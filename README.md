@@ -45,6 +45,7 @@ harness can load it progressively.
 | `skills/gt/SKILL.md` | `/gt` | 🚧 **Reserved slot — not yet implemented.** Will cover Graphite (`gt`) stacked-PR workflows. Frontmatter and directory shape are in place so future work lands without a rename; invoking it today announces the banner and falls back to the `gt` CLI directly. |
 | `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
 | `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
+| `skills/ralphify-spec/SKILL.md` | `/ralphify-spec` | Generate a ralphify-approved ralph directory (RALPH.md + scripts) from a plain-English description of repetitive or iterative work. Ships an iteration-cap-enforcing runner wrapper, a `<promise>COMPLETE</promise>` stop sentinel, and a burn-down-todos template. |
 
 ## Scope
 
@@ -57,6 +58,7 @@ Each skill wraps a single CLI you probably already use:
 | `gt` | `gt` (Graphite) | gt (when implemented) | — |
 | `justfile` | `just` | just | — |
 | `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
+| `ralphify-spec` | [`ralphify`](https://github.com/ghuntley/ralphify) | ralphify (`uv tool install ralphify`), Python 3.10+ | — |
 
 What that means in practice:
 
@@ -101,7 +103,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in commit gh gt justfile prek; do
+for s in commit gh gt justfile prek ralphify-spec; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```
