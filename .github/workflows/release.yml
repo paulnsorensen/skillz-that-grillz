@@ -1,0 +1,59 @@
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: publish github release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not an ancestor of origin/main. Refusing to publish a release from an unreviewed branch."
+            exit 1
+          fi
+
+      - name: Install latest gh CLI
+        run: |
+          set -euo pipefail
+          latest=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name)
+          ver="${latest#v}"
+          curl -fsSL "https://github.com/cli/cli/releases/download/${latest}/gh_${ver}_linux_amd64.tar.gz" | tar -xz -C /tmp
+          sudo install -m 755 "/tmp/gh_${ver}_linux_amd64/bin/gh" /usr/local/bin/gh
+          gh --version
+
+      - name: Validate skills
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh skill publish --dry-run
+
+      - name: Drop trigger tag so skill publish can recreate it
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git push origin ":refs/tags/$TAG"
+          git tag -d "$TAG" || true
+
+      - name: Publish agent skills
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh skill publish --tag "$TAG"
