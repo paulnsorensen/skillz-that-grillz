@@ -42,9 +42,14 @@ the user which mode they want with `AskUserQuestion`. Never silently default
 
 | First arg | Mode |
 | --- | --- |
-| `review`, a PR number, or a PR URL | `review` |
+| `review` (with optional PR number / URL after) | `review` |
 | `delegate` followed by a task description | `delegate` |
 | `setup` | `setup` (load `references/setup.md`) |
+| Bare PR URL (`https://github.com/...`) | `review` |
+| Anything else (bare integer, ambiguous, missing) | ask via `AskUserQuestion` |
+
+A bare integer is **ambiguous** — it could be a PR number, a `gh
+agent-task` ID, or noise. Always ask before assuming review mode.
 
 ## Mode: review
 
@@ -52,8 +57,10 @@ Review a PR and post Copilot-actionable fixes as inline review comments.
 
 ### Phase 1: fetch PR context
 
-Determine the PR number from the argument. If it's a URL, extract the
-number. If no number was provided, run `gh pr list` and ask which PR.
+Determine the PR number. If the argument is a PR URL, extract the number.
+If a bare integer was passed, confirm with the user it is a PR number (it
+could equally be a `gh agent-task` ID). If no number was provided, run
+`gh pr list` and ask which PR.
 
 ```bash
 PR=<number>
