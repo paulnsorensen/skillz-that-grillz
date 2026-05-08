@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Workflow scratch (age/cure/press reports, planning notes)
+.cheese/
+.context/

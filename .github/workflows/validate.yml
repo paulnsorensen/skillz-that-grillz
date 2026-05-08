@@ -1,0 +1,96 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: validate skills
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: pip install --no-cache-dir pyyaml==6.0.2
+
+      - name: Test SKILL.md validator
+        run: python3 .github/scripts/test_validate_skills.py -v
+
+      - name: Validate SKILL.md frontmatter
+        run: python3 .github/scripts/validate_skills.py
+
+  install-script:
+    name: test install.sh (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install shellcheck
+        run: brew install shellcheck
+
+      - name: Lint install.sh
+        run: shellcheck scripts/install.sh
+
+      - name: Install bats
+        run: brew install bats-core
+
+      - name: Run install.sh unit tests
+        run: bats tests/bash/test_install.bats
+
+      # Dry-run smoke: exercises arg parsing, selection validation, and
+      # the skill-install dispatch path. Does NOT actually run brew or
+      # gh skill install, so it will not catch regressions in the real
+      # install paths (broken tap, renamed formula, etc.). Promote to a
+      # real install (drop --dry-run) once the repo is published and CI
+      # has authenticated gh available.
+      - name: install.sh dry-run smoke test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/install.sh --skip-mcp --dry-run
+
+  lint:
+    name: lint markdown and yaml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@992badcdf24e3b8eb7e87ff9287fe931bcb00c6e # v20.0.0
+        with:
+          globs: |
+            skills/**/*.md
+            *.md
+
+      - name: yamllint
+        uses: ibiqlik/action-yamllint@2576378a8e339169678f9939646ee3ee325e845c # v3.1.1
+        with:
+          file_or_dir: .
+          config_file: .yamllint.yml
+          format: github
+
+  pr-title:
+    name: conventional commits pr title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        uses: amannn/action-semantic-pull-request@0723387faaf9b38adef4775cd42cfd5155ed6017 # v5.5.3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
