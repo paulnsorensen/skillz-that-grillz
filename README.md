@@ -42,7 +42,7 @@ harness can load it progressively.
 | --- | --- | --- |
 | `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, code search — via the GitHub MCP plugin, with `gh` CLI as the fallback for operations MCP doesn't cover. |
-| `skills/gt/SKILL.md` | `/gt` | 🚧 **Reserved slot — not yet implemented.** Will cover Graphite (`gt`) stacked-PR workflows. Frontmatter and directory shape are in place so future work lands without a rename; invoking it today announces the banner and falls back to the `gt` CLI directly. |
+| `skills/gt/SKILL.md` | `/gt` | Manage stacked branches with the Graphite (`gt`) CLI — `gt create`, `gt modify`, `gt sync`, `gt submit --stack`, `gt track`, `gt log short`. Hands off staging/commits to `/commit` and PR review to `/gh`. |
 | `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
 | `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
 | `skills/ralphify-spec/SKILL.md` | `/ralphify-spec` | Generate a ralphify-approved ralph directory (RALPH.md + scripts) from a plain-English description of repetitive or iterative work. Ships an iteration-cap-enforcing runner wrapper, a `<promise>COMPLETE</promise>` stop sentinel, and a burn-down-todos template. |
@@ -55,7 +55,7 @@ Each skill wraps a single CLI you probably already use:
 | --- | --- | --- | --- |
 | `commit` | `git` | git | — |
 | `gh` | `gh` CLI | gh | GitHub MCP plugin (preferred) |
-| `gt` | `gt` (Graphite) | gt (when implemented) | — |
+| `gt` | `gt` (Graphite) | gt | — |
 | `justfile` | `just` | just | — |
 | `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
 | `ralphify-spec` | [`ralphify`](https://github.com/ghuntley/ralphify) | ralphify (`uv tool install ralphify`), Python 3.10+ | — |
@@ -75,7 +75,7 @@ What that means in practice:
 ```text
 work on a branch
     ├── /commit            ──►  stage + commit (conventional commits)
-    ├── /gt                ──►  manage stacked branches (reserved slot — not yet implemented)
+    ├── /gt                ──►  manage stacked branches (Graphite)
     └── /gh                ──►  push + create PR + watch checks
 
 new project setup
@@ -243,7 +243,7 @@ instructions.
 
 ### `gt` (Graphite CLI)
 
-Stacked-PR workflow tool. Used by the `gt` reserved-slot skill.
+Stacked-PR workflow tool. Used by the `gt` skill.
 
 ```sh
 brew install withgraphite/tap/graphite   # macOS/Linux via Homebrew tap

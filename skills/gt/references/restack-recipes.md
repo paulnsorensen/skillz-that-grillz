@@ -1,0 +1,148 @@
+# Restack recipes
+
+Less-common stack operations. Read when `gt sync` complains, a branch needs
+splitting, or a stack needs to be partially abandoned. The happy path lives
+in `../SKILL.md`.
+
+## Conflicts during `gt sync`
+
+`gt sync` runs `git rebase` for every branch in the stack against the new
+trunk tip. If any branch hits a conflict, the rebase pauses on that branch.
+
+```bash
+# 1. See where you are
+gt log short
+
+# 2. Resolve the conflict in the working tree
+git status                  # shows conflicted paths
+# … edit files, remove <<<<<<< markers …
+git add path/to/resolved
+
+# 3. Continue the rebase
+git rebase --continue
+
+# 4. Resume the stack-wide sync
+gt continue                 # picks up the rest of the stack
+```
+
+If you cannot resolve and want to back out:
+
+```bash
+git rebase --abort
+gt sync --abort 2>/dev/null || true   # older versions: just bail after the abort
+```
+
+After abort, the stack returns to its pre-sync state. Investigate the
+conflict, fix the underlying cause (often a merged branch that should be
+dropped first), then re-run `gt sync`.
+
+## Conflicts during `gt restack`
+
+`gt restack` is the same machinery as `gt sync` minus the trunk pull. Same
+recipe — `git rebase --continue`, then `gt continue`.
+
+## Splitting a branch
+
+Sometimes a branch grew too big and you want to split it into two stacked
+branches.
+
+```bash
+# On the branch you want to split
+gt log short                       # confirm position
+git log --oneline                  # find the commit to split at
+
+# Soft-reset to the split point — keeps changes in working tree
+git reset --soft <split-commit-sha>
+
+# Re-commit the lower half on this branch
+gt modify -a -m "feat: lower half"
+
+# Stack a new branch on top with the upper half
+git stash                           # if the working tree is dirty
+gt create feat/upper -m "feat: upper half"
+git stash pop                       # if you stashed
+gt modify -a                        # add the upper-half changes
+```
+
+Re-run `gt log short` to confirm the chain. The original branch's PR (if
+already submitted) will keep its number; the new top branch will open a
+fresh PR on the next `gt submit --stack`.
+
+## Abandoning a stack tip
+
+Drop the top branch without affecting its parents:
+
+```bash
+gt down                            # move to the parent
+git branch -D feat/topmost         # delete the abandoned tip
+gt log short                       # confirm
+```
+
+If the tip already has an open PR, close it on GitHub first (via `/gh`) so
+graphite doesn't try to update it on the next `gt submit`.
+
+## Abandoning the whole stack
+
+```bash
+git checkout main
+git branch -D feat/foo feat/bar feat/baz
+```
+
+`gt` only stores parent metadata — deleting the branches with `git branch -D`
+cleans up the stack. Run `gt log short` after to confirm only `main` remains.
+
+## Recovering from an interrupted `gt submit`
+
+If `gt submit --stack` died mid-push (network blip, auth expiry, sandbox
+killed the process), the stack state is fine — only some branches were
+pushed. Re-run:
+
+```bash
+gt submit --stack
+```
+
+`gt` is idempotent: branches already pushed will be no-ops, the rest will
+push and open PRs. Already-open PRs get their bodies updated; new PRs are
+created for branches that didn't have one yet.
+
+If a partial push left a branch in a weird state (rare), force-restack and
+retry:
+
+```bash
+gt restack
+gt submit --stack
+```
+
+## Picking up someone else's stack
+
+Teammate hands you a stack to take over (e.g. they're out, PRs need
+follow-up):
+
+```bash
+git fetch
+git checkout feat/their-bottom
+gt track --parent main
+git checkout feat/their-middle
+gt track --parent feat/their-bottom
+git checkout feat/their-top
+gt track --parent feat/their-middle
+gt log short                       # full chain visible now
+```
+
+`gt track` per branch in bottom-up order. Once the chain is in graphite's
+metadata, `gt sync` / `gt modify` / `gt submit --stack` work normally.
+
+## Reordering branches mid-stack
+
+Rare. Use `gt move --onto <new-parent>` to re-parent the current branch.
+Conflicts during the move follow the `git rebase --continue` →
+`gt continue` recipe above.
+
+```bash
+git checkout feat/middle
+gt move --onto feat/new-parent
+gt log short
+```
+
+If you find yourself reaching for this often, the work probably wants two
+separate stacks rather than one tangled one.
