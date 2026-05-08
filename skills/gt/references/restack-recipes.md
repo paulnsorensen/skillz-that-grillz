@@ -36,34 +36,36 @@ dropped first), then re-run `gt sync`.
 ## Conflicts during `gt restack`
 
 `gt restack` is the same machinery as `gt sync` minus the trunk pull. Same
-recipe — `git rebase --continue`, then `gt continue`.
+recipe — resolve conflicts, `git add` resolved files, then `gt continue`.
 
 ## Splitting a branch
 
-Sometimes a branch grew too big and you want to split it into two stacked
-branches.
+Sometimes a branch grew too big and you want to split its commits across two
+stacked branches. The cleanest path uses `gt absorb` or interactive rebase:
 
 ```bash
-# On the branch you want to split
-gt log short                       # confirm position
-git log --oneline                  # find the commit to split at
+# On the over-stuffed branch
+gt log short
+git log --oneline                  # identify the keep-here vs move-up commits
 
-# Soft-reset to the split point — keeps changes in working tree
-git reset --soft <split-commit-sha>
+# Mixed-reset to the boundary commit so later commits become unstaged changes
+git reset <boundary-commit-sha>    # mixed (default): keep in working tree, unstaged
 
-# Re-commit the lower half on this branch
-gt modify -a -m "feat: lower half"
-
-# Stack a new branch on top with the upper half
-git stash                           # if the working tree is dirty
+# Lower branch is now exactly the keep-here commits; nothing to do here.
+# Stack a new branch on top, then commit the moved-up changes:
 gt create feat/upper -m "feat: upper half"
-git stash pop                       # if you stashed
-gt modify -a                        # add the upper-half changes
+git add path/to/moved/files
+gt modify                          # amend feat/upper with the staged changes
+gt log short                       # confirm the chain
 ```
 
-Re-run `gt log short` to confirm the chain. The original branch's PR (if
-already submitted) will keep its number; the new top branch will open a
-fresh PR on the next `gt submit --stack`.
+If the boundary lands inside a single commit (you want to split *one* commit
+into two), use `git rebase -i <boundary>~1` and `edit` that commit, then
+`git reset HEAD^` and re-stage in two passes — see
+<https://graphite.dev/docs> for the full recipe.
+
+The original branch's PR (if already submitted) will keep its number; the new
+top branch will open a fresh PR on the next `gt submit --stack`.
 
 ## Abandoning a stack tip
 

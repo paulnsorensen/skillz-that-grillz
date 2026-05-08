@@ -107,9 +107,10 @@ Reload the shell. `gt log <Tab>`, `gt create <Tab>`, etc. all work afterwards.
 ## Uninstalling and starting over
 
 ```bash
-brew uninstall graphite                      # or npm uninstall -g
+brew uninstall withgraphite/tap/graphite        # if installed via Homebrew
+npm uninstall -g @withgraphite/graphite-cli     # if installed via npm
 rm -rf ~/.graphite_user_config
-rm .graphite_repo_config                     # in any repo where you ran gt init
+rm .graphite_repo_config                        # in any repo where you ran gt init
 ```
 
 Re-install from the top of this doc to start clean.

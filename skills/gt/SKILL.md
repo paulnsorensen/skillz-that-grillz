@@ -52,8 +52,10 @@ gt log short
 gt submit --stack
 ```
 
-`gt create` requires staged changes (or `--no-interactive` to make an empty
-branch) and uses `-m` for the commit message — same shape as `git commit`.
+`gt create` commits the staged set with `-m` (same shape as `git commit -m`)
+and creates the new branch. With nothing staged, it creates an empty branch.
+With unstaged changes, it prompts to stage them — pass `--no-interactive` to
+skip the prompt.
 
 ## Amending the current branch
 
@@ -171,6 +173,6 @@ The closer (when all queue items are done) verifies the stack with
 - `references/restack-recipes.md` — rebase conflicts during `gt sync`,
   splitting a branch in the middle of a stack, abandoning a stack tip,
   recovering from an interrupted `gt submit`.
-- `references/auth-and-setup.md` — first-time `gt auth`, repo init,
-  `gt config` knobs (trunk name, draft default, submit-on-create). Rarely
-  needed once the repo is set up.
+- `references/auth-and-setup.md` — install, first-time `gt auth`, `gt init`,
+  the `gt config` interactive menu, and shell completion. Rarely needed once
+  the repo and shell are wired up.
