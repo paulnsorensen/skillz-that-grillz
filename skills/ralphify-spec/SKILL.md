@@ -184,12 +184,6 @@ Show the user:
    logs captured. Starting with `-n 50` lets them see the loop work before
    going unbounded — and the wrapper refuses to drop the cap entirely.
 
-## Templates
-
-`assets/RALPH.template.md` is the canonical burn-down-todos template — the
-shape this very skill's port-loop uses. Copy it into the new ralph dir and
-fill the placeholders rather than re-deriving the structure each time.
-
 ## What not to do
 
 - Do not invent frontmatter fields ralphify does not support. Schema is
