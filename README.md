@@ -46,6 +46,8 @@ harness can load it progressively.
 | `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, code search — via the GitHub MCP plugin, with `gh` CLI as the fallback for operations MCP doesn't cover. |
 | `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
+| `skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
+| `skills/github-copilot-repo-instructions/SKILL.md` | `/github-copilot-repo-instructions` | Add or audit `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md` so Copilot Chat, code review, and the coding agent pick up project-wide guidance. Covers `applyTo`/`excludeAgent` frontmatter, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` alternates, surfaces, verification, **and the full `copilot_code_review` ruleset knob inventory** (see `references/code-review-knobs.md`). |
 | `skills/gt/SKILL.md` | `/gt` | 🚧 **Reserved slot — not yet implemented.** Will cover Graphite (`gt`) stacked-PR workflows. Frontmatter and directory shape are in place so future work lands without a rename; invoking it today announces the banner and falls back to the `gt` CLI directly. |
 | `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
 | `skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
@@ -66,6 +68,8 @@ Code); the bundled `bash-shorten.py` rewriter additionally requires
 | `chezmoi` | `chezmoi` CLI | chezmoi | `op` / `bw` / `age` / `gpg` (one of, when using encrypted dotfiles); Context7 MCP (latest template-function docs) |
 | `gh` | `gh` CLI | gh | GitHub MCP plugin (preferred) |
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
+| `github-copilot-personal-instructions` | github.com Copilot UI | — | — |
+| `github-copilot-repo-instructions` | repo files + `gh api repos/.../rulesets` | — | — |
 | `gt` | `gt` (Graphite) | gt (when implemented) | — |
 | `justfile` | `just` | just | — |
 | `oss-hygiene` | `gh` CLI (`gh api`) + scaffolded GitHub Actions (Dependabot, Scorecard, dependency review, CodeQL) | gh | — |
@@ -120,7 +124,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in bash-shortening commit gh gh-bootstrap gt justfile oss-hygiene prek safe-settings; do
+for s in bash-shortening commit gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions gt justfile oss-hygiene prek safe-settings; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```

@@ -400,6 +400,8 @@ STUB
     [ "$status" -eq 0 ]
     [[ "$output" == *"commit"* ]]
     [[ "$output" == *"gh"* ]]
+    [[ "$output" == *"github-copilot-personal-instructions"* ]]
+    [[ "$output" == *"github-copilot-repo-instructions"* ]]
     [[ "$output" == *"gt"* ]]
     [[ "$output" == *"justfile"* ]]
     [[ "$output" == *"prek"* ]]
