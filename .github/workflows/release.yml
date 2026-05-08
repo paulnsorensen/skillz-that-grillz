@@ -30,13 +30,13 @@ jobs:
             exit 1
           fi
 
-      - name: Install latest gh CLI
+      - name: Install pinned gh CLI
+        env:
+          GH_VERSION: "2.92.0"
         run: |
           set -euo pipefail
-          latest=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest | jq -r .tag_name)
-          ver="${latest#v}"
-          curl -fsSL "https://github.com/cli/cli/releases/download/${latest}/gh_${ver}_linux_amd64.tar.gz" | tar -xz -C /tmp
-          sudo install -m 755 "/tmp/gh_${ver}_linux_amd64/bin/gh" /usr/local/bin/gh
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" | tar -xz -C /tmp
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
           gh --version
 
       - name: Validate skills
@@ -44,16 +44,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh skill publish --dry-run
 
-      - name: Drop trigger tag so skill publish can recreate it
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          git push origin ":refs/tags/$TAG"
-          git tag -d "$TAG" || true
-
       - name: Publish agent skills
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh skill publish --tag "$TAG"
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # gh skill publish wants to (re)create the trigger tag itself, so we
+          # drop it first. If publish fails, restore the tag at its original
+          # SHA so consumers and retries aren't broken by a missing release tag.
+          git push origin ":refs/tags/$TAG"
+          git tag -d "$TAG" || true
+
+          if ! gh skill publish --tag "$TAG"; then
+            echo "::error::publish failed; restoring trigger tag $TAG at $SHA"
+            git tag "$TAG" "$SHA"
+            git push origin "$TAG"
+            exit 1
+          fi

@@ -154,13 +154,16 @@ sg_brew_install_if_missing() {
     sg_brew install "$formula"
 }
 
-# Install every tool in the comma-separated list.
+# Install every tool in the comma-separated list. Accumulates failures so a
+# single broken tool doesn't get masked by a successful later install when the
+# script is sourced (tests) without `set -e`.
 sg_install_tools() {
-    local list="$1" tool
+    local list="$1" tool rc=0
     local IFS=,
     for tool in $list; do
-        sg_brew_install_if_missing "$tool"
+        sg_brew_install_if_missing "$tool" || rc=1
     done
+    return "$rc"
 }
 
 # Register a single MCP server with the chosen harness.
