@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Closer gate. Print a definitive verdict on whether the closer may run.
+#
+# Drop this file into a burn-down-todos ralph directory as `closer-gate.sh`,
+# `chmod +x` it, and wire the closer block in `RALPH.md` to require the
+# `CLOSER GATE PASS` verdict as its first step.
+#
+# Contract:
+#   stdout begins with one of:
+#     CLOSER GATE PASS  — every queue item is status: done
+#     CLOSER GATE FAIL  — at least one item is still status: open, or the
+#                         queue directory is missing (likely wrong branch)
+#
+# The closer block in RALPH.md MUST run this script first and only proceed
+# (push, submit, tag, COMPLETE sentinel) when the verdict is PASS. Iterations
+# that did per-item work MUST NOT run this script — the closer is its own
+# dedicated iteration. See Guard 4 in `references/guards.md`.
+#
+# Placeholders to fill in before use:
+#   PLACEHOLDER_QUEUE_DIR     queue directory relative to repo root,
+#                             e.g. ".cheese/issues" or "tasks"
+#   PLACEHOLDER_QUEUE_GLOB    glob that matches one queue item file,
+#                             e.g. "oslo-v1-*.md"
+#   PLACEHOLDER_STATUS_FIELD  YAML frontmatter field on each queue item
+#                             that gates open/done, e.g. "status"
+#   PLACEHOLDER_PLANNING_BRANCH  branch where the queue files live
+#                                (printed in the FAIL hint), e.g.
+#                                "paulnsorensen/mold-myralph"
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+issues_dir="$repo_root/PLACEHOLDER_QUEUE_DIR"
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+
+if [ ! -d "$issues_dir" ]; then
+  echo "CLOSER GATE FAIL"
+  echo "issues dir missing: $issues_dir (branch: $branch)"
+  echo "switch to the planning branch (PLACEHOLDER_PLANNING_BRANCH) — the queue lives there only"
+  exit 1
+fi
+
+total=0
+open_count=0
+open_files=()
+# shellcheck disable=SC2043  # PLACEHOLDER_QUEUE_GLOB is a literal token in
+# the template; once substituted with a real glob (e.g. "oslo-v1-*.md"), the
+# loop expands to multiple files. shellcheck cannot see past the placeholder.
+for f in "$issues_dir"/PLACEHOLDER_QUEUE_GLOB; do
+  [ -f "$f" ] || continue
+  total=$((total + 1))
+  status=$(awk '/^---$/{c++; next} c==1 && /^PLACEHOLDER_STATUS_FIELD:[[:space:]]/{
+    sub(/^PLACEHOLDER_STATUS_FIELD:[[:space:]]*/, ""); print; exit
+  }' "$f")
+  if [ "$status" = "open" ]; then
+    open_count=$((open_count + 1))
+    open_files+=("$(basename "$f")")
+  fi
+done
+
+if [ "$total" -eq 0 ]; then
+  echo "CLOSER GATE FAIL"
+  echo "no PLACEHOLDER_QUEUE_GLOB queue files found in $issues_dir"
+  exit 1
+fi
+
+if [ "$open_count" -gt 0 ]; then
+  echo "CLOSER GATE FAIL"
+  echo "$open_count of $total queue items still PLACEHOLDER_STATUS_FIELD: open:"
+  for name in "${open_files[@]}"; do
+    printf '  - %s\n' "$name"
+  done
+  exit 1
+fi
+
+echo "CLOSER GATE PASS"
+echo "all $total queue items are PLACEHOLDER_STATUS_FIELD: done"
