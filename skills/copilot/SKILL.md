@@ -3,20 +3,18 @@ allowed-tools: Read, Write, Edit, Grep, Glob, AskUserQuestion, Bash(gh:*), Bash(
 license: MIT
 name: copilot
 description: >
-  Umbrella skill for the GitHub Copilot CLI / coding agent with two routine
-  modes — `review` and `delegate` — plus a one-time bootstrap (`setup`).
-  `/copilot review <pr>` runs a code review on a PR and routes findings to
-  Copilot via inline comments tagged `@copilot fix this`. `/copilot delegate
-  <task>` creates a `gh agent-task`, polls until the agent opens a PR, and
-  optionally hands the PR off to review mode. `/copilot setup` is a one-time
-  bootstrap that generates `.github/copilot-instructions.md` and the
-  `.github/instructions/*.instructions.md` files for a repo; it is loaded
-  on demand from `references/setup.md` only when the user explicitly asks
-  for "copilot setup", "generate copilot instructions", or "bootstrap copilot
-  for this repo". Use this skill when the user says "copilot review",
-  "review with copilot", "delegate to copilot", "have copilot fix this",
-  "copilot agent task", "set up copilot", or invokes `/copilot`. Do NOT use
-  for plain GitHub PR work — that is `/gh`'s job.
+  Use when the user says "copilot review", "review with copilot", "delegate
+  to copilot", "have copilot fix this", "copilot agent task", "set up
+  copilot", "generate copilot instructions", "bootstrap copilot for this
+  repo", or invokes `/copilot`. Three modes: `review` (run a code review
+  on a PR and route fixes to Copilot via inline `@copilot fix this`
+  comments), `delegate` (create a `gh agent-task`, poll until the coding
+  agent opens a PR, optionally hand off to review), and `setup` (one-time
+  bootstrap that writes `.github/copilot-instructions.md` and the per-role
+  `.github/instructions/*.instructions.md` files). `review` and `delegate`
+  are routine; `setup` is a one-time repo bootstrap loaded on demand from
+  `references/setup.md` only when the user explicitly asks. Do NOT use for
+  plain GitHub PR work — that is `/gh`'s job.
 ---
 
 # copilot
@@ -29,9 +27,12 @@ Drive the GitHub Copilot CLI and coding agent. Three modes:
 | `delegate` | `/copilot delegate <task>` | Create a `gh agent-task`, monitor until it produces a PR. |
 | `setup` | `/copilot setup` | One-time bootstrap of `.github/copilot-instructions.md` and friends. |
 
-Routine work is `review` and `delegate`. `setup` is loaded on demand from
-[references/setup.md](references/setup.md) only when the user explicitly
-asks for it — its content stays out of context for routine usage.
+Routine work is `review` and `delegate`. Read
+[references/setup.md](references/setup.md) **only** when the user
+explicitly says "copilot setup", "generate copilot instructions", or
+"bootstrap copilot for this repo" — never for routine review/delegate
+work, since it adds ~12 KB of repo-bootstrap content irrelevant to those
+modes.
 
 ## Mode selection
 
@@ -229,13 +230,13 @@ review mode with the PR number. On no, print the link and exit.
 `setup` is a one-time bootstrap that writes `.github/copilot-instructions.md`
 and the per-language / per-role files under `.github/instructions/`.
 
-For the full walkthrough — project-type detection, tooling detection,
-overwrite gating, the global instructions template, the code-review
-instructions template, language-specific stubs, and the coding-agent
-instructions — see [references/setup.md](references/setup.md).
-
-Load that reference **only** when the user explicitly asks for setup. It
-adds ~12 KB of context and is irrelevant to routine `review` / `delegate`
+See [references/setup.md](references/setup.md) — read **only** when the
+user explicitly says "copilot setup", "generate copilot instructions", or
+"bootstrap copilot for this repo". It contains the full walkthrough:
+project-type detection, tooling detection, overwrite gating, the global
+instructions template, the code-review instructions template,
+language-specific stubs, and the coding-agent instructions. Loading it
+costs ~12 KB of context and is irrelevant to routine `review` / `delegate`
 work.
 
 ## What this skill never does
