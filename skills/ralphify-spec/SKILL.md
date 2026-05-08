@@ -99,15 +99,24 @@ iteration-cap and COMPLETE-sentinel guards every generated ralph must include.
 
 When the loop pattern is `burn-down-todos` (a queue-driven ralph that
 fires a closer when the queue drains — open PRs, push the stack, tag a
-release), install `assets/closer-gate.sh.template` into the ralph
-directory as `closer-gate.sh`. Fill the placeholders (queue dir, glob,
-status field, planning branch), `chmod +x` it, and wire the closer block
-in `RALPH.md` to require `CLOSER GATE PASS` as **step 1** of the closer
-— before any push, submit, PR creation, or COMPLETE sentinel. This is
-Guard 4 in `references/guards.md`; it exists because every observed
-failure of this ralph shape involved firing the closer in the same
-iteration as per-item work and emitting COMPLETE while items were still
-open.
+release), install **both** of the canonical scripts alongside `RALPH.md`
+in the ralph directory:
+
+1. `assets/next-issue.sh.template` → `next-issue.sh`. The queue-read
+   script `RALPH.template.md`'s `commands.next-issue` invokes every
+   iteration. Its stdout (`Path: …` / `QUEUE EMPTY` / `QUEUE READ
+   ERROR`) drives the mutual-exclusion decision in the Task block.
+2. `assets/closer-gate.sh.template` → `closer-gate.sh`. The Guard 4
+   verdict gate the closer iteration must pass before any push,
+   submit, PR creation, or COMPLETE sentinel.
+
+Fill the same `PLACEHOLDER_*` markers in both (queue dir, glob, status
+field, planning branch), `chmod +x` them, and wire the closer block in
+`RALPH.md` to require `CLOSER GATE PASS` as **step 1** of the closer.
+This is Guard 4 in `references/guards.md`; it exists because every
+observed failure of this ralph shape involved firing the closer in the
+same iteration as per-item work and emitting COMPLETE while items were
+still open.
 
 ### 5. Shell features belong in scripts
 
@@ -262,6 +271,9 @@ scripts/run.sh PATH/TO/RALPH_DIR -n 50 -t 1800 -s -l PATH/TO/RALPH_DIR/logs
 - `assets/RALPH.template.md` — copy into the new ralph dir as the
   starting point for burn-down-todos loops; fill the `PLACEHOLDER_*`
   markers in place.
+- `assets/next-issue.sh.template` — copy alongside `RALPH.md` for
+  burn-down-todos ralphs; the queue-read script the template's
+  `commands.next-issue` invokes every iteration.
 - `assets/closer-gate.sh.template` — copy alongside `RALPH.md` for
   burn-down-todos ralphs; fills in queue dir, glob, status field, and
   planning branch and gates the closer (Guard 4).

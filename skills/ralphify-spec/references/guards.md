@@ -133,41 +133,16 @@ mutual-exclusion decision in `RALPH.md`. The contract is:
 | `QUEUE EMPTY` | run the **closer** branch (which begins with `closer-gate.sh`) |
 | `QUEUE READ ERROR` | run the **recovery** branch — switch to the planning branch and stop |
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+The implementation ships in `assets/next-issue.sh.template`. Copy it
+alongside `RALPH.md` as `next-issue.sh`, fill the `PLACEHOLDER_*`
+markers (queue dir, glob, status field, planning branch), and
+`chmod +x` it.
 
-repo_root="$(git rev-parse --show-toplevel)"
-issues_dir="$repo_root/PLACEHOLDER_QUEUE_DIR"
-branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
-
-# CRITICAL: a missing queue dir prints QUEUE READ ERROR, not QUEUE EMPTY.
-# Treating "directory absent" as "queue drained" is the silent-queue-empty
-# footgun documented under Common bugs below — it lets the closer fire on
-# a phantom-empty queue.
-if [ ! -d "$issues_dir" ]; then
-  echo "QUEUE READ ERROR"
-  echo
-  echo "The queue directory ($issues_dir) does not exist on branch '$branch'."
-  echo "Switch to the planning branch and let the next firing render a real read."
-  exit 0
-fi
-
-for f in "$issues_dir"/PLACEHOLDER_QUEUE_GLOB; do
-  [ -f "$f" ] || continue
-  status=$(awk '/^---$/{c++; next} c==1 && /^PLACEHOLDER_STATUS_FIELD:[[:space:]]/{
-    sub(/^PLACEHOLDER_STATUS_FIELD:[[:space:]]*/, ""); print; exit
-  }' "$f")
-  if [ "$status" = "open" ]; then
-    echo "Path: $f"
-    echo
-    cat "$f"
-    exit 0
-  fi
-done
-
-echo "QUEUE EMPTY"
-```
+A missing queue directory MUST print `QUEUE READ ERROR`, not
+`QUEUE EMPTY`. Treating "directory absent" as "queue drained" is the
+silent-queue-empty footgun documented under Common bugs below — it
+lets the closer fire on a phantom-empty queue when the working tree
+is on a per-item branch where the queue dir is gitignored and absent.
 
 A `QUEUE EMPTY` output is the **only** signal that authorizes a closer
 iteration; a `QUEUE READ ERROR` output must be treated as "wrong

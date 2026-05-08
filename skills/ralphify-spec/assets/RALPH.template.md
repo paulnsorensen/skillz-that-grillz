@@ -9,8 +9,6 @@ commands:
     run: git rev-parse --abbrev-ref HEAD
   - name: next-issue
     run: ./next-issue.sh
-  - name: stack-state
-    run: ./stack-state.sh
 ---
 
 <!--
@@ -21,9 +19,16 @@ commands:
 
   Required sibling scripts in the same ralph directory:
     - next-issue.sh    prints the next open issue, `QUEUE EMPTY`, or
-                       `QUEUE READ ERROR` (see Guard 4 in references).
+                       `QUEUE READ ERROR`. Install from
+                       `assets/next-issue.sh.template`.
     - closer-gate.sh   verdict gate the closer iteration must pass before
-                       any push/submit/COMPLETE step (Guard 4).
+                       any push/submit/COMPLETE step (Guard 4). Install
+                       from `assets/closer-gate.sh.template`.
+
+  Optional commands a project can add (not shipped by this template):
+    - stack-state      diagnostics for stacked-PR workflows (graphite, etc.).
+                       Add a `commands.stack-state` entry and a script if
+                       relevant; otherwise the template is git-stack-agnostic.
 
   Placeholders to fill in:
     PLACEHOLDER_ROLE             short descriptor of the agent's role,
@@ -69,10 +74,6 @@ frontmatter of the queue files.
 
 {{ commands.branch }}
 
-## Stack state
-
-{{ commands.stack-state }}
-
 ## Next open issue
 
 {{ commands.next-issue }}
@@ -92,7 +93,7 @@ recovery — never two at once. The decision is made entirely by the
 The mutual-exclusion rule above and the closer gate (Guard 4) exist
 because the original failure mode for this kind of ralph is firing
 the closer in the same iteration as per-item work and emitting
-`COMPLETE` while items are still open. Per-item step 9 STOPS the
+`COMPLETE` while items are still open. Per-item step 8 STOPS the
 iteration so a single firing cannot cross into the closer.
 
 ### Per-item iteration (when `## Next open issue` shows an issue)
