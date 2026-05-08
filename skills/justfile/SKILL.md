@@ -213,7 +213,7 @@ Don't duplicate the full recipe list — `just --list` is self-documenting.
 | `.PHONY: target` | (not needed) |
 | `$(VAR)` | `{{var}}` |
 | `$(shell cmd)` | `` `cmd` `` |
-| `-include .env` | `set dotenv-load := true` |
+| `-include .env` | `set dotenv-load` |
 | `ifeq ($(OS),Darwin)` | `if os() == "macos" { ... }` |
 | `ifndef VAR` / `$(or ...)` | `env_var_or_default("VAR", "default")` |
 | `make -C subdir` | `mod subdir` |
