@@ -1,5 +1,10 @@
 # `gh` extras
 
+> **When to read:** When the user asks about labels, codespaces, gists,
+> Actions secrets/variables, Projects, aliases, the `gh status` page,
+> repo rulesets, or attestations — anything beyond the SKILL.md core
+> domains. Also consult here before reaching for `gh api`.
+
 Less common but useful `gh` subcommands. SKILL.md links here on demand.
 
 ## Labels

@@ -1,5 +1,10 @@
 # `gh` troubleshooting
 
+> **When to read:** When `gh` returns an error code (401, 403, 404, 422,
+> 500), an authentication or scope problem, a rate-limit hit, an
+> SSL/network failure, or any "could not resolve" / "not mergeable" /
+> "no default repo" symptom that needs a recovery path.
+
 Common errors, diagnostics, and recovery paths.
 
 ## Authentication

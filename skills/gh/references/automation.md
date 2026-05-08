@@ -1,5 +1,10 @@
 # `gh` automation patterns
 
+> **When to read:** When the user asks for a multi-step flow — tagging
+> and uploading a release, watching CI then merging, bulk PR or issue
+> triage, daily activity reports, or triggering a workflow and waiting
+> on it. Skip for single-command operations covered by SKILL.md.
+
 End-to-end recipes that compose multiple `gh` commands. All patterns use
 only `gh` and standard POSIX shell — no extra binaries, no MCPs.
 

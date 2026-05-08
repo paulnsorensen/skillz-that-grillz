@@ -1,5 +1,10 @@
 # jq recipes for `gh`
 
+> **When to read:** When the workflow needs to filter or transform `gh`
+> output — extract specific fields, count results, group by attribute,
+> drive a downstream `xargs` invocation. Skip for simple one-off
+> commands that already inline `--jq`.
+
 `gh` ships with `--jq` and `--template` flags built in. **Always inline**
 filters with `--jq` instead of piping to a separate `jq` binary — pipes
 trigger Claude Code's compound-command sandbox and double the round-trips.
