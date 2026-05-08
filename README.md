@@ -45,7 +45,7 @@ harness can load it progressively.
 | `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
 | `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
 | `skills/copilot/SKILL.md` | `/copilot` | Drive the GitHub Copilot CLI / coding agent. Three modes: `review` (PR review with `@copilot fix this` inline comments) and `delegate` (`gh agent-task` create + monitor) are routine; `setup` is a one-time bootstrap that writes `.github/copilot-instructions.md` and per-language `.github/instructions/*.instructions.md`. |
-| `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, code search — via the GitHub MCP plugin, with `gh` CLI as the fallback for operations MCP doesn't cover. |
+| `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, workflow runs, code search, repo and label management — via the `gh` CLI, with idiomatic `--jq` and `--body-file` patterns. |
 | `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
 | `skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
 | `skills/github-copilot-repo-instructions/SKILL.md` | `/github-copilot-repo-instructions` | Add or audit `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md` so Copilot Chat, code review, and the coding agent pick up project-wide guidance. Covers `applyTo`/`excludeAgent` frontmatter, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` alternates, surfaces, verification, **and the full `copilot_code_review` ruleset knob inventory** (see `references/code-review-knobs.md`). |
@@ -70,7 +70,7 @@ Code); the bundled `bash-shorten.py` rewriter additionally requires
 | `commit` | `git` | git | — |
 | `chezmoi` | `chezmoi` CLI | chezmoi | `op` / `bw` / `age` / `gpg` (one of, when using encrypted dotfiles); Context7 MCP (latest template-function docs) |
 | `copilot` | `gh` CLI + `gh agent-task` + GitHub Copilot Chat | gh, gh agent-task extension | review skill (e.g. `age` or `code-review`) for `review` mode |
-| `gh` | `gh` CLI | gh | GitHub MCP plugin (preferred) |
+| `gh` | `gh` CLI | gh | — |
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
 | `github-copilot-personal-instructions` | github.com Copilot UI | — | — |
 | `github-copilot-repo-instructions` | repo files + `gh api repos/.../rulesets` | — | — |
@@ -86,9 +86,8 @@ What that means in practice:
 
 - **No orchestration, no intent classification.** Each skill is a single
   focused step the user (or another skill) explicitly invokes.
-- **No required MCP servers.** The `gh` skill prefers the GitHub MCP plugin
-  but degrades cleanly to the `gh` CLI; `prek` falls back to documented
-  hook revisions when Context7 is missing.
+- **No required MCP servers.** The `gh` skill is `gh` CLI only; `prek`
+  falls back to documented hook revisions when Context7 is missing.
 - **Composes freely with any other skill set** — install just these, install
   alongside something larger, or pick individual skills.
 
@@ -295,19 +294,6 @@ gh extension install github/gh-stack     # requires gh v2.0+
 See [github.github.com/gh-stack](https://github.github.com/gh-stack/).
 
 ## Optional MCP servers
-
-### GitHub MCP plugin (preferred for `/gh`)
-
-The `gh` skill prefers the GitHub MCP plugin (`mcp__plugin_github_github__*`)
-over the `gh` CLI because it bypasses sandbox / TLS issues. Install via your
-harness's plugin manager — for Claude Code:
-
-```sh
-/plugin install github
-```
-
-If MCP isn't available, the skill falls back to the `gh` CLI for every
-operation that has a CLI equivalent.
 
 ### Context7 (optional, used by `/prek`)
 
