@@ -18,22 +18,19 @@ git status                  # shows conflicted paths
 # … edit files, remove <<<<<<< markers …
 git add path/to/resolved
 
-# 3. Continue the rebase
-git rebase --continue
-
-# 4. Resume the stack-wide sync
-gt continue                 # picks up the rest of the stack
+# 3. Resume the gt command (handles git rebase --continue + restack)
+gt continue                 # or: gt continue -a to stage all changes first
 ```
 
 If you cannot resolve and want to back out:
 
 ```bash
-git rebase --abort
-gt sync --abort 2>/dev/null || true   # older versions: just bail after the abort
+git rebase --abort     # halts the in-flight rebase; gt sync stops with it
 ```
 
-After abort, the stack returns to its pre-sync state. Investigate the
-conflict, fix the underlying cause (often a merged branch that should be
+After abort, the in-flight branch returns to its pre-sync state. Other
+branches in the stack that were already restacked stay restacked. Investigate
+the conflict, fix the underlying cause (often a merged branch that should be
 dropped first), then re-run `gt sync`.
 
 ## Conflicts during `gt restack`

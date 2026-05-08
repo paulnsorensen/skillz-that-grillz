@@ -58,16 +58,16 @@ branch) and uses `-m` for the commit message — same shape as `git commit`.
 ## Amending the current branch
 
 ```bash
-gt modify          # stage + amend the tip of the current branch
-gt modify -a       # stage all tracked changes, then amend
+gt modify              # amend the tip with currently-staged changes
+gt modify -a           # stage every change first, then amend (-a == git commit -a)
+gt modify -u           # stage every tracked-file change, then amend
+gt modify -c -m "msg"  # add a NEW commit on this branch instead of amending
 ```
 
-`gt modify` amends the current branch's tip commit and automatically restacks
-every descendant branch onto the new commit. Prefer this over
-`git commit --amend` inside a stack — bare git won't fix the children.
-
-For a brand-new commit on top of the current branch (no amend), use
-`git commit` then `gt modify --commit` — or just chain another `gt create`.
+`gt modify` amends the current branch's tip commit (or with `-c`, adds a new
+commit) and automatically restacks every descendant branch onto the result.
+Prefer this over `git commit --amend` inside a stack — bare git won't fix the
+children.
 
 ## Sync with trunk
 
@@ -103,7 +103,8 @@ After tracking, `gt log short` shows the branch in the stack and
 ```bash
 gt log short      # one-line per branch, current branch marked ◉
 gt log            # full per-branch detail
-gt ls             # alias for gt log short in some versions
+gt ls             # default alias for gt log short
+gt ll             # default alias for gt log long
 ```
 
 `gt log short` is the cheap diagnostic — read it before any restack or
@@ -114,15 +115,15 @@ submit to confirm the stack looks how you expect.
 ```bash
 gt submit --stack             # push every branch in the current stack
 gt submit --stack --draft     # open all PRs as drafts
+gt submit --stack --dry-run   # show what would be submitted, don't push
+gt ss                         # default alias for gt submit --stack
 ```
 
 `gt submit --stack` pushes every branch from trunk up to the current branch
 tip and opens one PR per branch, each targeting its parent. PR titles default
-to the commit subject; PR bodies default to the commit body.
-
-**Heads-up**: `gt submit` posts a "stack overview" comment on each PR by
-default. Disable with `gt submit --stack --no-update` if a project disallows
-auto comments on PRs.
+to the commit subject; PR bodies default to the commit body. The first run
+prompts interactively for any missing PR metadata; pass `--no-edit` to skip
+the prompts and let existing commit messages drive title and description.
 
 ## Bootstrap retrofit (iter 1 plain branch)
 

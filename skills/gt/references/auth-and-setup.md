@@ -22,19 +22,19 @@ If `which gt` lands on `/opt/homebrew/bin/gt` (macOS) or `/usr/local/bin/gt`
 
 ## Auth
 
+`gt auth` needs a token from the Graphite dashboard:
+
+1. Open <https://app.graphite.com/settings/cli> in a browser.
+2. Create a new auth token. The page generates a ready-to-paste
+   `gt auth --token <token>` command.
+3. Paste and run it in the terminal.
+
 ```bash
-gt auth
+gt auth --token <token-from-app.graphite.com>
 ```
 
-The first run opens a browser tab and exchanges an OAuth-style token. The
-token is stored under `~/.graphite_user_config`. If the browser handoff
-fails (headless box, sandbox), use the printed CLI token form:
-
-```bash
-gt auth --token <token-from-graphite-dashboard>
-```
-
-Re-auth if `gt submit` fails with a 401 — the token has likely expired.
+The token is stored under `~/.graphite_user_config`. Re-auth if `gt submit`
+fails with a 401 — the token has likely expired or been revoked.
 
 ## Repo init
 
@@ -53,11 +53,8 @@ Skip `gt init` if a teammate already ran it and committed `.graphite_repo_config
 ## Trunk-detection gotcha
 
 If the repo has multiple "trunk-like" branches (e.g. `main` plus a long-lived
-`release/*` branch), `gt` may misidentify trunk on first run. Override:
-
-```bash
-gt config --trunk main
-```
+`release/*` branch), `gt` may misidentify trunk on first run. Re-run
+`gt init` and pick the right trunk, or open `gt config` and adjust.
 
 Verify with:
 
@@ -69,41 +66,43 @@ The bottom node should be your real trunk.
 
 ## Useful config knobs
 
+`gt config` is an interactive menu — there's no `gt config --foo bar` form.
+Run it and walk the prompts:
+
 ```bash
-# Default to draft PRs on every submit
-gt config --submit-draft true
-
-# Disable the auto-comment on each submitted PR
-gt config --submit-update false
-
-# Default branch-name template (kebab-case from the commit message)
-gt config --branch-prefix "$(whoami)/"
+gt config
 ```
 
-These persist in `.graphite_user_config` (per-user) or
-`.graphite_repo_config` (per-repo, committed). Repo-level config wins for
-the team-shared knobs (trunk name, submit-update default).
+The menu lets you change:
+
+- **Trunk branch** — the bottom of every stack.
+- **Submit settings** — whether new PRs default to draft, whether `gt submit`
+  prompts for title/description, etc.
+- **Branch naming** — auto-generated branch prefix when `gt create` infers a
+  name from the commit message.
+
+Settings persist in `~/.graphite_user_config` (per-user) and
+`.graphite_repo_config` (per-repo, committed). Per-repo config wins for the
+team-shared knobs (trunk name, target trunk for cross-fork PRs).
 
 ## Shell completion
 
+`gt completion` prints a yargs-style completion script to stdout. Append it
+to your shell rc:
+
 ```bash
-gt completion zsh  > ~/.zsh/completions/_gt    # zsh
-gt completion bash > ~/.bash_completion.d/gt   # bash
-gt completion fish > ~/.config/fish/completions/gt.fish
+gt completion >> ~/.zshrc       # zsh
+gt completion >> ~/.bashrc      # bash
 ```
 
-Reload the shell after installing. `gt log <Tab>`, `gt create <Tab>`, etc.
-all work afterwards.
+Reload the shell. `gt log <Tab>`, `gt create <Tab>`, etc. all work afterwards.
 
-## Sandbox / CI considerations
+## CI considerations
 
-- `gt submit` posts PRs by hitting `api.github.com` — same auth scope as the
-  `gh` CLI. If `gh auth status` is healthy, `gt` should also work.
-- In a sandboxed shell that blocks browser handoff, prefer
-  `gt auth --token` over `gt auth`.
-- CI usually doesn't need `gt` at all — keep `gt submit` to local dev. If a
-  CI pipeline does call it, set `GRAPHITE_TOKEN` in the env and skip
-  `gt auth` interactively.
+- CI usually doesn't need `gt` at all — keep `gt submit` to local dev.
+- If a CI pipeline does call `gt`, populate `~/.graphite_user_config` with a
+  token from <https://app.graphite.com/settings/cli> in a CI-only secret so
+  no interactive auth step is needed.
 
 ## Uninstalling and starting over
 
