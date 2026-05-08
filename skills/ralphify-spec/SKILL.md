@@ -1,8 +1,8 @@
 ---
-name: ralphify-spec
-description: Generate a ralphify-approved ralph directory (RALPH.md + optional scripts) from a plain-English description of repetitive or iterative work. Use this skill whenever the user says "ralphify", "create a ralph", "ralph wiggum", "autonomous loop", "/ralphify", references Geoffrey Huntley's Ralph Wiggum method, or asks to wrap iterative work in ralphify (test-until-green, refactor-until-done, lint-until-clean, coverage-until-90, burn-down-todos, resolve-review-comments). Trigger even when the user does not explicitly name ralphify but describes an open-ended loop ("keep fixing tests until they pass", "port files one by one until the directory is done"). Do not trigger for one-shot tasks — ralphs exist for work that benefits from running N times against a stop condition.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 license: MIT
+name: ralphify-spec
+description: Generate a ralphify-approved ralph directory (RALPH.md + optional scripts) from a plain-English description of repetitive or iterative work. Use this skill whenever the user says "ralphify", "create a ralph", "ralph wiggum", "autonomous loop", "/ralphify", references Geoffrey Huntley's Ralph Wiggum method, or asks to wrap iterative work in ralphify (test-until-green, refactor-until-done, lint-until-clean, coverage-until-90, burn-down-todos, resolve-review-comments). Trigger even when the user does not explicitly name ralphify but describes an open-ended loop ("keep fixing tests until they pass", "port files one by one until the directory is done"). Do not trigger for one-shot tasks — ralphs exist for work that benefits from running N times against a stop condition.
 ---
 
 # ralphify-spec
@@ -205,10 +205,24 @@ fill the placeholders rather than re-deriving the structure each time.
 - Do not omit the `<promise>COMPLETE</promise>` sentinel. Loops without an
   explicit terminator burn tokens until the cap and exit ambiguously.
 
+## Bundled scripts
+
+```bash
+# Validate a draft RALPH.md against the v0.3.0 schema.
+#   exit 0 = clean, 1 = errors, 2 = environment problem
+uv run --with pyyaml python scripts/validate.py PATH/TO/RALPH.md
+
+# Wrap `ralph run` so the iteration cap is mandatory and the COMPLETE
+# sentinel decides the exit code. Forwards every other flag to ralph run.
+scripts/run.sh PATH/TO/RALPH_DIR -n 50 -t 1800 -s -l PATH/TO/RALPH_DIR/logs
+```
+
 ## References
 
-- `references/schema.md` — authoritative frontmatter schema (v0.3.0)
-- `references/guards.md` — guard scripts, iteration cap, COMPLETE sentinel
-- `assets/RALPH.template.md` — canonical burn-down-todos template
-- `scripts/validate.py` — schema validator (run before reporting back)
-- `scripts/run.sh` — runner wrapper that enforces the iteration cap
+- `references/schema.md` — read when you need the exact frontmatter
+  rule (v0.3.0): required fields, regex constraints, default values.
+- `references/guards.md` — read when designing the guard story for a
+  new ralph: iteration cap, COMPLETE sentinel, pre-agent short-circuit.
+- `assets/RALPH.template.md` — copy into the new ralph dir as the
+  starting point for burn-down-todos loops; fill the `PLACEHOLDER_*`
+  markers in place.
