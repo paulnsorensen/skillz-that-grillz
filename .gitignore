@@ -7,3 +7,7 @@ __pycache__/
 *.swp
 .idea/
 .vscode/
+
+# Workflow scratch (age/cure/press reports, planning notes)
+.cheese/
+.context/
