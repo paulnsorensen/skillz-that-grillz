@@ -1,0 +1,50 @@
+# Per-repo override for github/safe-settings.
+#
+# This file lives in the admin repo at `.github/repos/<repo-name>.yml`
+# and overrides the org baseline (and any matching suborg file) for
+# exactly one repo.
+#
+# Use this sparingly — every repo-level override is a divergence from
+# org policy that has to be remembered. Prefer setting policy at the
+# org or suborg level when possible.
+
+repository:
+  # Set to `true` to create the repo if it doesn't already exist.
+  # Powerful — leave this `false` unless you specifically want the
+  # admin repo to be the source of repo creation.
+  force_create: false
+
+  # Set the public-facing description and homepage.
+  description: "Short description shown on the repo page."
+  homepage: "https://example.com"
+
+  # Topics for discovery.
+  topics:
+    - example
+    - public
+
+  # Override merge button settings just for this repo. Anything
+  # omitted inherits from the org settings.
+  # allow_rebase_merge: true
+
+# Per-repo collaborators. Use sparingly — prefer team-based access at
+# the org or suborg level.
+# collaborators:
+#   - username: alice
+#     permission: push
+
+# Per-repo branch protection or rulesets. Same shape as the org file.
+# rulesets:
+#   - name: release-branches
+#     target: branch
+#     enforcement: active
+#     conditions:
+#       ref_name:
+#         include: ["refs/heads/release/*"]
+#         exclude: []
+#     rules:
+#       - type: deletion
+#       - type: non_fast_forward
+#       - type: pull_request
+#         parameters:
+#           required_approving_review_count: 2

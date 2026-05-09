@@ -1,0 +1,54 @@
+# Tag-driven release workflow.
+#
+# When a tag matching `v[0-9]*` is pushed (e.g. `v1.2.3`), this workflow
+# verifies that the tag points at a commit on `main`, then creates a
+# GitHub Release whose body is built from `.github/release.yml` via
+# `gh release create --generate-notes`.
+#
+# Pair this with `.github/release.yml` (categories) and a default-branch
+# ruleset that blocks direct pushes — together they make every release
+# note line up with a merged, reviewed PR.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: publish github release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${GITHUB_SHA}) is not an ancestor of origin/main. Refusing to publish a release from an unreviewed branch."
+            exit 1
+          fi
+
+      - name: Create release with auto-generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag

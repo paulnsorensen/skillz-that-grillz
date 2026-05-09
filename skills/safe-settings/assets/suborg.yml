@@ -1,0 +1,69 @@
+# Sub-org override for github/safe-settings.
+#
+# This file lives in the admin repo at `.github/suborgs/<name>.yml`.
+# Settings here override the org baseline (`.github/settings.yml`)
+# for the listed group of repositories.
+#
+# A sub-org is just a named group of repos. Pick whichever selector
+# fits — explicit list, glob pattern, team, or custom property — then
+# define the overrides below.
+
+# Pick at least one selector. They're additive: a repo is in the suborg
+# if it matches any selector.
+
+# Selector 1: glob patterns matching repo names.
+suborgrepos:
+  - "platform-*"
+  - "infra-*"
+
+# Selector 2: every repo a given team has access to.
+# suborgteams:
+#   - platform-team
+
+# Selector 3: every repo with this custom property set.
+# suborgproperties:
+#   - tier: critical
+
+# Overrides — every key valid in the org settings file is valid here.
+# Anything you don't override inherits from the org baseline.
+
+repository:
+  # Tighter security for platform / infra repos.
+  has_wiki: false
+
+rulesets:
+  - name: main-protection
+    target: branch
+    enforcement: active
+    bypass_actors: []
+    conditions:
+      ref_name:
+        include: ["~DEFAULT_BRANCH"]
+        exclude: []
+    rules:
+      - type: deletion
+      - type: non_fast_forward
+      - type: required_signatures
+      - type: pull_request
+        parameters:
+          # Suborg requires two reviews instead of one.
+          required_approving_review_count: 2
+          dismiss_stale_reviews_on_push: true
+          require_code_owner_review: true
+          require_last_push_approval: true
+          required_review_thread_resolution: true
+      - type: required_status_checks
+        parameters:
+          strict_required_status_checks_policy: true
+          required_status_checks:
+            - context: ci
+            - context: security-scan
+      - type: merge_queue
+        parameters:
+          check_response_timeout_minutes: 60
+          grouping_strategy: ALLGREEN
+          max_entries_to_build: 5
+          max_entries_to_merge: 5
+          min_entries_to_merge: 1
+          min_entries_to_merge_wait_minutes: 5
+          merge_method: SQUASH
