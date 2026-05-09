@@ -22,6 +22,7 @@ Do NOT commit or push when `just check` fails. If CI fails, pull the branch loca
 | `/gh` | GitHub plumbing (PRs, issues, CI, releases) |
 | `/gh-bootstrap` | One-shot repo configuration (merge queue, squash-only, release notes) |
 | `/justfile` | Generate or migrate to justfiles |
+| `/oss-hygiene` | Bring a public repo up to GitHub Community Standards + OpenSSF Scorecard baseline |
 | `/prek` | Onboard prek and language-appropriate pre-commit hooks |
 | `/safe-settings` | Org-scale GitHub policy as code via safe-settings Probot |
 

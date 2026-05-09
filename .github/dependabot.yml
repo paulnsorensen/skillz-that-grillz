@@ -1,0 +1,19 @@
+# Dependabot configuration — version updates only.
+# See: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# This repo has no language-package manifest (no package.json / Cargo.toml /
+# pyproject.toml / go.mod / etc.); the only declared deps are GitHub Actions
+# in workflow files and a hard-coded `pip install pyyaml==6.0.2` step in
+# validate.yml. Dependabot can't manage the latter without a manifest, so
+# only the github-actions ecosystem is enabled here. Add other ecosystems
+# as soon as a manifest lands.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types: [minor, patch]
