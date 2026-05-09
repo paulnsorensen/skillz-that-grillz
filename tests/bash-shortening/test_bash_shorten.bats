@@ -398,9 +398,34 @@ setup_sg_only() {
 @test "--engine sg: regex rules still fire for non-sg-handled patterns" {
     setup_sg_only
     local got
-    got="$(printf '`git rev-parse HEAD`\n' \
+    got="$(printf 'LEN=$(echo -n "$S" | wc -c)\n' \
         | python3 "$SCRIPT" --engine sg -)"
-    [[ "$got" == *'$(git rev-parse HEAD)'* ]]
+    [[ "$got" == *'LEN=${#S}'* ]]
+}
+
+@test "--engine sg: backticks rule rewrites legit command substitution" {
+    setup_sg_only
+    local got
+    got="$(printf 'COUNT=`wc -l < file`\n' \
+        | python3 "$SCRIPT" --engine sg -)"
+    [[ "$got" == *'COUNT=$(wc -l < file)'* ]]
+}
+
+@test "--engine sg: backticks skips markdown spans in # comments (issue #16)" {
+    setup_sg_only
+    local input='# Run `bash --help` for help.'
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" --engine sg -)"
+    [ "${got%$'\n'}" = "$input" ]
+}
+
+@test "--engine sg: backticks skips quoted heredoc bodies (issue #16)" {
+    setup_sg_only
+    local input
+    input="$(printf "cat <<'EOF'\nliteral \`backticks\`\nEOF\n")"
+    local got
+    got="$(printf '%s' "$input" | python3 "$SCRIPT" --engine sg -)"
+    [ "${got%$'\n'}" = "${input%$'\n'}" ]
 }
 
 @test "--engine sg: report includes basename count" {

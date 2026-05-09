@@ -56,7 +56,7 @@ class Rule:
 # Rules that have an ast-grep equivalent in scripts/sg-rules/. When the
 # sg engine handles these, the Python regex must NOT re-fire (it would
 # either no-op or rewrite a partial match).
-SG_HANDLED_IDS = frozenset({"basename", "dirname"})
+SG_HANDLED_IDS = frozenset({"basename", "dirname", "backticks"})
 
 
 def _expr_op(escaped: str) -> str:
