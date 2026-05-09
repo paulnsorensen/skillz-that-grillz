@@ -42,8 +42,10 @@ assert_rewrite() {
     run python3 "$SCRIPT" --list
     [ "$status" -eq 0 ]
     for rule in basename dirname sed-replace-first sed-replace-all \
-                echo-wc-c expr-arith-vars expr-arith-literal \
-                combined-tests test-numeric empty-default mkdir-guard \
+                echo-wc-c cut-c-substring \
+                expr-arith-vars expr-increment expr-arith-literal \
+                combined-tests test-numeric empty-default param-default \
+                mkdir-guard for-range-expansion \
                 backticks legacy-null-check empty-string-eq \
                 find-exec-rm-delete cat-file-pipe-grep \
                 sed-replace-to-sd grep-fixed-to-rg find-name-to-fd; do
@@ -221,7 +223,45 @@ assert_rewrite() {
 }
 
 @test "rule expr-arith-literal rewrites VAR + INT" {
-    assert_rewrite 'C=$(expr $C + 1)' 'C=$((C + 1))'
+    assert_rewrite 'R=$(expr $A + 1)' 'R=$((A + 1))'
+}
+
+@test "rule expr-increment rewrites matched-name self-increment" {
+    # expr-increment must claim COUNT=$(expr $COUNT + 1) before
+    # expr-arith-literal does (which would emit C=$((C + 1))).
+    assert_rewrite 'COUNT=$(expr $COUNT + 1)' '((COUNT++))'
+}
+
+@test "rule expr-increment SKIPS mismatched names" {
+    # different vars on each side — falls through to expr-arith-literal.
+    assert_rewrite 'TOTAL=$(expr $A + 1)' 'TOTAL=$((A + 1))'
+}
+
+@test "rule cut-c-substring rewrites cut -c1-N to substring" {
+    assert_rewrite 'PRE=$(echo "$NAME" | cut -c1-5)' 'PRE=${NAME:0:5}'
+}
+
+@test "rule param-default rewrites positional fallback" {
+    assert_rewrite 'if [ -z "$1" ]; then NAME="anon"; fi' 'NAME=${1:-"anon"}'
+}
+
+@test "rule for-range-expansion collapses consecutive integers" {
+    assert_rewrite 'for i in 1 2 3 4 5; do echo $i; done' \
+                   'for i in {1..5}; do echo $i; done'
+}
+
+@test "rule for-range-expansion SKIPS non-consecutive sequences" {
+    local input='for i in 1 3 5; do echo $i; done'
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "$input" ]
+}
+
+@test "rule for-range-expansion SKIPS zero-padded literals" {
+    local input='for i in 01 02 03; do echo $i; done'
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "$input" ]
 }
 
 @test "rule combined-tests fuses paired single-bracket tests" {

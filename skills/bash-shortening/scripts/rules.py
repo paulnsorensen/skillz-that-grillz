@@ -137,6 +137,38 @@ def _apply_backticks(text: str) -> tuple[str, int]:
     return "".join(out), count
 
 
+_FOR_RANGE = re.compile(
+    rf'\bfor\s+({_VAR})\s+in\s+(\d+(?:\s+\d+){{2,}})\s*;?\s*do\b'
+)
+
+
+def _apply_for_range(text: str) -> tuple[str, int]:
+    """Collapse `for i in 1 2 3 4 5; do` to `for i in {1..5}; do` when the
+    listed integers form a step-1 ascending sequence of >=3 elements.
+
+    Conservative — does NOT handle:
+    - non-step-1 sequences (1 3 5 → would be {1..5..2})
+    - zero-padded literals (01 02 03 → would be {01..03}) — leading zeros
+      get lost when parsed as int, so the rule skips
+    - reverse sequences (5 4 3 2 1)
+    """
+    count = 0
+
+    def repl(m: re.Match[str]) -> str:
+        nonlocal count
+        tokens = m.group(2).split()
+        # Skip zero-padded literals — `int("01")` would lose the padding.
+        if any(t != "0" and t.startswith("0") for t in tokens):
+            return m.group(0)
+        nums = [int(t) for t in tokens]
+        if all(nums[i + 1] - nums[i] == 1 for i in range(len(nums) - 1)):
+            count += 1
+            return f"for {m.group(1)} in {{{nums[0]}..{nums[-1]}}}; do"
+        return m.group(0)
+
+    return _FOR_RANGE.sub(repl, text), count
+
+
 _CAT_FILE_GREP = re.compile(
     r'\bcat\s+("(?:[^"\\]|\\.)*"|\'[^\']*\'|[\w./~$-]+)\s*\|\s*'
     r'grep\s+([^\n|]+?)(?=\s*$|\s*\||\s*;|\s*&&|\s*\|\|)',
@@ -218,6 +250,19 @@ RULES: list[Rule] = [
         ),
     ),
     Rule(
+        id="cut-c-substring",
+        description='$(echo "$VAR" | cut -c1-N) → ${VAR:0:N}  (leading-N substring)',
+        pattern=re.compile(
+            rf'\$\(\s*echo\s+"\$({_VAR})"\s*\|\s*cut\s+-c1-(\d+)\s*\)'
+        ),
+        replace=lambda m: f"${{{m.group(1)}:0:{m.group(2)}}}",
+        source_example="10",
+        notes="Only matches the cut -c1-N form (start at first char). Other ranges (-c2-7, -c3-) need offset/length math the rule deliberately avoids.",
+        examples=(
+            ('PRE=$(echo "$NAME" | cut -c1-5)', 'PRE=${NAME:0:5}'),
+        ),
+    ),
+    Rule(
         id="expr-arith-vars",
         description='$(expr $A OP $B) → $((A OP B))  (numeric ops)',
         pattern=re.compile(
@@ -231,6 +276,23 @@ RULES: list[Rule] = [
             ("R=$(expr $A \\* $B)", "R=$((A * B))"),
         ),
     ),
+    # expr-increment must run BEFORE expr-arith-literal so the more specific
+    # self-increment form claims `COUNT=$(expr $COUNT + 1)` first; otherwise
+    # the literal rule would rewrite it to the more verbose `$((COUNT + 1))`.
+    Rule(
+        id="expr-increment",
+        description='VAR=$(expr $VAR + 1) → ((VAR++))  (matched-name self-increment)',
+        pattern=re.compile(
+            rf'\b({_VAR})=\$\(\s*expr\s+\$\1\s+\+\s+1\s*\)'
+        ),
+        replace=lambda m: f"(({m.group(1)}++))",
+        source_example="33",
+        shellcheck_id="SC2003",
+        notes="Cross-meta equality via backreference: only matches when the assigned name equals the operand name. ((var++)) drops the assignment-as-expression value (which the original expr form also lacked in practice).",
+        examples=(
+            ('COUNT=$(expr $COUNT + 1)', '((COUNT++))'),
+        ),
+    ),
     Rule(
         id="expr-arith-literal",
         description='$(expr $A OP N) → $((A OP N))',
@@ -241,7 +303,7 @@ RULES: list[Rule] = [
         source_example="32",
         shellcheck_id="SC2003",
         examples=(
-            ("C=$(expr $C + 1)", "C=$((C + 1))"),
+            ("R=$(expr $A + 1)", "R=$((A + 1))"),
         ),
     ),
     # combined-tests must run BEFORE test-numeric so that
@@ -293,6 +355,24 @@ RULES: list[Rule] = [
         ),
     ),
     Rule(
+        id="param-default",
+        description='if [ -z "$N" ]; then VAR=DEFAULT; fi → VAR=${N:-DEFAULT}  (positional param)',
+        pattern=re.compile(
+            rf'if\s+\[\s+-z\s+"\$(\d+)"\s+\]\s*;\s*then\s+'
+            rf'({_VAR})=([^\n;]+?)\s*;?\s*fi',
+            re.MULTILINE,
+        ),
+        replace=lambda m: f"{m.group(2)}=${{{m.group(1)}:-{m.group(3).strip()}}}",
+        source_example="17",
+        notes='Like empty-default but for positional parameters ($1, $2, ...). Single-line if/then/fi only. The rewrite always assigns VAR; the original only assigned when $N was empty — equivalent IF VAR was unset before the if-block, which is the idiomatic "function-prologue default" usage this rule targets.',
+        examples=(
+            (
+                'if [ -z "$1" ]; then NAME="anon"; fi',
+                'NAME=${1:-"anon"}',
+            ),
+        ),
+    ),
+    Rule(
         id="mkdir-guard",
         description='if [ ! -d "$D" ]; then mkdir -p "$D"; fi → mkdir -p "$D"',
         pattern=re.compile(
@@ -326,6 +406,22 @@ RULES: list[Rule] = [
         notes="Skips backticks inside single-quoted strings and quoted-heredoc bodies (<<'EOF' / <<\"EOF\") — both are literal text in bash. Unquoted heredocs (<<EOF) interpolate, so backticks inside are rewritten as expected.",
         examples=(
             ("VER=`git rev-parse HEAD`", "VER=$(git rev-parse HEAD)"),
+        ),
+    ),
+    Rule(
+        id="for-range-expansion",
+        description='for V in 1 2 3 4 5; do → for V in {1..5}; do  (step-1 ascending sequences only)',
+        # apply_fn checks the captured token list for step-1 ordering and
+        # rejects zero-padded literals; the regex captures the whole list
+        # and the apply_fn does the arithmetic check.
+        pattern=re.compile(r"(?!x)x"),
+        replace=lambda m: m.group(0),
+        apply_fn=_apply_for_range,
+        source_example="23",
+        notes='Skips non-consecutive (1 3 5), reverse (5 4 3), and zero-padded (01 02 03) sequences — those need different brace-expansion forms.',
+        examples=(
+            ('for i in 1 2 3 4 5; do echo $i; done', 'for i in {1..5}; do echo $i; done'),
+            ('for i in 1 3 5; do echo $i; done', 'for i in 1 3 5; do echo $i; done'),  # unchanged
         ),
     ),
     Rule(

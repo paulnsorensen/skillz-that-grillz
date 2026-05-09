@@ -99,13 +99,14 @@ python3 scripts/bash-shorten.py --explain test-numeric
 python3 scripts/bash-shorten.py --self-test
 ```
 
-**19 rules across 2 groups, 31 embedded test cases** (positive + negative).
-The `core` group has 16 rules, all on by default; the `modernize` group
-has 3 rules, off by default. 11 of the core rules mirror source-article
+**23 rules across 2 groups, 40 embedded test cases** (positive + negative).
+The `core` group has 20 rules, all on by default; the `modernize` group
+has 3 rules, off by default. 15 of the core rules mirror source-article
 examples (`basename`, `dirname`, `sed-replace-first/all`, `echo-wc-c`,
-`expr-arith-vars/literal`, `combined-tests`, `test-numeric`,
-`empty-default`, `mkdir-guard`); 5 are bonus core patterns the article
-doesn't cover but are obvious wins (`backticks`, `legacy-null-check`,
+`cut-c-substring`, `expr-arith-vars/literal/increment`, `combined-tests`,
+`test-numeric`, `empty-default`, `param-default`, `mkdir-guard`,
+`for-range-expansion`); 5 are bonus core patterns the article doesn't
+cover but are obvious wins (`backticks`, `legacy-null-check`,
 `empty-string-eq`, `find-exec-rm-delete`, `cat-file-pipe-grep` — three
 of which shellcheck flags but doesn't auto-fix).
 
@@ -124,7 +125,7 @@ it eliminates the boring 60% of the work.
 
 | Group | Default | Contents |
 |---|---|---|
-| `core` | on | 16 idiomatic-bash rewrites that don't change tooling |
+| `core` | on | 20 idiomatic-bash rewrites that don't change tooling |
 | `modernize` | off | `sed-replace-to-sd`, `grep-fixed-to-rg`, `find-name-to-fd` — rewrite to non-coreutils binaries (sd, rg, fd) the user must have installed |
 
 The modernize rules are conservative on purpose: only literal sed
