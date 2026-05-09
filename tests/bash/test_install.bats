@@ -6,7 +6,7 @@
 # so each test can call individual functions with controlled stubs.
 
 setup() {
-    REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
+    REPO_ROOT="$(cd "${BATS_TEST_FILENAME%/*}/../.." && pwd)"
     INSTALL_SH="$REPO_ROOT/scripts/install.sh"
     STUB_BIN="$BATS_TEST_TMPDIR/bin"
     STUB_LOG="$BATS_TEST_TMPDIR/calls.log"
