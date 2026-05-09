@@ -41,7 +41,7 @@ harness can load it progressively.
 
 | Skill path | Command | Purpose |
 | --- | --- | --- |
-| `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Pure methodology — no CLI dependency. |
+| `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in Claude. |
 | `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, code search — via the GitHub MCP plugin, with `gh` CLI as the fallback for operations MCP doesn't cover. |
 | `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
@@ -58,7 +58,7 @@ pure-methodology skill with no external dependency.
 
 | Skill | Wraps | Required | Optional |
 | --- | --- | --- | --- |
-| `bash-shortening` | — (methodology) | bash 4+ in target scripts | shellcheck (post-validation), ast-grep (`--engine sg`), sd / ripgrep / fd (`--include modernize`) |
+| `bash-shortening` | methodology + `bash-shorten.py` rewriter | bash 4+ in target scripts, **ast-grep** (when running the rewriter) | shellcheck (post-validation), sd / ripgrep / fd (`--include modernize`) |
 | `commit` | `git` | git | — |
 | `gh` | `gh` CLI | gh | GitHub MCP plugin (preferred) |
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |

@@ -91,9 +91,6 @@ python3 scripts/bash-shorten.py --skip find-exec-rm-delete script.sh
 # enable the modernize rule group (off by default — see "Rule groups")
 python3 scripts/bash-shorten.py --include modernize --apply script.sh
 
-# use the ast-grep engine for the structural patterns (basename/dirname)
-python3 scripts/bash-shorten.py --engine sg path/to/script.sh
-
 # explore the ruleset
 python3 scripts/bash-shorten.py --list
 python3 scripts/bash-shorten.py --explain test-numeric
@@ -102,13 +99,14 @@ python3 scripts/bash-shorten.py --explain test-numeric
 python3 scripts/bash-shorten.py --self-test
 ```
 
-**19 rules across 2 groups, 31 embedded test cases** (positive + negative).
-The `core` group has 16 rules, all on by default; the `modernize` group
-has 3 rules, off by default. 11 of the core rules mirror source-article
+**23 rules across 2 groups, 40 embedded test cases** (positive + negative).
+The `core` group has 20 rules, all on by default; the `modernize` group
+has 3 rules, off by default. 15 of the core rules mirror source-article
 examples (`basename`, `dirname`, `sed-replace-first/all`, `echo-wc-c`,
-`expr-arith-vars/literal`, `combined-tests`, `test-numeric`,
-`empty-default`, `mkdir-guard`); 5 are bonus core patterns the article
-doesn't cover but are obvious wins (`backticks`, `legacy-null-check`,
+`cut-c-substring`, `expr-arith-vars/literal/increment`, `combined-tests`,
+`test-numeric`, `empty-default`, `param-default`, `mkdir-guard`,
+`for-range-expansion`); 5 are bonus core patterns the article doesn't
+cover but are obvious wins (`backticks`, `legacy-null-check`,
 `empty-string-eq`, `find-exec-rm-delete`, `cat-file-pipe-grep` — three
 of which shellcheck flags but doesn't auto-fix).
 
@@ -127,7 +125,7 @@ it eliminates the boring 60% of the work.
 
 | Group | Default | Contents |
 |---|---|---|
-| `core` | on | 16 idiomatic-bash rewrites that don't change tooling |
+| `core` | on | 20 idiomatic-bash rewrites that don't change tooling |
 | `modernize` | off | `sed-replace-to-sd`, `grep-fixed-to-rg`, `find-name-to-fd` — rewrite to non-coreutils binaries (sd, rg, fd) the user must have installed |
 
 The modernize rules are conservative on purpose: only literal sed
@@ -139,31 +137,52 @@ rewrite changes behavior: fd respects `.gitignore` by default).
 
 Opt in via `--include modernize`. The installer (`scripts/install.sh`)
 brings down `sd`, `ripgrep`, `fd`, and `ast-grep` so the rewritten code
-runs and the `--engine sg` path works.
+runs and the rewriter has its required dependencies.
 
-### ast-grep engine (opt-in)
+### ast-grep is required
 
-`--engine sg` routes the structural patterns through ast-grep first
-using the rule pack at `scripts/sg-rules/`, then runs the regex rules
-for everything else. Currently only `basename` and `dirname` have
-ast-grep equivalents — these are the patterns where tree-sitter-bash
-exposes enough structure for safe AST rewrites.
+`bash-shorten.py` requires [ast-grep](https://ast-grep.github.io/) (`sg`)
+on PATH. Structural patterns (`basename`, `dirname`, `backticks`) route
+through ast-grep first using the rule pack at `scripts/sg-rules/`, then
+the remaining regex rules run on the output. Tree-sitter parses the bash
+once, so context-sensitive rules (skip `#` comments, skip heredoc bodies)
+work correctly without ad-hoc lookbehinds in the regex layer.
 
-**Why so few sg rules?** tree-sitter-bash flattens a lot of structure:
+If `sg` is missing, the script exits with a friendly diagnostic. Two paths
+forward:
 
-- `mkdir-guard`, `empty-default` need ARG1 == ARG2 cross-metavariable
-  equality to skip mismatched-var cases. ast-grep can't express that
-  constraint cleanly; the Python regex uses a backreference instead.
-- `combined-tests` — `[ ... ]` (`test_command`) flattens into a list of
-  word tokens, so structural matching on the operator side is brittle.
-- `test-numeric` — same flattening, plus the operator map (`-gt → >`)
-  needs lambda-style replacement that YAML rules can't express.
+```sh
+brew install ast-grep        # macOS / Linuxbrew
+cargo install ast-grep --bin sg
+```
+
+Or skip the script and invoke `/bash-shortening` directly in Claude Code
+— the methodology in this file is the fallback for environments without
+ast-grep.
+
+**Why some rules are still regex-only.**
+
+- `mkdir-guard`, `empty-default`, `param-default`, `expr-increment`
+  need cross-metavariable equality (same name in two positions). YAML
+  ast-grep rules can't express that constraint cleanly; the Python
+  regex uses a backreference instead.
+- `combined-tests` — `[ ... ]` flattens into a list of word tokens, so
+  structural matching on the operator side is brittle.
+- `for-range-expansion` — needs runtime arithmetic to verify the
+  captured integers form a step-1 ascending sequence; pure-YAML rules
+  can't compute that.
 - `sed-replace-*` — the literal-pattern guard needs character-class
   restrictions in the matcher.
 
-When tree-sitter-bash matures or ast-grep adds cross-meta equality, more
-rules can move to `sg-rules/`. Falls back to regex with a warning if
-`sg` isn't on PATH.
+`test-numeric` was previously in this list but moved to `sg-rules/`
+as six per-operator rules — tree-sitter-bash distinguishes
+`test_command` (`[ ]`) from `conditional_expression` (`[[ ]]`) so the
+sg form correctly skips `[[ ]]` whereas the regex bled into it
+(issue #18).
+
+These regex-only rules still run after the ast-grep pass. See
+`AGENTS.md` for guidance on writing new rules — default to ast-grep,
+fall back to regex only when one of the constraints above blocks it.
 
 ## Quick wins
 

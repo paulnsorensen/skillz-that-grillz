@@ -42,8 +42,10 @@ assert_rewrite() {
     run python3 "$SCRIPT" --list
     [ "$status" -eq 0 ]
     for rule in basename dirname sed-replace-first sed-replace-all \
-                echo-wc-c expr-arith-vars expr-arith-literal \
-                combined-tests test-numeric empty-default mkdir-guard \
+                echo-wc-c cut-c-substring \
+                expr-arith-vars expr-increment expr-arith-literal \
+                combined-tests test-numeric empty-default param-default \
+                mkdir-guard for-range-expansion \
                 backticks legacy-null-check empty-string-eq \
                 find-exec-rm-delete cat-file-pipe-grep \
                 sed-replace-to-sd grep-fixed-to-rg find-name-to-fd; do
@@ -221,7 +223,45 @@ assert_rewrite() {
 }
 
 @test "rule expr-arith-literal rewrites VAR + INT" {
-    assert_rewrite 'C=$(expr $C + 1)' 'C=$((C + 1))'
+    assert_rewrite 'R=$(expr $A + 1)' 'R=$((A + 1))'
+}
+
+@test "rule expr-increment rewrites matched-name self-increment" {
+    # expr-increment must claim COUNT=$(expr $COUNT + 1) before
+    # expr-arith-literal does (which would emit C=$((C + 1))).
+    assert_rewrite 'COUNT=$(expr $COUNT + 1)' '((COUNT++))'
+}
+
+@test "rule expr-increment SKIPS mismatched names" {
+    # different vars on each side — falls through to expr-arith-literal.
+    assert_rewrite 'TOTAL=$(expr $A + 1)' 'TOTAL=$((A + 1))'
+}
+
+@test "rule cut-c-substring rewrites cut -c1-N to substring" {
+    assert_rewrite 'PRE=$(echo "$NAME" | cut -c1-5)' 'PRE=${NAME:0:5}'
+}
+
+@test "rule param-default rewrites positional fallback" {
+    assert_rewrite 'if [ -z "$1" ]; then NAME="anon"; fi' 'NAME=${1:-"anon"}'
+}
+
+@test "rule for-range-expansion collapses consecutive integers" {
+    assert_rewrite 'for i in 1 2 3 4 5; do echo $i; done' \
+                   'for i in {1..5}; do echo $i; done'
+}
+
+@test "rule for-range-expansion SKIPS non-consecutive sequences" {
+    local input='for i in 1 3 5; do echo $i; done'
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "$input" ]
+}
+
+@test "rule for-range-expansion SKIPS zero-padded literals" {
+    local input='for i in 01 02 03; do echo $i; done'
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "$input" ]
 }
 
 @test "rule combined-tests fuses paired single-bracket tests" {
@@ -367,87 +407,83 @@ SH
     [[ "$output" == *"modernize ("* ]]
 }
 
-# -- ast-grep engine dispatch ----------------------------------------------
+# -- ast-grep engine ------------------------------------------------------
 #
-# These tests only run when `sg` (ast-grep) is on PATH. CI installs it via
-# install.sh; when running locally without it, the tests below get skipped
-# with a clear marker so the suite stays green.
+# `sg` (ast-grep) is a hard requirement. The suite asserts the dispatch
+# fires on its sg-handled rules and that the missing-sg path produces a
+# friendly diagnostic.
 
-setup_sg_only() {
-    if ! command -v sg >/dev/null 2>&1; then
-        skip "sg (ast-grep) not on PATH"
-    fi
-}
-
-@test "--engine sg: basename rewrite goes through sg, captures variable name" {
-    setup_sg_only
+@test "basename rewrite goes through sg, captures variable name" {
     local got
-    got="$(printf 'X=$(basename "$FULLPATH")\n' \
-        | python3 "$SCRIPT" --engine sg -)"
+    got="$(printf 'X=$(basename "$FULLPATH")\n' | python3 "$SCRIPT" -)"
     [[ "$got" == *'X=${FULLPATH##*/}'* ]]
 }
 
-@test "--engine sg: dirname rewrite goes through sg" {
-    setup_sg_only
+@test "dirname rewrite goes through sg" {
     local got
-    got="$(printf 'D=$(dirname "$FULLPATH")\n' \
-        | python3 "$SCRIPT" --engine sg -)"
+    got="$(printf 'D=$(dirname "$FULLPATH")\n' | python3 "$SCRIPT" -)"
     [[ "$got" == *'D=${FULLPATH%/*}'* ]]
 }
 
-@test "--engine sg: regex rules still fire for non-sg-handled patterns" {
-    setup_sg_only
+@test "non-sg-handled rules still fire (echo-wc-c via regex path)" {
     local got
-    got="$(printf '`git rev-parse HEAD`\n' \
-        | python3 "$SCRIPT" --engine sg -)"
-    [[ "$got" == *'$(git rev-parse HEAD)'* ]]
+    got="$(printf 'LEN=$(echo -n "$S" | wc -c)\n' | python3 "$SCRIPT" -)"
+    [[ "$got" == *'LEN=${#S}'* ]]
 }
 
-@test "--engine sg: report includes basename count" {
-    setup_sg_only
+@test "backticks rule rewrites legit command substitution" {
+    local got
+    got="$(printf 'COUNT=`wc -l < file`\n' | python3 "$SCRIPT" -)"
+    [[ "$got" == *'COUNT=$(wc -l < file)'* ]]
+}
+
+@test "backticks skips markdown spans in # comments (issue #16)" {
+    local input='# Run `bash --help` for help.'
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "$input" ]
+}
+
+@test "backticks skips quoted heredoc bodies (issue #16)" {
+    local input
+    input="$(printf "cat <<'EOF'\nliteral \`backticks\`\nEOF\n")"
+    local got
+    got="$(printf '%s' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "${input%$'\n'}" ]
+}
+
+@test "report includes basename count" {
     local err
     err="$(printf 'X=$(basename "$FULLPATH")\n' \
-        | python3 "$SCRIPT" --engine sg - 2>&1 >/dev/null)"
+        | python3 "$SCRIPT" - 2>&1 >/dev/null)"
     [[ "$err" == *"basename"* ]]
 }
 
-@test "--engine regex (default) does not invoke sg" {
-    # Even without sg on PATH the default engine works — proven by the
-    # whole test suite above passing in environments without ast-grep.
-    # This test asserts the explicit default path produces the same
-    # output as omitting --engine.
-    local with_default with_explicit
-    with_default="$(printf 'X=$(basename "$P")\n' | python3 "$SCRIPT" -)"
-    with_explicit="$(printf 'X=$(basename "$P")\n' | python3 "$SCRIPT" --engine regex -)"
-    [ "$with_default" = "$with_explicit" ]
+@test "missing sg exits with friendly diagnostic" {
+    # Run with an empty PATH that excludes sg. Use `env -i` to clear,
+    # then add /usr/bin so python3 still resolves.
+    local out
+    out="$(env -i PATH=/usr/bin:/bin python3 "$SCRIPT" /etc/hosts 2>&1 || true)"
+    [[ "$out" == *"requires ast-grep"* ]]
+    [[ "$out" == *"/bash-shortening"* ]]
 }
 
-# -- Real-world regression fixtures (skipped until bugs land) --------------
-# Surfaced by dogfooding the rewriter on ~/Dev/dotfiles. Each test uses
-# `skip` so the suite stays green; the fix PR for the linked issue removes
-# the skip and the test becomes a real gate.
+# -- Real-world regression fixtures ----------------------------------------
+# Surfaced by dogfooding the rewriter on ~/Dev/dotfiles. Both issues
+# are now fixed by the ast-grep engine: tree-sitter-bash distinguishes
+# [[ ]] (conditional_expression) from [ ] (test_command) so the rule
+# only matches single-bracket form. The skips on these tests have been
+# removed — they're real gates now.
 
 @test "rule test-numeric leaves [[ ... ]] form untouched (issue #18)" {
-    skip "blocked on issue #18 — regex bleeds into [[ ]], producing [(( ... ))]"
     local input='if [[ $V -eq 0 ]]; then :; fi'
     local got
     got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
     [ "${got%$'\n'}" = "$input" ]
 }
 
-@test "rule backticks leaves markdown code spans in # comments untouched (issue #16)" {
-    skip "blocked on issue #16 — backticks rule does not skip # comment lines"
-    local input='# Run `bash install.sh --help` for the full flag list.'
+@test "rule test-numeric rewrites single-bracket [ \$V -OP N ] to ((V OP N)) via sg" {
     local got
-    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
-    [ "${got%$'\n'}" = "$input" ]
-}
-
-@test "rule backticks leaves heredoc body literals untouched (issue #16)" {
-    skip "blocked on issue #16 — backticks rule fires inside heredoc bodies"
-    local input
-    input="$(printf 'cat <<EOF\nrun \\`gh skill install\\` to add it\nEOF\n')"
-    local got
-    got="$(printf '%s' "$input" | python3 "$SCRIPT" -)"
-    [ "${got%$'\n'}" = "${input%$'\n'}" ]
+    got="$(printf 'if [ $X -gt 100 ]; then echo big; fi\n' | python3 "$SCRIPT" -)"
+    [[ "$got" == *"if (( X > 100 )); then"* ]]
 }
