@@ -45,7 +45,8 @@ assert_rewrite() {
                 echo-wc-c expr-arith-vars expr-arith-literal \
                 combined-tests test-numeric empty-default mkdir-guard \
                 backticks legacy-null-check empty-string-eq \
-                find-exec-rm-delete cat-file-pipe-grep; do
+                find-exec-rm-delete cat-file-pipe-grep \
+                sed-replace-to-sd grep-fixed-to-rg find-name-to-fd; do
         [[ "$output" == *"$rule"* ]] || {
             echo "missing rule in --list output: $rule" >&2
             return 1
@@ -131,9 +132,12 @@ assert_rewrite() {
     run python3 "$SCRIPT" --apply "$FIXTURE"
     [ "$status" -eq 0 ]
     grep -q '^X=${P##\*/}$' "$FIXTURE"
-    # _atomic_write creates `.sample.sh.<rand>.tmp` siblings; check none survived.
-    run bash -c "ls \"$BATS_TEST_TMPDIR\"/.sample.sh.*.tmp 2>/dev/null"
-    [ "$status" -ne 0 ]
+    # Asserts the public contract (atomic write, no leftover temp siblings)
+    # without coupling to the private temp-file naming convention.
+    local fixture_dir leftovers
+    fixture_dir="$(dirname "$FIXTURE")"
+    leftovers="$(find "$fixture_dir" -maxdepth 1 -name '*.tmp' -not -path "$FIXTURE")"
+    [ -z "$leftovers" ]
 }
 
 @test "--apply on no-op file does not rewrite" {
@@ -261,15 +265,15 @@ assert_rewrite() {
 }
 
 @test "rule legacy-null-check maps x-prefix idiom to -z" {
-    assert_rewrite '[ "x$VAR" = "x" ]' '[ -z "${VAR}" ]'
+    assert_rewrite '[ "x$VAR" = "x" ]' '[ -z "$VAR" ]'
 }
 
 @test "rule legacy-null-check maps not-equal x-prefix idiom to -n" {
-    assert_rewrite '[ "x$VAR" != "x" ]' '[ -n "${VAR}" ]'
+    assert_rewrite '[ "x$VAR" != "x" ]' '[ -n "$VAR" ]'
 }
 
 @test "rule empty-string-eq maps explicit empty compare to -z" {
-    assert_rewrite '[ "$X" = "" ]' '[ -z "${X}" ]'
+    assert_rewrite '[ "$X" = "" ]' '[ -z "$X" ]'
 }
 
 @test "rule find-exec-rm-delete swaps -exec rm for -delete" {
@@ -307,7 +311,7 @@ SH
     grep -q 'LEN=${#FILENAME}' "$FIXTURE"
     grep -q 'ENV=${ENV:-"dev"}' "$FIXTURE"
     grep -q 'mkdir -p "${DIR}"' "$FIXTURE"
-    grep -qF '[ -z "${USER}" ]' "$FIXTURE"
+    grep -qF '[ -z "$USER" ]' "$FIXTURE"
 }
 
 # -- Modernize group: opt-in via --include modernize -----------------------
