@@ -28,7 +28,26 @@ _SG_CONFIG = Path(__file__).resolve().parent / "sgconfig.yml"
 
 
 def _sg_available() -> bool:
-    return shutil.which("sg") is not None and _SG_CONFIG.is_file()
+    """True iff `sg` on PATH is the ast-grep binary AND sgconfig.yml exists.
+
+    On Linux, `sg` is also util-linux's "execute command as a different group"
+    — same binary name, totally different tool. We must not let that mask
+    the missing-ast-grep case. `sg --version` on ast-grep prints
+    "ast-grep <version>"; on util-linux it errors out. We probe that.
+    """
+    if shutil.which("sg") is None or not _SG_CONFIG.is_file():
+        return False
+    try:
+        result = subprocess.run(
+            ["sg", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    return "ast-grep" in (result.stdout + result.stderr).lower()
 
 
 def _apply_sg(text: str) -> tuple[str, dict[str, int]]:
