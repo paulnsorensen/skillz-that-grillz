@@ -45,6 +45,7 @@ harness can load it progressively.
 | `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
 | `skills/gt/SKILL.md` | `/gt` | 🚧 **Reserved slot — not yet implemented.** Will cover Graphite (`gt`) stacked-PR workflows. Frontmatter and directory shape are in place so future work lands without a rename; invoking it today announces the banner and falls back to the `gt` CLI directly. |
 | `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
+| `skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
 | `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
 | `skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
 
@@ -59,6 +60,7 @@ Each skill wraps a single CLI you probably already use:
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
 | `gt` | `gt` (Graphite) | gt (when implemented) | — |
 | `justfile` | `just` | just | — |
+| `oss-hygiene` | `gh` CLI (`gh api`) + scaffolded GitHub Actions (Dependabot, Scorecard, dependency review, CodeQL) | gh | — |
 | `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
 | `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
 
@@ -83,7 +85,8 @@ work on a branch
 new project setup
     ├── /justfile          ──►  scaffold task runner
     ├── /prek              ──►  scaffold pre-commit hooks
-    └── /gh-bootstrap      ──►  configure merge queue + squash-only + release notes on a single repo
+    ├── /gh-bootstrap      ──►  configure merge queue + squash-only + release notes on a single repo
+    └── /oss-hygiene       ──►  community files + supply-chain workflows + Scorecard / OSSF Badge
 
 org-wide policy as code
     └── /safe-settings     ──►  scaffold admin repo + GitHub App for declarative settings across many repos
@@ -109,7 +112,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in commit gh gh-bootstrap gt justfile prek safe-settings; do
+for s in commit gh gh-bootstrap gt justfile oss-hygiene prek safe-settings; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```
