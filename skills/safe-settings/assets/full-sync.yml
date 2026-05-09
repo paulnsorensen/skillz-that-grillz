@@ -1,0 +1,72 @@
+# Scheduled full-sync of github/safe-settings via GitHub Actions.
+#
+# Lives in the admin repo at `.github/workflows/safe-settings.yml`.
+# Reconciles every repo in `GH_ORG` against the YAML files in this
+# repo's `.github/` (or `CONFIG_PATH`) on a cron schedule.
+#
+# Required variables (set with `gh variable set`):
+#   SAFE_SETTINGS_GH_ORG          - the org name
+#   SAFE_SETTINGS_APP_ID          - the GitHub App ID
+#   SAFE_SETTINGS_GITHUB_CLIENT_ID
+#
+# Required secrets (set with `gh secret set`):
+#   SAFE_SETTINGS_PRIVATE_KEY     - contents of the App's private key .pem
+#   SAFE_SETTINGS_GITHUB_CLIENT_SECRET
+#
+# Reference:
+#   https://github.com/github/safe-settings/blob/main/docs/github-action.md
+
+name: safe-settings sync
+
+on:
+  schedule:
+    - cron: "0 */4 * * *" # every 4 hours
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  full-sync:
+    name: full sync
+    runs-on: ubuntu-latest
+    env:
+      # Pin to a known-good safe-settings release. Refresh this when a
+      # new version ships and you've reviewed the changelog.
+      SAFE_SETTINGS_VERSION: 2.1.17
+      SAFE_SETTINGS_CODE_DIR: ${{ github.workspace }}/.safe-settings-code
+    steps:
+      - name: Checkout admin repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Checkout safe-settings code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: github/safe-settings
+          ref: ${{ env.SAFE_SETTINGS_VERSION }}
+          path: ${{ env.SAFE_SETTINGS_CODE_DIR }}
+
+      - name: Set up Node
+        uses: actions/setup-node@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.0.0
+        with:
+          node-version: "20"
+
+      - name: Install safe-settings deps
+        working-directory: ${{ env.SAFE_SETTINGS_CODE_DIR }}
+        run: npm install
+
+      - name: Run full sync
+        working-directory: ${{ env.SAFE_SETTINGS_CODE_DIR }}
+        env:
+          GH_ORG: ${{ vars.SAFE_SETTINGS_GH_ORG }}
+          APP_ID: ${{ vars.SAFE_SETTINGS_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.SAFE_SETTINGS_PRIVATE_KEY }}
+          GITHUB_CLIENT_ID: ${{ vars.SAFE_SETTINGS_GITHUB_CLIENT_ID }}
+          GITHUB_CLIENT_SECRET: ${{ secrets.SAFE_SETTINGS_GITHUB_CLIENT_SECRET }}
+          ADMIN_REPO: ${{ github.event.repository.name }}
+          CONFIG_PATH: .github
+        run: npm run full-sync

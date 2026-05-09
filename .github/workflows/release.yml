@@ -49,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
-        run: |
+        run: |-
           set -euo pipefail
 
           # gh skill publish wants to (re)create the trigger tag itself, so we

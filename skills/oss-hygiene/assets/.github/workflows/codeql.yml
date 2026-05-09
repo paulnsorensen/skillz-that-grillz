@@ -1,0 +1,44 @@
+# CodeQL — static analysis for supported languages. Uses "advanced"
+# setup (workflow file). Conflicts with the UI-driven "default" setup;
+# disable that first if it was enabled.
+# See: https://docs.github.com/code-security/code-scanning
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "26 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Replace with the languages your repo uses. Supported:
+        # actions, c-cpp, csharp, go, java-kotlin, javascript-typescript,
+        # python, ruby, swift.
+        language: [javascript-typescript]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - uses: github/codeql-action/autobuild@v3
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

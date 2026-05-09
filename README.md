@@ -44,9 +44,12 @@ harness can load it progressively.
 | `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Pure methodology — no CLI dependency. |
 | `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, code search — via the GitHub MCP plugin, with `gh` CLI as the fallback for operations MCP doesn't cover. |
+| `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
 | `skills/gt/SKILL.md` | `/gt` | 🚧 **Reserved slot — not yet implemented.** Will cover Graphite (`gt`) stacked-PR workflows. Frontmatter and directory shape are in place so future work lands without a rename; invoking it today announces the banner and falls back to the `gt` CLI directly. |
 | `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
+| `skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
 | `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
+| `skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
 
 ## Scope
 
@@ -58,9 +61,12 @@ pure-methodology skill with no external dependency.
 | `bash-shortening` | — (methodology) | bash 4+ in target scripts | shellcheck (post-validation), ast-grep (`--engine sg`), sd / ripgrep / fd (`--include modernize`) |
 | `commit` | `git` | git | — |
 | `gh` | `gh` CLI | gh | GitHub MCP plugin (preferred) |
+| `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
 | `gt` | `gt` (Graphite) | gt (when implemented) | — |
 | `justfile` | `just` | just | — |
+| `oss-hygiene` | `gh` CLI (`gh api`) + scaffolded GitHub Actions (Dependabot, Scorecard, dependency review, CodeQL) | gh | — |
 | `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
+| `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
 
 What that means in practice:
 
@@ -82,7 +88,12 @@ work on a branch
 
 new project setup
     ├── /justfile          ──►  scaffold task runner
-    └── /prek              ──►  scaffold pre-commit hooks
+    ├── /prek              ──►  scaffold pre-commit hooks
+    ├── /gh-bootstrap      ──►  configure merge queue + squash-only + release notes on a single repo
+    └── /oss-hygiene       ──►  community files + supply-chain workflows + Scorecard / OSSF Badge
+
+org-wide policy as code
+    └── /safe-settings     ──►  scaffold admin repo + GitHub App for declarative settings across many repos
 ```
 
 `/commit`, `/gt`, and `/gh` form a loose pipeline for everyday change flow:
@@ -105,7 +116,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in bash-shortening commit gh gt justfile prek; do
+for s in bash-shortening commit gh gh-bootstrap gt justfile oss-hygiene prek safe-settings; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```
