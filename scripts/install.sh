@@ -41,6 +41,7 @@ sg_tool_binary() {
     case "$1" in
         graphite) echo "gt" ;;
         ripgrep)  echo "rg" ;;
+        ast-grep) echo "sg" ;;
         *)        echo "$1" ;;
     esac
 }

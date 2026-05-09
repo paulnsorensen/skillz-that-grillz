@@ -48,13 +48,16 @@ make_stub() {
     [[ "$(sg_tool_binary ripgrep)" == "rg" ]]
 }
 
+@test "sg_tool_binary maps ast-grep to sg" {
+    [[ "$(sg_tool_binary ast-grep)" == "sg" ]]
+}
+
 @test "sg_tool_binary returns identity for non-aliased tools" {
     [[ "$(sg_tool_binary gh)" == "gh" ]]
     [[ "$(sg_tool_binary just)" == "just" ]]
     [[ "$(sg_tool_binary prek)" == "prek" ]]
     [[ "$(sg_tool_binary sd)" == "sd" ]]
     [[ "$(sg_tool_binary fd)" == "fd" ]]
-    [[ "$(sg_tool_binary ast-grep)" == "ast-grep" ]]
 }
 
 # -- sg_tool_formula ---------------------------------------------------------

@@ -1,32 +1,38 @@
 # ast-grep config for the bash-shortening skill.
 #
-# This is the alternate AST-aware engine for bash-shorten.py. The Python
-# engine in scripts/bash-shorten.py covers all 16 rules with regex; this
-# pack covers the subset where tree-sitter-bash exposes enough structure
-# to do safe AST-level rewrites.
+# This is the AST-aware rule pack used by bash-shorten.py. ast-grep (`sg`)
+# is a hard requirement of the script: structural rules in sg-rules/ run
+# first, then the remaining regex-only rules in rules.py run over the
+# output. See SKILL.md for the full ruleset (currently 23 rules across
+# `core` and `modernize` groups) and which subset routes through sg.
 #
-# Run directly with:
+# Run the sg pack directly with:
 #   sg scan --config skills/bash-shortening/scripts/sgconfig.yml path/to/script.sh
 #
-# Or via bash-shorten.py:
-#   python3 scripts/bash-shorten.py --engine sg path/to/script.sh
+# Or via the wrapper (the typical entry point — handles the regex pass too):
+#   python3 scripts/bash-shorten.py path/to/script.sh
 #
 # The Python script orchestrates: it dispatches the rules in this directory
-# to sg, then runs the remaining (Python-only) rules over the sg output.
+# to sg, then runs the remaining (regex-only) rules over the sg output.
 #
 # Why isn't every rule here?
 #
-# - mkdir-guard, empty-default — need ARG1 == ARG2 cross-metavariable
-#   equality to skip mismatched-var cases. ast-grep can't express that
-#   constraint cleanly; the Python regex uses a backreference instead.
+# - mkdir-guard, empty-default, param-default, expr-increment — need
+#   cross-metavariable equality (same name in two positions) to skip
+#   mismatched-var cases. ast-grep can't express that constraint cleanly;
+#   the regex rules in rules.py use a backreference instead.
 # - combined-tests — tree-sitter-bash flattens [ ... ] (test_command) into
 #   a list of word tokens, so structural matching on the operator side is
 #   brittle.
-# - test-numeric — same flattening, plus the operator map (-gt → >, etc.)
-#   needs lambda-style replacement that YAML rules can't express.
+# - for-range-expansion — needs runtime arithmetic to verify the captured
+#   integers form a step-1 ascending sequence; pure-YAML rules can't
+#   compute that.
 # - sed-replace-* — the literal-pattern guard needs character-class
-#   restrictions in the matcher, which the Python rule expresses with a
+#   restrictions in the matcher, which the regex rule expresses with a
 #   regex charset.
+#
+# (test-numeric used to live in this list but moved to sg-rules/ as
+# per-operator rules so it can correctly skip [[ ]] vs [ ].)
 #
 # When tree-sitter-bash matures further (or when ast-grep adds cross-meta
 # equality), more rules can move here.

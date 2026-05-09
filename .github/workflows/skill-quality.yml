@@ -67,9 +67,10 @@ jobs:
       - name: Judge with GitHub Models (gpt-4o)
         if: steps.collect.outputs.skip != 'true'
         id: judge
-        # actions/ai-inference is GitHub's official wrapper. Pinned to @v1
-        # tag for now — promote to a SHA pin once dependabot can track it.
-        uses: actions/ai-inference@v1
+        # actions/ai-inference is GitHub's official wrapper. Pinned to a
+        # commit SHA to match the rest of this repo's actions; bump via
+        # dependabot or manually when a new release lands.
+        uses: actions/ai-inference@b81b2afb8390ee6839b494a404766bef6493c7d9 # v1.2.8
         with:
           model: openai/gpt-4o
           prompt-file: prompt-payload.md

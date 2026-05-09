@@ -53,8 +53,10 @@ harness can load it progressively.
 
 ## Scope
 
-Most skills wrap a single CLI you probably already use; `bash-shortening` is a
-pure-methodology skill with no external dependency.
+Most skills wrap a single CLI you probably already use. `bash-shortening`
+can be used as pure methodology (invoke `/bash-shortening` in Claude
+Code); the bundled `bash-shorten.py` rewriter additionally requires
+**ast-grep**.
 
 | Skill | Wraps | Required | Optional |
 | --- | --- | --- | --- |

@@ -279,6 +279,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.explain:
         return _explain(args.explain)
     if args.self_test:
+        if not _sg_available():
+            sys.exit(_SG_MISSING_DIAGNOSTIC)
         return self_test()
     if not args.file:
         ap.error("a file is required (or '-' for stdin)")

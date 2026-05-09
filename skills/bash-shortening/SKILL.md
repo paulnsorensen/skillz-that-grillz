@@ -1,21 +1,23 @@
 ---
 name: bash-shortening
 description: >
-  Write, review, or refactor Bash and POSIX shell scripts into concise,
-  idiomatic shell code. Use this skill whenever the user is editing a
-  `.sh`, `.bash`, or `bash`-fenced block, mentions "shorten this script",
-  "make this more idiomatic", "clean up this bash", "this script is too
-  long", "is there a shorter way to do this in bash", or asks for a code
-  review of shell scripts. Also trigger when generating new shell scripts
-  from scratch — produce idiomatic patterns the first time instead of
-  refactoring later. Covers parameter expansion, brace expansion, process
-  substitution, arithmetic contexts, function patterns, pipelines vs temp
-  files, heredocs, associative arrays, parallel execution, and CSV/IFS
-  parsing — 51 techniques total. Knows when shortening hurts readability
-  and refuses to produce cryptic one-liners. Do NOT use for fish, zsh, or
-  POSIX-only sh scripts where bashisms (parameter expansion `${var//x/y}`,
-  `[[ ]]`, arrays, process substitution `<( )`) would break portability —
-  call that out and switch register.
+  Write, review, or refactor Bash scripts into concise, idiomatic shell
+  code. Use this skill whenever the user is editing a `.sh`, `.bash`, or
+  `bash`-fenced block with a Bash shebang (or no shebang in a Bash-only
+  context), mentions "shorten this script", "make this more idiomatic",
+  "clean up this bash", "this script is too long", "is there a shorter
+  way to do this in bash", or asks for a code review of shell scripts.
+  Also trigger when generating new Bash scripts from scratch — produce
+  idiomatic patterns the first time instead of refactoring later. Covers
+  parameter expansion, brace expansion, process substitution, arithmetic
+  contexts, function patterns, pipelines vs temp files, heredocs,
+  associative arrays, parallel execution, and CSV/IFS parsing — 51
+  techniques total. Knows when shortening hurts readability and refuses
+  to produce cryptic one-liners. Can advise on POSIX-safe alternatives
+  when asked. Do NOT use for fish, zsh, or POSIX-only `/bin/sh` scripts
+  where bashisms (parameter expansion `${var//x/y}`, `[[ ]]`, arrays,
+  process substitution `<( )`) would break portability — call that out
+  and switch register.
 license: MIT
 ---
 
@@ -52,9 +54,9 @@ the cheatsheet lookup:
    "Quick wins" table below — that tells you which reference file holds
    the idiomatic form.
 2. **Try the automated rewriter first** (see "Automated rewrites"
-   below). For the 16 highest-confidence patterns, `bash-shorten.py`
-   produces a diff in seconds with a tested ruleset. Use it for the
-   easy half, then hand-edit the rest.
+   below). For the high-confidence patterns in the `core` rule group,
+   `bash-shorten.py` produces a diff in seconds with a tested ruleset.
+   Use it for the easy half, then hand-edit the rest.
 3. **Apply the rewrite.** Use the `before / after` examples in the matching
    reference file. Preserve quoting (`"$var"`), `set -euo pipefail` if the
    surrounding script has it, and any error handling already in place.
@@ -70,10 +72,13 @@ attributable to one technique the user can learn.
 
 ## Automated rewrites
 
-The skill ships with `scripts/bash-shorten.py` — a zero-dependency Python
-rewriter for the highest-confidence patterns. It defaults to dry-run
-(prints a unified diff + per-rule counts to stderr) and only writes when
-you pass `--apply`. Always run `shellcheck` on the output afterwards.
+The skill ships with `scripts/bash-shorten.py` — a Python rewriter for
+the high-confidence patterns. It has no third-party Python dependencies
+but does require [ast-grep](https://ast-grep.github.io/) (`sg`) on PATH;
+see the "ast-grep is required" section below. It defaults to dry-run
+(prints a unified diff to stdout and per-rule counts to stderr) and only
+writes when you pass `--apply`. Always run `shellcheck` on the output
+afterwards.
 
 ```bash
 # preview rewrites
