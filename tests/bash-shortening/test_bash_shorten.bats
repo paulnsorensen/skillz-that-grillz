@@ -421,3 +421,33 @@ setup_sg_only() {
     with_explicit="$(printf 'X=$(basename "$P")\n' | python3 "$SCRIPT" --engine regex -)"
     [ "$with_default" = "$with_explicit" ]
 }
+
+# -- Real-world regression fixtures (skipped until bugs land) --------------
+# Surfaced by dogfooding the rewriter on ~/Dev/dotfiles. Each test uses
+# `skip` so the suite stays green; the fix PR for the linked issue removes
+# the skip and the test becomes a real gate.
+
+@test "rule test-numeric leaves [[ ... ]] form untouched (issue #18)" {
+    skip "blocked on issue #18 — regex bleeds into [[ ]], producing [(( ... ))]"
+    local input='if [[ $V -eq 0 ]]; then :; fi'
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "$input" ]
+}
+
+@test "rule backticks leaves markdown code spans in # comments untouched (issue #16)" {
+    skip "blocked on issue #16 — backticks rule does not skip # comment lines"
+    local input='# Run `bash install.sh --help` for the full flag list.'
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "$input" ]
+}
+
+@test "rule backticks leaves heredoc body literals untouched (issue #16)" {
+    skip "blocked on issue #16 — backticks rule fires inside heredoc bodies"
+    local input
+    input="$(printf 'cat <<EOF\nrun \\`gh skill install\\` to add it\nEOF\n')"
+    local got
+    got="$(printf '%s' "$input" | python3 "$SCRIPT" -)"
+    [ "${got%$'\n'}" = "${input%$'\n'}" ]
+}
