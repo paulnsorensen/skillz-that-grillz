@@ -126,12 +126,12 @@ gh api "repos/$REPO" --jq '{
 }'
 ```
 
-Ask the user:
+Ask the user — **once, as a single consolidated question** with all decisions inline. Do not prompt sequentially; the user should be able to reply "go with defaults" and have the skill proceed. Cap the list at the items below (≤5):
 
 - Visibility — this skill is sized for **public** repos. Private repos can use a subset (community files yes, secret scanning needs Advanced Security, scorecard publishing needs public visibility for the badge).
 - License — if `licenseInfo` is null, surface and stop until the user picks one.
-- CodeQL applicability — does the repo contain code in a CodeQL-supported language (`go`, `java`, `javascript`, `python`, `ruby`, `swift`, `c-cpp`, `csharp`, `kotlin`)? If not, skip the CodeQL workflow.
-- FUNDING.yml — does the user accept sponsorship? If yes, ask for platforms (GitHub Sponsors, OpenCollective, Ko-fi, etc.).
+- CodeQL applicability — does the repo contain code in a CodeQL-supported language (`go`, `java`, `javascript`, `python`, `ruby`, `swift`, `c-cpp`, `csharp`, `kotlin`)? If not, skip the CodeQL workflow. **Surface a recommendation, don't force a question** when the only matches are CI-helper scripts (e.g. `.github/scripts/*.py`) — those are not project code, and the default should be skip with the user opting in.
+- FUNDING.yml — does the user accept sponsorship? If yes, ask for platform + handle (GitHub Sponsors, Buy Me a Coffee, Ko-fi, OpenCollective, etc.).
 - CODEOWNERS — only suggest when the repo has multiple maintainers. For solo, skip.
 
 ### 2. Scaffold the community files
@@ -163,6 +163,8 @@ Diff against the existing file (if present). If different, ask before overwritin
 
 `dependabot.yml` is configured with the language packages detected in the repo (look for `package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `Gemfile`, `composer.json`, `pom.xml`, etc.) plus a `github-actions` ecosystem entry to keep workflow action versions current.
 
+**Manifest detection scope.** Only count manifests in project source roots — *not* under `.github/scripts/`, `.devcontainer/`, `tools/ci/`, or other CI-helper paths. A `pyproject.toml` under a project root is real; a hard-coded `pip install foo==1.2.3` line in a workflow is not, and Dependabot can't track it without a real top-level manifest. When the only language presence is CI-helper code, **skip that ecosystem** and add a one-line comment in the generated `dependabot.yml` explaining why (e.g. "no top-level Python manifest; the only Python is in `.github/scripts/`"). This mirrors the same heuristic used for CodeQL applicability in step 1.
+
 ### 4. Toggle the GitHub-native security features
 
 Use `gh api` to enable or verify (idempotent — re-applying is a no-op):
@@ -193,13 +195,14 @@ Print findings; don't auto-edit. These are subtle changes the user should review
 
 ### 6. Surface the OpenSSF Best Practices Badge step
 
-Print, don't apply:
+Print, don't apply. Substitute `<owner>`, `<repo>`, and the project ID once registered. Read `assets/README-badge-snippet.md` and **strip the block between `<!-- BEGIN-CODEQL -->` and `<!-- END-CODEQL -->` markers when CodeQL was skipped in step 3** — the markers exist precisely so the snippet is conditionally trimmable without ambiguity.
 
 ```text
 Register at: https://www.bestpractices.dev/en/projects/new
 Repo URL:    https://github.com/<owner>/<repo>
 Once you have a project ID, paste this into README.md:
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/<owner>/<repo>/badge)](https://scorecard.dev/viewer/?uri=github.com/<owner>/<repo>)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/<id>/badge)](https://www.bestpractices.dev/projects/<id>)
 ```
 
@@ -249,6 +252,7 @@ The summary should call out:
 - **`pull_request_target` is dangerous by default**: don't use it just to access secrets in fork PRs. The skill flags it; the user should refactor to a separate `workflow_run` or labeled-PR pattern.
 - **OSSF badge is self-attested**: a passing badge means the maintainer answered the questions, not that an audit happened. It's a signal, not a guarantee.
 - **Scorecard score on tiny / new repos**: the `Maintained` check needs 90 days of activity; new repos will score low until they age in. This is a feature, not a bug.
+- **Scaffolded workflows trip `Pinned-Dependencies` against themselves**: `dependency-review.yml`, `scorecard.yml`, and `codeql.yml` use floating tags (`@v4`, `@v2`, `@v3`) to match the OSSF reference templates and stay readable. Scorecard's `Pinned-Dependencies` check will flag this on the first run. The intentional trade-off: Dependabot (also scaffolded by this skill) keeps the tags green automatically, whereas SHA pins decay silently. If you want a clean Pinned-Dependencies score, convert the three new workflow files to commit-SHA pins after the first Dependabot PR lands — Dependabot will then maintain them in pinned form.
 
 ## References
 
