@@ -56,7 +56,7 @@ class Rule:
 # Rules that have an ast-grep equivalent in scripts/sg-rules/. When the
 # sg engine handles these, the Python regex must NOT re-fire (it would
 # either no-op or rewrite a partial match).
-SG_HANDLED_IDS = frozenset({"basename", "dirname", "backticks"})
+SG_HANDLED_IDS = frozenset({"basename", "dirname", "backticks", "test-numeric"})
 
 
 def _expr_op(escaped: str) -> str:
@@ -306,21 +306,21 @@ RULES: list[Rule] = [
             ("R=$(expr $A + 1)", "R=$((A + 1))"),
         ),
     ),
-    # combined-tests must run BEFORE test-numeric so that
-    # [ $A -ge 18 ] && [ $B -eq 1 ] fuses to [[ ... && ... ]] in one pass
-    # rather than each side rewriting independently to (( )).
+    # NOTE: when both sides are numeric tests (e.g. [ $A -ge 18 ] && [ $B -eq 1 ]),
+    # the sg engine claims each side as test-numeric before this rule runs and
+    # the result is `(( A >= 18 )) && (( B == 1 ))` — semantically equivalent,
+    # just not fused. combined-tests still claims FILE/STRING test pairs.
     Rule(
         id="combined-tests",
-        description='[ A ] && [ B ] → [[ A && B ]]  (single-bracket, no nesting)',
+        description='[ A ] && [ B ] → [[ A && B ]]  (file/string tests only; numeric pairs go through test-numeric per-side)',
         pattern=re.compile(
             r'\[\s+([^\[\]\n]+?)\s+\]\s*&&\s*\[\s+([^\[\]\n]+?)\s+\]'
         ),
         replace=lambda m: f"[[ {m.group(1)} && {m.group(2)} ]]",
         source_example="37",
-        notes="Conservative — only matches when neither bracket contains nested brackets or newlines.",
+        notes="Conservative — only matches when neither bracket contains nested brackets or newlines. For numeric tests with -eq/-ne/-lt/-le/-gt/-ge on both sides, the sg engine rewrites each side independently to (( )); the result is correct but unfused.",
         examples=(
             ('if [ -f "$F" ] && [ -r "$F" ]; then', 'if [[ -f "$F" && -r "$F" ]]; then'),
-            ('[ $A -ge 18 ] && [ $B -eq 1 ]', '[[ $A -ge 18 && $B -eq 1 ]]'),
         ),
     ),
     Rule(

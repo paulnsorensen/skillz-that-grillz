@@ -160,20 +160,29 @@ Or skip the script and invoke `/bash-shortening` directly in Claude Code
 — the methodology in this file is the fallback for environments without
 ast-grep.
 
-**Why some rules are still regex-only.** tree-sitter-bash flattens a lot
-of structure:
+**Why some rules are still regex-only.**
 
-- `mkdir-guard`, `empty-default` need ARG1 == ARG2 cross-metavariable
-  equality to skip mismatched-var cases. ast-grep can't express that
-  constraint cleanly; the Python regex uses a backreference instead.
-- `combined-tests` — `[ ... ]` (`test_command`) flattens into a list of
-  word tokens, so structural matching on the operator side is brittle.
-- `test-numeric` — same flattening, plus the operator map (`-gt → >`)
-  needs lambda-style replacement that YAML rules can't express.
+- `mkdir-guard`, `empty-default`, `param-default`, `expr-increment`
+  need cross-metavariable equality (same name in two positions). YAML
+  ast-grep rules can't express that constraint cleanly; the Python
+  regex uses a backreference instead.
+- `combined-tests` — `[ ... ]` flattens into a list of word tokens, so
+  structural matching on the operator side is brittle.
+- `for-range-expansion` — needs runtime arithmetic to verify the
+  captured integers form a step-1 ascending sequence; pure-YAML rules
+  can't compute that.
 - `sed-replace-*` — the literal-pattern guard needs character-class
   restrictions in the matcher.
 
-These regex-only rules still run after the ast-grep pass.
+`test-numeric` was previously in this list but moved to `sg-rules/`
+as six per-operator rules — tree-sitter-bash distinguishes
+`test_command` (`[ ]`) from `conditional_expression` (`[[ ]]`) so the
+sg form correctly skips `[[ ]]` whereas the regex bled into it
+(issue #18).
+
+These regex-only rules still run after the ast-grep pass. See
+`AGENTS.md` for guidance on writing new rules — default to ast-grep,
+fall back to regex only when one of the constraints above blocks it.
 
 ## Quick wins
 

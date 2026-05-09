@@ -50,10 +50,14 @@ def _sg_available() -> bool:
     return "ast-grep" in (result.stdout + result.stderr).lower()
 
 
-def _apply_sg(text: str) -> tuple[str, dict[str, int]]:
+def _apply_sg(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
     """Run the ast-grep rule pack against `text`. Returns (new_text, counts).
 
-    Counts are keyed by the Python rule id (basename, dirname) so the
+    `enabled` is the set of Python rule ids the dispatch wants to apply.
+    sg-handled rules outside that set are filtered out of the sg run via
+    --filter so --rules / --skip work correctly across both engines.
+
+    Counts are keyed by the Python rule id (basename, dirname, …) so the
     upstream caller can present them uniformly. The count "after" patterns
     below MUST mirror the `fix:` strings in scripts/sg-rules/*.yml exactly —
     if the YAML output formatting changes, the count regex will silently
@@ -66,6 +70,17 @@ def _apply_sg(text: str) -> tuple[str, dict[str, int]]:
     if not _sg_available():
         return text, {}
 
+    # Determine which sg-handled rules to actually run. Skip the sg pass
+    # entirely when none are enabled — saves a subprocess and a tempfile.
+    active_sg_ids = SG_HANDLED_IDS & enabled
+    if not active_sg_ids:
+        return text, {}
+    # sg rule ids in sg-rules/*.yml are prefixed with "bash-shorten-" so
+    # the filter is anchored to that namespace. The trailing (-|$) allows
+    # suffixed forms (test-numeric-eq, test-numeric-ne, ...) to match the
+    # parent Python rule id "test-numeric" without listing each variant.
+    filter_regex = "^bash-shorten-(" + "|".join(sorted(active_sg_ids)) + ")(-|$)"
+
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", suffix=".sh", delete=False
     ) as tmp:
@@ -77,7 +92,13 @@ def _apply_sg(text: str) -> tuple[str, dict[str, int]]:
         # before/after byte counts to detect per-rule fires.
         try:
             subprocess.run(
-                ["sg", "scan", "--config", str(_SG_CONFIG), "--update-all", str(tmp_path)],
+                [
+                    "sg", "scan",
+                    "--config", str(_SG_CONFIG),
+                    "--filter", filter_regex,
+                    "--update-all",
+                    str(tmp_path),
+                ],
                 check=True,
                 capture_output=True,
             )
@@ -115,6 +136,16 @@ def _apply_sg(text: str) -> tuple[str, dict[str, int]]:
         btick_delta = (text.count("`") - new_text.count("`")) // 2
         if btick_delta > 0:
             counts["backticks"] = btick_delta
+        # test-numeric: count drops in the [ $V -OP N ] (single-bracket)
+        # form. The [[ ]] form never matches the sg rule (different node
+        # kind in tree-sitter-bash) so this count is precise.
+        tn_pattern = re.compile(
+            rf"\[\s+\$({_VAR})\s+(-eq|-ne|-lt|-le|-gt|-ge)\s+(\d+)\s+\]"
+        )
+        tn_before = len(tn_pattern.findall(text))
+        tn_after = len(tn_pattern.findall(new_text))
+        if tn_before - tn_after > 0:
+            counts["test-numeric"] = tn_before - tn_after
     return new_text, counts
 
 
@@ -127,7 +158,7 @@ def apply_rules(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
     """
     counts: dict[str, int] = {}
 
-    sg_text, sg_counts = _apply_sg(text)
+    sg_text, sg_counts = _apply_sg(text, enabled)
     text = sg_text
     counts.update(sg_counts)
 

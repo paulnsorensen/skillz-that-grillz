@@ -468,16 +468,22 @@ SH
     [[ "$out" == *"/bash-shortening"* ]]
 }
 
-# -- Real-world regression fixtures (skipped until bugs land) --------------
-# Surfaced by dogfooding the rewriter on ~/Dev/dotfiles. The issue-#16
-# backticks cases are no longer skipped — sg handles them correctly and
-# they're covered by the engine tests above. Issue-#18 stays skipped
-# because test-numeric still goes through the Python regex.
+# -- Real-world regression fixtures ----------------------------------------
+# Surfaced by dogfooding the rewriter on ~/Dev/dotfiles. Both issues
+# are now fixed by the ast-grep engine: tree-sitter-bash distinguishes
+# [[ ]] (conditional_expression) from [ ] (test_command) so the rule
+# only matches single-bracket form. The skips on these tests have been
+# removed — they're real gates now.
 
 @test "rule test-numeric leaves [[ ... ]] form untouched (issue #18)" {
-    skip "blocked on issue #18 — regex bleeds into [[ ]], producing [(( ... ))]"
     local input='if [[ $V -eq 0 ]]; then :; fi'
     local got
     got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
     [ "${got%$'\n'}" = "$input" ]
+}
+
+@test "rule test-numeric rewrites single-bracket [ \$V -OP N ] to ((V OP N)) via sg" {
+    local got
+    got="$(printf 'if [ $X -gt 100 ]; then echo big; fi\n' | python3 "$SCRIPT" -)"
+    [[ "$got" == *"if (( X > 100 )); then"* ]]
 }
