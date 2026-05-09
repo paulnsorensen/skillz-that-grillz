@@ -44,10 +44,17 @@ make_stub() {
     [[ "$(sg_tool_binary graphite)" == "gt" ]]
 }
 
+@test "sg_tool_binary maps ripgrep to rg" {
+    [[ "$(sg_tool_binary ripgrep)" == "rg" ]]
+}
+
 @test "sg_tool_binary returns identity for non-aliased tools" {
     [[ "$(sg_tool_binary gh)" == "gh" ]]
     [[ "$(sg_tool_binary just)" == "just" ]]
     [[ "$(sg_tool_binary prek)" == "prek" ]]
+    [[ "$(sg_tool_binary sd)" == "sd" ]]
+    [[ "$(sg_tool_binary fd)" == "fd" ]]
+    [[ "$(sg_tool_binary ast-grep)" == "ast-grep" ]]
 }
 
 # -- sg_tool_formula ---------------------------------------------------------
@@ -94,6 +101,10 @@ make_stub() {
     [[ "$SG_TOOLS" == *"just"* ]]
     [[ "$SG_TOOLS" == *"prek"* ]]
     [[ "$SG_TOOLS" == *"graphite"* ]]
+    [[ "$SG_TOOLS" == *"ast-grep"* ]]
+    [[ "$SG_TOOLS" == *"sd"* ]]
+    [[ "$SG_TOOLS" == *"ripgrep"* ]]
+    [[ "$SG_TOOLS" == *"fd"* ]]
     [[ "$SG_MCP" == "context7" ]]
     [[ "$SG_HARNESS" == "auto" ]]
     [[ "$SG_DRY_RUN" == "0" ]]
@@ -287,6 +298,20 @@ STUB
     [[ "$output" == *"would run 'brew install gh'"* ]]
     [[ "$output" == *"would run 'brew install withgraphite/tap/graphite'"* ]]
     [ ! -s "$STUB_LOG" ] || ! grep -q "^brew install" "$STUB_LOG"
+}
+
+@test "sg_install_tools dry-run handles all bash-shortening dependencies" {
+    SG_DRY_RUN=1 run sg_install_tools "ast-grep,sd,ripgrep,fd"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"would run 'brew install ast-grep'"* ]]
+    [[ "$output" == *"would run 'brew install sd'"* ]]
+    [[ "$output" == *"would run 'brew install ripgrep'"* ]]
+    [[ "$output" == *"would run 'brew install fd'"* ]]
+}
+
+@test "sg_validate_selection accepts the new modernize-deps tools" {
+    run sg_validate_selection "ast-grep,sd,ripgrep,fd" "$SG_KNOWN_TOOLS"
+    [ "$status" -eq 0 ]
 }
 
 # -- sg_resolve_harnesses ----------------------------------------------------

@@ -34,6 +34,9 @@ jobs:
       - name: Validate SKILL.md frontmatter
         run: python3 .github/scripts/validate_skills.py
 
+      - name: bash-shorten.py self-test
+        run: python3 skills/bash-shortening/scripts/bash-shorten.py --self-test
+
   install-script:
     name: test install.sh (macOS)
     runs-on: macos-latest
@@ -52,6 +55,9 @@ jobs:
 
       - name: Run install.sh unit tests
         run: bats tests/bash/test_install.bats
+
+      - name: Run bash-shorten.py CLI tests
+        run: bats tests/bash-shortening/test_bash_shorten.bats
 
       # Dry-run smoke: exercises arg parsing, selection validation, and
       # the skill-install dispatch path. Does NOT actually run brew or
