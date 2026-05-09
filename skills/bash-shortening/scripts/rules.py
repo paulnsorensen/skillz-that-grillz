@@ -196,6 +196,14 @@ RULES: list[Rule] = [
         examples=(
             ('FILENAME=$(basename "$FULLPATH")', 'FILENAME=${FULLPATH##*/}'),
         ),
+        notes=(
+            "Not strictly equivalent for paths with trailing slashes: "
+            "basename strips them (basename /tmp/foo/ → foo), but "
+            "${VAR##*/} treats the trailing / as the last separator and "
+            "yields an empty string. Apply only when the path is known to "
+            "be normalized (or guard with VAR=${VAR%/}). Equivalent for "
+            "paths without trailing slashes."
+        ),
     ),
     Rule(
         id="dirname",
@@ -206,7 +214,15 @@ RULES: list[Rule] = [
         examples=(
             ('DIR=$(dirname "$PATH_VAR")', 'DIR=${PATH_VAR%/*}'),
         ),
-        notes='dirname returns "." for paths with no slash; ${VAR%/*} returns the original. Equivalent for absolute paths.',
+        notes=(
+            "Two semantic mismatches vs dirname: (1) dirname returns \".\" "
+            "for paths with no slash; ${VAR%/*} returns the original "
+            "string. (2) For paths with trailing slashes (e.g. "
+            "/tmp/foo/), dirname returns /tmp but ${VAR%/*} returns "
+            "/tmp/foo. Equivalent for absolute paths without trailing "
+            "slashes; otherwise normalize first (VAR=${VAR%/}) or stay "
+            "with dirname."
+        ),
     ),
     Rule(
         id="sed-replace-first",
