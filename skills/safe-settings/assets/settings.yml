@@ -1,0 +1,108 @@
+# Org-level baseline for github/safe-settings.
+#
+# This file lives in the admin repo at `.github/settings.yml` and is
+# applied to every repository in the org. Suborg files in `suborgs/`
+# and per-repo files in `repos/` override these values.
+#
+# Schema reference:
+#   https://github.com/github/safe-settings/blob/main/docs/sample-settings/settings.yml
+#
+# This baseline mirrors the gh-bootstrap defaults: squash-only merging,
+# PR title becomes the commit subject, branches deleted on merge, plus a
+# default-branch ruleset with merge queue and required reviews.
+
+repository:
+  # Visibility and feature toggles. Comment out fields you want to leave
+  # at GitHub's default — every key here is enforced.
+  has_issues: true
+  has_projects: true
+  has_wiki: false
+
+  # Merge button: squash only, PR title → commit subject, PR body → commit body.
+  allow_squash_merge: true
+  allow_merge_commit: false
+  allow_rebase_merge: false
+  allow_auto_merge: true
+  delete_branch_on_merge: true
+  allow_update_branch: true
+  squash_merge_commit_title: PR_TITLE
+  squash_merge_commit_message: PR_BODY
+
+  # Security toggles.
+  security:
+    enableVulnerabilityAlerts: true
+    enableAutomatedSecurityFixes: true
+
+# Org-wide labels. Drives the auto-generated release notes categories
+# in `.github/release.yml` of each repo (if present).
+labels:
+  include:
+    - name: bug
+      color: "d73a4a"
+      description: Something isn't working
+    - name: enhancement
+      color: "a2eeef"
+      description: New feature or request
+    - name: documentation
+      color: "0075ca"
+      description: Improvements or additions to documentation
+    - name: dependencies
+      color: "0366d6"
+      description: Pull requests that update a dependency file
+    - name: breaking-change
+      color: "b60205"
+      description: A change that breaks backwards compatibility
+    - name: chore
+      color: "fef2c0"
+      description: Repo maintenance, no functional change
+    - name: ignore-for-release
+      color: "ededed"
+      description: Exclude this PR from auto-generated release notes
+  # Don't auto-delete labels created on GitHub that match these patterns.
+  exclude:
+    - name: ^release
+
+# Repo name validator. Refuses to apply settings to repos whose name
+# doesn't match this pattern. Tighten this for your org's convention.
+validator:
+  pattern: "[a-z0-9][a-z0-9-]*"
+
+# Default-branch ruleset — merge queue + required checks + no force-push.
+# Same shape as the /gh-bootstrap ruleset payload, expressed in YAML and
+# applied org-wide.
+rulesets:
+  - name: main-protection
+    target: branch
+    enforcement: active
+    bypass_actors: []
+    conditions:
+      ref_name:
+        include: ["~DEFAULT_BRANCH"]
+        exclude: []
+    rules:
+      - type: deletion
+      - type: non_fast_forward
+      - type: pull_request
+        parameters:
+          required_approving_review_count: 1
+          dismiss_stale_reviews_on_push: true
+          require_code_owner_review: false
+          require_last_push_approval: false
+          required_review_thread_resolution: true
+      - type: required_status_checks
+        parameters:
+          strict_required_status_checks_policy: false
+          required_status_checks:
+            # Replace `ci` with the actual check names your CI emits.
+            # Run this on a green PR to see real names:
+            #   gh api repos/<org>/<repo>/commits/<sha>/check-runs --jq '.check_runs[].name'
+            - context: ci
+      - type: merge_queue
+        parameters:
+          check_response_timeout_minutes: 60
+          grouping_strategy: ALLGREEN
+          max_entries_to_build: 5
+          max_entries_to_merge: 5
+          min_entries_to_merge: 1
+          min_entries_to_merge_wait_minutes: 5
+          merge_method: SQUASH

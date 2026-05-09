@@ -27,7 +27,7 @@ SG_SKILL_REPO="paulnsorensen/skillz-that-grillz"
 # the live set via 'gh api repos/.../contents/skills' so it self-heals when
 # new skills land — this list is only used when the API call is
 # unavailable (offline, rate-limited, repo temporarily private).
-SG_FALLBACK_SKILLS="commit gh gt justfile prek"
+SG_FALLBACK_SKILLS="commit gh gh-bootstrap gt justfile prek safe-settings"
 
 # Default selections.
 SG_DEFAULT_TOOLS="$SG_KNOWN_TOOLS"
