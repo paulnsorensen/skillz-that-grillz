@@ -22,12 +22,16 @@ lint-md-fix:
 lint-md:
     markdownlint-cli2 "skills/**/*.md" "*.md"
 
+# Fix YAML formatting issues
+lint-yaml-fix:
+    yamlfmt .
+
 # Verify YAML formatting
 lint-yaml:
     yamllint -c .yamllint.yml .
 
 # Full local check with autofixes
-check: lint-md-fix lint-yaml lint-sh test
+check: lint-md-fix lint-yaml-fix lint-yaml lint-sh test
 
 # CI-mode verification (no autofixes)
 ci: lint-md lint-yaml lint-sh test

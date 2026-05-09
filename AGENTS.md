@@ -9,6 +9,7 @@ This document is for LLMs, agents, and automation tools working in this reposito
 This is the authoritative local gate. It mirrors all CI checks:
 
 - Markdown linting (with autofix) — markdownlint-cli2
+- YAML formatting (with autofix) — yamlfmt
 - YAML linting — yamllint
 - Shell linting — shellcheck
 - Python linting — uv ruff
@@ -29,10 +30,10 @@ If it passes locally, the PR will pass CI. If it fails locally, fix the issues a
 `just check` automatically fixes markdown and Python issues where possible:
 
 - `markdownlint-cli2 --fix` — reformats markdown
-- `uv ruff format` — formats Python code
+- `yamlfmt` — reformats YAML (preserves blank lines via `.yamlfmt` config)
 - Linting failures that cannot autofix must be corrected manually
 
-YAML, shell, and Python import issues must be fixed manually.
+Shell and Python issues must be fixed manually.
 
 ## Workflow
 
