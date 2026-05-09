@@ -130,7 +130,7 @@ Ask the user — **once, as a single consolidated question** with all decisions 
 
 - Visibility — this skill is sized for **public** repos. Private repos can use a subset (community files yes, secret scanning needs Advanced Security, scorecard publishing needs public visibility for the badge).
 - License — if `licenseInfo` is null, surface and stop until the user picks one.
-- CodeQL applicability — does the repo contain code in a CodeQL-supported language (`go`, `java`, `javascript`, `python`, `ruby`, `swift`, `c-cpp`, `csharp`, `kotlin`)? If not, skip the CodeQL workflow. **Surface a recommendation, don't force a question** when the only matches are CI-helper scripts (e.g. `.github/scripts/*.py`) — those are not project code, and the default should be skip with the user opting in.
+- CodeQL applicability — does the repo contain code in a CodeQL-supported language (`actions`, `c-cpp`, `csharp`, `go`, `java-kotlin`, `javascript-typescript`, `python`, `ruby`, `swift`)? If not, skip the CodeQL workflow. **Surface a recommendation, don't force a question** when the only matches are CI-helper scripts (e.g. `.github/scripts/*.py`) — those are not project code, and the default should be skip with the user opting in.
 - FUNDING.yml — does the user accept sponsorship? If yes, ask for platform + handle (GitHub Sponsors, Buy Me a Coffee, Ko-fi, OpenCollective, etc.).
 - CODEOWNERS — only suggest when the repo has multiple maintainers. For solo, skip.
 
@@ -170,8 +170,8 @@ Diff against the existing file (if present). If different, ask before overwritin
 Use `gh api` to enable or verify (idempotent — re-applying is a no-op):
 
 ```bash
-# Dependency graph (auto-on for public; verify it's not been disabled)
-gh api -X PUT "repos/$REPO/dependency-graph/automated-security-fixes"
+# Automated security fixes / Dependabot security updates
+gh api -X PUT "repos/$REPO/automated-security-fixes"
 
 # Vulnerability alerts (Dependabot alerts)
 gh api -X PUT "repos/$REPO/vulnerability-alerts"

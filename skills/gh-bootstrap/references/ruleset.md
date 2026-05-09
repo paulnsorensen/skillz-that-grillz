@@ -117,7 +117,7 @@ To apply:
 
 ```bash
 REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
-TEMPLATE="$(skills/gh-bootstrap/assets/rulesets/main-pr-ci.json)"
+TEMPLATE="skills/gh-bootstrap/assets/rulesets/main-pr-ci.json"
 
 # Substitute the user's CI check name into the template before POSTing.
 jq --arg ctx "$YOUR_CHECK_NAME" \

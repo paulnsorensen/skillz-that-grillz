@@ -72,9 +72,10 @@ to keep if it's already in place — they coexist.
 - **Files in subdirectories don't count**. `docs/CONTRIBUTING.md`
   doesn't satisfy the checklist; `CONTRIBUTING.md` or
   `.github/CONTRIBUTING.md` do.
-- **Default community-health repo files override per-repo defaults
-  silently**. If you scaffold per-repo and don't see them surfaced,
-  check the `.github` repo first.
+- **Per-repo files take priority over the `.github` community-health
+  defaults**. The `.github` repo is a fallback — it only applies when the
+  individual repo has no copy of its own. If you updated the `.github` repo
+  but the per-repo copy isn't changing, that's why.
 - **`PULL_REQUEST_TEMPLATE.md` is auto-applied**; multiple templates
   require a directory and `?template=name.md` URL parameter to pick
   one. Most projects use a single template.
