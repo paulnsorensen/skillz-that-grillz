@@ -40,8 +40,9 @@ def _apply_sg(text: str) -> tuple[str, dict[str, int]]:
     if the YAML output formatting changes, the count regex will silently
     miss matches even though the rewrite still applies.
 
-    On sg failure (parse error, rule error), emits a warning and falls back
-    to the regex engine by returning the original text with empty counts.
+    On sg failure (parse error, rule error), emits a warning and returns
+    the original text with empty counts. Non-sg-handled regex rules still
+    run afterwards on the unmodified input.
     """
     if not _sg_available():
         return text, {}
@@ -65,7 +66,7 @@ def _apply_sg(text: str) -> tuple[str, dict[str, int]]:
             stderr = (e.stderr or b"").decode(errors="replace").strip()
             print(
                 f"# warning: sg scan failed ({stderr or 'no stderr'}); "
-                "falling back to regex engine.",
+                "sg-handled rules will be skipped this run.",
                 file=sys.stderr,
             )
             return text, {}
@@ -88,28 +89,33 @@ def _apply_sg(text: str) -> tuple[str, dict[str, int]]:
             delta = after_n_new - after_n_old
             if delta > 0:
                 counts[py_id] = min(delta, before_n)
+        # backticks rewrites are counted by tracking removed backtick pairs:
+        # each `\`cmd\`` → `$(cmd)` removes exactly two backticks. The
+        # after-pattern `$(...)` is too generic to count directly without
+        # conflating with basename/dirname output.
+        btick_delta = (text.count("`") - new_text.count("`")) // 2
+        if btick_delta > 0:
+            counts["backticks"] = btick_delta
     return new_text, counts
 
 
-def apply_rules(
-    text: str,
-    enabled: set[str],
-    *,
-    use_sg: bool = False,
-) -> tuple[str, dict[str, int]]:
+def apply_rules(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
+    """Run sg-handled rules through ast-grep, then run remaining Python rules.
+
+    sg is a hard requirement for this engine — the CLI verifies presence at
+    startup. The dispatch here trusts that and skips rules whose ids are in
+    SG_HANDLED_IDS so the Python regex doesn't double-fire on sg's output.
+    """
     counts: dict[str, int] = {}
 
-    if use_sg:
-        sg_text, sg_counts = _apply_sg(text)
-        text = sg_text
-        counts.update(sg_counts)
+    sg_text, sg_counts = _apply_sg(text)
+    text = sg_text
+    counts.update(sg_counts)
 
     for rule in RULES:
         if rule.id not in enabled:
             continue
-        # Skip Python rules that ast-grep already handled, otherwise the
-        # regex might misfire on the rewritten output.
-        if use_sg and rule.id in SG_HANDLED_IDS:
+        if rule.id in SG_HANDLED_IDS:
             continue
         if rule.apply_fn is not None:
             new_text, n = rule.apply_fn(text)

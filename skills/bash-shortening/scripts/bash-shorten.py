@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """bash-shorten — apply high-confidence rewrites from the bash-shortening skill.
 
-Default engine is pure-local regex with conservatively-matched inputs.
-When a rule could plausibly misfire, it skips — better to miss than to
-corrupt quoting.
+ast-grep (`sg`) is a hard requirement. Structural patterns route through
+ast-grep first using the rule pack at scripts/sg-rules/; remaining
+regex-only rules run after. If `sg` is not on PATH, the script exits
+with a friendly diagnostic — invoke `/bash-shortening` in Claude Code
+and apply the methodology by hand, or install ast-grep:
 
-Two opt-in extensions:
+  brew install ast-grep        # macOS / Linuxbrew
+  cargo install ast-grep --bin sg
 
-- --engine sg : route the structural patterns (basename, dirname) to
-  ast-grep first using the rule pack at scripts/sg-rules/, then run the
-  remaining regex rules. Requires `sg` (ast-grep) on PATH.
+One opt-in extension:
+
 - --include modernize : enable the off-by-default modernize rule group
   that suggests sd/rg in place of sed/grep for the most literal cases.
   Requires the target binary to be installed for the rewritten code to
@@ -22,7 +24,6 @@ Defaults to dry-run (prints a unified diff). Pass --apply to write.
   bash-shorten --rules basename,dirname script.sh
   bash-shorten --skip backticks script.sh
   bash-shorten --include modernize --apply file.sh  # also rewrite sed→sd, grep→rg
-  bash-shorten --engine sg script.sh                # ast-grep first, then regex
   bash-shorten --list                               # list all rules with examples
   bash-shorten --explain test-numeric               # show one rule in detail
   bash-shorten --self-test                          # run the embedded fixtures
@@ -223,44 +224,36 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="comma-separated opt-in rule groups to enable (default: core only). "
              "Known: core, modernize.",
     )
-    ap.add_argument(
-        "--engine",
-        choices=("regex", "sg"),
-        default="regex",
-        help="rewrite engine. 'regex' (default) is pure-Python; 'sg' routes "
-             "the structural patterns (basename, dirname) through ast-grep "
-             "first when `sg` is on PATH, then runs the regex rules.",
-    )
     ap.add_argument("--list", action="store_true", help="list all rules and exit")
     ap.add_argument("--explain", metavar="ID", help="describe one rule and exit")
     ap.add_argument("--self-test", action="store_true", help="run embedded fixtures and exit")
     return ap
 
 
-def _resolve_engine(engine: str) -> bool:
-    use_sg = engine == "sg"
-    if use_sg and not _sg_available():
-        print(
-            "# warning: --engine sg requested but `sg` (ast-grep) is not on "
-            "PATH or sgconfig.yml is missing; falling back to regex engine.",
-            file=sys.stderr,
-        )
-        return False
-    return use_sg
+_SG_MISSING_DIAGNOSTIC = (
+    "bash-shorten requires ast-grep (`sg`) on PATH.\n"
+    "\n"
+    "Install one of:\n"
+    "  brew install ast-grep\n"
+    "  cargo install ast-grep --bin sg\n"
+    "\n"
+    "Or skip the script entirely: invoke `/bash-shortening` in Claude\n"
+    "Code and apply the methodology by hand from SKILL.md."
+)
 
 
-def _run_stdin(enabled: set[str], use_sg: bool) -> int:
+def _run_stdin(enabled: set[str]) -> int:
     text = sys.stdin.read()
-    new_text, counts = apply_rules(text, enabled, use_sg=use_sg)
+    new_text, counts = apply_rules(text, enabled)
     sys.stdout.write(new_text)
     for rid, n in counts.items():
         print(f"# applied {rid}: {n}", file=sys.stderr)
     return 0
 
 
-def _run_file(path: Path, enabled: set[str], use_sg: bool, apply: bool) -> int:
+def _run_file(path: Path, enabled: set[str], apply: bool) -> int:
     text = path.read_text(encoding="utf-8")
-    new_text, counts = apply_rules(text, enabled, use_sg=use_sg)
+    new_text, counts = apply_rules(text, enabled)
     if not counts:
         print(f"{path}: no rewrites applicable", file=sys.stderr)
         return 0
@@ -290,18 +283,20 @@ def main(argv: list[str] | None = None) -> int:
     if not args.file:
         ap.error("a file is required (or '-' for stdin)")
 
+    if not _sg_available():
+        sys.exit(_SG_MISSING_DIAGNOSTIC)
+
     enabled = _resolve_enabled(args.rules, args.skip, args.include)
-    use_sg = _resolve_engine(args.engine)
 
     if args.file == "-":
         if args.apply:
             ap.error("--apply is incompatible with stdin")
-        return _run_stdin(enabled, use_sg)
+        return _run_stdin(enabled)
 
     path = Path(args.file)
     if not path.is_file():
         sys.exit(f"not a file: {path}")
-    return _run_file(path, enabled, use_sg, args.apply)
+    return _run_file(path, enabled, args.apply)
 
 
 if __name__ == "__main__":
