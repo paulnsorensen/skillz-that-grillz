@@ -2,6 +2,17 @@
 
 The full ruleset payload, the `gh api` invocation, and the create-vs-update logic for step 3 of the protocol.
 
+## Two canonical variants
+
+Two ruleset shapes ship as assets, picked by repo size:
+
+| Asset | Use when | Highlights |
+|---|---|---|
+| `assets/rulesets/main-pr-ci.json` | Solo or small repo, no merge queue | Squash-only via `allowed_merge_methods`, 0 reviews, single CI check |
+| (inline below) | Team repo with a real merge queue | `merge_queue` rule, ≥1 review, multi-check matrix |
+
+The "main: PR + CI" template is the simpler default and matches what the user runs on their own repos. Pick it unless the project has enough PR throughput to justify the queue. Both variants enforce the same fundamentals (no force-push, no deletion, PRs required, CI must pass).
+
 ## Why a ruleset (not classic branch protection)
 
 Both surfaces can gate merges into `main`, but rulesets are the modern path:
@@ -77,6 +88,54 @@ What each rule buys:
 | `merge_queue` | Enables the queue. `merge_method: SQUASH` matches the repo-level squash-only setting. `ALLGREEN` waits for the whole batch to be green. |
 
 `required_approving_review_count: 0` is valid for solo repos and is the right pick when there's nobody else to review.
+
+## Variant: `main: PR + CI` (solo / no merge queue)
+
+`assets/rulesets/main-pr-ci.json` is the simpler shape — the same fundamentals (no force-push, no deletion, PRs required, named CI check must pass) without the merge queue and with squash hard-clamped at the rule level too.
+
+Key differences from the queue variant above:
+
+| Field | This variant | Queue variant |
+|---|---|---|
+| `name` | `main: PR + CI` | `main-protection` |
+| `pull_request.allowed_merge_methods` | `["squash"]` (belt-and-suspenders) | omitted (repo-level squash-only is enough) |
+| `pull_request.required_approving_review_count` | `0` | typically `1` |
+| `pull_request.dismiss_stale_reviews_on_push` | `false` | `true` |
+| `pull_request.required_review_thread_resolution` | `false` | `true` |
+| `merge_queue` rule | not present | present |
+| `required_status_checks` | one `{ "context": "check" }` | matrix of named checks |
+
+Why these defaults make sense for a solo repo:
+
+- `required_approving_review_count: 0` — there's no second pair of eyes to wait on. The CI check is the gate.
+- `dismiss_stale_reviews_on_push: false` — irrelevant when there are no reviewers to dismiss.
+- `required_review_thread_resolution: false` — same.
+- `allowed_merge_methods: ["squash"]` — the repo-level `allow_squash_merge=true` + `allow_merge_commit=false` + `allow_rebase_merge=false` already enforces this. The rule-level entry is redundant but explicit, which means a future contributor (or a future you) can read the ruleset and immediately see the merge contract without having to cross-check repo settings.
+- No `merge_queue` rule — the queue costs latency and only pays off when concurrent PRs are common.
+
+To apply:
+
+```bash
+REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner')
+TEMPLATE="$(skills/gh-bootstrap/assets/rulesets/main-pr-ci.json)"
+
+# Substitute the user's CI check name into the template before POSTing.
+jq --arg ctx "$YOUR_CHECK_NAME" \
+   '(.rules[] | select(.type=="required_status_checks") | .parameters.required_status_checks[0].context) = $ctx' \
+   "$TEMPLATE" > "$TMPDIR/ruleset.json"
+
+gh api -X POST "repos/$REPO/rulesets" --input "$TMPDIR/ruleset.json"
+```
+
+Or, if updating an existing ruleset by name:
+
+```bash
+EXISTING_ID=$(gh api "repos/$REPO/rulesets" \
+  --jq '.[] | select(.name == "main: PR + CI") | .id')
+gh api -X PUT "repos/$REPO/rulesets/$EXISTING_ID" --input "$TMPDIR/ruleset.json"
+```
+
+Required-status-checks can be expanded — duplicate the `{ "context": "..." }` object once per CI job that should gate merges. The template ships with a single placeholder named `check`; replace it with the real check names from `gh api repos/$REPO/commits/<sha>/check-runs --jq '.check_runs[].name'`.
 
 ## Apply it
 

@@ -95,13 +95,22 @@ Why each flag:
 
 Rulesets are GitHub's modern replacement for branch protection — they support merge queues as a first-class rule, layer cleanly with org rulesets, and are queryable via the API. Default to a ruleset; only fall back to classic branch protection if the user explicitly asks (e.g. they are pinned to an older GHE version).
 
-The full payload and the create-vs-update logic live in `references/ruleset.md` — read that file before this step. The high-level shape:
+The full payloads, the asset templates, and the create-vs-update logic live in `references/ruleset.md` — read that file before this step. Two canonical variants ship as assets:
+
+| Variant | Asset | Pick when |
+|---|---|---|
+| `main: PR + CI` | `assets/rulesets/main-pr-ci.json` | Solo or small repo. Squash-only via `allowed_merge_methods: ["squash"]`, 0 required reviews, single CI check, no merge queue. |
+| `main-protection` (queue) | inline JSON in `references/ruleset.md` | Team repo with concurrent PR throughput. Adds the `merge_queue` rule, ≥1 review, matrix of CI checks. |
+
+Both variants share the same shape:
 
 - `target: "branch"`, `conditions.ref_name.include: ["~DEFAULT_BRANCH"]`
 - `enforcement: "active"`
-- Rules: `deletion`, `non_fast_forward`, `pull_request` (with the requested review count), `required_status_checks` (with the user-supplied check names), `merge_queue` (with `merge_method: "SQUASH"`)
+- Rules: `deletion`, `non_fast_forward`, `pull_request`, `required_status_checks`
 
-**Idempotency:** list rulesets first, look for one with the agreed name (default `main-protection`). If present, `PUT` to the same id; if absent, `POST` a new one. Never duplicate.
+Default to the `main: PR + CI` variant unless the user explicitly asks for the merge queue. It's the simpler shape and the one that matches everyday solo work.
+
+**Idempotency:** list rulesets first, look for one with the agreed name. If present, `PUT` to the same id; if absent, `POST` a new one. Never duplicate.
 
 ### 4. Scaffold the release-notes config
 
