@@ -93,14 +93,14 @@ The org baseline in `assets/settings.yml` mirrors the gh-bootstrap defaults: squ
 
 ### 3. Choose the deployment path
 
-**GitHub Actions cron (recommended starting point)**
+#### GitHub Actions cron (recommended starting point)
 
 - Lowest setup cost — no hosting, no webhook tunnel
 - Reconciles every N hours via `npm run full-sync`
 - Drift gets fixed within the cron interval, not in real time
 - Copy `assets/full-sync.yml` → `<admin-repo>/.github/workflows/safe-settings.yml`
 
-**Hosted Probot app**
+#### Hosted Probot app
 
 - Real-time response to webhook events (push to `.github/settings.yml`, repo created, etc.)
 - Needs hosting (AWS Lambda, Docker, Heroku, k8s) and a public URL for webhooks
