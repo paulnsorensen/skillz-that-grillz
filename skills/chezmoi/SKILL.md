@@ -38,8 +38,10 @@ source-state semantics, Go templates, and at-rest encryption.
 
 chezmoi maps a **source directory** (`~/.local/share/chezmoi`, a git repo) to
 a **target directory** (the user's home). Source filenames carry attribute
-prefixes that determine target name and behavior. Source files with `.tmpl`
-suffix or under `.chezmoitemplates/` are rendered as Go `text/template`. A
+prefixes that determine target name and behavior. Source files with a `.tmpl` suffix are rendered as Go `text/template` and
+written to their target paths. Files under `.chezmoitemplates/` are reusable
+template fragments included by other templates — they do not produce target
+files on their own. A
 config file at `~/.config/chezmoi/chezmoi.toml` (typically generated from
 `.chezmoi.toml.tmpl` on first init) holds per-machine variables.
 

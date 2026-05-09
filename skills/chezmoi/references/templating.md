@@ -1,8 +1,10 @@
 # Templating
 
-chezmoi uses Go's `text/template`. A file is rendered if its source name
-ends in `.tmpl` OR if it lives under `.chezmoitemplates/`. The rendered
-output becomes the target file contents.
+chezmoi uses Go's `text/template`. A source file with a `.tmpl` suffix is
+rendered and written to its target path in `~`. Files under
+`.chezmoitemplates/` are *reusable fragments* — they are included by other
+templates via `{{ template "name" . }}` and do **not** produce target files
+themselves.
 
 ## Built-in variables
 

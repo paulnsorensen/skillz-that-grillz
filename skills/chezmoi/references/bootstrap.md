@@ -15,7 +15,7 @@ This:
 2. Clones `https://github.com/$GITHUB_USERNAME/dotfiles` into
    `~/.local/share/chezmoi`
 3. Renders `.chezmoi.toml.tmpl` to `~/.config/chezmoi/chezmoi.toml`,
-   prompting for any `promptOnce` answers
+   prompting for any `prompt*Once` answers (e.g. `promptStringOnce`, `promptBoolOnce`)
 4. Runs templated `run_once_before_*` scripts (typically
    `install-packages`)
 5. Renders and writes every dotfile to `~`
