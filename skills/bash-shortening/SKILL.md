@@ -104,16 +104,17 @@ python3 scripts/bash-shorten.py --explain test-numeric
 python3 scripts/bash-shorten.py --self-test
 ```
 
-**23 rules across 2 groups, 40 embedded test cases** (positive + negative).
-The `core` group has 20 rules, all on by default; the `modernize` group
-has 3 rules, off by default. 15 of the core rules mirror source-article
-examples (`basename`, `dirname`, `sed-replace-first/all`, `echo-wc-c`,
-`cut-c-substring`, `expr-arith-vars/literal/increment`, `combined-tests`,
-`test-numeric`, `empty-default`, `param-default`, `mkdir-guard`,
-`for-range-expansion`); 5 are bonus core patterns the article doesn't
-cover but are obvious wins (`backticks`, `legacy-null-check`,
-`empty-string-eq`, `find-exec-rm-delete`, `cat-file-pipe-grep` — three
-of which shellcheck flags but doesn't auto-fix).
+**Two rule groups (`core`, `modernize`)** with embedded positive and
+negative fixtures for every rule (run `--list` to see the current
+counts). The `core` group is on by default; the `modernize` group is
+opt-in. Most `core` rules mirror source-article examples (`basename`,
+`dirname`, `sed-replace-first/all`, `echo-wc-c`, `cut-c-substring`,
+`expr-arith-vars/literal/increment`, `combined-tests`, `test-numeric`,
+`empty-default`, `param-default`, `mkdir-guard`, `for-range-expansion`);
+the rest are bonus core patterns the article doesn't cover but are
+obvious wins (`backticks`, `legacy-null-check`, `empty-string-eq`,
+`find-exec-rm-delete`, `cat-file-pipe-grep` — three of which shellcheck
+flags but doesn't auto-fix).
 
 **What the rewriter deliberately *can't* do**: anything that needs data
 flow analysis (single-use variable inlining), multi-statement detection
@@ -201,7 +202,7 @@ Numbers in parens are the example numbers from the source article.
 | `$(basename "$P")` / `$(dirname "$P")` | `${P##*/}` / `${P%/*}` | parameter-expansion (11-12) |
 | `$(echo "$S" \| sed 's/a/b/g')` | `${S//a/b}` | parameter-expansion (13-14) |
 | `$(echo -n "$S" \| wc -c)` | `${#S}` | parameter-expansion (15) |
-| `$(expr $A + $B)` / `$(expr $C + 1)` | `$((A + B))` / `((C++))` | arithmetic (32-34) |
+| `$(expr $A + $B)` / `C=$(expr $C + 1)` | `$((A + B))` / `((C+=1))` (or `C=$((C + 1))`) | arithmetic (32-34) |
 | `[ $X -gt 100 ]` / `[ $A ] && [ $B ]` | `((X > 100))` / `[[ $A && $B ]]` | arithmetic (35, 37) |
 | `mkdir a; mkdir b; mkdir c` | `mkdir -p {a,b,c}` | brace-expansion (21-22) |
 | `for i in 1 2 3 4 5` | `for i in {1..5}` (or `{01..10}`, `{2..10..2}`) | brace-expansion (23-26) |
