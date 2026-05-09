@@ -1,0 +1,135 @@
+name: skill-quality
+
+# Tier 1 SKILL.md description review.
+#
+# Free GitHub Models GPT-4o judge that lints the *content* of changed
+# SKILL.md files: trigger phrases, scope clarity, internal contradictions,
+# spec adherence beyond what validate_skills.py can check structurally.
+#
+# Runs only when a SKILL.md changes. Step summary on every run, job fails
+# on any score < 60.
+#
+# This is a smoke test, not a faithful Claude-routing eval. For that, run
+# anthropic/skill-creator's run_eval.py locally before tagging a release.
+
+on:
+  pull_request:
+    paths:
+      - "skills/**/SKILL.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  models: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  judge:
+    name: judge SKILL.md descriptions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed SKILL.md files
+        id: collect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${BASE_SHA:-}" && -n "${HEAD_SHA:-}" ]]; then
+            mapfile -t files < <(git diff --name-only --diff-filter=AM "$BASE_SHA..$HEAD_SHA" -- 'skills/**/SKILL.md')
+          else
+            mapfile -t files < <(git ls-files 'skills/**/SKILL.md')
+          fi
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No SKILL.md changes; skipping judge."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          {
+            echo "## SKILL.md files under review"
+            echo
+            for f in "${files[@]}"; do
+              printf '### %s\n\n```markdown\n' "$f"
+              cat "$f"
+              printf '\n```\n\n'
+            done
+          } > prompt-payload.md
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Judge with GitHub Models (gpt-4o)
+        if: steps.collect.outputs.skip != 'true'
+        id: judge
+        # actions/ai-inference is GitHub's official wrapper. Pinned to a
+        # commit SHA to match the rest of this repo's actions; bump via
+        # dependabot or manually when a new release lands.
+        uses: actions/ai-inference@b81b2afb8390ee6839b494a404766bef6493c7d9 # v1.2.8
+        with:
+          model: openai/gpt-4o
+          prompt-file: prompt-payload.md
+          system-prompt: |
+            You are a strict reviewer of Anthropic Agent Skills
+            (https://agentskills.io/specification). For each SKILL.md file
+            you receive, score the *description* on a 0-100 scale and list
+            specific issues.
+
+            Score against:
+              1. Trigger phrases — description names concrete situations the
+                 skill applies to ("use when …", "trigger when …"). Vague
+                 descriptions score low.
+              2. Scope boundaries — when the skill could overlap others, it
+                 says when NOT to use it.
+              3. Internal consistency — no contradictions between sentences.
+              4. No marketing fluff — no "powerful", "comprehensive",
+                 "robust"; no hedging filler.
+              5. Spec adherence — frontmatter has at minimum `name` and
+                 `description`; `name` matches the parent directory.
+
+            Bands: >=80 pass, 60-79 warn, <60 fail.
+
+            Output ONLY strict JSON, no prose, matching:
+            {"results": [{"file": "skills/<name>/SKILL.md",
+                          "score": <int 0-100>,
+                          "issues": ["<short string>", ...]}]}
+
+      - name: Parse verdict and gate
+        if: steps.collect.outputs.skip != 'true'
+        env:
+          RESPONSE: ${{ steps.judge.outputs.response }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, sys
+
+          raw = os.environ.get("RESPONSE", "").strip()
+          # Strip ``` fences if the model wrapped its JSON.
+          raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              print(f"::error::Judge returned non-JSON: {exc}\n---\n{raw}", file=sys.stderr)
+              sys.exit(2)
+
+          lines = ["## Tier 1 SKILL.md review", ""]
+          fail = False
+          for r in data.get("results", []):
+              score = int(r.get("score", 0))
+              icon = "✅" if score >= 80 else ("⚠️" if score >= 60 else "❌")
+              lines.append(f"- {icon} **{r.get('file', '?')}** — {score}/100")
+              for issue in r.get("issues", []) or []:
+                  lines.append(f"  - {issue}")
+              if score < 60:
+                  fail = True
+
+          summary = "\n".join(lines) + "\n"
+          print(summary)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write(summary)
+          sys.exit(1 if fail else 0)
+          PY

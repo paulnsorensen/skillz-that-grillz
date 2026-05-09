@@ -28,11 +28,20 @@ jobs:
       - name: Install PyYAML
         run: pip install --no-cache-dir pyyaml==6.0.2
 
+      - name: Install ast-grep (sg)
+        # Hard requirement of bash-shorten.py. Note `sg` collides with
+        # util-linux's "switch group" binary on Ubuntu; ast-grep-cli's
+        # wheel installs to the venv bin which is earlier on PATH.
+        run: pip install --no-cache-dir ast-grep-cli==0.42.1
+
       - name: Test SKILL.md validator
         run: python3 .github/scripts/test_validate_skills.py -v
 
       - name: Validate SKILL.md frontmatter
         run: python3 .github/scripts/validate_skills.py
+
+      - name: bash-shorten.py self-test
+        run: python3 skills/bash-shortening/scripts/bash-shorten.py --self-test
 
   install-script:
     name: test install.sh (macOS)
@@ -50,8 +59,17 @@ jobs:
       - name: Install bats
         run: brew install bats-core
 
+      - name: Install ast-grep (sg)
+        # Hard requirement of bash-shorten.py — installed before the bats
+        # tests so the engine path is exercised. install.sh would also
+        # bring this down, but its dry-run runs after these tests.
+        run: brew install ast-grep
+
       - name: Run install.sh unit tests
         run: bats tests/bash/test_install.bats
+
+      - name: Run bash-shorten.py CLI tests
+        run: bats tests/bash-shortening/test_bash_shorten.bats
 
       # Dry-run smoke: exercises arg parsing, selection validation, and
       # the skill-install dispatch path. Does NOT actually run brew or

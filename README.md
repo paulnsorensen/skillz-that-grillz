@@ -7,13 +7,14 @@
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-spec-blueviolet?style=flat-square)](https://agentskills.io/specification)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/pulls)
 
-> _Tight little toolbelt of git, GitHub, and project-runner skills._
+> _Tight little toolbelt of git, GitHub, project-runner, and shell-craft skills._
 
 A focused, skills-only repository of [Agent Skills](https://agentskills.io/specification)
 for the everyday plumbing around a project: making a clean commit, working a
-GitHub PR, stacking branches with Graphite, scaffolding a justfile, and wiring
-up prek pre-commit hooks. No agents, no orchestration, no MCP requirements —
-just self-contained `SKILL.md` files that any spec-compliant harness can load.
+GitHub PR, stacking branches with Graphite, scaffolding a justfile, wiring up
+prek pre-commit hooks, and writing concise idiomatic Bash. No agents, no
+orchestration, no MCP requirements — just self-contained `SKILL.md` files that
+any spec-compliant harness can load.
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
 covers the design / implement / review workflow (mold, cook, press, age, cure).
@@ -40,6 +41,7 @@ harness can load it progressively.
 
 | Skill path | Command | Purpose |
 | --- | --- | --- |
+| `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in Claude. |
 | `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
 | `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, code search — via the GitHub MCP plugin, with `gh` CLI as the fallback for operations MCP doesn't cover. |
@@ -52,10 +54,14 @@ harness can load it progressively.
 
 ## Scope
 
-Each skill wraps a single CLI you probably already use:
+Most skills wrap a single CLI you probably already use. `bash-shortening`
+can be used as pure methodology (invoke `/bash-shortening` in Claude
+Code); the bundled `bash-shorten.py` rewriter additionally requires
+**ast-grep**.
 
 | Skill | Wraps | Required | Optional |
 | --- | --- | --- | --- |
+| `bash-shortening` | methodology + `bash-shorten.py` rewriter | bash 4+ in target scripts, **ast-grep** (when running the rewriter) | shellcheck (post-validation), sd / ripgrep / fd (`--include modernize`) |
 | `commit` | `git` | git | — |
 | `chezmoi` | `chezmoi` CLI | chezmoi | `op` / `bw` / `age` / `gpg` (one of, when using encrypted dotfiles); Context7 MCP (latest template-function docs) |
 | `gh` | `gh` CLI | gh | GitHub MCP plugin (preferred) |
@@ -114,7 +120,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in commit gh gh-bootstrap gt justfile oss-hygiene prek safe-settings; do
+for s in bash-shortening commit gh gh-bootstrap gt justfile oss-hygiene prek safe-settings; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```

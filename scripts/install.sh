@@ -15,9 +15,12 @@
 # file so sourcing (e.g. from a test suite) does not mutate the caller's
 # shell options.
 
-# CLI tools wrapped by the skills in this repo. graphite is the upstream
-# package name for the gt CLI used by the (placeholder) gt skill.
-SG_KNOWN_TOOLS="gh just prek graphite"
+# CLI tools wrapped by the skills in this repo. Names listed here are the
+# brew formula names, which sometimes differ from the binary name (see
+# sg_tool_binary). graphite is the upstream package for the gt CLI;
+# ripgrep installs the rg binary. sd / fd / ast-grep back the
+# bash-shortening skill's modernize rules and ast-grep engine.
+SG_KNOWN_TOOLS="gh just prek graphite ast-grep sd ripgrep fd"
 
 # Repository the installer pulls skills from. Centralized so discovery and
 # install both reference the same source.
@@ -27,7 +30,7 @@ SG_SKILL_REPO="paulnsorensen/skillz-that-grillz"
 # the live set via 'gh api repos/.../contents/skills' so it self-heals when
 # new skills land — this list is only used when the API call is
 # unavailable (offline, rate-limited, repo temporarily private).
-SG_FALLBACK_SKILLS="commit gh gh-bootstrap gt justfile prek safe-settings"
+SG_FALLBACK_SKILLS="bash-shortening commit gh gh-bootstrap gt justfile prek safe-settings"
 
 # Default selections.
 SG_DEFAULT_TOOLS="$SG_KNOWN_TOOLS"
@@ -37,6 +40,8 @@ SG_DEFAULT_MCP="context7"
 sg_tool_binary() {
     case "$1" in
         graphite) echo "gt" ;;
+        ripgrep)  echo "rg" ;;
+        ast-grep) echo "sg" ;;
         *)        echo "$1" ;;
     esac
 }
@@ -70,7 +75,8 @@ Usage:
 
 Options:
   --tools <list>       Comma-separated CLI tools to install. Default: all.
-                       Choices: gh, just, prek, graphite
+                       Choices: gh, just, prek, graphite, ast-grep, sd,
+                       ripgrep, fd
   --mcp <list>         Comma-separated MCP servers to register. Default:
                        context7. Choices: context7, none
   --skip-mcp           Same as --mcp none.
