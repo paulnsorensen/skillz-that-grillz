@@ -331,8 +331,9 @@ For higher rate limits, get a free API key at
 [context7.com](https://context7.com) and append `--api-key YOUR_API_KEY` to
 the `args` array. Requires Node.js v18+.
 
-If Context7 is missing, `doc-grounder` falls back to Tavily/WebSearch with a
-freshness warning, and `prek` falls back to the hook revisions documented inline.
+If Context7 is missing, `doc-grounder` falls back to Tavily/WebSearch and notes
+the missing source in the brief's target/freshness section; `prek` falls back
+to the hook revisions documented inline.
 
 ### Tavily (optional, used by `/doc-grounder`)
 

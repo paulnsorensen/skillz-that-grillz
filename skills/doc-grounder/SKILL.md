@@ -38,9 +38,9 @@ that another planning or coding step can use.
 Extract the library name, ecosystem, version constraint, and intended use case.
 If the prompt is broad ("use this library"), infer a small set of likely topics
 such as installation, core API/command surface, configuration, integration
-points, examples, security caveats, and recommended workflows. Ask clarifying questions when multiple libraries match
-the name, version constraints conflict, or the use case maps to fundamentally
-different API surfaces.
+points, examples, security caveats, and recommended workflows. Ask clarifying
+questions when multiple libraries match the name, version constraints conflict,
+or the use case maps to fundamentally different API surfaces.
 
 ### 2. Resolve with Context7 first
 
@@ -78,9 +78,9 @@ docs site.
 
 Compare Context7 and Tavily findings before summarizing:
 
-- Prefer newer official docs when Context7 conflicts with official version numbers,
-  misses recently announced features, or points to docs marked for an older major
-  version
+- Supplement Context7 with newer official docs when they conflict with official
+  version numbers, mention features Context7 misses, or are marked for a newer
+  major version; flag the conflict in the brief
 - Call out version mismatches, renamed APIs, deprecated commands, or missing docs
 - Separate documented guarantees from examples or conventions
 - Note anything important that remains unverified
