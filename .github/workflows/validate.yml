@@ -65,6 +65,9 @@ jobs:
       - name: Lint install.sh
         run: shellcheck scripts/install.sh
 
+      - name: Lint skillz.sh
+        run: shellcheck skills/file-handler/scripts/skillz.sh
+
       - name: Install bats
         run: brew install bats-core
 
@@ -76,6 +79,9 @@ jobs:
 
       - name: Run install.sh unit tests
         run: bats tests/bash/test_install.bats
+
+      - name: Run skillz.sh unit tests
+        run: bats tests/bash/test_skillz.bats
 
       - name: Run bash-shorten.py CLI tests
         run: bats tests/bash-shortening/test_bash_shorten.bats
