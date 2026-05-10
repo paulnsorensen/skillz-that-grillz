@@ -38,8 +38,8 @@ that another planning or coding step can use.
 Extract the library name, ecosystem, version constraint, and intended use case.
 If the prompt is broad ("use this library"), infer a small set of likely topics
 such as installation, core API/command surface, configuration, integration
-points, examples, security caveats, and recommended workflows. Ask one clarifying question only when the target library
-or use case is ambiguous enough that docs would fork in different directions.
+points, examples, security caveats, and recommended workflows. Ask clarifying questions when the target library or use
+case is ambiguous enough that docs would fork in different directions.
 
 ### 2. Resolve with Context7 first
 
@@ -69,8 +69,9 @@ order:
 5. Community examples only when official docs are missing
 
 Then use `tavily-extract` on the selected URLs. Extract only pages that answer
-the planning question; do not bulk-download an entire docs site unless the user
-explicitly asks for a local docs corpus.
+the planning question. For comprehensive coverage across multiple related
+topics, extract the specific pages needed rather than bulk-downloading an entire
+docs site.
 
 ### 4. Reconcile the sources
 
