@@ -71,11 +71,14 @@ order:
 4. Maintainer-authored blog or release announcement
 5. Community examples only when official docs are missing
 
-Then use `tavily-extract` on the selected URLs. Extract only pages that answer
-the planning question. For comprehensive coverage across multiple related
-topics, extract the specific pages needed rather than bulk-downloading an entire
-docs site. Selective extraction keeps the brief relevant and avoids spending
-tokens and latency on pages that cannot affect the plan.
+Then use `tavily-extract` on the selected URLs. Extract pages that can change
+the plan: quickstarts, API references, migration guides, release notes, security
+notes, and authoritative examples. Skip marketing pages, unrelated tutorials,
+and reference sections outside the requested use case. For comprehensive
+coverage across multiple related topics, extract the specific pages needed
+rather than bulk-downloading an entire docs site. Selective extraction keeps the
+brief relevant and avoids spending tokens and latency on pages that cannot
+affect the plan.
 
 ### 4. Reconcile the sources
 
@@ -114,7 +117,7 @@ it directly.
   mirror.
 - Cite every claim that could change across versions.
 - Prefer official current docs over model memory.
-- Mark MCP failures explicitly. Use WebSearch to fill the missing side when one
-  MCP fails, and use WebSearch as the primary fallback when both MCPs are
-  unavailable.
+- Mark MCP failures explicitly. When Context7 fails, use WebSearch to supplement
+  Tavily results. When Tavily fails, use WebSearch to verify Context7 findings.
+  When both MCPs are unavailable, use WebSearch as the primary research method.
 - Do not invoke implementation, commit, PR, or CI workflows from this skill.

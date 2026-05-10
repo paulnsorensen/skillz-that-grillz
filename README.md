@@ -284,7 +284,7 @@ structured library docs; Tavily search/extract verifies official docs, release
 notes, API references, examples, and best-practice pages.
 
 Install Context7 as below, then add Tavily using your harness's MCP
-configuration with a `TAVILY_API_KEY` from Tavily. If either MCP is missing,
+configuration with a `TAVILY_API_KEY`. If either MCP is missing,
 `doc-grounder` should say what is unavailable and fall back to narrower web
 research where possible.
 
@@ -342,8 +342,9 @@ official docs pages. `doc-grounder` uses it to verify Context7 results against
 release notes, changelogs, API references, examples, and best-practice guides.
 
 Configure Tavily in your harness's MCP settings and provide `TAVILY_API_KEY` as
-an environment variable or secret. Prefer extracting selected official URLs over
-crawling an entire docs site unless you explicitly need a local docs corpus.
+an environment variable or secret. Prefer extracting selected official URLs such
+as quickstarts, API references, release notes, and migration guides; crawl an
+entire docs site only when you explicitly need a local docs corpus.
 
 ## Validate
 
