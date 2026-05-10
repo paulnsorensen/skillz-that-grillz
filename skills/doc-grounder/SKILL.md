@@ -38,8 +38,9 @@ that another planning or coding step can use.
 Extract the library name, ecosystem, version constraint, and intended use case.
 If the prompt is broad ("use this library"), infer a small set of likely topics
 such as installation, core API/command surface, configuration, integration
-points, examples, security caveats, and recommended workflows. Ask clarifying questions when the target library or use
-case is ambiguous enough that docs would fork in different directions.
+points, examples, security caveats, and recommended workflows. Ask clarifying questions when multiple libraries match
+the name, version constraints conflict, or the use case maps to fundamentally
+different API surfaces.
 
 ### 2. Resolve with Context7 first
 
@@ -77,7 +78,9 @@ docs site.
 
 Compare Context7 and Tavily findings before summarizing:
 
-- Prefer newer official docs when Context7 appears stale
+- Prefer newer official docs when Context7 conflicts with official version numbers,
+  misses recently announced features, or points to docs marked for an older major
+  version
 - Call out version mismatches, renamed APIs, deprecated commands, or missing docs
 - Separate documented guarantees from examples or conventions
 - Note anything important that remains unverified
@@ -108,6 +111,7 @@ it directly.
   mirror.
 - Cite every claim that could change across versions.
 - Prefer official current docs over model memory.
-- Mark MCP failures explicitly and fall back to WebSearch only when Tavily or
-  Context7 is unavailable.
+- Mark MCP failures explicitly. Use WebSearch to fill the missing side when one
+  MCP fails, and use WebSearch as the primary fallback when both MCPs are
+  unavailable.
 - Do not invoke implementation, commit, PR, or CI workflows from this skill.
