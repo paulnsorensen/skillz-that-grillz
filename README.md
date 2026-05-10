@@ -7,12 +7,13 @@
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-spec-blueviolet?style=flat-square)](https://agentskills.io/specification)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/pulls)
 
-> _Tight little toolbelt of git, GitHub, project-runner, and shell-craft skills._
+> _Tight little toolbelt of git, GitHub, project-runner, docs-research, and shell-craft skills._
 
 A focused, skills-only repository of [Agent Skills](https://agentskills.io/specification)
 for the everyday plumbing around a project: making a clean commit, working a
-GitHub PR, stacking branches with Graphite, scaffolding a justfile, wiring up
-prek pre-commit hooks, and writing concise idiomatic Bash. No agents, no
+GitHub PR, stacking branches with Graphite, scaffolding a justfile, grounding
+plans in current library docs, wiring up prek pre-commit hooks, and writing
+concise idiomatic Bash. No agents, no
 orchestration, no MCP requirements — just self-contained `SKILL.md` files that
 any spec-compliant harness can load.
 
@@ -43,6 +44,7 @@ harness can load it progressively.
 | --- | --- | --- |
 | `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in Claude. |
 | `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
+| `skills/doc-grounder/SKILL.md` | `/doc-grounder` | Ground a planning phase in current library docs with Context7 library lookup plus Tavily search/extract of official docs, API references, changelogs, examples, and best practices. Produces a cited docs brief; does not implement. |
 | `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, code search — via the GitHub MCP plugin, with `gh` CLI as the fallback for operations MCP doesn't cover. |
 | `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
@@ -63,6 +65,7 @@ Code); the bundled `bash-shorten.py` rewriter additionally requires
 | --- | --- | --- | --- |
 | `bash-shortening` | methodology + `bash-shorten.py` rewriter | bash 4+ in target scripts, **ast-grep** (when running the rewriter) | shellcheck (post-validation), sd / ripgrep / fd (`--include modernize`) |
 | `commit` | `git` | git | — |
+| `doc-grounder` | Context7 + Tavily MCP-assisted docs research | — | Context7 MCP, Tavily MCP, WebSearch fallback |
 | `chezmoi` | `chezmoi` CLI | chezmoi | `op` / `bw` / `age` / `gpg` (one of, when using encrypted dotfiles); Context7 MCP (latest template-function docs) |
 | `gh` | `gh` CLI | gh | GitHub MCP plugin (preferred) |
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
@@ -77,8 +80,9 @@ What that means in practice:
 - **No orchestration, no intent classification.** Each skill is a single
   focused step the user (or another skill) explicitly invokes.
 - **No required MCP servers.** The `gh` skill prefers the GitHub MCP plugin
-  but degrades cleanly to the `gh` CLI; `prek` falls back to documented
-  hook revisions when Context7 is missing.
+  but degrades cleanly to the `gh` CLI; `doc-grounder` uses MCPs when present
+  and falls back to narrower web research; `prek` falls back to documented hook
+  revisions when Context7 is missing.
 - **Composes freely with any other skill set** — install just these, install
   alongside something larger, or pick individual skills.
 
@@ -120,7 +124,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in bash-shortening commit gh gh-bootstrap gt justfile oss-hygiene prek safe-settings; do
+for s in bash-shortening commit doc-grounder gh gh-bootstrap gt justfile oss-hygiene prek safe-settings; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```
@@ -272,6 +276,18 @@ latest install instructions and `gt auth` to log in.
 
 ## Optional MCP servers
 
+### Context7 + Tavily (optional, used by `/doc-grounder`)
+
+The `doc-grounder` skill combines Context7 with Tavily to produce current,
+cited docs briefs before planning library-dependent work. Context7 supplies
+structured library docs; Tavily search/extract verifies official docs, release
+notes, API references, examples, and best-practice pages.
+
+Install Context7 as below, then add Tavily using your harness's MCP
+configuration with a `TAVILY_API_KEY` from Tavily. If either MCP is missing,
+`doc-grounder` should say what is unavailable and fall back to narrower web
+research where possible.
+
 ### GitHub MCP plugin (preferred for `/gh`)
 
 The `gh` skill prefers the GitHub MCP plugin (`mcp__plugin_github_github__*`)
@@ -285,11 +301,12 @@ harness's plugin manager — for Claude Code:
 If MCP isn't available, the skill falls back to the `gh` CLI for every
 operation that has a CLI equivalent.
 
-### Context7 (optional, used by `/prek`)
+### Context7 (optional, used by `/doc-grounder` and `/prek`)
 
 [Context7](https://github.com/upstash/context7) fetches up-to-date library
-docs into the session. The `prek` skill uses it to pin current revisions of
-community hook repos (ruff-pre-commit, shellcheck-py, etc.).
+docs into the session. The `doc-grounder` skill uses it as the structured docs
+source for planning briefs; the `prek` skill uses it to pin current revisions
+of community hook repos (ruff-pre-commit, shellcheck-py, etc.).
 
 **Claude Code:**
 
@@ -314,8 +331,18 @@ For higher rate limits, get a free API key at
 [context7.com](https://context7.com) and append `--api-key YOUR_API_KEY` to
 the `args` array. Requires Node.js v18+.
 
-If Context7 is missing, the `prek` skill falls back to the hook revisions
-documented inline.
+If Context7 is missing, `doc-grounder` falls back to Tavily/WebSearch with a
+freshness warning, and `prek` falls back to the hook revisions documented inline.
+
+### Tavily (optional, used by `/doc-grounder`)
+
+[Tavily](https://www.tavily.com/) provides web search and `tavily-extract` for
+official docs pages. `doc-grounder` uses it to verify Context7 results against
+release notes, changelogs, API references, examples, and best-practice guides.
+
+Configure Tavily in your harness's MCP settings and provide `TAVILY_API_KEY` as
+an environment variable or secret. Prefer extracting selected official URLs over
+crawling an entire docs site unless you explicitly need a local docs corpus.
 
 ## Validate
 
