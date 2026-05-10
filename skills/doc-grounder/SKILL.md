@@ -17,8 +17,10 @@ license: MIT
 
 # doc-grounder
 
-Prepare a planning-ready documentation brief for a library, framework, CLI, or
-SDK before design or implementation starts.
+Use this before choosing an integration shape, API surface, or migration path
+for a library. It produces a cited docs brief for planning; hand off to another
+skill or workflow for implementation, GitHub operations, or broad non-library
+web research.
 
 ## When to use
 
@@ -72,7 +74,8 @@ order:
 Then use `tavily-extract` on the selected URLs. Extract only pages that answer
 the planning question. For comprehensive coverage across multiple related
 topics, extract the specific pages needed rather than bulk-downloading an entire
-docs site.
+docs site. Selective extraction keeps the brief relevant and avoids spending
+tokens and latency on pages that cannot affect the plan.
 
 ### 4. Reconcile the sources
 
@@ -85,7 +88,7 @@ Compare Context7 and Tavily findings before summarizing:
 - Separate documented guarantees from examples or conventions
 - Note anything important that remains unverified
 
-This prevents a plan from inheriting outdated signatures or cargo-cult examples.
+This prevents a plan from inheriting outdated signatures or unverified patterns.
 
 ### 5. Produce a planning brief
 
