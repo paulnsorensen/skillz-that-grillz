@@ -26,8 +26,10 @@ web research.
 
 - The user wants to plan with current library docs instead of memory alone
 - The target is version-sensitive, fast-moving, or unfamiliar
-- The prompt names Context7, Tavily, `tavily-extract`, or asks to "ground" a plan
-- The user asks what a library offers: APIs, commands, integrations, examples,
+- The prompt names Context7, Tavily, the `tavily-extract` MCP tool, or asks to
+  "ground" a plan
+- The user says "check the latest API", "what changed in version X", or asks
+  what a library offers: APIs, commands, integrations, examples,
   best practices, migration notes, or gotchas
 
 Do not start implementing. This skill stops after producing a concise docs brief
@@ -71,7 +73,7 @@ order:
 4. Maintainer-authored blog or release announcement
 5. Community examples only when official docs are missing
 
-Then use `tavily-extract` on the selected URLs. Extract pages that can change
+Then use the `tavily-extract` MCP tool on the selected URLs. Extract pages that can change
 the plan: quickstarts, API references, migration guides, release notes, security
 notes, and authoritative examples. Skip marketing pages, unrelated tutorials,
 and reference sections outside the requested use case. For comprehensive
@@ -117,7 +119,8 @@ it directly.
   mirror.
 - Cite every claim that could change across versions.
 - Prefer official current docs over model memory.
-- Mark MCP failures explicitly. When Context7 fails, use WebSearch to supplement
-  Tavily results. When Tavily fails, use WebSearch to verify Context7 findings.
-  When both MCPs are unavailable, use WebSearch as the primary research method.
+- Mark MCP failures explicitly. When Context7 fails, use the standard WebSearch
+  tool to supplement Tavily results. When Tavily fails, use WebSearch to verify
+  Context7 findings. When both MCPs are unavailable, use WebSearch as the primary
+  research method.
 - Do not invoke implementation, commit, PR, or CI workflows from this skill.
