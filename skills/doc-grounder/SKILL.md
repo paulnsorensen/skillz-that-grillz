@@ -10,7 +10,7 @@ description: >
   brief for using <library>", or asks for implementation planning that depends
   on unfamiliar or fast-moving library behavior. Do NOT use for implementing the
   change, generic web research unrelated to a library, or GitHub/CI operations.
-allowed-tools: Read, Write, Edit, Glob, Grep, WebSearch, mcp__context7__resolve-library-id, mcp__context7__query-docs, mcp__context7__get-library-docs, mcp__tavily__tavily-search, mcp__tavily__tavily-extract
+allowed-tools: Write, WebSearch, mcp__context7__resolve-library-id, mcp__context7__query-docs, mcp__context7__get-library-docs, mcp__tavily__tavily-search, mcp__tavily__tavily-extract
 context: fork
 license: MIT
 ---
@@ -36,9 +36,9 @@ that another planning or coding step can use.
 ### 1. Pin the research target
 
 Extract the library name, ecosystem, version constraint, and intended use case.
-If the prompt is broad ("use chezmoi"), infer a small set of likely topics such
-as installation, configuration, API/command surface, templates, secrets, and
-recommended workflows. Ask one clarifying question only when the target library
+If the prompt is broad ("use this library"), infer a small set of likely topics
+such as installation, core API/command surface, configuration, integration
+points, examples, security caveats, and recommended workflows. Ask one clarifying question only when the target library
 or use case is ambiguous enough that docs would fork in different directions.
 
 ### 2. Resolve with Context7 first

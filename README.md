@@ -7,7 +7,7 @@
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-spec-blueviolet?style=flat-square)](https://agentskills.io/specification)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/pulls)
 
-> _Tight little toolbelt of git, GitHub, project-runner, docs-research, and shell-craft skills._
+> _Tight little toolbelt of git, GitHub, project-runner, library-docs, and shell-craft skills._
 
 A focused, skills-only repository of [Agent Skills](https://agentskills.io/specification)
 for the everyday plumbing around a project: making a clean commit, working a
