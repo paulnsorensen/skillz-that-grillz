@@ -44,18 +44,20 @@ command -v gt >/dev/null 2>&1 && gt --version >/dev/null 2>&1
 test -f "$(git rev-parse --git-dir)/.graphite_repo_config"
 
 # gh stack extension installed?
-gh extension list 2>/dev/null | grep -q '^github/gh-stack\b'
+# (gh extension list output is TAB-separated: <short-name>\t<owner/repo>\t<version>)
+gh extension list 2>/dev/null | awk -F '\t' '$2 == "github/gh-stack"' | grep -q .
 ```
 
 Decision table:
 
-| `gt` present + repo init | `gh stack` ext present | Action |
-| --- | --- | --- |
-| yes | no | Use `gt`. Read `references/gt.md`. |
-| no | yes | Use `gh stack`. Read `references/gh-stack.md`. |
-| yes | yes | Prefer `gt` (mature, generally available). Mention `gh stack` is also present and offer to switch. |
-| `gt` installed, repo NOT init | no | Offer to run `gt init` (one-time, see `references/gt.md`). |
-| no | no | **Stop. Tell the user neither tool is available.** Don't reach for `git push` chains. See "Neither installed" below. |
+| `gt` installed | repo `gt init`'d | `gh stack` ext | Action |
+| --- | --- | --- | --- |
+| yes | yes | no | Use `gt`. Read `references/gt.md`. |
+| no | — | yes | Use `gh stack`. Read `references/gh-stack.md`. |
+| yes | yes | yes | Prefer `gt` (GA, mature). Mention `gh stack` is also present and offer to switch. |
+| yes | no | no | Offer to run `gt init` (one-time, see `references/gt.md`), then use `gt`. |
+| yes | no | yes | Use `gh stack` (no init step needed). Optionally offer `gt init` for the future. |
+| no | — | no | **Stop. Tell the user neither tool is available.** Don't reach for `git push` chains. See "Neither installed" below. |
 
 The detection itself takes three short commands. Run them every invocation —
 the user's environment can change between sessions.
@@ -110,7 +112,7 @@ reference.
 | Pull trunk + restack | `gt sync` | `gh stack sync` |
 | Cascade restack only | `gt restack` | `gh stack rebase` |
 | Submit / update PRs | `gt submit --stack` (`gt ss`) | `gh stack submit` |
-| Adopt a plain-git branch | `gt track` | `gh stack init --adopt` |
+| Adopt a plain-git branch | `gt track` (any time) | `gh stack init --adopt` *(init-time only — adopts current branch as bottom of a new stack)* |
 | Move up / down in stack | `gt up` / `gt down` | `gh stack up` / `gh stack down` |
 | Continue after conflict | `gt continue` | `gh stack rebase --continue` |
 | Abort halted op | `gt abort` | `gh stack rebase --abort` |

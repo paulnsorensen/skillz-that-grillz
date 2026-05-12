@@ -205,10 +205,10 @@ git status                   # shows conflicted paths
 # … edit files, remove <<<<<<< markers …
 
 # 2. Mark resolved
-gt add .                     # (gt's wrapper) or git add path/to/resolved
+git add .                    # or `git add path/to/resolved` for specific files
 
 # 3. Resume the broader Graphite operation — NOT bare git rebase --continue
-gt continue                  # -a stages everything before continuing
+gt continue                  # -a stages everything before continuing (equivalent to step 2 + this)
 ```
 
 Critical: **always use `gt continue` / `gt abort`**, never bare
