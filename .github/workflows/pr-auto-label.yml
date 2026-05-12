@@ -1,0 +1,59 @@
+# Auto-label PRs from their conventional-commit title prefix so that
+# `gh release --generate-notes` groups them into the categories defined
+# in .github/release.yml. Without labels every PR falls into the
+# release.yml "*" catch-all ("Other changes"), which is why v0.0.2 notes
+# came out flat.
+#
+# Mapping (prefix -> default GitHub label):
+#   feat:        -> enhancement
+#   fix:         -> bug
+#   docs:        -> documentation
+#   chore(deps): -> dependencies
+#   anything else -> no label (falls into release.yml "Other changes")
+#
+# Only the four labels above are touched because they exist on every
+# GitHub repo by default — no label-creation step required.
+#
+# `pull_request_target` (not `pull_request`) so the workflow runs in the
+# base-repo context with write permission to labels, which is needed
+# when contributions arrive from forks. No PR code is checked out, so
+# the usual `pull_request_target` checkout-injection risk does not apply.
+
+name: pr-auto-label
+
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const title = context.payload.pull_request.title || '';
+            // Conventional commit: type(scope)?!?:
+            const m = title.match(/^([a-z]+)(\(([^)]+)\))?!?:/);
+            if (!m) return;
+            const type = m[1];
+            const scope = m[3] || '';
+            const map = {
+              feat: 'enhancement',
+              fix: 'bug',
+              docs: 'documentation',
+            };
+            const labels = new Set();
+            if (map[type]) labels.add(map[type]);
+            if (type === 'chore' && /^deps/.test(scope)) labels.add('dependencies');
+            if (labels.size === 0) return;
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: [...labels],
+            });
