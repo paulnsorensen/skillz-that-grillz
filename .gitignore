@@ -11,3 +11,6 @@ __pycache__/
 # Workflow scratch (age/cure/press reports, planning notes)
 .cheese/
 .context/
+
+# Skill-creator iteration workspaces (eval runs, benchmarks, viewer HTML)
+skills/*-workspace/
