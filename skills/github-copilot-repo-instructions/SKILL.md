@@ -1,7 +1,7 @@
 ---
 name: github-copilot-repo-instructions
 model: haiku
-allowed-tools: Read, Write, Edit, Glob, Bash(ls:*), Bash(cat:*), Bash(git:*)
+allowed-tools: Read, Write, Edit, Glob, Bash(ls:*), Bash(cat:*), Bash(git:*), Bash(mkdir:*), Bash(gh:*)
 description: >
   Add, audit, or fix GitHub Copilot repository custom instructions —
   `.github/copilot-instructions.md` (repo-wide) and
@@ -180,7 +180,7 @@ review on a PR that touches a glob covered by a path-specific file.
 
 When the user says "audit our Copilot config":
 
-1. `ls -la .github/copilot-instructions.md .github/instructions/ AGENTS.md CLAUDE.md GEMINI.md` (silence missing files).
+1. `ls -la .github/copilot-instructions.md .github/instructions/ AGENTS.md CLAUDE.md GEMINI.md 2>/dev/null` (silence missing files).
 2. Read each present file and check:
    - Repo-wide file ≤ 2 pages.
    - Every path-specific file has `applyTo` frontmatter.
