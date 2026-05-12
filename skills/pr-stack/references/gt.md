@@ -267,7 +267,7 @@ Environment overrides:
   worktrees. `gt undo` history is per-worktree.
 - **GitHub Enterprise Cloud**: works out of the box.
 - **GitHub Enterprise Server (self-hosted)**: requires Graphite Enterprise
-  + IP allowlist coordination with Graphite support. No self-serve path.
+  plus IP allowlist coordination with Graphite support. No self-serve path.
 
 Source: <https://graphite.dev/docs/multiple-trunks>,
 <https://graphite.dev/docs/multiple-worktrees>,
