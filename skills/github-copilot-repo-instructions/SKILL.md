@@ -118,6 +118,50 @@ toggle **"Use custom instructions when reviewing pull requests"**.
 
 Default is enabled, but confirm — orgs sometimes flip it off.
 
+### Enable automatic Copilot review on every PR
+
+Two paths — pick one. Both create a branch ruleset; the API path is scriptable.
+
+**UI** — Settings → **Rules** → **Rulesets** → **New branch ruleset**.
+Under "Branch rules", select **Automatically request Copilot code review**.
+Two sub-toggles: *Review new pushes* (re-review on each push, burns premium
+requests) and *Review draft pull requests*.
+
+**API** (`gh`) — the rule type is `copilot_code_review`. It is **not** listed
+on the [rulesets schema page](https://docs.github.com/rest/repos/rules#create-a-repository-ruleset)
+as of writing, but the endpoint accepts it. Targets work like any other ruleset.
+
+```bash
+gh api repos/<owner>/<repo>/rulesets -X POST --input - <<'JSON'
+{
+  "name": "copilot-auto-review",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
+  "rules": [
+    {
+      "type": "copilot_code_review",
+      "parameters": {
+        "review_on_push": false,
+        "review_draft_pull_requests": false
+      }
+    }
+  ]
+}
+JSON
+```
+
+Defaults shown are conservative: review once on PR open, skip drafts.
+Flip `review_on_push` to `true` to re-review on every push — useful for
+agentic workflows, expensive on premium-request quota.
+
+Requires Copilot Business/Enterprise on the org, or Copilot Pro for personal
+repos. The ruleset still installs without a license; reviews just don't fire.
+
+For the full knob inventory across repo / org / per-PR — including what
+Copilot review **cannot** do (no "request changes" mode, no severity
+threshold, no API re-request) — read `references/code-review-knobs.md`.
+
 ### Verify Copilot is reading the file
 
 1. Open `github.com/copilot` and attach the repo.
