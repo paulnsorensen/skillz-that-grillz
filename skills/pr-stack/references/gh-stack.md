@@ -227,7 +227,12 @@ gh stack add -Am "feat: payments"   # adds a new top branch with that commit
 gh stack submit --open
 ```
 
-### Sync trunk into your stack
+### Sync trunk into your stack (also: after a sibling PR merged)
+
+This is the canonical post-merge command. When the bottom (or any) PR in
+the stack lands, GitHub has already cascaded the rebase server-side —
+`gh stack sync` pulls that state down. You only need a follow-up
+`gh stack submit` if you have local commits not yet pushed.
 
 ```bash
 gh stack sync

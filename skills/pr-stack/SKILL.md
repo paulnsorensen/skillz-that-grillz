@@ -9,7 +9,8 @@ description: >
   reference (`references/gt.md` or `references/gh-stack.md`). Use when the
   user asks to "create a stack", "stack a branch", "restack", "submit a
   stacked PR", "rebase the stack", "sync the stack", "track this branch",
-  or invokes /pr-stack. If neither tool is available, stop and tell the
+  "the bottom PR merged, what now", "clean up after a stack merge", or
+  invokes /pr-stack. If neither tool is available, stop and tell the
   user — never fall back to ad-hoc `git push` chains. Do NOT use for
   staging or committing — hand off to /commit. Do NOT use for PR review
   traffic, comments, or CI checks — hand off to /gh.
@@ -86,6 +87,13 @@ manual PR linking — the value of this skill is the stack-aware machinery,
 and faking it produces a worse outcome than telling the user the tool is
 missing.
 
+**Third failure mode — `gh stack` installed but the repo isn't allow-listed.**
+The CLI installs anywhere, but remote ops (`submit`, `sync`, `link`) fail
+with exit code `4` when the repo isn't on the private-preview allow-list.
+If you see exit `4`, surface this and point the user at
+[gh.io/stacksbeta](https://gh.io/stacksbeta). If `gt` is also installed
+locally, offer to fall back to it for this repo.
+
 ## Mental model (shared)
 
 - **Trunk** is `main` (or whatever the repo calls it).
@@ -99,6 +107,32 @@ missing.
 
 Both tools implement this model. Command names diverge — see the per-tool
 reference.
+
+## After a PR in the stack merges
+
+When the bottom (or any merged) PR lands, the rest of the stack needs to
+follow trunk forward and the merged branch needs to drop out. This is a
+distinct moment — don't wait for it to come up in normal "sync" cadence.
+
+Run the tool's sync command:
+
+| Tool | Command | What it does |
+| --- | --- | --- |
+| `gt` | `gt sync` then `gt submit --stack` | Fetches trunk, restacks survivors onto the new trunk tip locally, prompts to delete merged / closed branches. Then submit pushes the rebased survivors. |
+| `gh stack` | `gh stack sync` (`gh stack submit` only if you have unpushed local commits) | GitHub already cascaded the rebase server-side at merge time; sync mostly pulls that state down and updates local refs. |
+
+Key divergence: with `gh stack` the survivors were already rebased by the
+GitHub server when the bottom PR merged — your job is to **pull that state
+down**, not to recompute it. With `gt` the rebase is local, so `gt sync`
+does the actual work on your machine.
+
+If sync hits a conflict (trunk and a survivor touched the same lines), drop
+into the tool's conflict-recovery flow — `gt continue` / `gt abort`, or
+`gh stack rebase --continue` / `--abort`. Never reach for bare
+`git rebase --continue`; the tool's metadata won't advance.
+
+After sync succeeds, run `gt log short` / `gh stack view` to confirm the
+chain looks right before the next submit.
 
 ## Tool-equivalence cheat sheet
 
