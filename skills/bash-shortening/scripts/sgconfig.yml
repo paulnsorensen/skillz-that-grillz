@@ -3,7 +3,7 @@
 # This is the AST-aware rule pack used by bash-shorten.py. ast-grep (`sg`)
 # is a hard requirement of the script: structural rules in sg-rules/ run
 # first, then the remaining regex-only rules in rules.py run over the
-# output. See SKILL.md for the full ruleset (currently 23 rules across
+# output. See SKILL.md for the full ruleset (currently 21 rules across
 # `core` and `modernize` groups) and which subset routes through sg.
 #
 # Run the sg pack directly with:

@@ -41,7 +41,7 @@ assert_rewrite() {
 @test "--list emits every documented rule id" {
     run python3 "$SCRIPT" --list
     [ "$status" -eq 0 ]
-    for rule in basename dirname sed-replace-first sed-replace-all \
+    for rule in sed-replace-first sed-replace-all \
                 echo-wc-c cut-c-substring \
                 expr-arith-vars expr-increment expr-arith-literal \
                 combined-tests test-numeric empty-default param-default \
@@ -90,8 +90,8 @@ assert_rewrite() {
 }
 
 @test "--rules referencing unknown id exits 1" {
-    printf 'X=$(basename "$P")\n' > "$FIXTURE"
-    run python3 "$SCRIPT" --rules basename,bogus "$FIXTURE"
+    printf 'V=`pwd`\n' > "$FIXTURE"
+    run python3 "$SCRIPT" --rules backticks,bogus "$FIXTURE"
     [ "$status" -eq 1 ]
     [[ "$output" == *"unknown rules: bogus"* ]]
 }
@@ -106,7 +106,7 @@ assert_rewrite() {
 # -- Engine behavior --------------------------------------------------------
 
 @test "dry-run emits unified diff but leaves the file untouched" {
-    printf 'X=$(basename "$P")\n' > "$FIXTURE"
+    printf 'V=`pwd`\n' > "$FIXTURE"
     local before_hash
     before_hash="$(shasum "$FIXTURE" | awk '{print $1}')"
 
@@ -114,8 +114,8 @@ assert_rewrite() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"---"* ]]
     [[ "$output" == *"+++"* ]]
-    [[ "$output" == *"-X="* ]]
-    [[ "$output" == *'+X=${P##*/}'* ]]
+    [[ "$output" == *"-V="* ]]
+    [[ "$output" == *'+V=$(pwd)'* ]]
 
     local after_hash
     after_hash="$(shasum "$FIXTURE" | awk '{print $1}')"
@@ -130,16 +130,24 @@ assert_rewrite() {
 }
 
 @test "--apply rewrites the file in place and leaves no temp files" {
-    printf 'X=$(basename "$P")\n' > "$FIXTURE"
+    printf 'V=`pwd`\n' > "$FIXTURE"
     run python3 "$SCRIPT" --apply "$FIXTURE"
     [ "$status" -eq 0 ]
-    grep -q '^X=${P##\*/}$' "$FIXTURE"
+    grep -qF 'V=$(pwd)' "$FIXTURE"
     # Asserts the public contract (atomic write, no leftover temp siblings)
     # without coupling to the private temp-file naming convention.
     local fixture_dir leftovers
     fixture_dir="$(dirname "$FIXTURE")"
     leftovers="$(find "$fixture_dir" -maxdepth 1 -name '*.tmp' -not -path "$FIXTURE")"
     [ -z "$leftovers" ]
+}
+
+@test "--apply preserves the executable bit on rewritten scripts" {
+    printf '#!/usr/bin/env bash\nV=`pwd`\n' > "$FIXTURE"
+    chmod +x "$FIXTURE"
+    run python3 "$SCRIPT" --apply "$FIXTURE"
+    [ "$status" -eq 0 ]
+    [ -x "$FIXTURE" ]
 }
 
 @test "--apply on no-op file does not rewrite" {
@@ -155,27 +163,27 @@ assert_rewrite() {
 
 @test "stdin mode writes rewritten content to stdout" {
     local got
-    got="$(printf 'X=$(basename "$P")\n' | python3 "$SCRIPT" -)"
-    [[ "$got" == *'X=${P##*/}'* ]]
+    got="$(printf 'V=`pwd`\n' | python3 "$SCRIPT" -)"
+    [[ "$got" == *'V=$(pwd)'* ]]
 }
 
 # -- Rule selection ---------------------------------------------------------
 
 @test "--rules subset only fires named rules" {
-    printf 'X=$(basename "$P")\nY=$(dirname "$P")\n' > "$FIXTURE"
-    run python3 "$SCRIPT" --rules basename --apply "$FIXTURE"
+    printf 'V=`pwd`\nLEN=$(echo -n "$S" | wc -c)\n' > "$FIXTURE"
+    run python3 "$SCRIPT" --rules backticks --apply "$FIXTURE"
     [ "$status" -eq 0 ]
-    grep -q '^X=${P##\*/}$' "$FIXTURE"
-    # dirname must remain untouched
-    grep -qF 'Y=$(dirname "$P")' "$FIXTURE"
+    grep -qF 'V=$(pwd)' "$FIXTURE"
+    # echo-wc-c must remain untouched
+    grep -qF 'LEN=$(echo -n "$S" | wc -c)' "$FIXTURE"
 }
 
 @test "--skip excludes a rule even when its pattern matches" {
-    printf 'X=$(basename "$P")\nY=$(dirname "$P")\n' > "$FIXTURE"
-    run python3 "$SCRIPT" --skip dirname --apply "$FIXTURE"
+    printf 'V=`pwd`\nLEN=$(echo -n "$S" | wc -c)\n' > "$FIXTURE"
+    run python3 "$SCRIPT" --skip echo-wc-c --apply "$FIXTURE"
     [ "$status" -eq 0 ]
-    grep -q '^X=${P##\*/}$' "$FIXTURE"
-    grep -qF 'Y=$(dirname "$P")' "$FIXTURE"
+    grep -qF 'V=$(pwd)' "$FIXTURE"
+    grep -qF 'LEN=$(echo -n "$S" | wc -c)' "$FIXTURE"
 }
 
 # -- Per-rule end-to-end via stdin (one positive fixture per rule) ---------
@@ -184,14 +192,6 @@ assert_rewrite() {
 # rules also fire when invoked through the real CLI (env, encoding, argv
 # handling). If any of these regress while --self-test still passes, the
 # regression is in the CLI plumbing, not the rules.
-
-@test "rule basename rewrites via CLI" {
-    assert_rewrite 'FILENAME=$(basename "$FULLPATH")' 'FILENAME=${FULLPATH##*/}'
-}
-
-@test "rule dirname rewrites via CLI" {
-    assert_rewrite 'DIR=$(dirname "$P")' 'DIR=${P%/*}'
-}
 
 @test "rule sed-replace-first rewrites literal patterns" {
     assert_rewrite "X=\$(echo \"\$S\" | sed 's/foo/bar/')" 'X=${S/foo/bar}'
@@ -337,8 +337,7 @@ assert_rewrite() {
 @test "applies multiple rules to the same file in one pass" {
     cat > "$FIXTURE" <<'SH'
 #!/usr/bin/env bash
-FILENAME=$(basename "$FULLPATH")
-DIR=$(dirname "$FULLPATH")
+DIR=`pwd`
 LEN=$(echo -n "$FILENAME" | wc -c)
 if [ -z "$ENV" ]; then ENV="dev"; fi
 if [ ! -d "$DIR" ]; then mkdir -p "$DIR"; fi
@@ -346,8 +345,7 @@ if [ ! -d "$DIR" ]; then mkdir -p "$DIR"; fi
 SH
     run python3 "$SCRIPT" --apply "$FIXTURE"
     [ "$status" -eq 0 ]
-    grep -q 'FILENAME=${FULLPATH##\*/}' "$FIXTURE"
-    grep -q 'DIR=${FULLPATH%/\*}' "$FIXTURE"
+    grep -qF 'DIR=$(pwd)' "$FIXTURE"
     grep -q 'LEN=${#FILENAME}' "$FIXTURE"
     grep -q 'ENV=${ENV:-"dev"}' "$FIXTURE"
     grep -q 'mkdir -p "${DIR}"' "$FIXTURE"
@@ -413,18 +411,6 @@ SH
 # fires on its sg-handled rules and that the missing-sg path produces a
 # friendly diagnostic.
 
-@test "basename rewrite goes through sg, captures variable name" {
-    local got
-    got="$(printf 'X=$(basename "$FULLPATH")\n' | python3 "$SCRIPT" -)"
-    [[ "$got" == *'X=${FULLPATH##*/}'* ]]
-}
-
-@test "dirname rewrite goes through sg" {
-    local got
-    got="$(printf 'D=$(dirname "$FULLPATH")\n' | python3 "$SCRIPT" -)"
-    [[ "$got" == *'D=${FULLPATH%/*}'* ]]
-}
-
 @test "non-sg-handled rules still fire (echo-wc-c via regex path)" {
     local got
     got="$(printf 'LEN=$(echo -n "$S" | wc -c)\n' | python3 "$SCRIPT" -)"
@@ -452,11 +438,12 @@ SH
     [ "${got%$'\n'}" = "${input%$'\n'}" ]
 }
 
-@test "report includes basename count" {
+@test "report includes rule id and count" {
     local err
-    err="$(printf 'X=$(basename "$FULLPATH")\n' \
+    err="$(printf 'V=`pwd`\n' \
         | python3 "$SCRIPT" - 2>&1 >/dev/null)"
-    [[ "$err" == *"basename"* ]]
+    # stdin-mode report format is "# applied <rid>: <n>" (see _run_stdin).
+    [[ "$err" == *"applied backticks: 1"* ]]
 }
 
 @test "missing sg exits with friendly diagnostic" {

@@ -57,7 +57,7 @@ fixtures — but the regex itself never runs at default invocation.
 
 - One YAML file per ast-grep rule under `scripts/sg-rules/`.
 - ast-grep rule id: `bash-shorten-<py-id>` for 1:1 ports
-  (`bash-shorten-basename`).
+  (`bash-shorten-backticks`).
 - For Python rules that fan out into multiple sg rules
   (e.g. one Python `test-numeric` → six ast-grep rules per operator),
   use suffixes: `bash-shorten-test-numeric-eq`, `-ne`, etc. The filter
@@ -92,9 +92,20 @@ for regex.
 
 ## Counting rewrites for sg-handled rules
 
-`_apply_sg` does its own count-back by re-applying the *before* regex
-to `text` and `new_text` and reporting the delta. New sg-handled rules
-should add a count-back stanza to that loop. The after-pattern is
-usually too generic to count directly without conflating with other
-rule outputs (e.g. `$(...)` covers basename, dirname, and backticks
-output) — counting drops in the *before* pattern is unambiguous.
+`_apply_sg` counts per-rule, not via a shared loop. Each sg-handled
+rule gets its own branch picking whichever signal is unambiguous against
+untouched code:
+
+- `backticks` counts removed backtick pairs in the byte-level delta —
+  every `` `cmd` `` → `$(cmd)` removes exactly two backticks, and the
+  `$(...)` after-form is too generic to count directly (it matches
+  pre-existing command substitutions in untouched code).
+- `test-numeric` re-applies the *before* regex `[ $V -OP N ]` against
+  `text` and `new_text` and reports the delta. The `[[ ]]` form lives
+  under a different tree-sitter node so the sg rule never touches it
+  and the count stays precise.
+
+When adding a new sg-handled rule, append a matching branch to
+`_apply_sg` after the existing two. Prefer counting drops in the
+*before* pattern unless the rewrite removes a uniquely-identifiable
+character (like backticks).

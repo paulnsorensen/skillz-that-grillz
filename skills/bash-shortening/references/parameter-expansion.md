@@ -82,6 +82,13 @@ FILENAME=${FULLPATH##*/}
 `##` strips the longest match of the pattern from the **start**. Pattern
 `*/` greedily eats up to and including the last `/`.
 
+**Edge case:** if `$FULLPATH` carries a trailing slash (e.g. iterating
+`for x in "$dir"/*/`), `basename` strips the slash and returns the leaf
+name, but `${FULLPATH##*/}` treats the trailing `/` as the last separator
+and yields an empty string. Hand-edit only when the path is known to be
+normalized — the rewriter does **not** auto-apply this rewrite for that
+reason.
+
 For extension stripping (the `basename "$f" .ext` case):
 
 ```bash
@@ -103,9 +110,12 @@ DIRECTORY=${FULLPATH%/*}
 greedy version (longest match). Memory aid: `#` is left of `$` on the
 keyboard (start of string), `%` is to the right (end of string).
 
-**Edge case:** `${FULLPATH%/*}` returns the original path unchanged when
-there's no `/` (i.e., `myfile.txt` stays `myfile.txt`, not `.`). Real
-`dirname` returns `.` in that case. If that matters, use the real tool.
+**Edge cases:** (1) `${FULLPATH%/*}` returns the original path unchanged
+when there's no `/` (i.e. `myfile.txt` stays `myfile.txt`, not `.`); real
+`dirname` returns `.`. (2) For trailing-slash paths like `/tmp/foo/`,
+`dirname` returns `/tmp` but `${FULLPATH%/*}` returns `/tmp/foo`. The
+rewriter does **not** auto-apply this rewrite for those reasons — use
+the real tool when the path's shape is unknown.
 
 ## Example 13 — Replace first match
 
