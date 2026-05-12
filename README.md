@@ -11,10 +11,10 @@
 
 A focused, skills-only repository of [Agent Skills](https://agentskills.io/specification)
 for the everyday plumbing around a project: making a clean commit, working a
-GitHub PR, stacking branches with Graphite, scaffolding a justfile, wiring up
-prek pre-commit hooks, and writing concise idiomatic Bash. No agents, no
-orchestration, no MCP requirements — just self-contained `SKILL.md` files that
-any spec-compliant harness can load.
+GitHub PR, stacking branches with Graphite or `gh stack`, scaffolding a
+justfile, wiring up prek pre-commit hooks, and writing concise idiomatic Bash.
+No agents, no orchestration, no MCP requirements — just self-contained
+`SKILL.md` files that any spec-compliant harness can load.
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
 covers the design / implement / review workflow (mold, cook, press, age, cure).
@@ -48,7 +48,7 @@ harness can load it progressively.
 | `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
 | `skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
 | `skills/github-copilot-repo-instructions/SKILL.md` | `/github-copilot-repo-instructions` | Add or audit `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md` so Copilot Chat, code review, and the coding agent pick up project-wide guidance. Covers `applyTo`/`excludeAgent` frontmatter, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` alternates, surfaces, verification, **and the full `copilot_code_review` ruleset knob inventory** (see `references/code-review-knobs.md`). |
-| `skills/gt/SKILL.md` | `/gt` | 🚧 **Reserved slot — not yet implemented.** Will cover Graphite (`gt`) stacked-PR workflows. Frontmatter and directory shape are in place so future work lands without a rename; invoking it today announces the banner and falls back to the `gt` CLI directly. |
+| `skills/pr-stack/SKILL.md` | `/pr-stack` | Stacked-PR workflows across whichever tool is installed: Graphite (`gt`) or GitHub's native `gh stack` extension. Auto-detects which is available, dispatches to the matching per-tool reference, and refuses to fake stacking with plain `git push` chains when neither is present. |
 | `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
 | `skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
 | `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
@@ -71,7 +71,7 @@ Code); the bundled `bash-shorten.py` rewriter additionally requires
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
 | `github-copilot-personal-instructions` | github.com Copilot UI | — | — |
 | `github-copilot-repo-instructions` | repo files + `gh api repos/.../rulesets` | — | — |
-| `gt` | `gt` (Graphite) | gt (when implemented) | — |
+| `pr-stack` | `gt` (Graphite) **or** `gh stack` (GitHub extension) | one of: `gt`, or `gh` v2.0+ with `gh extension install github/gh-stack` | — |
 | `justfile` | `just` | just | — |
 | `oss-hygiene` | `gh` CLI (`gh api`) + scaffolded GitHub Actions (Dependabot, Scorecard, dependency review, CodeQL) | gh | — |
 | `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
@@ -93,7 +93,7 @@ What that means in practice:
 ```text
 work on a branch
     ├── /commit            ──►  stage + commit (conventional commits)
-    ├── /gt                ──►  manage stacked branches (reserved slot — not yet implemented)
+    ├── /pr-stack          ──►  manage stacked branches (gt or gh stack — auto-detects)
     └── /gh                ──►  push + create PR + watch checks
 
 new project setup
@@ -106,9 +106,10 @@ org-wide policy as code
     └── /safe-settings     ──►  scaffold admin repo + GitHub App for declarative settings across many repos
 ```
 
-`/commit`, `/gt`, and `/gh` form a loose pipeline for everyday change flow:
-commit locally → arrange in a stack → push and review on GitHub. `/justfile`
-and `/prek` are one-shot scaffolding skills you run when bootstrapping a repo.
+`/commit`, `/pr-stack`, and `/gh` form a loose pipeline for everyday change
+flow: commit locally → arrange in a stack → push and review on GitHub.
+`/justfile` and `/prek` are one-shot scaffolding skills you run when
+bootstrapping a repo.
 
 ## Install
 
@@ -126,7 +127,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in bash-shortening commit gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions gt justfile oss-hygiene prek ralphify-spec safe-settings; do
+for s in bash-shortening commit gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile oss-hygiene pr-stack prek ralphify-spec safe-settings; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```
@@ -264,17 +265,30 @@ brew install prek              # macOS/Linux (when the formula is available)
 See [prek.j178.dev](https://prek.j178.dev/) for the latest install
 instructions.
 
-### `gt` (Graphite CLI)
+### Stacked-PR tooling (one of)
 
-Stacked-PR workflow tool. Used by the `gt` reserved-slot skill.
+Used by the `pr-stack` skill. Install **one** — the skill auto-detects which
+is available and dispatches to the matching reference.
+
+**Graphite (`gt`)** — third-party, generally available:
 
 ```sh
 brew install withgraphite/tap/graphite   # macOS/Linux via Homebrew tap
-npm install -g @withgraphite/graphite-cli # Node.js
+npm install -g @withgraphite/graphite-cli # Node.js (incl. Windows)
+gt auth --token <token>                  # from https://app.graphite.com/activate
+gt init                                  # once per repo
 ```
 
-See [graphite.dev/docs](https://graphite.dev/docs/graphite-cli) for the
-latest install instructions and `gt auth` to log in.
+See [graphite.dev/docs](https://graphite.dev/docs/graphite-cli).
+
+**GitHub `gh stack`** — first-party, private preview as of 2026-05:
+
+```sh
+gh extension install github/gh-stack     # requires gh v2.0+
+# join the waitlist at https://gh.io/stacksbeta and have your repo allow-listed
+```
+
+See [github.github.com/gh-stack](https://github.github.com/gh-stack/).
 
 ## Optional MCP servers
 

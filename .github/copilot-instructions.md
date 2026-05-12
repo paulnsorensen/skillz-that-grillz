@@ -13,13 +13,19 @@ model *why* not just *what*, and whether bundled resources earn their keep.
 ## What this repo is and isn't
 
 - **Is**: self-contained `SKILL.md` files for everyday plumbing (commit, gh,
-  gt, justfile, prek). Each skill wraps a single CLI.
+  pr-stack, justfile, prek). Each skill wraps a single CLI, with a narrow
+  exception for same-domain alternative tools — `pr-stack` covers both
+  `gt` and `gh stack` because they're drop-in replacements for the same
+  stacked-PR workflow (see `.github/instructions/skills.instructions.md`
+  "Scope discipline").
 - **Isn't**: an agent framework, an orchestrator, an MCP server. No required
   MCPs. Skills compose freely; they do not call each other implicitly.
 
-Keep this scope in mind — flag scope creep (orchestration logic, intent
-classification, multi-CLI fan-out) inside an individual skill. Cross-skill
-handoffs belong in the README's "Suggested flow", not in skill bodies.
+Keep this scope in mind — flag scope creep (multi-domain orchestration,
+intent classification, fan-out across unrelated tools) inside an individual
+skill. The same-domain detect-and-dispatch pattern is allowed; arbitrary
+dispatch is not. Cross-skill handoffs belong in the README's "Suggested
+flow", not in skill bodies.
 
 ## Skill review priorities (in order)
 
