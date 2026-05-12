@@ -272,7 +272,7 @@ Numbers in parens are the example numbers from the source article.
 |---|---|---|
 | `if [ -z "$X" ]; then X=default; fi` | `X=${X:-default}` | parameter-expansion (8) |
 | `$(echo "$S" \| cut -c1-5)` | `${S:0:5}` | parameter-expansion (10) |
-| `$(basename "$P")` / `$(dirname "$P")` | `${P##*/}` / `${P%/*}` *(hand-edit only — silently breaks on trailing-slash paths; rewriter does not auto-apply)* | parameter-expansion (11-12) |
+| `$(basename "$P")` / `$(dirname "$P")` | `${P##*/}` / `${P%/*}` *(hand-edit only — silently breaks on trailing-slash paths; `dirname` also diverges from `${P%/*}` when the path has no `/` (real `dirname` returns `.`, the expansion returns the original string); rewriter does not auto-apply)* | parameter-expansion (11-12) |
 | `$(echo "$S" \| sed 's/a/b/g')` | `${S//a/b}` | parameter-expansion (13-14) |
 | `$(echo -n "$S" \| wc -c)` | `${#S}` | parameter-expansion (15) |
 | `$(expr $A + $B)` / `C=$(expr $C + 1)` | `$((A + B))` / `((C+=1))` (or `C=$((C + 1))`) | arithmetic (32-34) |

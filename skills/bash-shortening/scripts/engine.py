@@ -58,10 +58,12 @@ def _apply_sg(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
     --filter so --rules / --skip work correctly across both engines.
 
     Counts are keyed by the Python rule id (backticks, test-numeric, …) so
-    the upstream caller can present them uniformly. The count "after"
-    patterns below MUST mirror the `fix:` strings in scripts/sg-rules/*.yml
-    exactly — if the YAML output formatting changes, the count regex will
-    silently miss matches even though the rewrite still applies.
+    the upstream caller can present them uniformly. Counting is per-rule
+    (no shared after-pattern table): `backticks` counts removed backtick
+    pairs in the byte-level delta, `test-numeric` counts the before regex
+    against text vs new_text. When adding a new sg-handled rule, append a
+    matching branch below — pick whichever signal (before-pattern delta,
+    raw character delta, etc.) is unambiguous against untouched code.
 
     On sg failure (parse error, rule error), emits a warning and returns
     the original text with empty counts. Non-sg-handled regex rules still
@@ -180,9 +182,10 @@ def diff(before: str, after: str, label: str) -> str:
 
 
 def atomic_write(path: Path, content: str) -> None:
-    # Preserve the original file's mode bits (executable, group, other) —
-    # NamedTemporaryFile creates with 0600, and os.replace would otherwise
-    # silently strip the +x bit from rewritten scripts.
+    # Preserve the original file's permission and special bits (setuid,
+    # setgid, sticky + ugo rwx — the full 0o7777 mask). NamedTemporaryFile
+    # creates with 0600, and os.replace would otherwise silently strip the
+    # +x bit from rewritten scripts.
     try:
         original_mode = path.stat().st_mode
     except FileNotFoundError:

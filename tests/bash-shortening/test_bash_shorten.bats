@@ -442,7 +442,8 @@ SH
     local err
     err="$(printf 'V=`pwd`\n' \
         | python3 "$SCRIPT" - 2>&1 >/dev/null)"
-    [[ "$err" == *"backticks"* ]]
+    # stdin-mode report format is "# applied <rid>: <n>" (see _run_stdin).
+    [[ "$err" == *"applied backticks: 1"* ]]
 }
 
 @test "missing sg exits with friendly diagnostic" {
