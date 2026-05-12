@@ -441,9 +441,9 @@ Map of what lives where:
 | Plugins | `/reference/plugins/` |
 
 Heuristic: when the user asks "what does prefix X do" → source-state-
-attributes; "what does `chezmoi <cmd>` do" → commands/<cmd>; "what
+attributes; "what does `chezmoi <cmd>` do" → `commands/<cmd>`; "what
 template var holds Y" → templates/variables; "how do I read a secret from
-Z" → templates/<vendor>-functions. Fetch only the page you need with
+Z" → `templates/<vendor>-functions`. Fetch only the page you need with
 `mcp__tavily__tavily_extract` — single URL, advanced depth — so the
 answer is always grounded in the canonical docs as of today, not what
 this skill happened to know when it was last edited.
