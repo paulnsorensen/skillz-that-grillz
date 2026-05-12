@@ -88,7 +88,7 @@ python3 scripts/bash-shorten.py path/to/script.sh
 python3 scripts/bash-shorten.py --apply path/to/script.sh
 
 # only run a subset of rules
-python3 scripts/bash-shorten.py --rules basename,dirname,backticks script.sh
+python3 scripts/bash-shorten.py --rules backticks,test-numeric script.sh
 
 # disable a rule
 python3 scripts/bash-shorten.py --skip find-exec-rm-delete script.sh
@@ -107,8 +107,8 @@ python3 scripts/bash-shorten.py --self-test
 **Two rule groups (`core`, `modernize`)** with embedded positive and
 negative fixtures for every rule (run `--list` to see the current
 counts). The `core` group is on by default; the `modernize` group is
-opt-in. Most `core` rules mirror source-article examples (`basename`,
-`dirname`, `sed-replace-first/all`, `echo-wc-c`, `cut-c-substring`,
+opt-in. Most `core` rules mirror source-article examples
+(`sed-replace-first/all`, `echo-wc-c`, `cut-c-substring`,
 `expr-arith-vars/literal/increment`, `combined-tests`, `test-numeric`,
 `empty-default`, `param-default`, `mkdir-guard`, `for-range-expansion`);
 the rest are bonus core patterns the article doesn't cover but are
@@ -204,7 +204,7 @@ came to mind first.
 
 | Group | Default | Contents |
 |---|---|---|
-| `core` | on | 20 idiomatic-bash rewrites that don't change tooling |
+| `core` | on | 18 idiomatic-bash rewrites that don't change tooling |
 | `modernize` | off | `sed-replace-to-sd`, `grep-fixed-to-rg`, `find-name-to-fd` — rewrite to non-coreutils binaries (sd, rg, fd) the user must have installed |
 
 The modernize rules are conservative on purpose: only literal sed
@@ -221,7 +221,7 @@ runs and the rewriter has its required dependencies.
 ### ast-grep is required
 
 `bash-shorten.py` requires [ast-grep](https://ast-grep.github.io/) (`sg`)
-on PATH. Structural patterns (`basename`, `dirname`, `backticks`) route
+on PATH. Structural patterns (`backticks`, `test-numeric`) route
 through ast-grep first using the rule pack at `scripts/sg-rules/`, then
 the remaining regex rules run on the output. Tree-sitter parses the bash
 once, so context-sensitive rules (skip `#` comments, skip heredoc bodies)
@@ -272,7 +272,7 @@ Numbers in parens are the example numbers from the source article.
 |---|---|---|
 | `if [ -z "$X" ]; then X=default; fi` | `X=${X:-default}` | parameter-expansion (8) |
 | `$(echo "$S" \| cut -c1-5)` | `${S:0:5}` | parameter-expansion (10) |
-| `$(basename "$P")` / `$(dirname "$P")` | `${P##*/}` / `${P%/*}` | parameter-expansion (11-12) |
+| `$(basename "$P")` / `$(dirname "$P")` | `${P##*/}` / `${P%/*}` *(hand-edit only — silently breaks on trailing-slash paths; rewriter does not auto-apply)* | parameter-expansion (11-12) |
 | `$(echo "$S" \| sed 's/a/b/g')` | `${S//a/b}` | parameter-expansion (13-14) |
 | `$(echo -n "$S" \| wc -c)` | `${#S}` | parameter-expansion (15) |
 | `$(expr $A + $B)` / `C=$(expr $C + 1)` | `$((A + B))` / `((C+=1))` (or `C=$((C + 1))`) | arithmetic (32-34) |

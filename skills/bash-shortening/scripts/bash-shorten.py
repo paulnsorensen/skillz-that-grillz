@@ -21,7 +21,7 @@ Defaults to dry-run (prints a unified diff). Pass --apply to write.
 
   bash-shorten script.sh                            # dry-run, prints diff
   bash-shorten --apply script.sh                    # rewrite in place (atomic)
-  bash-shorten --rules basename,dirname script.sh
+  bash-shorten --rules backticks,test-numeric script.sh
   bash-shorten --skip backticks script.sh
   bash-shorten --include modernize --apply file.sh  # also rewrite sed→sd, grep→rg
   bash-shorten --list                               # list all rules with examples

@@ -56,7 +56,7 @@ class Rule:
 # Rules that have an ast-grep equivalent in scripts/sg-rules/. When the
 # sg engine handles these, the Python regex must NOT re-fire (it would
 # either no-op or rewrite a partial match).
-SG_HANDLED_IDS = frozenset({"basename", "dirname", "backticks", "test-numeric"})
+SG_HANDLED_IDS = frozenset({"backticks", "test-numeric"})
 
 
 def _expr_op(escaped: str) -> str:
@@ -187,43 +187,12 @@ def _apply_cat_file_grep(text: str) -> tuple[str, int]:
 # --- Rule definitions -----------------------------------------------------
 
 RULES: list[Rule] = [
-    Rule(
-        id="basename",
-        description='$(basename "$VAR") → ${VAR##*/}',
-        pattern=re.compile(rf'\$\(\s*basename\s+"\$({_VAR})"\s*\)'),
-        replace=lambda m: f"${{{m.group(1)}##*/}}",
-        source_example="11",
-        examples=(
-            ('FILENAME=$(basename "$FULLPATH")', 'FILENAME=${FULLPATH##*/}'),
-        ),
-        notes=(
-            "Not strictly equivalent for paths with trailing slashes: "
-            "basename strips them (basename /tmp/foo/ → foo), but "
-            "${VAR##*/} treats the trailing / as the last separator and "
-            "yields an empty string. Apply only when the path is known to "
-            "be normalized (or guard with VAR=${VAR%/}). Equivalent for "
-            "paths without trailing slashes."
-        ),
-    ),
-    Rule(
-        id="dirname",
-        description='$(dirname "$VAR") → ${VAR%/*}',
-        pattern=re.compile(rf'\$\(\s*dirname\s+"\$({_VAR})"\s*\)'),
-        replace=lambda m: f"${{{m.group(1)}%/*}}",
-        source_example="12",
-        examples=(
-            ('DIR=$(dirname "$PATH_VAR")', 'DIR=${PATH_VAR%/*}'),
-        ),
-        notes=(
-            "Two semantic mismatches vs dirname: (1) dirname returns \".\" "
-            "for paths with no slash; ${VAR%/*} returns the original "
-            "string. (2) For paths with trailing slashes (e.g. "
-            "/tmp/foo/), dirname returns /tmp but ${VAR%/*} returns "
-            "/tmp/foo. Equivalent for absolute paths without trailing "
-            "slashes; otherwise normalize first (VAR=${VAR%/}) or stay "
-            "with dirname."
-        ),
-    ),
+    # basename/dirname rewrites were removed: $(basename "$x") → ${x##*/}
+    # silently corrupts to "" when $x carries a trailing slash (e.g. iterating
+    # `for x in dir/*/`), and dirname's "." vs original-string divergence has
+    # the same flavor of silent breakage. There is no clean general fix
+    # without data-flow analysis of the variable's source. Keep using
+    # basename/dirname when the path's shape is unknown.
     Rule(
         id="sed-replace-first",
         description='$(echo "$VAR" | sed \'s/PAT/REP/\') → ${VAR/PAT/REP}  (literal-only patterns)',

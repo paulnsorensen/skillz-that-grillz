@@ -57,11 +57,11 @@ def _apply_sg(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
     sg-handled rules outside that set are filtered out of the sg run via
     --filter so --rules / --skip work correctly across both engines.
 
-    Counts are keyed by the Python rule id (basename, dirname, …) so the
-    upstream caller can present them uniformly. The count "after" patterns
-    below MUST mirror the `fix:` strings in scripts/sg-rules/*.yml exactly —
-    if the YAML output formatting changes, the count regex will silently
-    miss matches even though the rewrite still applies.
+    Counts are keyed by the Python rule id (backticks, test-numeric, …) so
+    the upstream caller can present them uniformly. The count "after"
+    patterns below MUST mirror the `fix:` strings in scripts/sg-rules/*.yml
+    exactly — if the YAML output formatting changes, the count regex will
+    silently miss matches even though the rewrite still applies.
 
     On sg failure (parse error, rule error), emits a warning and returns
     the original text with empty counts. Non-sg-handled regex rules still
@@ -119,20 +119,9 @@ def _apply_sg(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
 
     counts: dict[str, int] = {}
     if new_text != text:
-        for py_id, before, after in (
-            ("basename", r"\$\(\s*basename\s+\"\$" + _VAR + r"\"\s*\)", r"\$\{" + _VAR + r"##\*/\}"),
-            ("dirname",  r"\$\(\s*dirname\s+\"\$"  + _VAR + r"\"\s*\)", r"\$\{" + _VAR + r"%/\*\}"),
-        ):
-            before_n = len(re.findall(before, text))
-            after_n_old = len(re.findall(after, text))
-            after_n_new = len(re.findall(after, new_text))
-            delta = after_n_new - after_n_old
-            if delta > 0:
-                counts[py_id] = min(delta, before_n)
         # backticks rewrites are counted by tracking removed backtick pairs:
         # each `\`cmd\`` → `$(cmd)` removes exactly two backticks. The
-        # after-pattern `$(...)` is too generic to count directly without
-        # conflating with basename/dirname output.
+        # after-pattern `$(...)` is too generic to count directly.
         btick_delta = (text.count("`") - new_text.count("`")) // 2
         if btick_delta > 0:
             counts["backticks"] = btick_delta
@@ -191,6 +180,14 @@ def diff(before: str, after: str, label: str) -> str:
 
 
 def atomic_write(path: Path, content: str) -> None:
+    # Preserve the original file's mode bits (executable, group, other) —
+    # NamedTemporaryFile creates with 0600, and os.replace would otherwise
+    # silently strip the +x bit from rewritten scripts.
+    try:
+        original_mode = path.stat().st_mode
+    except FileNotFoundError:
+        original_mode = None
+
     tmp = tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -204,6 +201,8 @@ def atomic_write(path: Path, content: str) -> None:
         tmp.flush()
         os.fsync(tmp.fileno())
         tmp.close()
+        if original_mode is not None:
+            os.chmod(tmp.name, original_mode & 0o7777)
         os.replace(tmp.name, path)
     except Exception:
         try:

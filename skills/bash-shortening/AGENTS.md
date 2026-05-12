@@ -57,7 +57,7 @@ fixtures — but the regex itself never runs at default invocation.
 
 - One YAML file per ast-grep rule under `scripts/sg-rules/`.
 - ast-grep rule id: `bash-shorten-<py-id>` for 1:1 ports
-  (`bash-shorten-basename`).
+  (`bash-shorten-backticks`).
 - For Python rules that fan out into multiple sg rules
   (e.g. one Python `test-numeric` → six ast-grep rules per operator),
   use suffixes: `bash-shorten-test-numeric-eq`, `-ne`, etc. The filter
@@ -96,5 +96,6 @@ for regex.
 to `text` and `new_text` and reporting the delta. New sg-handled rules
 should add a count-back stanza to that loop. The after-pattern is
 usually too generic to count directly without conflating with other
-rule outputs (e.g. `$(...)` covers basename, dirname, and backticks
-output) — counting drops in the *before* pattern is unambiguous.
+rule outputs (e.g. `$(cmd)` is the *output* of the backticks rewrite but
+also a common literal in untouched code) — counting drops in the *before*
+pattern is unambiguous.
