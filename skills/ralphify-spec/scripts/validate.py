@@ -15,6 +15,7 @@ Run via: `uv run --with pyyaml python validate.py <path/to/RALPH.md>`
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import sys
@@ -54,14 +55,25 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
     raise ValueError("RALPH.md frontmatter is not closed with ---")
 
 
-def _validate_agent(fm: dict) -> list[str]:
+def _validate_agent(fm: dict, ralph_dir: Path) -> list[str]:
     errors: list[str] = []
     agent = fm.get("agent")
     if not agent or not isinstance(agent, str) or not agent.strip():
         errors.append("frontmatter `agent` is required and must be a non-empty string")
         return errors
     first_token = agent.split()[0]
-    if shutil.which(first_token) is None:
+    if first_token.startswith("./") or first_token.startswith("../"):
+        # Relative paths resolve against the ralph directory (where ralphify runs
+        # them), not the validator's cwd. shutil.which would otherwise reject a
+        # valid `agent: ./guard.sh` config when validate.py is invoked from
+        # outside the ralph dir.
+        candidate = (ralph_dir / first_token).resolve()
+        if not candidate.is_file() or not os.access(candidate, os.X_OK):
+            errors.append(
+                f"agent script `{first_token}` not found or not executable "
+                f"under {ralph_dir} — ralphify will refuse to start"
+            )
+    elif shutil.which(first_token) is None:
         errors.append(
             f"agent binary `{first_token}` not on PATH — ralphify will refuse to start"
         )
@@ -207,7 +219,7 @@ def validate(path: Path) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
 
-    errors.extend(_validate_agent(fm))
+    errors.extend(_validate_agent(fm, path.parent))
     errors.extend(_validate_credit(fm))
     cmd_errors, declared_commands = _validate_commands(fm)
     errors.extend(cmd_errors)

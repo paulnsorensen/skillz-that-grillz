@@ -39,6 +39,11 @@ for arg in "$@"; do
     -n=*)
       cap="${arg#-n=}"
       ;;
+    -n[0-9]*)
+      # Click accepts -n50 (no separator). Match short flag glued to a digit
+      # so `-name` and similar don't get parsed as a cap.
+      cap="${arg#-n}"
+      ;;
   esac
   prev="$arg"
 done
@@ -75,7 +80,7 @@ complete_marker='<promise>COMPLETE</promise>'
 
 # Stream `ralph run` output to a temp log AND to the terminal so a human
 # can watch in real time, while we scan for the COMPLETE marker.
-log="$(mktemp -t ralph-run.XXXXXX)"
+log="$(mktemp "${TMPDIR:-/tmp}/ralph-run.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 
 printf '>>> ralph run with cap=%s\n' "$cap" >&2

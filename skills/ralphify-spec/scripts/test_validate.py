@@ -71,6 +71,39 @@ class TestAgentValidation:
         errors, _ = tmp_ralph("---\nagent: echo test\n---\nbody\n")
         assert not any("agent" in e for e in errors)
 
+    def test_relative_agent_script_resolves_against_ralph_dir(self, tmp_path: Path):
+        # `agent: ./guard.sh` is the documented short-circuit pattern. Validation
+        # must succeed regardless of the validator's cwd — the script resolves
+        # against the RALPH.md's parent directory.
+        guard = tmp_path / "guard.sh"
+        guard.write_text("#!/bin/sh\nexec claude -p \"$@\"\n")
+        guard.chmod(0o755)
+        ralph = tmp_path / "RALPH.md"
+        ralph.write_text("---\nagent: ./guard.sh\n---\nbody\n")
+        import os
+        before = os.getcwd()
+        os.chdir(before)  # explicit: cwd is NOT the ralph dir
+        try:
+            errors, _ = validate(ralph)
+        finally:
+            os.chdir(before)
+        assert not any("agent" in e for e in errors), errors
+
+    def test_relative_agent_script_missing_is_rejected(self, tmp_path: Path):
+        ralph = tmp_path / "RALPH.md"
+        ralph.write_text("---\nagent: ./missing.sh\n---\nbody\n")
+        errors, _ = validate(ralph)
+        assert any("not found or not executable" in e for e in errors)
+
+    def test_relative_agent_script_not_executable_is_rejected(self, tmp_path: Path):
+        guard = tmp_path / "guard.sh"
+        guard.write_text("#!/bin/sh\necho hi\n")
+        guard.chmod(0o644)
+        ralph = tmp_path / "RALPH.md"
+        ralph.write_text("---\nagent: ./guard.sh\n---\nbody\n")
+        errors, _ = validate(ralph)
+        assert any("not found or not executable" in e for e in errors)
+
 
 # ── Credit validation ────────────────────────────────────────────────
 
