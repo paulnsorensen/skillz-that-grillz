@@ -132,14 +132,15 @@ it eliminates the boring 60% of the work.
 The rewriter handles the obvious patterns in `core` + `modernize`. The
 *rest* lives in shapes the rewriter can't see — and a single in-context
 reviewer reliably tunnel-visions on the first one or two categories they
-look at, missing whole classes (parameter expansion, arithmetic, brace
-expansion, process substitution, functions, advanced, real-world).
+look at, missing whole classes (command substitution, parameter expansion,
+arithmetic, brace expansion, process substitution, functions, advanced,
+real-world).
 
 **Pick the strategy by file count, not by gut feel:**
 
 - **1-2 bash files (or a single snippet):** stay inline. Open each file
   once, then iterate through *every* reference category in the table
-  below in order — parameter expansion → functions → brace expansion →
+  below in order — command substitution → parameter expansion → functions → brace expansion →
   process substitution → arithmetic → real-world → advanced →
   anti-patterns. Tick each category off explicitly so none get skipped.
   Sub-agents are overkill at this size and the round-trip costs more than
@@ -153,12 +154,13 @@ expansion, process substitution, functions, advanced, real-world).
 
 Either way, the categories below are the **complete** checklist — do not
 stop after finding hits in two or three of them. Tunnel-vision on
-`basename`/`dirname`/`for-range` while skipping parameter expansion,
-arithmetic, brace expansion, process substitution, functions, advanced,
-and real-world is the failure mode this section exists to prevent.
+`basename`/`dirname`/`for-range` while skipping command substitution,
+parameter expansion, arithmetic, brace expansion, process substitution,
+functions, advanced, and real-world is the failure mode this section exists to prevent.
 
-| Sub-agent | Reference | Article refs | Patterns to find |
+| Category | Reference | Article refs | Patterns to find |
 |---|---|---|---|
+| Command-substitution sweep | `references/command-substitution.md` | 3-7 | `$(cmd)` temp-file elimination, pipelines vs reused output, `xargs` patterns, `find … \| xargs` vs process substitution |
 | Parameter-expansion sweep | `references/parameter-expansion.md` | 8-15 | `if [ -z "$X" ]; then X=…` defaults, `cut -c`/`echo \| sed` substitutions, `${#S}` length, `basename`/`dirname` shells |
 | Function-pattern sweep | `references/functions.md` | 16-20 | repeated logging blocks, default-param boilerplate, echo-returns, named-param patterns |
 | Brace-expansion sweep | `references/brace-expansion.md` | 21-26 | sequential `mkdir`/`touch a b c`, `for i in 1 2 3 4 5` ranges, zero-padded sequences |
