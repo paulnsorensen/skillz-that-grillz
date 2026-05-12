@@ -131,8 +131,11 @@ enough situation every time to be useful. Follow the canonical shape:
    coverage". A fresh-context agent should pick a target and finish it
    within a single iteration.
 5. **Stop condition.** A `<promise>COMPLETE</promise>` sentinel the agent
-   prints when the loop's "done" condition is met. The runner wrapper in
-   `scripts/run.sh` watches for this and halts.
+   prints when the loop's "done" condition is met. After `ralph run`
+   exits, the runner wrapper in `scripts/run.sh` scans the captured log
+   for this marker and exits 0 if found; otherwise it flags the run as a
+   cap-hit failure. (No mid-run early termination — ralph runs to its
+   natural end.)
 6. **Rules.** Bulleted list — what to avoid, what to always do.
 7. **Commit conventions.** One commit per iteration; format (Conventional
    Commits or repo style); push or not.
@@ -161,7 +164,10 @@ cleanup signals.
 
 ### 8. Wire the runner wrapper
 
-Drop `scripts/run.sh` into the generated ralph directory (or symlink it).
+Copy this skill's `scripts/run.sh` into the generated ralph directory as
+a sibling of `RALPH.md` (or symlink it as `ralphs/NAME/run.sh`). Keeping
+the wrapper inside the ralph dir means the run command is self-contained
+and the wrapper travels with the ralph if the dir is moved or shared.
 The wrapper enforces the iteration-cap rule the bare `ralph run` does not:
 
 - Refuses to start if `-n / --max-iterations` is missing — every generated
@@ -181,10 +187,13 @@ Show the user:
 
 1. **File tree** of the created directory.
 2. **One sentence** describing what a single iteration does.
-3. **Suggested first run:** `./scripts/run.sh ralphs/NAME -n 50 -t 1800 -s
-   -l ralphs/NAME/logs` — 50 iterations, 30-minute timeout, stop on error,
-   logs captured. Starting with `-n 50` lets them see the loop work before
-   going unbounded — and the wrapper refuses to drop the cap entirely.
+3. **Suggested first run:** `ralphs/NAME/run.sh ralphs/NAME -n 50 -t 1800
+   -s -l ralphs/NAME/logs` — 50 iterations, 30-minute timeout, stop on
+   error, logs captured. The wrapper path matches step 8's "copy into
+   the ralph dir" instruction; the second `ralphs/NAME` is the ralph
+   dir argument the wrapper forwards to `ralph run`. Starting with
+   `-n 50` lets them see the loop work before going unbounded — and the
+   wrapper refuses to drop the cap entirely.
 
 ## What not to do
 

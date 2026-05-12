@@ -72,8 +72,12 @@ drained and you must run the closer:
 PLACEHOLDER_CLOSER_STEPS
 
 Once the closer steps complete successfully, emit
-`<promise>COMPLETE</promise>` on its own line. The runner wrapper
-watches for that exact string and terminates the loop.
+`<promise>COMPLETE</promise>` on its own line and stop work for this
+iteration. After `ralph run` exits, the runner wrapper scans the log
+for this marker — finding it makes the run a clean success, otherwise
+the wrapper exits as a cap-hit failure. If the loop fires another
+iteration before exiting, recognise the closer is already done and
+emit `<promise>COMPLETE</promise>` again without redoing the work.
 
 **Otherwise (queue still has open items)** — drive the next issue
 shown above to done in this iteration:

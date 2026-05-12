@@ -211,7 +211,7 @@ def _validate_placeholders(
 
 
 def validate(path: Path) -> tuple[list[str], list[str]]:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     try:
         fm, body = _split_frontmatter(text)
     except ValueError as e:

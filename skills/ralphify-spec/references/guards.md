@@ -38,13 +38,16 @@ Every generated `RALPH.md` body declares an explicit done condition:
 
 ```markdown
 **If the work is finished**, emit `<promise>COMPLETE</promise>` on its own
-line as your final output. The runner wrapper watches for this exact string
-and stops the loop.
+line as your final output. After `ralph run` exits, the runner wrapper
+scans the captured log for this exact string and treats the run as a
+success if it finds it; otherwise the run is flagged as a cap-hit
+failure.
 ```
 
 `<promise>...</promise>` is unambiguous: the agent cannot accidentally
 print it, the wrapper greps for the literal string, and reviewers reading
-the log can see the moment the loop terminated cleanly.
+the log can see the moment the loop terminated cleanly. The check is
+post-run, not streaming — see Guard 2 for the exit-code contract.
 
 ## Optional guard — Pre-agent short-circuit
 
