@@ -127,6 +127,77 @@ rewriter first to clear the obvious patterns, *then* walk through the
 remaining bloat by hand using the cheatsheet. Don't skip the rewriter —
 it eliminates the boring 60% of the work.
 
+## Thorough sweep via parallel sub-agents
+
+The rewriter handles the obvious patterns in `core` + `modernize`. The
+*rest* lives in shapes the rewriter can't see — and a single in-context
+reviewer reliably tunnel-visions on the first one or two categories they
+look at, missing whole classes (parameter expansion, arithmetic, brace
+expansion, process substitution, functions, advanced, real-world).
+
+**Pick the strategy by file count, not by gut feel:**
+
+- **1-2 bash files (or a single snippet):** stay inline. Open each file
+  once, then iterate through *every* reference category in the table
+  below in order — parameter expansion → functions → brace expansion →
+  process substitution → arithmetic → real-world → advanced →
+  anti-patterns. Tick each category off explicitly so none get skipped.
+  Sub-agents are overkill at this size and the round-trip costs more than
+  the read.
+- **3+ bash files, or a whole directory/repo audit:** fan out. Spawn
+  **one sub-agent per reference category in a single message** (parallel
+  `Agent` calls with `subagent_type=Explore`, which is read-only and
+  fast). Each sub-agent owns one reference file and reports back
+  `file:line` hits with a one-line rationale. The orchestrator merges
+  results.
+
+Either way, the categories below are the **complete** checklist — do not
+stop after finding hits in two or three of them. Tunnel-vision on
+`basename`/`dirname`/`for-range` while skipping parameter expansion,
+arithmetic, brace expansion, process substitution, functions, advanced,
+and real-world is the failure mode this section exists to prevent.
+
+| Sub-agent | Reference | Article refs | Patterns to find |
+|---|---|---|---|
+| Parameter-expansion sweep | `references/parameter-expansion.md` | 8-15 | `if [ -z "$X" ]; then X=…` defaults, `cut -c`/`echo \| sed` substitutions, `${#S}` length, `basename`/`dirname` shells |
+| Function-pattern sweep | `references/functions.md` | 16-20 | repeated logging blocks, default-param boilerplate, echo-returns, named-param patterns |
+| Brace-expansion sweep | `references/brace-expansion.md` | 21-26 | sequential `mkdir`/`touch a b c`, `for i in 1 2 3 4 5` ranges, zero-padded sequences |
+| Process-substitution sweep | `references/process-substitution.md` | 27-31 | temp files feeding `diff`/loops, `echo "x" \| cmd` → `<<<` here-strings |
+| Arithmetic sweep | `references/arithmetic.md` | 32-38 | `expr`, `$(…)+1` increments, `[ -gt/-lt/-eq ]` numeric tests, `[ "$A" ] && [ "$B" ]` |
+| Real-world sweep | `references/real-world.md` | 39-45 | config parsing, log analysis, health checks, batch processing, backups, API+`jq` |
+| Advanced sweep | `references/advanced.md` | 48-51 | repeated `echo` lines (→ heredoc), 3+ branch `if`/`elif` (→ assoc array or `case`), sequential independent commands (→ `& … & wait`), `cut -d,` in loops (→ custom `IFS`) |
+| Anti-pattern sweep | `references/anti-patterns.md` | 1-2, 46-47 | nested expansions, cryptic one-liners, places where shortening would *hurt* — flag for the user, do not auto-rewrite |
+
+When fanning out, brief each sub-agent with the same shape: "Read
+`skills/bash-shortening/references/<file>`. Search `<target paths>` for
+every instance of the patterns it covers. Return a markdown list of
+`path:line — verbose form → idiomatic form` with no rewriting; the
+orchestrator will apply changes."
+
+When iterating inline (1-2 files), do the same per-category pass without
+the sub-agent — load the reference file mentally, scan the target for
+its patterns, write down hits, move to the next category. Don't merge
+categories in a single read; that's how patterns get missed.
+
+After collection (either path), the orchestrator:
+
+1. Collects the per-category hit lists.
+2. Deduplicates overlap (the same line can be flagged by two sweeps).
+3. Presents the combined punch list to the user *before* applying any
+   rewrites — let them pick which categories to apply, especially when
+   anti-pattern sweep hits conflict with shortening sweeps.
+4. Applies rewrites one technique per change with rationale (per the
+   "How to use this skill" workflow above).
+
+**Why fan out at scale:** the categories are orthogonal, each needs a
+different reference file in working memory, and parallel sub-agents
+force coverage that a single pass over many files reliably skips. The
+cost is small (read-only agents, parallel) and the alternative is
+shipping a half-audit that misses entire pattern classes. At 1-2 files
+the same coverage is achievable inline as long as you actually walk the
+table category-by-category instead of grepping for whichever pattern
+came to mind first.
+
 ### Rule groups
 
 | Group | Default | Contents |
