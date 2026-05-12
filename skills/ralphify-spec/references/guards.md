@@ -16,17 +16,21 @@ guard agent script and the prompt body can both see it. Generated
 `RALPH.md` files reference the cap explicitly in their rules section so the
 agent knows the ceiling.
 
-## Guard 2 — Iteration count surfaced and cap exit is loud
+## Guard 2 — Cap exit is loud
 
-The wrapper prints a banner each iteration (`>>> iteration N of CAP`) and,
-when the cap is hit before the agent prints the COMPLETE sentinel, exits
-non-zero with a `CAP HIT WITHOUT COMPLETE` banner. Silent rollover is
-forbidden — if the loop ran out the clock without finishing, the human
-needs to see it.
+The wrapper prints a startup banner with the cap value (`>>> ralph run
+with cap=N`) and, after `ralph run` exits, scans the captured log for
+the COMPLETE sentinel. If the cap was hit before the agent printed
+COMPLETE, the wrapper exits non-zero with a `CAP HIT WITHOUT COMPLETE`
+banner. Silent rollover is forbidden — if the loop ran out the clock
+without finishing, the human needs to see it.
 
-Implementation lives in `scripts/run.sh`. The wrapper consumes `ralph run`
-output in a streaming fashion, watches for the COMPLETE marker, and chooses
-the right exit code based on whether the marker was seen.
+Implementation lives in `scripts/run.sh`. The wrapper pipes `ralph run`
+output through `tee` to both the terminal (live human visibility) and a
+log file, then post-processes the log to choose the right exit code.
+There is no mid-run early termination on COMPLETE — ralph runs to its
+natural end (cap, error, or `--stop-on-error`), and the wrapper makes
+the success/failure call afterwards.
 
 ## Guard 3 — `<promise>COMPLETE</promise>` sentinel
 

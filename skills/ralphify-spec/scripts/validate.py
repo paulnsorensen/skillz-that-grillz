@@ -10,7 +10,8 @@ Catches the failure modes that parse but break at runtime:
 - `timeout: true` (bool slipping through int check)
 
 Exits 0 on clean (warnings allowed), 1 on errors, 2 on environment problems.
-Run via: `uv run --with pyyaml python validate.py <path/to/RALPH.md>`
+Run via: `uv run --with pyyaml python scripts/validate.py <path/to/RALPH.md>`
+(adjust the script path to wherever this skill lives in your harness).
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ try:
 except ImportError:
     sys.stderr.write(
         "validate.py: PyYAML not available. Run via "
-        "`uv run --with pyyaml python validate.py <path>`.\n"
+        "`uv run --with pyyaml python scripts/validate.py <path>`.\n"
     )
     sys.exit(2)
 

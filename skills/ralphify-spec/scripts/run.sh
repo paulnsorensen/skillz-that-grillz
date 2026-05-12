@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # run.sh — runner wrapper for ralphify ralphs.
 #
-# Adds three guards on top of `ralph run`:
-#   1. Refuses to start unless `-n` / `--max-iterations` is supplied.
-#   2. Surfaces each iteration boundary in the live output.
-#   3. Watches for `<promise>COMPLETE</promise>`; exits 0 if seen,
-#      non-zero with a banner if the cap is hit without it.
+# Adds two guards on top of `ralph run`:
+#   1. Refuses to start unless `-n` / `--max-iterations` is supplied,
+#      and prints a startup banner with the cap value.
+#   2. After `ralph run` exits, scans the captured log for
+#      `<promise>COMPLETE</promise>`. Exits 0 if found; otherwise
+#      propagates `ralph run`'s exit code, or — if ralph exited clean
+#      after the cap — exits 1 with a `CAP HIT WITHOUT COMPLETE`
+#      banner. (No mid-run early termination; ralph runs to natural
+#      end.)
 #
 # Usage: run.sh PATH/TO/RALPH_DIR -n 50 [other ralph run flags...]
 
