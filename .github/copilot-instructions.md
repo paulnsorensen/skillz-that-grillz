@@ -13,7 +13,8 @@ model *why* not just *what*, and whether bundled resources earn their keep.
 ## What this repo is and isn't
 
 - **Is**: self-contained `SKILL.md` files for everyday plumbing (commit, gh,
-  gt, justfile, prek). Each skill wraps a single CLI.
+  pr-stack, justfile, prek). Each skill wraps a single CLI (pr-stack wraps
+  whichever of `gt` / `gh stack` the user has installed).
 - **Isn't**: an agent framework, an orchestrator, an MCP server. No required
   MCPs. Skills compose freely; they do not call each other implicitly.
 
