@@ -59,13 +59,22 @@ Spend your review budget on the things linters cannot see.
 
 - Each skill wraps exactly one CLI. Adding a second CLI is a new skill, not
   a new section.
+- **Narrow exception — same-domain alternative tools.** When two CLIs are
+  drop-in replacements for the *same* user-facing workflow (one mental
+  model, one set of verbs, only the binary differs), a single skill may
+  wrap both. The skill must: (a) detect which is installed up front, (b)
+  load the per-tool surface from `references/<tool>.md` rather than
+  inlining a runtime branch on every command, and (c) refuse to fake the
+  workflow with lower-level tooling when neither is installed. `pr-stack`
+  is the canonical case (`gt` and `gh stack` both implement stacked PRs).
+  Multi-domain orchestration is still out.
 - No skill *requires* an MCP server. MCPs may be **preferred** (e.g., the
   GitHub MCP plugin in `gh`) but the skill must degrade cleanly to the CLI.
 - Skills do not invoke other skills programmatically. If a workflow needs
   two skills back-to-back, document it in the README's "Suggested flow" and
   let the user (or the harness) chain them.
 - No orchestration, no intent classification, no automatic dispatching
-  inside a skill body.
+  inside a skill body — outside the narrow same-domain exception above.
 
 ## Quick triage prompt for review comments
 

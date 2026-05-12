@@ -46,7 +46,11 @@ test -f "$(git rev-parse --git-dir)/.graphite_repo_config"
 
 # gh stack extension installed?
 # (gh extension list output is TAB-separated: <short-name>\t<owner/repo>\t<version>)
-gh extension list 2>/dev/null | awk -F '\t' '$2 == "github/gh-stack"' | grep -q .
+# Guard with `command -v gh` so the probe stays quiet when gh itself is missing
+# — `2>/dev/null` on the pipeline doesn't catch the shell's own "command not
+# found" message.
+command -v gh >/dev/null 2>&1 \
+  && gh extension list 2>/dev/null | awk -F '\t' '$2 == "github/gh-stack"' | grep -q .
 ```
 
 Decision table:
