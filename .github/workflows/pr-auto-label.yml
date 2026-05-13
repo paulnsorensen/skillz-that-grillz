@@ -12,7 +12,10 @@
 #   anything else -> no label (falls into release.yml "Other changes")
 #
 # Only the four labels above are touched because they exist on every
-# GitHub repo by default — no label-creation step required.
+# GitHub repo by default — no label-creation step required. The script
+# also removes any *managed* label that no longer matches the current
+# title (e.g. a PR retitled feat: -> fix: loses `enhancement` and gains
+# `bug`), so editing the title doesn't leave stale labels behind.
 #
 # `pull_request_target` (not `pull_request`) so the workflow runs in the
 # base-repo context with write permission to labels, which is needed
@@ -23,37 +26,43 @@ name: pr-auto-label
 
 on:
   pull_request_target:
-    types: [opened, edited, reopened, synchronize]
+    types: [opened, edited, reopened]
 
 permissions:
   pull-requests: write
+  issues: write
   contents: read
 
 jobs:
   label:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
+            const MANAGED = ['enhancement', 'bug', 'documentation', 'dependencies'];
             const title = context.payload.pull_request.title || '';
             // Conventional commit: type(scope)?!?:
             const m = title.match(/^([a-z]+)(\(([^)]+)\))?!?:/);
-            if (!m) return;
-            const type = m[1];
-            const scope = m[3] || '';
+            const type = m ? m[1] : '';
+            const scope = m && m[3] ? m[3] : '';
             const map = {
               feat: 'enhancement',
               fix: 'bug',
               docs: 'documentation',
             };
-            const labels = new Set();
-            if (map[type]) labels.add(map[type]);
-            if (type === 'chore' && /^deps/.test(scope)) labels.add('dependencies');
-            if (labels.size === 0) return;
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              labels: [...labels],
-            });
+            let desired = map[type] || null;
+            if (type === 'chore' && /^deps/.test(scope)) desired = 'dependencies';
+
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const current = (context.payload.pull_request.labels || []).map(l => l.name);
+            const toRemove = MANAGED.filter(l => l !== desired && current.includes(l));
+            for (const name of toRemove) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
+            }
+            if (desired && !current.includes(desired)) {
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number, labels: [desired],
+              });
+            }
