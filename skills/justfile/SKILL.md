@@ -126,10 +126,12 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 `-euo pipefail` makes shell recipes fail loudly on any error, unset
 variable, or broken pipe — the same posture as a well-written bash
 script. If a recipe needs softer behavior, use `-` line prefix to
-ignore errors on a single command, not weaker shell flags.
+ignore errors on a single command, not weaker shell flags. Skip the
+`set shell` line for Windows targets or projects without a bash
+dependency — the default `/bin/sh` is fine for most recipes.
 
-Add `set unstable` if you use modules (`mod`) or the `[script]`
-attribute (see below).
+Add `set unstable` if you use modules (`mod`), the `[script]`
+attribute, or `[arg()]` flags (see below).
 
 ### Tool dependencies — `require()`
 
@@ -145,11 +147,12 @@ jq := require("jq")
 just := require("just")
 ```
 
-Use the variable name directly inside recipes (`jq '.name' x.json`),
-not interpolated (`{{ jq }} ...`). The URL comment doubles as the
-install hint. Skip `require()` for ubiquitous tools like `git`,
-`curl`, or the language toolchain — declare only what a fresh
-machine might be missing.
+Use `{{ jq }}` to invoke through the resolved path, or call `jq`
+normally — `require()` has already confirmed it exists at evaluate
+time, so either form works. The URL comment doubles as the install
+hint. Skip `require()` for ubiquitous tools like `git`, `curl`, or
+the language toolchain — declare only what a fresh machine might be
+missing.
 
 ### 4. Token-optimized output (for LLM-driven builds)
 
@@ -281,7 +284,7 @@ Usage: `just build --target x86_64 --release`. Run `just --usage build`
 to see the generated help.
 
 **Script blocks (`[script]`):** Cleaner than shebang recipes and
-required when the body has shell control flow you don't want
+preferred when the body has shell control flow you don't want
 re-evaluated line-by-line. Requires `set unstable`:
 
 ```just
@@ -367,8 +370,10 @@ shebang-portability quirks.
 - `dotenv-load` exposes all env vars to all recipes — avoid for secrets-heavy projects
 - Module paths are relative to the justfile location, not the working directory
 - `set positional-arguments` changes how `$1` works inside recipes — document when used
-- `require("tool")` validates at evaluate time — call the variable
-  directly (`jq '.x'`), never via interpolation (`{{ jq }}`)
-- `[arg()]`, `[script()]`, and modules require `set unstable` and
-  recent just versions (~1.34+) — pin a minimum in your README if you
-  rely on them
+- `require("tool")` validates at evaluate time — use `{{ jq }}` to
+  invoke via resolved path, or call `jq` directly; both work once
+  `require` has confirmed the tool exists
+- `[script()]` and modules require `set unstable` and just ≥1.34 —
+  pin a minimum in your README if you rely on them
+- `[arg()]` requires `set unstable` and just ≥1.46 — pin v1.46+ if
+  you expose argument flags
