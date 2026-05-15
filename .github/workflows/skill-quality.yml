@@ -70,7 +70,7 @@ jobs:
         # actions/ai-inference is GitHub's official wrapper. Pinned to a
         # commit SHA to match the rest of this repo's actions; bump via
         # dependabot or manually when a new release lands.
-        uses: actions/ai-inference@b81b2afb8390ee6839b494a404766bef6493c7d9 # v1.2.8
+        uses: actions/ai-inference@17ff458cb182449bbb2e43701fcd98f6af8f6570 # v2.1.0
         with:
           model: openai/gpt-4o
           prompt-file: prompt-payload.md
