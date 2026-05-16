@@ -100,15 +100,59 @@ test *args:
 - Use defaults for optional args: `test filter=""`
 - Use variadic for passthrough: `run *args`
 - Use `+args` (1+ required) sparingly
+- For ergonomic CLI flags (`just build --target x86_64`), use the
+  `[arg()]` attribute (v1.46+ — see "Recipe argument flags" below)
+
+**Aliases:** Add a one-letter alias for any recipe a developer will
+type more than a few times a day. Define it on the line below the
+recipe so `just --list` shows the canonical name first:
+
+```just
+# Run tests
+test *args:
+    cargo test {{args}}
+alias t := test
+```
+
+Don't manufacture aliases for every recipe — only the hot path.
 
 **Settings to always include:**
 
 ```just
-set dotenv-load := true
+set dotenv-load
+set shell := ["bash", "-euo", "pipefail", "-c"]
 ```
 
-Add `set shell := ["bash", "-uc"]` only if recipes need bash-specific features
-(arrays, process substitution). The default `/bin/sh` is fine for most recipes.
+`-euo pipefail` makes shell recipes fail loudly on any error, unset
+variable, or broken pipe — the same posture as a well-written bash
+script. If a recipe needs softer behavior, use `-` line prefix to
+ignore errors on a single command, not weaker shell flags. Skip the
+`set shell` line for Windows targets or projects without a bash
+dependency — the default `/bin/sh` is fine for most recipes.
+
+Add `set unstable` if you use modules (`mod`), the `[script]`
+attribute, or `[arg()]` flags (see below).
+
+### Tool dependencies — `require()`
+
+When a recipe depends on a tool that isn't a standard system command,
+declare it at the top of the justfile so `just --evaluate` fails fast
+when it's missing:
+
+```just
+# https://github.com/jqlang/jq
+jq := require("jq")
+
+# https://github.com/casey/just (yes, just itself)
+just := require("just")
+```
+
+Use `{{ jq }}` to invoke through the resolved path, or call `jq`
+normally — `require()` has already confirmed it exists at evaluate
+time, so either form works. The URL comment doubles as the install
+hint. Skip `require()` for ubiquitous tools like `git`, `curl`, or
+the language toolchain — declare only what a fresh machine might be
+missing.
 
 ### 4. Token-optimized output (for LLM-driven builds)
 
@@ -172,7 +216,7 @@ Don't duplicate the full recipe list — `just --list` is self-documenting.
 | `.PHONY: target` | (not needed) |
 | `$(VAR)` | `{{var}}` |
 | `$(shell cmd)` | `` `cmd` `` |
-| `-include .env` | `set dotenv-load := true` |
+| `-include .env` | `set dotenv-load` |
 | `ifeq ($(OS),Darwin)` | `if os() == "macos" { ... }` |
 | `ifndef VAR` / `$(or ...)` | `env_var_or_default("VAR", "default")` |
 | `make -C subdir` | `mod subdir` |
@@ -209,7 +253,76 @@ open-docs:
 [private]
 _setup:
     mkdir -p tmp/
+
+# Group recipes in `just --list` output
+[group("checks")]
+lint:
+    cargo clippy
+
+[group("checks")]
+fmt:
+    cargo fmt
+
+# Multiple attributes — same line (comma-separated) or stacked
+[group("dev"), no-cd]
+status:
+    git status
 ```
+
+**Recipe argument flags (v1.46+):** Use `[arg()]` to expose a
+parameter as a CLI option instead of a positional arg. Best for
+recipes a human runs at the prompt:
+
+```just
+[arg("target", long, help="Build target architecture")]
+[arg("release", long, value="true", help="Build in release mode")]
+build target release="false":
+    cargo build --target {{target}} {{ if release == "true" { "--release" } else { "" } }}
+```
+
+Usage: `just build --target x86_64 --release`. Run `just --usage build`
+to see the generated help.
+
+**Script blocks (`[script]`):** Cleaner than shebang recipes and
+preferred when the body has shell control flow you don't want
+re-evaluated line-by-line. Requires `set unstable`:
+
+```just
+[script("bash")]
+deploy env:
+    set -e
+    case {{env}} in
+        prod) URL="https://prod.example.com" ;;
+        stage) URL="https://stage.example.com" ;;
+        *) echo "unknown env: {{env}}"; exit 1 ;;
+    esac
+    curl -X POST "$URL/deploy"
+
+[script("python3")]
+analyze:
+    import json
+    print(json.load(open("results.json"))["total"])
+```
+
+`[script()]` is preferred over `#!/usr/bin/env` shebangs for
+cross-platform portability and so the whole body runs as one block.
+
+**Built-in color constants:** Available globally without definition —
+`RED`, `GREEN`, `YELLOW`, `BLUE`, `CYAN`, `MAGENTA`, plus `BOLD`,
+`UNDERLINE`, and `NORMAL` to reset. Useful for status output in
+multi-step recipes:
+
+```just
+@check:
+    cargo check
+    echo -e '{{ GREEN }}✓ check passed{{ NORMAL }}'
+
+@fail-loudly:
+    echo -e '{{ BOLD + RED }}deploy aborted{{ NORMAL }}'
+```
+
+Don't sprinkle color through every recipe — reserve it for status
+lines that summarize an aggregate step.
 
 **Modules (monorepo):**
 
@@ -221,7 +334,7 @@ mod? local     # optional — no error if missing
 # Usage: just api::test, just web::build
 ```
 
-**Shebang recipes (multi-line scripts):**
+**Shebang recipes (multi-line scripts, no `set unstable` needed):**
 
 ```just
 analyze:
@@ -230,6 +343,10 @@ analyze:
     data = json.load(open("results.json"))
     print(f"Total: {len(data)}")
 ```
+
+Prefer `[script("python3")]` over shebangs on just ≥ 1.34 with
+`set unstable` — it runs the body as one block and avoids
+shebang-portability quirks.
 
 ## Anti-patterns
 
@@ -253,3 +370,10 @@ analyze:
 - `dotenv-load` exposes all env vars to all recipes — avoid for secrets-heavy projects
 - Module paths are relative to the justfile location, not the working directory
 - `set positional-arguments` changes how `$1` works inside recipes — document when used
+- `require("tool")` validates at evaluate time — use `{{ jq }}` to
+  invoke via resolved path, or call `jq` directly; both work once
+  `require` has confirmed the tool exists
+- `[script()]` and modules require `set unstable` and just ≥1.34 —
+  pin a minimum in your README if you rely on them
+- `[arg()]` requires `set unstable` and just ≥1.46 — pin v1.46+ if
+  you expose argument flags
