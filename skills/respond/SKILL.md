@@ -178,7 +178,8 @@ single place.
 ```
 
 Keep the tone professional and specific. Cite project conventions
-(CLAUDE.md, complexity budget, early-development stance) when relevant.
+(`AGENTS.md` or its harness-specific equivalent, complexity budget,
+early-development stance) when relevant.
 
 **ASK items (30–49).** Wait for the user. Execute as FIX or PUSH BACK once
 they decide. If the user doesn't respond to a specific ASK, leave it
@@ -229,8 +230,9 @@ updating this section first.
   >= 50 items.
 - One reply per thread — don't fragment responses across multiple comments.
 - Match the reviewer's tone — professional for humans, concise for bots.
-- Cite specifics in pushback — reference CLAUDE.md conventions, the
-  complexity budget, or the early-development stance when relevant.
+- Cite specifics in pushback — reference the project's conventions doc
+  (`AGENTS.md` or its harness-specific equivalent), the complexity budget,
+  or the early-development stance when relevant.
 - Don't argue style — if the suggestion is purely stylistic and the score
   is < 30, skip it (note as SKIP in the table) rather than posting
   pushback. Stylistic items in 30–49 stay as ASK so the user can decide.
