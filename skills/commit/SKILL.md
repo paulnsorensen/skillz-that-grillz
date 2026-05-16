@@ -40,8 +40,11 @@ type(scope): short description (≤72 chars)
 
 Optional body if nuance is lost without it.
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-Authored-By: <agent-name> <agent-email>
 ```
+
+The `Co-Authored-By` trailer is optional — fill in the agent identity your
+harness provides, or omit the line entirely if the project doesn't want it.
 
 Types: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `style`
 
@@ -53,7 +56,7 @@ Use a heredoc to preserve formatting:
 git commit -m "$(cat <<'EOF'
 type(scope): short description
 
-Co-Authored-By: Claude <noreply@anthropic.com>
+Co-Authored-By: <agent-name> <agent-email>
 EOF
 )"
 ```
@@ -63,7 +66,7 @@ EOF
 - **Never amend** unless explicitly asked — create new commits instead
 - **Never --no-verify** — don't skip hooks
 - **Never force-push** to main/master
-- **No push, no PR** — hand off to gh skill (GitHub MCP) for that
+- **No push, no PR** — hand off to the gh skill for that
 - **Hook fails?** Fix the issue, re-stage, create a new commit (not amend)
 - **Don't commit** `.env`, credentials, or large binaries — warn the user
 
@@ -71,5 +74,5 @@ EOF
 
 - Heredoc commit messages with backticks or `$` need single-quoted delimiter (`<<'EOF'` not `<<EOF`)
 - If prek hook fails, the commit did NOT happen — create a new commit after fixing, never amend
-- Co-Authored-By line uses the generic `Claude <noreply@anthropic.com>` form — replace with a specific model name (e.g. `Claude Sonnet 4.6`) only if the project requires it
+- Co-Authored-By trailer is optional — use the agent identity your harness exposes, or drop the line if the project doesn't track agent authorship
 - Empty `git diff HEAD` after staging means nothing new was added — check `git diff --cached` instead
