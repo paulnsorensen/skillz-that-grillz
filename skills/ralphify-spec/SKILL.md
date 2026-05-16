@@ -72,8 +72,9 @@ for the user's task — do not ship the stock template.
 `references/schema.md` is the authoritative schema reference. Read it when you
 need exact rules; do not re-derive from this skill body.
 
-Default agent: `claude -p --dangerously-skip-permissions`, unless the user is
-on a different agent (Gemini, Cursor agent).
+Pick the `agent:` invocation that matches the harness the user is running
+(e.g. `claude -p --dangerously-skip-permissions`, `gemini -p --yolo`,
+`cursor-agent -p`). `references/schema.md` lists the validated forms.
 
 Set `credit: false` if the repo forbids automated commit trailers.
 
