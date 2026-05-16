@@ -146,11 +146,12 @@ real-world).
   Sub-agents are overkill at this size and the round-trip costs more than
   the read.
 - **3+ bash files, or a whole directory/repo audit:** fan out. Spawn
-  **one sub-agent per reference category in a single message** (parallel
-  `Agent` calls with `subagent_type=Explore`, which is read-only and
-  fast). Each sub-agent owns one reference file and reports back
-  `file:line` hits with a one-line rationale. The orchestrator merges
-  results.
+  **one sub-agent per reference category in a single message** using the
+  harness's parallel sub-agent / fan-out mechanism if available
+  (preferably a read-only, exploration-scoped variant), otherwise iterate
+  the categories sequentially. Each sub-agent owns one reference file and
+  reports back `file:line` hits with a one-line rationale. The
+  orchestrator merges results.
 
 Either way, the categories below are the **complete** checklist — do not
 stop after finding hits in two or three of them. Tunnel-vision on
@@ -235,9 +236,9 @@ brew install ast-grep        # macOS / Linuxbrew
 cargo install ast-grep --bin sg
 ```
 
-Or skip the script and invoke `/bash-shortening` directly in Claude Code
-— the methodology in this file is the fallback for environments without
-ast-grep.
+Or skip the script and invoke this skill (`/bash-shortening` or whatever
+your harness exposes) directly — the methodology in this file is the
+fallback for environments without ast-grep.
 
 **Why some rules are still regex-only.**
 
