@@ -18,7 +18,7 @@ Install `op`, sign in (`op signin`), then use template functions:
 
 ```go-template
 export GITHUB_TOKEN="{{ onepasswordRead "op://Personal/GitHub/credential" }}"
-export ANTHROPIC_API_KEY="{{ onepasswordRead "op://Dev/Anthropic/api-key" }}"
+export VENDOR_API_KEY="{{ onepasswordRead "op://Dev/Vendor/api-key" }}"
 ```
 
 `chezmoi apply` invokes `op` at render time. Secrets never touch the
