@@ -3,7 +3,7 @@
 ## Template (Rails)
 
 ```just
-set dotenv-load := true
+set dotenv-load
 
 default:
     @just --list

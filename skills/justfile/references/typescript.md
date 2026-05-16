@@ -10,7 +10,7 @@ Detect the package manager from lockfiles:
 ## Template (npm — adapt runner for other managers)
 
 ```just
-set dotenv-load := true
+set dotenv-load
 
 default: check
 

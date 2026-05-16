@@ -3,7 +3,7 @@
 ## Template
 
 ```just
-set dotenv-load := true
+set dotenv-load
 
 default: check
 
