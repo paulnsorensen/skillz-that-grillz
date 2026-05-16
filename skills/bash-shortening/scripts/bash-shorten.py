@@ -238,8 +238,10 @@ _SG_MISSING_DIAGNOSTIC = (
     "  brew install ast-grep\n"
     "  cargo install ast-grep --bin sg\n"
     "\n"
-    "Or skip the script entirely: run the bash-shortening skill's\n"
-    "category analyzers and apply the methodology by hand from SKILL.md."
+    "Or skip the script entirely and follow the reference-driven\n"
+    "methodology in skills/bash-shortening/SKILL.md — see its\n"
+    "'Parallel sweep — worker contract' and 'Categories' sections for the\n"
+    "per-category review workflow (no separate analyzer binary exists)."
 )
 
 

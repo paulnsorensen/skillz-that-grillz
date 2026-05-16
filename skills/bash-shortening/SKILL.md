@@ -63,10 +63,11 @@ race the user is right to worry about).
 3. **Merge analyzer reports.** Collect each analyzer's `path:line —
    verbose → idiomatic` hits. Dedupe overlap (the same line can be flagged
    by two categories — keep one entry, note both attributions).
-4. **Run the script from the main thread.** `python3
-   scripts/bash-shorten.py --apply <target paths>` applies the
-   high-confidence `core` rules in one writer. Never delegate `--apply` to
-   a worker.
+4. **Run the script from the main thread.** Run
+   `python3 scripts/bash-shorten.py --apply <target>` (one file per
+   invocation — loop over the list if there are several). This applies
+   the high-confidence `core` rules in one writer. Never delegate
+   `--apply` to a worker.
 5. **Verify the script's output.** `bash -n <target>` for syntax,
    `shellcheck <target>` if available, and read the diff. If a rule
    produced something surprising, revert and narrow with `--rules` or
@@ -169,14 +170,16 @@ once.
 | Category analyzer | One per reference category (9 by default) | Read `references/<category>.md` and scan the target for the patterns it covers | Markdown list of `path:line — verbose → idiomatic`, no rewriting |
 
 **Brief for each category analyzer** (substitute `<category>` and
-`<target paths>`):
+`<target>` — paths in this skill are relative to the skill directory
+unless noted; pass the repo-relative path of the script being shortened
+as `<target>`):
 
-> Read `skills/bash-shortening/references/<category>.md`. Scan
-> `<target paths>` for every instance of the patterns it covers. Return a
-> markdown list: `path:line — verbose form → idiomatic form`. Do not
-> rewrite the file, do not run `scripts/bash-shorten.py`, do not write
-> anything. If a hit conflicts with the anti-patterns reference, flag it
-> but still include it.
+> Read `references/<category>.md` (relative to the bash-shortening skill
+> directory). Scan `<target>` for every instance of the patterns it
+> covers. Return a markdown list: `path:line — verbose form → idiomatic
+> form`. Do not rewrite the file, do not run `scripts/bash-shorten.py`,
+> do not write anything. If a hit conflicts with the anti-patterns
+> reference, flag it but still include it.
 
 **Dispatch rule:** fire all analyzers in a single batched call so they run
 concurrently. Sequential dispatch defeats the latency win that's the whole
@@ -224,10 +227,11 @@ After all analyzers return, the **main thread** owns every write:
 
 1. **Collect and dedupe** the per-category hit lists. The same line can be
    flagged by two analyzers — keep one entry, note both attributions.
-2. **Run the rewriter script** from the main thread:
-   `python3 scripts/bash-shorten.py --apply <target paths>` (defaults to
-   `core`; add `--include modernize` to opt into the sd/rg/fd rewrites).
-   This is the *only* place `--apply` runs.
+2. **Run the rewriter script** from the main thread. Invoke
+   `python3 scripts/bash-shorten.py --apply <target>` once per file
+   (loop if there are several — the script takes one positional file).
+   Defaults to `core`; add `--include modernize` to opt into the sd/rg/fd
+   rewrites. This is the *only* place `--apply` runs.
 3. **Verify the script's output.** `bash -n <target>` for syntax,
    `shellcheck <target>` if available, and a manual diff read. If a rule
    produced something surprising, revert and narrow with `--rules` or
