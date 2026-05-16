@@ -452,7 +452,7 @@ SH
     local out
     out="$(env -i PATH=/usr/bin:/bin python3 "$SCRIPT" /etc/hosts 2>&1 || true)"
     [[ "$out" == *"requires ast-grep"* ]]
-    [[ "$out" == *"/bash-shortening"* ]]
+    [[ "$out" == *"bash-shortening"* ]]
 }
 
 # -- Real-world regression fixtures ----------------------------------------

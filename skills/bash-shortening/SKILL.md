@@ -47,28 +47,42 @@ See `references/anti-patterns.md` for the long-form version.
 
 ## How to use this skill
 
-When the user asks for shorter shell, do the **whole** workflow, not just
-the cheatsheet lookup:
+**Architecture: workers gather, main thread writes.** Read-only analyzer
+workers run in parallel to collect violations. Then the main thread is the
+*single writer* — it runs the script, verifies the result, and hand-edits
+the rest. This avoids parallel writes to the same file (the lost-update
+race the user is right to worry about).
 
-1. **Identify the bloat class.** Match the verbose code against the
-   "Quick wins" table below — that tells you which reference file holds
-   the idiomatic form.
-2. **Try the automated rewriter first** (see "Automated rewrites"
-   below). For the high-confidence patterns in the `core` rule group,
-   `bash-shorten.py` produces a diff in seconds with a tested ruleset.
-   Use it for the easy half, then hand-edit the rest.
-3. **Apply the rewrite.** Use the `before / after` examples in the matching
-   reference file. Preserve quoting (`"$var"`), `set -euo pipefail` if the
-   surrounding script has it, and any error handling already in place.
-4. **Stop before it gets cryptic.** If the rewrite needs a comment to
-   explain *what* it does (not *why*), back off to the verbose form. The
-   anti-patterns reference has the calibration.
-5. **Show the user the diff** with a one-line rationale per change — what
-   was eliminated (subprocess, temp file, intermediate var, redundant
-   branch).
+1. **Identify the target.** File path(s), pasted snippet, or `bash`-fenced
+   block. Confirm it's actually bash (see "When NOT to use this skill").
+2. **Dispatch the analyzer sweep.** Fire one read-only analyzer worker per
+   reference category in a single batched call so they run concurrently.
+   Analyzers only *report* violations — they do not write, do not run the
+   script, do not touch the target. See "Parallel sweep — worker contract"
+   below.
+3. **Merge analyzer reports.** Collect each analyzer's `path:line —
+   verbose → idiomatic` hits. Dedupe overlap (the same line can be flagged
+   by two categories — keep one entry, note both attributions).
+4. **Run the script from the main thread.** Run
+   `python3 scripts/bash-shorten.py --apply <target>` (one file per
+   invocation — loop over the list if there are several). This applies
+   the high-confidence `core` rules in one writer. Never delegate
+   `--apply` to a worker.
+5. **Verify the script's output.** `bash -n <target>` for syntax,
+   `shellcheck <target>` if available, and read the diff. If a rule
+   produced something surprising, revert and narrow with `--rules` or
+   `--skip` before retrying.
+6. **Present the remaining punch list.** Show the analyzer hits the script
+   didn't cover and let the user pick which categories to apply,
+   especially when anti-pattern hits conflict with shortening hits.
+7. **Hand-edit the rest.** One technique per change with rationale visible.
+   Use the `before / after` examples in the matching reference file.
+   Preserve quoting (`"$var"`), `set -euo pipefail`, and any error
+   handling. Stop before any rewrite needs a comment to explain *what* it
+   does.
 
-Don't bulk-rewrite a whole script silently. Each change should be
-attributable to one technique the user can learn.
+Don't bulk-rewrite silently. Workers gather, main thread writes, every
+change attributable to one technique the user can learn.
 
 ## Automated rewrites
 
@@ -122,41 +136,78 @@ flow analysis (single-use variable inlining), multi-statement detection
 behavioral judgment ("is this `&&`/`||` chain safe?"). Those are
 hand-edits guided by the references.
 
-When a user asks "can you shorten this whole script?", run the
-rewriter first to clear the obvious patterns, *then* walk through the
-remaining bloat by hand using the cheatsheet. Don't skip the rewriter —
-it eliminates the boring 60% of the work.
+When a user asks "can you shorten this whole script?", the main thread
+runs the script *after* the read-only analyzer sweep returns (see next
+section). The script handles the boring 60% of the rewrites; the analyzers
+cover what regex can't see; the main thread is the only writer.
 
-## Thorough sweep via parallel sub-agents
+## Parallel sweep — worker contract
 
-The rewriter handles the obvious patterns in `core` + `modernize`. The
-*rest* lives in shapes the rewriter can't see — and a single in-context
-reviewer reliably tunnel-visions on the first one or two categories they
-look at, missing whole classes (command substitution, parameter expansion,
-arithmetic, brace expansion, process substitution, functions, advanced,
-real-world).
-
-**Pick the strategy by file count, not by gut feel:**
-
-- **1-2 bash files (or a single snippet):** stay inline. Open each file
-  once, then iterate through *every* reference category in the table
-  below in order — command substitution → parameter expansion → functions → brace expansion →
-  process substitution → arithmetic → real-world → advanced →
-  anti-patterns. Tick each category off explicitly so none get skipped.
-  Sub-agents are overkill at this size and the round-trip costs more than
-  the read.
-- **3+ bash files, or a whole directory/repo audit:** fan out. Spawn
-  **one sub-agent per reference category in a single message** (parallel
-  `Agent` calls with `subagent_type=Explore`, which is read-only and
-  fast). Each sub-agent owns one reference file and reports back
-  `file:line` hits with a one-line rationale. The orchestrator merges
-  results.
-
-Either way, the categories below are the **complete** checklist — do not
-stop after finding hits in two or three of them. Tunnel-vision on
-`basename`/`dirname`/`for-range` while skipping command substitution,
+A single in-context reviewer reliably tunnel-visions on the first one or two
+categories it looks at, missing whole classes (command substitution,
 parameter expansion, arithmetic, brace expansion, process substitution,
-functions, advanced, and real-world is the failure mode this section exists to prevent.
+functions, advanced, real-world). The fix is to fan out **read-only**
+analyzers — one per reference category — in parallel. They gather
+violations; they don't write. The main thread runs the script and the
+hand-edits afterward.
+
+### Workers are strictly read-only
+
+Every parallel worker has the same contract: **read the target, report
+violations, return.** No worker writes to disk, applies rewrites, or runs
+`scripts/bash-shorten.py --apply`. If a job involves writing, it isn't a
+worker — it's the main thread's job.
+
+Why: parallel writes to the same file race. Even if you scoped each worker
+to its own category, they'd produce overlapping diffs against shared lines
+that the main thread would still have to merge by hand. Gather first, write
+once.
+
+### Worker type
+
+| Worker | Count | Role | Output |
+|---|---|---|---|
+| Category analyzer | One per reference category (9 by default) | Read `references/<category>.md` and scan the target for the patterns it covers | Markdown list of `path:line — verbose → idiomatic`, no rewriting |
+
+**Brief for each category analyzer** (substitute `<category>` and
+`<target>` — paths in this skill are relative to the skill directory
+unless noted; pass the repo-relative path of the script being shortened
+as `<target>`):
+
+> Read `references/<category>.md` (relative to the bash-shortening skill
+> directory). Scan `<target>` for every instance of the patterns it
+> covers. Return a markdown list: `path:line — verbose form → idiomatic
+> form`. Do not rewrite the file, do not run `scripts/bash-shorten.py`,
+> do not write anything. If a hit conflicts with the anti-patterns
+> reference, flag it but still include it.
+
+**Dispatch rule:** fire all analyzers in a single batched call so they run
+concurrently. Sequential dispatch defeats the latency win that's the whole
+reason to fan out.
+
+### Harness-agnostic — pick your primitive
+
+The contract is "fire N read-only tasks in parallel and collect results."
+Use whichever primitive your harness exposes — the skill does not depend on
+any one of them:
+
+- A parallel sub-agent / sub-task call (one batched message that spawns all
+  workers at once).
+- Multiple parallel tool calls in a single assistant turn.
+- A task / node fan-out in an agent-graph framework.
+- Plain shell: `xargs -P 9` or `parallel` over the worker briefs piped to
+  your agent CLI, with each worker's stdout captured to a separate file.
+- **No parallel primitive available:** walk the category table sequentially
+  in one pass. Tick each off explicitly — tunnel-vision on the first hits
+  is the failure mode this section exists to prevent.
+
+### Categories
+
+These are the **complete** checklist — do not stop after finding hits in two
+or three of them. Tunnel-vision on `basename`/`dirname`/`for-range` while
+skipping command substitution, parameter expansion, arithmetic, brace
+expansion, process substitution, functions, advanced, and real-world is the
+failure mode this section exists to prevent.
 
 | Category | Reference | Article refs | Patterns to find |
 |---|---|---|---|
@@ -170,35 +221,40 @@ functions, advanced, and real-world is the failure mode this section exists to p
 | Advanced sweep | `references/advanced.md` | 48-51 | repeated `echo` lines (→ heredoc), 3+ branch `if`/`elif` (→ assoc array or `case`), sequential independent commands (→ `& … & wait`), `cut -d,` in loops (→ custom `IFS`) |
 | Anti-pattern sweep | `references/anti-patterns.md` | 1-2, 46-47 | nested expansions, cryptic one-liners, places where shortening would *hurt* — flag for the user, do not auto-rewrite |
 
-When fanning out, brief each sub-agent with the same shape: "Read
-`skills/bash-shortening/references/<file>`. Search `<target paths>` for
-every instance of the patterns it covers. Return a markdown list of
-`path:line — verbose form → idiomatic form` with no rewriting; the
-orchestrator will apply changes."
+### Merge, apply, verify — single writer
 
-When iterating inline (1-2 files), do the same per-category pass without
-the sub-agent — load the reference file mentally, scan the target for
-its patterns, write down hits, move to the next category. Don't merge
-categories in a single read; that's how patterns get missed.
+After all analyzers return, the **main thread** owns every write:
 
-After collection (either path), the orchestrator:
+1. **Collect and dedupe** the per-category hit lists. The same line can be
+   flagged by two analyzers — keep one entry, note both attributions.
+2. **Run the rewriter script** from the main thread. Invoke
+   `python3 scripts/bash-shorten.py --apply <target>` once per file
+   (loop if there are several — the script takes one positional file).
+   Defaults to `core`; add `--include modernize` to opt into the sd/rg/fd
+   rewrites. This is the *only* place `--apply` runs.
+3. **Verify the script's output.** `bash -n <target>` for syntax,
+   `shellcheck <target>` if available, and a manual diff read. If a rule
+   produced something surprising, revert and narrow with `--rules` or
+   `--skip` before retrying.
+4. **Present the remaining analyzer punch list** — the hits the script
+   didn't cover. Let the user pick which categories to apply, especially
+   when anti-pattern hits conflict with shortening hits.
+5. **Apply hand-edits** one technique per change with rationale (per the
+   "How to use this skill" workflow above). Each edit is a single write
+   from the main thread; no fan-out, no parallelism.
 
-1. Collects the per-category hit lists.
-2. Deduplicates overlap (the same line can be flagged by two sweeps).
-3. Presents the combined punch list to the user *before* applying any
-   rewrites — let them pick which categories to apply, especially when
-   anti-pattern sweep hits conflict with shortening sweeps.
-4. Applies rewrites one technique per change with rationale (per the
-   "How to use this skill" workflow above).
+**Why one writer:** the analyzers are orthogonal in *what they look for*,
+but their proposed rewrites overlap on the same lines (a single `for i in
+1 2 3 4 5` hit shows up in brace-expansion *and* arithmetic *and* maybe
+real-world). If workers wrote in parallel, the last writer would silently
+overwrite the others. Gathering all violations first and applying from one
+place keeps the diff auditable and prevents lost-update bugs.
 
-**Why fan out at scale:** the categories are orthogonal, each needs a
-different reference file in working memory, and parallel sub-agents
-force coverage that a single pass over many files reliably skips. The
-cost is small (read-only agents, parallel) and the alternative is
-shipping a half-audit that misses entire pattern classes. At 1-2 files
-the same coverage is achievable inline as long as you actually walk the
-table category-by-category instead of grepping for whichever pattern
-came to mind first.
+**Why fan out for analysis:** the categories are orthogonal, each needs a
+different reference file in working memory, and parallel workers force
+coverage that a single pass over many files reliably skips. Read-only
+tasks don't race, so parallelism is free here — exactly where the
+single-writer discipline doesn't apply.
 
 ### Rule groups
 
@@ -235,9 +291,9 @@ brew install ast-grep        # macOS / Linuxbrew
 cargo install ast-grep --bin sg
 ```
 
-Or skip the script and invoke `/bash-shortening` directly in Claude Code
-— the methodology in this file is the fallback for environments without
-ast-grep.
+Or skip the script entirely and run only the category analyzers from the
+parallel sweep — the reference-driven methodology in this file is the
+fallback for environments without ast-grep.
 
 **Why some rules are still regex-only.**
 
