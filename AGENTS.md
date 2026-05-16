@@ -20,6 +20,7 @@ Do NOT commit or push when `just check` fails. If CI fails, pull the branch loca
 |---|---|
 | `/commit` | Stage and commit changes with conventional-commits messages |
 | `/chezmoi` | Manage dotfiles with chezmoi (file naming, templating, secrets, bootstrap) |
+| `/file-handler` | Save / fetch / search skill artifacts under `.skillz/<type>/<slug>` — shared on-disk convention for every skill that needs scratch space |
 | `/gh` | GitHub plumbing (PRs, issues, CI, releases) |
 | `/gh-bootstrap` | One-shot repo configuration (merge queue, squash-only, release notes) |
 | `/justfile` | Generate or migrate to justfiles |

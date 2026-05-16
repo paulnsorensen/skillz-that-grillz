@@ -9,10 +9,11 @@ test:
     python3 .github/scripts/test_validate_skills.py -v
     python3 .github/scripts/validate_skills.py
     bats tests/bash/test_install.bats
+    bats tests/bash/test_skillz.bats
 
 # Lint shell scripts
 lint-sh:
-    shellcheck scripts/install.sh
+    shellcheck scripts/install.sh skills/file-handler/scripts/skillz.sh
 
 # Fix markdown formatting issues
 lint-md-fix:
