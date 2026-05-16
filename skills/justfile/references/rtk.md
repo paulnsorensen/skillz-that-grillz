@@ -1,7 +1,7 @@
 # Token-optimized output via rtk
 
-When `just` recipes run inside an LLM agent's context (Claude Code, Cursor,
-Conductor, CI logs piped to an agent), output verbosity = token cost. `just`
+When `just` recipes run inside an LLM agent's context (any agentic harness,
+or CI logs piped to an agent), output verbosity = token cost. `just`
 echoes each recipe line, then the underlying tool prints its own banner — a
 typical TS pipeline is 60+ lines, most of it low-signal.
 
