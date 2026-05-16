@@ -44,6 +44,7 @@ harness can load it progressively.
 | `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in Claude. |
 | `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
 | `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
+| `skills/copilot/SKILL.md` | `/copilot` | Drive the GitHub Copilot CLI / coding agent. Three modes: `review` (PR review with `@copilot fix this` inline comments) and `delegate` (`gh agent-task` create + monitor) are routine; `setup` is a one-time bootstrap that writes `.github/copilot-instructions.md` and per-language `.github/instructions/*.instructions.md`. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, code search — via the GitHub MCP plugin, with `gh` CLI as the fallback for operations MCP doesn't cover. |
 | `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
 | `skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
@@ -68,6 +69,7 @@ Code); the bundled `bash-shorten.py` rewriter additionally requires
 | `bash-shortening` | methodology + `bash-shorten.py` rewriter | bash 4+ in target scripts, **ast-grep** (when running the rewriter) | shellcheck (post-validation), sd / ripgrep / fd (`--include modernize`) |
 | `commit` | `git` | git | — |
 | `chezmoi` | `chezmoi` CLI | chezmoi | `op` / `bw` / `age` / `gpg` (one of, when using encrypted dotfiles); Context7 MCP (latest template-function docs) |
+| `copilot` | `gh` CLI + `gh agent-task` + GitHub Copilot Chat | gh, gh agent-task extension | review skill (e.g. `age` or `code-review`) for `review` mode |
 | `gh` | `gh` CLI | gh | GitHub MCP plugin (preferred) |
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
 | `github-copilot-personal-instructions` | github.com Copilot UI | — | — |
@@ -129,7 +131,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in bash-shortening commit gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile oss-hygiene pr-stack prek ralphify-spec respond safe-settings; do
+for s in bash-shortening commit copilot gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile oss-hygiene pr-stack prek ralphify-spec respond safe-settings; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```
