@@ -53,12 +53,15 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Send only the YAML frontmatter — the judge scores the
+          # `description` field, not the skill body. Keeps the prompt under
+          # gpt-4o's 8000-token cap regardless of body length.
           {
-            echo "## SKILL.md files under review"
+            echo "## SKILL.md frontmatter under review"
             echo
             for f in "${files[@]}"; do
-              printf '### %s\n\n```markdown\n' "$f"
-              cat "$f"
+              printf '### %s\n\n```yaml\n' "$f"
+              awk '/^---$/{c++; if(c==2){print; exit}} c>=1' "$f"
               printf '\n```\n\n'
             done
           } > prompt-payload.md
