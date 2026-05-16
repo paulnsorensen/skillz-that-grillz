@@ -5,7 +5,7 @@ Always use `uv` as the package manager (user preference).
 ## Template
 
 ```just
-set dotenv-load := true
+set dotenv-load
 
 default: check
 

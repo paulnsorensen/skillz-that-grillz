@@ -3,7 +3,7 @@
 ## Template
 
 ```just
-set dotenv-load := true
+set dotenv-load
 
 BINARY := "myapp"
 VERSION := `git describe --tags --always 2>/dev/null || echo "dev"`
