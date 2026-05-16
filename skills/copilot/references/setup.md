@@ -27,7 +27,7 @@ review/coding-agent files.
 | `Cargo.toml` | rust | `*.rs` |
 | `go.mod` | go | `*.go` |
 | `Gemfile` | ruby | `*.rb` |
-| `.brew` or `zshrc` or `zsh/` dir | dotfiles | `*.sh`, `*.zsh` |
+| `.brew` or `.zshrc` or `.zsh/` dir (or chezmoi-style `dot_zshrc`) | dotfiles | `*.sh`, `*.zsh` |
 
 ## 2. Detect existing tooling
 

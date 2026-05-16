@@ -1,5 +1,5 @@
 ---
-allowed-tools: Read, Write, Edit, Grep, Glob, AskUserQuestion, Bash(gh:*), Bash(git:*), Bash(jq:*), Bash(sleep:*), Bash(date:*)
+allowed-tools: Read, Write, Edit, Grep, Glob, AskUserQuestion, Bash(gh:*), Bash(git:*), Bash(sleep:*)
 license: MIT
 name: copilot
 description: >
