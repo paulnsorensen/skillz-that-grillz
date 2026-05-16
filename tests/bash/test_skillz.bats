@@ -182,6 +182,39 @@ last" >/dev/null
     [[ "$output" != *"note/todo"* ]]
 }
 
+@test "search_files title pass matches glob metacharacters literally" {
+    # Title pass must treat the query as a literal case-insensitive
+    # substring on the basename, not as a shell glob. `a*real` must
+    # match only the slug literally containing `a*real`, not anything
+    # that matches the glob `*a*real*`.
+    skillz_save_file note "a-real" "body" >/dev/null
+    skillz_save_file note "axxxreal" "body" >/dev/null
+    skillz_save_file note "a-star-real" "x" >/dev/null
+    run skillz_search_files "a*real"
+    # No literal `a*real` slug exists, so titles section should not appear.
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"a-real"* ]]
+    [[ "$output" != *"axxxreal"* ]]
+}
+
+@test "search_files title pass matches bracket characters literally" {
+    skillz_save_file note "ab" "body" >/dev/null
+    skillz_save_file note "a-b-c" "body" >/dev/null
+    run skillz_search_files "a[b]"
+    # No slug contains the literal `a[b]` substring, so no title hits.
+    [[ "$output" != *"## titles"* ]]
+}
+
+@test "search_files title pass matches dot literally" {
+    skillz_save_file note "v1.2.3" "body" >/dev/null
+    skillz_save_file note "v1X2X3" "body" >/dev/null
+    run skillz_search_files "v1.2.3"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"## titles"* ]]
+    [[ "$output" == *"v1.2.3"* ]]
+    [[ "$output" != *"v1X2X3"* ]]
+}
+
 @test "search_files matches regex metacharacters literally" {
     # Body grep must treat the query as a fixed string (grep -F), so
     # `v1.2.3` matches only that exact text and not `v1X2Y3`.

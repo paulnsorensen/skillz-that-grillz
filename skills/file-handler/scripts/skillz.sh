@@ -137,7 +137,21 @@ skillz_search_files() {
 
     local found=0 hits
 
-    hits="$(find "$scope" -type f -iname "*${query}*" 2>/dev/null | sort || true)"
+    # Match the query as a literal case-insensitive substring against
+    # each file's basename, not as a shell glob. `find -iname` would
+    # interpret `*`, `?`, `[` as glob metacharacters; we want the same
+    # fixed-string semantics the body pass uses (`grep -F`). The awk
+    # filter lowercases both sides and tests for substring containment
+    # on the trailing path component only.
+    local lc_query
+    lc_query="$(printf '%s' "$query" | tr '[:upper:]' '[:lower:]')"
+    hits="$(find "$scope" -type f 2>/dev/null \
+        | awk -v q="$lc_query" '{
+            n = split($0, parts, "/"); base = parts[n];
+            lc = tolower(base);
+            if (index(lc, q) > 0) print
+        }' \
+        | sort || true)"
     if [[ -n "$hits" ]]; then
         printf '## titles\n%s\n' "$hits"
         found=1
