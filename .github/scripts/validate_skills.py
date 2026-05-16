@@ -10,6 +10,7 @@ Per-file checks:
 - Only spec-allowed keys (plus Claude Code extensions) are present.
 - name is kebab-case, 1-64 chars, no leading/trailing/consecutive hyphens.
 - name matches the parent directory name.
+- description is at most 1024 characters (Codex enforces this limit).
 
 Exit 0 on success, 1 on any failure.
 """
@@ -40,6 +41,7 @@ ALLOWED_KEYS = {
 
 NAME_RE = re.compile(r"^(?!-)(?!.*--)[a-z0-9-]{1,64}(?<!-)$")
 FRONTMATTER_RE = re.compile(r"\A---\r?\n(.*?)\r?\n---\s*(\r?\n|\Z)", re.DOTALL)
+DESCRIPTION_MAX_LEN = 1024
 
 
 def validate_path_shape(path: Path) -> str | None:
@@ -89,6 +91,11 @@ def validate_frontmatter(path: Path) -> list[str]:
         errors.append(f"{path}: missing required key 'description'")
     elif not isinstance(description, str) or not description.strip():
         errors.append(f"{path}: 'description' must be a non-empty string")
+    elif len(description) > DESCRIPTION_MAX_LEN:
+        errors.append(
+            f"{path}: 'description' is {len(description)} characters; "
+            f"max is {DESCRIPTION_MAX_LEN} (Codex limit)"
+        )
 
     extra = set(fm) - ALLOWED_KEYS
     if extra:
