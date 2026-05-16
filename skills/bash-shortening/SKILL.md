@@ -12,12 +12,9 @@ description: >
   parameter expansion, brace expansion, process substitution, arithmetic
   contexts, function patterns, pipelines vs temp files, heredocs,
   associative arrays, parallel execution, and CSV/IFS parsing — 51
-  techniques total. Knows when shortening hurts readability and refuses
-  to produce cryptic one-liners. Can advise on POSIX-safe alternatives
-  when asked. Do NOT use for fish, zsh, or POSIX-only `/bin/sh` scripts
-  where bashisms (parameter expansion `${var//x/y}`, `[[ ]]`, arrays,
-  process substitution `<( )`) would break portability — call that out
-  and switch register.
+  techniques total. Refuses cryptic one-liners when shortening would
+  hurt readability. Do NOT use for fish, zsh, or POSIX-only `/bin/sh`
+  scripts where bashisms would break portability.
 license: MIT
 ---
 
