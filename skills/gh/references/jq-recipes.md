@@ -7,7 +7,8 @@
 
 `gh` ships with `--jq` and `--template` flags built in. **Always inline**
 filters with `--jq` instead of piping to a separate `jq` binary — pipes
-trigger Claude Code's compound-command sandbox and double the round-trips.
+can trigger compound-command sandbox heuristics in some harnesses and
+double the round-trips.
 
 ```bash
 # wrong
