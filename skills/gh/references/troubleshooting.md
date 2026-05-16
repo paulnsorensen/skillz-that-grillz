@@ -42,9 +42,16 @@ access. `gh auth status` shows the current login.
 
 ```bash
 gh api rate_limit                                # check headroom
-gh api rate_limit --jq '.rate.reset' \
-  | xargs -I {} date -r {}                       # human-readable reset time
+
+# human-readable reset time (BSD/macOS)
+gh api rate_limit --jq '.rate.reset' | xargs -I {} date -r {}
+
+# human-readable reset time (GNU/Linux)
+gh api rate_limit --jq '.rate.reset' | xargs -I {} date -d @{}
 ```
+
+`date -r <epoch>` is BSD/macOS syntax; on GNU coreutils `date -r` expects
+a file path. Use `date -d @<epoch>` on Linux.
 
 - Authenticated requests: 5000/hour
 - Unauthenticated: 60/hour
