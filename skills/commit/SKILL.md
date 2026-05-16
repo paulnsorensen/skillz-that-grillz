@@ -1,14 +1,14 @@
 ---
-name: commit
-model: haiku
 allowed-tools: Bash(git:*)
+license: MIT
+model: haiku
+name: commit
 description: >
   Stage and commit changes to git following conventional commits format. Use
   when asked to commit, create a commit, or save changes. Drafts meaningful
   commit messages by understanding the why, not just the what. Never amends
   published commits, never skips hooks, never uses git add -A. Stages specific
   files by name. Does not push — that is the gh skill's job.
-license: MIT
 ---
 
 # commit
