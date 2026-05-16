@@ -71,7 +71,7 @@ Code); the bundled `bash-shorten.py` rewriter additionally requires
 | `commit` | `git` | git | — |
 | `chezmoi` | `chezmoi` CLI | chezmoi | `op` / `bw` / `age` / `gpg` (one of, when using encrypted dotfiles); Context7 MCP (latest template-function docs) |
 | `copilot` | `gh` CLI + `gh agent-task` + GitHub Copilot Chat | gh, gh agent-task extension | review skill (e.g. `age` or `code-review`) for `review` mode |
-| `file-handler` | `bash` + `find` + `grep` (coreutils) | bash 4+ | — |
+| `file-handler` | `bash` + standard POSIX tools (`find`, `grep`) | bash 4+, `find`, `grep` | — |
 | `gh` | `gh` CLI | gh | — |
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
 | `github-copilot-personal-instructions` | github.com Copilot UI | — | — |

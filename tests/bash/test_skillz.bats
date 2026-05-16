@@ -182,6 +182,34 @@ last" >/dev/null
     [[ "$output" != *"note/todo"* ]]
 }
 
+@test "search_files matches regex metacharacters literally" {
+    # Body grep must treat the query as a fixed string (grep -F), so
+    # `v1.2.3` matches only that exact text and not `v1X2Y3`.
+    skillz_save_file note real "release v1.2.3 ships now" >/dev/null
+    skillz_save_file note decoy "v1X2Y3 should not match" >/dev/null
+    run skillz_search_files "v1.2.3"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"## bodies"* ]]
+    [[ "$output" == *"real:1:release v1.2.3 ships now"* ]]
+    [[ "$output" != *"decoy"* ]]
+}
+
+@test "search_files matches bracket characters literally" {
+    skillz_save_file note brackets "value is a[b] today" >/dev/null
+    skillz_save_file note decoy "value is ab today" >/dev/null
+    run skillz_search_files "a[b]"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"## bodies"* ]]
+    [[ "$output" == *"brackets:1:value is a[b] today"* ]]
+    [[ "$output" != *"decoy"* ]]
+}
+
+@test "save_file rejects extra args beyond single content" {
+    run skillz_save_file note hello "first" "second"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"save_file"* ]]
+}
+
 @test "search_files exits 1 when no matches" {
     skillz_save_file note alpha "nothing here" >/dev/null
     run skillz_search_files zzzz-no-match

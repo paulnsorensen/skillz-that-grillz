@@ -14,3 +14,6 @@ __pycache__/
 
 # Skill-creator iteration workspaces (eval runs, benchmarks, viewer HTML)
 skills/*-workspace/
+
+# file-handler skill artifact tree (local scratch space)
+.skillz/

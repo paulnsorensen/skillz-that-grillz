@@ -73,8 +73,10 @@ be committed.
 - **Pick a type once and reuse it.** Don't invent a new `<type>` per
   artifact — types are buckets (`note`, `plan`, `draft`, `log`,
   `transcript`). Slugs are the unique part.
-- **Slugs are kebab-case ASCII.** Allowed: `[A-Za-z0-9._-]`. Anything
-  else gets rejected with exit 2.
+- **Slugs are ASCII filename-safe.** Allowed: `[A-Za-z0-9._-]`
+  (letters, digits, dot, underscore, hyphen — kebab-case is the
+  preferred style, but dots for extensions and uppercase are
+  accepted). Anything else gets rejected with exit 2.
 - **No extension is required**, but adding one (`.md`, `.txt`, `.json`)
   helps when a user opens the file directly.
 - **Prefer stdin over the inline content arg** for anything multi-line
@@ -135,9 +137,10 @@ keeps the rest of the toolkit tiny.
   the storage root.
 - **Slug validation rejects spaces.** Pass `release-cut`, not
   `release cut`. The regex is documented above.
-- **Body grep uses the literal query, not regex.** Special characters
-  (`.`, `*`, `[`) are matched literally. That's deliberate — users
-  searching for `v1.2.3` get exactly what they typed.
+- **Body grep uses fixed-string matching (`grep -F`).** Special
+  characters (`.`, `*`, `[`) are matched literally. That's deliberate
+  — users searching for `v1.2.3` get exactly what they typed, not a
+  regex.
 - **No locking.** Two skills writing the same `<type>/<slug>`
   concurrently will race; last writer wins. Use distinct slugs for
   parallel work.

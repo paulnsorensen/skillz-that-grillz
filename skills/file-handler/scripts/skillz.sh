@@ -29,8 +29,6 @@
 #   1  not found / no matches
 #   2  usage error (missing args, bad slug, etc.)
 
-set -euo pipefail
-
 skillz_root() {
     printf '%s\n' "${SKILLZ_DIR:-$PWD/.skillz}"
 }
@@ -62,7 +60,7 @@ skillz_path() {
 }
 
 skillz_save_file() {
-    [[ $# -ge 2 ]] || skillz_die "save_file <type> <slug> [content]"
+    [[ $# -ge 2 && $# -le 3 ]] || skillz_die "save_file <type> <slug> [content]"
     local type="$1" slug="$2"
     shift 2
     local path
@@ -73,8 +71,8 @@ skillz_save_file() {
         return 2
     fi
     mkdir -p "${path%/*}"
-    if [[ $# -gt 0 ]]; then
-        printf '%s' "$*" > "$path"
+    if [[ $# -eq 1 ]]; then
+        printf '%s' "$1" > "$path"
     else
         cat > "$path"
     fi
@@ -146,7 +144,7 @@ skillz_search_files() {
     fi
 
     local body_hits
-    body_hits="$(grep -rIn --binary-files=without-match -- "$query" "$scope" 2>/dev/null || true)"
+    body_hits="$(grep -rFIn --binary-files=without-match -- "$query" "$scope" 2>/dev/null || true)"
     if [[ -n "$body_hits" ]]; then
         [[ "$found" -eq 1 ]] && printf '\n'
         printf '## bodies\n%s\n' "$body_hits"
@@ -174,5 +172,9 @@ skillz_main() {
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
+    # Strict mode is intentionally scoped to direct execution: enabling
+    # it at top-level would mutate the caller's shell options whenever
+    # this script is sourced (e.g. by the bats tests).
+    set -euo pipefail
     skillz_main "$@"
 fi
