@@ -174,7 +174,7 @@ Three universal levers, then escalate to `references/rtk.md` if needed:
 
 After creating the justfile:
 
-**CLAUDE.md** — Add a "Key Commands" or "Common Tasks" section:
+**Agent context file** (e.g. `AGENTS.md`, `CLAUDE.md`, `.cursor/rules`, or whatever convention the harness uses) — Add a "Key Commands" or "Common Tasks" section:
 
 ```markdown
 ## Key Commands
