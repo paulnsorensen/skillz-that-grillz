@@ -77,7 +77,7 @@ Code); the bundled `bash-shorten.py` rewriter additionally requires
 | `oss-hygiene` | `gh` CLI (`gh api`) + scaffolded GitHub Actions (Dependabot, Scorecard, dependency review, CodeQL) | gh | — |
 | `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
 | `ralphify-spec` | [`ralphify`](https://github.com/ghuntley/ralphify) | ralphify (`uv tool install ralphify`), Python 3.10+ | — |
-| `respond` | `gh` CLI + `git` | gh, git | GitHub MCP plugin (preferred over raw `gh api`) |
+| `respond` | `gh` CLI + `git` | gh, git | — |
 | `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
 
 What that means in practice:
@@ -129,7 +129,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in bash-shortening commit gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile oss-hygiene pr-stack prek ralphify-spec safe-settings; do
+for s in bash-shortening commit gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile oss-hygiene pr-stack prek ralphify-spec respond safe-settings; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```

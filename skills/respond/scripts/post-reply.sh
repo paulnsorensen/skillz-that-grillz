@@ -70,15 +70,24 @@ resolve_handle() {
 }
 
 # Compose the final reply body: original body + blank line + separator +
-# attribution line. Idempotent — if the body already ends with the
-# attribution, return it unchanged.
+# attribution line. Idempotent — if the body already ends with the exact
+# suffix block (separator + attribution line for this handle, optionally
+# followed by a trailing newline), return it unchanged. A substring match
+# would skip the append when the body merely quotes the attribution
+# elsewhere (e.g. citing the spec), which would post unattributed replies.
 compose_body() {
   local body="$1"
   local handle="$2"
   local attribution_line="${ATTRIBUTION_PREFIX} ${handle}"
-  case "$body" in
-    *"${ATTRIBUTION_PREFIX}"*) printf '%s' "$body"; return 0 ;;
-  esac
+  local suffix
+  printf -v suffix '\n\n%s\n%s' "$ATTRIBUTION_SEPARATOR" "$attribution_line"
+  # Strip a single trailing newline (the form compose_body itself emits)
+  # before comparing, so the check accepts both "...handle" and "...handle\n".
+  local body_trimmed="${body%$'\n'}"
+  if [ "${body_trimmed: -${#suffix}}" = "$suffix" ]; then
+    printf '%s' "$body"
+    return 0
+  fi
   printf '%s\n\n%s\n%s\n' "$body" "$ATTRIBUTION_SEPARATOR" "$attribution_line"
 }
 
@@ -114,10 +123,21 @@ pr=""
 comment_id=""
 body=""
 
+set_mode() {
+  local new_mode="$1"
+  if [ -n "$mode" ] && [ "$mode" != "$new_mode" ]; then
+    die "cannot combine --thread and --issue (mode already set to '$mode')"
+  fi
+  if [ -n "$mode" ] && [ "$mode" = "$new_mode" ]; then
+    die "--${new_mode} passed more than once"
+  fi
+  mode="$new_mode"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --thread)     mode="thread"; shift ;;
-    --issue)      mode="issue"; shift ;;
+    --thread)     set_mode "thread"; shift ;;
+    --issue)      set_mode "issue"; shift ;;
     --pr)         pr="${2:-}"; shift 2 ;;
     --comment-id) comment_id="${2:-}"; shift 2 ;;
     --body)       body="${2:-}"; shift 2 ;;

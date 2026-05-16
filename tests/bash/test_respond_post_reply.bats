@@ -13,17 +13,10 @@ setup() {
     mkdir -p "$STUB_BIN"
     PATH_ORIG="$PATH"
     PATH="$STUB_BIN:/usr/bin:/bin"
-    # The script uses `set -e` and runs `usage` at module load if no args
-    # are present. Source with a sentinel that only defines functions: we
-    # achieve that by stripping the bottom argument-parser block via env.
-    # Simpler approach: sourcing with stub-friendly args fails on the
-    # "missing --pr" check before any network call. Instead we eval the
-    # script body up to the parser by extracting the function definitions.
-    # Easiest stable approach: source the script through a wrapper that
-    # short-circuits before argument parsing.
-    cp "$POST_REPLY_SH" "$BATS_TEST_TMPDIR/post-reply.sh"
-    # Replace the argument-parsing tail with `return 0` so sourcing only
-    # registers the functions and constants.
+    # The script runs argument parsing at module load. To source only the
+    # functions and constants for unit testing, slice everything before the
+    # "Argument parsing" section into a temp file and replace the tail with
+    # `return 0` so the source call exits cleanly.
     awk '/^# --- Argument parsing/{print "return 0"; exit} {print}' \
         "$POST_REPLY_SH" > "$BATS_TEST_TMPDIR/post-reply-fns.sh"
     # shellcheck disable=SC1091
@@ -84,6 +77,19 @@ agent on behalf of; octocat"
 agent on behalf of; octocat"
     out="$(compose_body "$pre" "octocat")"
     [[ "$out" == "$pre" ]]
+}
+
+@test "compose_body appends when attribution is quoted mid-body but not at end" {
+    # Body merely quotes the prefix (e.g. citing the spec); the suffix
+    # check must still append the real attribution at the end.
+    body='See the rule: lines must end with "agent on behalf of; <handle>".
+
+Now, my actual reply continues below.'
+    out="$(compose_body "$body" "octocat")"
+    [[ "$out" == *"---"*"agent on behalf of; octocat"* ]]
+    # Tail must be the real attribution line (with the leading separator).
+    tail="$(printf '%s' "$out" | tail -n 2)"
+    [[ "$tail" == "---"$'\n'"agent on behalf of; octocat" ]]
 }
 
 @test "compose_body keeps the exact 'agent on behalf of;' wording" {
@@ -168,6 +174,18 @@ EOF
     run bash "$POST_REPLY_SH" --issue --pr 42 --comment-id 1 --body "hi"
     [[ "$status" -ne 0 ]]
     [[ "$output" == *"not valid for --issue"* ]]
+}
+
+@test "script rejects both --thread and --issue passed together" {
+    run bash "$POST_REPLY_SH" --thread --issue --pr 42 --comment-id 1 --body "hi"
+    [[ "$status" -ne 0 ]]
+    [[ "$output" == *"cannot combine"* ]]
+}
+
+@test "script rejects --thread passed twice" {
+    run bash "$POST_REPLY_SH" --thread --thread --pr 42 --comment-id 1 --body "hi"
+    [[ "$status" -ne 0 ]]
+    [[ "$output" == *"more than once"* ]]
 }
 
 @test "script rejects unknown args" {
