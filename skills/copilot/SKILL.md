@@ -77,8 +77,8 @@ additions/deletions) before continuing.
 ### Phase 2: run the review
 
 Invoke whatever code-review skill the calling environment provides (in the
-cheese-flow ecosystem this is `age`; in plain Claude Code it may be
-`code-review`). The review must surface findings with confidence scores so
+cheese-flow ecosystem this is `age`; elsewhere it may be `code-review` or
+similar). The review must surface findings with confidence scores so
 phase 3 can triage. If no review skill is available, ask the user to point
 at one before continuing — do not guess at findings.
 
