@@ -1,5 +1,5 @@
 ---
-agent: claude -p --dangerously-skip-permissions
+agent: PLACEHOLDER_AGENT_COMMAND
 commands:
   - name: git-log
     run: git log --oneline -10
@@ -31,6 +31,11 @@ commands:
                        relevant; otherwise the template is git-stack-agnostic.
 
   Placeholders to fill in:
+    PLACEHOLDER_AGENT_COMMAND    the shell command ralphify pipes each
+                                 iteration's prompt into. See
+                                 `references/schema.md` for validated
+                                 forms (claude / gemini / cursor-agent /
+                                 ./guard.sh wrapper).
     PLACEHOLDER_ROLE             short descriptor of the agent's role,
                                  e.g. "skill-pack porting"
     PLACEHOLDER_QUEUE_DIR        where the queue items live, e.g.
