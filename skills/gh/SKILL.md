@@ -26,9 +26,11 @@ this skill. Pair with `/commit` for git writes.
 
 ## CLI rules
 
-**Never pipe `gh` output.** `gh` ships with `--jq` and `--template` flags;
-inlining them avoids spawning `jq` and triggering Claude Code's compound
-command heuristic:
+**Don't pipe `gh` into a separate `jq` binary.** `gh` ships with `--jq`
+and `--template` flags; inlining them avoids spawning `jq` and triggering
+Claude Code's compound command heuristic. Piping `gh ... --jq` into
+downstream consumers like `xargs` or `sed` is fine — the goal is to keep
+JSON extraction inside `gh` itself:
 
 ```bash
 # wrong — needs jq binary, triggers a compound command
@@ -36,6 +38,9 @@ gh pr list --json number | jq '.[].number'
 
 # right — inline jq, no pipe
 gh pr list --json number --jq '.[].number'
+
+# also fine — --jq inlined, then piped to xargs for a bulk op
+gh pr list --json number --jq '.[].number' | xargs -I{} gh pr view {}
 
 # Go template alternative
 gh pr view 42 --json title --template '{{.title}}'

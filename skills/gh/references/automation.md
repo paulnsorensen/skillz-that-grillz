@@ -137,7 +137,10 @@ gh issue list --author @me --state closed --search "closed:$DATE"
 
 ## Patterns to avoid
 
-- **Pipes around `gh`**: use `--jq` instead.
+- **Piping `gh` into a separate `jq` binary or other JSON transforms**:
+  inline with `--jq` or `--template` instead. Piping `gh ... --jq` output
+  into `xargs`/`sed`/`awk` for downstream bulk operations is fine — the
+  rule is about JSON extraction, not all pipes.
 - **`--body "$(cat <<EOF...)"`**: use `--body-file`.
 - **`gh api repos/...` for endpoints with named subcommands**: prefer
   `gh pr ...`, `gh issue ...`, `gh run ...`. Reach for `gh api` only when
