@@ -28,9 +28,9 @@ this skill. Pair with `/commit` for git writes.
 
 **Don't pipe `gh` into a separate `jq` binary.** `gh` ships with `--jq`
 and `--template` flags; inlining them avoids spawning `jq` and triggering
-Claude Code's compound command heuristic. Piping `gh ... --jq` into
-downstream consumers like `xargs` or `sed` is fine — the goal is to keep
-JSON extraction inside `gh` itself:
+any compound-command sandbox heuristics some harnesses apply. Piping
+`gh ... --jq` into downstream consumers like `xargs` or `sed` is fine —
+the goal is to keep JSON extraction inside `gh` itself:
 
 ```bash
 # wrong — needs jq binary, triggers a compound command
@@ -47,9 +47,9 @@ gh pr view 42 --json title --template '{{.title}}'
 ```
 
 **Never use heredoc `--body` for PR or issue creation.** The
-`$(cat <<'EOF' ... EOF)` pattern triggers Claude Code's "# hides arguments"
-heuristic when the body contains markdown headers. Write the body to a file
-with the Write tool and pass `--body-file`:
+`$(cat <<'EOF' ... EOF)` pattern can trip "# hides arguments" sandbox
+heuristics when the body contains markdown headers. Write the body to a
+file and pass `--body-file`:
 
 ```bash
 gh pr create --title "feat(api): add health endpoint" \
@@ -251,9 +251,9 @@ Hand off any push or commit work to `/commit`.
 
 ## Gotchas
 
-- **Compound `cd <dir> && git ...`** is blocked by Claude Code's
-  bare-repo heuristic. Use git's `-C <dir>` flag instead, or run from
-  the worktree root.
+- **Compound `cd <dir> && git ...`** can be blocked by a harness's
+  bare-repo sandbox heuristic. Use git's `-C <dir>` flag instead, or run
+  from the worktree root.
 - **Heredoc `--body` with markdown headers** trips the
   "# hides arguments" guard — always use `--body-file`.
 - **`gh api` raw calls** are flakier than the named subcommands and
