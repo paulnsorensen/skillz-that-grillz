@@ -4,8 +4,8 @@
 ast-grep (`sg`) is a hard requirement. Structural patterns route through
 ast-grep first using the rule pack at scripts/sg-rules/; remaining
 regex-only rules run after. If `sg` is not on PATH, the script exits
-with a friendly diagnostic — invoke `/bash-shortening` in Claude Code
-and apply the methodology by hand, or install ast-grep:
+with a friendly diagnostic — invoke the bash-shortening skill in your
+agent harness and apply the methodology by hand, or install ast-grep:
 
   brew install ast-grep        # macOS / Linuxbrew
   cargo install ast-grep --bin sg
@@ -237,8 +237,8 @@ _SG_MISSING_DIAGNOSTIC = (
     "  brew install ast-grep\n"
     "  cargo install ast-grep --bin sg\n"
     "\n"
-    "Or skip the script entirely: invoke `/bash-shortening` in Claude\n"
-    "Code and apply the methodology by hand from SKILL.md."
+    "Or skip the script entirely: invoke the bash-shortening skill in\n"
+    "your agent harness and apply the methodology by hand from SKILL.md."
 )
 
 
