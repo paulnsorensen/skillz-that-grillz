@@ -1,0 +1,14 @@
+{
+  "name": "harness-config",
+  "description": "Agent and account configuration — chezmoi dotfiles management and personal (account-level) Copilot instructions.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Paul Sorensen"
+  },
+  "license": "MIT",
+  "keywords": ["config", "chezmoi", "dotfiles", "copilot", "harness"],
+  "skills": [
+    "./skills/chezmoi",
+    "./skills/github-copilot-personal-instructions"
+  ]
+}

@@ -47,10 +47,10 @@ jobs:
         run: python3 .github/scripts/validate_skills.py
 
       - name: bash-shorten.py self-test
-        run: python3 skills/bash-shortening/scripts/bash-shorten.py --self-test
+        run: python3 plugins/util/skills/bash-shortening/scripts/bash-shorten.py --self-test
 
       - name: Test ralphify-spec validator
-        run: python3 -m pytest skills/ralphify-spec/scripts/test_validate.py -v
+        run: python3 -m pytest plugins/util/skills/ralphify-spec/scripts/test_validate.py -v
 
   install-script:
     name: test install.sh (macOS)
@@ -66,7 +66,7 @@ jobs:
         run: shellcheck scripts/install.sh
 
       - name: Lint skillz.sh
-        run: shellcheck skills/file-handler/scripts/skillz.sh
+        run: shellcheck plugins/util/skills/file-handler/scripts/skillz.sh
 
       - name: Install bats
         run: brew install bats-core
@@ -108,7 +108,7 @@ jobs:
         uses: DavidAnson/markdownlint-cli2-action@ded1f9488f68a970bc66ea5619e13e9b52e601cd # v23.2.0
         with:
           globs: |
-            skills/**/*.md
+            plugins/**/*.md
             *.md
 
       - name: yamllint

@@ -289,14 +289,17 @@ sg_install_mcp_for_harnesses() {
     return $rc
 }
 
-# Discover the live skill list by listing skills/ via the GitHub contents
-# API. Prints one skill name per line on success; on failure (network,
-# rate limit, private repo) returns non-zero with empty stdout and the
-# caller falls back to SG_FALLBACK_SKILLS.
+# Discover the live skill list by walking the repo tree for
+# plugins/<bucket>/skills/<name>/SKILL.md via the GitHub git-trees API.
+# Prints one skill name per line on success; on failure (network, rate
+# limit, private repo) returns non-zero with empty stdout and the caller
+# falls back to SG_FALLBACK_SKILLS. Bare names still resolve at install
+# time: 'gh skill install' discovers them across plugins/*/skills/.
 sg_discover_skills() {
     local gh="$1"
-    "$gh" api "repos/${SG_SKILL_REPO}/contents/skills" \
-        --jq '.[] | select(.type == "dir") | .name' 2>/dev/null
+    "$gh" api "repos/${SG_SKILL_REPO}/git/trees/HEAD?recursive=1" \
+        --jq '[.tree[].path | select(test("^plugins/[^/]+/skills/[^/]+/SKILL\\.md$")) | split("/")[3]] | unique | .[]' \
+        2>/dev/null
 }
 
 # Install the skill set into the picked harness via 'gh skill'. User scope

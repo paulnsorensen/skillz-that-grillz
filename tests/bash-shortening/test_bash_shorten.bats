@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 #
-# Tests for skills/bash-shortening/scripts/bash-shorten.py.
+# Tests for plugins/util/skills/bash-shortening/scripts/bash-shorten.py.
 #
 # Three layers:
 #   1. CLI surface  — flag/arg parsing, error paths, --list, --explain.
@@ -11,7 +11,7 @@
 
 setup() {
     REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
-    SCRIPT="$REPO_ROOT/skills/bash-shortening/scripts/bash-shorten.py"
+    SCRIPT="$REPO_ROOT/plugins/util/skills/bash-shortening/scripts/bash-shorten.py"
     FIXTURE="$BATS_TEST_TMPDIR/sample.sh"
 }
 

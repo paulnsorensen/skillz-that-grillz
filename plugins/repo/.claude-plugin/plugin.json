@@ -1,0 +1,18 @@
+{
+  "name": "repo",
+  "description": "Project and repository standards — bootstrap GitHub repos, scaffold OSS hygiene, manage org settings as code, justfiles, pre-commit hooks, and repo-level Copilot instructions.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Paul Sorensen"
+  },
+  "license": "MIT",
+  "keywords": ["repo", "bootstrap", "oss-hygiene", "settings", "ci"],
+  "skills": [
+    "./skills/oss-hygiene",
+    "./skills/gh-bootstrap",
+    "./skills/safe-settings",
+    "./skills/justfile",
+    "./skills/prek",
+    "./skills/github-copilot-repo-instructions"
+  ]
+}

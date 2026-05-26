@@ -22,41 +22,51 @@ This repo covers the surrounding mechanics.
 
 ## Skill layout
 
-This repo follows the [Agent Skills spec](https://agentskills.io/specification):
+This repo follows the [Agent Skills spec](https://agentskills.io/specification),
+packaged as a marketplace of one plugin per bucket:
 
 ```text
-skills/
-└── <skill-name>/
-    ├── SKILL.md          # required: name + description + body
-    ├── references/       # optional: detail pulled in on demand
-    ├── scripts/          # optional: executable helpers
-    └── assets/           # optional: templates / static resources
+.claude-plugin/
+└── marketplace.json     # lists the bucket plugins (pluginRoot: ./plugins)
+plugins/
+└── <bucket>/            # repo | git-workflow | harness-config | util
+    ├── .claude-plugin/
+    │   └── plugin.json  # bucket plugin manifest + explicit skill paths
+    └── skills/
+        └── <skill-name>/
+            ├── SKILL.md          # required: name + description + body
+            ├── references/       # optional: detail pulled in on demand
+            ├── scripts/          # optional: executable helpers
+            └── assets/           # optional: templates / static resources
 ```
 
-Each `SKILL.md` is self-contained markdown with YAML frontmatter. There are no
-nested sub-skills; deeper material lives in `references/<topic>.md` so the
-harness can load it progressively.
+Buckets are discovered natively by `gh skill` (`plugins/<bucket>/skills/*`) and
+via `marketplace.json` by `npx skills` and Claude Code's plugin marketplace. The
+bucket only namespaces install addressing; a flat install still invokes as
+`/<skill>`. Each `SKILL.md` is self-contained markdown with YAML frontmatter.
+There are no nested sub-skills; deeper material lives in `references/<topic>.md`
+so the harness can load it progressively.
 
 ## Skills
 
 | Skill path | Command | Purpose |
 | --- | --- | --- |
-| `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in Claude. |
-| `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
-| `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
-| `skills/copilot/SKILL.md` | `/copilot` | Drive the GitHub Copilot CLI / coding agent. Three modes: `review` (PR review with `@copilot fix this` inline comments) and `delegate` (`gh agent-task` create + monitor) are routine; `setup` is a one-time bootstrap that writes `.github/copilot-instructions.md` and per-language `.github/instructions/*.instructions.md`. |
-| `skills/file-handler/SKILL.md` | `/file-handler` | Persist, fetch, and search skill artifacts under a shared `.skillz/<type>/<slug>` tree. Wraps a dependency-free `skillz.sh` exposing `save_file`, `get_file`, and `search_files` (titles + body grep). The on-disk convention every other skill in this repo delegates to for scratch space. |
-| `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, workflow runs, code search, repo and label management — via the `gh` CLI, with idiomatic `--jq` and `--body-file` patterns. |
-| `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
-| `skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
-| `skills/github-copilot-repo-instructions/SKILL.md` | `/github-copilot-repo-instructions` | Add or audit `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md` so Copilot Chat, code review, and the coding agent pick up project-wide guidance. Covers `applyTo`/`excludeAgent` frontmatter, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` alternates, surfaces, verification, **and the full `copilot_code_review` ruleset knob inventory** (see `references/code-review-knobs.md`). |
-| `skills/pr-stack/SKILL.md` | `/pr-stack` | Stacked-PR workflows across whichever tool is installed: Graphite (`gt`) or GitHub's native `gh stack` extension. Auto-detects which is available, dispatches to the matching per-tool reference, and refuses to fake stacking with plain `git push` chains when neither is present. |
-| `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
-| `skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
-| `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
-| `skills/ralphify-spec/SKILL.md` | `/ralphify-spec` | Generate a ralphify-approved ralph directory (RALPH.md + scripts) from a plain-English description of repetitive or iterative work. Ships an iteration-cap-enforcing runner wrapper, a `<promise>COMPLETE</promise>` stop sentinel, and a burn-down-todos template. |
-| `skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
-| `skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
+| `plugins/util/skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in Claude. |
+| `plugins/git-workflow/skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
+| `plugins/harness-config/skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
+| `plugins/git-workflow/skills/copilot/SKILL.md` | `/copilot` | Drive the GitHub Copilot CLI / coding agent. Three modes: `review` (PR review with `@copilot fix this` inline comments) and `delegate` (`gh agent-task` create + monitor) are routine; `setup` is a one-time bootstrap that writes `.github/copilot-instructions.md` and per-language `.github/instructions/*.instructions.md`. |
+| `plugins/util/skills/file-handler/SKILL.md` | `/file-handler` | Persist, fetch, and search skill artifacts under a shared `.skillz/<type>/<slug>` tree. Wraps a dependency-free `skillz.sh` exposing `save_file`, `get_file`, and `search_files` (titles + body grep). The on-disk convention every other skill in this repo delegates to for scratch space. |
+| `plugins/git-workflow/skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PRs, issues, CI checks, releases, workflow runs, code search, repo and label management — via the `gh` CLI, with idiomatic `--jq` and `--body-file` patterns. |
+| `plugins/repo/skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
+| `plugins/harness-config/skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
+| `plugins/repo/skills/github-copilot-repo-instructions/SKILL.md` | `/github-copilot-repo-instructions` | Add or audit `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md` so Copilot Chat, code review, and the coding agent pick up project-wide guidance. Covers `applyTo`/`excludeAgent` frontmatter, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` alternates, surfaces, verification, **and the full `copilot_code_review` ruleset knob inventory** (see `references/code-review-knobs.md`). |
+| `plugins/git-workflow/skills/pr-stack/SKILL.md` | `/pr-stack` | Stacked-PR workflows across whichever tool is installed: Graphite (`gt`) or GitHub's native `gh stack` extension. Auto-detects which is available, dispatches to the matching per-tool reference, and refuses to fake stacking with plain `git push` chains when neither is present. |
+| `plugins/repo/skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
+| `plugins/repo/skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
+| `plugins/repo/skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
+| `plugins/util/skills/ralphify-spec/SKILL.md` | `/ralphify-spec` | Generate a ralphify-approved ralph directory (RALPH.md + scripts) from a plain-English description of repetitive or iterative work. Ships an iteration-cap-enforcing runner wrapper, a `<promise>COMPLETE</promise>` stop sentinel, and a burn-down-todos template. |
+| `plugins/git-workflow/skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
+| `plugins/repo/skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
 
 ## Scope
 
@@ -167,16 +177,16 @@ Copy the skills you want into your skills directory:
 ```sh
 # Per-user
 mkdir -p ~/.claude/skills
-cp -r skills/commit ~/.claude/skills/
+cp -r plugins/git-workflow/skills/commit ~/.claude/skills/
 
 # Per-project
 mkdir -p .claude/skills
-cp -r skills/justfile .claude/skills/
+cp -r plugins/repo/skills/justfile .claude/skills/
 ```
 
 ### Other harnesses
 
-Copy `skills/<name>/` into wherever the harness loads Agent Skills from. The
+Copy `plugins/<bucket>/skills/<name>/` into wherever the harness loads Agent Skills from. The
 format follows the [agentskills.io spec](https://agentskills.io/specification)
 and works in any compliant client.
 
@@ -336,7 +346,7 @@ The reference validator from
 frontmatter and naming:
 
 ```sh
-skills-ref validate ./skills/commit
+skills-ref validate ./plugins/git-workflow/skills/commit
 ```
 
 Each `SKILL.md` must have YAML frontmatter with at least `name` and
