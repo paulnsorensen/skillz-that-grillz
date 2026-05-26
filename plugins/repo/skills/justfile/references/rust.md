@@ -4,11 +4,32 @@
 
 ```just
 set dotenv-load
+set unstable  # for the [script] gate recipe
 
-default: check
+# The one command to run after every change.
+default: build
 
-# Run all checks (CI equivalent)
-check: fmt-check clippy test
+# Canonical gate — autofix, then clippy, test, coverage. Compact output.
+build: (_gate "fix")
+
+# CI gate — identical checks, NO autofix. A clean run here == a clean CI.
+ci: (_gate "check")
+
+[private]
+[script("bash")]
+_gate mode:
+    set -uo pipefail
+    step() { local n=$1; shift; local o
+        if o=$("$@" 2>&1); then echo "✓ $n"
+        else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
+    if [ "{{mode}}" = "fix" ]; then
+        step format cargo fmt --all
+    else
+        step format cargo fmt --all -- --check
+    fi
+    step clippy cargo clippy --all-targets --all-features -- -D warnings
+    # cargo-llvm-cov runs the tests and enforces the threshold in one pass.
+    step test cargo llvm-cov --all-features --workspace --fail-under-lines 80 --fail-under-functions 70
 
 # Format code
 fmt:
@@ -30,12 +51,12 @@ test *args:
 test-fast *args:
     cargo nextest run {{args}}
 
-# Build debug
-build:
+# Compile debug (the gate already compiles via clippy/test — this is for a bare build)
+compile:
     cargo build
 
-# Build release
-build-release:
+# Build release artifact (not the gate — that's `build`)
+release:
     cargo build --release
 
 # Run the binary
