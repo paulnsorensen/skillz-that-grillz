@@ -25,17 +25,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install just
+        # The gate uses `[script]` recipes, which require just >= 1.34 — newer
+        # than distro apt packages ship. setup-just installs a current release.
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
       - name: Install gate tooling
         # `just ci` is the single source of truth — the same gate runs locally.
         # Pin the tools it shells out to so CI matches a developer's machine:
-        #   apt: just, shellcheck, bats   npm: markdownlint-cli2
+        #   apt: shellcheck, bats   npm: markdownlint-cli2
         #   pip: yamllint + pyyaml (validators) + pytest (ralphify) + ast-grep (bash-shorten)
         # `sg` (ast-grep) collides with util-linux on Ubuntu; the pip wheel's bin
         # is earlier on PATH via setup-python, same as the old validate job.
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y just shellcheck bats
+          sudo apt-get install -y shellcheck bats
           npm install -g markdownlint-cli2@0.22.1
           pip install --no-cache-dir \
             yamllint==1.35.1 \

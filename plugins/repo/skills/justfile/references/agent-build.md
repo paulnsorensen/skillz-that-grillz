@@ -113,9 +113,14 @@ verify step. In a GitHub Actions job that already checks out and sets up the
 toolchain, the verification step becomes:
 
 ```yaml
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       - run: just ci
 ```
+
+**Install `just` from `setup-just`, never distro `apt`.** The `_gate` uses the
+`[script]` attribute, which requires just ≥ 1.34; Ubuntu/Debian apt ship a much
+older just (~1.16) that fails with `Unknown setting 'unstable'`. Use the
+`setup-just` action (or a pinned release binary), pinned by commit SHA.
 
 Collapse any separate `lint` / `test` / `coverage` steps into the single `just
 ci` call. If multiple jobs each ran a slice of the checks, they now all run
