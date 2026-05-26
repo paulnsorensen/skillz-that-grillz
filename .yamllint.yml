@@ -1,5 +1,12 @@
 extends: default
 
+# Untracked dev-tool artifacts — present locally, never in a CI checkout.
+# Listing them here keeps local `just ci` consistent with CI.
+ignore: |
+  .serena/
+  .cheese/
+  .context/
+
 rules:
   line-length:
     max: 200
