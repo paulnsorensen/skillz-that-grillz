@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 #
-# Tests for skills/respond/scripts/post-reply.sh.
+# Tests for plugins/git-workflow/skills/respond/scripts/post-reply.sh.
 #
 # We source the script with --help / wrong args to drive parser code paths,
 # and call compose_body / resolve_handle directly with PATH stubs to keep
@@ -8,7 +8,7 @@
 
 setup() {
     REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
-    POST_REPLY_SH="$REPO_ROOT/skills/respond/scripts/post-reply.sh"
+    POST_REPLY_SH="$REPO_ROOT/plugins/git-workflow/skills/respond/scripts/post-reply.sh"
     STUB_BIN="$BATS_TEST_TMPDIR/bin"
     mkdir -p "$STUB_BIN"
     PATH_ORIG="$PATH"

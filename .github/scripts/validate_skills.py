@@ -2,7 +2,7 @@
 """Validate every SKILL.md in the repository.
 
 Per-file checks:
-- Lives at exactly skills/<name>/SKILL.md (no scope, no nested sub-skills).
+- Lives at exactly plugins/<bucket>/skills/<name>/SKILL.md (no nested sub-skills).
 - Begins with a YAML frontmatter block (--- ... ---). CRLF and missing
   trailing newline are tolerated.
 - Frontmatter parses as a YAML mapping.
@@ -46,9 +46,15 @@ DESCRIPTION_MAX_LEN = 1024
 
 def validate_path_shape(path: Path) -> str | None:
     parts = path.parts
-    if len(parts) != 3 or parts[0] != "skills" or parts[2] != "SKILL.md":
+    if (
+        len(parts) != 5
+        or parts[0] != "plugins"
+        or parts[2] != "skills"
+        or parts[4] != "SKILL.md"
+    ):
         return (
-            f"{path}: file is not at the documented path skills/<name>/SKILL.md "
+            f"{path}: file is not at the documented path "
+            f"plugins/<bucket>/skills/<name>/SKILL.md "
             f"(nested sub-skills are not supported)"
         )
     return None
@@ -112,8 +118,8 @@ def validate(path: Path) -> list[str]:
 
 
 def main() -> int:
-    if not Path("skills").is_dir():
-        print("ERROR: skills/ directory not found", file=sys.stderr)
+    if not Path("plugins").is_dir():
+        print("ERROR: plugins/ directory not found", file=sys.stderr)
         return 1
 
     skill_files = sorted(

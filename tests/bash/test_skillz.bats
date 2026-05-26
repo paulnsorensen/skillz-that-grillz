@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 #
-# Tests for skills/file-handler/scripts/skillz.sh.
+# Tests for plugins/util/skills/file-handler/scripts/skillz.sh.
 #
 # The script is sourced so the BASH_SOURCE != $0 guard skips main, and
 # each test can drive individual subcommand functions directly with a
@@ -8,7 +8,7 @@
 
 setup() {
     REPO_ROOT="$(cd "${BATS_TEST_FILENAME%/*}/../.." && pwd)"
-    SKILLZ_SH="$REPO_ROOT/skills/file-handler/scripts/skillz.sh"
+    SKILLZ_SH="$REPO_ROOT/plugins/util/skills/file-handler/scripts/skillz.sh"
     export SKILLZ_DIR="$BATS_TEST_TMPDIR/.skillz"
     # shellcheck disable=SC1090
     source "$SKILLZ_SH"

@@ -15,7 +15,7 @@ name: skill-quality
 on:
   pull_request:
     paths:
-      - "skills/**/SKILL.md"
+      - "plugins/**/SKILL.md"
   workflow_dispatch:
 
 permissions:
@@ -47,9 +47,9 @@ jobs:
             # Three-dot diff: changes on HEAD since the merge-base with
             # BASE. Two-dot would include files that exist on main but
             # not on a stale PR branch — judging skills we never touched.
-            mapfile -t files < <(git diff --name-only --diff-filter=AM "$BASE_SHA...$HEAD_SHA" -- 'skills/**/SKILL.md')
+            mapfile -t files < <(git diff --name-only --diff-filter=AM "$BASE_SHA...$HEAD_SHA" -- 'plugins/**/SKILL.md')
           else
-            mapfile -t files < <(git ls-files 'skills/**/SKILL.md')
+            mapfile -t files < <(git ls-files 'plugins/**/SKILL.md')
           fi
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "No SKILL.md changes; skipping judge."
@@ -105,7 +105,7 @@ jobs:
             Bands: >=80 pass, 60-79 warn, <60 fail.
 
             Output ONLY strict JSON, no prose, matching:
-            {"results": [{"file": "skills/<name>/SKILL.md",
+            {"results": [{"file": "plugins/<bucket>/skills/<name>/SKILL.md",
                           "score": <int 0-100>,
                           "issues": ["<short string>", ...]}]}
 
