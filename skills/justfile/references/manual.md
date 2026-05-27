@@ -76,8 +76,8 @@ and [Just vs Cargo build scripts](https://just.systems/man/en/whats-the-relation
 
 ## Link tree
 
-Top-level chapters (full nested index saved at
-`.cheese/research/just-manual/raw/link-tree.md` when this skill last refreshed it):
+Top-level chapters (the manual's own sidebar carries the full nested index on
+every [just.systems/man](https://just.systems/man/en/introduction.html) page):
 
 - [Introduction](https://just.systems/man/en/introduction.html)
   - [Installation](https://just.systems/man/en/installation.html) — prerequisites, packages, pre-built binaries, GitHub Actions, Docker, Node.js, Nix

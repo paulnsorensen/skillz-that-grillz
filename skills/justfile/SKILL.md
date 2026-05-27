@@ -173,8 +173,10 @@ make that failure loud — fail fast rather than running with empty vars:
 ```just
 set dotenv-load
 set dotenv-required          # error if no dotenv file is found
-set dotenv-path := ".env.local"   # explicit path (relative to justfile)
-set dotenv-filename := ".env.dev" # filename to search for up the tree
+
+# Pick ONE of the following (omit both to load ./.env):
+set dotenv-path := ".env.local"     # explicit path (relative to justfile), OR…
+# set dotenv-filename := ".env.dev" # …a filename to search for up the tree
 ```
 
 `dotenv-required` turns a missing env file into a hard error instead of a silent
