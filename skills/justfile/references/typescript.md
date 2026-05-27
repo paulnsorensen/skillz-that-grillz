@@ -11,7 +11,6 @@ Detect the package manager from lockfiles:
 
 ```just
 set dotenv-load
-set unstable  # for the [script] gate recipe
 
 # The one command to run after every change.
 default: build

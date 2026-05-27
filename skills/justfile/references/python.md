@@ -6,7 +6,6 @@ Always use `uv` as the package manager (user preference).
 
 ```just
 set dotenv-load
-set unstable  # for the [script] gate recipe
 
 # The one command to run after every change.
 default: build
