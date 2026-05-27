@@ -296,8 +296,11 @@ sg_install_mcp_for_harnesses() {
 # with empty stdout and the caller falls back to SG_FALLBACK_SKILLS.
 sg_discover_skills() {
     local gh="$1"
+    local jq_filter='.tree[] | select(.type == "blob" and (.path | test("^skills/[^/]+/SKILL\\.md$"))) | .path | split("/")[1]'
+    # Keep only blob entries whose path is exactly skills/<name>/SKILL.md,
+    # then emit just <name> from the second path segment.
     "$gh" api "repos/${SG_SKILL_REPO}/git/trees/HEAD?recursive=1" \
-        --jq '.tree[] | select(.type == "blob" and (.path | test("^skills/[^/]+/SKILL\\.md$"))) | .path | split("/")[1]' 2>/dev/null
+        --jq "$jq_filter" 2>/dev/null
 }
 
 # Install the skill set into the picked harness via 'gh skill'. User scope

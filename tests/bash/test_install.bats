@@ -400,6 +400,7 @@ STUB
     [ "$status" -eq 0 ]
     [ "$output" = $'commit\ngh' ]
     grep -Fq "repos/${SG_SKILL_REPO}/git/trees/HEAD?recursive=1" "$STUB_LOG"
+    grep -Fq -- "--jq" "$STUB_LOG"
 }
 
 @test "sg_discover_skills filters for skills/<name>/SKILL.md paths" {
@@ -407,12 +408,59 @@ STUB
 #!/usr/bin/env bash
 echo "gh $*" >> "$STUB_LOG"
 echo "commit"
+echo "gh"
 STUB
     chmod +x "$STUB_BIN/gh"
 
     run sg_discover_skills "$STUB_BIN/gh"
     [ "$status" -eq 0 ]
-    grep -Fq '^skills/[^/]+/SKILL\\.md$' "$STUB_LOG"
+    [ "$output" = $'commit\ngh' ]
+    grep -Fq 'test("^skills/' "$STUB_LOG"
+    grep -Fq 'SKILL\\.md$' "$STUB_LOG"
+    grep -Fq 'split("/")[1]' "$STUB_LOG"
+}
+
+@test "sg_discover_skills extracts only top-level skill names from tree payload" {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip "jq is required for this test"
+    fi
+
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh $*" >> "$STUB_LOG"
+jq_filter=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --jq)
+            jq_filter="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
+cat <<'JSON' | jq -r "$jq_filter"
+{
+  "tree": [
+    { "type": "blob", "path": "skills/commit/SKILL.md" },
+    { "type": "blob", "path": "skills/gh/SKILL.md" },
+    { "type": "tree", "path": "skills/not-a-skill" },
+    { "type": "blob", "path": "skills/commit/README.md" },
+    { "type": "blob", "path": "docs/SKILL.md" }
+  ]
+}
+JSON
+STUB
+    chmod +x "$STUB_BIN/gh"
+
+    run sg_discover_skills "$STUB_BIN/gh"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'commit\ngh' ]
+    ! grep -Fq "not-a-skill" <<< "$output"
+    ! grep -Fq "README.md" <<< "$output"
+    ! grep -Fq "docs/SKILL.md" <<< "$output"
 }
 
 @test "sg_install_skills warns and returns 0 when gh missing" {
