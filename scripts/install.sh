@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# skillz-that-grillz installer — sets up the CLI tools and (optional) MCP
-# servers used by the skills in this repo on macOS.
+# skillz-that-grillz installer — installs the skills (via `npx skills`), the
+# CLI tools they wrap, and (optional) MCP servers on macOS.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/paulnsorensen/skillz-that-grillz/main/scripts/install.sh | bash
@@ -22,15 +22,9 @@
 # bash-shortening skill's modernize rules and ast-grep engine.
 SG_KNOWN_TOOLS="gh just prek graphite ast-grep sd ripgrep fd"
 
-# Repository the installer pulls skills from. Centralized so discovery and
-# install both reference the same source.
+# Repository the installer pulls skills from. Centralized so the installer
+# and the help text reference the same source.
 SG_SKILL_REPO="paulnsorensen/skillz-that-grillz"
-
-# Embedded fallback list of skill names. The installer normally discovers
-# the live set via 'gh api repos/.../contents/skills' so it self-heals when
-# new skills land — this list is only used when the API call is
-# unavailable (offline, rate-limited, repo temporarily private).
-SG_FALLBACK_SKILLS="bash-shortening commit copilot file-handler gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile pr-stack prek safe-settings"
 
 # Default selections.
 SG_DEFAULT_TOOLS="$SG_KNOWN_TOOLS"
@@ -81,7 +75,7 @@ Options:
                        context7. Choices: context7, none
   --skip-mcp           Same as --mcp none.
   --skip-tools         Skip CLI tool installs (useful for MCP-only runs).
-  --harness <selection> Harness to register skills + MCP servers with.
+  --harness <selection> Harness to install skills + register MCP servers for.
                        Default: auto-detect claude-code, cursor, and codex.
                        Accepts a single harness, a comma-separated list, or
                        'auto'. Other values include vscode, gemini, zed, copilot.
@@ -89,10 +83,10 @@ Options:
   -h, --help           Show this help.
 
 Environment:
-  SG_BREW   SG_GH      Override the brew / gh binaries (used by tests).
+  SG_BREW              Override the brew binary (used by tests).
   SG_CLAUDE SG_CURSOR  Override claude / cursor binaries for detection.
   SG_CODEX             Override codex binary for detection.
-  SG_NPX               Override npx (used to launch context7 MCP).
+  SG_NPX               Override npx (runs 'npx skills' + the context7 MCP).
 USAGE
 }
 
@@ -289,54 +283,38 @@ sg_install_mcp_for_harnesses() {
     return $rc
 }
 
-# Discover the live skill list by listing skills/ via the GitHub contents
-# API. Prints one skill name per line on success; on failure (network,
-# rate limit, private repo) returns non-zero with empty stdout and the
-# caller falls back to SG_FALLBACK_SKILLS.
-sg_discover_skills() {
-    local gh="$1"
-    "$gh" api "repos/${SG_SKILL_REPO}/contents/skills" \
-        --jq '.[] | select(.type == "dir") | .name' 2>/dev/null
+# Map an install.sh harness name to the agent identifier the `npx skills`
+# CLI expects. Most names are identical; a couple differ.
+sg_npx_agent() {
+    case "$1" in
+        gemini)  echo "gemini-cli" ;;
+        copilot) echo "github-copilot" ;;
+        *)       echo "$1" ;;
+    esac
 }
 
-# Install the skill set into the picked harness via 'gh skill'. User scope
-# so they live alongside the user's other skills, not committed into the
-# project. Requires gh to be authenticated.
+# Install every skill from the repo into the picked harness via `npx skills`.
+# --global so they live alongside the user's other skills, not committed into
+# a project. `--skill '*'` installs the whole set; `--yes` keeps the run
+# non-interactive when piped through `curl | bash`.
 sg_install_skills() {
     local harness="$1"
-    local gh="${SG_GH:-gh}"
-    if ! sg_cmd_exists "$gh"; then
-        sg_warn "skills: gh CLI not found; skipping. Add 'gh' to --tools first."
+    local npx="${SG_NPX:-npx}"
+    local agent
+    agent="$(sg_npx_agent "$harness")"
+
+    if ! sg_cmd_exists "$npx"; then
+        sg_warn "skills: npx not found; install Node.js (https://nodejs.org) to use 'npx skills'."
+        return 1
+    fi
+
+    if [[ "${SG_DRY_RUN:-0}" == "1" ]]; then
+        sg_log "skills: would run 'npx skills add $SG_SKILL_REPO --skill * --agent $agent --global --yes'"
         return 0
     fi
 
-    local skills="$SG_FALLBACK_SKILLS"
-    if [[ "${SG_DRY_RUN:-0}" != "1" ]]; then
-        if ! "$gh" auth status >/dev/null 2>&1; then
-            sg_warn "skills: gh is not authenticated. Run 'gh auth login' and re-run."
-            return 1
-        fi
-        local discovered
-        if discovered="$(sg_discover_skills "$gh")" && [[ -n "$discovered" ]]; then
-            skills="$discovered"
-        else
-            sg_warn "skills: could not list skills via gh api; using embedded fallback list."
-        fi
-    fi
-
-    local skill rc=0
-    for skill in $skills; do
-        if [[ "${SG_DRY_RUN:-0}" == "1" ]]; then
-            sg_log "skills: would run '$gh skill install $SG_SKILL_REPO $skill --agent $harness --scope user --force'"
-            continue
-        fi
-        sg_log "skills: installing $skill into $harness (user scope)"
-        if ! "$gh" skill install "$SG_SKILL_REPO" "$skill" --agent "$harness" --scope user --force; then
-            sg_warn "skills: failed to install $skill"
-            rc=1
-        fi
-    done
-    return $rc
+    sg_log "skills: installing all skills into $agent (user scope) via npx skills"
+    "$npx" skills add "$SG_SKILL_REPO" --skill '*' --agent "$agent" --global --yes
 }
 
 # Parse argv into the SG_* config variables.

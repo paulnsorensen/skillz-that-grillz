@@ -95,7 +95,7 @@ if ! grep -q '^- \[ \]' "$QUEUE" 2>/dev/null; then
   exit 1
 fi
 
-exec claude -p --dangerously-skip-permissions "$@"
+exec claude -p --dangerously-skip-permissions "$@"  # swap claude for your agent CLI (gemini, cursor-agent, etc.)
 ```
 
 ```yaml

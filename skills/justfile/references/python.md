@@ -1,6 +1,6 @@
 # Python Justfile Recipes
 
-Always use `uv` as the package manager (user preference).
+Default to `uv` as the package manager. If the project already uses pip, poetry, or pdm, match the existing toolchain instead.
 
 ## Template
 

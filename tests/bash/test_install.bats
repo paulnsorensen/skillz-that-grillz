@@ -385,24 +385,42 @@ STUB
     [[ "$output" == *"claude CLI not found"* ]]
 }
 
-# -- sg_install_skills (gh-skill dispatch) -----------------------------------
+# -- sg_npx_agent ------------------------------------------------------------
 
-@test "sg_install_skills warns and returns 0 when gh missing" {
-    run sg_install_skills claude-code
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"gh CLI not found"* ]]
+@test "sg_npx_agent maps gemini to gemini-cli and copilot to github-copilot" {
+    [[ "$(sg_npx_agent gemini)" == "gemini-cli" ]]
+    [[ "$(sg_npx_agent copilot)" == "github-copilot" ]]
 }
 
-@test "sg_install_skills dry-run lists every fallback skill" {
-    make_stub gh
-    export SG_GH="$STUB_BIN/gh"
+@test "sg_npx_agent returns identity for already-canonical agent names" {
+    [[ "$(sg_npx_agent claude-code)" == "claude-code" ]]
+    [[ "$(sg_npx_agent codex)" == "codex" ]]
+    [[ "$(sg_npx_agent cursor)" == "cursor" ]]
+}
+
+# -- sg_install_skills (npx skills dispatch) ---------------------------------
+
+@test "sg_install_skills warns and fails when npx missing" {
+    SG_NPX=sg-no-such-npx run sg_install_skills claude-code
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"npx not found"* ]]
+}
+
+@test "sg_install_skills dry-run prints the npx skills add command" {
+    make_stub npx
+    export SG_NPX="$STUB_BIN/npx"
     SG_DRY_RUN=1 run sg_install_skills claude-code
     [ "$status" -eq 0 ]
-    [[ "$output" == *"commit"* ]]
-    [[ "$output" == *"gh"* ]]
-    [[ "$output" == *"github-copilot-personal-instructions"* ]]
-    [[ "$output" == *"github-copilot-repo-instructions"* ]]
-    [[ "$output" == *"gt"* ]]
-    [[ "$output" == *"justfile"* ]]
-    [[ "$output" == *"prek"* ]]
+    [[ "$output" == *"would run"* ]]
+    [[ "$output" == *"skills add"* ]]
+    [[ "$output" == *"paulnsorensen/skillz-that-grillz"* ]]
+    [[ "$output" == *"--agent claude-code"* ]]
+}
+
+@test "sg_install_skills dry-run maps a gemini harness to the gemini-cli agent" {
+    make_stub npx
+    export SG_NPX="$STUB_BIN/npx"
+    SG_DRY_RUN=1 run sg_install_skills gemini
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--agent gemini-cli"* ]]
 }

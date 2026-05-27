@@ -15,7 +15,7 @@ description: >
   guidance", or invokes /github-copilot-repo-instructions. Do NOT use for
   personal (per-user) Copilot instructions — that is
   /github-copilot-personal-instructions. Do NOT use for opinionated generation
-  aligned with Cheese Lord's principles — that is /copilot-setup.
+  aligned with this project's opinionated engineering principles — that is /copilot-setup.
 license: MIT
 ---
 

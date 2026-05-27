@@ -175,7 +175,7 @@ hooks = [
 
 ### 4. Fetch latest versions
 
-Before writing config, use Context7 MCP to check for current recommended versions of community hook repos (ruff-pre-commit, shellcheck-py, etc.). Fall back to the versions listed above if Context7 is unavailable.
+Before writing config, check the community hook repos for their current recommended versions (ruff-pre-commit, shellcheck-py, etc.) — via the Context7 MCP if your harness has it, your harness's doc-lookup tool, or the repos' GitHub releases pages. Fall back to the versions listed above if no lookup is available.
 
 ### 5. Generate or augment prek.toml
 
