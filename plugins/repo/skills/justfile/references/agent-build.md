@@ -122,6 +122,13 @@ toolchain, the verification step becomes:
 older just (~1.16) that fails with `Unknown setting 'unstable'`. Use the
 `setup-just` action (or a pinned release binary), pinned by commit SHA.
 
+**Install every tool the gate shells out to, pinned.** `just ci` is only as
+green as the runner's `PATH`. Each `step <name> <cmd>` invokes a real binary
+(`yamlfmt`, `markdownlint-cli2`, the test runner…); a tool the runner lacks
+fails the gate with `command not found`, not a real defect. Add an install step
+that pins the same versions a developer runs locally — including formatters that
+have no apt/npm/pip package (`yamlfmt` ships only as a release binary).
+
 Collapse any separate `lint` / `test` / `coverage` steps into the single `just
 ci` call. If multiple jobs each ran a slice of the checks, they now all run
 `just ci` (or are merged into one job) — one gate, one definition.

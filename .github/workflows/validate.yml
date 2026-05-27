@@ -35,6 +35,7 @@ jobs:
         # Pin the tools it shells out to so CI matches a developer's machine:
         #   apt: shellcheck, bats   npm: markdownlint-cli2
         #   pip: yamllint + pyyaml (validators) + pytest (ralphify) + ast-grep (bash-shorten)
+        #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
         # `sg` (ast-grep) collides with util-linux on Ubuntu; the pip wheel's bin
         # is earlier on PATH via setup-python, same as the old validate job.
         run: |
@@ -47,6 +48,8 @@ jobs:
             pyyaml==6.0.2 \
             pytest==8.3.4 \
             ast-grep-cli==0.42.1
+          curl -fsSL https://github.com/google/yamlfmt/releases/download/v0.21.0/yamlfmt_0.21.0_Linux_x86_64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin yamlfmt
 
       - name: Run gate (just ci)
         run: just ci
