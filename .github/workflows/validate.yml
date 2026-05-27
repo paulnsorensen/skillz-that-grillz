@@ -68,7 +68,7 @@ jobs:
         run: shellcheck scripts/install.sh
 
       - name: Lint skillz.sh
-        run: shellcheck plugins/util/skills/file-handler/scripts/skillz.sh
+        run: shellcheck skills/file-handler/scripts/skillz.sh
 
       - name: Install bats
         run: brew install bats-core
