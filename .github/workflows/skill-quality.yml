@@ -113,7 +113,7 @@ jobs:
         if: steps.collect.outputs.skip != 'true'
         env:
           RESPONSE: ${{ steps.judge.outputs.response }}
-        run: |
+        run: |-
           python3 - <<'PY'
           import json, os, re, sys
 
