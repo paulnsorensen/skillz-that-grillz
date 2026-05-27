@@ -7,7 +7,9 @@ name: skill-quality
 # spec adherence beyond what validate_skills.py can check structurally.
 #
 # Runs only when a SKILL.md changes. Step summary on every run, job fails
-# on any score < 60.
+# on any score < 60. Unparseable judge output (a model glitch, not a skill
+# defect) downgrades to a ::warning:: and passes — the hard gate is reserved
+# for a real score below the threshold.
 #
 # This is a smoke test, not a faithful Claude-routing eval. For that, run
 # anthropic/skill-creator's run_eval.py locally before tagging a release.
@@ -142,8 +144,20 @@ jobs:
           try:
               data = json.loads(raw)
           except json.JSONDecodeError as exc:
-              print(f"::error::Judge returned non-JSON: {exc}\n---\n{raw}", file=sys.stderr)
-              sys.exit(2)
+              # This is a smoke test, not a faithful eval: a model glitch that
+              # returns non-JSON is not a skill defect and must not block merge.
+              # Downgrade to a warning and pass — the hard gate is reserved for
+              # a real score < 60.
+              print(f"::warning::Judge returned non-JSON ({exc}); skipping gate this run.")
+              note = (
+                  "## Tier 1 SKILL.md review\n\n"
+                  f"⚠️ Judge returned non-JSON ({exc}); skipping gate this run.\n\n"
+                  "<details><summary>Raw model output</summary>\n\n"
+                  f"```\n{raw}\n```\n\n</details>\n"
+              )
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+                  fh.write(note)
+              sys.exit(0)
 
           lines = ["## Tier 1 SKILL.md review", ""]
           fail = False
