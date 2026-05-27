@@ -6,11 +6,33 @@ Always use `uv` as the package manager (user preference).
 
 ```just
 set dotenv-load
+set unstable  # for the [script] gate recipe
 
-default: check
+# The one command to run after every change.
+default: build
 
-# Run all checks
-check: lint typecheck test
+# Canonical gate — autofix, then lint, typecheck, test, coverage. Compact output.
+build: (_gate "fix")
+
+# CI gate — identical checks, NO autofix. A clean run here == a clean CI.
+ci: (_gate "check")
+
+[private]
+[script("bash")]
+_gate mode:
+    set -uo pipefail
+    step() { local n=$1; shift; local o
+        if o=$("$@" 2>&1); then echo "✓ $n"
+        else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
+    if [ "{{mode}}" = "fix" ]; then
+        step format uv run ruff format .
+        step lint   uv run ruff check --fix .
+    else
+        step format uv run ruff format --check .
+        step lint   uv run ruff check .
+    fi
+    step typecheck uv run mypy src/
+    step test      uv run pytest --cov=src --cov-fail-under=85 -q
 
 # Install dependencies
 install:
@@ -62,12 +84,12 @@ fmt:
 typecheck:
     uv run mypy src/
 
-# Build distribution
-build:
+# Build distribution artifact (not the gate — that's `build`)
+dist:
     uv build
 
 # Publish to PyPI
-publish: check build
+publish: ci dist
     uv publish
 
 # Clean artifacts

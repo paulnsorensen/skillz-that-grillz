@@ -22,11 +22,14 @@ cd skillz-that-grillz
 
 ## Running tests
 
+This project has one canonical quality gate:
+
 ```sh
-# project-specific test command goes here
+just build   # autofix, then verify markdown/YAML/shell + run the test suites
+just ci      # the same gate with no autofixes — exactly what CI runs
 ```
 
-Please run the full test suite before opening a PR.
+Please run `just build` and verify 0 failures before opening a PR.
 
 ## Submitting a pull request
 

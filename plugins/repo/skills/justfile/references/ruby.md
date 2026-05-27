@@ -4,9 +4,31 @@
 
 ```just
 set dotenv-load
+set unstable  # for the [script] gate recipe
 
-default:
-    @just --list
+# The one command to run after every change.
+default: build
+
+# Canonical gate — autofix, then lint, test, coverage. Compact output.
+build: (_gate "fix")
+
+# CI gate — identical checks, NO autofix. A clean run here == a clean CI.
+ci: (_gate "check")
+
+[private]
+[script("bash")]
+_gate mode:
+    set -uo pipefail
+    step() { local n=$1; shift; local o
+        if o=$("$@" 2>&1); then echo "✓ $n"
+        else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
+    if [ "{{mode}}" = "fix" ]; then
+        step lint bundle exec rubocop -a
+    else
+        step lint bundle exec rubocop
+    fi
+    # SimpleCov enforces the coverage floor in spec_helper.rb (see below).
+    step test bundle exec rspec
 
 # Install dependencies
 install:
@@ -53,9 +75,30 @@ routes:
 ## Template (gem/library)
 
 ```just
-default: check
+set unstable  # for the [script] gate recipe
 
-check: lint test
+default: build
+
+# Canonical gate — autofix, then lint, test, coverage. Compact output.
+build: (_gate "fix")
+
+# CI gate — identical checks, NO autofix.
+ci: (_gate "check")
+
+[private]
+[script("bash")]
+_gate mode:
+    set -uo pipefail
+    step() { local n=$1; shift; local o
+        if o=$("$@" 2>&1); then echo "✓ $n"
+        else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
+    if [ "{{mode}}" = "fix" ]; then
+        step lint bundle exec rubocop -a
+    else
+        step lint bundle exec rubocop
+    fi
+    # SimpleCov enforces the coverage floor in spec_helper.rb (see below).
+    step test bundle exec rspec
 
 test *args:
     bundle exec rspec {{args}}
@@ -66,10 +109,11 @@ lint:
 fmt:
     bundle exec rubocop -a
 
-build:
+# Build the gem artifact (not the gate — that's `build`)
+dist:
     gem build *.gemspec
 
-install-local: build
+install-local: dist
     gem install *.gem
 ```
 

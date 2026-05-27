@@ -26,6 +26,25 @@ shell scripts with a clean, discoverable command runner.
 - `just --list` gives instant discoverability with doc comments
 - Shebang recipes let you write Python/Ruby/Node inline
 
+## The default: one canonical command
+
+Every justfile this skill generates exposes **one** command an agent runs after
+every change — `just build` — and its no-autofix CI twin `just ci`. `build` is
+the default recipe. Both run the full gate (format/lint → typecheck → test →
+coverage) and compact their output: `✓ <step>` per passing step, full tool
+output with file:line only on failure.
+
+This is the default posture for *every* generated justfile, not an opt-in —
+unless the user explicitly asks for a different layout. The rationale (agents
+converge faster with one consistent command, deterministic pass/fail, and
+compact error-only output — with citations) and the full recipe template,
+`_gate` helper, and the mandatory `AGENTS.md` / CI updates all live in
+`references/agent-build.md`. **Read it before writing any justfile.**
+
+`build` = the gate (autofix on). `ci` = the gate (autofix off). The recipe that
+compiles or packages an artifact is named `dist` (or `release`) — never `build`,
+which is reserved for the gate.
+
 ## Protocol
 
 ### 1. Detect the project
@@ -71,12 +90,16 @@ Place `justfile` in the project root. Follow these conventions:
 
 **Structure order:**
 
-1. Settings (`set dotenv-load`, `set shell`, etc.)
+1. Settings (`set dotenv-load`, `set shell`, `set unstable`)
 2. Variables (version, binary name, etc.)
-3. Default recipe (first recipe — either `default: check` or `@just --list`)
-4. Core recipes grouped by concern: build, test, lint/fmt, run, deploy
-5. Utility recipes (clean, docs, etc.)
-6. Private helpers (`_prefixed` or `[private]`)
+3. Default recipe — `default: build` (the canonical gate). Use `@just --list`
+   only when the user explicitly wants no default gate.
+4. The gate: `build` (autofix) + `ci` (no autofix) + the `_gate` helper — see
+   `references/agent-build.md`
+5. Granular recipes the gate composes: test, lint, fmt, typecheck, coverage
+6. Other recipes by concern: run/dev, dist/release, docs
+7. Utility recipes (clean, etc.)
+8. Private helpers (`_prefixed` or `[private]`)
 
 **Recipe naming:**
 
@@ -154,41 +177,56 @@ hint. Skip `require()` for ubiquitous tools like `git`, `curl`, or
 the language toolchain — declare only what a fresh machine might be
 missing.
 
-### 4. Token-optimized output (for LLM-driven builds)
+### 4. Token-optimized output (default, not opt-in)
 
-When recipes run inside an LLM agent's context, output verbosity = token cost.
-Three universal levers, then escalate to `references/rtk.md` if needed:
+`build` and `ci` run through the `_gate` helper from
+`references/agent-build.md`, which is already compacted: `✓ <step>` per passing
+step, full tool output (with file:line) only on failure. Coverage runs inside
+the gate — its table is swallowed on success and shown in full when the
+threshold fails. (This supersedes the old "skip coverage to save tokens"
+advice: keep coverage in the gate; let compaction, not omission, handle the
+token cost.)
 
-1. **`@` prefix + tool flags** (~60 → ~15 lines). Silences recipe echo; pass
-   `--silent --no-audit --no-fund` to npm to drop banner/audit/fund noise.
+For the granular recipes the gate composes, still apply:
 
-2. **Skip coverage in the default recipe.** Coverage tables are ~15 lines.
-   Use `npm test` (or `cargo test`) in `build`; keep `test:coverage` in
-   `build-ci` where the CI logs aren't paying per-token.
+1. **`@` prefix + tool flags.** Silence recipe echo; pass `--silent --no-audit
+   --no-fund` to npm to drop banner/audit/fund noise.
 
-3. **rtk wrappers** (deterministic per-tool filters + hard-gate on failure).
-   See `references/rtk.md` for the shell-wrap pattern, `rtk test`/`rtk err`
-   gates, and the npm script-naming gotcha.
+2. **rtk upgrade.** When the project has rtk installed, swap the `step` calls in
+   `_gate` for `rtk test` / `rtk err` to get per-tool smart filtering on top of
+   quiet-on-success. See `references/rtk.md` for the shell-wrap pattern and the
+   npm script-naming gotcha. rtk is an upgrade, never a requirement — the bash
+   `step` helper is the portable floor.
 
-### 5. Update project docs
+### 5. Update project docs (mandatory)
 
-After creating the justfile:
+Generating the recipes is only half the job — the value of one canonical command
+is lost if nothing tells agents to use it. After creating the justfile, **always**
+do both updates. Full snippets live in `references/agent-build.md`.
 
-**Agent context file** (e.g. `AGENTS.md`, `CLAUDE.md`, `.cursor/rules`, or whatever convention the harness uses) — Add a "Key Commands" or "Common Tasks" section:
+**Agent context file** (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules`, or whatever the
+harness uses; create `AGENTS.md` if none exists) — add/replace a build section
+that tells the agent to ALWAYS run the one command and treat failure as a hard
+stop:
 
 ```markdown
-## Key Commands
+## Build & verification
 
-This project uses [just](https://github.com/casey/just) as its command runner.
-Run `just` to see all available recipes.
+This project has ONE canonical verification command. ALWAYS run it after
+changing code, and treat a non-zero exit as a hard stop.
 
-- `just` — List all available commands
-- `just test` — Run tests
-- `just lint` — Run linters
-- `just fmt` — Format code
+- `just build` — autofix, then lint, typecheck, test, and coverage. Run after
+  every change.
+- `just ci` — the same gate with no autofixes; exactly what CI runs.
+
+Output is compacted: `✓ <step>` on success, full output (file:line) only on
+failure. Don't invent ad-hoc test/lint commands — run `just build`.
 ```
 
-Only list the 4-6 most important recipes. Point to `just --list` for the rest.
+**CI workflow** — point the existing verify step at `just ci` so local and CI
+run the identical gate. This skill doesn't design pipelines; it only redirects
+the verify step (e.g. replace separate lint/test/coverage steps with a single
+`run: just ci`). See `references/agent-build.md` for the Actions snippet.
 
 **README.md** — Add a "Development" or "Getting Started" section:
 
@@ -354,11 +392,13 @@ shebang-portability quirks.
 - Don't use `set positional-arguments` unless you have a strong reason — `{{arg}}` is clearer
 - Don't put secrets in justfiles — use dotenv or env vars
 - Don't write 200-line justfiles — use modules (`mod`) to split by concern
-- Don't duplicate CI pipeline steps 1:1 — group them into meaningful recipes like `check` or `ci`
+- Don't duplicate CI pipeline steps 1:1 — collapse them into the `build`/`ci` gate
+- Don't name the artifact/compile recipe `build` — that name is the gate; use `dist` or `release`
 
 ## What You Don't Do
 
-- Design CI pipelines or GitHub Actions workflows
+- Design CI pipelines or GitHub Actions workflows from scratch — but **do**
+  redirect the existing CI verify step at `just ci` (see step 5)
 - Create Dockerfiles or container configs
 - Replace actual build systems (cargo, webpack, go build) — just wraps them
 - Remove existing Makefiles without user confirmation

@@ -2,17 +2,26 @@
 
 This document is for LLMs, agents, and automation tools working in this repository.
 
-## Single Quality Gate: `just check`
+## Single Quality Gate: `just build`
 
-**Before shipping any work (commit, PR, or merge), run `just check` and verify 0 errors/failures.**
+This project has ONE canonical verification command. ALWAYS run it after changing
+code, and treat a non-zero exit as a hard stop — fix the reported failures before
+doing anything else.
 
-`just check` autofixes lint and runs tests. CI runs `just ci` (same checks, no autofixes).
+- `just build` — autofix (markdown + YAML format), then verify markdown/YAML/shell
+  and run the skill validators + bats suites. Run after every change.
+- `just ci` — the same gate with NO autofixes; this is what CI runs.
 
 ```bash
-just check
+just build
 ```
 
-Do NOT commit or push when `just check` fails. If CI fails, pull the branch locally, run `just check`, commit the autofixes, and push.
+Output is compacted: each step prints `✓ <step>` on success and the full tool
+output (with file:line) only on failure, then aborts. Don't invent ad-hoc
+lint/test commands — run `just build` so your feedback loop matches CI.
+
+Do NOT commit or push when `just build` fails. If CI fails, pull the branch
+locally, run `just build`, commit the autofixes, and push.
 
 ## Skills in this repo
 

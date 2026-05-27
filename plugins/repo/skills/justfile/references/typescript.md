@@ -11,11 +11,35 @@ Detect the package manager from lockfiles:
 
 ```just
 set dotenv-load
+set unstable  # for the [script] gate recipe
 
-default: check
+# The one command to run after every change.
+default: build
 
-# Run all checks
-check: lint typecheck test
+# Canonical gate — autofix, then lint, typecheck, test, coverage. Compact output.
+build: (_gate "fix")
+
+# CI gate — identical checks, NO autofix. A clean run here == a clean CI.
+ci: (_gate "check")
+
+[private]
+[script("bash")]
+_gate mode:
+    set -uo pipefail
+    step() { local n=$1; shift; local o
+        if o=$("$@" 2>&1); then echo "✓ $n"
+        else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
+    if [ "{{mode}}" = "fix" ]; then
+        step format npx prettier --write .
+        step lint   npx eslint --fix src/
+    else
+        step format npx prettier --check .
+        step lint   npx eslint src/
+    fi
+    step typecheck npx tsc --noEmit
+    # test:coverage must exist in package.json and enforce its own threshold
+    # (e.g. vitest --coverage with thresholds in vitest.config, or jest --coverage).
+    step test npm run test:coverage
 
 # Install dependencies
 install:
@@ -25,8 +49,8 @@ install:
 dev:
     npm run dev
 
-# Build for production
-build:
+# Build for production (the artifact — not the gate, which is `build`)
+dist:
     npm run build
 
 # Run tests
@@ -44,16 +68,6 @@ fmt:
 # Type check only
 typecheck:
     npx tsc --noEmit
-
-# Full CI pipeline — hard-gate the coverage step
-# (see references/rtk.md for the rtk test/err pattern)
-build-ci:
-    npm install
-    just fmt
-    just lint
-    just typecheck
-    just build
-    rtk test npm run test:coverage
 
 # Clean
 clean:
@@ -78,9 +92,12 @@ dev:
 test *args:
     bun test {{args}}
 
-build:
+dist:
     bun run build
 ```
+
+In the `_gate`, swap `npx`/`npm run test:coverage` for the bun equivalents
+(`bunx prettier`, `bunx eslint`, `bunx tsc --noEmit`, `bun test --coverage`).
 
 ## Monorepo (Turborepo/Nx)
 
