@@ -56,7 +56,7 @@ agent gets a clean `✓`/`✗` ledger instead of scrolling banners.
 
 ### rtk upgrade path
 
-The `step` helper is portable (bash only). When the project has [rtk](https://github.com/) installed,
+The `step` helper is portable (bash only). When the project has `rtk` installed,
 swap `step test CMD` for `rtk test CMD` (and `step <other> CMD` for `rtk err
 CMD`) to get per-tool smart filtering on top of quiet-on-success — see
 `rtk.md`. Don't require rtk; the bash `step` is the floor.

@@ -18,6 +18,7 @@ _gate mode:
         if o=$("$@" 2>&1); then echo "✓ $n"
         else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
     tests() {
+        set -e  # fail-fast: without this, a non-last failing test is masked
         python3 .github/scripts/test_validate_skills.py
         python3 .github/scripts/validate_skills.py
         python3 plugins/util/skills/bash-shortening/scripts/bash-shorten.py --self-test
@@ -31,6 +32,7 @@ _gate mode:
         step yaml-fmt yamlfmt .
     else
         step markdown markdownlint-cli2 "plugins/**/*.md" "*.md"
+        step yaml-fmt yamlfmt -lint .
     fi
     step yaml  yamllint -c .yamllint.yml .
     step shell shellcheck scripts/install.sh plugins/util/skills/file-handler/scripts/skillz.sh
