@@ -18,5 +18,7 @@ skills/*-workspace/
 # file-handler skill artifact tree (local scratch space)
 .skillz/
 
-# Serena MCP per-project data (auto-created on activation; machine-local)
-.serena/
+# Serena MCP — track project.yml (shared config); ignore derived + machine-local data
+.serena/cache/
+.serena/memories/
+.serena/project.local.yml
