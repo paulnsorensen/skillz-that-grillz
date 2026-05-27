@@ -47,9 +47,28 @@ jobs:
             # Three-dot diff: changes on HEAD since the merge-base with
             # BASE. Two-dot would include files that exist on main but
             # not on a stale PR branch — judging skills we never touched.
-            mapfile -t files < <(git diff --name-only --diff-filter=AM "$BASE_SHA...$HEAD_SHA" -- 'skills/**/SKILL.md')
+            #
+            # Rename-aware (no pathspec, so git can pair an old path with
+            # its new one): a pure move with identical content (R100) is
+            # not a content change and must not trigger a re-judge. Keep
+            # added/modified files and renames that also edited the body
+            # (R<100), take the destination path, restrict to
+            # skills/<name>/SKILL.md.
+            mapfile -t files < <(
+              git diff --name-status --find-renames --diff-filter=AMR "$BASE_SHA...$HEAD_SHA" \
+                | while IFS=$'\t' read -r status old new; do
+                    case "$status" in
+                      R100) continue ;;       # pure move: content unchanged
+                      R*)   path="$new" ;;     # moved and edited
+                      *)    path="$old" ;;     # added or modified in place
+                    esac
+                    case "$path" in
+                      skills/*/SKILL.md) printf '%s\n' "$path" ;;
+                    esac
+                  done
+            )
           else
-            mapfile -t files < <(git ls-files 'skills/**/SKILL.md')
+            mapfile -t files < <(git ls-files 'skills/*/SKILL.md')
           fi
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "No SKILL.md changes; skipping judge."
