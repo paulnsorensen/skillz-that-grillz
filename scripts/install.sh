@@ -27,9 +27,10 @@ SG_KNOWN_TOOLS="gh just prek graphite ast-grep sd ripgrep fd"
 SG_SKILL_REPO="paulnsorensen/skillz-that-grillz"
 
 # Embedded fallback list of skill names. The installer normally discovers
-# the live set via 'gh api repos/.../contents/skills' so it self-heals when
-# new skills land — this list is only used when the API call is
-# unavailable (offline, rate-limited, repo temporarily private).
+# the live set via the git-trees API by selecting paths that match
+# skills/<name>/SKILL.md, so it self-heals when new skills land — this list
+# is only used when the API call is unavailable (offline, rate-limited,
+# repo temporarily private).
 SG_FALLBACK_SKILLS="bash-shortening commit copilot file-handler gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile pr-stack prek safe-settings"
 
 # Default selections.
@@ -289,14 +290,14 @@ sg_install_mcp_for_harnesses() {
     return $rc
 }
 
-# Discover the live skill list by listing skills/ via the GitHub contents
-# API. Prints one skill name per line on success; on failure (network,
-# rate limit, private repo) returns non-zero with empty stdout and the
-# caller falls back to SG_FALLBACK_SKILLS.
+# Discover the live skill list via the git-trees API and keep only true
+# skill roots (skills/<name>/SKILL.md). Prints one skill name per line on
+# success; on failure (network, rate limit, private repo) returns non-zero
+# with empty stdout and the caller falls back to SG_FALLBACK_SKILLS.
 sg_discover_skills() {
     local gh="$1"
-    "$gh" api "repos/${SG_SKILL_REPO}/contents/skills" \
-        --jq '.[] | select(.type == "dir") | .name' 2>/dev/null
+    "$gh" api "repos/${SG_SKILL_REPO}/git/trees/HEAD?recursive=1" \
+        --jq '.tree[] | select(.type == "blob" and (.path | test("^skills/[^/]+/SKILL\\.md$"))) | .path | split("/")[1]' 2>/dev/null
 }
 
 # Install the skill set into the picked harness via 'gh skill'. User scope

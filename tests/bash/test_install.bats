@@ -387,6 +387,34 @@ STUB
 
 # -- sg_install_skills (gh-skill dispatch) -----------------------------------
 
+@test "sg_discover_skills uses git trees API endpoint" {
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh $*" >> "$STUB_LOG"
+echo "commit"
+echo "gh"
+STUB
+    chmod +x "$STUB_BIN/gh"
+
+    run sg_discover_skills "$STUB_BIN/gh"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'commit\ngh' ]
+    grep -Fq "repos/${SG_SKILL_REPO}/git/trees/HEAD?recursive=1" "$STUB_LOG"
+}
+
+@test "sg_discover_skills filters for skills/<name>/SKILL.md paths" {
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "gh $*" >> "$STUB_LOG"
+echo "commit"
+STUB
+    chmod +x "$STUB_BIN/gh"
+
+    run sg_discover_skills "$STUB_BIN/gh"
+    [ "$status" -eq 0 ]
+    grep -Fq '^skills/[^/]+/SKILL\\.md$' "$STUB_LOG"
+}
+
 @test "sg_install_skills warns and returns 0 when gh missing" {
     run sg_install_skills claude-code
     [ "$status" -eq 0 ]
