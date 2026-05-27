@@ -1,14 +1,15 @@
 {
   "name": "harness-config",
-  "description": "Agent and account configuration — chezmoi dotfiles management and personal (account-level) Copilot instructions.",
+  "description": "Agent and account configuration — chezmoi dotfiles management, personal (account-level) Copilot instructions, and Serena MCP configuration.",
   "version": "0.1.0",
   "author": {
     "name": "Paul Sorensen"
   },
   "license": "MIT",
-  "keywords": ["config", "chezmoi", "dotfiles", "copilot", "harness"],
+  "keywords": ["config", "chezmoi", "dotfiles", "copilot", "serena", "harness"],
   "skills": [
     "./skills/chezmoi",
-    "./skills/github-copilot-personal-instructions"
+    "./skills/github-copilot-personal-instructions",
+    "./skills/serena-config"
   ]
 }

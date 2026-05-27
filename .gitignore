@@ -17,3 +17,6 @@ skills/*-workspace/
 
 # file-handler skill artifact tree (local scratch space)
 .skillz/
+
+# Serena MCP per-project data (auto-created on activation; machine-local)
+.serena/
