@@ -42,10 +42,8 @@ class ValidateSkillsTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
 
-    def _write_skill(self, name: str, bucket: str = "util") -> None:
-        self._write(
-            f"plugins/{bucket}/skills/{name}/SKILL.md", VALID_BODY.format(name=name)
-        )
+    def _write_skill(self, name: str, parent: str = "skills") -> None:
+        self._write(f"{parent}/{name}/SKILL.md", VALID_BODY.format(name=name))
 
     def _run(self) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
@@ -59,56 +57,28 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("validated 1", out)
 
-    def test_valid_skill_in_any_bucket_passes(self) -> None:
-        self._write_skill("commit", bucket="git-workflow")
-        rc, out, _ = self._run()
-        self.assertEqual(rc, 0)
-        self.assertIn("validated 1", out)
-
-    def test_plugins_dir_missing(self) -> None:
+    def test_skills_dir_missing(self) -> None:
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
-        self.assertIn("plugins/ directory not found", err)
+        self.assertIn("skills/ directory not found", err)
 
     def test_no_skill_files(self) -> None:
-        (self.tmpdir / "plugins").mkdir()
+        (self.tmpdir / "skills").mkdir()
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
         self.assertIn("no SKILL.md files found", err)
 
-    def test_flat_skills_path_fails(self) -> None:
-        # Old flat layout is no longer valid: must be plugins/<bucket>/skills/<name>.
+    def test_stray_outside_skills_fails(self) -> None:
+        # Guard against a copy-pasted plugin tree silently passing validation.
         self._write_skill("foo")
-        self._write("skills/bar/SKILL.md", VALID_BODY.format(name="bar"))
+        self._write_skill("bar", parent="plugins/other-plugin/skills")
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
-        self.assertIn("skills/bar/SKILL.md", err)
-        self.assertIn("not at the documented path", err)
-
-    def test_bucket_without_skills_dir_fails(self) -> None:
-        # plugins/<bucket>/<name>/SKILL.md (missing the skills/ level) is invalid.
-        self._write_skill("foo")
-        self._write("plugins/repo/bar/SKILL.md", VALID_BODY.format(name="bar"))
-        rc, _, err = self._run()
-        self.assertEqual(rc, 1)
-        self.assertIn("not at the documented path", err)
-
-    def test_wrong_middle_segment_fails(self) -> None:
-        # 5-part path but the 3rd segment is not literally "skills" — must fail,
-        # so the check can't be loosened to "any 5-part path under plugins/".
-        self._write_skill("foo")
-        self._write(
-            "plugins/repo/references/foo/SKILL.md", VALID_BODY.format(name="foo")
-        )
-        rc, _, err = self._run()
-        self.assertEqual(rc, 1)
-        self.assertIn("plugins/repo/references/foo/SKILL.md", err)
+        self.assertIn("plugins/other-plugin/skills/bar/SKILL.md", err)
         self.assertIn("not at the documented path", err)
 
     def test_nested_subskill_fails(self) -> None:
-        self._write(
-            "plugins/util/skills/foo/bar/SKILL.md", VALID_BODY.format(name="bar")
-        )
+        self._write("skills/foo/bar/SKILL.md", VALID_BODY.format(name="bar"))
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
         self.assertIn("nested sub-skills are not supported", err)
@@ -122,7 +92,7 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertIn("validated 1", out)
 
     def test_missing_frontmatter(self) -> None:
-        self._write("plugins/util/skills/foo/SKILL.md", "no frontmatter here\n")
+        self._write("skills/foo/SKILL.md", "no frontmatter here\n")
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
         self.assertIn("missing or malformed YAML frontmatter", err)
@@ -130,7 +100,7 @@ class ValidateSkillsTest(unittest.TestCase):
     def test_invalid_yaml(self) -> None:
         # Unterminated quoted string -> YAMLError.
         self._write(
-            "plugins/util/skills/foo/SKILL.md",
+            "skills/foo/SKILL.md",
             '---\nname: foo\ndescription: "unterminated\n---\n',
         )
         rc, _, err = self._run()
@@ -139,7 +109,7 @@ class ValidateSkillsTest(unittest.TestCase):
 
     def test_frontmatter_not_a_mapping(self) -> None:
         self._write(
-            "plugins/util/skills/foo/SKILL.md",
+            "skills/foo/SKILL.md",
             "---\n- just\n- a\n- list\n---\n",
         )
         rc, _, err = self._run()
@@ -147,32 +117,26 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertIn("must be a YAML mapping", err)
 
     def test_name_dir_mismatch(self) -> None:
-        self._write(
-            "plugins/util/skills/foo/SKILL.md", VALID_BODY.format(name="bar")
-        )
+        self._write("skills/foo/SKILL.md", VALID_BODY.format(name="bar"))
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
         self.assertIn("does not match parent directory", err)
 
     def test_invalid_kebab_case(self) -> None:
-        self._write(
-            "plugins/util/skills/Foo_Bar/SKILL.md", VALID_BODY.format(name="Foo_Bar")
-        )
+        self._write("skills/Foo_Bar/SKILL.md", VALID_BODY.format(name="Foo_Bar"))
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
         self.assertIn("not kebab-case", err)
 
     def test_missing_description(self) -> None:
-        self._write(
-            "plugins/util/skills/foo/SKILL.md", "---\nname: foo\n---\n\nbody\n"
-        )
+        self._write("skills/foo/SKILL.md", "---\nname: foo\n---\n\nbody\n")
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
         self.assertIn("missing required key 'description'", err)
 
     def test_disallowed_keys(self) -> None:
         self._write(
-            "plugins/util/skills/foo/SKILL.md",
+            "skills/foo/SKILL.md",
             "---\nname: foo\ndescription: x\nbogus: 1\n---\n",
         )
         rc, _, err = self._run()
@@ -183,7 +147,7 @@ class ValidateSkillsTest(unittest.TestCase):
     def test_description_at_limit_passes(self) -> None:
         desc = "a" * validate_skills.DESCRIPTION_MAX_LEN
         self._write(
-            "plugins/util/skills/foo/SKILL.md",
+            "skills/foo/SKILL.md",
             f"---\nname: foo\ndescription: {desc}\n---\n",
         )
         rc, out, _ = self._run()
@@ -193,7 +157,7 @@ class ValidateSkillsTest(unittest.TestCase):
     def test_description_over_limit_fails(self) -> None:
         desc = "a" * (validate_skills.DESCRIPTION_MAX_LEN + 1)
         self._write(
-            "plugins/util/skills/foo/SKILL.md",
+            "skills/foo/SKILL.md",
             f"---\nname: foo\ndescription: {desc}\n---\n",
         )
         rc, _, err = self._run()
@@ -203,7 +167,7 @@ class ValidateSkillsTest(unittest.TestCase):
 
     def test_allowed_optional_keys_pass(self) -> None:
         self._write(
-            "plugins/util/skills/foo/SKILL.md",
+            "skills/foo/SKILL.md",
             "---\nname: foo\ndescription: x\nlicense: MIT\nallowed-tools: Read,Write\n---\n",
         )
         rc, out, _ = self._run()
