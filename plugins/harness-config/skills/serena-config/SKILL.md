@@ -73,7 +73,7 @@ If none apply, leave the config alone — the bootstrap is correct.
 ## Editing discipline
 
 - **Never hand-create a config from scratch.** Let Serena bootstrap it
-  (`serena project generate` for a project, first run for the global file), then
+  (`serena project create` for a project, first run for the global file), then
   edit. The generated files carry inline documentation comments and fields added
   by newer versions — preserve them.
 - **Verify after editing.** `serena print-system-prompt "$(pwd)"` renders the

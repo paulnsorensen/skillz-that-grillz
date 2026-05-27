@@ -16,9 +16,9 @@ Two ways:
 - **Explicit** — run the creation command from the project directory:
 
   ```bash
-  serena project generate          # current dir; auto-detect languages
-  serena project generate --language python --language typescript   # empty project
-  serena project generate --name my-name --index
+  serena project create            # current dir; auto-detect languages
+  serena project create --language python --language typescript   # empty project
+  serena project create --name my-name --index
   ```
 
   - Defaults the project directory to the current directory.
@@ -28,7 +28,7 @@ Two ways:
 
 - **Implicit** — just activate a directory mid-conversation; Serena writes default settings and skips straight to activation.
 
-> `<speculative>` The exact subcommand name (`serena project generate`) may vary by Serena version — confirm with `serena --help` / `serena project --help`. The behavior (auto-detect, `--language`, `--name`, `--index`) is doc-accurate.
+> `<certain>` The subcommand is `serena project create` (verified against the Serena CLI; it accepts `--name`, `--language` (repeatable), and `--index`). Run `serena project --help` for the full, version-current flag list.
 
 ### Indexing
 
