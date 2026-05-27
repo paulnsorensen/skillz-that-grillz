@@ -26,9 +26,9 @@
     {
       "name": "harness-config",
       "source": "./plugins/harness-config",
-      "description": "Agent and account configuration — chezmoi dotfiles and personal Copilot instructions.",
+      "description": "Agent and account configuration — chezmoi dotfiles, personal Copilot instructions, and Serena MCP configuration.",
       "category": "tooling",
-      "tags": ["config", "chezmoi", "harness"]
+      "tags": ["config", "chezmoi", "serena", "harness"]
     },
     {
       "name": "util",

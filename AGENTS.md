@@ -36,6 +36,7 @@ locally, run `just build`, commit the autofixes, and push.
 | `/oss-hygiene` | Bring a public repo up to GitHub Community Standards + OpenSSF Scorecard baseline |
 | `/prek` | Onboard prek and language-appropriate pre-commit hooks |
 | `/safe-settings` | Org-scale GitHub policy as code via safe-settings Probot |
+| `/serena-config` | Configure the Serena MCP server — global `serena_config.yml` (settings, contexts, modes) and per-repo `project.yml` (languages, ignore rules, monorepo workspace folders) |
 
 See `README.md` for full details.
 

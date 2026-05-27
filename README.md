@@ -67,6 +67,7 @@ so the harness can load it progressively.
 | `plugins/util/skills/ralphify-spec/SKILL.md` | `/ralphify-spec` | Generate a ralphify-approved ralph directory (RALPH.md + scripts) from a plain-English description of repetitive or iterative work. Ships an iteration-cap-enforcing runner wrapper, a `<promise>COMPLETE</promise>` stop sentinel, and a burn-down-todos template. |
 | `plugins/git-workflow/skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
 | `plugins/repo/skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
+| `plugins/harness-config/skills/serena-config/SKILL.md` | `/serena-config` | Configure the [Serena](https://oraios.github.io/serena/) MCP server across both layers: global `~/.serena/serena_config.yml` (settings, contexts, modes, `ls_specific_settings`) and per-repo `.serena/project.yml` (languages, ignore rules, monorepo `additional_workspace_folders`, `read_only`). Routes to `references/project-config.md` and `references/global-config.md`; covers the create → index → activate lifecycle, the layered override model, and `serena print-system-prompt` verification. |
 
 ## Scope
 
@@ -93,6 +94,7 @@ Code); the bundled `bash-shorten.py` rewriter additionally requires
 | `ralphify-spec` | [`ralphify`](https://github.com/ghuntley/ralphify) | ralphify (`uv tool install ralphify`), Python 3.10+ | — |
 | `respond` | `gh` CLI + `git` | gh, git | — |
 | `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
+| `serena-config` | [Serena](https://oraios.github.io/serena/) MCP `serena` CLI + config files | serena (for `print-system-prompt` / `project` verification) | Context7 MCP (latest config-key docs) |
 
 What that means in practice:
 
@@ -142,7 +144,7 @@ gh skill install paulnsorensen/skillz-that-grillz
 Install every skill in one shot:
 
 ```sh
-for s in bash-shortening commit copilot file-handler gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile oss-hygiene pr-stack prek ralphify-spec respond safe-settings; do
+for s in bash-shortening commit copilot file-handler gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile oss-hygiene pr-stack prek ralphify-spec respond safe-settings serena-config; do
   gh skill install paulnsorensen/skillz-that-grillz "$s"
 done
 ```
