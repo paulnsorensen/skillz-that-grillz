@@ -44,7 +44,7 @@ real editorial framing.
 Derive every entry from a real commit — never invent a bullet:
 
 ```bash
-git log "$LAST_TAG..HEAD" --no-merges --pretty='%s (%h)'
+git log "${LAST_TAG:+$LAST_TAG..}HEAD" --no-merges --pretty='%s (%h)'
 ```
 
 Group by Conventional Commit type, map to reader-facing headings:

@@ -48,7 +48,8 @@ BRANCH=$(git branch --show-current)
 DEFAULT=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
 git diff-index --quiet HEAD || { echo "uncommitted changes — commit or stash first"; exit 1; }
 [ "$BRANCH" = "$DEFAULT" ] || echo "WARNING: not on $DEFAULT (on $BRANCH) — releases normally tag the default branch"
-git rev-list --left-right --count "origin/$DEFAULT...HEAD"   # ahead/behind remote
+read -r AHEAD BEHIND < <(git rev-list --left-right --count "origin/$DEFAULT...HEAD")
+[ "$BEHIND" = 0 ] || { echo "HEAD is $BEHIND commits behind origin/$DEFAULT — pull/rebase before tagging"; exit 1; }
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
 ```
 
@@ -80,7 +81,7 @@ Propose the computed version and the one-line reason ("3 feats, no breaking → 
 
 ### 3. Draft the release notes
 
-Read `references/release-notes.md` for the two strategies and how to choose. Summary:
+Read `references/release-notes.md` for the three strategies and how to choose. Summary:
 
 - **Auto-generated** (`gh release create --generate-notes`) — best when the repo merges via PRs and has `.github/release.yml`. GitHub groups merged PRs into the configured category buckets by label. Cheapest, and complete as long as every change landed as a labelled PR.
 - **Hand-curated** — best when there's no `.github/release.yml`, when commits (not PRs) are the unit of change, or when the release needs editorial highlights. Group by Conventional Commit type; lead with a **Highlights** section and, for any breaking change, an **Upgrade notes** section with the concrete migration step. `assets/release-notes-template.md` is the starting structure.
