@@ -4,7 +4,6 @@
 
 ```just
 set dotenv-load
-set unstable  # for the [script] gate recipe
 
 BINARY := "myapp"
 VERSION := `git describe --tags --always 2>/dev/null || echo "dev"`

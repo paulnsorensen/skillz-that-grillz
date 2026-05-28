@@ -1,6 +1,3 @@
-set dotenv-load := true
-set unstable  # for the [script] gate recipe
-
 # The one command to run after every change.
 default: build
 
@@ -17,26 +14,16 @@ _gate mode:
     step() { local n=$1; shift; local o
         if o=$("$@" 2>&1); then echo "✓ $n"
         else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
-    tests() {
-        set -e  # fail-fast: without this, a non-last failing test is masked
-        python3 .github/scripts/test_validate_skills.py
-        python3 .github/scripts/validate_skills.py
-        python3 skills/bash-shortening/scripts/bash-shorten.py --self-test
-        python3 -m pytest skills/ralphify-spec/scripts/test_validate.py -q
-        bats tests/bash/test_install.bats
-        bats tests/bash/test_skillz.bats
-        bats tests/bash-shortening/test_bash_shorten.bats
-    }
     if [ "{{mode}}" = "fix" ]; then
-        step markdown markdownlint-cli2 --fix "skills/**/*.md" "*.md"
-        step yaml-fmt yamlfmt .
+        step markdown    just lint-md-fix
+        step yaml-fmt    just lint-yaml-fmt-fix
     else
-        step markdown markdownlint-cli2 "skills/**/*.md" "*.md"
-        step yaml-fmt yamlfmt -lint .
+        step markdown    just lint-md
+        step yaml-fmt    just lint-yaml-fmt
     fi
-    step yaml  yamllint -c .yamllint.yml .
-    step shell shellcheck scripts/install.sh skills/file-handler/scripts/skillz.sh
-    step test  tests
+    step yaml  just lint-yaml
+    step shell just lint-sh
+    step test  just test
 
 # List all available commands
 list:
@@ -44,7 +31,7 @@ list:
 
 # Run tests (skill validators + self-tests + bash unit tests — mirrors CI)
 test:
-    python3 .github/scripts/test_validate_skills.py -v
+    python3 .github/scripts/test_validate_skills.py
     python3 .github/scripts/validate_skills.py
     python3 skills/bash-shortening/scripts/bash-shorten.py --self-test
     python3 -m pytest skills/ralphify-spec/scripts/test_validate.py -q
@@ -65,9 +52,13 @@ lint-md:
     markdownlint-cli2 "skills/**/*.md" "*.md"
 
 # Fix YAML formatting issues
-lint-yaml-fix:
+lint-yaml-fmt-fix:
     yamlfmt .
 
-# Verify YAML formatting
+# Verify YAML formatting (no autofix)
+lint-yaml-fmt:
+    yamlfmt -lint .
+
+# Verify YAML lint rules
 lint-yaml:
     yamllint -c .yamllint.yml .

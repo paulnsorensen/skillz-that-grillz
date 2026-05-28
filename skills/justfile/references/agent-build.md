@@ -27,8 +27,6 @@ one `✓ <step>` line per passing step, and the full tool output (with file:line
 only when a step fails — at which point the gate aborts immediately.
 
 ```just
-set unstable  # required for [script] recipes (just ≥ 1.34)
-
 # The one command to run after every change.
 default: build
 
@@ -63,7 +61,8 @@ CMD`) to get per-tool smart filtering on top of quiet-on-success — see
 
 ### No `[script]` / older just
 
-If `set unstable` isn't acceptable, make `_gate` a shebang recipe instead — the
+On a just older than 1.44 (where `[script]` isn't yet stable), or if you'd
+rather avoid the attribute, make `_gate` a shebang recipe instead — the
 parameterized dependency (`build: (_gate "fix")`) works regardless of body type:
 
 ```just
@@ -118,8 +117,8 @@ toolchain, the verification step becomes:
 ```
 
 **Install `just` from `setup-just`, never distro `apt`.** The `_gate` uses the
-`[script]` attribute, which requires just ≥ 1.34; Ubuntu/Debian apt ship a much
-older just (~1.16) that fails with `Unknown setting 'unstable'`. Use the
+`[script]` attribute, stable since just 1.44; Ubuntu/Debian apt ship a much
+older just (~1.16) that fails with an unknown-attribute error. Use the
 `setup-just` action (or a pinned release binary), pinned by commit SHA.
 
 **Install every tool the gate shells out to, pinned.** `just ci` is only as

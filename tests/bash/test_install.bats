@@ -18,6 +18,18 @@ setup() {
     PATH="$STUB_BIN:/usr/bin:/bin"
     # shellcheck disable=SC1090
     source "$INSTALL_SH"
+    # Pin tool presence to the per-test stub dir. install.sh's real
+    # sg_cmd_exists uses `command -v`, which leaks host binaries on CI runners
+    # (ubuntu ships gh in /usr/bin, and util-linux's `sg` shadows ast-grep),
+    # breaking the install/skip/warn assertions. Absolute paths (SG_CLAUDE,
+    # SG_GH, ... = "$STUB_BIN/<name>") are checked directly; bare names resolve
+    # only against the stub dir.
+    sg_cmd_exists() {
+        case "$1" in
+            /*) [[ -x "$1" ]] ;;
+            *)  [[ -x "$STUB_BIN/$1" ]] ;;
+        esac
+    }
 }
 
 teardown() {

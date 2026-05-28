@@ -26,6 +26,11 @@ shell scripts with a clean, discoverable command runner.
 - `just --list` gives instant discoverability with doc comments
 - Shebang recipes let you write Python/Ruby/Node inline
 
+For the official feature rationale — the most-used features, the special use
+cases that make justfiles truly worth it, and a deep-linked chapter index — see
+[`references/manual.md`](references/manual.md), grounded in the
+[Just Programmer's Manual](https://just.systems/man/en/introduction.html).
+
 ## The default: one canonical command
 
 Every justfile this skill generates exposes **one** command an agent runs after
@@ -62,7 +67,10 @@ Scan the project root for ecosystem markers:
 Read the relevant reference file for language-specific recipes.
 
 If multiple markers exist (e.g., a Rust backend + TypeScript frontend), combine
-patterns. Use modules (`mod frontend`, `mod backend`) for true monorepos.
+patterns. Use modules (`mod frontend`, `mod backend`) for true monorepos — the
+root `build` gate then aggregates each module's gate so `just build` still means
+"verify everything." For the full module/import composition pattern (and when to
+pick `import` over `mod`), see [`references/composition.md`](references/composition.md).
 
 **Multi-ecosystem naming:** When a project has multiple languages (e.g., Tauri
 with Rust + TypeScript), use ecosystem suffixes to disambiguate overlapping
@@ -90,7 +98,7 @@ Place `justfile` in the project root. Follow these conventions:
 
 **Structure order:**
 
-1. Settings (`set dotenv-load`, `set shell`, `set unstable`)
+1. Settings (`set dotenv-load`, `set shell`)
 2. Variables (version, binary name, etc.)
 3. Default recipe — `default: build` (the canonical gate). Use `@just --list`
    only when the user explicitly wants no default gate.
@@ -153,8 +161,29 @@ ignore errors on a single command, not weaker shell flags. Skip the
 `set shell` line for Windows targets or projects without a bash
 dependency — the default `/bin/sh` is fine for most recipes.
 
-Add `set unstable` if you use modules (`mod`), the `[script]`
-attribute, or `[arg()]` flags (see below).
+`set unstable` is no longer needed for the common features: modules (stable
+since just 1.31), the `[script]` attribute (1.44), and `[arg()]` flags (1.46)
+all work on a current just without it. Add `set unstable` only to support a just
+older than the relevant stabilization.
+
+**dotenv hardening:** `set dotenv-load` silently does nothing when `.env` is
+absent. When a project genuinely *requires* its `.env` (DB URLs, API keys),
+make that failure loud — fail fast rather than running with empty vars:
+
+```just
+set dotenv-load
+set dotenv-required          # error if no dotenv file is found
+
+# Pick ONE of the following (omit both to load ./.env):
+set dotenv-path := ".env.local"     # explicit path (relative to justfile), OR…
+# set dotenv-filename := ".env.dev" # …a filename to search for up the tree
+```
+
+`dotenv-required` turns a missing env file into a hard error instead of a silent
+no-op — the "fail fast and loud" posture. Use `dotenv-path` to point at one
+exact file, or `dotenv-filename` to change which name just walks the tree
+looking for. See
+[Settings § dotenv](https://just.systems/man/en/settings.html#dotenv-settings).
 
 ### Tool dependencies — `require()`
 
@@ -323,7 +352,7 @@ to see the generated help.
 
 **Script blocks (`[script]`):** Cleaner than shebang recipes and
 preferred when the body has shell control flow you don't want
-re-evaluated line-by-line. Requires `set unstable`:
+re-evaluated line-by-line (stable since just 1.44 — no `set unstable` needed):
 
 ```just
 [script("bash")]
@@ -362,7 +391,28 @@ multi-step recipes:
 Don't sprinkle color through every recipe — reserve it for status
 lines that summarize an aggregate step.
 
-**Modules (monorepo):**
+**Watch / dev loop:** just has no built-in watch flag — the manual's pattern is
+to let [`watchexec`](https://github.com/watchexec/watchexec) re-run a recipe
+whenever a watched file changes: `watchexec just <recipe>`. This is the
+inner-loop counterpart to the gate. Wrap the common case in a `dev` recipe and
+declare the dependency:
+
+```just
+# https://github.com/watchexec/watchexec
+watchexec := require("watchexec")
+
+# Re-run the fast checks on every save (Ctrl-C to stop).
+dev:
+    watchexec just test
+```
+
+`watchexec just test` is the day-to-day inner loop; the canonical `build` gate
+stays the after-each-change verification. See
+[Re-running recipes when files change](https://just.systems/man/en/re-running-recipes-when-files-change.html).
+
+**Modules (monorepo):** See
+[`references/composition.md`](references/composition.md) for the full pattern —
+aggregating module gates into one root `build`, and `mod` vs `import`.
 
 ```just
 mod api        # looks for api/justfile or api.just
@@ -382,8 +432,8 @@ analyze:
     print(f"Total: {len(data)}")
 ```
 
-Prefer `[script("python3")]` over shebangs on just ≥ 1.34 with
-`set unstable` — it runs the body as one block and avoids
+Prefer `[script("python3")]` over shebangs on just ≥ 1.44 (stable, no
+`set unstable` needed) — it runs the body as one block and avoids
 shebang-portability quirks.
 
 ## Anti-patterns
@@ -413,7 +463,6 @@ shebang-portability quirks.
 - `require("tool")` validates at evaluate time — use `{{ jq }}` to
   invoke via resolved path, or call `jq` directly; both work once
   `require` has confirmed the tool exists
-- `[script()]` and modules require `set unstable` and just ≥1.34 —
-  pin a minimum in your README if you rely on them
-- `[arg()]` requires `set unstable` and just ≥1.46 — pin v1.46+ if
-  you expose argument flags
+- `[script()]` is stable since just 1.44, modules since 1.31, `[arg()]` since
+  1.46 — none need `set unstable` on a current just. Add `set unstable` only for
+  an older just, and pin the relevant minimum in your README if you rely on them

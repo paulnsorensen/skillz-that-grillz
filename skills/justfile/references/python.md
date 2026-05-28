@@ -6,7 +6,6 @@ Default to `uv` as the package manager. If the project already uses pip, poetry,
 
 ```just
 set dotenv-load
-set unstable  # for the [script] gate recipe
 
 # The one command to run after every change.
 default: build

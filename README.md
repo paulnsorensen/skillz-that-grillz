@@ -55,6 +55,7 @@ harness can load it progressively.
 | `skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
 | `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
 | `skills/ralphify-spec/SKILL.md` | `/ralphify-spec` | Generate a ralphify-approved ralph directory (RALPH.md + scripts) from a plain-English description of repetitive or iterative work. Ships an iteration-cap-enforcing runner wrapper, a `<promise>COMPLETE</promise>` stop sentinel, and a burn-down-todos template. |
+| `skills/release/SKILL.md` | `/release` | Cut a versioned release end to end: decide the next semantic version from the Conventional Commits since the last tag (with the `0.x` exception), draft proper release notes (auto-generated via `.github/release.yml`, hand-curated grouped by change type with highlights + upgrade notes, or hybrid), update `CHANGELOG.md`, create and push an annotated tag, and publish the GitHub release. Stops at the tag push when a tag-driven release workflow already publishes. |
 | `skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
 | `skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
 | `skills/serena-config/SKILL.md` | `/serena-config` | Configure the [Serena](https://oraios.github.io/serena/) MCP server across both layers: global `~/.serena/serena_config.yml` (settings, contexts, modes, `ls_specific_settings`) and per-repo `.serena/project.yml` (languages, ignore rules, monorepo `additional_workspace_folders`, `read_only`). Routes to `references/project-config.md` and `references/global-config.md`; covers the create → index → activate lifecycle, the layered override model, and `serena print-system-prompt` verification. |
@@ -82,6 +83,7 @@ harness); the bundled `bash-shorten.py` rewriter additionally requires
 | `oss-hygiene` | `gh` CLI (`gh api`) + scaffolded GitHub Actions (Dependabot, Scorecard, dependency review, CodeQL) | gh | — |
 | `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
 | `ralphify-spec` | [`ralphify`](https://github.com/ghuntley/ralphify) | ralphify (`uv tool install ralphify`), Python 3.10+ | — |
+| `release` | `git` + `gh` CLI (`gh release`) | git, gh | `.github/release.yml` (for `--generate-notes` grouping), `CHANGELOG.md` (when the repo keeps one) |
 | `respond` | `gh` CLI + `git` | gh, git | — |
 | `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
 | `serena-config` | [Serena](https://oraios.github.io/serena/) MCP `serena` CLI + config files | serena (for `print-system-prompt` / `project` verification) | Context7 MCP (latest config-key docs) |
@@ -102,6 +104,9 @@ work on a branch
     ├── /commit            ──►  stage + commit (conventional commits)
     ├── /pr-stack          ──►  manage stacked branches (gt or gh stack — auto-detects)
     └── /gh                ──►  push + create PR + watch checks
+
+ship a release
+    └── /release           ──►  decide semver bump + draft notes + tag + publish
 
 new project setup
     ├── /justfile          ──►  scaffold task runner
