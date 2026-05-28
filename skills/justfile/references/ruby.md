@@ -4,7 +4,6 @@
 
 ```just
 set dotenv-load
-set unstable  # for the [script] gate recipe
 
 # The one command to run after every change.
 default: build
@@ -75,8 +74,6 @@ routes:
 ## Template (gem/library)
 
 ```just
-set unstable  # for the [script] gate recipe
-
 default: build
 
 # Canonical gate — autofix, then lint, test, coverage. Compact output.
