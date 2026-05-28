@@ -294,11 +294,15 @@ sg_install_mcp_for_harnesses() {
 # skill roots (skills/<name>/SKILL.md). Prints one skill name per line on
 # success; on failure (network, rate limit, private repo) returns non-zero
 # with empty stdout and the caller falls back to SG_FALLBACK_SKILLS.
+# If the API marks the response as truncated (repo exceeds GitHub's
+# 7 MB / 100k-entry tree limits), emit nothing so the caller falls back
+# rather than installing a silently-partial skill set.
 sg_discover_skills() {
     local gh="$1"
-    local jq_filter='.tree[] | select(.type == "blob" and (.path | test("^skills/[^/]+/SKILL\\.md$"))) | .path | split("/")[1]'
+    local jq_filter='if .truncated then empty else (.tree[] | select(.type == "blob" and (.path | test("^skills/[^/]+/SKILL\\.md$"))) | .path | split("/")[1]) end'
     # Keep only blob entries whose path is exactly skills/<name>/SKILL.md,
-    # then emit just <name> from the second path segment.
+    # then emit just <name> from the second path segment. The if-guard
+    # short-circuits to empty on a truncated tree.
     "$gh" api "repos/${SG_SKILL_REPO}/git/trees/HEAD?recursive=1" \
         --jq "$jq_filter" 2>/dev/null
 }

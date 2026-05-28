@@ -463,6 +463,19 @@ STUB
     ! grep -Fq "docs/SKILL.md" <<< "$output"
 }
 
+@test "sg_discover_skills emits nothing when tree response is truncated" {
+    if ! command -v jq >/dev/null 2>&1; then
+        skip "jq is required for this test"
+    fi
+    local truncated_json='{"truncated":true,"tree":[{"type":"blob","path":"skills/commit/SKILL.md"}]}'
+    local jq_filter
+    jq_filter=$(grep -E "^[[:space:]]+local jq_filter='" scripts/install.sh | head -1 | sed -E "s/^[[:space:]]+local jq_filter='//; s/'$//")
+    [ -n "$jq_filter" ]
+    local out
+    out=$(printf '%s' "$truncated_json" | jq -r "$jq_filter")
+    [ -z "$out" ]
+}
+
 @test "sg_install_skills warns and returns 0 when gh missing" {
     run sg_install_skills claude-code
     [ "$status" -eq 0 ]
