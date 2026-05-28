@@ -178,6 +178,7 @@ Install a specific skill, or pin to a release tag / commit SHA:
 ```sh
 gh skill install paulnsorensen/skillz-that-grillz commit
 gh skill install paulnsorensen/skillz-that-grillz commit@v1.0.0
+gh skill install paulnsorensen/skillz-that-grillz commit@a1b2c3d
 ```
 
 Pick the agent and scope (swap `claude-code` for your harness — `codex`,

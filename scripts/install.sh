@@ -309,7 +309,7 @@ sg_install_skills() {
     fi
 
     if [[ "${SG_DRY_RUN:-0}" == "1" ]]; then
-        sg_log "skills: would run 'npx skills add $SG_SKILL_REPO --skill * --agent $agent --global --yes'"
+        sg_log "skills: would run 'npx skills add $SG_SKILL_REPO --skill '*' --agent $agent --global --yes'"
         return 0
     fi
 

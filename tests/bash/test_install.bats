@@ -424,3 +424,25 @@ STUB
     [ "$status" -eq 0 ]
     [[ "$output" == *"--agent gemini-cli"* ]]
 }
+
+@test "sg_install_skills invokes npx with the expected argv (gemini -> gemini-cli)" {
+    make_stub npx
+    export SG_NPX="$STUB_BIN/npx"
+    run sg_install_skills gemini
+    [ "$status" -eq 0 ]
+    # The stub records argv joined by spaces; '*' survives shell parsing as a
+    # literal because sg_install_skills passes it inside single quotes. -F so
+    # the literal '*' in the pattern is not interpreted as a regex quantifier.
+    grep -Fq -- "npx skills add paulnsorensen/skillz-that-grillz --skill * --agent gemini-cli --global --yes" "$STUB_LOG"
+}
+
+@test "sg_install_skills invokes npx with the expected argv (claude-code identity)" {
+    make_stub npx
+    export SG_NPX="$STUB_BIN/npx"
+    run sg_install_skills claude-code
+    [ "$status" -eq 0 ]
+    grep -Fq -- "--agent claude-code" "$STUB_LOG"
+    grep -Fq -- "--skill * " "$STUB_LOG"
+    grep -Fq -- "--global" "$STUB_LOG"
+    grep -Fq -- "--yes" "$STUB_LOG"
+}
