@@ -192,4 +192,4 @@ still fails, your `languages:` entry probably isn't a valid key in the
   monorepo where `.md` outnumbers code can get `markdown` picked and leave you
   without a real LSP. Override explicitly.
 - Keep `initial_prompt` small — it is prepended to every session in this repo and
-  inflates context. Put stable instructions in `AGENTS.md` / `CLAUDE.md` instead.
+  inflates context. Put stable instructions in `AGENTS.md` / `CLAUDE.md` / `.cursor/rules` or your harness's instructions file instead.

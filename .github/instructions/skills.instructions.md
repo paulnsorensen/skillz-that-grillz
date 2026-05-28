@@ -30,7 +30,7 @@ Spend your review budget on the things linters cannot see.
   and link from `SKILL.md` with a one-line "read this when …" pointer.
 - For skills that span multiple variants (Rust / Python / Go, AWS / GCP /
   Azure), keep the selection logic in `SKILL.md` and put the variant-specific
-  detail in `references/`. Claude only loads what it needs.
+  detail in `references/`. A spec-compliant harness loads only what it needs.
 - Tables of contents only earn their place in reference files >300 lines.
 
 ## Bundled resources must pay rent

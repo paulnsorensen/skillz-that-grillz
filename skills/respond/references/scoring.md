@@ -24,7 +24,7 @@ FIX territory just because the reviewer is a maintainer.
 | Evidence                                                  | Modifier  |
 | --------------------------------------------------------- | --------- |
 | Reviewer cites specific code with accurate analysis       | +20       |
-| Suggestion references project convention or CLAUDE.md     | +15       |
+| Suggestion references project convention or agent-instructions file (`AGENTS.md` / `CLAUDE.md`) | +15 |
 | Generic observation without specific code reference       | -10       |
 | Reviewer misreads the code or cites the wrong line        | hard cap 0 |
 

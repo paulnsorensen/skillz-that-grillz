@@ -76,9 +76,9 @@ additions/deletions) before continuing.
 
 ### Phase 2: run the review
 
-Invoke whatever code-review skill the calling environment provides (in the
-cheese-flow ecosystem this is `age`; elsewhere it may be `code-review` or
-similar). The review must surface findings with confidence scores so
+Invoke whatever code-review skill your harness provides (e.g. `age`,
+`code-review`, or similar). The review must surface findings with
+confidence scores so
 phase 3 can triage. If no review skill is available, ask the user to point
 at one before continuing — do not guess at findings.
 
@@ -172,15 +172,15 @@ then optionally hand off to review mode.
 
 ### Copilot model constraints
 
-The coding agent runs on Auto model selection (typically Claude Sonnet
-4.5). The CLI has no `--model` flag. Optimize the task description:
+The coding agent runs on Auto model selection. The CLI has no `--model`
+flag. Optimize the task description:
 
 - Be explicit and concrete. Spell out expected behavior.
 - Scope tightly. One focused task per delegation.
 - Name files and symbols. "In `src/auth/login.ts`, `validateToken` should…"
 - State acceptance criteria. "Return 400 for empty email, 422 for malformed."
 - Include constraints. Reference existing patterns (e.g., `AppError`).
-- Skip the why. Sonnet does not need motivation, just what and where.
+- Skip the why. The coding agent needs what and where, not motivation.
 
 When confirming the task with the user (phase 1 step 3), check the
 description against these criteria. Suggest concrete improvements if it is

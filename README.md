@@ -41,7 +41,7 @@ harness can load it progressively.
 
 | Skill path | Command | Purpose |
 | --- | --- | --- |
-| `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in Claude. |
+| `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in your harness. |
 | `skills/commit/SKILL.md` | `/commit` | Stage and commit changes with conventional-commits messages, no `git add -A`, no `--no-verify`, no amends to published commits. Hand off to `/gh` for push / PR. |
 | `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
 | `skills/copilot/SKILL.md` | `/copilot` | Drive the GitHub Copilot CLI / coding agent. Three modes: `review` (PR review with `@copilot fix this` inline comments) and `delegate` (`gh agent-task` create + monitor) are routine; `setup` is a one-time bootstrap that writes `.github/copilot-instructions.md` and per-language `.github/instructions/*.instructions.md`. |
@@ -63,8 +63,8 @@ harness can load it progressively.
 ## Scope
 
 Most skills wrap a single CLI you probably already use. `bash-shortening`
-can be used as pure methodology (invoke `/bash-shortening` in Claude
-Code); the bundled `bash-shorten.py` rewriter additionally requires
+can be used as pure methodology (invoke `/bash-shortening` in any compliant
+harness); the bundled `bash-shorten.py` rewriter additionally requires
 **ast-grep**.
 
 | Skill | Wraps | Required | Optional |
@@ -125,7 +125,49 @@ bootstrapping a repo.
 
 ## Install
 
-### gh skill (recommended)
+### npx skills (recommended)
+
+[`npx skills`](https://skills.sh) is the harness-agnostic installer. It
+auto-detects which agents you have installed and works with Claude Code,
+Codex, Cursor, opencode, Gemini CLI, GitHub Copilot, Windsurf, and 30+ other
+clients. Requires Node.js (for `npx`).
+
+Install interactively — pick agents and skills from a menu:
+
+```sh
+npx skills add paulnsorensen/skillz-that-grillz
+```
+
+Install every skill into every detected agent, no prompts:
+
+```sh
+npx skills add paulnsorensen/skillz-that-grillz --all
+```
+
+Install specific skills:
+
+```sh
+npx skills add paulnsorensen/skillz-that-grillz --skill commit --skill gh
+```
+
+Target specific agents at user scope, non-interactive (CI-friendly):
+
+```sh
+npx skills add paulnsorensen/skillz-that-grillz --skill '*' --global --yes \
+  --agent claude-code --agent codex
+```
+
+List the available skills without installing anything:
+
+```sh
+npx skills add paulnsorensen/skillz-that-grillz --list
+```
+
+Scope defaults to the current project (`./<agent>/skills/`). Pass `-g` /
+`--global` for a user-wide install (`~/<agent>/skills/`), and `--copy` to copy
+files instead of symlinking.
+
+### gh skill
 
 Requires [GitHub CLI](https://cli.github.com) v2.90.0 or later with the
 `gh skill` command.
@@ -136,55 +178,37 @@ Install all skills interactively:
 gh skill install paulnsorensen/skillz-that-grillz
 ```
 
-Install every skill in one shot:
-
-```sh
-for s in bash-shortening commit copilot file-handler gh gh-bootstrap github-copilot-personal-instructions github-copilot-repo-instructions justfile oss-hygiene pr-stack prek ralphify-spec release respond safe-settings serena-config; do
-  gh skill install paulnsorensen/skillz-that-grillz "$s"
-done
-```
-
-Install a specific skill:
+Install a specific skill, or pin to a release tag / commit SHA:
 
 ```sh
 gh skill install paulnsorensen/skillz-that-grillz commit
-```
-
-Pin to a release tag or commit SHA:
-
-```sh
 gh skill install paulnsorensen/skillz-that-grillz commit@v1.0.0
-gh skill install paulnsorensen/skillz-that-grillz commit@abc123def
+gh skill install paulnsorensen/skillz-that-grillz commit@a1b2c3d
 ```
 
-Pick the agent and scope:
+Pick the agent and scope (swap `claude-code` for your harness — `codex`,
+`cursor`, `copilot`, etc.):
 
 ```sh
 # User-wide (recommended for personal toolkits)
 gh skill install paulnsorensen/skillz-that-grillz --agent claude-code --scope user
 
 # Committed into the current project repo
-gh skill install paulnsorensen/skillz-that-grillz --agent claude-code --scope project
+gh skill install paulnsorensen/skillz-that-grillz --agent codex --scope project
 ```
 
-### Claude Code (manual)
+### Manual (any harness)
 
-Copy the skills you want into your skills directory:
+Copy `skills/<name>/` into wherever your harness loads Agent Skills from:
 
 ```sh
-# Per-user
-mkdir -p ~/.claude/skills
-cp -r skills/commit ~/.claude/skills/
-
-# Per-project
-mkdir -p .claude/skills
-cp -r skills/justfile .claude/skills/
+cp -r skills/commit ~/.claude/skills/    # Claude Code (user)
+cp -r skills/commit ~/.codex/skills/     # Codex
+cp -r skills/commit ~/.cursor/skills/    # Cursor
+cp -r skills/commit .claude/skills/      # project scope
 ```
 
-### Other harnesses
-
-Copy `skills/<name>/` into wherever the harness loads Agent Skills from. The
-format follows the [agentskills.io spec](https://agentskills.io/specification)
+The format follows the [agentskills.io spec](https://agentskills.io/specification)
 and works in any compliant client.
 
 ## One-shot installer (macOS)
@@ -193,13 +217,15 @@ and works in any compliant client.
 
 1. Installs the CLI tools the skills wrap (`gh`, `just`, `prek`, `graphite`)
    via Homebrew.
-2. Auto-detects installed Claude Code, Cursor, and Codex CLIs, then installs
-   every skill into each detected harness at user scope.
-3. Optionally registers `context7` (used by the prek skill for up-to-date
-   hook revisions) with the detected harness.
+2. Auto-detects installed Claude Code, Cursor, and Codex CLIs and installs
+   every skill into each via `npx skills` (pass `--harness <name>` to target
+   other agents — gemini, copilot, opencode, etc.).
+3. Optionally registers the `context7` MCP server (used by the `prek` skill).
+   Auto-registration currently covers Claude Code only; for other harnesses it
+   prints a manual-config hint (see the Context7 section below).
 
-Currently macOS only — it relies on Homebrew. Requires `gh` to be authenticated
-(`gh auth login`) before running.
+Currently macOS only — it relies on Homebrew. Skill install goes through
+`npx skills`, so Node.js (which provides `npx`) must be available.
 
 Pipe straight from GitHub:
 
@@ -310,13 +336,7 @@ See [github.github.com/gh-stack](https://github.github.com/gh-stack/).
 docs into the session. The `prek` skill uses it to pin current revisions of
 community hook repos (ruff-pre-commit, shellcheck-py, etc.).
 
-**Claude Code:**
-
-```sh
-claude mcp add context7 -- npx -y @upstash/context7-mcp@latest
-```
-
-**Other harnesses** — add to your MCP config file:
+Add it to your harness's MCP config file (works for any harness):
 
 ```json
 {
@@ -327,6 +347,12 @@ claude mcp add context7 -- npx -y @upstash/context7-mcp@latest
     }
   }
 }
+```
+
+Claude Code shortcut — register it from the CLI instead:
+
+```sh
+claude mcp add context7 -- npx -y @upstash/context7-mcp@latest
 ```
 
 For higher rate limits, get a free API key at

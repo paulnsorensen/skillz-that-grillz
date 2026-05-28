@@ -233,7 +233,7 @@ Generating the recipes is only half the job — the value of one canonical comma
 is lost if nothing tells agents to use it. After creating the justfile, **always**
 do both updates. Full snippets live in `references/agent-build.md`.
 
-**Agent context file** (`AGENTS.md`, `CLAUDE.md`, `.cursor/rules`, or whatever the
+**Agent context file** (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursor/rules`, or whatever the
 harness uses; create `AGENTS.md` if none exists) — add/replace a build section
 that tells the agent to ALWAYS run the one command and treat failure as a hard
 stop:
