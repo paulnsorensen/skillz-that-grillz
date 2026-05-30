@@ -8,6 +8,11 @@
 #   3. Per-rule end-to-end — every rule fires on a positive fixture
 #      through the real CLI (complements the in-process --self-test
 #      with subprocess-level coverage).
+#
+# This whole file is fixture data — literal bash strings the rewriter is meant
+# to transform in-test, not a script to optimize. Opt the entire file out so a
+# stray `bash-shorten --apply` over it can't rewrite the fixtures (issue #59).
+# bash-shorten: disable
 
 setup() {
     REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
@@ -473,4 +478,115 @@ SH
     local got
     got="$(printf 'if [ $X -gt 100 ]; then echo big; fi\n' | python3 "$SCRIPT" -)"
     [[ "$got" == *"if (( X > 100 )); then"* ]]
+}
+
+# -- Opt-out directive (issue #59) -----------------------------------------
+# `# bash-shorten: disable` / `enable` and `# bash-shorten: skip` opt regions
+# out of EVERY rule, enforced in the engine apply path so it covers both the
+# sg pass and the regex pass uniformly.
+
+@test "directive disable/enable leaves the enclosed block verbatim (issue #59)" {
+    local input
+    input="$(printf '%s\n' \
+        'V=`pwd`' \
+        '# bash-shorten: disable' \
+        'W=`whoami`' \
+        '# bash-shorten: enable' \
+        'X=`date`')"
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    # Chained so every assertion is required (Bats fails only on the last
+    # command's status). Outside the span rewritten; inside verbatim.
+    [[ "$got" == *'V=$(pwd)'* ]] \
+        && [[ "$got" == *'X=$(date)'* ]] \
+        && [[ "$got" == *'W=`whoami`'* ]]
+}
+
+@test "directive disable protects BOTH sg-handled and regex rules (issue #59)" {
+    local input
+    input="$(printf '%s\n' \
+        '# bash-shorten: disable' \
+        'V=`pwd`' \
+        'LEN=$(echo -n "$S" | wc -c)' \
+        '# bash-shorten: enable')"
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    # backticks (sg-handled) and echo-wc-c (regex path) both untouched.
+    [[ "$got" == *'V=`pwd`'* ]] \
+        && [[ "$got" == *'LEN=$(echo -n "$S" | wc -c)'* ]] \
+        && [[ "$got" != *'LEN=${#S}'* ]]
+}
+
+@test "directive skip no-ops only the following line (issue #59)" {
+    local input
+    input="$(printf '%s\n' \
+        '# bash-shorten: skip' \
+        'W=`whoami`' \
+        'X=`date`')"
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    # Skipped line untouched; the line after still rewritten. Both required.
+    [[ "$got" == *'W=`whoami`'* ]] \
+        && [[ "$got" == *'X=$(date)'* ]]
+}
+
+@test "no directive present — behavior is unchanged (issue #59 backward-compat)" {
+    local got
+    got="$(printf 'V=`pwd`\n' | python3 "$SCRIPT" -)"
+    [[ "$got" == *'V=$(pwd)'* ]]
+}
+
+@test "directive disable without enable protects to EOF (issue #59)" {
+    # This is the mechanism the .bats file's own whole-file opt-out relies on.
+    local input
+    input="$(printf '%s\n' \
+        'V=`pwd`' \
+        '# bash-shorten: disable' \
+        'W=`whoami`' \
+        'X=`date`')"
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    # First line (before disable) rewritten; everything after stays verbatim.
+    [[ "$got" == *'V=$(pwd)'* ]] \
+        && [[ "$got" == *'W=`whoami`'* ]] \
+        && [[ "$got" == *'X=`date`'* ]]
+}
+
+@test "directive with trailing tokens is NOT honoured (issue #59)" {
+    # Strict whole-comment match guards against accidental over-protection:
+    # '# bash-shorten: disable foo' is an ordinary comment, so the next line
+    # is still rewritten.
+    local input
+    input="$(printf '%s\n' \
+        '# bash-shorten: disable foo' \
+        'V=`pwd`')"
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [[ "$got" == *'V=$(pwd)'* ]]
+}
+
+@test "indented directive is honoured (issue #59)" {
+    local input
+    input="$(printf '%s\n' \
+        'if true; then' \
+        '    # bash-shorten: disable' \
+        '    W=`whoami`' \
+        '    # bash-shorten: enable' \
+        'fi')"
+    local got
+    got="$(printf '%s\n' "$input" | python3 "$SCRIPT" -)"
+    [[ "$got" == *'W=`whoami`'* ]]
+}
+
+@test "--apply leaves a disabled block byte-for-byte unchanged (issue #59)" {
+    printf '%s\n' \
+        'A=`pwd`' \
+        '# bash-shorten: disable' \
+        'B=`whoami`' \
+        '# bash-shorten: enable' > "$FIXTURE"
+    run python3 "$SCRIPT" --apply "$FIXTURE"
+    [ "$status" -eq 0 ]
+    # Outside the span got written; the protected line kept its backticks.
+    grep -qF 'A=$(pwd)' "$FIXTURE" \
+        && grep -qF 'B=`whoami`' "$FIXTURE"
 }
