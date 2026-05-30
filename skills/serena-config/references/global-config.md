@@ -29,6 +29,23 @@ Full schema: the [template file](https://github.com/oraios/serena/blob/main/src/
 
 Some of these are *extended* or *overridden* by project settings, contexts, and modes.
 
+### Notable defaults (from `serena_config.template.yml`)
+
+`<certain>` Values a fresh install ships with — change these, don't recreate them:
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `language_backend` | `LSP` | vs `JetBrains`; overridable per project |
+| `base_modes` | `[interactive, editing]` | always-active modes (see Modes) |
+| `default_modes` | *(empty)* | overridable by project / `--mode` |
+| `tool_timeout` | `240` | seconds before a tool execution is killed |
+| `default_max_tool_answer_chars` | `150000` | default cap on a tool's answer length |
+| `symbol_info_budget` | `10` | per-call seconds for docstring/param fetch; `0` disables. Lower it for slow LSPs (clangd is called out by name) that stall on `request_hover`. Overridable per project. |
+| `line_ending` | `native` | `lf` / `crlf` / `native`; per-project overridable |
+| `web_dashboard` | `True` | template comment: *"strongly recommend to always enable"* |
+| `excluded_tools` / `included_optional_tools` / `fixed_tools` | *(empty)* | `fixed_tools` replaces the base set; can't combine with the other two |
+| `project_serena_folder_location` | `$projectDir/.serena` | see below |
+
 ## Contexts
 
 A **context** is the environment Serena runs in. It sets the initial system prompt
@@ -73,9 +90,15 @@ influence the system prompt and can exclude tools.
 
 The active set is the **union** of:
 
-- `base_modes` — global config; always active.
-- `default_modes` — global config; overridable by project (`default_modes`) or CLI (`--mode`).
+- `base_modes` — global config; always active. `<certain>` Ships defaulting to
+  `[interactive, editing]` in `serena_config.template.yml` — that pair is what a
+  fresh install runs with unless you change it. Empty/undefined ⇒ no base modes.
+- `default_modes` — global config; overridable by project (`default_modes`) or CLI (`--mode`). Empty by default.
 - `added_modes` — project config (`added_modes`) or CLI (`--add-mode`); added on top.
+
+So the out-of-the-box active set is just `interactive + editing`. To make a mode
+universal, add it to `base_modes`; to make it a usually-on-but-overridable
+default, use `default_modes`; for one repo/session, use `added_modes`.
 
 Guidance:
 
@@ -133,10 +156,26 @@ ls_specific_settings:
     # language-server-specific keys
 ```
 
-#### Overriding the language-server path — `ls_path`
+#### `ls_path`: override or leave managed (default = leave managed)
 
-To use your own language-server install instead of Serena's managed one, set
-`ls_path`:
+> `<certain>` Serena is **managed-first by design.** The configuration docs
+> introduce `ls_path` only as: *"if you have installed the language server
+> yourself and want to use your installation instead of Serena's managed
+> installation, you can set the `ls_path` setting."* There is **no** official
+> guidance to set it in the common case, and most languages expose no
+> per-language options at all ("No documentation on options means no options are
+> available"). Leaving it unset is the recommended path.
+
+| Leave `ls_path` unset (the default — do this) | Set `ls_path` (rare, deliberate) |
+| --- | --- |
+| You want Serena to download + version-manage the server | You already installed the server and want *that* binary |
+| Reproducibility comes from Serena's pinned managed version | Air-gapped / offline box where the managed download can't run |
+| You don't care which exact LSP binary runs | You must match a specific local toolchain the managed one won't |
+
+> `<certain>` Setting `ls_path` **bypasses Serena's managed download** for that
+> server; any server-specific version/registry settings then apply only while
+> `ls_path` is unset. So `ls_path` and version-pin knobs are mutually exclusive
+> for the same language.
 
 ```yaml
 ls_specific_settings:
@@ -175,7 +214,9 @@ runtime paths, lint toggles). A few representative ones:
 > The full per-language catalog (every supported key, defaults, runtime requirements)
 > lives in the [Configuration docs](https://oraios.github.io/serena/02-usage/050_configuration.html#language-server-specific-settings)
 > and the [config template](https://github.com/oraios/serena/blob/main/src/serena/resources/serena_config.template.yml).
-> Check there before guessing keys — most languages have a handful, some have none.
+> Check there before guessing keys — most languages expose few or none ("No
+> documentation on options means no options are available"); only a minority,
+> like those above, carry notable settings.
 
 ## Verification
 

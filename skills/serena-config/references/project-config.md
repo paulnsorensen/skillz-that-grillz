@@ -70,11 +70,17 @@ project_name: "my-repo"
 
 # LSP keys to start; choose from the language enum in Serena's docs.
 # First entry is the default/fallback. Multi-language repos list each.
+# For C use cpp; for JavaScript use typescript; Angular/Svelte/SCSS have
+# their own subsuming keys (see the template's languages comment).
 languages:
   - typescript
   - python
 
-# additive to .gitignore — gitignore syntax (*, **)
+# whether to honor the repo's .gitignore files when ignoring (default true)
+ignore_all_files_in_gitignore: true
+
+# ADDITIVE on top of .gitignore AND the global ignored_paths — gitignore
+# syntax (*, **). Set this in most non-trivial repos; see below.
 ignored_paths:
   - "vendor/**"
   - "dist/**"
@@ -86,14 +92,76 @@ additional_workspace_folders:
   - packages/utils
 
 # per-language LSP knobs; replaces (does not deep-merge) the global
-# ls_specific_settings entry for the same language. Keys vary per server.
+# ls_specific_settings entry for the same language. Keys vary per server,
+# and most languages expose NONE. ls_path is an escape hatch, NOT a default
+# — see global-config.md § "ls_path: override or leave managed".
 ls_specific_settings:
   python:
     ls_path: ".venv/bin/pyright-langserver"
 
 # disables ALL edit tools for this repo
 read_only: false
+
+# encoding of source files (default utf-8). line_ending is unset by default
+# (= inherit global); uncomment only to force a convention for this repo.
+encoding: "utf-8"
+# line_ending: lf       # unset = inherit global; else lf | crlf | native
+
+# tool-set overrides for this repo. excluded_/included_ EXTEND the global
+# lists; fixed_tools REPLACES the base set and can't combine with the other two.
+excluded_tools: []
+included_optional_tools: []
+fixed_tools: []         # empty = inactive; set to replace Serena's base tool set
+
+# mode overrides (commented out — copying `default_modes: []` verbatim would
+# silently opt this repo out of the global default modes). Uncomment only when
+# you mean to override. `default_modes: []` opts out; `added_modes` layers on top.
+# See global-config.md § Modes for how base/default/added resolve.
+# default_modes: []
+# added_modes: [query-projects]
+
+# override the global language backend for this repo only (LSP | JetBrains).
+# Unset by default (= inherit global). Fixed at startup — copying a hardcoded
+# value into a repo whose global backend differs causes activation errors.
+# language_backend: LSP
+
+# per-call seconds budget for fetching docstrings/param info; unset = inherit
+# global (default 10). Uncomment to lower it for repos on slow LSPs (e.g. clangd).
+# symbol_info_budget: 10
 ```
+
+### `ignored_paths` — set this in most non-trivial repos
+
+This is the path setting that actually pays off broadly. Serena's symbol search
+and overviews walk the project tree; vendored, generated, and build-output dirs
+pollute `find_symbol` / `get_symbols_overview` results. `<certain>` `ignored_paths`
+also reaches the language-server layer (it is a field on solidlsp's
+`LanguageServerConfig`), so `<speculative>` excluding bulky generated dirs can cut
+the server's initial indexing work too. `.gitignore` already covers most of it (honored by default via
+`ignore_all_files_in_gitignore`), but anything *committed* yet noise — vendored
+deps, generated clients, snapshot fixtures, `dist/` checked in for a GitHub
+Pages build — won't be excluded unless you list it here.
+
+> `<certain>` `ignored_paths` is **additive**: it merges with the repo's
+> `.gitignore` and with the global `ignored_paths` from `serena_config.yml`. It
+> never *un*-ignores anything.
+
+A conventional starter set (`<speculative>` — opinionated, not Serena-blessed;
+the docs prescribe no defaults). Trim to what's actually committed in your repo:
+
+```yaml
+ignored_paths:
+  - "node_modules/**"      # if not already gitignored
+  - "vendor/**"            # committed third-party code
+  - "dist/**"
+  - "build/**"
+  - "**/__snapshots__/**"
+  - "**/*.generated.*"     # generated clients / protobufs / GraphQL types
+  - "**/*.min.js"
+```
+
+Don't list things `.gitignore` already excludes — that's redundant. The value of
+`ignored_paths` is the *committed* noise gitignore can't reach.
 
 ### Additional workspace folders (cross-package references)
 
