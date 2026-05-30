@@ -31,12 +31,15 @@ Defaults to dry-run (prints a unified diff). Pass --apply to write.
   cat script.sh | bash-shorten -                    # stdin → stdout (no diff)
 
 Opt-out directive (shellcheck-style). Mark regions the rewriter must leave
-alone with a comment line — covers every rule:
+alone with a comment line — covers every rule. The keyword must be the whole
+comment (trailing text is ignored), so write each directive on its own line:
 
-  # bash-shorten: disable    # start a block to leave untouched
-  ...                        # copied through verbatim
-  # bash-shorten: enable     # end the block (omit to protect to EOF)
-  # bash-shorten: skip       # no-op only the next line
+  # bash-shorten: disable
+  # bash-shorten: enable
+  # bash-shorten: skip
+
+`disable` starts a block left verbatim (omit `enable` to protect to EOF);
+`enable` ends it; `skip` no-ops only the next line.
 
 Always run `shellcheck` on the output. These rules are conservative but
 not infallible; quoting edge cases at the boundary of regex matches can
