@@ -214,7 +214,9 @@ runtime paths, lint toggles). A few representative ones:
 > The full per-language catalog (every supported key, defaults, runtime requirements)
 > lives in the [Configuration docs](https://oraios.github.io/serena/02-usage/050_configuration.html#language-server-specific-settings)
 > and the [config template](https://github.com/oraios/serena/blob/main/src/serena/resources/serena_config.template.yml).
-> Check there before guessing keys — most languages have a handful, some have none.
+> Check there before guessing keys — most languages expose few or none ("No
+> documentation on options means no options are available"); only a minority,
+> like those above, carry notable settings.
 
 ## Verification
 

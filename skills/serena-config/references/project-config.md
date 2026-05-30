@@ -112,11 +112,12 @@ line_ending: lf
 excluded_tools: []
 included_optional_tools: []
 
-# mode overrides. default_modes here overrides the global default_modes
-# (set [] to opt out); added_modes are layered on top (e.g. [query-projects]).
+# mode overrides (commented out — copying `default_modes: []` verbatim would
+# silently opt this repo out of the global default modes). Uncomment only when
+# you mean to override. `default_modes: []` opts out; `added_modes` layers on top.
 # See global-config.md § Modes for how base/default/added resolve.
-default_modes: []
-added_modes: []
+# default_modes: []
+# added_modes: [query-projects]
 
 # override the global language backend for this repo only (LSP | JetBrains).
 # Fixed at startup — activating a project with a different backend errors out.
@@ -131,8 +132,10 @@ symbol_info_budget: 10
 
 This is the path setting that actually pays off broadly. Serena's symbol search
 and overviews walk the project tree; vendored, generated, and build-output dirs
-pollute `find_symbol` / `get_symbols_overview` results and slow the LSP's initial
-scan. `.gitignore` already covers most of it (honored by default via
+pollute `find_symbol` / `get_symbols_overview` results. `<certain>` `ignored_paths`
+also reaches the language-server layer (it is a field on solidlsp's
+`LanguageServerConfig`), so `<speculative>` excluding bulky generated dirs can cut
+the server's initial indexing work too. `.gitignore` already covers most of it (honored by default via
 `ignore_all_files_in_gitignore`), but anything *committed* yet noise — vendored
 deps, generated clients, snapshot fixtures, `dist/` checked in for a GitHub
 Pages build — won't be excluded unless you list it here.

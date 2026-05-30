@@ -74,7 +74,7 @@ If none apply, leave the config alone — the bootstrap is correct.
 worth setting *before* you feel pain in any repo that commits vendored or
 generated code (`vendor/`, checked-in `dist/`, generated clients, snapshot
 fixtures). `.gitignore` is honored by default, but committed noise pollutes
-`find_symbol` / `get_symbols_overview` and slows the LSP's first scan. See
+`find_symbol` / `get_symbols_overview` (and can cut the LSP's initial indexing). See
 `references/project-config.md` § "`ignored_paths` — set this in most non-trivial
 repos". `ls_path`, by contrast, stays an escape hatch — managed-first is the
 recommended default (see `references/global-config.md`).
