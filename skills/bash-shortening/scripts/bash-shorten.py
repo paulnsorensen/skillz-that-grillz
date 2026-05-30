@@ -30,6 +30,14 @@ Defaults to dry-run (prints a unified diff). Pass --apply to write.
   bash-shorten --self-test                          # run the embedded fixtures
   cat script.sh | bash-shorten -                    # stdin → stdout (no diff)
 
+Opt-out directive (shellcheck-style). Mark regions the rewriter must leave
+alone with a comment line — covers every rule:
+
+  # bash-shorten: disable    # start a block to leave untouched
+  ...                        # copied through verbatim
+  # bash-shorten: enable     # end the block (omit to protect to EOF)
+  # bash-shorten: skip       # no-op only the next line
+
 Always run `shellcheck` on the output. These rules are conservative but
 not infallible; quoting edge cases at the boundary of regex matches can
 still slip through. The script does not invoke shellcheck for you.
@@ -79,6 +87,12 @@ _NEGATIVE_CASES: tuple[str, ...] = (
     # find -exec rm -r must NOT collapse to -delete: rm -r removes
     # non-empty dirs while find -delete refuses them without -depth.
     'find . -type d -exec rm -r {} \\;',
+    # bash-shorten: disable/enable opts a region out of every rule (issue
+    # #59). Lines between the directives are copied verbatim — here the
+    # backtick command substitution survives untouched.
+    "# bash-shorten: disable\nV=`pwd`\n# bash-shorten: enable\n",
+    # bash-shorten: skip no-ops the single following line.
+    "# bash-shorten: skip\nV=`pwd`\n",
 )
 
 # Custom positive tests for cat-file-pipe-grep (which has no static .examples)
@@ -213,6 +227,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Defaults to dry-run (prints unified diff). Pass --apply to write back.\n"
+            "Opt out regions with a '# bash-shorten: disable' / 'enable' block or\n"
+            "'# bash-shorten: skip' for the next line.\n"
             "Always run shellcheck on the output."
         ),
     )

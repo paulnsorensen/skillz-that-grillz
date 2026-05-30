@@ -26,6 +26,15 @@ _VAR = r"[A-Za-z_][A-Za-z0-9_]*"
 # import time so the dispatch is deterministic regardless of cwd.
 _SG_CONFIG = Path(__file__).resolve().parent / "sgconfig.yml"
 
+# Opt-out directive (issue #59), shellcheck-style. A comment line of the form
+#   # bash-shorten: disable   — start a span copied through verbatim
+#   # bash-shorten: enable    — end the span
+#   # bash-shorten: skip      — no-op the single following line
+# opts a region out of EVERY rule. Enforced in apply_rules (not per-rule) so it
+# covers the sg pass and the regex pass uniformly. Leading indentation and the
+# spacing around `#` / `:` are tolerated; the keyword must be the whole comment.
+_DIRECTIVE = re.compile(r"[ \t]*#[ \t]*bash-shorten:[ \t]*(disable|enable|skip)[ \t]*\Z")
+
 
 def _sg_available() -> bool:
     """True iff `sg` on PATH is the ast-grep binary AND sgconfig.yml exists.
@@ -140,7 +149,7 @@ def _apply_sg(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
     return new_text, counts
 
 
-def apply_rules(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
+def _apply_pipeline(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
     """Run sg-handled rules through ast-grep, then run remaining Python rules.
 
     sg is a hard requirement for this engine — the CLI verifies presence at
@@ -166,6 +175,67 @@ def apply_rules(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
             counts[rule.id] = n
             text = new_text
     return text, counts
+
+
+def _protected_mask(lines: list[str]) -> list[bool]:
+    """Per-line flag: True where an opt-out directive (issue #59) is in effect.
+
+    A directive comment line is itself protected (it is a comment, so no rule
+    touches it anyway); `disable`/`enable` bracket a span and `skip` protects
+    only the next line. Takes the `splitlines(keepends=True)` list and returns a
+    mask of equal length.
+    """
+    mask: list[bool] = []
+    disabled = False
+    skip_next = False
+    for line in lines:
+        directive = _DIRECTIVE.match(line.rstrip("\r\n"))
+        if directive:
+            mask.append(True)
+            kind = directive.group(1)
+            if kind == "disable":
+                disabled = True
+            elif kind == "enable":
+                disabled = False
+            else:  # skip
+                skip_next = True
+            continue
+        mask.append(disabled or skip_next)
+        skip_next = False
+    return mask
+
+
+def apply_rules(text: str, enabled: set[str]) -> tuple[str, dict[str, int]]:
+    """Rewrite `text`, honouring the `# bash-shorten:` opt-out directive (#59).
+
+    Splits the input at directive boundaries and runs the rewrite pipeline only
+    over unprotected runs, copying protected runs through verbatim. Enforcing
+    the directive here — above both the sg and regex passes — is what makes it
+    apply to every rule uniformly. With no directive present the input is passed
+    straight through the pipeline, byte-for-byte identical to the un-split run.
+    """
+    if "bash-shorten:" not in text:
+        return _apply_pipeline(text, enabled)
+
+    lines = text.splitlines(keepends=True)
+    mask = _protected_mask(lines)
+    out: list[str] = []
+    counts: dict[str, int] = {}
+    i = 0
+    while i < len(lines):
+        j = i
+        while j < len(lines) and mask[j] == mask[i]:
+            j += 1
+        chunk = "".join(lines[i:j])
+        if mask[i]:
+            out.append(chunk)
+        else:
+            new_chunk, chunk_counts = _apply_pipeline(chunk, enabled)
+            out.append(new_chunk)
+            for rid, n in chunk_counts.items():
+                counts[rid] = counts.get(rid, 0) + n
+        i = j
+    return "".join(out), counts
 
 
 def diff(before: str, after: str, label: str) -> str:
