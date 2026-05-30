@@ -102,15 +102,16 @@ ls_specific_settings:
 # disables ALL edit tools for this repo
 read_only: false
 
-# encoding of source files (default utf-8) and line endings written by edits
-# (unset = inherit global; else lf | crlf | native)
+# encoding of source files (default utf-8). line_ending is unset by default
+# (= inherit global); uncomment only to force a convention for this repo.
 encoding: "utf-8"
-line_ending: lf
+# line_ending: lf       # unset = inherit global; else lf | crlf | native
 
 # tool-set overrides for this repo. excluded_/included_ EXTEND the global
 # lists; fixed_tools REPLACES the base set and can't combine with the other two.
 excluded_tools: []
 included_optional_tools: []
+fixed_tools: []         # empty = inactive; set to replace Serena's base tool set
 
 # mode overrides (commented out — copying `default_modes: []` verbatim would
 # silently opt this repo out of the global default modes). Uncomment only when
@@ -120,12 +121,13 @@ included_optional_tools: []
 # added_modes: [query-projects]
 
 # override the global language backend for this repo only (LSP | JetBrains).
-# Fixed at startup — activating a project with a different backend errors out.
-language_backend: LSP
+# Unset by default (= inherit global). Fixed at startup — copying a hardcoded
+# value into a repo whose global backend differs causes activation errors.
+# language_backend: LSP
 
-# per-call seconds budget for fetching docstrings/param info; overrides global
-# (default 10). Lower it for repos on slow LSPs (e.g. clangd) that stall on hover.
-symbol_info_budget: 10
+# per-call seconds budget for fetching docstrings/param info; unset = inherit
+# global (default 10). Uncomment to lower it for repos on slow LSPs (e.g. clangd).
+# symbol_info_budget: 10
 ```
 
 ### `ignored_paths` — set this in most non-trivial repos
