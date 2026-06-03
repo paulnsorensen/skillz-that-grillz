@@ -3,25 +3,26 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash(gh:*), Bash(git:*), Bash(./sc
 license: MIT
 name: respond
 description: >
-  Triage PR review comments by confidence score and act — fix the high-scoring
-  ones, push back on the low-scoring ones, and ask about the borderline.
-  Handles both inline review threads (anchored to diff lines) and PR-level
-  review body comments (summaries submitted with reviews, like Age tables or
-  Copilot overviews). First checks the PR's build and merge state and fixes
-  those before processing comments. Use when the user says "respond to PR
-  comments", "handle review feedback", "address PR reviews", "fix the build",
-  "fix CI", "fix merge conflicts", or invokes /respond with a PR number. Also
-  trigger when the user mentions a specific PR and wants to deal with reviewer
-  suggestions — Copilot, human, or bot. Every reply this skill posts ends
-  with an "agent on behalf of;" attribution line so reviewers can tell the
-  comment came from an agent on behalf of the human, not the human directly.
-  Do NOT use to generate a new review — that is /copilot-review's job.
+  Triage PR review comments by severity tier and act — fix the grounded
+  high-severity ones, push back on the weak ones, and ask about the
+  borderline. Handles both inline review threads (anchored to diff lines)
+  and PR-level review body comments (summaries submitted with reviews, like
+  Age tables or Copilot overviews). First checks the PR's build and merge
+  state and fixes those before processing comments. Use when the user says
+  "respond to PR comments", "handle review feedback", "address PR reviews",
+  "fix the build", "fix CI", "fix merge conflicts", or invokes /respond with
+  a PR number. Also trigger when the user mentions a specific PR and wants to
+  deal with reviewer suggestions — Copilot, human, or bot. Every reply this
+  skill posts ends with an "agent on behalf of;" attribution line so
+  reviewers can tell the comment came from an agent on behalf of the human,
+  not the human directly. Do NOT use to generate a new review — that is
+  /copilot-review's job.
 ---
 
 # respond
 
-Read review comments on a PR, score each one 0–100, and act based on the
-score: fix the obvious wins immediately, push back on the bad calls, ask
+Read review comments on a PR, triage each one by severity tier, and act on
+it: fix the grounded wins immediately, push back on the bad calls, ask
 about the borderline ones while the fixes are already underway. Every reply
 posted by this skill carries an `agent on behalf of;` attribution line.
 
@@ -85,25 +86,26 @@ context). Only score the review body for suggestions not already covered by
 its inline comments — link inline comments to their parent review via
 `pull_request_review_id`.
 
-## Phase 2: Score each suggestion
+## Phase 2: Triage each suggestion
 
 For each unresolved thread or review body item, read the suggestion, any
-follow-up discussion, and the relevant diff. Then assign a 0–100 confidence
-score representing how confident **you** are that the suggestion is correct
-and valuable.
+follow-up discussion, and the relevant diff. Then assign a **severity tier**
+(`blocker > high > medium > low`) and a **calibration tag** (`<certain>` /
+`<speculative>`) representing how much the suggestion matters and how
+confident **you** are that it's correct and grounded.
 
 Parse review bodies into individual items where possible: bullet lists,
 numbered lists, and table rows often contain multiple distinct suggestions
-that each deserve their own score and triage row. A cohesive comment
+that each deserve their own tier and triage row. A cohesive comment
 ("LGTM", general observation) stays as one item.
 
 `CHANGES_REQUESTED` carries more weight than `COMMENTED` — the reviewer
-flagged something as blocking. Factor this into scoring; it raises
-confidence that the suggestion matters, not that the suggestion is correct.
+flagged something as blocking. Factor this into severity; it raises how
+much the suggestion matters, not whether the suggestion is correct.
 
 The full 4-step calibration rubric (suggestion type, evidence grounding,
 context modifiers, borderline re-assessment) lives in
-[references/scoring.md](references/scoring.md). Read it once, score every
+[references/scoring.md](references/scoring.md). Read it once, triage every
 item against it.
 
 ## Phase 3: Triage table + immediate execution
@@ -113,18 +115,18 @@ Present the full triage table so the user sees everything at once:
 ```text
 ## PR #N review triage
 
-| # | Score | Type          | Reviewer | Location      | Summary                       | Action    |
-|---|-------|---------------|----------|---------------|-------------------------------|-----------|
-| 1 | 92    | BUG           | copilot  | auth.ts:42    | Missing null check on token   | FIX       |
-| 2 | 78    | VALID_CONCERN | alice    | (review body) | Missing error handling in 3   | FIX       |
-| 3 | 60    | STYLE         | copilot  | utils.ts:15   | Extract to shared helper      | ASK       |
-| 4 | 35    | SCOPE_CREEP   | bob      | index.ts:3    | Add backward compat shim      | PUSH BACK |
-| 5 | 20    | STYLE         | copilot  | (review body) | "consider adding tests"       | SKIP      |
+| # | Severity | Calibration     | Type          | Reviewer | Location      | Summary                       | Action    |
+|---|----------|-----------------|---------------|----------|---------------|-------------------------------|-----------|
+| 1 | high     | `<certain>`     | BUG           | copilot  | auth.ts:42    | Missing null check on token   | FIX       |
+| 2 | medium   | `<certain>`     | VALID_CONCERN | alice    | (review body) | Missing error handling in 3   | FIX       |
+| 3 | medium   | `<speculative>` | VALID_CONCERN | copilot  | utils.ts:15   | Extract to shared helper      | ASK       |
+| 4 | low      | `<speculative>` | SCOPE_CREEP   | bob      | index.ts:3    | Add backward compat shim      | PUSH BACK |
+| 5 | low      | `<speculative>` | STYLE         | copilot  | (review body) | "consider adding tests"       | SKIP      |
 
 ### Legend
-- FIX (>= 50): agree and implement — proceeding now
-- ASK (30–49): needs your call — what do you want to do?
-- PUSH BACK (< 30): draft reply below — edit or approve
+- FIX (medium+ `<certain>`): agree and implement — proceeding now
+- ASK (medium+ `<speculative>`, or low `<certain>`): needs your call — what do you want to do?
+- PUSH BACK (low `<speculative>`): draft reply below — edit or approve
 ```
 
 For each row, include a one-line expansion so the user can decide on ASK
@@ -134,16 +136,16 @@ expansion shape.
 
 **Then immediately — in the same turn:**
 
-1. Start fixing all FIX items (>= 50) while the user reviews ASK and
-   PUSH BACK items.
-2. Post PUSH BACK replies for items scored < 30 (the user can override
-   before you get to them; don't wait).
-3. Ask the user about ASK items (30–49). Include enough context for a quick
-   decision.
+1. Start fixing all FIX items (medium+ `<certain>`) while the user reviews
+   ASK and PUSH BACK items.
+2. Post PUSH BACK replies for low `<speculative>` items (the user can
+   override before you get to them; don't wait).
+3. Ask the user about ASK items (medium+ `<speculative>`, or low
+   `<certain>`). Include enough context for a quick decision.
 
-The triage table is informational, not a gate for high-confidence items.
-The user sees what's happening and can interrupt ("stop, don't fix #2"),
-but the default is to move fast on the obvious wins.
+The triage table is informational, not a gate for grounded high-severity
+items. The user sees what's happening and can interrupt ("stop, don't
+fix #2"), but the default is to move fast on the obvious wins.
 
 ## Phase 4: Execute
 
@@ -153,7 +155,8 @@ wraps the `gh api` calls and appends the attribution suffix (see
 from this skill for posting replies — the attribution must be applied in a
 single place.
 
-**FIX items (>= 50).** Read the source, implement the fix, then reply:
+**FIX items (medium+ `<certain>`).** Read the source, implement the fix,
+then reply:
 
 ```bash
 # Inline thread reply
@@ -168,7 +171,8 @@ single place.
   --body "Re: @<reviewer>'s review — Fixed: <brief description>."
 ```
 
-**PUSH BACK items (< 30).** Post the reply explaining *why*, not just *no*:
+**PUSH BACK items (low `<speculative>`).** Post the reply explaining *why*,
+not just *no*:
 
 ```bash
 ./scripts/post-reply.sh --thread \
@@ -180,9 +184,9 @@ single place.
 Keep the tone professional and specific. Cite project conventions
 (CLAUDE.md, complexity budget, early-development stance) when relevant.
 
-**ASK items (30–49).** Wait for the user. Execute as FIX or PUSH BACK once
-they decide. If the user doesn't respond to a specific ASK, leave it
-unresolved.
+**ASK items (medium+ `<speculative>`, or low `<certain>`).** Wait for the
+user. Execute as FIX or PUSH BACK once they decide. If the user doesn't
+respond to a specific ASK, leave it unresolved.
 
 **After all actions.** If code changed, hand off to `/commit` for the
 commit and `/gh` for the push. Present a summary: files modified, threads
@@ -226,21 +230,24 @@ updating this section first.
 ## Rules
 
 - Show the triage table before executing — but don't wait for approval on
-  >= 50 items.
+  grounded medium+ items.
 - One reply per thread — don't fragment responses across multiple comments.
 - Match the reviewer's tone — professional for humans, concise for bots.
 - Cite specifics in pushback — reference CLAUDE.md conventions, the
   complexity budget, or the early-development stance when relevant.
-- Don't argue style — if the suggestion is purely stylistic and the score
-  is < 30, skip it (note as SKIP in the table) rather than posting
-  pushback. Stylistic items in 30–49 stay as ASK so the user can decide.
+- Don't argue style — if the suggestion is purely stylistic and lands at
+  low `<speculative>`, skip it (note as SKIP in the table) rather than
+  posting pushback. Stylistic items at low `<certain>` stay as ASK so the
+  user can decide.
+- A `<speculative>` claim is never auto-fixed — even a high-severity bug or
+  security claim goes to ASK until you confirm it against the source.
 - Never defer to a follow-up — don't reply "will address in a follow-up
-  PR" or "good idea, will do separately." If it scores >= 50, fix it now;
-  if it scores < 30, push back. The only valid deferral is an ASK item the
-  user explicitly skips.
+  PR" or "good idea, will do separately." If it's medium+ `<certain>`, fix
+  it now; if it's low `<speculative>`, push back. The only valid deferral
+  is an ASK item the user explicitly skips.
 - Batch commits — group fixes into one commit, not one per thread.
 - The user can override anything — "don't fix #2" stops it, "actually fix
-  #4" runs it. The score is a default, not a mandate.
+  #4" runs it. The tier is a default, not a mandate.
 
 ## What this skill never does
 
@@ -262,6 +269,6 @@ updating this section first.
 - `is_resolved` is not always reliable across GitHub Apps — verify thread
   state by inspecting the latest comment if in doubt.
 - Bot reviewers with `CHANGES_REQUESTED` inflate perceived urgency —
-  `references/scoring.md` applies a -10 modifier for this case.
+  `references/scoring.md` downgrades a bot's generic observation to `low`.
 - Deduplication between inline comments and review-body summaries is
   tricky — check `pull_request_review_id` overlap before acting.

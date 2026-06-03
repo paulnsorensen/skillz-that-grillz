@@ -7,7 +7,7 @@ representative shapes — adapt the prose, not the structure.
 ## FIX expansion
 
 ```text
-### 1. Missing null check on token (92) — FIX
+### 1. Missing null check on token (high `<certain>`) — FIX
 > copilot: `token` could be undefined when the auth header is malformed
 Plan: add a null guard before decode and return 401 on missing token.
 ```
@@ -15,7 +15,7 @@ Plan: add a null guard before decode and return 401 on missing token.
 ## FIX (review body) expansion
 
 ```text
-### 3. Missing error handling in 3 endpoints (78) — FIX [review body]
+### 3. Missing error handling in 3 endpoints (high `<certain>`) — FIX [review body]
 > alice (CHANGES_REQUESTED): "The new endpoints in handler.rs don't
 > propagate database errors — they silently return empty results."
 Plan: add error propagation in the 3 endpoints alice flagged.
@@ -24,7 +24,7 @@ Plan: add error propagation in the 3 endpoints alice flagged.
 ## ASK expansion
 
 ```text
-### 4. Extract to shared helper (60) — ASK
+### 4. Extract to shared helper (medium `<speculative>`) — ASK
 > copilot: `formatDate()` is duplicated in 3 files
 Real duplication, but extracting introduces a shared module and a
 new import surface. Worth it now, or leave for a dedicated cleanup
@@ -34,7 +34,7 @@ pass?
 ## PUSH BACK expansion
 
 ```text
-### 5. Add backward compat shim (35) — PUSH BACK
+### 5. Add backward compat shim (low `<speculative>`) — PUSH BACK
 > bob: users on v1 will break without a migration path
 Draft reply: "This project is pre-release with zero users and no
 production data — backward compatibility isn't a concern yet per our
@@ -45,7 +45,7 @@ something to migrate from."
 ## SKIP entry
 
 ```text
-### 6. "Consider adding tests" (20) — SKIP
+### 6. "Consider adding tests" (low `<speculative>`) — SKIP
 > copilot: general suggestion, no specific test target
 Action: noted in the triage table; no reply posted.
 ```
