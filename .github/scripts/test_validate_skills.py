@@ -175,5 +175,150 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertIn("validated 1", out)
 
 
+BODY_SKILL = """---
+name: {name}
+description: a test skill
+---
+
+{body}
+"""
+
+
+class ValidateBodyTest(unittest.TestCase):
+    """Cover the body-portability gate (validate_skills.validate_body).
+
+    Curd 3 added validate_body() to flag Claude-only tool names and
+    harness-coupled CLI fragments baked into a skill BODY as instruction
+    logic — they silently no-op on Codex / opencode. The gate is scope-aware:
+    a token is allowed only under an explicitly Claude-Code-scoped heading (or
+    on a line carrying the same explicit label), and the `/plugin` matcher
+    must not fire on documentation paths like `/plugin-dev` or
+    `/reference/plugins/`. These tests lock that contract — without them a
+    regression that drops the gate, broadens it to false-positive on doc
+    paths, or loses the scope exemption would pass CI silently.
+    """
+
+    def _body_errors(self, body: str, name: str = "foo") -> list[str]:
+        path = Path("skills") / name / "SKILL.md"
+        with tempfile.TemporaryDirectory() as tmp:
+            full = Path(tmp) / path
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(BODY_SKILL.format(name=name, body=body), encoding="utf-8")
+            return validate_skills.validate_body(full)
+
+    def test_body_violation_fails(self) -> None:
+        # Each Claude-coupled token in unscoped body logic must be flagged.
+        cases = {
+            "Ask via AskUserQuestion to confirm.": "AskUserQuestion",
+            "Track steps with TodoWrite.": "TodoWrite",
+            "Run claude mcp add context7 to wire it.": "claude mcp add",
+            "Then run /plugin to install.": "/plugin",
+        }
+        for body, label in cases.items():
+            with self.subTest(token=label):
+                errors = self._body_errors(body)
+                self.assertEqual(
+                    len(errors), 1, f"{label!r} body should yield exactly one error, got {errors}"
+                )
+                self.assertIn("harness-neutral", errors[0])
+                self.assertIn(label, errors[0])
+
+    def test_per_harness_scoped_heading_passes(self) -> None:
+        # A token under an explicitly Claude-Code-scoped heading is deliberate.
+        body = (
+            "Default portable instructions here.\n\n"
+            "## Claude Code only\n\n"
+            "Ask via AskUserQuestion and track with TodoWrite.\n"
+        )
+        self.assertEqual(self._body_errors(body), [])
+
+    def test_per_harness_scoped_inline_passes(self) -> None:
+        # The exemption also applies when the offending line itself carries the
+        # explicit Claude-Code label, not only via a preceding heading.
+        body = "On Claude Code, ask via AskUserQuestion; elsewhere ask in plain text.\n"
+        self.assertEqual(self._body_errors(body), [])
+
+    def test_inline_scope_lead_in_list_item_passes(self) -> None:
+        # A bulleted per-harness clause is a legitimate lead-in too — the
+        # leading "- " must not defeat the inline-scope exemption.
+        body = "- On Claude Code, track steps with TodoWrite.\n"
+        self.assertEqual(self._body_errors(body), [])
+
+    def test_incidental_claude_code_substring_does_not_exempt(self) -> None:
+        # The inline exemption is anchored to a scope LEAD-IN, not any
+        # appearance of the substring "claude-code". A line that mentions
+        # `claude-code` for an unrelated reason — here the Serena CONTEXT name,
+        # exactly the serena-config:50 shape that motivated tightening this —
+        # must NOT exempt a coupled token planted on the same line. Without the
+        # anchor a future edit that drops AskUserQuestion onto such a line would
+        # pass CI silently — the whitewash this gate exists to stop.
+        body = (
+            "Pick a Serena context (`claude-code`, `ide`); "
+            "then ask via AskUserQuestion.\n"
+        )
+        errors = self._body_errors(body)
+        self.assertEqual(len(errors), 1, f"incidental substring must not exempt, got {errors}")
+        self.assertIn("AskUserQuestion", errors[0])
+
+    def test_trailing_scope_mention_does_not_exempt(self) -> None:
+        # Only a lead-in scopes the line. A scope label that appears AFTER the
+        # coupled token is not a deliberate per-harness clause and must not
+        # whitewash it.
+        errors = self._body_errors("Use AskUserQuestion (Claude Code only).\n")
+        self.assertEqual(len(errors), 1, f"trailing scope must not exempt, got {errors}")
+        self.assertIn("AskUserQuestion", errors[0])
+
+    def test_scope_resets_after_unscoped_heading(self) -> None:
+        # A Claude-scoped section must NOT leak its exemption into the next,
+        # unscoped section — otherwise one labelled heading whitewashes the
+        # whole rest of the file.
+        body = (
+            "## Claude Code only\n\n"
+            "Use AskUserQuestion here — fine.\n\n"
+            "## General usage\n\n"
+            "Use AskUserQuestion here too — should fail.\n"
+        )
+        errors = self._body_errors(body)
+        self.assertEqual(len(errors), 1, f"expected one error from the unscoped section, got {errors}")
+        self.assertIn("AskUserQuestion", errors[0])
+
+    def test_token_in_unscoped_heading_fails(self) -> None:
+        # A coupled token planted in an UNSCOPED heading is still body text and
+        # must be flagged — the heading branch exempts only headings whose own
+        # text scopes to Claude Code. Regression guard for the bypass where the
+        # token scan was skipped on every heading line.
+        for body in ("## Use AskUserQuestion to confirm\n", "## Install via /plugin\n"):
+            with self.subTest(body=body):
+                errors = self._body_errors(body)
+                self.assertEqual(len(errors), 1, f"token in unscoped heading must fail, got {errors}")
+                self.assertIn("harness-neutral", errors[0])
+
+    def test_token_in_scoped_heading_passes(self) -> None:
+        # The flip side: a coupled token in a heading whose own text scopes to
+        # Claude Code is deliberate and must still pass.
+        self.assertEqual(self._body_errors("## Claude Code only: AskUserQuestion\n"), [])
+
+    def test_doc_paths_not_false_positive(self) -> None:
+        # The `/plugin` matcher uses a negative lookahead so documentation
+        # references do not trip the gate; only the bare command does.
+        body = (
+            "See the /plugin-dev skill and /reference/plugins/ docs.\n"
+            "The /plugins marketplace lists everything.\n"
+        )
+        self.assertEqual(self._body_errors(body), [])
+
+    def test_bare_plugin_command_fails(self) -> None:
+        # Guard the other side of the lookahead: a bare /plugin command (here
+        # followed by end-of-line) is a real Claude-Code coupling and must fail,
+        # so the doc-path exclusion can't be widened into a blanket pass.
+        errors = self._body_errors("Install it by running /plugin\n")
+        self.assertEqual(len(errors), 1, f"bare /plugin should fail, got {errors}")
+        self.assertIn("/plugin", errors[0])
+
+    def test_clean_body_passes(self) -> None:
+        body = "Ask via your harness's interactive-prompt mechanism; if none, ask in plain text.\n"
+        self.assertEqual(self._body_errors(body), [])
+
+
 if __name__ == "__main__":
     unittest.main()
