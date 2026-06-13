@@ -113,9 +113,12 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |-
           set -euo pipefail
-          # The trigger tag already exists (it is what started this run), and the
-          # "Check if already published" guard proved no release exists for it
-          # yet. `gh skill publish` creates the release against the existing tag,
-          # so there is no tag delete/restore dance — deleting the tag is what
-          # produced duplicate releases on re-runs.
-          gh skill publish --tag "$TAG"
+          # `gh skill publish --tag` *creates* the tag, so it errors ("tag
+          # already exists") whenever the trigger tag is already present — which
+          # it always is here, because the tag push is what started this run.
+          # The "Validate skills" step already ran `gh skill publish --dry-run`
+          # (spec validation + install-metadata check), so all that remains is
+          # release creation — which is exactly what `gh skill publish` does
+          # internally. Create the release directly against the existing tag;
+          # the already_published guard keeps re-runs idempotent.
+          gh release create "$TAG" --title "$TAG" --generate-notes --latest
