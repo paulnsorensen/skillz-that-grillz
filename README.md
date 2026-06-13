@@ -14,9 +14,9 @@ for the everyday plumbing around a project: making a clean commit, working a
 GitHub PR, stacking branches with Graphite or `gh stack`, scaffolding a
 justfile, wiring up prek pre-commit hooks, and writing concise idiomatic Bash.
 No agents and no orchestration. There are no _required_ MCP servers — three
-skills (`chezmoi`, `prek`, `serena-config`) _optionally_ use Context7 and fall
-back to the wrapped CLI's own self-docs when it is absent — just self-contained
-`SKILL.md` files that any spec-compliant harness can load.
+skills (`chezmoi`, `prek`, `serena-config`) _optionally_ use Context7 for current
+docs, and `chezmoi`/`serena-config` may also use Tavily for web extracts; when
+those tools are absent they fall back to bundled guidance and CLI help — just self-contained `SKILL.md` files that any spec-compliant harness can load.
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
 covers the design / implement / review workflow (mold, cook, press, age, cure).
