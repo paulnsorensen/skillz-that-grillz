@@ -32,7 +32,9 @@ list:
 # Run tests (skill validators + self-tests + bash unit tests — mirrors CI)
 test:
     python3 .github/scripts/test_validate_skills.py
+    python3 .github/scripts/test_validate_evals.py
     python3 .github/scripts/validate_skills.py
+    python3 .github/scripts/validate_evals.py
     python3 skills/bash-shortening/scripts/bash-shorten.py --self-test
     python3 -m pytest skills/ralphify-spec/scripts/test_validate.py -q
     bats tests/bash/test_install.bats
