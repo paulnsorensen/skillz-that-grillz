@@ -1,7 +1,6 @@
 ---
 allowed-tools: Bash(git:*)
 license: MIT
-model: haiku
 name: commit
 description: >
   Stage and commit changes to git following conventional commits format. Use
