@@ -19,7 +19,14 @@
       "id": 2,
       "name": "neither-tool-installed",
       "prompt": "I want to break this WIP branch into a stacked-PR chain — a couple of small reviewable PRs instead of one big one. Can you set that up? I think I have a fresh repo, nothing fancy installed.",
-      "expected_output": "Skill should run detection probes (gt --version, gt init marker, gh extension list), find neither is installed, and STOP. Surface the install options for both gt and gh stack with the right install commands. Should NOT improvise with `git checkout -b` + `git push` chains. Should NOT fake stacking with bare git.",
+      "expected_output": "Skill should run detection probes (gt --version + gt init marker, git-town --version + git-town.main-branch config, gh extension list), find none is installed, and STOP. Surface the install options for gt, git-town, and gh stack with the right install commands. Should NOT improvise with `git checkout -b` + `git push` chains. Should NOT fake stacking with bare git.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "post-merge-cleanup-git-town",
+      "prompt": "I'm using git-town for a stacked chain. The bottom PR (branch `db-schema`) just got merged into main through the GitHub web UI. The other two branches are `api` and `ui`, and I'm sitting on `ui` right now. What's the exact command to get them caught up and re-pushed, and does git-town rebase them for me or do I do it by hand?",
+      "expected_output": "Should say to run `git town sync --stack` (or `--all`): it fetches trunk, detects the merged db-schema branch is gone and drops it, rebases the survivors (api, ui) onto the new trunk tip, and force-pushes them so the forge re-targets their PRs. Should NOT advise bare `git rebase` or manual base re-targeting. Bonus: mention `git town branch` to confirm the chain, and the squash-merge phantom-conflict caveat (auto-resolve / fast-forward) since the merge went through the web UI.",
       "files": []
     }
   ]
