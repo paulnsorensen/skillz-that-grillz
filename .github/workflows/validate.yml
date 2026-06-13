@@ -88,6 +88,9 @@ jobs:
       - name: Run bash-shorten.py CLI tests
         run: bats tests/bash-shortening/test_bash_shorten.bats
 
+      - name: Run attribution unit tests
+        run: bats tests/bash/test_respond_post_reply.bats
+
       # Dry-run smoke: exercises arg parsing, selection validation, and
       # the skill-install dispatch path. Does NOT actually run brew or
       # gh skill install, so it will not catch regressions in the real
