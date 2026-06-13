@@ -15,7 +15,8 @@ description: >
   guidance", or invokes /github-copilot-repo-instructions. Do NOT use for
   personal (per-user) Copilot instructions — that is
   /github-copilot-personal-instructions. Do NOT use for opinionated generation
-  aligned with this project's opinionated engineering principles — that is /copilot-setup.
+  aligned with this project's opinionated engineering principles — that is the
+  setup mode of the multi-mode Copilot driver, `/copilot setup` (if installed).
 license: MIT
 ---
 
@@ -25,7 +26,11 @@ Repository-scoped Copilot guidance. Markdown files in `.github/` that GitHub
 Copilot reads on every request against the repo.
 
 > Generic, doc-faithful. For an opinionated generator that bakes in specific
-> engineering principles, see `/copilot-setup`.
+> engineering principles, see the `setup` mode of `/copilot` — `/copilot setup`
+> (if installed).
+>
+> For the multi-mode Copilot driver (review / delegate / setup), see `/copilot`
+> (if installed) — this skill only writes and audits the instruction files.
 
 ---
 
@@ -236,7 +241,8 @@ When the user says "audit our Copilot config":
 ## What this skill is not
 
 - Not a setup wizard — it advises and edits, does not interview.
-- Not the same as `/copilot-setup` — that skill bakes in a specific style.
+- Not the same as `/copilot setup` (if installed) — that mode of the `/copilot`
+  driver bakes in a specific style.
 - Not personal instructions — see `/github-copilot-personal-instructions`.
 - Not org-level instructions — those are configured in GitHub Enterprise
   org settings, outside any repo.
