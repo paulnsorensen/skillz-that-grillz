@@ -1,6 +1,5 @@
 ---
 name: release
-model: haiku
 description: >
   End-to-end release cutting for a GitHub repo: decide the next semantic
   version from the Conventional Commits since the last tag, draft proper
