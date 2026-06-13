@@ -4,8 +4,9 @@
   "evals": [
     {
       "id": 0,
-      "eval_name": "coverage-climber-python",
+      "name": "coverage-climber-python",
       "prompt": "I've got a Python lib (pyproject.toml, src/myapp/, tests/) sitting at 62% pytest-cov coverage and I want to grind it up to 95%. Each iteration should pick one uncovered function, write tests for it, and commit. Coverage check should run `uv run pytest --cov=src/myapp --cov-report=term-missing`. Wrap this in ralphify so I can leave it running. Project name is 'myapp'.",
+      "expected_output": "A ralphify directory whose outputs/RALPH.md passes the bundled validate.py, sets a runnable agent, embeds the COMPLETE sentinel and {{ ralph.iteration }} placeholder, ships run.sh, runs the pytest-cov probe, and ties COMPLETE to the 95% coverage threshold. See assertions for the exact gates.",
       "files": [],
       "assertions": [
         {"id": "has_ralph_md", "text": "outputs/RALPH.md exists"},
@@ -20,8 +21,9 @@
     },
     {
       "id": 1,
-      "eval_name": "clippy-burndown-rust",
+      "name": "clippy-burndown-rust",
       "prompt": "ralphify a clippy burndown for my Rust crate. `cargo clippy --all-targets -- -D warnings` currently spits out 47 warnings across the workspace and I want them gone, one or two per iteration. Crate is called 'fromage-core'. Tests are `cargo test --workspace`. Conventional commits. Once clippy is clean, stop.",
+      "expected_output": "A ralphify directory whose outputs/RALPH.md passes the bundled validate.py, sets a runnable agent, embeds the COMPLETE sentinel and {{ ralph.iteration }} placeholder, ships run.sh, runs clippy and cargo test, and instructs Conventional Commits. See assertions for the exact gates.",
       "files": [],
       "assertions": [
         {"id": "has_ralph_md", "text": "outputs/RALPH.md exists"},
@@ -37,8 +39,9 @@
     },
     {
       "id": 2,
-      "eval_name": "burn-down-todos-queue",
+      "name": "burn-down-todos-queue",
       "prompt": "I've got a queue at `.tasks/todo-*.md`. Each one has YAML frontmatter with `state: open` or `state: done`. The body describes one porting task — moving a JS module to TypeScript. I want a ralph that picks the next open one, does the port, flips state to done, commits, and moves on. When the queue is empty, push everything and stop. Use claude as the agent.",
+      "expected_output": "A ralphify directory whose outputs/RALPH.md passes the bundled validate.py, uses claude as the agent, embeds the COMPLETE sentinel and {{ ralph.iteration }} placeholder, ships run.sh plus a next-issue script, distinguishes the queue-empty closer from the work case, and instructs the state open->done flip. See assertions for the exact gates.",
       "files": [],
       "assertions": [
         {"id": "has_ralph_md", "text": "outputs/RALPH.md exists"},
