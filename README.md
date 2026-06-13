@@ -237,7 +237,7 @@ and works in any compliant client.
 2. Auto-detects installed Claude Code, Cursor, Codex, and opencode CLIs and
    installs every skill into each via `npx skills` (pass `--harness <name>` to
    target other agents — gemini, copilot, vscode, etc.).
-3. Optionally registers the `context7` MCP server (used by the `prek` skill).
+3. Optionally registers the `context7` MCP server (used by the `chezmoi`, `prek`, and `serena-config` skills).
    Auto-registration currently covers Claude Code only; for other harnesses it
    prints a manual-config hint (see the Context7 section below).
 
