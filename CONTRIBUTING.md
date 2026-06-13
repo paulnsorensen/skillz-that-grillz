@@ -20,9 +20,9 @@ cd skillz-that-grillz
 just build   # runs all formatters, linters, validators, and test suites
 ```
 
-`just build` is the only setup step — it installs nothing globally and uses
-`uv` to run the Python validators. Install [`just`](https://github.com/casey/just)
-first if you don't have it (`brew install just` / `cargo install just`).
+`just build` is the primary quality gate — it runs formatters, linters, validators,
+and test suites. It doesn’t install dependencies for you; see `justfile` for the required tools.
+Install [`just`](https://github.com/casey/just) first if you don't have it (`brew install just` / `cargo install just`).
 
 ## Adding a skill
 
