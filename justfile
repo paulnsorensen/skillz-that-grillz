@@ -37,6 +37,7 @@ test:
     python3 -m pytest skills/ralphify-spec/scripts/test_validate.py -q
     bats tests/bash/test_install.bats
     bats tests/bash/test_skillz.bats
+    bats tests/bash/test_respond_post_reply.bats
     bats tests/bash-shortening/test_bash_shorten.bats
 
 # Lint shell scripts
