@@ -1,5 +1,5 @@
 ---
-allowed-tools: Read, Write, Edit, Grep, Glob, AskUserQuestion, Bash(gh:*), Bash(git:*), Bash(sleep:*)
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash(gh:*), Bash(git:*), Bash(sleep:*)
 license: MIT
 name: copilot
 description: >
@@ -37,8 +37,9 @@ modes.
 ## Mode selection
 
 Parse the first positional argument as the mode. If no mode is given, ask
-the user which mode they want with `AskUserQuestion`. Never silently default
-— each mode has very different side effects.
+the user which mode they want via your harness's interactive-prompt
+mechanism; if none, ask in plain text and stop for the answer. Never
+silently default — each mode has very different side effects.
 
 | First arg | Mode |
 | --- | --- |
@@ -46,7 +47,7 @@ the user which mode they want with `AskUserQuestion`. Never silently default
 | `delegate` followed by a task description | `delegate` |
 | `setup` | `setup` (load `references/setup.md`) |
 | Bare PR URL (`https://github.com/...`) | `review` |
-| Anything else (bare integer, ambiguous, missing) | ask via `AskUserQuestion` |
+| Anything else (bare integer, ambiguous, missing) | ask via your harness's prompt |
 
 A bare integer is **ambiguous** — it could be a PR number, a `gh
 agent-task` ID, or noise. Always ask before assuming review mode.
@@ -236,6 +237,12 @@ review mode with the PR number. On no, print the link and exit.
 
 `setup` is a one-time bootstrap that writes `.github/copilot-instructions.md`
 and the per-language / per-role files under `.github/instructions/`.
+
+For pure instruction-file authoring or auditing — adding or refining
+`.github/copilot-instructions.md` and `.github/instructions/*.instructions.md`
+without driving a review or delegation — use
+`/github-copilot-repo-instructions` instead; this `setup` mode is the
+bootstrap-from-scratch path.
 
 See [references/setup.md](references/setup.md) — read **only** when the
 user explicitly says "copilot setup", "generate copilot instructions", or
