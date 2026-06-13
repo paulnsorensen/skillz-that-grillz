@@ -25,20 +25,9 @@ locally, run `just build`, commit the autofixes, and push.
 
 ## Skills in this repo
 
-| Skill | Purpose |
-|---|---|
-| `/commit` | Stage and commit changes with conventional-commits messages |
-| `/chezmoi` | Manage dotfiles with chezmoi (file naming, templating, secrets, bootstrap) |
-| `/file-handler` | Save / fetch / search skill artifacts under `.skillz/<type>/<slug>` — shared on-disk convention for every skill that needs scratch space |
-| `/gh` | GitHub plumbing (PRs, issues, CI, releases) |
-| `/gh-bootstrap` | One-shot repo configuration (merge queue, squash-only, release notes) |
-| `/justfile` | Generate or migrate to justfiles |
-| `/oss-hygiene` | Bring a public repo up to GitHub Community Standards + OpenSSF Scorecard baseline |
-| `/prek` | Onboard prek and language-appropriate pre-commit hooks |
-| `/safe-settings` | Org-scale GitHub policy as code via safe-settings Probot |
-| `/serena-config` | Configure the Serena MCP server — global `serena_config.yml` (settings, contexts, modes) and per-repo `project.yml` (languages, ignore rules, monorepo workspace folders) |
-
-See `README.md` for full details.
+The [`## Skills` table in `README.md`](README.md#skills) is the single source of
+truth for every skill in this repo — paths, commands, and purpose. Read it
+there rather than duplicating it here.
 
 ## Development notes
 
