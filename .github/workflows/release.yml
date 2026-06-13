@@ -35,6 +35,15 @@ jobs:
             exit 1
           fi
 
+      - name: Install pinned gh CLI
+        env:
+          GH_VERSION: "2.92.0"
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" | tar -xz -C /tmp
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+          gh --version
+
       - name: Check if already published
         # Idempotency guard: re-pushing the trigger tag must be a no-op. A bare
         # `exit 0` here would NOT skip later steps — a successful step just lets
@@ -90,16 +99,6 @@ jobs:
         # Full quality gate must pass before anything is published. This is the
         # same gate that guards every PR (validate.yml); a release must clear it.
         run: just ci
-
-      - name: Install pinned gh CLI
-        if: steps.guard.outputs.already_published != 'true'
-        env:
-          GH_VERSION: "2.92.0"
-        run: |
-          set -euo pipefail
-          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" | tar -xz -C /tmp
-          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
-          gh --version
 
       - name: Validate skills
         if: steps.guard.outputs.already_published != 'true'
