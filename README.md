@@ -13,7 +13,9 @@ A focused, skills-only repository of [Agent Skills](https://agentskills.io/speci
 for the everyday plumbing around a project: making a clean commit, working a
 GitHub PR, stacking branches with Graphite or `gh stack`, scaffolding a
 justfile, wiring up prek pre-commit hooks, and writing concise idiomatic Bash.
-No agents, no orchestration, no MCP requirements — just self-contained
+No agents and no orchestration. There are no _required_ MCP servers — three
+skills (`chezmoi`, `prek`, `serena-config`) _optionally_ use Context7 and fall
+back to the wrapped CLI's own self-docs when it is absent — just self-contained
 `SKILL.md` files that any spec-compliant harness can load.
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
@@ -92,8 +94,10 @@ What that means in practice:
 
 - **No orchestration, no intent classification.** Each skill is a single
   focused step the user (or another skill) explicitly invokes.
-- **No required MCP servers.** The `gh` skill is `gh` CLI only; `prek`
-  falls back to documented hook revisions when Context7 is missing.
+- **No required MCP servers.** Only `chezmoi`, `prek`, and `serena-config`
+  touch an MCP server at all, and only optionally: each uses Context7 for
+  current docs and falls back to the wrapped CLI's own self-docs when it is
+  missing (e.g. `prek` uses documented hook revisions).
 - **Composes freely with any other skill set** — install just these, install
   alongside something larger, or pick individual skills.
 
@@ -202,14 +206,27 @@ gh skill install paulnsorensen/skillz-that-grillz --agent codex --scope project
 Copy `skills/<name>/` into wherever your harness loads Agent Skills from:
 
 ```sh
-cp -r skills/commit ~/.claude/skills/    # Claude Code (user)
-cp -r skills/commit ~/.codex/skills/     # Codex
-cp -r skills/commit ~/.cursor/skills/    # Cursor
-cp -r skills/commit .claude/skills/      # project scope
+cp -r skills/commit ~/.claude/skills/            # Claude Code (user)
+cp -r skills/commit ~/.codex/skills/             # Codex
+cp -r skills/commit ~/.cursor/skills/            # Cursor
+cp -r skills/commit ~/.config/opencode/skills/   # opencode (user)
+cp -r skills/commit .claude/skills/              # project scope
 ```
+
+opencode loads skills from `~/.config/opencode/skills/<name>/SKILL.md` at user
+scope and `.opencode/skills/<name>/SKILL.md` per project; it also reads the
+`.claude/skills/` and `.agents/skills/` paths above as fallbacks, so a single
+`.claude/skills/` copy serves both Claude Code and opencode.
 
 The format follows the [agentskills.io spec](https://agentskills.io/specification)
 and works in any compliant client.
+
+> **Claude Code frontmatter extensions:** some `SKILL.md` files carry
+> Claude-Code-specific frontmatter keys (e.g. `allowed-tools`) alongside the
+> spec-required `name` + `description`. These are ignored by harnesses that
+> don't recognize them, so the skills still load — but a green
+> [validator](#validate) confirms only spec conformance, not that every
+> frontmatter key is portable.
 
 ## One-shot installer (macOS)
 
@@ -217,9 +234,9 @@ and works in any compliant client.
 
 1. Installs the CLI tools the skills wrap (`gh`, `just`, `prek`, `graphite`)
    via Homebrew.
-2. Auto-detects installed Claude Code, Cursor, and Codex CLIs and installs
-   every skill into each via `npx skills` (pass `--harness <name>` to target
-   other agents — gemini, copilot, opencode, etc.).
+2. Auto-detects installed Claude Code, Cursor, Codex, and opencode CLIs and
+   installs every skill into each via `npx skills` (pass `--harness <name>` to
+   target other agents — gemini, copilot, vscode, etc.).
 3. Optionally registers the `context7` MCP server (used by the `prek` skill).
    Auto-registration currently covers Claude Code only; for other harnesses it
    prints a manual-config hint (see the Context7 section below).

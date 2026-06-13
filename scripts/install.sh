@@ -76,16 +76,18 @@ Options:
   --skip-mcp           Same as --mcp none.
   --skip-tools         Skip CLI tool installs (useful for MCP-only runs).
   --harness <selection> Harness to install skills + register MCP servers for.
-                       Default: auto-detect claude-code, cursor, and codex.
-                       Accepts a single harness, a comma-separated list, or
-                       'auto'. Other values include vscode, gemini, zed, copilot.
+                       Default: auto-detect claude-code, cursor, codex, and
+                       opencode. Accepts a single harness, a comma-separated
+                       list, or 'auto'. Other values include vscode, gemini,
+                       zed, copilot. (opencode also loads ~/.claude/skills, so
+                       a claude-code install covers it as a fallback.)
   --dry-run            Print what would happen without changing anything.
   -h, --help           Show this help.
 
 Environment:
   SG_BREW              Override the brew binary (used by tests).
   SG_CLAUDE SG_CURSOR  Override claude / cursor binaries for detection.
-  SG_CODEX             Override codex binary for detection.
+  SG_CODEX SG_OPENCODE  Override codex / opencode binaries for detection.
   SG_NPX               Override npx (runs 'npx skills' + the context7 MCP).
 USAGE
 }
@@ -217,6 +219,7 @@ sg_detect_harnesses() {
     local claude_cli="${SG_CLAUDE:-claude}"
     local cursor_cli="${SG_CURSOR:-cursor}"
     local codex_cli="${SG_CODEX:-codex}"
+    local opencode_cli="${SG_OPENCODE:-opencode}"
 
     if sg_cmd_exists "$claude_cli"; then
         printf 'claude-code\n'
@@ -226,6 +229,9 @@ sg_detect_harnesses() {
     fi
     if sg_cmd_exists "$codex_cli"; then
         printf 'codex\n'
+    fi
+    if sg_cmd_exists "$opencode_cli"; then
+        printf 'opencode\n'
     fi
 }
 
