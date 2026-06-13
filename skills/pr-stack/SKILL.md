@@ -1,7 +1,7 @@
 ---
 name: pr-stack
 model: haiku
-allowed-tools: Bash(gt:*), Bash(gh:*), Bash(git:*), Bash(git-town:*)
+allowed-tools: Bash(gt:*), Bash(gh:*), Bash(git:*)
 description: >
   Manage stacked PRs using whichever stacking tool is installed: Graphite
   (`gt`), git-town (`git town`), or GitHub's native `gh stack` extension.
@@ -61,7 +61,7 @@ command -v gh >/dev/null 2>&1 \
 command -v git-town >/dev/null 2>&1 && git town --version >/dev/null 2>&1
 
 # git-town configured for this repo? (non-empty trunk = set up)
-git config --get git-town.main-branch >/dev/null 2>&1
+git config --local --get git-town.main-branch >/dev/null 2>&1
 ```
 
 **Pick the tool the repo is already set up for.** A tool counts as *usable
@@ -70,8 +70,8 @@ here* when it's installed **and** configured for this repo:
 | Tool | Installed probe | Configured-for-repo probe |
 | --- | --- | --- |
 | `gt` | `command -v gt` | `.git/.graphite_repo_config` exists |
-| `git town` | `command -v git-town` | `git config --get git-town.main-branch` non-empty |
-| `gh stack` | `gh extension list` has `github/gh-stack` | repo allow-listed (remote ops don't exit `4`) |
+| `git town` | `command -v git-town` | `git config --local --get git-town.main-branch` non-empty |
+| `gh stack` | `gh extension list` has `github/gh-stack` | no preflight — detected lazily when a remote op exits `4` |
 
 Then:
 
@@ -81,8 +81,8 @@ Then:
   forge-agnostic), then **`gh stack`** (first-party but private preview).
   Tell the user which others are present and offer to switch.
 - **Installed but not configured** → offer the one-time setup (`gt init`,
-  or `git config git-town.main-branch main`; `gh stack` needs no repo init)
-  and proceed.
+  or `git config --local git-town.main-branch <trunk>` — your trunk name,
+  e.g. `main` / `master`; `gh stack` needs no repo init) and proceed.
 - **None usable** → **stop.** Don't reach for `git push` chains. See
   "None installed" below.
 
@@ -102,9 +102,10 @@ surface this verbatim and stop:
 >   `gt auth --token <token from https://app.graphite.com/activate>` and
 >   `gt init` inside this repo.
 > - **git-town** — `brew install git-town` (or `choco` / `scoop` on
->   Windows), then `git config git-town.main-branch main` (or the
->   `git town config setup` wizard) inside this repo, plus either
->   `git config git-town.github-connector gh` (reuse your `gh` auth) or a
+>   Windows), then `git config --local git-town.main-branch <trunk>` (your
+>   trunk name, e.g. `main` / `master`; or the `git town config setup`
+>   wizard) inside this repo, plus either `git config --local
+>   git-town.github-connector gh` (reuse your `gh` auth) or a
 >   `git-town.github-token` PAT. Works on GitHub, GitLab, Gitea, and more.
 > - **GitHub native `gh stack`** — `gh extension install github/gh-stack`,
 >   then make sure the repo is allow-listed at

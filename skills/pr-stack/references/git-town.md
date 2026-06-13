@@ -27,7 +27,7 @@ Source: <https://www.git-town.com/stacked-changes>,
 
 - **Homebrew** (recommended on macOS / Linux): `brew install git-town`
 - **Windows**: `choco install git-town` or `scoop install git-town`
-- **Binary**: `curl https://www.git-town.com/install.sh | sh`
+- **Binary**: `curl https://www.git-town.com/install.sh | sh` — review the script first (or use a package-manager path above); don't pipe an unreviewed remote script straight to `sh`.
 - **From source**: `go install github.com/git-town/git-town/v23@latest`
   (bump the major suffix to match the installed release).
 - Version check: `git town --version`.
@@ -40,7 +40,7 @@ Source: <https://www.git-town.com/install>.
 
    ```bash
    git town config setup                  # interactive wizard (recent builds; older ones used `git town init` — confirm with `git town --help`)
-   git config git-town.main-branch main   # or set the trunk directly, no wizard
+   git config --local git-town.main-branch main   # or set the trunk directly, no wizard
    ```
 
    The direct `git config` form is the one the detection probe below reads,
@@ -49,8 +49,8 @@ Source: <https://www.git-town.com/install>.
 2. **Forge auth** — pick one:
 
    ```bash
-   git config git-town.github-connector gh   # reuse the gh CLI's existing auth (cleanest if gh is set up)
-   git config git-town.github-token ghp_xxx  # or a PAT, stored in local git config
+   git config --local git-town.github-connector gh   # reuse the gh CLI's existing auth (cleanest if gh is set up)
+   git config --local git-town.github-token ghp_xxx  # or a PAT, stored in local git config
    export GIT_TOWN_GITHUB_TOKEN=ghp_xxx      # or an env var (CI / ephemeral homes)
    ```
 
@@ -65,7 +65,7 @@ Source: <https://www.git-town.com/preferences/github-connector>,
 
 - `git-town` installed: `command -v git-town && git town --version`
   (non-zero if missing).
-- Repo configured: `git config --get git-town.main-branch` — a non-empty
+- Repo configured: `git config --local --get git-town.main-branch` — a non-empty
   result means Git Town knows this repo's trunk. This is the on-disk marker;
   prefer it over running a `git town` command, which prompts when
   unconfigured.
@@ -185,7 +185,7 @@ git town status                # show the halted state and what's available
 git town status --pending      # machine-readable: prints the pending command name (or nothing)
 
 # 1. resolve the conflict in the working tree, then:
-git add .
+git add <resolved paths>       # stage resolved paths by name, not the whole tree
 # 2. resume — NOT bare git rebase --continue
 git town continue              # re-run the halted command from where it stopped
 git town skip                  # abandon the conflicting branch, continue with the rest
