@@ -168,7 +168,11 @@ def validate_body(path: Path) -> list[str]:
         heading = HEADING_RE.match(line)
         if heading:
             section_is_scoped = bool(CLAUDE_SCOPE_HEADING_RE.search(heading.group(2)))
-            continue
+            if section_is_scoped:
+                continue
+            # An unscoped heading is still body text: a coupled token planted in
+            # the heading itself (e.g. "## Use AskUserQuestion") must be flagged,
+            # not skipped. Fall through to the token scan below.
         if section_is_scoped or CLAUDE_SCOPE_LINE_RE.search(line):
             continue
         for pattern, label in HARNESS_COUPLED_PATTERNS:

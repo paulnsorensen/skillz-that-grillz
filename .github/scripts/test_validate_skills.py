@@ -282,6 +282,22 @@ class ValidateBodyTest(unittest.TestCase):
         self.assertEqual(len(errors), 1, f"expected one error from the unscoped section, got {errors}")
         self.assertIn("AskUserQuestion", errors[0])
 
+    def test_token_in_unscoped_heading_fails(self) -> None:
+        # A coupled token planted in an UNSCOPED heading is still body text and
+        # must be flagged — the heading branch exempts only headings whose own
+        # text scopes to Claude Code. Regression guard for the bypass where the
+        # token scan was skipped on every heading line.
+        for body in ("## Use AskUserQuestion to confirm\n", "## Install via /plugin\n"):
+            with self.subTest(body=body):
+                errors = self._body_errors(body)
+                self.assertEqual(len(errors), 1, f"token in unscoped heading must fail, got {errors}")
+                self.assertIn("harness-neutral", errors[0])
+
+    def test_token_in_scoped_heading_passes(self) -> None:
+        # The flip side: a coupled token in a heading whose own text scopes to
+        # Claude Code is deliberate and must still pass.
+        self.assertEqual(self._body_errors("## Claude Code only: AskUserQuestion\n"), [])
+
     def test_doc_paths_not_false_positive(self) -> None:
         # The `/plugin` matcher uses a negative lookahead so documentation
         # references do not trip the gate; only the bare command does.
