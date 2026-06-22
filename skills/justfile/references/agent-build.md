@@ -37,6 +37,7 @@ build: (_gate "fix")
 ci: (_gate "check")
 
 [private]
+[no-exit-message]
 [script("bash")]
 _gate mode:
     set -uo pipefail
@@ -48,9 +49,18 @@ _gate mode:
     # language-specific steps go here, branching on {{mode}} for fix vs check
 ```
 
-`step` buffers each command and reveals nothing until it finishes — the
-trade-off that buys the compaction. For a slow suite that's acceptable; the
-agent gets a clean `✓`/`✗` ledger instead of scrolling banners.
+`step` buffers each command and reveals nothing until it finishes — the same
+quiet-on-success, dump-on-failure trick as
+[`chronic`](https://joeyh.name/code/moreutils/) (moreutils), inlined here so
+each step gets its own named `✓`/`✗` label, which `chronic` alone wouldn't give.
+The trade-off that buys the compaction: a slow suite shows nothing until it's
+done. The agent gets a clean `✓`/`✗` ledger instead of scrolling banners.
+
+`[no-exit-message]` on `_gate` suppresses just's own
+`error: recipe '_gate' failed…` line, which would otherwise trail the clean
+ledger on every failure. The gate still exits non-zero — the attribute only
+drops the redundant banner, keeping the failure output to the `✗` step plus its
+captured `file:line`.
 
 ### rtk upgrade path
 
@@ -62,10 +72,11 @@ CMD`) to get per-tool smart filtering on top of quiet-on-success — see
 ### No `[script]` / older just
 
 On a just older than 1.44 (where `[script]` isn't yet stable), or if you'd
-rather avoid the attribute, make `_gate` a shebang recipe instead — the
+rather avoid the `[script]` attribute, make `_gate` a shebang recipe instead — the
 parameterized dependency (`build: (_gate "fix")`) works regardless of body type:
 
 ```just
+[no-exit-message]
 _gate mode:
     #!/usr/bin/env bash
     set -uo pipefail
