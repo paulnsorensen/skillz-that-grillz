@@ -17,6 +17,7 @@ build: (_gate "fix")
 ci: (_gate "check")
 
 [private]
+[no-exit-message]
 [script("bash")]
 _gate mode:
     set -uo pipefail
