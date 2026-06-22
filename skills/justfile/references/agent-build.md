@@ -72,7 +72,7 @@ CMD`) to get per-tool smart filtering on top of quiet-on-success — see
 ### No `[script]` / older just
 
 On a just older than 1.44 (where `[script]` isn't yet stable), or if you'd
-rather avoid the attribute, make `_gate` a shebang recipe instead — the
+rather avoid the `[script]` attribute, make `_gate` a shebang recipe instead — the
 parameterized dependency (`build: (_gate "fix")`) works regardless of body type:
 
 ```just
