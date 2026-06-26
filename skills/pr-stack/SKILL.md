@@ -71,7 +71,7 @@ here* when it's installed **and** configured for this repo:
 | --- | --- | --- |
 | `gt` | `command -v gt` | `.git/.graphite_repo_config` exists |
 | `git town` | `command -v git-town` | `git config --local --get git-town.main-branch` non-empty |
-| `gh stack` | `gh extension list` has `github/gh-stack` | no preflight — detected lazily when a remote op exits `4` |
+| `gh stack` | `gh extension list` has `github/gh-stack` | no preflight — detected lazily when a remote op exits `9` |
 
 Then:
 
@@ -121,10 +121,11 @@ missing.
 
 **Third failure mode — `gh stack` installed but the repo isn't allow-listed.**
 The CLI installs anywhere, but remote ops (`submit`, `sync`, `link`) fail
-with exit code `4` when the repo isn't on the private-preview allow-list.
-If you see exit `4`, surface this and point the user at
-[gh.io/stacksbeta](https://gh.io/stacksbeta). If `gt` is also installed
-locally, offer to fall back to it for this repo.
+with exit code `9` ("Stacked PRs not enabled for this repository") when the
+repo isn't on the private-preview allow-list. (Exit `4` is a generic GitHub
+API failure — a different condition.) If you see exit `9`, surface this and
+point the user at [gh.io/stacksbeta](https://gh.io/stacksbeta). If `gt` is
+also installed locally, offer to fall back to it for this repo.
 
 ## Mental model (shared)
 
@@ -213,6 +214,11 @@ to memory — all three CLIs drift between versions.
 
 ## When to read references
 
+- `references/setup.md` — one-time setup + team / multi-machine onboarding
+  for all three tools: the per-machine vs per-clone vs committed-and-shared
+  config split (answers "do we init once or on every machine"), per-tool
+  who-does-what checklists, and the free-for-an-OSS-team guidance. Read when
+  the user is setting up, onboarding a teammate, or asks about cost.
 - `references/gt.md` — full `gt` command surface (create / modify / sync /
   submit / track / log), install + auth, restack recipes, conflict
   recovery, monorepo / multi-trunk caveats. Read when detection picks `gt`.
