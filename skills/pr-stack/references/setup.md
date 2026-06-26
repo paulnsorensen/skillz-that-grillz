@@ -103,9 +103,11 @@ so reviewers see the stack without any local tool.
 
 ```bash
 brew install git-town               # or choco / scoop (Windows); apt/.deb/.rpm/pacman; go install …@latest
-gh auth login                       # git-town auto-detects gh …
+gh auth login                       # …then reuse it explicitly:
+git config --local git-town.github-connector gh   # reuse gh's auth (cleanest if gh is set up)
 # …or, PAT route (per-user, not committed):
 git config --global git-town.github-token <PAT>
+# CI / ephemeral hosts: export GIT_TOWN_GITHUB_TOKEN=<PAT> instead of a stored token
 ```
 
 Cloning the repo picks up the committed `git-town.toml` automatically — **no
@@ -163,18 +165,18 @@ The cost question is about the *driver*, and for a multi-contributor OSS repo:
   works from forks. Committed config means lightest onboarding.
 - **`gt` (Graphite)** — the free Hobby tier covers **personal-account repos
   only**; on an **org repo** the CLI hard-errors without a plan. The
-  **"Graphite for Open Source"** program grants the full plan free to OSS
-  projects with **≤10 GitHub org members** (auto-detected at signup); larger
-  projects must contact Graphite. Every CLI user still needs a Graphite
-  account. *(OSS program last confirmed via a 2024 Graphite blog post — verify
-  it's still running before relying on it.)*
+  **"Graphite for Open Source"** program can grant the full plan free to OSS
+  projects, but eligibility is a **contact-us check** — email
+  `billing@graphite.com` to confirm (the current pricing FAQ documents no fixed
+  member-count threshold). Every CLI user still needs a Graphite account.
+  *(Eligibility terms change — verify with Graphite before relying on this.)*
 - **`gh stack`** — free and native, but **not usable yet**: private preview
   behind a waitlist with no GA date. Revisit once it's GA.
 
 ## Sources
 
 - Graphite install / auth / init scope: <https://graphite.dev/docs/install-the-cli>, <https://graphite.dev/docs/cli-quick-start>, <https://graphite.dev/docs/configure-cli>, <https://graphite.dev/docs/collaborate-on-a-stack>
-- Graphite OSS program: <https://graphite.dev/blog/startup-program-announcement>
+- Graphite OSS program: <https://graphite.dev/docs/pricing-faq>
 - git-town config file + tokens + connector: <https://www.git-town.com/configuration-file.html>, <https://www.git-town.com/preferences/github-token.html>, <https://www.git-town.com/preferences/github-connector.html>, <https://www.git-town.com/install.html>
 - git-town Action: <https://github.com/git-town/action>
 - gh stack quick start + CLI reference (exit codes) + waitlist: <https://github.github.com/gh-stack/getting-started/quick-start/>, <https://github.github.com/gh-stack/reference/cli/>, <https://github.com/github/gh-stack>, <https://gh.io/stacksbeta>
