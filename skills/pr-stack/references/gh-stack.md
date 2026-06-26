@@ -54,9 +54,11 @@ Run these in order:
 2. `gh` version OK: `gh --version` reports `>= 2.0`.
 
 3. **Repo enablement** has no documented preflight command. The only
-   reliable signal is exit code `4` from a remote op (`submit`, `sync`,
-   `link`) when the repo isn't allow-listed. Don't preflight — just run
-   the user's command and translate the failure.
+   reliable signal is exit code `9` ("Stacked PRs not enabled for this
+   repository") from a remote op (`submit`, `sync`, `link`) when the repo
+   isn't allow-listed. (Exit `4` is a generic GitHub API failure — don't
+   conflate them.) Don't preflight — just run the user's command and
+   translate the failure.
 
 ## Mental model
 
@@ -141,11 +143,12 @@ From the README — critical for skill error handling:
 | 1 | Generic error |
 | 2 | Not in a stack / stack not found |
 | 3 | Rebase conflict |
-| 4 | GitHub API failure (use this to detect "feature not enabled for repo") |
+| 4 | GitHub API failure |
 | 5 | Invalid arguments or flags |
 | 6 | Disambiguation required (branch belongs to multiple stacks) |
 | 7 | Rebase already in progress |
 | 8 | Stack is locked by another process |
+| 9 | Stacked PRs not enabled for this repository (remote ops on a repo not allow-listed) |
 
 Source: <https://github.com/github/gh-stack> (exit codes table).
 
