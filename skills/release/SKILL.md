@@ -31,7 +31,7 @@ This sits next to `/gh-bootstrap` and `/gh` and answers a different question. `/
 | One-time release-notes config + tag-driven workflow | `/gh-bootstrap` |
 | Raw per-command `gh release create` / `view` / `upload` | `/gh` |
 | Deciding the version, drafting notes, tagging, publishing | **`/release`** (this skill) |
-| Local commit before any of this | `/commit` |
+| Local commit before any of this | `/plate` |
 
 If the repo has a tag-driven release workflow (from `/gh-bootstrap`), pushing the tag is enough — the workflow publishes the release. This skill still decides the version and (optionally) drafts curated notes; it just stops after the tag push and reports that the workflow takes over. Otherwise it publishes the release itself with `gh release create`.
 
@@ -139,7 +139,7 @@ Report to the user: the version and why, the notes strategy used, the release UR
 
 - Scaffolding `.github/release.yml` or the release workflow — that's `/gh-bootstrap` (run once, first).
 - Looking up raw `gh release` flags outside a release ceremony — that's `/gh`.
-- Committing or pushing branch code — that's `/commit` + `/gh`.
+- Committing or pushing branch code — that's `/plate`.
 - Publishing to a package registry (npm / crates.io / PyPI). This skill tags and creates the GitHub release; registry publishing is the project's own `just`/CI step.
 - Per-package versioning in a monorepo with independent release lines — out of scope; this skill cuts one tag for one version line. Say so if the repo is a multi-package monorepo.
 

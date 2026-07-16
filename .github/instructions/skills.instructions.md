@@ -65,9 +65,10 @@ Spend your review budget on the things linters cannot see.
   wrap both. The skill must: (a) detect which is installed up front, (b)
   load the per-tool surface from `references/<tool>.md` rather than
   inlining a runtime branch on every command, and (c) refuse to fake the
-  workflow with lower-level tooling when neither is installed. `pr-stack`
-  is the canonical case (`gt` and `gh stack` both implement stacked PRs).
-  Multi-domain orchestration is still out.
+  workflow with lower-level tooling when neither is installed (the former
+  `pr-stack` skill — `gt` / `git town` / `gh stack`, all implementing
+  stacked PRs — was the canonical case). Multi-domain orchestration is
+  still out.
 - No skill *requires* an MCP server. MCPs may be **preferred** (e.g., the
   GitHub MCP plugin in `gh`) but the skill must degrade cleanly to the CLI.
 - Skills do not invoke other skills programmatically. If a workflow needs

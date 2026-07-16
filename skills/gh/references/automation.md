@@ -8,40 +8,6 @@
 End-to-end recipes that compose multiple `gh` commands. All patterns use
 only `gh` and standard POSIX shell — no extra binaries, no MCPs.
 
-## Quick PR from current branch
-
-```bash
-# After committing locally
-git push -u origin "$(git branch --show-current)"
-gh pr create --fill                              # title/body from commits
-gh pr view --web                                 # open in browser
-```
-
-## Draft a PR with a long body
-
-Write the body to a file (heredoc into the body would trip the
-"# hides arguments" guard):
-
-```bash
-BODY=$(mktemp)
-cat > "$BODY" <<'MD'
-## Summary
-
-- Adds /healthz endpoint
-- Wires up Prometheus metrics
-
-## Test plan
-
-- [x] unit tests
-- [ ] manual hit via curl
-MD
-
-gh pr create --title "feat(api): add health endpoint" \
-  --body-file "$BODY" --base main --head "$(git branch --show-current)"
-
-rm -f "$BODY"
-```
-
 ## Wait for CI, merge on green
 
 ```bash

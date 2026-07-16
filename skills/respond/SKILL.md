@@ -184,9 +184,9 @@ Keep the tone professional and specific. Cite project conventions
 they decide. If the user doesn't respond to a specific ASK, leave it
 unresolved.
 
-**After all actions.** If code changed, hand off to `/commit` for the
-commit and `/gh` for the push. Present a summary: files modified, threads
-replied to, threads still pending user decision.
+**After all actions.** If code changed, hand off to `/plate` for the
+commit and push. Present a summary: files modified, threads replied to,
+threads still pending user decision.
 
 ## Attribution rule
 

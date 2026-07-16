@@ -256,7 +256,7 @@ work.
 ## What this skill never does
 
 - Run `git push`, open PRs, or merge — that is `/gh`'s job.
-- Commit code — that is `/commit`'s job.
+- Commit code — that is `/plate`'s job.
 - Generate a code review on its own — `review` mode delegates to whatever
   review skill the environment provides (e.g. `age`, `code-review`).
 - Modify any file outside `.github/` during `setup`.

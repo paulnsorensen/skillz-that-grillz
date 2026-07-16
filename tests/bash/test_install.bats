@@ -52,10 +52,6 @@ make_stub() {
 
 # -- sg_tool_binary ----------------------------------------------------------
 
-@test "sg_tool_binary maps graphite to gt" {
-    [[ "$(sg_tool_binary graphite)" == "gt" ]]
-}
-
 @test "sg_tool_binary maps ripgrep to rg" {
     [[ "$(sg_tool_binary ripgrep)" == "rg" ]]
 }
@@ -73,10 +69,6 @@ make_stub() {
 }
 
 # -- sg_tool_formula ---------------------------------------------------------
-
-@test "sg_tool_formula maps graphite to the withgraphite tap spec" {
-    [[ "$(sg_tool_formula graphite)" == "withgraphite/tap/graphite" ]]
-}
 
 @test "sg_tool_formula returns identity for core formulas" {
     [[ "$(sg_tool_formula gh)" == "gh" ]]
@@ -115,7 +107,6 @@ make_stub() {
     [[ "$SG_TOOLS" == *"gh"* ]]
     [[ "$SG_TOOLS" == *"just"* ]]
     [[ "$SG_TOOLS" == *"prek"* ]]
-    [[ "$SG_TOOLS" == *"graphite"* ]]
     [[ "$SG_TOOLS" == *"ast-grep"* ]]
     [[ "$SG_TOOLS" == *"sd"* ]]
     [[ "$SG_TOOLS" == *"ripgrep"* ]]
@@ -260,24 +251,18 @@ STUB
     [ ! -s "$STUB_LOG" ] || ! grep -q "^brew install" "$STUB_LOG"
 }
 
-@test "sg_brew_install_if_missing dry-run prints would-run line for tap formula" {
-    SG_DRY_RUN=1 run sg_brew_install_if_missing graphite
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"would run 'brew install withgraphite/tap/graphite'"* ]]
-}
-
 @test "sg_brew_install_if_missing dry-run prints would-run line for core formula" {
     SG_DRY_RUN=1 run sg_brew_install_if_missing just
     [ "$status" -eq 0 ]
     [[ "$output" == *"would run 'brew install just'"* ]]
 }
 
-@test "sg_brew_install_if_missing invokes brew with mapped formula when missing" {
+@test "sg_brew_install_if_missing invokes brew with mapped binary name when missing" {
     make_stub brew
     export SG_BREW="$STUB_BIN/brew"
-    run sg_brew_install_if_missing graphite
+    run sg_brew_install_if_missing ripgrep
     [ "$status" -eq 0 ]
-    grep -q "^brew install withgraphite/tap/graphite$" "$STUB_LOG"
+    grep -q "^brew install ripgrep$" "$STUB_LOG"
 }
 
 @test "sg_brew_install_if_missing surfaces brew failure" {
@@ -299,19 +284,11 @@ STUB
     grep -q "^brew install prek$" "$STUB_LOG"
 }
 
-@test "sg_install_tools routes graphite through the tap-spec formula" {
-    make_stub brew
-    export SG_BREW="$STUB_BIN/brew"
-    run sg_install_tools "graphite"
-    [ "$status" -eq 0 ]
-    grep -q "^brew install withgraphite/tap/graphite$" "$STUB_LOG"
-}
-
 @test "sg_install_tools dry-run lists every tool without invoking brew" {
-    SG_DRY_RUN=1 run sg_install_tools "gh,graphite"
+    SG_DRY_RUN=1 run sg_install_tools "gh,just"
     [ "$status" -eq 0 ]
     [[ "$output" == *"would run 'brew install gh'"* ]]
-    [[ "$output" == *"would run 'brew install withgraphite/tap/graphite'"* ]]
+    [[ "$output" == *"would run 'brew install just'"* ]]
     [ ! -s "$STUB_LOG" ] || ! grep -q "^brew install" "$STUB_LOG"
 }
 
