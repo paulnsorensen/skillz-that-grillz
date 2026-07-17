@@ -257,7 +257,7 @@ STUB
     [[ "$output" == *"would run 'brew install just'"* ]]
 }
 
-@test "sg_brew_install_if_missing invokes brew with mapped binary name when missing" {
+@test "sg_brew_install_if_missing installs mapped formula when mapped binary is missing" {
     make_stub brew
     export SG_BREW="$STUB_BIN/brew"
     run sg_brew_install_if_missing ripgrep

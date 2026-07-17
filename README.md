@@ -228,8 +228,8 @@ and works in any compliant client.
 
 `scripts/install.sh` does the whole setup in one shot:
 
-1. Installs the CLI tools the skills wrap (`gh`, `just`, `prek`)
-   via Homebrew.
+1. Installs the CLI tools the skills wrap (`gh`, `just`, `prek`) plus the
+   bash-shortening helpers (`ast-grep`, `sd`, `ripgrep`, `fd`) via Homebrew.
 2. Auto-detects installed Claude Code, Cursor, Codex, and opencode CLIs and
    installs every skill into each via `npx skills` (pass `--harness <name>` to
    target other agents — gemini, copilot, vscode, etc.).
