@@ -171,7 +171,7 @@ Re-running the skill on a partially-set-up admin repo should fill in only the mi
 
 - Setting policy on a single one-off repo with no org behind it — use `/gh-bootstrap`
 - Running PR / issue / CI ops — use `/gh`
-- Local git work — use `/commit`
+- Local git work — use `/plate`
 - Authoring new safe-settings rules upstream — this skill consumes the released app, doesn't develop it
 - Migrating from the older `github/settings` app — safe-settings is the supported successor; the skill assumes you're starting fresh or already off `github/settings`
 

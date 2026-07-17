@@ -17,10 +17,9 @@
 
 # CLI tools wrapped by the skills in this repo. Names listed here are the
 # brew formula names, which sometimes differ from the binary name (see
-# sg_tool_binary). graphite is the upstream package for the gt CLI;
-# ripgrep installs the rg binary. sd / fd / ast-grep back the
-# bash-shortening skill's modernize rules and ast-grep engine.
-SG_KNOWN_TOOLS="gh just prek graphite ast-grep sd ripgrep fd"
+# sg_tool_binary). ripgrep installs the rg binary. sd / fd / ast-grep back
+# the bash-shortening skill's modernize rules and ast-grep engine.
+SG_KNOWN_TOOLS="gh just prek ast-grep sd ripgrep fd"
 
 # Repository the installer pulls skills from. Centralized so the installer
 # and the help text reference the same source.
@@ -33,7 +32,6 @@ SG_DEFAULT_MCP="context7"
 # Map a brew formula name to the binary it installs (when they differ).
 sg_tool_binary() {
     case "$1" in
-        graphite) echo "gt" ;;
         ripgrep)  echo "rg" ;;
         ast-grep) echo "sg" ;;
         *)        echo "$1" ;;
@@ -41,10 +39,10 @@ sg_tool_binary() {
 }
 
 # Map a brew formula name to a custom tap/formula spec (when needed).
+# No current tool needs a tap spec; the mapping stays for future tools.
 sg_tool_formula() {
     case "$1" in
-        graphite) echo "withgraphite/tap/graphite" ;;
-        *)        echo "$1" ;;
+        *) echo "$1" ;;
     esac
 }
 
@@ -69,8 +67,7 @@ Usage:
 
 Options:
   --tools <list>       Comma-separated CLI tools to install. Default: all.
-                       Choices: gh, just, prek, graphite, ast-grep, sd,
-                       ripgrep, fd
+                       Choices: gh, just, prek, ast-grep, sd, ripgrep, fd
   --mcp <list>         Comma-separated MCP servers to register. Default:
                        context7. Choices: context7, none
   --skip-mcp           Same as --mcp none.

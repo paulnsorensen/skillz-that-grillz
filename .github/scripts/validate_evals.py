@@ -3,8 +3,7 @@
 
 All skills that ship behavioural evals keep them at exactly
 `skills/<name>/evals/evals.json`. This script finds every such file and
-checks it against the canonical contract that `skills/pr-stack` already
-follows:
+checks it against one canonical contract:
 
 Top-level (a JSON object):
 - `skill_name`: non-empty string.
@@ -111,7 +110,7 @@ def _canonical_entry(**overrides: object) -> dict:
 # `[{query, should_trigger}]` is now rejected, so the contract can't silently
 # regress back to two incompatible schemas.
 _SELF_TEST_CASES: list[tuple[str, object, bool]] = [
-    ("canonical pr-stack shape", {"skill_name": "s", "evals": [_canonical_entry()]}, False),
+    ("canonical evals shape", {"skill_name": "s", "evals": [_canonical_entry()]}, False),
     (
         "extras tolerated (ralphify notes + assertions)",
         {

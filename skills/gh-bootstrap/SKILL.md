@@ -161,7 +161,7 @@ The skill is designed to be re-run safely on a partially-configured repo:
 ## What this skill is NOT for
 
 - Per-task GitHub ops (PRs, issues, CI status, releases for a specific tag) — use `/gh`
-- Local git operations — use `/commit`
+- Local git operations — use `/plate`
 - Pre-commit hooks — use `/prek`
 - Project task running — use `/justfile`
 - Designing a CI pipeline — out of scope; this skill writes one specific release workflow if asked, no more

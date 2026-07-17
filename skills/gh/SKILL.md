@@ -2,14 +2,14 @@
 name: gh
 model: haiku
 description: >
-  Complete GitHub tasks using the `gh` CLI — pull requests, issues, CI checks,
-  releases, workflow runs, code search, repo and label management.
-  Use when the user says "create PR", "merge PR", "check CI", "list issues",
-  "review PR", "PR status", "close issue", "trigger workflow", "view release",
-  "search repos", or invokes /gh. Use `git` (log, diff, status) for read-only
-  local context only. Do NOT use for committing, staging, or pushing — use
-  /commit for those. Do NOT use for code-quality review — use a dedicated
-  review skill.
+  Complete GitHub tasks using the `gh` CLI — pull request inspection, review,
+  and merge, issues, CI checks, releases, workflow runs, code search, repo and
+  label management. Use when the user says "merge PR", "check CI", "list
+  issues", "review PR", "PR status", "close issue", "trigger workflow",
+  "view release", "search repos", or invokes /gh. Use `git` (log, diff,
+  status) for read-only local context only. Do NOT use for committing,
+  staging, pushing, or PR creation — use /plate for those. Do NOT use for
+  code-quality review — use a dedicated review skill.
 license: MIT
 ---
 
@@ -19,8 +19,10 @@ GitHub operations via the [`gh`](https://cli.github.com) CLI. Wraps every
 common operation — PRs, issues, releases, workflow runs, repos, search — in
 idiomatic, token-efficient invocations.
 
-`git` is read-only here — log, diff, status. No commits, no pushes through
-this skill. Pair with `/commit` for git writes.
+`git` is read-only here — log, diff, status. No commits, no pushes, no PR
+creation through this skill. Pair with `/plate` (from the companion
+[easy-cheese](https://github.com/paulnsorensen/easy-cheese) repo) for
+committing, pushing, and opening PRs — single or stacked.
 
 ---
 
@@ -46,15 +48,14 @@ gh pr list --json number --jq '.[].number' | xargs -I{} gh pr view {}
 gh pr view 42 --json title --template '{{.title}}'
 ```
 
-**Never use heredoc `--body` for PR or issue creation.** The
+**Never use heredoc `--body` for issue or comment bodies.** The
 `$(cat <<'EOF' ... EOF)` pattern can trip "# hides arguments" sandbox
 heuristics when the body contains markdown headers. Write the body to a
 file and pass `--body-file`:
 
 ```bash
-gh pr create --title "feat(api): add health endpoint" \
-  --body-file "$TMPDIR/pr-body.md" \
-  --base main --head feature/health
+gh issue create --title "flaky health-endpoint test" \
+  --body-file "$TMPDIR/issue-body.md" --label bug
 ```
 
 **Always check JSON field names with `--help`.** They differ from the GitHub
@@ -71,12 +72,11 @@ Common gotchas: `stargazerCount` (not `stargazersCount`), `forkCount`
 
 ## Pull requests
 
+PR creation lives in `/plate` — this skill picks up once the PR exists.
+
 ```bash
-# Create
-gh pr create --title "..." --body-file body.md --base main --head feature
-gh pr create --fill                              # title/body from commits
-gh pr create --draft
-gh pr create --reviewer @copilot                 # request Copilot review
+# Request review on an existing PR
+gh pr edit 123 --add-reviewer @copilot
 
 # View
 gh pr list                                       # repo PRs
@@ -224,24 +224,10 @@ missing — re-run `gh auth refresh -s <scope>`. For deeper diagnosis see
 
 ---
 
-## Local git context (read-only)
-
-Before drafting a PR description, gather diff context with git directly:
-
-```bash
-git log --oneline origin/main..HEAD              # commits going into the PR
-git diff origin/main...HEAD                      # full diff
-git status                                       # working tree state
-```
-
-Hand off any push or commit work to `/commit`.
-
----
-
 ## What you don't do
 
-- Stage, commit, push, rebase, or otherwise mutate the working tree —
-  that's `/commit`'s job
+- Stage, commit, push, create PRs, rebase, or otherwise mutate the working
+  tree — that's `/plate`'s job
 - Code-quality review — use a dedicated review skill
 - Worktree creation — out of scope
 - **Destructive operations.** `gh repo delete`, `gh release delete`,
@@ -270,7 +256,7 @@ Hand off any push or commit work to `/commit`.
 - [`references/jq-recipes.md`](references/jq-recipes.md) — token-efficient
   `--jq` patterns for PR / run / issue queries
 - [`references/automation.md`](references/automation.md) — release flow,
-  CI monitor, auto-PR, bulk operations
+  CI monitor, bulk operations
 - [`references/extras.md`](references/extras.md) — labels, codespaces,
   gists, secrets/variables, projects, aliases
 - [`references/troubleshooting.md`](references/troubleshooting.md) — auth,
