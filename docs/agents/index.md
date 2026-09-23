@@ -1,6 +1,7 @@
 # skillz-that-grillz wiki
 
 <!-- HALLOUMINATE:INDEX-START -->
+- [decisions/](./decisions/index.md) — decisions
 - [sources/](./sources/index.md) — sources
 - [agent-friendly-cli-design](./agent-friendly-cli-design.md) — Agent-friendly CLI design
 - [log](./log.md) — Ingest Log

@@ -41,6 +41,7 @@ test:
     bats tests/bash/test_skillz.bats
     bats tests/bash/test_respond_post_reply.bats
     bats tests/bash-shortening/test_bash_shorten.bats
+    uv run --locked --project lib/fromargs pytest lib/fromargs/tests -q
 
 # Lint shell scripts
 lint-sh:

@@ -1,3 +1,5 @@
+# Skip gitignored trees such as uv's .venv, whose vendored YAML is not ours.
+gitignore_excludes: true
 formatter:
   type: basic
   retain_line_breaks_single: true

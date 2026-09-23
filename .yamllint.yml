@@ -6,6 +6,7 @@ ignore: |
   .serena/
   .cheese/
   .context/
+  .venv/
 
 rules:
   line-length:
