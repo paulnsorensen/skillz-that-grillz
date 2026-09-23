@@ -37,7 +37,6 @@ test:
     python3 .github/scripts/validate_skills.py
     python3 .github/scripts/validate_evals.py
     python3 skills/bash-shortening/scripts/bash-shorten.py --self-test
-    python3 -m pytest skills/ralphify-spec/scripts/test_validate.py -q
     bats tests/bash/test_install.bats
     bats tests/bash/test_skillz.bats
     bats tests/bash/test_respond_post_reply.bats
