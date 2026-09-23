@@ -13,9 +13,9 @@ A focused, skills-only repository of [Agent Skills](https://agentskills.io/speci
 for the everyday plumbing around a project: working a GitHub PR, cutting a
 release, scaffolding a justfile, wiring up prek pre-commit hooks, and writing
 concise idiomatic Bash.
-No agents and no orchestration. There are no _required_ MCP servers — three
-skills (`chezmoi`, `prek`, `serena-config`) _optionally_ use Context7 for current
-docs, and `chezmoi`/`serena-config` may also use Tavily for web extracts; when
+No agents and no orchestration. There are no _required_ MCP servers — two
+skills (`chezmoi`, `prek`) _optionally_ use Context7 for current
+docs, and `chezmoi` may also use Tavily for web extracts; when
 those tools are absent they fall back to bundled guidance and CLI help — just self-contained `SKILL.md` files that any spec-compliant harness can load.
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
@@ -46,7 +46,6 @@ harness can load it progressively.
 | --- | --- | --- |
 | `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in your harness. |
 | `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
-| `skills/copilot/SKILL.md` | `/copilot` | Drive the GitHub Copilot CLI / coding agent. Three modes: `review` (PR review with `@copilot fix this` inline comments) and `delegate` (`gh agent-task` create + monitor) are routine; `setup` is a one-time bootstrap that writes `.github/copilot-instructions.md` and per-language `.github/instructions/*.instructions.md`. |
 | `skills/file-handler/SKILL.md` | `/file-handler` | Persist, fetch, and search skill artifacts under a shared `.skillz/<type>/<slug>` tree. Wraps a dependency-free `skillz.sh` exposing `save_file`, `get_file`, and `search_files` (titles + body grep). The on-disk convention every other skill in this repo delegates to for scratch space. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PR inspection / review / merge, issues, CI checks, releases, workflow runs, code search, repo and label management — via the `gh` CLI, with idiomatic `--jq` and `--body-file` patterns. Committing, pushing, and PR creation live in easy-cheese's `/plate`. |
 | `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
@@ -55,11 +54,9 @@ harness can load it progressively.
 | `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
 | `skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
 | `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
-| `skills/ralphify-spec/SKILL.md` | `/ralphify-spec` | Generate a ralphify-approved ralph directory (RALPH.md + scripts) from a plain-English description of repetitive or iterative work. Ships an iteration-cap-enforcing runner wrapper, a `<promise>COMPLETE</promise>` stop sentinel, and a burn-down-todos template. |
 | `skills/release/SKILL.md` | `/release` | Cut a versioned release end to end: decide the next semantic version from the Conventional Commits since the last tag (with the `0.x` exception), draft proper release notes (auto-generated via `.github/release.yml`, hand-curated grouped by change type with highlights + upgrade notes, or hybrid), update `CHANGELOG.md`, create and push an annotated tag, and publish the GitHub release. Stops at the tag push when a tag-driven release workflow already publishes. |
 | `skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
 | `skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
-| `skills/serena-config/SKILL.md` | `/serena-config` | Configure the [Serena](https://oraios.github.io/serena/) MCP server across both layers: global `~/.serena/serena_config.yml` (settings, contexts, modes, `ls_specific_settings`) and per-repo `.serena/project.yml` (languages, ignore rules, monorepo `additional_workspace_folders`, `read_only`). Routes to `references/project-config.md` and `references/global-config.md`; covers the create → index → activate lifecycle, the layered override model, and `serena print-system-prompt` verification. |
 
 ## Scope
 
@@ -72,7 +69,6 @@ harness); the bundled `bash-shorten.py` rewriter additionally requires
 | --- | --- | --- | --- |
 | `bash-shortening` | methodology + `bash-shorten.py` rewriter | bash 4+ in target scripts, **ast-grep** (when running the rewriter) | shellcheck (post-validation), sd / ripgrep / fd (`--include modernize`) |
 | `chezmoi` | `chezmoi` CLI | chezmoi | `op` / `bw` / `age` / `gpg` (one of, when using encrypted dotfiles); Context7 MCP (latest template-function docs) |
-| `copilot` | `gh` CLI + `gh agent-task` + GitHub Copilot Chat | gh, gh agent-task extension | review skill (e.g. `age` or `code-review`) for `review` mode |
 | `file-handler` | `bash` + standard POSIX tools (`find`, `grep`) | bash 4+, `find`, `grep` | — |
 | `gh` | `gh` CLI | gh | — |
 | `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
@@ -81,17 +77,15 @@ harness); the bundled `bash-shorten.py` rewriter additionally requires
 | `justfile` | `just` | just | — |
 | `oss-hygiene` | `gh` CLI (`gh api`) + scaffolded GitHub Actions (Dependabot, Scorecard, dependency review, CodeQL) | gh | — |
 | `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
-| `ralphify-spec` | [`ralphify`](https://github.com/ghuntley/ralphify) | ralphify (`uv tool install ralphify`), Python 3.10+ | — |
 | `release` | `git` + `gh` CLI (`gh release`) | git, gh | `.github/release.yml` (for `--generate-notes` grouping), `CHANGELOG.md` (when the repo keeps one) |
 | `respond` | `gh` CLI + `git` | gh, git | — |
 | `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
-| `serena-config` | [Serena](https://oraios.github.io/serena/) MCP `serena` CLI + config files | serena (for `print-system-prompt` / `project` verification) | Context7 MCP (latest config-key docs) |
 
 What that means in practice:
 
 - **No orchestration, no intent classification.** Each skill is a single
   focused step the user (or another skill) explicitly invokes.
-- **No required MCP servers.** Only `chezmoi`, `prek`, and `serena-config`
+- **No required MCP servers.** Only `chezmoi` and `prek`
   touch an MCP server at all, and only optionally: each uses Context7 for
   current docs and falls back to the wrapped CLI's own self-docs when it is
   missing (e.g. `prek` uses documented hook revisions).
@@ -233,7 +227,7 @@ and works in any compliant client.
 2. Auto-detects installed Claude Code, Cursor, Codex, and opencode CLIs and
    installs every skill into each via `npx skills` (pass `--harness <name>` to
    target other agents — gemini, copilot, vscode, etc.).
-3. Optionally registers the `context7` MCP server (used by the `chezmoi`, `prek`, and `serena-config` skills).
+3. Optionally registers the `context7` MCP server (used by the `chezmoi` and `prek` skills).
    Auto-registration currently covers Claude Code only; for other harnesses it
    prints a manual-config hint (see the Context7 section below).
 
