@@ -40,7 +40,7 @@ Sources agree that a CLI for agents needs machine-readable output and strict inp
 | Typer, Click, argparse | Python | typo suggestions only |
 | `click-to-mcp` | Python | wraps a Click or Typer CLI as an MCP server (7 stars) |
 | FastMCP `generate-cli` | Python | creates a CLI from an MCP server (reverse direction) |
-| `toon-python` | Python | TOON encoder only |
+| `toon-python` | Python | TOON encoder and decoder |
 
 No Python framework examined has a built-in `--llms`, `--mcp`, or TOON output mode.
 

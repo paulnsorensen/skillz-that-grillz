@@ -13,6 +13,6 @@ The Improving Agents TOON Benchmarks post tests how well LLMs retrieve facts fro
 
 ## Limitations of the TOON Benchmarks post
 
-Each Improving Agents test uses one small model, so the results can differ on larger models. The conflict with the vendor benchmark appears to come from dataset and prompt differences, not from errors in either benchmark.
+Each Improving Agents test uses one small model, so the results can differ on larger models. Dataset and prompt differences may explain the conflict with the vendor benchmark, but the available evidence does not establish that either benchmark is error-free.
 
 _Source: https://www.improvingagents.com/blog/toon-benchmarks · Updated: 2026-09-23_

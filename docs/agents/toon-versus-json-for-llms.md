@@ -10,7 +10,7 @@ sources:
 ---
 # TOON versus JSON for LLMs
 
-Independent benchmarks show that LLMs read TOON less accurately than JSON, although TOON uses fewer tokens. No evidence shows that model vendors train on TOON or support it in constrained decoding; their structured-output features use JSON Schema. Only the TOON project's own benchmark shows TOON matching JSON.
+In the independent benchmarks cited, TOON scored lower than JSON on the tested models, although it used fewer tokens. No examined source describes TOON training or TOON constrained decoding at OpenAI, Anthropic, or Google; their structured-output features use JSON Schema. The TOON project's own benchmark reports near-parity with JSON.
 
 ## Vendor claim: TOON matches JSON with fewer tokens
 
@@ -22,11 +22,11 @@ Independent TOON benchmarks disagree with the vendor claim. Improving Agents' "T
 
 ## Generating TOON in agent tool calls
 
-TOON output from models is less reliable than JSON output in agent tool calling. The "Notation Matters" preprint (arXiv:2605.29676) reports up to 18% token savings at about a 9-point accuracy cost. Parse failures cascade in multi-turn runs, and parallel tool-call output collapses for most models. See [Notation Matters](sources/notation-matters-token-optimized-formats.md).
+In the Notation Matters tests of five open-weight models on four tool-calling benchmarks, TOON output was less accurate than JSON and had more multi-turn and parallel-call failures. The "Notation Matters" preprint (arXiv:2605.29676) reports up to 18% token savings at about a 9-point accuracy cost. Parse failures cascade in multi-turn runs, and parallel tool-call output collapses for most models. See [Notation Matters](sources/notation-matters-token-optimized-formats.md).
 
-## Why models handle JSON better than TOON
+## TOON training data and vendor support
 
-Models see far more JSON than TOON in training. OpenAI, Anthropic, and Google offer JSON Schema constrained decoding, and none of the sources examined describe a TOON equivalent. This absence claim covers only the structured-output guides checked on 2026-09-23. Format choice matters most for small models: one 2024 study (arXiv:2411.10541) found swings up to 40% on GPT-3.5 and more robustness on GPT-4.
+The cited sources do not measure how much JSON or TOON models see in training. A secondary summary of structured outputs across providers reports that OpenAI, Anthropic, and Google offer JSON Schema constrained decoding; the sources examined on 2026-09-23 describe no TOON equivalent ([Structured outputs across providers](https://niteagent.com/blog/2026-06-04-structured-outputs-across-providers)). Format choice matters most for small models: one 2024 study (arXiv:2411.10541) found swings up to 40% on GPT-3.5 and more robustness on GPT-4.
 
 ## When TOON output is reasonable
 

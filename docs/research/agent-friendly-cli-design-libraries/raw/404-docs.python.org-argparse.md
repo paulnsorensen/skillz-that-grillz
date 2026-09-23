@@ -7,4 +7,4 @@ Fetched: 2026-09-23
 Secondary source (pythonmorsels.com, fetched 2026-09-23):
 > the argparse module now includes a suggest_on_error argument that will suggest corrections when you make a typo in the choices options for a command-line argument
 
-Note: suggest_on_error is opt-in (default False), stdlib argparse, new in Python 3.14 (released Oct 2025). It is choices-typo suggestion only, not a full command/flag "did you mean".
+Note: suggest_on_error is opt-in (default False), stdlib argparse, new in Python 3.14 (released Oct 2025). It suggests corrections for mistyped string choices and subparser names (docs: "Enables suggestions for mistyped argument choices and subparser names").
