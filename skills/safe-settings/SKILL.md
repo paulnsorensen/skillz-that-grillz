@@ -12,8 +12,8 @@ description: >
   from one admin repo. Scaffolds the admin-repo layout (`settings.yml` +
   `suborgs/` + `repos/`), the GitHub App installation steps, and a
   scheduled `full-sync` GitHub Actions workflow. Distinct from /gh
-  (per-task ops) and /gh-bootstrap (one-shot `gh api` config of a single
-  repo) — this skill is for **org-scale settings as code** that
+  (per-task ops) and one-shot `gh api` config of a single repo — this
+  skill is for **org-scale settings as code** that
   reconciles continuously.
 allowed-tools: Read, Write, Edit, Glob, Bash(gh:*), Bash(git:*)
 license: MIT
@@ -29,7 +29,7 @@ Use this skill when an org wants to manage repository policy declaratively at sc
 
 | Situation | Tool |
 |---|---|
-| Single repo, one-time policy lockdown | `/gh-bootstrap` (gh CLI, imperative) |
+| Single repo, one-time policy lockdown | `gh api` calls or the repo settings page (imperative) |
 | Many repos, central policy that must stay in sync, drift detection, dry-run on PR | safe-settings (this skill) |
 | Per-task GitHub ops (PRs, issues, CI status) | `/gh` |
 
@@ -89,7 +89,7 @@ Files to copy from `assets/`:
 - `assets/suborg.yml` → `.github/suborgs/example.yml` — commented sub-org template
 - `assets/repo.yml` → `.github/repos/example.yml` — commented per-repo override template
 
-The org baseline in `assets/settings.yml` mirrors the gh-bootstrap defaults: squash-only merging, PR-title commit subjects, delete-on-merge, plus a default-branch ruleset with merge queue and required reviews. Read `references/schema.md` for the full key catalog and how the layering works.
+The org baseline in `assets/settings.yml` sets these defaults: squash-only merging, PR-title commit subjects, delete-on-merge, plus a default-branch ruleset with merge queue and required reviews. Read `references/schema.md` for the full key catalog and how the layering works.
 
 ### 3. Choose the deployment path
 
@@ -169,7 +169,7 @@ Re-running the skill on a partially-set-up admin repo should fill in only the mi
 
 ## What this skill is NOT for
 
-- Setting policy on a single one-off repo with no org behind it — use `/gh-bootstrap`
+- Setting policy on a single one-off repo with no org behind it — use `gh api` or the repo settings page
 - Running PR / issue / CI ops — use `/gh`
 - Local git work — use `/plate`
 - Authoring new safe-settings rules upstream — this skill consumes the released app, doesn't develop it
@@ -184,4 +184,4 @@ Re-running the skill on a partially-set-up admin repo should fill in only the mi
 - When you change the org-level `settings.yml`, every repo gets the change on next sync. There is no "stage to a few repos first" toggle short of using `enforcement: evaluate` on rulesets.
 - `force_create: true` in a `repos/<name>.yml` will create the repo if it doesn't exist. This is powerful and dangerous — use it deliberately.
 - safe-settings does not unset every API field by default. To remove a label, listing it under `labels.exclude` is required; to remove a collaborator, you typically delete the entry and run sync. Read the schema before assuming "remove from YAML" means "remove from GitHub".
-- The merge queue is a `merge_queue` rule inside a `rulesets` entry — not a top-level toggle. Same shape as `/gh-bootstrap`'s ruleset payload, just expressed in YAML and applied org-wide.
+- The merge queue is a `merge_queue` rule inside a `rulesets` entry — not a top-level toggle. Same shape as the REST API ruleset payload, just expressed in YAML and applied org-wide.

@@ -7,7 +7,7 @@
 # Schema reference:
 #   https://github.com/github/safe-settings/blob/main/docs/sample-settings/settings.yml
 #
-# This baseline mirrors the gh-bootstrap defaults: squash-only merging,
+# This baseline sets these defaults: squash-only merging,
 # PR title becomes the commit subject, branches deleted on merge, plus a
 # default-branch ruleset with merge queue and required reviews.
 
@@ -68,7 +68,7 @@ validator:
   pattern: "[a-z0-9][a-z0-9-]*"
 
 # Default-branch ruleset — merge queue + required checks + no force-push.
-# Same shape as the /gh-bootstrap ruleset payload, expressed in YAML and
+# Same shape as the REST API ruleset payload, expressed in YAML and
 # applied org-wide.
 rulesets:
   - name: main-protection

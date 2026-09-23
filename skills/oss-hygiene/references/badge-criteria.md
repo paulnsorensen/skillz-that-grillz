@@ -38,7 +38,7 @@ directly to repo artifacts the skill scaffolds:
 | `vulnerability_report_response` | Do you respond to reports promptly? | Process commitment in `SECURITY.md` |
 | `coding_standards` | Are coding standards documented? | `CONTRIBUTING.md` / linters |
 | `test_policy` | Is there a documented test policy? | `CONTRIBUTING.md` / CI |
-| `release_notes` | Are release notes published? | `.github/release.yml` (covered by `/gh-bootstrap`) |
+| `release_notes` | Are release notes published? | `.github/release.yml` (out of scope; see `/release`) |
 | `static_analysis` | Is static analysis used? | `.github/workflows/codeql.yml` |
 | `dynamic_analysis` | Is dynamic analysis used? | Optional; many small projects skip |
 | `crypto_practices` | Are cryptography best practices followed? | Project-specific |

@@ -12,10 +12,10 @@ risk weighting Scorecard itself uses.
 | Check | Risk | Skill action | Rationale |
 |---|---|---|---|
 | `Binary-Artifacts` | High | Scan tree for `.so .dll .jar .exe .zip .tgz`; warn on findings | Pinning binaries in source is a supply-chain footgun; surface, don't auto-delete |
-| `Branch-Protection` | High | None (handled by `/gh-bootstrap`) | Already covered by the ruleset |
+| `Branch-Protection` | High | None (out of scope) | The default-branch ruleset covers it |
 | `CI-Tests` | Low | None | Repo's existing CI already provides this signal |
 | `CII-Best-Practices` | Low | Print badge registration link | Self-attested; only the maintainer can answer the questions |
-| `Code-Review` | High | None (handled by `/gh-bootstrap`) | PR rule with required approving review is in the ruleset |
+| `Code-Review` | High | None (out of scope) | PR rule with required approving review is in the ruleset |
 | `Contributors` | Low | None | Passive; emerges from real activity over time |
 | `Dangerous-Workflow` | Critical | Audit existing workflows for `pull_request_target` + checkout-of-head | Refactoring is repo-specific; warn rather than auto-fix |
 | `Dependency-Update-Tool` | High | Scaffold `dependabot.yml` | Always useful; per-ecosystem entries commented out for the user to enable |
@@ -64,8 +64,8 @@ These are features, not bugs. Don't try to game them.
 
 ## How the skill maps to the score
 
-After running `/oss-hygiene` on a public repo with `/gh-bootstrap`
-already applied, you should expect to see green check marks on:
+After running `/oss-hygiene` on a public repo with a default-branch
+ruleset already applied, you should expect to see green check marks on:
 
 - `Branch-Protection`
 - `Code-Review` (gated on the review-count > 0; solo repos with 0
