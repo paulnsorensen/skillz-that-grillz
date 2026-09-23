@@ -1,0 +1,19 @@
+# Repo-layer hallouminate config.
+#
+# Declares this repo as a hallouminate tenant. `path = "."` resolves against
+# the repo root (the parent of .hallouminate/), so the config works from any
+# checkout or worktree. Embeddings inherit the XDG baseline
+# (~/.config/hallouminate/config.toml).
+#
+# Layout:
+#   docs/agents/  -> `repo:skillz-that-grillz:wiki`   (LLM-curated wiki)
+#   docs/**       -> `repo:skillz-that-grillz:corpus` (source documents,
+#                    for example docs/research/), excluding the wiki and
+#                    raw research captures (audit trail, not search hits).
+[[repository]]
+name = "skillz-that-grillz"
+path = "."
+wiki = "docs/agents"
+corpus_paths = ["docs"]
+corpus_globs = ["**/*.md"]
+corpus_exclude = ["agents/**", "**/raw/**"]
