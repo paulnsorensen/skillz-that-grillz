@@ -1,57 +1,42 @@
-"""Command output in JSON or text form, with list truncation."""
+"""Serialize a command's return value as one JSON document, with truncation."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from collections.abc import Mapping, Sequence
 from typing import TextIO
 
 
-def emit(
-    value: object,
-    *,
-    limit: int | None = None,
-    full: bool = False,
-    json_mode: bool = False,
-    stdout: TextIO | None = None,
+def write_result(
+    value: object, *, limit: int | None, full: bool, stdout: TextIO | None = None
 ) -> None:
-    """Print a scalar, mapping, or sequence in the shared output format.
+    """Print ``value`` as one JSON document; truncate a long sequence unless ``full``.
 
-    ``json_mode`` and mappings dump the whole value as JSON; ``limit`` applies
-    only to text output of a sequence or a multi-line string.
+    A sequence longer than ``limit`` is cut to its first ``limit`` items and
+    stderr gets a ``note:`` line, unless ``full`` is true or ``limit`` is
+    ``None``. Truncation never applies to a mapping or a string.
     """
-    if limit is not None and limit < 0:
-        raise ValueError(f"limit must not be negative: {limit}")
     stream = stdout if stdout is not None else sys.stdout
-    if json_mode or isinstance(value, Mapping):
-        payload = dict(value) if isinstance(value, Mapping) and not isinstance(value, dict) else value
-        print(json.dumps(payload, indent=2, default=str), file=stream)
-        return
+    payload = value
+    if limit is not None and isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        total = len(value)
+        if not full and total > limit:
+            payload = list(value)[:limit]
+            print(
+                f"note: showing {limit} of {total}; pass --full for the rest",
+                file=sys.stderr,
+            )
+    print(json.dumps(payload, indent=2, default=_default), file=stream)
+
+
+def _default(value: object) -> object:
+    """Fallback for ``json.dumps``: dataclass via ``asdict``, else mapping, else list, else ``str``."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return dataclasses.asdict(value)
+    if isinstance(value, Mapping):
+        return dict(value)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        _emit_list(value, limit=limit, full=full, stream=stream)
-        return
-    if isinstance(value, str) and limit is not None and "\n" in value:
-        _emit_list(value.splitlines(), limit=limit, full=full, stream=stream)
-        return
-    print(value, file=stream)
-
-
-def _emit_list(
-    items: Sequence[object], *, limit: int | None, full: bool, stream: TextIO
-) -> None:
-    total = len(items)
-    for item in items if full or limit is None else items[:limit]:
-        print(item, file=stream)
-    if limit is None:
-        return
-    if full:
-        print(
-            f"... showing {total} of {total} (--full; default limit={limit})",
-            file=stream,
-        )
-    elif total > limit:
-        print(
-            f"... showing {limit} of {total}; pass --full for the rest (limit={limit})",
-            file=stream,
-        )
+        return list(value)
+    return str(value)

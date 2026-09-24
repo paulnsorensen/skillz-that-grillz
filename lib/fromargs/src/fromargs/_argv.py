@@ -1,14 +1,14 @@
 """Argv repairs and scans that run around the single Cyclopts parse.
 
-Quote repair uses only a verified split. Leading flags move before a resolved
-leaf command, or before an unresolved command to preserve parser suggestions.
-Only verified moves print a plain-text ``note:`` line on stderr.
-Probing only parses; handlers never run here.
+Quote repair uses only a verified split. The global ``--json``/``--full``
+flags are stripped from anywhere before the end-of-options marker; they are
+never hoisted and never passed to a handler. Only a verified quote split
+prints a plain-text ``note:`` line on stderr. Probing only parses; handlers
+never run here.
 """
 
 from __future__ import annotations
 
-import itertools
 import os
 import shlex
 import sys
@@ -16,50 +16,25 @@ import types
 from collections.abc import Sequence
 from typing import Union, get_args, get_origin
 
-from cyclopts import App, CoercionError, CycloptsError, convert
+from cyclopts import App, CycloptsError
 
 from fromargs._errors import CliError
 
-JSON_FLAG = "--json"
-_HOISTABLE_FLAGS = frozenset({JSON_FLAG, "--full"})
+_GLOBAL_FLAGS = frozenset({"--json", "--full"})
 
 
-def hoist_leading_flags(app: App, argv: Sequence[str]) -> list[str]:
-    """Move leading ``--json``/``--full`` flags after a registered command.
+def strip_global_flags(app: App, argv: Sequence[str]) -> tuple[list[str], bool]:
+    """Remove bare ``--json``/``--full`` tokens before the end-of-options marker.
 
-    Only valueless global flags move. The value of any other flag can equal a
-    command name, so a guess can run the wrong command.
+    ``--json`` is a no-op; ``--full`` turns off truncation. Neither flag ever
+    reaches a handler or Cyclopts. Returns the stripped tokens and whether
+    ``--full`` was present.
     """
     tokens = list(argv)
-    leading = list(itertools.takewhile(lambda token: token.startswith("-"), tokens))
-    if not leading or not _HOISTABLE_FLAGS.issuperset(leading):
-        return tokens
-    rest = tokens[len(leading) :]
-    try:
-        command, apps, _ = app.parse_commands(rest)
-    except (CycloptsError, ValueError):
-        command, apps = (), ()
-    if (
-        command
-        and apps[-1].default_command is not None
-        and rest[: len(command)] == list(command)
-    ):
-        print(
-            f"note: moved {' '.join(leading)} after {' '.join(command)!r}",
-            file=sys.stderr,
-        )
-        return [*command, *leading, *rest[len(command) :]]
-    prefix = list(itertools.takewhile(lambda token: not token.startswith("-"), rest))
-    return [*prefix, *leading, *rest[len(prefix) :]] if prefix else tokens
-
-
-def json_requested(app: App, argv: Sequence[str]) -> bool:
-    """True when an option token asks for JSON: ``--json`` or ``--json=<true>``."""
-    for token in _options(app, argv):
-        flag, equals, value = token.partition("=")
-        if flag == JSON_FLAG and (not equals or _is_true(value)):
-            return True
-    return False
+    boundary = len(_options(app, tokens))
+    before, after = tokens[:boundary], tokens[boundary:]
+    kept = [token for token in before if token not in _GLOBAL_FLAGS]
+    return kept + after, "--full" in before
 
 
 def repair_argv(app: App, argv: Sequence[str]) -> list[str]:
@@ -118,14 +93,6 @@ def _control_flags(app: App, argv: Sequence[str]) -> frozenset[str]:
         flags.update(command_app.help_flags)
         flags.update(command_app.version_flags)
     return frozenset(flags)
-
-
-def _is_true(value: str) -> bool:
-    """Read ``value`` with Cyclopts' own boolean words; an invalid word is false."""
-    try:
-        return convert(bool, [value]) is True
-    except CoercionError:
-        return False
 
 
 def _options(app: App, argv: Sequence[str]) -> list[str]:

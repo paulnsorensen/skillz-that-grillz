@@ -1,11 +1,11 @@
-"""Public surface of fromargs and native Cyclopts JSON-string parameters."""
+"""Public surface of fromargs: App decorators, groups, and reserved parameters."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 
-from cyclopts import App
+import pytest
 
 import fromargs
 
@@ -16,29 +16,86 @@ class Point:
 
 
 def test_public_surface() -> None:
-    assert set(fromargs.__all__) == {
-        "CliError",
-        "contract_error",
-        "emit",
-        "repair_argv",
-        "run",
-    }
-    assert len(fromargs.__all__) == 5
+    assert set(fromargs.__all__) == {"App", "CliError", "contract_error"}
+    assert len(fromargs.__all__) == 3
     assert Path(fromargs.__file__).with_name("py.typed").is_file()
     for name in fromargs.__all__:
         assert hasattr(fromargs, name)
 
 
+def test_bare_decorator_registers_a_command() -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def greet(name: str) -> str:
+        return f"hi {name}"
+
+    assert app.run(["greet", "x"]) == 0
+
+
+def test_decorator_with_name_and_limit_registers_a_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    @app.command(name="ls", limit=1)
+    def listing() -> list[int]:
+        return [1, 2]
+
+    assert app.run(["ls"]) == 0
+    assert "note: showing 1 of 2" in capsys.readouterr().err
+
+
+def test_group_returns_a_nested_command_registrar() -> None:
+    app = fromargs.App("t")
+    group = app.group("wheels", help="Inspect wheels.")
+
+    @group.command(name="list")
+    def listing() -> list[str]:
+        return ["a"]
+
+    assert app.run(["wheels", "list"]) == 0
+
+
+def test_group_nests_further_groups() -> None:
+    app = fromargs.App("t")
+    outer = app.group("a")
+    inner = outer.group("b")
+
+    @inner.command
+    def deep() -> None:
+        pass
+
+    assert app.run(["a", "b", "deep"]) == 0
+
+
+def test_reserved_json_parameter_is_rejected_at_registration() -> None:
+    app = fromargs.App("t")
+
+    with pytest.raises(ValueError, match="json"):
+
+        @app.command
+        def bad(*, json: bool = False) -> None:
+            pass
+
+
+def test_reserved_full_parameter_is_rejected_at_registration() -> None:
+    app = fromargs.App("t")
+
+    with pytest.raises(ValueError, match="full"):
+
+        @app.command
+        def bad(*, full: bool = False) -> None:
+            pass
+
+
 def test_json_string_parameters_still_parse() -> None:
     received: list[object] = []
-    app = App()
+    app = fromargs.App("t")
 
     @app.command
     def conf(*, point: Point, numbers: list[int]) -> None:
         received.extend([point, numbers])
 
-    assert (
-        fromargs.run(app, argv=["conf", "--point", '{"a": 1}', "--numbers", "[1, 2]"])
-        == 0
-    )
+    assert app.run(["conf", "--point", '{"a": 1}', "--numbers", "[1, 2]"]) == 0
     assert received == [Point(a=1), [1, 2]]

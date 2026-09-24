@@ -18,8 +18,6 @@ from pathlib import Path
 import pytest
 from cheese_cave import Wheel, build_app, starter_cave
 
-import fromargs
-
 JsonLine = Callable[[str], dict[str, object]]
 Outcome = tuple[int, str, str, dict[str, Wheel]]
 
@@ -29,7 +27,7 @@ EXAMPLE = Path(__file__).parents[1] / "examples" / "cheese_cave.py"
 def _call(capsys: pytest.CaptureFixture[str], argv: list[str]) -> Outcome:
     """Run ``argv`` against a new starter cave; return status, out, err, and cave."""
     cave = starter_cave()
-    status = fromargs.run(build_app(cave), argv=argv)
+    status = build_app(cave).run(argv)
     captured = capsys.readouterr()
     return status, captured.out, captured.err, cave
 
@@ -37,39 +35,23 @@ def _call(capsys: pytest.CaptureFixture[str], argv: list[str]) -> Outcome:
 HEALS = {
     "leading --json before a nested command": (
         ["--json", "wheels", "list"],
-        ["wheels", "list", "--json"],
-        ["note: moved --json after 'wheels list'"],
+        ["wheels", "list"],
+        ["note: showing 3 of 4; pass --full for the rest"],
     ),
     "leading --full before a nested command": (
         ["--full", "wheels", "list"],
         ["wheels", "list", "--full"],
-        ["note: moved --full after 'wheels list'"],
+        [],
     ),
     "flag merged into an int value": (
         ["age", "brie", "--weeks", "2 --dry-run"],
         ["age", "brie", "--weeks", "2", "--dry-run"],
         ["note: split quoted argument '2 --dry-run' into ['2', '--dry-run']"],
     ),
-    "whole tail merged into one token": (
-        ["age", "brie", "--weeks", "3 --dry-run --json"],
-        ["age", "brie", "--weeks", "3", "--dry-run", "--json"],
-        [
-            "note: split quoted argument '3 --dry-run --json' "
-            "into ['3', '--dry-run', '--json']"
-        ],
-    ),
-    "equals form that changes state": (
-        ["age", "comte", "--weeks=8 --json"],
-        ["age", "comte", "--weeks=8", "--json"],
-        ["note: split quoted argument '--weeks=8 --json' into ['--weeks=8', '--json']"],
-    ),
     "leading flag and merged value in one call": (
         ["--json", "age", "gouda", "--weeks", "2 --dry-run"],
-        ["age", "gouda", "--json", "--weeks", "2", "--dry-run"],
-        [
-            "note: moved --json after 'age'",
-            "note: split quoted argument '2 --dry-run' into ['2', '--dry-run']",
-        ],
+        ["age", "gouda", "--weeks", "2", "--dry-run"],
+        ["note: split quoted argument '2 --dry-run' into ['2', '--dry-run']"],
     ),
     "snake_case flag (native Cyclopts)": (
         ["age", "brie", "--weeks", "2", "--dry_run"],
@@ -88,10 +70,10 @@ def test_mangled_argv_heals_to_the_canonical_call(
     canonical: list[str],
     notes: list[str],
 ) -> None:
-    expected_status, expected_out, expected_err, expected_cave = _call(
+    expected_status, expected_out, _expected_err, expected_cave = _call(
         capsys, canonical
     )
-    assert (expected_status, expected_err) == (0, "")
+    assert expected_status == 0
 
     status, out, err, cave = _call(capsys, mangled)
 
@@ -104,10 +86,11 @@ def test_mangled_argv_heals_to_the_canonical_call(
 def test_state_change_runs_once_after_repair(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    _, out, _, cave = _call(capsys, ["age", "comte", "--weeks=8 --json"])
+    _, out, err, cave = _call(capsys, ["age", "comte", "--weeks", "8 --no-dry-run"])
 
     assert json.loads(out) == {"name": "comte", "weeks": 60, "dry_run": False}
     assert cave["comte"].weeks == 60
+    assert err == "note: split quoted argument '8 --no-dry-run' into ['8', '--no-dry-run']\n"
 
 
 def _did_you_mean(err: str) -> str:
@@ -133,31 +116,28 @@ def test_agent_retries_a_typo_from_the_json_error(
     status, out, err, _ = _call(capsys, retry)
 
     assert status == 0
-    assert err == "note: moved --json after 'wheels list'\n"
+    assert err == "note: showing 3 of 4; pass --full for the rest\n"
     assert [wheel["name"] for wheel in json.loads(out)] == [
         "comte",
         "gouda",
         "stilton",
-        "brie",
     ]
 
 
 def test_agent_follows_the_truncation_hint(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    status, out, _, _ = _call(capsys, ["wheels", "list"])
+    status, out, err, _ = _call(capsys, ["wheels", "list"])
 
     assert status == 0
-    assert out.splitlines()[-1] == (
-        "... showing 3 of 4; pass --full for the rest (limit=3)"
-    )
+    assert err == "note: showing 3 of 4; pass --full for the rest\n"
     assert "brie" not in out
 
-    status, out, _, _ = _call(capsys, ["wheels", "list", "--full"])
+    status, out, err, _ = _call(capsys, ["wheels", "list", "--full"])
 
     assert status == 0
+    assert err == ""
     assert "brie" in out
-    assert out.splitlines()[-1] == "... showing 4 of 4 (--full; default limit=3)"
 
 
 REFUSALS = {
@@ -180,15 +160,19 @@ REFUSALS = {
     ("argv", "message"), REFUSALS.values(), ids=REFUSALS.keys()
 )
 def test_unsafe_guess_is_refused_with_an_actionable_error(
-    capsys: pytest.CaptureFixture[str], argv: list[str], message: str
+    capsys: pytest.CaptureFixture[str],
+    single_json_line: JsonLine,
+    argv: list[str],
+    message: str,
 ) -> None:
     status, out, err, cave = _call(capsys, argv)
 
     assert status == 2
     assert out == ""
     assert "note:" not in err
-    assert err.startswith("ERROR: ")
-    assert message in err
+    envelope = single_json_line(err)
+    assert envelope["exit_code"] == 2
+    assert message in str(envelope["error"])
     assert cave == starter_cave()
 
 
@@ -216,7 +200,6 @@ def test_script_heals_argv_in_a_real_process() -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stderr.splitlines() == [
-        "note: moved --json after 'age'",
-        "note: split quoted argument '2 --dry-run' into ['2', '--dry-run']",
+        "note: split quoted argument '2 --dry-run' into ['2', '--dry-run']"
     ]
     assert json.loads(result.stdout) == {"name": "brie", "weeks": 6, "dry_run": True}

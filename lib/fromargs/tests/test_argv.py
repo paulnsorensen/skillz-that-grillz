@@ -1,19 +1,16 @@
-"""Behavior of the argv repairs: leading-flag hoist and quote-split probing."""
+"""Behavior of the private argv repairs: global-flag stripping and quote-split probing."""
 
 # No `from __future__ import annotations`: Cyclopts resolves the Annotated
 # hints of commands defined inside tests, which reference local converters.
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated
 
 import pytest
 from cyclopts import App, Parameter, Token, validators
 
-import fromargs
-from fromargs._argv import hoist_leading_flags
-
-JsonLine = Callable[[str], dict[str, object]]
+from fromargs._argv import repair_argv, strip_global_flags
 
 
 def _app(calls: list[dict[str, object]]) -> App:
@@ -23,132 +20,57 @@ def _app(calls: list[dict[str, object]]) -> App:
     def show(
         name: str,
         *,
-        json: bool = False,
-        full: bool = False,
         count: int = 1,
         tags: list[str] | None = None,
         label: str = "",
     ) -> None:
-        calls.append(
-            {
-                "name": name,
-                "json": json,
-                "full": full,
-                "count": count,
-                "tags": tags,
-                "label": label,
-            }
-        )
+        calls.append({"name": name, "count": count, "tags": tags, "label": label})
 
     return app
 
 
-def test_hoists_leading_json(capsys: pytest.CaptureFixture[str]) -> None:
+def test_strip_removes_bare_json_and_full_anywhere() -> None:
     calls: list[dict[str, object]] = []
+    app = _app(calls)
 
-    assert fromargs.run(_app(calls), argv=["--json", "show", "x", "--count", "2"]) == 0
+    tokens, full = strip_global_flags(app, ["--json", "show", "x", "--full", "--count", "2"])
 
-    assert calls == [
-        {
-            "name": "x",
-            "json": True,
-            "full": False,
-            "count": 2,
-            "tags": None,
-            "label": "",
-        }
-    ]
-    assert capsys.readouterr().err == "note: moved --json after 'show'\n"
+    assert tokens == ["show", "x", "--count", "2"]
+    assert full is True
 
 
-def test_hoists_leading_json_and_full(capsys: pytest.CaptureFixture[str]) -> None:
-    calls: list[dict[str, object]] = []
+def test_strip_without_full_reports_false() -> None:
+    app = _app([])
 
-    assert fromargs.run(_app(calls), argv=["--full", "--json", "show", "x"]) == 0
+    tokens, full = strip_global_flags(app, ["--json", "show", "x"])
 
-    assert calls[0]["json"] is True
-    assert calls[0]["full"] is True
-    assert capsys.readouterr().err == "note: moved --full --json after 'show'\n"
-
-
-@pytest.mark.parametrize(
-    ("argv", "rejected"),
-    [
-        (["--count", "show", "x"], "--count"),
-        (["--json", "--count", "show", "x"], "--json"),
-    ],
-)
-def test_other_leading_flag_passes_through_unchanged(
-    capsys: pytest.CaptureFixture[str], argv: list[str], rejected: str
-) -> None:
-    calls: list[dict[str, object]] = []
-
-    assert fromargs.run(_app(calls), argv=argv) == 2
-
-    err = capsys.readouterr().err
-    assert "note:" not in err
-    assert f"Unknown command {rejected}" in err.replace('"', "").replace("\\", "")
-    assert calls == []
+    assert tokens == ["show", "x"]
+    assert full is False
 
 
-def test_leading_flag_before_unknown_command_keeps_suggestion(
-    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
-) -> None:
-    calls: list[dict[str, object]] = []
-
-    for argv in (["--json", "shw", "x"], ["--json", "shw"]):
-        assert fromargs.run(_app(calls), argv=argv) == 2
-        err = capsys.readouterr().err
-        assert "note:" not in err
-        assert "Did you mean" in str(single_json_line(err)["error"])
-    assert calls == []
-
-
-def test_leading_flag_before_unknown_nested_command_keeps_suggestion(
-    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
-) -> None:
-    calls: list[str] = []
+def test_strip_leaves_tokens_after_the_delimiter_untouched() -> None:
     app = App()
-    group = App(name="grp")
-    app.command(group)
 
-    @group.command
-    def deep(*, json: bool = False) -> None:
-        calls.append("deep")
+    @app.command
+    def echo(*words: str) -> None:
+        pass
 
-    assert fromargs.run(app, argv=["--json", "grp", "dep"]) == 2
-    err = capsys.readouterr().err
-    assert "note:" not in err
-    assert "Did you mean" in str(single_json_line(err)["error"])
-    assert calls == []
+    tokens, full = strip_global_flags(app, ["echo", "--", "--json", "--full"])
 
-
-def test_hoists_after_nested_command(capsys: pytest.CaptureFixture[str]) -> None:
-    received: list[tuple[str, bool]] = []
-    app = App()
-    group = App(name="group")
-    app.command(group)
-
-    @group.command
-    def leaf(name: str, *, json: bool = False) -> None:
-        received.append((name, json))
-
-    assert fromargs.run(app, argv=["--json", "group", "leaf", "x"]) == 0
-
-    assert received == [("x", True)]
-    assert capsys.readouterr().err == "note: moved --json after 'group leaf'\n"
+    assert tokens == ["echo", "--", "--json", "--full"]
+    assert full is False
 
 
 def test_splits_single_verified_candidate(capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, object]] = []
     app = _app(calls)
 
-    repaired = fromargs.repair_argv(app, ["show", "x", "--count", "2 --full"])
+    repaired = repair_argv(app, ["show", "x", "--count", "2 --label y"])
 
-    assert repaired == ["show", "x", "--count", "2", "--full"]
+    assert repaired == ["show", "x", "--count", "2", "--label", "y"]
     assert (
         capsys.readouterr().err
-        == "note: split quoted argument '2 --full' into ['2', '--full']\n"
+        == "note: split quoted argument '2 --label y' into ['2', '--label', 'y']\n"
     )
     assert calls == []
 
@@ -156,27 +78,9 @@ def test_splits_single_verified_candidate(capsys: pytest.CaptureFixture[str]) ->
 def test_splits_equals_form(capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, object]] = []
 
-    repaired = fromargs.repair_argv(_app(calls), ["show", "x", "--count=2 --full"])
+    repaired = repair_argv(_app(calls), ["show", "x", "--count=2 --label y"])
 
-    assert repaired == ["show", "x", "--count=2", "--full"]
-    assert "note: split quoted argument" in capsys.readouterr().err
-
-
-def test_run_uses_the_split(capsys: pytest.CaptureFixture[str]) -> None:
-    calls: list[dict[str, object]] = []
-
-    assert fromargs.run(_app(calls), argv=["show", "x", "--count", "2 --full"]) == 0
-
-    assert calls == [
-        {
-            "name": "x",
-            "json": False,
-            "full": True,
-            "count": 2,
-            "tags": None,
-            "label": "",
-        }
-    ]
+    assert repaired == ["show", "x", "--count=2", "--label", "y"]
     assert "note: split quoted argument" in capsys.readouterr().err
 
 
@@ -184,7 +88,7 @@ def test_valid_argv_is_returned_unchanged(capsys: pytest.CaptureFixture[str]) ->
     calls: list[dict[str, object]] = []
     argv = ["show", "x", "--tags", "a --count 2"]
 
-    assert fromargs.repair_argv(_app(calls), argv) == argv
+    assert repair_argv(_app(calls), argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -207,7 +111,7 @@ def test_ambiguous_candidates_keep_argv(capsys: pytest.CaptureFixture[str]) -> N
 
     argv = ["tag", "--first", "a --count 1", "--second", "b --count 2"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -233,16 +137,16 @@ def test_probing_stops_at_second_candidate(capsys: pytest.CaptureFixture[str]) -
     argv = ["tag", "--first", "a --count 1", "--second", "b --count 2"]
     argv += ["--mark", "m --count 3"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert "m" not in converted
     assert capsys.readouterr().err == ""
 
 
 def test_zero_candidates_keep_argv(capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, object]] = []
-    argv = ["show", "x", "--count", "two --full"]
+    argv = ["show", "x", "--count", "two --label y"]
 
-    assert fromargs.repair_argv(_app(calls), argv) == argv
+    assert repair_argv(_app(calls), argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -257,7 +161,7 @@ def test_plain_str_option_value_is_not_split(
 
     argv = ["note", "--label", "a --count 2"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -272,7 +176,7 @@ def test_token_after_double_dash_is_not_split(
 
     argv = ["triple", "--", "--count", "x -y"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -287,7 +191,7 @@ def test_value_after_boolean_flag_is_not_split(
 
     argv = ["note", "--verbose", "hello --count 2"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -297,7 +201,7 @@ def test_help_flag_inside_pieces_is_not_split(
     calls: list[dict[str, object]] = []
     argv = ["show", "x", "--count", "2 --help"]
 
-    assert fromargs.repair_argv(_app(calls), argv) == argv
+    assert repair_argv(_app(calls), argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -310,7 +214,7 @@ def test_app_help_flags_guard_the_split(capsys: pytest.CaptureFixture[str]) -> N
 
     argv = ["fetch", "--tags", "1 --usage"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -325,7 +229,7 @@ def test_split_without_dash_piece_is_refused(
 
     argv = ["pair", "--point", "1 2"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -342,7 +246,7 @@ def test_path_option_value_is_not_split(capsys: pytest.CaptureFixture[str]) -> N
 
     argv = ["p", "--path", "pyproject.toml --force"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -357,7 +261,7 @@ def test_list_str_option_value_is_not_split(
 
     argv = ["label", "--tags", "x --target /etc --force"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -372,7 +276,7 @@ def test_optional_str_option_value_is_not_split(
 
     argv = ["note", "--label", "a --count 2"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -387,7 +291,7 @@ def test_split_refused_when_pieces_contain_version_flag(
 
     argv = ["show", "--count", "2 --version"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
 
 
@@ -404,32 +308,5 @@ def test_split_refused_when_pieces_contain_nested_help_flag(
 
     argv = ["grp", "fetch", "--tags", "1 --usage"]
 
-    assert fromargs.repair_argv(app, argv) == argv
+    assert repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
-
-
-def test_hoist_does_not_misplace_flags_past_a_gap_in_the_command() -> None:
-    app = App()
-
-    @app.meta.default
-    def meta(
-        *tokens: Annotated[str, Parameter(show=False, allow_leading_hyphen=True)],
-        verbose: bool = False,
-    ) -> object:
-        return app(tokens)
-
-    db = App(name="db")
-    app.command(db)
-
-    @db.command
-    def migrate(target: str = "head", *, json: bool = False) -> None:
-        raise AssertionError("probing must not run a handler")
-
-    argv = ["--json", "db", "--verbose", "migrate"]
-
-    assert hoist_leading_flags(app.meta, argv) == [
-        "db",
-        "--json",
-        "--verbose",
-        "migrate",
-    ]

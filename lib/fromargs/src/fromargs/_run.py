@@ -1,4 +1,4 @@
-"""Parse argv once, invoke one handler, and map the outcome to an exit status."""
+"""Parse argv once, invoke one handler, and print its result as one JSON document."""
 
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ from typing import TextIO
 
 from cyclopts import App, CycloptsError
 
-from fromargs._argv import hoist_leading_flags, json_requested, repair_rejected
+from fromargs._argv import repair_rejected, strip_global_flags
 from fromargs._errors import CliError
+from fromargs._output import write_result
 
 
 def run(
@@ -22,60 +23,61 @@ def run(
 ) -> int:
     """Parse argv, invoke the command once, and return its exit status.
 
-    Leading ``--json``/``--full`` flags move after the command first. A
-    rejected argv gets one verified quote-split repair before it fails.
+    A bare ``--json`` or ``--full`` token anywhere before the end-of-options
+    marker is stripped before parsing. ``--json`` is a no-op; ``--full``
+    turns off result truncation. A rejected argv gets one verified
+    quote-split repair before it fails.
 
-    The handler may return ``None`` (exit 0), an ``int`` that is not a
-    ``bool``, or a coroutine that resolves to one of them. A coroutine runs
-    through ``asyncio.run``. ``TypeError`` is raised for a ``str`` argv, for
-    any other status, and for an async handler under a running event loop or
-    a non-asyncio backend on the resolved command chain.
+    ``None`` from the handler means exit 0 with no stdout. Any other return
+    value is printed as one JSON document and the command exits 0. A
+    coroutine handler runs through ``asyncio.run``. ``TypeError`` is raised
+    for a ``str`` argv, and for an async handler under a running event loop
+    or a non-asyncio backend on the resolved command chain.
 
-    Errors go to stderr as one line: ``ERROR: <message>``, or the JSON object
-    ``{"error": <message>, "exit_code": <n>}`` when JSON output is requested.
-    ``--json`` or ``--json=<true>`` before the end-of-options marker requests
-    it. After a successful parse, the handler's bound ``json`` argument
-    decides instead, and a non-bool ``json`` value means text.
+    Every error is one JSON line on stderr: ``{"error": <message>,
+    "exit_code": <n>}``. Repair ``note:`` lines stay plain text on stderr.
     """
     if isinstance(argv, str):
         raise TypeError("argv must be a sequence of strings, not str")
     tokens = list(sys.argv[1:] if argv is None else argv)
+    tokens, full = strip_global_flags(app, tokens)
     if not tokens and app.default_command is None:
-        return _report("command required", 2, json_mode=False)
-    tokens = hoist_leading_flags(app, tokens)
-    json_mode = json_requested(app, tokens)
+        return _report("command required", 2)
     context = redirect_stdout(stdout) if stdout is not None else nullcontext()
     with context:
         try:
-            handler, bound = _parse(app, tokens)
+            handler, bound, tokens, full = _parse(app, tokens, full)
         except CliError as exc:
-            return _report(str(exc), exc.exit_code, json_mode=json_mode)
+            return _report(str(exc), exc.exit_code)
         except CycloptsError as exc:
-            return _report(str(exc), 2, json_mode=json_mode)
-        if "json" in bound.arguments:
-            json_mode = bound.arguments["json"] is True
+            return _report(str(exc), 2)
         try:
             status = handler(*bound.args, **bound.kwargs)
             if inspect.iscoroutine(status):
                 status = _await(app, tokens, status)
         except CliError as exc:
-            return _report(str(exc), exc.exit_code, json_mode=json_mode)
+            return _report(str(exc), exc.exit_code)
     if status is None:
         return 0
-    if isinstance(status, bool) or not isinstance(status, int):
-        raise TypeError(f"command returned non-integer status: {status!r}")
-    return status
+    limit = getattr(handler, "__fromargs_limit__", None)
+    write_result(status, limit=limit, full=full, stdout=stdout)
+    return 0
 
 
-def _parse(app: App, tokens: list[str]) -> tuple[Callable[..., object], BoundArguments]:
+def _parse(
+    app: App, tokens: list[str], full: bool
+) -> tuple[Callable[..., object], BoundArguments, list[str], bool]:
     """Parse ``tokens``; on rejection, parse only a verified repair."""
     try:
-        return _parse_once(app, tokens)
+        handler, bound = _parse_once(app, tokens)
+        return handler, bound, tokens, full
     except (CycloptsError, CliError):
         repaired = repair_rejected(app, tokens)
         if repaired is None:
             raise
-        return _parse_once(app, repaired)
+        repaired, more_full = strip_global_flags(app, repaired)
+        handler, bound = _parse_once(app, repaired)
+        return handler, bound, repaired, full or more_full
 
 
 def _parse_once(
@@ -110,10 +112,6 @@ def _await(
     raise TypeError("async commands cannot run inside a running event loop")
 
 
-def _report(message: str, exit_code: int, *, json_mode: bool) -> int:
-    if json_mode:
-        line = json.dumps({"error": message, "exit_code": exit_code})
-    else:
-        line = f"ERROR: {' '.join(message.splitlines())}"
-    print(line, file=sys.stderr)
+def _report(message: str, exit_code: int) -> int:
+    print(json.dumps({"error": message, "exit_code": exit_code}), file=sys.stderr)
     return exit_code
