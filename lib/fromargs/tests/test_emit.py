@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import PurePosixPath
+from types import MappingProxyType
 
 import pytest
 
@@ -83,3 +84,26 @@ def test_scalar_prints_plainly_to_given_stream() -> None:
     fromargs.emit(42, stdout=buffer)
 
     assert buffer.getvalue() == "42\n"
+
+
+def test_tuple_is_truncated_like_a_list(capsys: pytest.CaptureFixture[str]) -> None:
+    fromargs.emit(("a", "b", "c"), limit=2)
+
+    assert capsys.readouterr().out.splitlines() == [
+        "a",
+        "b",
+        "... showing 2 of 3; pass --full for the rest (limit=2)",
+    ]
+
+
+def test_non_dict_mapping_dumps_as_json(capsys: pytest.CaptureFixture[str]) -> None:
+    value = MappingProxyType({"k": 1})
+
+    fromargs.emit(value)
+
+    assert capsys.readouterr().out == json.dumps(dict(value), indent=2) + "\n"
+
+
+def test_negative_limit_is_rejected() -> None:
+    with pytest.raises(ValueError, match="limit"):
+        fromargs.emit([1, 2, 3, 4, 5], limit=-1)

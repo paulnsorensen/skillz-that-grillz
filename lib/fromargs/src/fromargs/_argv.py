@@ -9,9 +9,12 @@ Probing only parses; handlers never run here.
 from __future__ import annotations
 
 import itertools
+import os
 import shlex
 import sys
+import types
 from collections.abc import Sequence
+from typing import Union, get_args, get_origin
 
 from cyclopts import App, CoercionError, CycloptsError, convert
 
@@ -34,9 +37,13 @@ def hoist_leading_flags(app: App, argv: Sequence[str]) -> list[str]:
     rest = tokens[len(leading) :]
     try:
         command, apps, _ = app.parse_commands(rest)
-    except CycloptsError:
+    except (CycloptsError, ValueError):
         command, apps = (), ()
-    if command and apps[-1].default_command is not None:
+    if (
+        command
+        and apps[-1].default_command is not None
+        and rest[: len(command)] == list(command)
+    ):
         print(
             f"note: moved {' '.join(leading)} after {' '.join(command)!r}",
             file=sys.stderr,
@@ -72,14 +79,14 @@ def repair_argv(app: App, argv: Sequence[str]) -> list[str]:
 def repair_rejected(app: App, argv: Sequence[str]) -> list[str] | None:
     """Return the one verified split of an argv the app rejected, or ``None``."""
     original = list(argv)
-    help_flags = frozenset(app.help_flags)
-    if help_flags.intersection(original):
+    control_flags = _control_flags(app, original)
+    if control_flags.intersection(original):
         return None
     splittable: set[str] | None = None
     found: tuple[list[str], str, list[str]] | None = None
     for index, token in enumerate(_options(app, original)):
         pieces = _pieces(token)
-        if pieces is None or help_flags.intersection(pieces):
+        if pieces is None or control_flags.intersection(pieces):
             continue
         if splittable is None:
             splittable = _splittable_options(app, original)
@@ -100,6 +107,19 @@ def repair_rejected(app: App, argv: Sequence[str]) -> list[str] | None:
     return candidate
 
 
+def _control_flags(app: App, argv: Sequence[str]) -> frozenset[str]:
+    """Help and version flags from every app in the parsed command chain."""
+    try:
+        _, apps, _ = app.parse_commands(list(argv))
+    except (CycloptsError, ValueError):
+        apps = (app,)
+    flags: set[str] = set()
+    for command_app in apps:
+        flags.update(command_app.help_flags)
+        flags.update(command_app.version_flags)
+    return frozenset(flags)
+
+
 def _is_true(value: str) -> bool:
     """Read ``value`` with Cyclopts' own boolean words; an invalid word is false."""
     try:
@@ -116,7 +136,7 @@ def _options(app: App, argv: Sequence[str]) -> list[str]:
     tokens = list(argv)
     try:
         _, apps, _ = app.parse_commands(tokens)
-    except CycloptsError:
+    except (CycloptsError, ValueError):
         apps = (app,)
     configured = [
         command_app.end_of_options_delimiter
@@ -135,7 +155,7 @@ def _parses(app: App, argv: Sequence[str]) -> bool:
         app.parse_args(
             list(argv), print_error=False, exit_on_error=False, help_on_error=False
         )
-    except (CycloptsError, CliError):
+    except (CycloptsError, CliError, ValueError):
         return False
     return True
 
@@ -144,7 +164,7 @@ def _splittable_options(app: App, argv: Sequence[str]) -> set[str]:
     """Names of the options that can take a split value: no flags, no free-text ``str``."""
     try:
         _, apps, _ = app.parse_commands(list(argv))
-    except CycloptsError:
+    except (CycloptsError, ValueError):
         return set()
     options: set[str] = set()
     for command_app in apps:
@@ -155,10 +175,25 @@ def _splittable_options(app: App, argv: Sequence[str]) -> set[str]:
         for argument in arguments:
             if argument.is_flag():
                 continue
-            if argument.hint is str and argument.get_choices() is None:
+            if _is_free_text(argument.hint) and argument.get_choices() is None:
                 continue
             options.update(argument.names)
     return options
+
+
+def _is_free_text(hint: object) -> bool:
+    """True when ``hint`` is unstructured text: ``str``, ``Path``, or a sequence of them."""
+    if hint is str or (isinstance(hint, type) and issubclass(hint, (str, os.PathLike))):
+        return True
+    origin = get_origin(hint)
+    if origin is Union or origin is types.UnionType:
+        return all(
+            argument is type(None) or _is_free_text(argument) for argument in get_args(hint)
+        )
+    if origin in (list, tuple, set, frozenset, Sequence):
+        args = tuple(argument for argument in get_args(hint) if argument is not Ellipsis)
+        return bool(args) and all(_is_free_text(argument) for argument in args)
+    return False
 
 
 def _pieces(token: str) -> list[str] | None:

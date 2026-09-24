@@ -237,7 +237,7 @@ def test_converter_rejection_still_tries_repair(
 
     @app.command
     def go(
-        *, tags: Annotated[list[str], Parameter(converter=no_spaces)], limit: int = 0
+        *, tags: Annotated[list[int], Parameter(converter=no_spaces)], limit: int = 0
     ) -> None:
         received.append((tags, limit))
 
@@ -317,7 +317,7 @@ def test_json_detection_honors_disabled_delimiter(
 def test_json_detection_honors_subcommand_delimiter(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    app = App()
+    app = App(end_of_options_delimiter="")
     sub = App(name="sub", end_of_options_delimiter="++")
     app.command(sub)
 
@@ -429,3 +429,64 @@ def test_multiline_message_is_one_text_line(capsys: pytest.CaptureFixture[str]) 
 
     assert fromargs.run(app, argv=["fail"]) == 5
     assert capsys.readouterr().err == "ERROR: line one line two\n"
+
+
+def test_ambiguous_command_is_a_usage_error(capsys: pytest.CaptureFixture[str]) -> None:
+    app = App()
+
+    @app.command
+    def show_items() -> None:
+        raise AssertionError("handler must not run")
+
+    @app.command
+    def showitems() -> None:
+        raise AssertionError("handler must not run")
+
+    assert fromargs.run(app, argv=["Show_Items"]) == 2
+    assert capsys.readouterr().err.startswith("ERROR: Ambiguous command")
+
+
+def test_ambiguous_command_is_a_json_envelope(
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
+) -> None:
+    app = App()
+
+    @app.command
+    def show_items() -> None:
+        raise AssertionError("handler must not run")
+
+    @app.command
+    def showitems() -> None:
+        raise AssertionError("handler must not run")
+
+    assert fromargs.run(app, argv=["Show_Items", "--json"]) == 2
+    envelope = single_json_line(capsys.readouterr().err)
+    assert envelope["exit_code"] == 2
+    assert "Ambiguous command" in str(envelope["error"])
+
+
+def test_async_handler_cli_error_text(capsys: pytest.CaptureFixture[str]) -> None:
+    app = App()
+
+    @app.command
+    async def later() -> int:
+        raise fromargs.CliError("async bad", exit_code=6)
+
+    assert fromargs.run(app, argv=["later"]) == 6
+    assert capsys.readouterr().err == "ERROR: async bad\n"
+
+
+def test_async_handler_cli_error_json_envelope(
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
+) -> None:
+    app = App()
+
+    @app.command
+    async def later(*, json: bool = False) -> int:
+        raise fromargs.CliError("async bad", exit_code=6)
+
+    assert fromargs.run(app, argv=["later", "--json"]) == 6
+    assert single_json_line(capsys.readouterr().err) == {
+        "error": "async bad",
+        "exit_code": 6,
+    }

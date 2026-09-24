@@ -81,9 +81,12 @@ def _parse(app: App, tokens: list[str]) -> tuple[Callable[..., object], BoundArg
 def _parse_once(
     app: App, tokens: list[str]
 ) -> tuple[Callable[..., object], BoundArguments]:
-    handler, bound, _ = app.parse_args(
-        tokens, print_error=False, exit_on_error=False, help_on_error=False
-    )
+    try:
+        handler, bound, _ = app.parse_args(
+            tokens, print_error=False, exit_on_error=False, help_on_error=False
+        )
+    except ValueError as exc:
+        raise CycloptsError(msg=str(exc)) from exc
     return handler, bound
 
 

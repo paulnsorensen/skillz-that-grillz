@@ -4,12 +4,14 @@
 # hints of commands defined inside tests, which reference local converters.
 
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Annotated
 
 import pytest
-from cyclopts import App, Parameter, Token
+from cyclopts import App, Parameter, Token, validators
 
 import fromargs
+from fromargs._argv import hoist_leading_flags
 
 JsonLine = Callable[[str], dict[str, object]]
 
@@ -186,14 +188,24 @@ def test_valid_argv_is_returned_unchanged(capsys: pytest.CaptureFixture[str]) ->
     assert capsys.readouterr().err == ""
 
 
+def _lenient(type_: object, tokens: Sequence[Token]) -> int:
+    """Accept any value, so a merged and a split token both parse."""
+    return 0
+
+
+# `Lenient` options are splittable (not free text) yet accept a merged value,
+# so each of two merged tokens yields a candidate that parses.
+Lenient = Annotated[int, Parameter(converter=_lenient)]
+
+
 def test_ambiguous_candidates_keep_argv(capsys: pytest.CaptureFixture[str]) -> None:
     app = App()
 
     @app.command
-    def tag(*, tags: list[str], count: int) -> None:
+    def tag(*, first: Lenient, second: Lenient, count: int) -> None:
         raise AssertionError("probing must not run a handler")
 
-    argv = ["tag", "--tags", "a --count 1", "--tags", "b --count 2"]
+    argv = ["tag", "--first", "a --count 1", "--second", "b --count 2"]
 
     assert fromargs.repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
@@ -202,23 +214,23 @@ def test_ambiguous_candidates_keep_argv(capsys: pytest.CaptureFixture[str]) -> N
 def test_probing_stops_at_second_candidate(capsys: pytest.CaptureFixture[str]) -> None:
     converted: list[str] = []
 
-    def record(type_: object, tokens: Sequence[Token]) -> list[str]:
-        values = [token.value for token in tokens]
-        converted.extend(values)
-        return values
+    def record(type_: object, tokens: Sequence[Token]) -> int:
+        converted.extend(token.value for token in tokens)
+        return 0
 
     app = App()
 
     @app.command
     def tag(
         *,
-        tags: list[str],
+        first: Lenient,
+        second: Lenient,
         count: int,
-        mark: Annotated[list[str], Parameter(converter=record)],
+        mark: Annotated[int, Parameter(converter=record)],
     ) -> None:
         raise AssertionError("probing must not run a handler")
 
-    argv = ["tag", "--tags", "a --count 1", "--tags", "b --count 2"]
+    argv = ["tag", "--first", "a --count 1", "--second", "b --count 2"]
     argv += ["--mark", "m --count 3"]
 
     assert fromargs.repair_argv(app, argv) == argv
@@ -315,3 +327,109 @@ def test_split_without_dash_piece_is_refused(
 
     assert fromargs.repair_argv(app, argv) == argv
     assert capsys.readouterr().err == ""
+
+
+def test_path_option_value_is_not_split(capsys: pytest.CaptureFixture[str]) -> None:
+    app = App()
+
+    @app.command
+    def p(
+        *,
+        path: Annotated[Path, Parameter(validator=validators.Path(exists=True))],
+        force: bool = False,
+    ) -> None:
+        raise AssertionError("probing must not run a handler")
+
+    argv = ["p", "--path", "pyproject.toml --force"]
+
+    assert fromargs.repair_argv(app, argv) == argv
+    assert capsys.readouterr().err == ""
+
+
+def test_list_str_option_value_is_not_split(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = App()
+
+    @app.command
+    def label(*, tags: list[str], target: str, force: bool = False) -> None:
+        raise AssertionError("probing must not run a handler")
+
+    argv = ["label", "--tags", "x --target /etc --force"]
+
+    assert fromargs.repair_argv(app, argv) == argv
+    assert capsys.readouterr().err == ""
+
+
+def test_optional_str_option_value_is_not_split(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = App()
+
+    @app.command
+    def note(*, label: str | None = None, count: int) -> None:
+        raise AssertionError("probing must not run a handler")
+
+    argv = ["note", "--label", "a --count 2"]
+
+    assert fromargs.repair_argv(app, argv) == argv
+    assert capsys.readouterr().err == ""
+
+
+def test_split_refused_when_pieces_contain_version_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = App()
+
+    @app.command
+    def show(*, count: int) -> None:
+        raise AssertionError("probing must not run a handler")
+
+    argv = ["show", "--count", "2 --version"]
+
+    assert fromargs.repair_argv(app, argv) == argv
+    assert capsys.readouterr().err == ""
+
+
+def test_split_refused_when_pieces_contain_nested_help_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = App()
+    group = App(name="grp", help_flags=["--usage"])
+    app.command(group)
+
+    @group.command
+    def fetch(*, tags: list[int]) -> None:
+        raise AssertionError("probing must not run a handler")
+
+    argv = ["grp", "fetch", "--tags", "1 --usage"]
+
+    assert fromargs.repair_argv(app, argv) == argv
+    assert capsys.readouterr().err == ""
+
+
+def test_hoist_does_not_misplace_flags_past_a_gap_in_the_command() -> None:
+    app = App()
+
+    @app.meta.default
+    def meta(
+        *tokens: Annotated[str, Parameter(show=False, allow_leading_hyphen=True)],
+        verbose: bool = False,
+    ) -> object:
+        return app(tokens)
+
+    db = App(name="db")
+    app.command(db)
+
+    @db.command
+    def migrate(target: str = "head", *, json: bool = False) -> None:
+        raise AssertionError("probing must not run a handler")
+
+    argv = ["--json", "db", "--verbose", "migrate"]
+
+    assert hoist_leading_flags(app.meta, argv) == [
+        "db",
+        "--json",
+        "--verbose",
+        "migrate",
+    ]

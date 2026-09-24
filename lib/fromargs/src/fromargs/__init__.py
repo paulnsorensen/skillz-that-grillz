@@ -1,9 +1,10 @@
 """Self-healing Cyclopts CLI helpers for agent-friendly command lines.
 
-``run`` parses argv once and invokes one command. Before the parse it moves
-leading ``--json``/``--full`` flags after the command and splits shell-merged
-arguments, announcing each repair on stderr. ``emit`` prints JSON or truncated
-text output. There is no JSON input mode.
+``run`` parses argv once and invokes one command. It moves leading
+``--json``/``--full`` flags after the command before the parse. It splits
+shell-merged arguments only after a rejected parse, and announces each
+repair on stderr. ``emit`` prints JSON or truncated text output. There is
+no JSON input mode.
 """
 
 from fromargs._argv import repair_argv

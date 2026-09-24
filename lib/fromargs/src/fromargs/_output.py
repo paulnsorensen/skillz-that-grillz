@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Sequence
-from typing import TextIO, cast
+from collections.abc import Mapping, Sequence
+from typing import TextIO
 
 
 def emit(
@@ -19,14 +19,17 @@ def emit(
     """Print a scalar, mapping, or sequence in the shared output format.
 
     ``json_mode`` and mappings dump the whole value as JSON; ``limit`` applies
-    only to text output of a list or a multi-line string.
+    only to text output of a sequence or a multi-line string.
     """
+    if limit is not None and limit < 0:
+        raise ValueError(f"limit must not be negative: {limit}")
     stream = stdout if stdout is not None else sys.stdout
-    if json_mode or isinstance(value, dict):
-        print(json.dumps(value, indent=2, default=str), file=stream)
+    if json_mode or isinstance(value, Mapping):
+        payload = dict(value) if isinstance(value, Mapping) and not isinstance(value, dict) else value
+        print(json.dumps(payload, indent=2, default=str), file=stream)
         return
-    if isinstance(value, list):
-        _emit_list(cast(list[object], value), limit=limit, full=full, stream=stream)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        _emit_list(value, limit=limit, full=full, stream=stream)
         return
     if isinstance(value, str) and limit is not None and "\n" in value:
         _emit_list(value.splitlines(), limit=limit, full=full, stream=stream)
