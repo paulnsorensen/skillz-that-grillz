@@ -58,6 +58,16 @@ HEALS = {
         ["age", "brie", "--weeks", "2", "--dry-run"],
         [],
     ),
+    "flag merged into an int value revealing --json": (
+        ["age", "brie", "--weeks", "2 --json"],
+        ["age", "brie", "--weeks", "2"],
+        ["note: split quoted argument '2 --json' into ['2', '--json']"],
+    ),
+    "flag merged into an int value revealing --dry-run and --json": (
+        ["age", "brie", "--weeks", "2 --dry-run --json"],
+        ["age", "brie", "--weeks", "2", "--dry-run"],
+        ["note: split quoted argument '2 --dry-run --json' into ['2', '--dry-run', '--json']"],
+    ),
 }
 
 

@@ -70,7 +70,8 @@ def repair_rejected(app: App, argv: Sequence[str]) -> list[str] | None:
         if option not in splittable:
             continue
         candidate = original[:index] + pieces + original[index + 1 :]
-        if not _parses(app, candidate):
+        probe, _ = strip_global_flags(app, candidate)
+        if not _parses(app, probe):
             continue
         if found is not None:
             return None

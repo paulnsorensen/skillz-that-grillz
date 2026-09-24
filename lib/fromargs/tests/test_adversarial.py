@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 from collections.abc import Callable
 
@@ -54,20 +55,34 @@ def test_multiline_message_stays_one_json_line(
     assert envelope == {"error": "line one\nline two", "exit_code": 4}
 
 
-def test_split_that_reveals_a_bare_json_token_is_refused(
-    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
-) -> None:
-    """A split candidate must parse on its own; --json is never stripped mid-probe."""
+def test_split_that_reveals_json_is_healed(capsys: pytest.CaptureFixture[str]) -> None:
+    """A split candidate is probed with --json already stripped, so it heals."""
     calls: list[tuple[str, dict[str, object]]] = []
 
-    assert _app(calls).run(["show", "x", "--count", "2 --json"]) == 2
+    assert _app(calls).run(["show", "x", "--count", "2 --json"]) == 0
 
     captured = capsys.readouterr()
-    assert "note:" not in captured.err
-    envelope = single_json_line(captured.err)
-    assert envelope["exit_code"] == 2
-    assert "--count" in str(envelope["error"])
-    assert calls == []
+    assert captured.err.strip() == "note: split quoted argument '2 --json' into ['2', '--json']"
+    assert captured.out == ""
+    assert calls == [("show", {"name": "x", "count": 2})]
+
+
+def test_split_that_reveals_full_is_honored(capsys: pytest.CaptureFixture[str]) -> None:
+    """A split candidate is probed with --full already stripped, and --full still turns off truncation."""
+    calls: list[tuple[str, dict[str, object]]] = []
+    app = fromargs.App("t")
+
+    @app.command(limit=2)
+    def rank(name: str, *, top: int) -> list[int]:
+        calls.append(("rank", {"name": name, "top": top}))
+        return list(range(top))
+
+    assert app.run(["rank", "x", "--top", "5 --full"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.err.strip() == "note: split quoted argument '5 --full' into ['5', '--full']"
+    assert json.loads(captured.out) == [0, 1, 2, 3, 4]
+    assert calls == [("rank", {"name": "x", "top": 5})]
 
 
 def test_lone_leading_json_before_empty_argv_is_command_required(
