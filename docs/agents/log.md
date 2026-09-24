@@ -19,3 +19,6 @@
 
 - 2026-09-24 · fromargs-app-redesign · merged · decisions/fromargs-cli-library.md · ADR-001 and ADR-003 amended for the App redesign; ADR-005 added for decorators and forced JSON output
 
+
+- 2026-09-24 · fromargs-publish-prep · merged · decisions/fromargs-cli-library.md · ADR-006 added for the tag-driven PyPI publish workflow
+
