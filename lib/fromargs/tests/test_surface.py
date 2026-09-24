@@ -124,6 +124,57 @@ def test_group_nests_further_groups() -> None:
     assert calls == ["deep"]
 
 
+def test_group_passes_extra_kwargs_to_the_nested_cyclopts_app() -> None:
+    app = fromargs.App("t")
+
+    group = app.group("sub", version="9.9.9")
+
+    assert group._cyclopts.version == "9.9.9"
+
+
+def test_bare_default_registers_the_no_subcommand_handler() -> None:
+    app = fromargs.App("t")
+
+    @app.default
+    def main() -> str:
+        return "ran"
+
+    assert app.run([]) == 0
+
+
+def test_called_default_with_limit_truncates_its_result(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    @app.default(limit=1)
+    def main() -> list[int]:
+        return [1, 2]
+
+    assert app.run([]) == 0
+    assert "note: showing 1 of 2" in capsys.readouterr().err
+
+
+def test_default_reserved_json_parameter_is_rejected_at_registration() -> None:
+    app = fromargs.App("t")
+
+    with pytest.raises(ValueError, match="json"):
+
+        @app.default
+        def bad(*, json: bool = False) -> None:
+            pass
+
+
+def test_default_reserved_full_parameter_is_rejected_at_registration() -> None:
+    app = fromargs.App("t")
+
+    with pytest.raises(ValueError, match="full"):
+
+        @app.default
+        def bad(*, full: bool = False) -> None:
+            pass
+
+
 @pytest.mark.parametrize("reserved", ["json", "full"])
 def test_reserved_parameter_is_rejected_at_registration(reserved: str) -> None:
     app = fromargs.App("t")

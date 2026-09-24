@@ -155,9 +155,58 @@ class App:
             self._limits[id(sub_app)] = limit
         return obj
 
-    def group(self, name: str, *, help: str | None = None) -> App:
+    @overload
+    def default(
+        self,
+        obj: T,
+        *,
+        limit: int | None = None,
+        **kwargs: Unpack[_AppKwargs],
+    ) -> T: ...
+
+    @overload
+    def default(
+        self,
+        obj: None = None,
+        *,
+        limit: int | None = None,
+        **kwargs: Unpack[_AppKwargs],
+    ) -> Callable[[T], T]: ...
+
+    def default(
+        self,
+        obj: T | None = None,
+        *,
+        limit: int | None = None,
+        **kwargs: Unpack[_AppKwargs],
+    ) -> T | Callable[[T], T]:
+        """Register ``obj`` as the handler that runs when argv names no subcommand.
+
+        ``limit`` truncates a sequence result to its first ``limit`` items
+        unless ``--full`` is passed; it must not be negative. ``obj`` must
+        not declare a CLI option named ``--json`` or ``--full``.
+        """
+        if obj is None:
+
+            def register(handler: T) -> T:
+                return self.default(handler, limit=limit, **kwargs)
+
+            return register
+        if limit is not None and limit < 0:
+            raise ValueError(f"limit must not be negative, got {limit}")
+        previous = self._cyclopts.default_command
+        _ = self._cyclopts.default(obj, **kwargs)
+        reserved = _reserved_option(self._cyclopts)
+        if reserved is not None:
+            self._cyclopts.default_command = previous
+            raise ValueError(f"command option {reserved!r} is reserved by fromargs")
+        if limit is not None:
+            self._limits[id(self._cyclopts)] = limit
+        return obj
+
+    def group(self, name: str, *, help: str | None = None, **cyclopts_kwargs: Unpack[_AppKwargs]) -> App:
         """Return a nested command group registered under this app."""
-        sub = cyclopts.App(name=name, help=help)
+        sub = cyclopts.App(name=name, help=help, **cyclopts_kwargs)
         _ = self._cyclopts.command(sub)
         return App._wrap(sub, self._limits)
 

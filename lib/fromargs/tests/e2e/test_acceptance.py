@@ -56,6 +56,17 @@ AC-13: WHEN argv names an unknown command or option close to a registered
 AC-14: WHEN argv uses an underscore variant of a dashed flag name THE SYSTEM
     SHALL bind it to the same parameter as the dashed form (native Cyclopts
     behavior).
+AC-15: WHEN the caller does not pass version= to App, THE SYSTEM SHALL
+    resolve the --version string from the calling module's installed
+    distribution version, else its __version__ attribute, else Cyclopts'
+    own default; WHEN the caller passes version= explicitly THE SYSTEM
+    SHALL print it unchanged.
+AC-16: WHEN app.default registers a handler, bare or called, and argv names
+    no subcommand THE SYSTEM SHALL invoke that handler exactly once, with
+    the same reserved-parameter check and the same JSON result handling as
+    app.command.
+AC-17: WHEN App.group(name, **cyclopts_kwargs) is called with extra keyword
+    arguments THE SYSTEM SHALL pass them to the nested cyclopts.App.
 """
 
 from __future__ import annotations
@@ -490,3 +501,55 @@ def test_ac14_underscore_flag_binds_max_count(tmp_path: Path) -> None:
     args = calls[0]["args"]
     assert isinstance(args, dict)
     assert args["max_count"] == 3
+
+
+# --------------------------------------------------------------------------
+# AC-15: --version resolves from the calling module, not from fromargs.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.ac("AC-15")
+def test_ac15_version_resolves_from_the_calling_module(tmp_path: Path) -> None:
+    result, calls = run_cli(tmp_path, ["--version"])
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "7.1.0"
+    assert calls == []
+
+
+# --------------------------------------------------------------------------
+# AC-16: app.default runs exactly once when argv names no subcommand.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.ac("AC-16")
+def test_ac16_default_handler_runs_once_when_the_group_gets_no_subcommand(
+    tmp_path: Path,
+) -> None:
+    result, calls = run_cli(tmp_path, ["nested"])
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout) == {"ran": True}
+    assert calls == [{"command": "nested default", "args": {}}]
+
+
+@pytest.mark.ac("AC-16")
+def test_ac16_default_yields_to_a_named_command_in_the_group(tmp_path: Path) -> None:
+    result, calls = run_cli(tmp_path, ["nested", "ping"])
+
+    assert result.returncode == 0
+    assert calls == [{"command": "nested ping", "args": {}}]
+
+
+# --------------------------------------------------------------------------
+# AC-17: App.group forwards extra keyword arguments to the nested app.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.ac("AC-17")
+def test_ac17_group_kwargs_reach_the_nested_cyclopts_app(tmp_path: Path) -> None:
+    result, calls = run_cli(tmp_path, ["nested", "--version"])
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "3.3.3"
+    assert calls == []

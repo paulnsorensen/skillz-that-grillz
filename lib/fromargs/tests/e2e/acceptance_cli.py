@@ -29,6 +29,8 @@ from cyclopts import Parameter, Token
 
 import fromargs
 
+__version__ = "7.1.0"
+
 
 def _log(command: str, args: dict[str, object]) -> None:
     """Append one call record to the log file named by the env var, if set."""
@@ -129,6 +131,19 @@ def _register_conf(app: fromargs.App) -> None:
         result: dict[str, object] = {"point": asdict(point), "numbers": numbers}
         _log("conf", result)
         return result
+
+    nested = app.group("nested", version="3.3.3")
+
+    @nested.command
+    def ping() -> None:
+        """AC-17 fixture: a command inside a group given extra cyclopts kwargs."""
+        _log("nested ping", {})
+
+    @nested.default
+    def nested_default() -> dict[str, bool]:
+        """AC-16 fixture: runs when the nested group gets no subcommand."""
+        _log("nested default", {})
+        return {"ran": True}
 
 
 def _register_guarded(app: fromargs.App) -> None:

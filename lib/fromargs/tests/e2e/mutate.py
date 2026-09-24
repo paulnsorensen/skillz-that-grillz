@@ -154,6 +154,27 @@ MUTATIONS: list[Mutation] = [
         ),
     ),
     Mutation(
+        ac_id="AC-15",
+        label="resolved version falls back before checking the caller module",
+        rel_file="_app.py",
+        old="    frame = sys._getframe(2)",
+        new="    frame = sys._getframe(1)",
+    ),
+    Mutation(
+        ac_id="AC-16",
+        label="default handler is never registered with Cyclopts",
+        rel_file="_app.py",
+        old="        self._cyclopts.default(obj, **kwargs)",
+        new="        pass",
+    ),
+    Mutation(
+        ac_id="AC-17",
+        label="group kwargs are dropped from the nested Cyclopts app",
+        rel_file="_app.py",
+        old="        sub = cyclopts.App(name=name, help=help, **cyclopts_kwargs)",
+        new="        sub = cyclopts.App(name=name, help=help)",
+    ),
+    Mutation(
         ac_id="AC-14",
         label="underscore flag binding (--max_count -> max_count)",
         na_reason=(
