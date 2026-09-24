@@ -8,6 +8,11 @@ handler ran exactly once" or "no handler ran" from outside the process.
 Keep every coupling to the ``fromargs`` public API in this one file. The
 acceptance tests in ``test_acceptance.py`` only know about argv, exit codes,
 stdout, stderr, and the call log; they do not import command internals.
+
+Set ``FROMARGS_E2E_REGISTER_BAD`` to ``json`` or ``full`` to skip the normal
+command surface and instead attempt one reserved-parameter registration,
+reporting the outcome as a JSON stdout line with exit 0 (raised) or 1
+(did not raise) -- this is how AC-8 is observed from a subprocess.
 """
 
 # No `from __future__ import annotations`: Cyclopts resolves command hints
@@ -20,7 +25,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Annotated
 
-from cyclopts import App, Parameter, Token
+from cyclopts import Parameter, Token
 
 import fromargs
 
@@ -35,7 +40,7 @@ def _log(command: str, args: dict[str, object]) -> None:
 
 
 def _lenient(type_: object, tokens: Sequence[Token]) -> int:
-    """Accept any single token as ``0``; used only to build an AC-7 fixture."""
+    """Accept any single token as ``0``; used only to build an AC-11 fixture."""
     return 0
 
 
@@ -44,13 +49,13 @@ Lenient = Annotated[int, Parameter(converter=_lenient)]
 
 @dataclass
 class Point:
-    """A tiny dataclass parameter for the AC-10 JSON-string parsing check."""
+    """A tiny dataclass parameter for a native-Cyclopts-conversion check."""
 
     a: int
 
 
-def build_app() -> App:
-    app = App(name="acceptance-cli", help="fromargs end-to-end acceptance fixture.")
+def build_app() -> fromargs.App:
+    app = fromargs.App(name="acceptance-cli", help="fromargs end-to-end acceptance fixture.")
 
     @app.command
     def widget(
@@ -60,10 +65,9 @@ def build_app() -> App:
         max_count: int = 1,
         tags: list[int] | None = None,
         label: str = "",
-        full: bool = False,
-        json: bool = False,
+        dry_run: bool = False,
     ) -> int | None:
-        """AC-1, AC-5, AC-6, AC-7 fixture: dispatch, binding, and repairs."""
+        """AC-1, AC-2, AC-3, AC-11, AC-14 fixture: dispatch, binding, repairs."""
         _log(
             "widget",
             {
@@ -73,25 +77,32 @@ def build_app() -> App:
                 "max_count": max_count,
                 "tags": tags,
                 "label": label,
-                "full": full,
-                "json": json,
+                "dry_run": dry_run,
             },
         )
         if name.lstrip("-").isdigit():
             return int(name)
         return None
 
+    crate = app.group("crate", help="A nested command group.")
+
+    @crate.command(name="show")
+    def crate_show(id_: int) -> dict[str, int]:
+        """AC-1 fixture: a decorator-registered command inside a group."""
+        _log("crate show", {"id_": id_})
+        return {"id": id_}
+
     @app.command
-    def fail(kind: str, *, json: bool = False) -> None:
-        """AC-2, AC-3 fixture: a handler that always raises."""
+    def fail(kind: str) -> None:
+        """AC-4 fixture: a handler that always raises."""
         _log("fail", {"kind": kind})
         if kind == "contract":
             raise fromargs.contract_error(ValueError("bad shape"), context="load")
-        raise fromargs.CliError("boom", exit_code=5)
+        raise fromargs.CliError("boom")
 
     @app.command
     def ambiguous(*, first: Lenient = 0, second: Lenient = 0, count: int) -> None:
-        """AC-7 fixture: two independently-splittable options, both required.
+        """AC-11 fixture: two independently-splittable options, both required.
 
         The literal argv never supplies ``count`` directly; only a verified
         split of ``first`` or ``second`` can supply it. Both splits succeed,
@@ -99,31 +110,51 @@ def build_app() -> App:
         """
         _log("ambiguous", {"first": first, "second": second, "count": count})
 
-    @app.command
-    def emit_list(*, limit: int = 3, full: bool = False) -> None:
-        """AC-9 fixture: text-mode list truncation."""
-        fromargs.emit(["a", "b", "c", "d", "e"], limit=limit, full=full)
+    @app.command(limit=3)
+    def ranked(*, top: int = 5) -> list[int]:
+        """AC-6, AC-7 fixture: a truncated sequence result with a splittable option."""
+        return list(range(top))
 
     @app.command
-    def emit_dict(*, limit: int = 2) -> None:
-        """AC-8 fixture: a ``dict`` value dumps whole even with ``limit`` set."""
-        fromargs.emit({"items": [1, 2, 3, 4, 5]}, limit=limit)
-
-    @app.command
-    def emit_json_list(*, limit: int = 2) -> None:
-        """AC-8 fixture: ``json_mode=True`` dumps a list whole, ignoring ``limit``."""
-        fromargs.emit([1, 2, 3, 4, 5], json_mode=True, limit=limit)
-
-    @app.command
-    def conf(*, point: Point, numbers: list[int], json: bool = False) -> None:
-        """AC-10 fixture: a dataclass and a ``list[int]`` still parse from JSON text."""
-        _log("conf", {"point": asdict(point), "numbers": numbers, "json": json})
+    def conf(*, point: Point, numbers: list[int]) -> dict[str, object]:
+        """Native-Cyclopts fixture: a dataclass and a ``list[int]`` from JSON text."""
+        result = {"point": asdict(point), "numbers": numbers}
+        _log("conf", result)
+        return result
 
     return app
 
 
+def _register_bad(name: str) -> int:
+    """AC-8: attempt to register a command with a reserved parameter.
+
+    Prints one JSON line to stdout and returns 0 when registration raised
+    ``ValueError`` as required, 1 otherwise.
+    """
+    app = fromargs.App(name="reserved-check")
+    try:
+        if name == "json":
+
+            @app.command
+            def bad(*, json: bool = False) -> None:  # noqa: ARG001
+                return None
+        else:
+
+            @app.command
+            def bad(*, full: bool = False) -> None:  # noqa: ARG001
+                return None
+    except ValueError as exc:
+        print(json.dumps({"raised": True, "error": str(exc)}))
+        return 0
+    print(json.dumps({"raised": False}))
+    return 1
+
+
 def main() -> int:
-    return fromargs.run(build_app())
+    register_bad = os.environ.get("FROMARGS_E2E_REGISTER_BAD")
+    if register_bad:
+        return _register_bad(register_bad)
+    return build_app().run()
 
 
 if __name__ == "__main__":

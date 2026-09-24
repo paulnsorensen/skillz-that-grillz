@@ -50,76 +50,121 @@ class Mutation:
 MUTATIONS: list[Mutation] = [
     Mutation(
         ac_id="AC-1",
-        label="None-result exit code",
-        rel_file="_run.py",
-        old="        return 0",
-        new="        return 1",
+        label="command registration renames every command",
+        rel_file="_app.py",
+        old='        self._cyclopts.command(obj, name=name, **kwargs)',
+        new='        self._cyclopts.command(obj, name=f"broken-{name or \'\'}", **kwargs)',
     ),
     Mutation(
         ac_id="AC-2",
-        label="plain error prefix",
-        rel_file="_run.py",
-        old='        line = f"ERROR: {\' \'.join(message.splitlines())}"',
-        new='        line = f"WARN: {\' \'.join(message.splitlines())}"',
+        label="JSON result payload is discarded",
+        rel_file="_output.py",
+        old="    print(json.dumps(payload, indent=2, default=_default), file=stream)",
+        new='    print(json.dumps({"broken": True}), file=stream)',
     ),
     Mutation(
         ac_id="AC-3",
-        label="JSON error envelope key",
+        label="None-result exit code",
         rel_file="_run.py",
-        old='        line = json.dumps({"error": message, "exit_code": exit_code})',
-        new='        line = json.dumps({"error": message, "code": exit_code})',
+        old="    if status is None:\n        return 0",
+        new="    if status is None:\n        return 1",
     ),
     Mutation(
         ac_id="AC-4",
-        label="unresolved-parse exit code",
+        label="JSON error envelope key",
         rel_file="_run.py",
-        old="            return _report(str(exc), 2, json_mode=json_mode)",
-        new="            return _report(str(exc), 1, json_mode=json_mode)",
+        old='    print(json.dumps({"error": message, "exit_code": exit_code}), file=sys.stderr)',
+        new='    print(json.dumps({"error": message, "code": exit_code}), file=sys.stderr)',
     ),
     Mutation(
         ac_id="AC-5",
-        label="underscore flag binding (--max_count -> max_count)",
-        na_reason=(
-            "Underscore/dash flag normalization is native Cyclopts behavior "
-            "(cyclopts.core, name-collapsing on '-'/'_'); fromargs has no code "
-            "path that participates in it, so there is nothing in src/fromargs "
-            "meaningful to mutate for this AC."
-        ),
+        label="--json stops being a no-op",
+        rel_file="_argv.py",
+        old='_GLOBAL_FLAGS = frozenset({"--json", "--full"})',
+        new='_GLOBAL_FLAGS = frozenset({"--full"})',
     ),
     Mutation(
         ac_id="AC-6",
-        label="hoist note wording",
+        label="--full never turns off truncation",
         rel_file="_argv.py",
-        old='            f"note: moved {\' \'.join(leading)} after {\' \'.join(command)!r}",',
-        new='            f"note: relocated {\' \'.join(leading)} after {\' \'.join(command)!r}",',
+        old='    return kept + after, "--full" in before',
+        new="    return kept + after, False",
     ),
     Mutation(
         ac_id="AC-7",
-        label="quote-split note wording",
-        rel_file="_argv.py",
-        old='    print(f"note: split quoted argument {token!r} into {pieces!r}", file=sys.stderr)',
-        new='    print(f"note: split quoted arg {token!r} into {pieces!r}", file=sys.stderr)',
+        label="limit truncation ignores --full",
+        rel_file="_output.py",
+        old="        if not full and total > limit:",
+        new="        if total > limit:",
     ),
     Mutation(
         ac_id="AC-8",
-        label="json_mode list no longer forces whole-value dump",
-        rel_file="_output.py",
-        old="    if json_mode or isinstance(value, Mapping):",
-        new="    if json_mode and isinstance(value, Mapping):",
+        label="full handler parameter no longer reserved",
+        rel_file="_app.py",
+        old='_RESERVED_PARAMETERS = frozenset({"json", "full"})',
+        new='_RESERVED_PARAMETERS = frozenset({"json"})',
     ),
     Mutation(
         ac_id="AC-9",
-        label="text truncation footer wording",
-        rel_file="_output.py",
-        old='            f"... showing {limit} of {total}; pass --full for the rest (limit={limit})",',
-        new='            f"... showing {limit} of {total}; pass --all for the rest (limit={limit})",',
+        label="public surface grows an extra name",
+        rel_file="__init__.py",
+        old='__all__ = ["App", "CliError", "contract_error"]',
+        new='__all__ = ["App", "CliError", "contract_error", "extra"]',
     ),
     Mutation(
         ac_id="AC-10",
-        label="public surface grows an extra name",
-        rel_file="__init__.py",
-        old='__all__ = ["CliError", "contract_error", "emit", "repair_argv", "run"]',
-        new='__all__ = ["CliError", "contract_error", "emit", "repair_argv", "run", "extra"]',
+        label="no JSON-input flag or stdin reader",
+        na_reason=(
+            "fromargs never reads sys.stdin and defines no JSON-input flag "
+            "anywhere in src/fromargs; the AC is an absence claim with no "
+            "existing line whose mutation would introduce that behavior."
+        ),
+    ),
+    Mutation(
+        ac_id="AC-11",
+        label="ambiguous quote split accepts the first candidate",
+        rel_file="_argv.py",
+        old="        if found is not None:\n            return None",
+        new="        if found is not None:\n            return found[0]",
+    ),
+    Mutation(
+        ac_id="AC-12",
+        label="probe parse invokes the handler",
+        rel_file="_argv.py",
+        old=(
+            "        app.parse_args(\n"
+            "            list(argv), print_error=False, exit_on_error=False, help_on_error=False\n"
+            "        )\n"
+            "    except (CycloptsError, CliError, ValueError):"
+        ),
+        new=(
+            "        handler, bound, _ = app.parse_args(\n"
+            "            list(argv), print_error=False, exit_on_error=False, help_on_error=False\n"
+            "        )\n"
+            "        handler(*bound.args, **bound.kwargs)\n"
+            "    except (CycloptsError, CliError, ValueError):"
+        ),
+    ),
+    Mutation(
+        ac_id="AC-13",
+        label='"Did you mean" suggestion wording',
+        na_reason=(
+            "Did-you-mean suggestions are native Cyclopts error-message "
+            "formatting; fromargs only relays str(exc) verbatim in _report "
+            "(_run.py), so there is no fromargs-owned line whose mutation "
+            "would selectively break the suggestion wording without also "
+            "breaking AC-4's envelope tests, which already cover _report."
+        ),
+    ),
+    Mutation(
+        ac_id="AC-14",
+        label="underscore flag binding (--max_count -> max_count)",
+        na_reason=(
+            "Underscore/dash flag normalization is native Cyclopts behavior "
+            "(cyclopts.core, name-collapsing on '-'/'_'); fromargs has no "
+            "code path that participates in it, so there is nothing in "
+            "src/fromargs meaningful to mutate for this AC."
+        ),
     ),
 ]
 
