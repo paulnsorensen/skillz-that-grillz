@@ -18,3 +18,5 @@ packages = ["src/fromargs"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["examples"]
+markers = ["ac(id): ties a test to an acceptance-criterion ID"]
+addopts = "--strict-markers"

@@ -47,6 +47,10 @@ test:
 lint-sh:
     shellcheck scripts/install.sh skills/file-handler/scripts/skillz.sh
 
+# Mutation-test the fromargs acceptance suite (not part of build/ci).
+mutate-fromargs:
+    uv run --project lib/fromargs python lib/fromargs/tests/e2e/mutate.py
+
 # Fix markdown formatting issues
 lint-md-fix:
     markdownlint-cli2 --fix "skills/**/*.md" "*.md"
