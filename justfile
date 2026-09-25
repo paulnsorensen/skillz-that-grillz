@@ -35,12 +35,9 @@ test:
     python3 .github/scripts/test_validate_skills.py
     python3 .github/scripts/test_validate_evals.py
     python3 .github/scripts/validate_skills.py
-    python3 .github/scripts/validate_evals.py
-    python3 skills/bash-shortening/scripts/bash-shorten.py --self-test
     bats tests/bash/test_install.bats
     bats tests/bash/test_skillz.bats
     bats tests/bash/test_respond_post_reply.bats
-    bats tests/bash-shortening/test_bash_shorten.bats
     uv run --locked --project lib/fromargs pytest lib/fromargs/tests -q
 
 # Lint shell scripts

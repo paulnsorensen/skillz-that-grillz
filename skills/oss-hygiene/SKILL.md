@@ -13,10 +13,10 @@ description: >
   "wire dependabot", "add scorecard", "OSSF badge", "supply chain
   hardening", or invokes /oss-hygiene on a public repo. Idempotent —
   safe to re-run; diffs against templates and asks before overwriting.
-  Distinct from /gh-bootstrap (merge-button + branch protection) and
+  Distinct from branch protection and merge settings, and from
   /safe-settings (org-scale settings as code): focuses on the
   contributor-facing and supply-chain surface, not merge or org policy.
-  Run after /gh-bootstrap; before announcing the repo.
+  Run after the default branch is protected; before announcing the repo.
 allowed-tools: Read, Write, Edit, Glob, Bash(gh:*), Bash(git:*)
 license: MIT
 ---
@@ -25,18 +25,18 @@ license: MIT
 
 Brings a public GitHub repo up to the **GitHub Community Standards** baseline and the **OpenSSF Scorecard** supply-chain baseline, and stages it for the **OpenSSF Best Practices Badge**.
 
-This sits next to `/gh-bootstrap` and answers a different question: gh-bootstrap locks the merge surface; oss-hygiene fills the contributor-facing and supply-chain surface.
+This skill does not lock the merge surface. It fills the contributor-facing and supply-chain surface.
 
 ## Where this skill fits
 
 | Concern | Skill |
 |---|---|
-| Merge button, branch protection, release-notes config | `/gh-bootstrap` |
+| Merge button, branch protection, release-notes config | out of scope (repo settings and rulesets) |
 | Community files, supply-chain checks, OSSF posture | **`/oss-hygiene`** (this skill) |
 | Org-wide settings as code across many repos | `/safe-settings` |
 | Per-task PR / issue / CI ops | `/gh` |
 
-Run `/gh-bootstrap` first (so `main` is locked), then `/oss-hygiene` (so contributors can find their way in and supply-chain checks gate PRs).
+Protect the default branch with a ruleset first. Then run `/oss-hygiene`, so contributors can find their way in and supply-chain checks gate PRs.
 
 ## What gets configured
 
@@ -71,8 +71,8 @@ OpenSSF Scorecard runs ~18 automated checks. The skill wires the ones that are s
 | `Security-Policy` | Medium | `SECURITY.md` (Surface 1) |
 | `License` | Low | `LICENSE` (Surface 1, surface only) |
 | `Dependency-Update-Tool` | High | `assets/.github/dependabot.yml` |
-| `Branch-Protection` | High | covered by `/gh-bootstrap` ruleset |
-| `Code-Review` | High | covered by `/gh-bootstrap` PR rule |
+| `Branch-Protection` | High | covered by the default-branch ruleset (out of scope) |
+| `Code-Review` | High | covered by the ruleset's PR rule (out of scope) |
 | `CI-Tests` | Low | repo's existing CI |
 | `Token-Permissions` | High | audit existing workflows for `permissions:` blocks; report only |
 | `Dangerous-Workflow` | Critical | audit only — warn on `pull_request_target` + `actions/checkout` of head ref |
@@ -236,7 +236,7 @@ The summary should call out:
 - License selection — it surfaces the gap, doesn't pick one
 - README authoring — content is the project's voice
 - Org-wide community files — use `/safe-settings` for that
-- Branch protection / merge queue — use `/gh-bootstrap`
+- Branch protection / merge queue — configure a default-branch ruleset
 - Sigstore release signing — language- and pipeline-specific, out of scope
 - Filling out the OSSF Best Practices Badge questionnaire — that's the maintainer's attestation
 - Pinning dependencies — per-ecosystem, often contentious

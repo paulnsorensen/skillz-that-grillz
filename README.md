@@ -11,12 +11,10 @@
 
 A focused, skills-only repository of [Agent Skills](https://agentskills.io/specification)
 for the everyday plumbing around a project: working a GitHub PR, cutting a
-release, scaffolding a justfile, wiring up prek pre-commit hooks, and writing
-concise idiomatic Bash.
-No agents and no orchestration. There are no _required_ MCP servers — two
-skills (`chezmoi`, `prek`) _optionally_ use Context7 for current
-docs, and `chezmoi` may also use Tavily for web extracts; when
-those tools are absent they fall back to bundled guidance and CLI help — just self-contained `SKILL.md` files that any spec-compliant harness can load.
+release, scaffolding a justfile, and wiring up prek pre-commit hooks.
+No agents and no orchestration. There are no _required_ MCP servers — one
+skill (`prek`) _optionally_ uses Context7 for current docs; when that tool is
+absent it falls back to bundled guidance and CLI help — just self-contained `SKILL.md` files that any spec-compliant harness can load.
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
 covers the design / implement / review workflow (mold, cook, press, age, cure)
@@ -44,11 +42,8 @@ harness can load it progressively.
 
 | Skill path | Command | Purpose |
 | --- | --- | --- |
-| `skills/bash-shortening/SKILL.md` | `/bash-shortening` | Rewrite verbose Bash into idiomatic forms — parameter expansion, brace expansion, process substitution, arithmetic contexts, heredocs, associative arrays, and 45 other techniques. Knows when shortening hurts readability and refuses cryptic one-liners. Methodology + a deterministic rewriter (`scripts/bash-shorten.py`) that requires `ast-grep`; without it, fall back to invoking the skill directly in your harness. |
-| `skills/chezmoi/SKILL.md` | `/chezmoi` | Manage dotfiles with [chezmoi](https://chezmoi.io/) — file-naming attribute table (`dot_`, `private_`, `encrypted_`, `run_once_`), safe-apply ritual (`status` → `diff` → `dry-run` → `apply`), secrets decision tree (1Password / Bitwarden / age / gpg / SOPS), `.chezmoi.toml.tmpl` bootstrap recipe, and the canonical pitfall list. |
 | `skills/file-handler/SKILL.md` | `/file-handler` | Persist, fetch, and search skill artifacts under a shared `.skillz/<type>/<slug>` tree. Wraps a dependency-free `skillz.sh` exposing `save_file`, `get_file`, and `search_files` (titles + body grep). The on-disk convention every other skill in this repo delegates to for scratch space. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PR inspection / review / merge, issues, CI checks, releases, workflow runs, code search, repo and label management — via the `gh` CLI, with idiomatic `--jq` and `--body-file` patterns. Committing, pushing, and PR creation live in easy-cheese's `/plate`. |
-| `skills/gh-bootstrap/SKILL.md` | `/gh-bootstrap` | One-time configuration of a single GitHub repo via `gh` CLI: enable the merge queue on `main`, lock to squash-only merging with PR-title commits, wire required CI checks, scaffold `.github/release.yml` for auto-generated release notes, and optionally add a tag-driven release workflow. Idempotent. |
 | `skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
 | `skills/github-copilot-repo-instructions/SKILL.md` | `/github-copilot-repo-instructions` | Add or audit `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md` so Copilot Chat, code review, and the coding agent pick up project-wide guidance. Covers `applyTo`/`excludeAgent` frontmatter, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` alternates, surfaces, verification, **and the full `copilot_code_review` ruleset knob inventory** (see `references/code-review-knobs.md`). |
 | `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
@@ -60,18 +55,12 @@ harness can load it progressively.
 
 ## Scope
 
-Most skills wrap a single CLI you probably already use. `bash-shortening`
-can be used as pure methodology (invoke `/bash-shortening` in any compliant
-harness); the bundled `bash-shorten.py` rewriter additionally requires
-**ast-grep**.
+Most skills wrap a single CLI you probably already use.
 
 | Skill | Wraps | Required | Optional |
 | --- | --- | --- | --- |
-| `bash-shortening` | methodology + `bash-shorten.py` rewriter | bash 4+ in target scripts, **ast-grep** (when running the rewriter) | shellcheck (post-validation), sd / ripgrep / fd (`--include modernize`) |
-| `chezmoi` | `chezmoi` CLI | chezmoi | `op` / `bw` / `age` / `gpg` (one of, when using encrypted dotfiles); Context7 MCP (latest template-function docs) |
 | `file-handler` | `bash` + standard POSIX tools (`find`, `grep`) | bash 4+, `find`, `grep` | — |
 | `gh` | `gh` CLI | gh | — |
-| `gh-bootstrap` | `gh` CLI (`gh api`) | gh | — |
 | `github-copilot-personal-instructions` | github.com Copilot UI | — | — |
 | `github-copilot-repo-instructions` | repo files + `gh api repos/.../rulesets` | — | — |
 | `justfile` | `just` | just | — |
@@ -85,10 +74,9 @@ What that means in practice:
 
 - **No orchestration, no intent classification.** Each skill is a single
   focused step the user (or another skill) explicitly invokes.
-- **No required MCP servers.** Only `chezmoi` and `prek`
-  touch an MCP server at all, and only optionally: each uses Context7 for
-  current docs and falls back to the wrapped CLI's own self-docs when it is
-  missing (e.g. `prek` uses documented hook revisions).
+- **No required MCP servers.** Only `prek` touches an MCP server at all,
+  and only optionally: it uses Context7 for current hook revisions and falls
+  back to documented hook revisions when Context7 is missing.
 - **Composes freely with any other skill set** — install just these, install
   alongside something larger, or pick individual skills.
 
@@ -105,7 +93,6 @@ ship a release
 new project setup
     ├── /justfile          ──►  scaffold task runner
     ├── /prek              ──►  scaffold pre-commit hooks
-    ├── /gh-bootstrap      ──►  configure merge queue + squash-only + release notes on a single repo
     └── /oss-hygiene       ──►  community files + supply-chain workflows + Scorecard / OSSF Badge
 
 org-wide policy as code
@@ -222,12 +209,11 @@ and works in any compliant client.
 
 `scripts/install.sh` does the whole setup in one shot:
 
-1. Installs the CLI tools the skills wrap (`gh`, `just`, `prek`) plus the
-   bash-shortening helpers (`ast-grep`, `sd`, `ripgrep`, `fd`) via Homebrew.
+1. Installs the CLI tools the skills wrap (`gh`, `just`, `prek`) via Homebrew.
 2. Auto-detects installed Claude Code, Cursor, Codex, and opencode CLIs and
    installs every skill into each via `npx skills` (pass `--harness <name>` to
    target other agents — gemini, copilot, vscode, etc.).
-3. Optionally registers the `context7` MCP server (used by the `chezmoi` and `prek` skills).
+3. Optionally registers the `context7` MCP server (used by the `prek` skill).
    Auto-registration currently covers Claude Code only; for other harnesses it
    prints a manual-config hint (see the Context7 section below).
 

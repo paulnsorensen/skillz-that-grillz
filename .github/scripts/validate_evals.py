@@ -23,7 +23,7 @@ skill can carry richer per-eval metadata (ralphify-spec's `assertions`)
 without forking the contract.
 
 Pass `--self-test` to run the embedded accept/reject fixtures instead of
-scanning the tree (mirrors `bash-shorten.py --self-test`).
+scanning the tree.
 
 Exit 0 on success, 1 on any failure.
 """

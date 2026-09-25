@@ -40,11 +40,9 @@ jobs:
         # `just ci` is the single source of truth — the same gate runs locally.
         # Pin the tools it shells out to so CI matches a developer's machine:
         #   apt: shellcheck, bats   npm: markdownlint-cli2
-        #   pip: yamllint + pyyaml (validators) + ast-grep (bash-shorten)
+        #   pip: yamllint + pyyaml (validators)
         #   uv: pinned by the Install uv step; lib/fromargs pytest from its uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
-        # `sg` (ast-grep) collides with util-linux on Ubuntu; the pip wheel's bin
-        # is earlier on PATH via setup-python, same as the old validate job.
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -52,8 +50,7 @@ jobs:
           npm install -g markdownlint-cli2@0.22.1
           pip install --no-cache-dir \
             yamllint==1.35.1 \
-            pyyaml==6.0.2 \
-            ast-grep-cli==0.42.1
+            pyyaml==6.0.2
           curl -fsSL https://github.com/google/yamlfmt/releases/download/v0.21.0/yamlfmt_0.21.0_Linux_x86_64.tar.gz \
             | sudo tar -xz -C /usr/local/bin yamlfmt
 
@@ -79,20 +76,11 @@ jobs:
       - name: Install bats
         run: brew install bats-core
 
-      - name: Install ast-grep (sg)
-        # Hard requirement of bash-shorten.py — installed before the bats
-        # tests so the engine path is exercised. install.sh would also
-        # bring this down, but its dry-run runs after these tests.
-        run: brew install ast-grep
-
       - name: Run install.sh unit tests
         run: bats tests/bash/test_install.bats
 
       - name: Run skillz.sh unit tests
         run: bats tests/bash/test_skillz.bats
-
-      - name: Run bash-shorten.py CLI tests
-        run: bats tests/bash-shortening/test_bash_shorten.bats
 
       - name: Run attribution unit tests
         run: bats tests/bash/test_respond_post_reply.bats

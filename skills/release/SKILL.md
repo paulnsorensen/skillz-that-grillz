@@ -10,8 +10,8 @@ description: >
   says "cut a release", "tag a release", "publish a release", "ship
   vX.Y.Z", "bump the version", "what version should this be", "write the
   release notes", "draft the changelog", or invokes /release. Distinct
-  from /gh-bootstrap (which scaffolds the `.github/release.yml` + release
-  workflow plumbing once) and /gh (raw per-command `gh release` ops):
+  from one-time release plumbing (`.github/release.yml`, a tag-driven
+  release workflow) and /gh (raw per-command `gh release` ops):
   this skill runs the actual release ceremony — version decision, notes,
   tag, publish. Run after the work is merged to the default branch.
 allowed-tools: Read, Write, Edit, Glob, Bash(gh:*), Bash(git:*)
@@ -22,18 +22,18 @@ license: MIT
 
 Cuts a versioned release: pick the next [semantic version](https://semver.org), write proper release notes, tag the commit, and publish the GitHub release.
 
-This sits next to `/gh-bootstrap` and `/gh` and answers a different question. `/gh-bootstrap` wires the release *plumbing* once (`.github/release.yml`, the tag-driven workflow). `/gh` is the raw `gh release` command reference. This skill is the **ceremony you run each time you ship**: decide the bump, draft the notes, tag, publish.
+This sits next to `/gh` and answers a different question. The release *plumbing* (`.github/release.yml`, a tag-driven workflow) is a one-time repo setup. `/gh` is the raw `gh release` command reference. This skill is the **ceremony you run each time you ship**: decide the bump, draft the notes, tag, publish.
 
 ## Where this skill fits
 
 | Concern | Skill |
 |---|---|
-| One-time release-notes config + tag-driven workflow | `/gh-bootstrap` |
+| One-time release-notes config + tag-driven workflow | repo setup (see `references/release-notes.md`) |
 | Raw per-command `gh release create` / `view` / `upload` | `/gh` |
 | Deciding the version, drafting notes, tagging, publishing | **`/release`** (this skill) |
 | Local commit before any of this | `/plate` |
 
-If the repo has a tag-driven release workflow (from `/gh-bootstrap`), pushing the tag is enough — the workflow publishes the release. This skill still decides the version and (optionally) drafts curated notes; it just stops after the tag push and reports that the workflow takes over. Otherwise it publishes the release itself with `gh release create`.
+If the repo has a tag-driven release workflow, pushing the tag is enough — the workflow publishes the release. This skill still decides the version and (optionally) drafts curated notes; it just stops after the tag push and reports that the workflow takes over. Otherwise it publishes the release itself with `gh release create`.
 
 ## Protocol
 
@@ -137,7 +137,7 @@ Report to the user: the version and why, the notes strategy used, the release UR
 
 ## What this skill is NOT for
 
-- Scaffolding `.github/release.yml` or the release workflow — that's `/gh-bootstrap` (run once, first).
+- Scaffolding the release workflow — a one-time repo setup. For a minimal `.github/release.yml`, see `references/release-notes.md`.
 - Looking up raw `gh release` flags outside a release ceremony — that's `/gh`.
 - Committing or pushing branch code — that's `/plate`.
 - Publishing to a package registry (npm / crates.io / PyPI). This skill tags and creates the GitHub release; registry publishing is the project's own `just`/CI step.
@@ -147,7 +147,7 @@ Report to the user: the version and why, the notes strategy used, the release UR
 
 - **Never re-point an existing tag.** `git tag -f` + `git push -f` to move a published tag breaks every consumer who already fetched it. If you tagged the wrong commit, cut a new patch version instead.
 - **Auto-generated notes only see merged PRs.** Direct pushes to the default branch don't appear. A repo without PR-based merges (no branch protection) should curate notes, not rely on `--generate-notes`.
-- **`--generate-notes` needs `.github/release.yml`** to group nicely; without it you get a flat "What's Changed" list. If the grouping looks wrong, the categories/labels in `release.yml` are the lever — fix them via `/gh-bootstrap`, not here.
+- **`--generate-notes` needs `.github/release.yml`** to group nicely; without it you get a flat "What's Changed" list. If the grouping looks wrong, the categories/labels in `release.yml` are the lever — fix them in that file as a separate change, not here.
 - **Prereleases must not be `--latest`.** Marking an `-rc` build as latest makes it the default download and the target of `releases/latest`. Use `--prerelease` and omit `--latest`.
 - **Pre-1.0 semver is different.** Under `0.x`, breaking changes bump the minor, not the major. See `references/semver.md`.
 - **Tag must be an ancestor of the default branch.** Tagging a feature-branch commit ships unreviewed code. Confirm the commit is on (or merged into) the default branch before tagging.
