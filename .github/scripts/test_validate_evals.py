@@ -111,7 +111,10 @@ class ShippedEvalsTest(unittest.TestCase):
 
     def test_shipped_eval_files_validate(self) -> None:
         eval_files = sorted((REPO_ROOT / "skills").glob("*/evals/evals.json"))
-        self.assertTrue(eval_files, "expected at least one shipped evals.json file")
+        if not eval_files:
+            # No skill ships evals now. The validator's own tests still run;
+            # this guard checks every evals.json that a skill adds later.
+            self.skipTest("no shipped evals.json files")
         for ef in eval_files:
             with self.subTest(file=str(ef.relative_to(REPO_ROOT))):
                 self.assertEqual(validate_evals.validate_file(ef), [])

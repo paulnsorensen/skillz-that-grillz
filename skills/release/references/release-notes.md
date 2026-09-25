@@ -9,8 +9,26 @@ answer.
 ### 1. Auto-generated (`--generate-notes`)
 
 GitHub builds the body from the merged PRs between the previous tag and the new
-one, grouped into the buckets defined in `.github/release.yml` (scaffolded by
-`/gh-bootstrap`).
+one, grouped into the buckets defined in `.github/release.yml`. See
+[GitHub's automatically generated release notes docs](https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes)
+for the full schema. A minimal config maps PR labels to categories. Put the
+`"*"` catch-all last:
+
+```yaml
+changelog:
+  exclude:
+    authors:
+      - dependabot
+  categories:
+    - title: Breaking changes
+      labels: [breaking-change]
+    - title: Features
+      labels: [enhancement, feature]
+    - title: Fixes
+      labels: [bug, fix]
+    - title: Other changes
+      labels: ["*"]
+```
 
 ```bash
 gh release create "$VERSION" --title "$VERSION" --generate-notes --latest
