@@ -53,14 +53,14 @@ MUTATIONS: list[Mutation] = [
         ac_id="AC-1",
         label="command registration renames every command",
         rel_file="_app.py",
-        old='        self._cyclopts.command(obj, name=name, **kwargs)',
-        new='        self._cyclopts.command(obj, name=f"broken-{name or \'\'}", **kwargs)',
+        old='        _ = self._cyclopts.command(obj, name=name, **kwargs)',
+        new='        _ = self._cyclopts.command(obj, name=f"broken-{name or \'\'}", **kwargs)',
     ),
     Mutation(
         ac_id="AC-2",
         label="JSON result payload is discarded",
         rel_file="_output.py",
-        old="    print(json.dumps(payload, indent=2, default=_default), file=stream)",
+        old="    print(json.dumps(payload, indent=2, default=_default, allow_nan=False), file=stream)",
         new='    print(json.dumps({"broken": True}), file=stream)',
     ),
     Mutation(
@@ -81,8 +81,8 @@ MUTATIONS: list[Mutation] = [
         ac_id="AC-5",
         label="--json stops being a no-op",
         rel_file="_argv.py",
-        old='_GLOBAL_FLAGS = frozenset({"--json", "--full"})',
-        new='_GLOBAL_FLAGS = frozenset({"--full"})',
+        old='GLOBAL_FLAGS = frozenset({"--json", "--full"})',
+        new='GLOBAL_FLAGS = frozenset({"--full"})',
     ),
     Mutation(
         ac_id="AC-6",
@@ -102,8 +102,8 @@ MUTATIONS: list[Mutation] = [
         ac_id="AC-8",
         label="full handler parameter no longer reserved",
         rel_file="_app.py",
-        old='_RESERVED_PARAMETERS = frozenset({"json", "full"})',
-        new='_RESERVED_PARAMETERS = frozenset({"json"})',
+        old="    reserved = sorted(GLOBAL_FLAGS.intersection(names))",
+        new='    reserved = sorted(frozenset({"--json"}).intersection(names))',
     ),
     Mutation(
         ac_id="AC-9",
@@ -133,17 +133,13 @@ MUTATIONS: list[Mutation] = [
         label="probe parse invokes the handler",
         rel_file="_argv.py",
         old=(
-            "        app.parse_args(\n"
-            "            list(argv), print_error=False, exit_on_error=False, help_on_error=False\n"
-            "        )\n"
-            "    except (CycloptsError, CliError, ValueError):"
+            "        _ = parse_once(app, argv)\n"
+            "    except (CycloptsError, CliError):"
         ),
         new=(
-            "        handler, bound, _ = app.parse_args(\n"
-            "            list(argv), print_error=False, exit_on_error=False, help_on_error=False\n"
-            "        )\n"
+            "        handler, bound = parse_once(app, argv)\n"
             "        handler(*bound.args, **bound.kwargs)\n"
-            "    except (CycloptsError, CliError, ValueError):"
+            "    except (CycloptsError, CliError):"
         ),
     ),
     Mutation(
@@ -183,8 +179,7 @@ def collect_node_ids() -> dict[str, list[str]]:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            f"pytest --collect-only failed (exit {result.returncode}):\n"
-            f"{result.stdout}\n{result.stderr}"
+            f"pytest --collect-only failed (exit {result.returncode}):\n{result.stdout}\n{result.stderr}"
         )
     by_ac: dict[str, list[str]] = {}
     for line in result.stdout.splitlines():
@@ -206,10 +201,13 @@ def run_mutation(mutation: Mutation, node_ids: list[str]) -> str:
     if not node_ids:
         print(f"  (no tests collected for {mutation.ac_id})", file=sys.stderr)
         return "STALE"
+    assert mutation.rel_file is not None
+    assert mutation.old is not None
+    assert mutation.new is not None
     with tempfile.TemporaryDirectory(prefix="fromargs-mutate-") as tmp_root_name:
         tmp_root = Path(tmp_root_name)
         tmp_src = tmp_root / "src"
-        shutil.copytree(SRC_DIR, tmp_src)
+        _ = shutil.copytree(SRC_DIR, tmp_src)
         target = tmp_src / "fromargs" / mutation.rel_file
         original = target.read_text(encoding="utf-8")
         if mutation.old not in original:
@@ -218,7 +216,7 @@ def run_mutation(mutation: Mutation, node_ids: list[str]) -> str:
                 file=sys.stderr,
             )
             return "STALE"
-        target.write_text(original.replace(mutation.old, mutation.new, 1), encoding="utf-8")
+        _ = target.write_text(original.replace(mutation.old, mutation.new, 1), encoding="utf-8")
 
         env = dict(os.environ)
         existing = env.get("PYTHONPATH", "")

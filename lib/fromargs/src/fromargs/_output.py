@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
-from typing import TextIO
+from typing import TextIO, cast
 
 
 def write_result(
@@ -42,7 +42,7 @@ def _default(value: object) -> object:
     if isinstance(value, os.PathLike):
         return str(value)
     if isinstance(value, Mapping):
-        return dict(value)
+        return dict(cast("Mapping[object, object]", value))
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return list(value)
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")

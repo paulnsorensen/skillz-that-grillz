@@ -9,19 +9,19 @@ never run here.
 
 from __future__ import annotations
 
-import os
 import shlex
 import sys
 from collections.abc import Callable, Sequence
 from inspect import BoundArguments
-from typing import get_args, get_origin
+from pathlib import Path
+from typing import cast, get_args, get_origin
 
 from cyclopts import App, CycloptsError
 from cyclopts.annotations import is_union
 
 from fromargs._errors import CliError
 
-_GLOBAL_FLAGS = frozenset({"--json", "--full"})
+GLOBAL_FLAGS = frozenset({"--json", "--full"})
 
 
 def strip_global_flags(app: App, argv: Sequence[str]) -> tuple[list[str], bool]:
@@ -34,7 +34,7 @@ def strip_global_flags(app: App, argv: Sequence[str]) -> tuple[list[str], bool]:
     tokens = list(argv)
     boundary = len(_options(app, tokens))
     before, after = tokens[:boundary], tokens[boundary:]
-    kept = [token for token in before if token not in _GLOBAL_FLAGS]
+    kept = [token for token in before if token not in GLOBAL_FLAGS]
     return kept + after, "--full" in before
 
 
@@ -93,7 +93,7 @@ def parse_once(app: App, argv: Sequence[str]) -> tuple[Callable[..., object], Bo
 def _parses(app: App, argv: Sequence[str]) -> bool:
     """Probe-parse ``argv``; a converter's ``CliError`` counts as a rejection."""
     try:
-        parse_once(app, argv)
+        _ = parse_once(app, argv)
     except (CycloptsError, CliError):
         return False
     return True
@@ -141,7 +141,7 @@ def _splittable_options(app: App, argv: Sequence[str]) -> set[str] | None:
         for argument in arguments:
             if argument.is_flag():
                 continue
-            if _is_free_text(argument.hint) and argument.get_choices() is None:
+            if _is_free_text(cast(object, argument.hint)) and argument.get_choices() is None:
                 continue
             options.update(argument.names)
     return options
@@ -149,15 +149,20 @@ def _splittable_options(app: App, argv: Sequence[str]) -> set[str] | None:
 
 def _is_free_text(hint: object) -> bool:
     """True when ``hint`` is unstructured text: ``str``, ``Path``, or a sequence of them."""
-    if isinstance(hint, type) and issubclass(hint, (str, os.PathLike)):
+    if isinstance(hint, type) and issubclass(hint, (str, Path)):
         return True
-    if is_union(hint):
+    if is_union(hint):  # pyright: ignore[reportArgumentType]  # cyclopts types this as type | None but accepts UnionType/Annotated hints at runtime
         return all(
-            argument is type(None) or _is_free_text(argument) for argument in get_args(hint)
+            argument is type(None) or _is_free_text(argument)
+            for argument in cast("tuple[object, ...]", get_args(hint))
         )
     origin = get_origin(hint)
     if origin in (list, tuple, set, frozenset, Sequence):
-        args = tuple(argument for argument in get_args(hint) if argument is not Ellipsis)
+        args = tuple(
+            argument
+            for argument in cast("tuple[object, ...]", get_args(hint))
+            if argument is not Ellipsis
+        )
         return bool(args) and all(_is_free_text(argument) for argument in args)
     return False
 

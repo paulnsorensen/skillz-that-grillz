@@ -128,7 +128,7 @@ def _await(apps: tuple[App, ...], coroutine: Coroutine[object, object, object]) 
         coroutine.close()
         raise _AsyncContractError(f"async commands need the asyncio backend, not {backend!r}")
     try:
-        asyncio.get_running_loop()
+        _ = asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coroutine)
     coroutine.close()
@@ -144,7 +144,7 @@ def _report_unexpected(exc: Exception) -> int:
     """Report an unexpected exception as a three-key envelope; write its traceback; return 1."""
     descriptor, path = tempfile.mkstemp(prefix="fromargs-", suffix=".traceback")
     with open(descriptor, "w") as handle:
-        handle.write(traceback.format_exc())
+        _ = handle.write(traceback.format_exc())
     print(
         json.dumps({"error": f"{type(exc).__name__}: {exc}", "exit_code": 1, "traceback": path}),
         file=sys.stderr,

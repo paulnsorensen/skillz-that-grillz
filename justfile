@@ -38,6 +38,7 @@ test:
     bats tests/bash/test_install.bats
     bats tests/bash/test_skillz.bats
     bats tests/bash/test_respond_post_reply.bats
+    uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
     uv run --locked --project lib/fromargs pytest lib/fromargs/tests -q
 
 # Lint shell scripts
