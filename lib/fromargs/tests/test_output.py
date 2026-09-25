@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 from dataclasses import dataclass
@@ -23,8 +24,6 @@ class Point:
 
 def _run(value: object, *, limit: int | None = None, full: bool = False) -> tuple[str, str]:
     stdout, stderr = io.StringIO(), io.StringIO()
-    import contextlib
-
     with contextlib.redirect_stderr(stderr):
         write_result(value, limit=limit, full=full, stdout=stdout)
     return stdout.getvalue(), stderr.getvalue()
@@ -116,3 +115,13 @@ def test_none_stdout_writes_to_sys_stdout(capsys: pytest.CaptureFixture[str]) ->
     write_result([1, 2], limit=None, full=False)
 
     assert json.loads(capsys.readouterr().out) == [1, 2]
+
+
+def test_nan_is_rejected() -> None:
+    with pytest.raises(ValueError, match="not JSON compliant"):
+        _run(float("nan"))
+
+
+def test_set_is_rejected() -> None:
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        _run({1, 2, 3})

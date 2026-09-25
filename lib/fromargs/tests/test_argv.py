@@ -247,7 +247,9 @@ def test_split_without_dash_piece_is_refused(
     assert capsys.readouterr().err == ""
 
 
-def test_path_option_value_is_not_split(capsys: pytest.CaptureFixture[str]) -> None:
+def test_path_option_value_is_not_split(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
     app = App()
 
     @app.command
@@ -258,7 +260,9 @@ def test_path_option_value_is_not_split(capsys: pytest.CaptureFixture[str]) -> N
     ) -> None:
         raise AssertionError("probing must not run a handler")
 
-    argv = ["p", "--path", "pyproject.toml --force"]
+    target = tmp_path / "wheel.toml"
+    target.write_text("")
+    argv = ["p", "--path", f"{target} --force"]
 
     assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""

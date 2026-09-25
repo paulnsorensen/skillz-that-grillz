@@ -296,7 +296,10 @@ def test_ac08_reserved_parameter_raises_at_registration(
 
     assert result.returncode == 0
     envelope = json.loads(result.stdout)
-    assert envelope == {"raised": True, "error": f"command parameter {reserved!r} is reserved by fromargs"}
+    assert envelope == {
+        "raised": True,
+        "error": f"command option {'--' + reserved!r} is reserved by fromargs",
+    }
     assert calls == []
 
 

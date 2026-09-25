@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import itertools
 import json
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from typing import TextIO
@@ -35,9 +36,11 @@ def write_result(
 
 
 def _default(value: object) -> object:
-    """Fallback for ``json.dumps``: dataclass via ``asdict``, else mapping, else list."""
+    """Fallback for ``json.dumps``: dataclass via ``asdict``, path via ``str``, else mapping, else list."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return dataclasses.asdict(value)
+    if isinstance(value, os.PathLike):
+        return str(value)
     if isinstance(value, Mapping):
         return dict(value)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):

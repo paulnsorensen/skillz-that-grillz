@@ -15,6 +15,7 @@ Cyclopts itself binds ``--dry_run`` to ``--dry-run``. It also answers a
 misspelled command such as ``wheels lst`` with ``Did you mean "list"?``.
 """
 
+import sys
 from dataclasses import dataclass
 
 import fromargs
@@ -88,9 +89,9 @@ def _find(cave: dict[str, Wheel], name: str) -> Wheel:
     return cave[name]
 
 
-def main() -> None:
-    build_app(starter_cave()).main()
+def main(argv: list[str] | None = None) -> int:
+    return build_app(starter_cave()).run(argv)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

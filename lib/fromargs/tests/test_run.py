@@ -4,15 +4,28 @@
 # hints of commands defined inside tests, which reference local converters.
 
 import asyncio
+import contextlib
 import io
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Annotated
 
 import pytest
 from cyclopts import CycloptsError, Parameter, Token
 
 import fromargs
+
+JsonLine = Callable[[str], dict[str, object]]
+
+
+def _unexpected_envelope(err: str) -> dict[str, object]:
+    """Checker: ``err`` is exactly one three-key unexpected-exception envelope; returns it."""
+    lines = err.splitlines()
+    assert len(lines) == 1, err
+    envelope = json.loads(lines[0])
+    assert set(envelope) == {"error", "exit_code", "traceback"}
+    return envelope
 
 
 def _app(calls: list[tuple[str, dict[str, object]]]) -> fromargs.App:
@@ -94,38 +107,75 @@ def test_stdout_parameter_receives_the_json_result() -> None:
     assert json.loads(buffer.getvalue()) == {"hi": "there"}
 
 
-def test_cli_error_json_envelope(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_error_json_envelope(
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
+) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
-    assert fromargs.App.run(_app(calls), ["fail", "plain"]) == 3
+    assert _app(calls).run(["fail", "plain"]) == 3
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert json.loads(captured.err) == {"error": "boom", "exit_code": 3}
+    assert single_json_line(captured.err) == {"error": "boom", "exit_code": 3}
 
 
-def test_contract_error_json_envelope(capsys: pytest.CaptureFixture[str]) -> None:
+def test_contract_error_json_envelope(
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
+) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
     assert _app(calls).run(["fail", "contract"]) == 3
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert json.loads(captured.err) == {"error": "load: bad shape", "exit_code": 3}
+    assert single_json_line(captured.err) == {"error": "load: bad shape", "exit_code": 3}
 
 
 def test_cli_error_default_exit_code_is_usage() -> None:
     assert fromargs.CliError("usage").exit_code == 2
 
 
-def test_missing_command_is_a_json_envelope(capsys: pytest.CaptureFixture[str]) -> None:
+def test_missing_command_is_a_json_envelope(
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
+) -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
     assert _app(calls).run([]) == 2
-    assert json.loads(capsys.readouterr().err) == {
+    assert single_json_line(capsys.readouterr().err) == {
         "error": "command required",
         "exit_code": 2,
     }
+
+
+def test_group_with_no_subcommand_is_a_json_envelope(
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
+) -> None:
+    app = fromargs.App("t")
+    group = app.group("group")
+
+    @group.command
+    def sub() -> None:
+        raise AssertionError("handler must not run")
+
+    assert app.run(["group"]) == 2
+    assert single_json_line(capsys.readouterr().err) == {
+        "error": "command required",
+        "exit_code": 2,
+    }
+
+
+def test_group_help_flag_still_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
+    app = fromargs.App("t")
+    group = app.group("group")
+
+    @group.command
+    def sub() -> None:
+        raise AssertionError("handler must not run")
+
+    assert app.run(["group", "--help"]) == 0
+    out, err = capsys.readouterr()
+    assert out != ""
+    assert err == ""
 
 
 def test_did_you_mean_surfaces(capsys: pytest.CaptureFixture[str]) -> None:
@@ -166,11 +216,13 @@ def _converter_app(converted: list[str]) -> fromargs.App:
     return app
 
 
-def test_converter_cli_error_is_reported(capsys: pytest.CaptureFixture[str]) -> None:
+def test_converter_cli_error_is_reported(
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
+) -> None:
     converted: list[str] = []
 
     assert _converter_app(converted).run(["fetch", "bad"]) == 4
-    assert json.loads(capsys.readouterr().err) == {
+    assert single_json_line(capsys.readouterr().err) == {
         "error": "custom bad value",
         "exit_code": 4,
     }
@@ -207,15 +259,64 @@ def test_converter_rejection_still_tries_repair(
     assert "note: split quoted argument" in capsys.readouterr().err
 
 
-def test_handler_cyclopts_error_propagates() -> None:
+def test_handler_cyclopts_error_is_an_unexpected_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     app = fromargs.App("t")
 
     @app.command
     def inner() -> None:
         raise CycloptsError(msg="inner")
 
-    with pytest.raises(CycloptsError):
-        app.run(["inner"])
+    assert app.run(["inner"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["error"] == "CycloptsError: inner"
+    assert envelope["exit_code"] == 1
+    assert Path(str(envelope["traceback"])).is_file()
+
+
+def test_handler_value_error_is_an_unexpected_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["error"] == "ValueError: bad shape"
+    assert envelope["exit_code"] == 1
+    assert Path(str(envelope["traceback"])).is_file()
+
+
+def test_handler_returning_nan_is_an_unexpected_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> float:
+        return float("nan")
+
+    assert app.run(["inner"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["exit_code"] == 1
+
+
+def test_handler_returning_a_set_is_an_unexpected_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> set[int]:
+        return {1, 2}
+
+    assert app.run(["inner"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["exit_code"] == 1
 
 
 def test_json_flag_is_a_noop_anywhere(capsys: pytest.CaptureFixture[str]) -> None:
@@ -246,7 +347,7 @@ def test_full_flag_disables_truncation_anywhere(capsys: pytest.CaptureFixture[st
 
 
 def test_json_after_double_dash_is_a_literal(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
 ) -> None:
     app = fromargs.App("t")
 
@@ -255,7 +356,7 @@ def test_json_after_double_dash_is_a_literal(
         raise fromargs.CliError(" ".join(words))
 
     assert app.run(["echo", "--", "--json"]) == 2
-    assert json.loads(capsys.readouterr().err) == {"error": "--json", "exit_code": 2}
+    assert single_json_line(capsys.readouterr().err) == {"error": "--json", "exit_code": 2}
 
 
 def test_bool_return_value_serializes_as_json_true() -> None:
@@ -264,8 +365,6 @@ def test_bool_return_value_serializes_as_json_true() -> None:
     @app.command
     def yes() -> bool:
         return True
-
-    import contextlib
 
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
@@ -302,33 +401,34 @@ def test_async_handler_inside_running_loop_is_refused() -> None:
     assert ran == []
 
 
-def test_async_handler_on_other_backend_is_refused() -> None:
-    ran: list[str] = []
+def _root_trio_target() -> tuple[fromargs.App, fromargs.App, list[str]]:
     app = fromargs.App("t", backend="trio")
-
-    @app.command
-    async def later() -> int:
-        ran.append("later")
-        return 5
-
-    with pytest.raises(TypeError, match="asyncio backend, not 'trio'"):
-        app.run(["later"])
-    assert ran == []
+    return app, app, ["later"]
 
 
-def test_async_handler_on_nested_trio_backend_is_refused() -> None:
-    ran: list[str] = []
+def _nested_trio_target() -> tuple[fromargs.App, fromargs.App, list[str]]:
     app = fromargs.App("t")
     group = app.group("group")
     group._cyclopts.backend = "trio"
+    return app, group, ["group", "later"]
 
-    @group.command
+
+@pytest.mark.parametrize(
+    "target_factory", [_root_trio_target, _nested_trio_target], ids=["root", "nested"]
+)
+def test_async_handler_on_trio_backend_is_refused(
+    target_factory: Callable[[], tuple[fromargs.App, fromargs.App, list[str]]],
+) -> None:
+    ran: list[str] = []
+    app, target, argv = target_factory()
+
+    @target.command
     async def later() -> int:
         ran.append("later")
         return 5
 
     with pytest.raises(TypeError, match="asyncio backend, not 'trio'"):
-        app.run(["group", "later"])
+        app.run(argv)
     assert ran == []
 
 
@@ -357,7 +457,7 @@ def test_str_argv_is_rejected() -> None:
 
 
 def test_multiline_message_stays_one_stderr_line(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
 ) -> None:
     app = fromargs.App("t")
 
@@ -366,12 +466,15 @@ def test_multiline_message_stays_one_stderr_line(
         raise fromargs.CliError("line one\nline two", exit_code=5)
 
     assert app.run(["fail"]) == 5
-    err = capsys.readouterr().err
-    assert err.count("\n") == 1
-    assert json.loads(err) == {"error": "line one\nline two", "exit_code": 5}
+    assert single_json_line(capsys.readouterr().err) == {
+        "error": "line one\nline two",
+        "exit_code": 5,
+    }
 
 
-def test_ambiguous_command_is_a_json_envelope(capsys: pytest.CaptureFixture[str]) -> None:
+def test_ambiguous_command_is_a_json_envelope(
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
+) -> None:
     app = fromargs.App("t")
 
     @app.command
@@ -383,13 +486,13 @@ def test_ambiguous_command_is_a_json_envelope(capsys: pytest.CaptureFixture[str]
         raise AssertionError("handler must not run")
 
     assert app.run(["Show_Items"]) == 2
-    envelope = json.loads(capsys.readouterr().err)
+    envelope = single_json_line(capsys.readouterr().err)
     assert envelope["exit_code"] == 2
-    assert "Ambiguous command" in envelope["error"]
+    assert "Ambiguous command" in str(envelope["error"])
 
 
 def test_async_handler_cli_error_json_envelope(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
 ) -> None:
     app = fromargs.App("t")
 
@@ -398,7 +501,78 @@ def test_async_handler_cli_error_json_envelope(
         raise fromargs.CliError("async bad", exit_code=6)
 
     assert app.run(["later"]) == 6
-    assert json.loads(capsys.readouterr().err) == {
+    assert single_json_line(capsys.readouterr().err) == {
         "error": "async bad",
         "exit_code": 6,
     }
+
+
+def test_reserved_option_from_trailing_underscore_name_is_rejected() -> None:
+    app = fromargs.App("t")
+
+    with pytest.raises(ValueError, match="'--json'"):
+
+        @app.command
+        def bad(*, json_: bool = False) -> None:
+            pass
+
+
+def test_reserved_option_from_trailing_underscore_full_name_is_rejected() -> None:
+    app = fromargs.App("t")
+
+    with pytest.raises(ValueError, match="'--full'"):
+
+        @app.command
+        def bad(*, full_: bool = False) -> None:
+            pass
+
+
+def test_reserved_option_from_explicit_parameter_name_is_rejected() -> None:
+    app = fromargs.App("t")
+
+    with pytest.raises(ValueError, match="'--full'"):
+
+        @app.command
+        def bad(*, override: Annotated[bool, Parameter(name="--full")] = False) -> None:
+            pass
+
+
+def test_negative_limit_is_rejected() -> None:
+    app = fromargs.App("t")
+
+    with pytest.raises(ValueError, match="must not be negative"):
+
+        @app.command(limit=-1)
+        def listing() -> list[int]:
+            return []
+
+
+def test_limit_works_with_a_bound_method() -> None:
+    class Lister:
+        def items(self) -> list[int]:
+            return [1, 2, 3]
+
+    app = fromargs.App("t")
+    app.command(Lister().items, name="items", limit=1)
+
+    buffer = io.StringIO()
+    assert app.run(["items"], stdout=buffer) == 0
+    assert json.loads(buffer.getvalue()) == [1]
+
+
+def test_one_function_under_two_names_keeps_independent_limits() -> None:
+    app = fromargs.App("t")
+
+    def items() -> list[int]:
+        return [1, 2, 3]
+
+    app.command(items, name="short", limit=1)
+    app.command(items, name="long", limit=2)
+
+    short_buffer = io.StringIO()
+    assert app.run(["short"], stdout=short_buffer) == 0
+    assert json.loads(short_buffer.getvalue()) == [1]
+
+    long_buffer = io.StringIO()
+    assert app.run(["long"], stdout=long_buffer) == 0
+    assert json.loads(long_buffer.getvalue()) == [1, 2]
