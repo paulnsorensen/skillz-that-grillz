@@ -76,7 +76,7 @@ Done when every item in the completion check holds.
 
 ## Type-check with basedpyright
 
-- Run `basedpyright <changed .py files>` before finishing. Fall back to `uvx basedpyright` if the binary is absent. Changed files must report zero errors and warnings.
+- Run `basedpyright <changed .py files>` before finishing. If the binary is absent, fall back to `uvx basedpyright@<version>` with the project's pinned version. Changed files must report zero errors and warnings.
 - Read configuration from `[tool.basedpyright]` in `pyproject.toml` or from `pyrightconfig.json`. Respect its include paths, `pythonVersion`, and execution environments.
 - An unset `typeCheckingMode` means `recommended`: every rule is on, and `failOnWarnings` fails the run on warnings too.
 - Fix any diagnostic that your change surfaces. When the project keeps a baseline, do not add new entries to it.
