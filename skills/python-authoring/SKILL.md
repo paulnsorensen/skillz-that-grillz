@@ -1,13 +1,15 @@
 ---
 name: python-authoring
 description: >
-  Write, edit, refactor, or review Python with concise, stdlib-first,
-  fully typed code that validates input at the boundary and passes
-  basedpyright. Use when the user changes Python source, scripts, CLIs,
-  validators, or tests, or asks for Pythonic, succinct, de-slopped,
-  dataclass-based, or type-clean code. Do NOT use for packaging or
-  dependency-resolution fixes (use /version-doctor), task-runner setup
-  (use /justfile), or bug and security review (use a review skill).
+  Write, edit, refactor, or review Python as concise, stdlib-first, fully
+  typed code that validates input at the boundary and passes basedpyright.
+  Use when the user changes Python source, scripts, CLIs, validators, or
+  tests, or says "make this more Pythonic", "clean up this Python",
+  "de-slop this Python", "use a dataclass here", "fix the basedpyright
+  errors", or invokes /python-authoring. Do NOT use for Bash scripts
+  (/bash-shortening), task-runner recipes (/justfile), dependency-version
+  conflicts (/version-doctor), or bug and security review (/age).
+license: MIT
 ---
 
 # Authoring Python
@@ -22,7 +24,9 @@ Produce the smallest readable Python change that satisfies the request and match
 4. Validate untrusted input once at the boundary, then work with typed trusted data.
 5. Choose the clearest succinct Python construct; do not compress code until it becomes harder to read.
 6. Remove only slop introduced by the change and code that the change orphaned.
-7. Type-check changed files with basedpyright, run targeted tests, then run the project's full gate.
+7. Type-check changed files with basedpyright, run targeted tests, regenerate generated artifacts, then run the project's full gate.
+
+Done when every item in the completion check holds.
 
 ## Keep runtime code stdlib-first
 
@@ -86,9 +90,7 @@ Produce the smallest readable Python change that satisfies the request and match
 
 - Test observable behavior and the reason it matters; do not add assertions that can pass when the implementation is broken.
 - Keep filesystem tests inside `tmp_path` or an equivalent temporary directory. Do not depend on user paths, repository-external state, network access, or auto-loaded pytest plugins.
-- Run the most focused affected tests first.
-- Regenerate generated artifacts when their sources changed.
-- Run the project's full gate (for example `just check` or `just build`) last.
+- Run the most focused affected tests first, and the project's full gate (for example `just check` or `just build`) last.
 
 ## Completion check
 
