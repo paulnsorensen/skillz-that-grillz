@@ -2,12 +2,18 @@ name: skill-quality
 
 # Tier 1 SKILL.md description review.
 #
-# Free GitHub Models GPT-4o judge that lints the *content* of changed
-# SKILL.md files: trigger phrases, scope clarity, internal contradictions,
-# spec adherence beyond what validate_skills.py can check structurally.
+# Copilot CLI judge that lints the *content* of changed SKILL.md files:
+# trigger phrases, scope clarity, internal contradictions, spec adherence
+# beyond what validate_skills.py can check structurally.
 #
 # Runs only when a SKILL.md changes. Step summary on every run, job fails
 # on any score < 60.
+#
+# GitHub Models is retired (its endpoints answer HTTP 200 "OK"), and
+# actions/ai-inference v3 dropped it for the Copilot CLI. The CLI needs a
+# COPILOT_PAT secret: a fine-grained PAT with the "Copilot Requests"
+# permission. Without the secret (unset, or a fork PR) the judge skips
+# with a warning instead of failing.
 #
 # This is a smoke test, not a faithful Claude-routing eval. For that, run
 # anthropic/skill-creator's run_eval.py locally before tagging a release.
@@ -20,7 +26,6 @@ on:
 
 permissions:
   contents: read
-  models: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -41,6 +46,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          COPILOT_PAT: ${{ secrets.COPILOT_PAT }}
         run: |
           set -euo pipefail
           if [[ -n "${BASE_SHA:-}" && -n "${HEAD_SHA:-}" ]]; then
@@ -87,22 +93,35 @@ jobs:
               printf '\n```\n\n'
             done
           } > prompt-payload.md
+          if [[ -z "${COPILOT_PAT:-}" ]]; then
+            msg="COPILOT_PAT secret unavailable; skipping the SKILL.md description judge."
+            echo "::warning::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
-      - name: Judge with GitHub Models (gpt-4o)
+      - name: Set up Node
+        if: steps.collect.outputs.skip != 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+
+      - name: Install Copilot CLI
+        if: steps.collect.outputs.skip != 'true'
+        run: npm install -g @github/copilot@1.0.88
+
+      - name: Judge with Copilot CLI (gpt-4.1)
         if: steps.collect.outputs.skip != 'true'
         id: judge
         # actions/ai-inference is GitHub's official wrapper. Pinned to a
         # commit SHA to match the rest of this repo's actions; bump via
         # dependabot or manually when a new release lands.
-        uses: actions/ai-inference@a7805884c80886efc241e94a5351df715968a0ad # v2.1.1
+        uses: actions/ai-inference@2c43c91ae16266ca159d311430343c67a5ffa222 # v3
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_PAT }}
         with:
-          model: openai/gpt-4o
+          model: gpt-4.1
           prompt-file: prompt-payload.md
-          # Action default is 200, which truncates structured JSON for
-          # multi-skill PRs and even single skills with several issues.
-          # gpt-4o caps output at 16384; 4000 is ample headroom.
-          max-tokens: 4000
           system-prompt: |
             You are a strict reviewer of Anthropic Agent Skills
             (https://agentskills.io/specification). For each SKILL.md file
