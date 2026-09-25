@@ -12,11 +12,12 @@ from __future__ import annotations
 import os
 import shlex
 import sys
-import types
-from collections.abc import Sequence
-from typing import Union, get_args, get_origin
+from collections.abc import Callable, Sequence
+from inspect import BoundArguments
+from typing import get_args, get_origin
 
 from cyclopts import App, CycloptsError
+from cyclopts.annotations import is_union
 
 from fromargs._errors import CliError
 
@@ -37,34 +38,20 @@ def strip_global_flags(app: App, argv: Sequence[str]) -> tuple[list[str], bool]:
     return kept + after, "--full" in before
 
 
-def repair_argv(app: App, argv: Sequence[str]) -> list[str]:
-    """Return one verified split of shell-merged arguments, or argv unchanged.
-
-    A shell caller can quote several arguments as one token. The split is used
-    only when Cyclopts rejects the original argv and accepts exactly one
-    candidate. Tokens after the end-of-options marker are never split.
-    """
-    original = list(argv)
-    if _parses(app, original):
-        return original
-    repaired = repair_rejected(app, original)
-    return original if repaired is None else repaired
-
-
 def repair_rejected(app: App, argv: Sequence[str]) -> list[str] | None:
     """Return the one verified split of an argv the app rejected, or ``None``."""
     original = list(argv)
     control_flags = _control_flags(app, original)
     if control_flags.intersection(original):
         return None
-    splittable: set[str] | None = None
+    splittable = _splittable_options(app, original)
+    if splittable is None:
+        return None
     found: tuple[list[str], str, list[str]] | None = None
     for index, token in enumerate(_options(app, original)):
         pieces = _pieces(token)
         if pieces is None or control_flags.intersection(pieces):
             continue
-        if splittable is None:
-            splittable = _splittable_options(app, original)
         previous = original[index - 1] if index else ""
         option = token.partition("=")[0] if token.startswith("--") else previous
         if option not in splittable:
@@ -83,12 +70,38 @@ def repair_rejected(app: App, argv: Sequence[str]) -> list[str] | None:
     return candidate
 
 
-def _control_flags(app: App, argv: Sequence[str]) -> frozenset[str]:
-    """Help and version flags from every app in the parsed command chain."""
+def command_chain(app: App, argv: Sequence[str]) -> tuple[App, ...] | None:
+    """The resolved chain of command apps for ``argv``, or ``None`` when parsing fails."""
     try:
         _, apps, _ = app.parse_commands(list(argv))
     except (CycloptsError, ValueError):
-        apps = (app,)
+        return None
+    return apps
+
+
+def parse_once(app: App, argv: Sequence[str]) -> tuple[Callable[..., object], BoundArguments]:
+    """Parse ``argv`` once; a converter's ``ValueError`` is reported as a ``CycloptsError``."""
+    try:
+        handler, bound, _ = app.parse_args(
+            list(argv), print_error=False, exit_on_error=False, help_on_error=False
+        )
+    except ValueError as exc:
+        raise CycloptsError(msg=str(exc)) from exc
+    return handler, bound
+
+
+def _parses(app: App, argv: Sequence[str]) -> bool:
+    """Probe-parse ``argv``; a converter's ``CliError`` counts as a rejection."""
+    try:
+        parse_once(app, argv)
+    except (CycloptsError, CliError):
+        return False
+    return True
+
+
+def _control_flags(app: App, argv: Sequence[str]) -> frozenset[str]:
+    """Help and version flags from every app in the parsed command chain."""
+    apps = command_chain(app, argv) or (app,)
     flags: set[str] = set()
     for command_app in apps:
         flags.update(command_app.help_flags)
@@ -102,10 +115,7 @@ def _options(app: App, argv: Sequence[str]) -> list[str]:
     The innermost command app with a configured marker decides, as in Cyclopts.
     """
     tokens = list(argv)
-    try:
-        _, apps, _ = app.parse_commands(tokens)
-    except (CycloptsError, ValueError):
-        apps = (app,)
+    apps = command_chain(app, tokens) or (app,)
     configured = [
         command_app.end_of_options_delimiter
         for command_app in apps
@@ -117,23 +127,11 @@ def _options(app: App, argv: Sequence[str]) -> list[str]:
     return tokens
 
 
-def _parses(app: App, argv: Sequence[str]) -> bool:
-    """Probe-parse ``argv``; a converter's ``CliError`` counts as a rejection."""
-    try:
-        app.parse_args(
-            list(argv), print_error=False, exit_on_error=False, help_on_error=False
-        )
-    except (CycloptsError, CliError, ValueError):
-        return False
-    return True
-
-
-def _splittable_options(app: App, argv: Sequence[str]) -> set[str]:
+def _splittable_options(app: App, argv: Sequence[str]) -> set[str] | None:
     """Names of the options that can take a split value: no flags, no free-text ``str``."""
-    try:
-        _, apps, _ = app.parse_commands(list(argv))
-    except (CycloptsError, ValueError):
-        return set()
+    apps = command_chain(app, argv)
+    if apps is None:
+        return None
     options: set[str] = set()
     for command_app in apps:
         try:
@@ -151,13 +149,13 @@ def _splittable_options(app: App, argv: Sequence[str]) -> set[str]:
 
 def _is_free_text(hint: object) -> bool:
     """True when ``hint`` is unstructured text: ``str``, ``Path``, or a sequence of them."""
-    if hint is str or (isinstance(hint, type) and issubclass(hint, (str, os.PathLike))):
+    if isinstance(hint, type) and issubclass(hint, (str, os.PathLike)):
         return True
-    origin = get_origin(hint)
-    if origin is Union or origin is types.UnionType:
+    if is_union(hint):
         return all(
             argument is type(None) or _is_free_text(argument) for argument in get_args(hint)
         )
+    origin = get_origin(hint)
     if origin in (list, tuple, set, frozenset, Sequence):
         args = tuple(argument for argument in get_args(hint) if argument is not Ellipsis)
         return bool(args) and all(_is_free_text(argument) for argument in args)

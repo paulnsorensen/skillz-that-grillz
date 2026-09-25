@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import json
 import sys
 from collections.abc import Mapping, Sequence
@@ -16,27 +17,29 @@ def write_result(
 
     A sequence longer than ``limit`` is cut to its first ``limit`` items and
     stderr gets a ``note:`` line, unless ``full`` is true or ``limit`` is
-    ``None``. Truncation never applies to a mapping or a string.
+    ``None``. Truncation never applies to a mapping or a string. ``NaN``
+    and ``Infinity`` are rejected, and a type ``_default`` cannot resolve
+    raises ``TypeError`` instead of printing a misleading fallback.
     """
     stream = stdout if stdout is not None else sys.stdout
     payload = value
     if limit is not None and isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         total = len(value)
         if not full and total > limit:
-            payload = list(value)[:limit]
+            payload = list(itertools.islice(value, limit))
             print(
                 f"note: showing {limit} of {total}; pass --full for the rest",
                 file=sys.stderr,
             )
-    print(json.dumps(payload, indent=2, default=_default), file=stream)
+    print(json.dumps(payload, indent=2, default=_default, allow_nan=False), file=stream)
 
 
 def _default(value: object) -> object:
-    """Fallback for ``json.dumps``: dataclass via ``asdict``, else mapping, else list, else ``str``."""
+    """Fallback for ``json.dumps``: dataclass via ``asdict``, else mapping, else list."""
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return dataclasses.asdict(value)
     if isinstance(value, Mapping):
         return dict(value)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return list(value)
-    return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")

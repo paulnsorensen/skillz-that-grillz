@@ -10,7 +10,8 @@ from typing import Annotated
 import pytest
 from cyclopts import App, Parameter, Token, validators
 
-from fromargs._argv import repair_argv, strip_global_flags
+import fromargs
+from fromargs._argv import repair_rejected, strip_global_flags
 
 
 def _app(calls: list[dict[str, object]]) -> App:
@@ -65,7 +66,7 @@ def test_splits_single_verified_candidate(capsys: pytest.CaptureFixture[str]) ->
     calls: list[dict[str, object]] = []
     app = _app(calls)
 
-    repaired = repair_argv(app, ["show", "x", "--count", "2 --label y"])
+    repaired = repair_rejected(app, ["show", "x", "--count", "2 --label y"])
 
     assert repaired == ["show", "x", "--count", "2", "--label", "y"]
     assert (
@@ -78,7 +79,7 @@ def test_splits_single_verified_candidate(capsys: pytest.CaptureFixture[str]) ->
 def test_splits_equals_form(capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, object]] = []
 
-    repaired = repair_argv(_app(calls), ["show", "x", "--count=2 --label y"])
+    repaired = repair_rejected(_app(calls), ["show", "x", "--count=2 --label y"])
 
     assert repaired == ["show", "x", "--count=2", "--label", "y"]
     assert "note: split quoted argument" in capsys.readouterr().err
@@ -86,9 +87,22 @@ def test_splits_equals_form(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_valid_argv_is_returned_unchanged(capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, object]] = []
+    app = fromargs.App("t")
+
+    @app.command
+    def show(
+        name: str,
+        *,
+        count: int = 1,
+        tags: list[str] | None = None,
+        label: str = "",
+    ) -> None:
+        calls.append({"name": name, "count": count, "tags": tags, "label": label})
+
     argv = ["show", "x", "--tags", "a --count 2"]
 
-    assert repair_argv(_app(calls), argv) == argv
+    assert app.run(argv) == 0
+    assert calls == [{"name": "x", "count": 1, "tags": ["a --count 2"], "label": ""}]
     assert capsys.readouterr().err == ""
 
 
@@ -111,7 +125,7 @@ def test_ambiguous_candidates_keep_argv(capsys: pytest.CaptureFixture[str]) -> N
 
     argv = ["tag", "--first", "a --count 1", "--second", "b --count 2"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -137,7 +151,7 @@ def test_probing_stops_at_second_candidate(capsys: pytest.CaptureFixture[str]) -
     argv = ["tag", "--first", "a --count 1", "--second", "b --count 2"]
     argv += ["--mark", "m --count 3"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert "m" not in converted
     assert capsys.readouterr().err == ""
 
@@ -146,7 +160,7 @@ def test_zero_candidates_keep_argv(capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, object]] = []
     argv = ["show", "x", "--count", "two --label y"]
 
-    assert repair_argv(_app(calls), argv) == argv
+    assert repair_rejected(_app(calls), argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -161,7 +175,7 @@ def test_plain_str_option_value_is_not_split(
 
     argv = ["note", "--label", "a --count 2"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -176,7 +190,7 @@ def test_token_after_double_dash_is_not_split(
 
     argv = ["triple", "--", "--count", "x -y"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -191,7 +205,7 @@ def test_value_after_boolean_flag_is_not_split(
 
     argv = ["note", "--verbose", "hello --count 2"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -201,7 +215,7 @@ def test_help_flag_inside_pieces_is_not_split(
     calls: list[dict[str, object]] = []
     argv = ["show", "x", "--count", "2 --help"]
 
-    assert repair_argv(_app(calls), argv) == argv
+    assert repair_rejected(_app(calls), argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -214,7 +228,7 @@ def test_app_help_flags_guard_the_split(capsys: pytest.CaptureFixture[str]) -> N
 
     argv = ["fetch", "--tags", "1 --usage"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -229,7 +243,7 @@ def test_split_without_dash_piece_is_refused(
 
     argv = ["pair", "--point", "1 2"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -246,7 +260,7 @@ def test_path_option_value_is_not_split(capsys: pytest.CaptureFixture[str]) -> N
 
     argv = ["p", "--path", "pyproject.toml --force"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -261,7 +275,7 @@ def test_list_str_option_value_is_not_split(
 
     argv = ["label", "--tags", "x --target /etc --force"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -276,7 +290,7 @@ def test_optional_str_option_value_is_not_split(
 
     argv = ["note", "--label", "a --count 2"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -291,7 +305,7 @@ def test_split_refused_when_pieces_contain_version_flag(
 
     argv = ["show", "--count", "2 --version"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
 
 
@@ -308,5 +322,5 @@ def test_split_refused_when_pieces_contain_nested_help_flag(
 
     argv = ["grp", "fetch", "--tags", "1 --usage"]
 
-    assert repair_argv(app, argv) == argv
+    assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
