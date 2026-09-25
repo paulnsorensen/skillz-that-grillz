@@ -26,15 +26,16 @@ locally, run `just build`, commit the autofixes, and push.
 ## Skills in this repo
 
 The [`## Skills` table in `README.md`](README.md#skills) is the single source of
-truth for every skill in this repo — paths, commands, and purpose. Read it
-there rather than duplicating it here.
+truth for every published skill in this repo — paths, commands, and purpose.
+Read it there rather than duplicating it here. `.agents/skills/` is the source
+of truth for repo-local skills.
 
 ## Development notes
 
 - Use `uv` for Python: `uv run <script>`, `uv pip install <pkg>`
 - Keep skills self-contained; avoid external dependencies
 - SKILL.md files must pass `validate_skills.py` (YAML frontmatter validation)
-- Repo-local skills (for work on this repo only) live in `.agents/skills/<name>/`
+- Repo-local skills (for work on this repo only) live in `.agents/skills/<name>/`,
   with a relative symlink in `.claude/skills/`. Set `metadata.internal: true`
   so `npx skills add` does not publish them. Keep them out of the README table.
 - Conventional Commits format for all commits
