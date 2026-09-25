@@ -418,35 +418,25 @@ def test_ac11_several_candidates_keeps_argv_and_fails_normally(tmp_path: Path) -
 
 @pytest.mark.ac("AC-11")
 def test_ac11_plain_str_option_value_is_never_split(tmp_path: Path) -> None:
-    result, calls = run_cli(tmp_path, ["widget", "--label", "a --count 2"])
+    result, calls = run_cli(tmp_path, ["guarded", "--label", "a --count 2"])
 
-    assert result.returncode == 0
+    assert result.returncode == 2
     assert "note:" not in result.stderr
-    assert calls[0]["args"]["label"] == "a --count 2"
-    assert calls[0]["args"]["count"] == 1
+    assert calls == []
 
 
 @pytest.mark.ac("AC-11")
 def test_ac11_token_after_double_dash_is_never_split(tmp_path: Path) -> None:
-    result, calls = run_cli(tmp_path, ["widget", "ok", "--", "--count 2"])
+    result, calls = run_cli(tmp_path, ["guarded", "--", "--count 2"])
 
-    assert result.returncode == 0
+    assert result.returncode == 2
     assert "note:" not in result.stderr
-    assert calls[0]["args"]["words"] == ["--count 2"]
-    assert calls[0]["args"]["count"] == 1
+    assert calls == []
 
 
 # --------------------------------------------------------------------------
 # AC-12: no handler runs while a rejected argv is being probed.
 # --------------------------------------------------------------------------
-
-
-@pytest.mark.ac("AC-12")
-def test_ac12_no_handler_runs_during_a_refused_probe(tmp_path: Path) -> None:
-    result, calls = run_cli(tmp_path, ["widget", "--count", "two --dry-run"])
-
-    assert result.returncode == 2
-    assert calls == []
 
 
 @pytest.mark.ac("AC-12")

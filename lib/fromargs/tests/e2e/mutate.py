@@ -12,7 +12,8 @@ Usage (from the repository root, or anywhere)::
     uv run --project lib/fromargs python lib/fromargs/tests/e2e/mutate.py
 
 Never writes to the real ``src/`` tree: every mutation is applied to a fresh
-``tempfile.mkdtemp()`` copy that is deleted once that mutation's tests run.
+``tempfile.TemporaryDirectory()`` copy that is deleted once that mutation's
+tests run.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from pathlib import Path
 FROMARGS_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = FROMARGS_DIR / "src"
 E2E_ARG = "tests/e2e"
-VENV_PYTHON = FROMARGS_DIR / ".venv" / "bin" / "python"
+PYTHON = sys.executable
 
 
 @dataclass(frozen=True)
@@ -173,13 +174,18 @@ def collect_node_ids() -> dict[str, list[str]]:
     """Run a collect-only pass and group node IDs by their ``ac`` marker."""
     env = dict(os.environ, FROMARGS_AC_DUMP="1")
     result = subprocess.run(
-        [str(VENV_PYTHON), "-m", "pytest", E2E_ARG, "--collect-only", "-q"],
+        [PYTHON, "-m", "pytest", E2E_ARG, "--collect-only", "-q"],
         cwd=FROMARGS_DIR,
         env=env,
         capture_output=True,
         text=True,
         timeout=60,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"pytest --collect-only failed (exit {result.returncode}):\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
     by_ac: dict[str, list[str]] = {}
     for line in result.stdout.splitlines():
         if "\t" not in line:
@@ -192,13 +198,16 @@ def collect_node_ids() -> dict[str, list[str]]:
 def run_mutation(mutation: Mutation, node_ids: list[str]) -> str:
     """Apply ``mutation`` to a throwaway ``src`` copy and run its AC's tests.
 
-    Returns ``"KILLED"``, ``"SURVIVED"``, or ``"STALE"``.
+    Returns ``"KILLED"``, ``"SURVIVED"``, ``"STALE"``, or ``"ERROR"``.
+    ``"ERROR"`` means pytest itself could not run the tests (any nonzero exit
+    other than the "some tests failed" exit 1), so the outcome says nothing
+    about whether the mutation was caught.
     """
     if not node_ids:
         print(f"  (no tests collected for {mutation.ac_id})", file=sys.stderr)
         return "STALE"
-    tmp_root = Path(tempfile.mkdtemp(prefix="fromargs-mutate-"))
-    try:
+    with tempfile.TemporaryDirectory(prefix="fromargs-mutate-") as tmp_root_name:
+        tmp_root = Path(tmp_root_name)
         tmp_src = tmp_root / "src"
         shutil.copytree(SRC_DIR, tmp_src)
         target = tmp_src / "fromargs" / mutation.rel_file
@@ -217,19 +226,20 @@ def run_mutation(mutation: Mutation, node_ids: list[str]) -> str:
             f"{tmp_src}{os.pathsep}{existing}" if existing else str(tmp_src)
         )
         result = subprocess.run(
-            [str(VENV_PYTHON), "-m", "pytest", *node_ids, "-q"],
+            [PYTHON, "-m", "pytest", *node_ids, "-q"],
             cwd=FROMARGS_DIR,
             env=env,
             capture_output=True,
             text=True,
             timeout=120,
         )
+        if result.returncode == 1:
+            return "KILLED"
+        print(result.stdout, file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
         if result.returncode == 0:
-            print(result.stdout, file=sys.stderr)
             return "SURVIVED"
-        return "KILLED"
-    finally:
-        shutil.rmtree(tmp_root, ignore_errors=True)
+        return "ERROR"
 
 
 def main() -> int:

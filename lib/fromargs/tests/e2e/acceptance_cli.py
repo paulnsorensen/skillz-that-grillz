@@ -54,9 +54,7 @@ class Point:
     a: int
 
 
-def build_app() -> fromargs.App:
-    app = fromargs.App(name="acceptance-cli", help="fromargs end-to-end acceptance fixture.")
-
+def _register_widget(app: fromargs.App) -> None:
     @app.command
     def widget(
         name: str = "ok",
@@ -84,6 +82,8 @@ def build_app() -> fromargs.App:
             return int(name)
         return None
 
+
+def _register_crate(app: fromargs.App) -> None:
     crate = app.group("crate", help="A nested command group.")
 
     @crate.command(name="show")
@@ -92,6 +92,8 @@ def build_app() -> fromargs.App:
         _log("crate show", {"id_": id_})
         return {"id": id_}
 
+
+def _register_fail(app: fromargs.App) -> None:
     @app.command
     def fail(kind: str) -> None:
         """AC-4 fixture: a handler that always raises."""
@@ -100,6 +102,8 @@ def build_app() -> fromargs.App:
             raise fromargs.contract_error(ValueError("bad shape"), context="load")
         raise fromargs.CliError("boom")
 
+
+def _register_ambiguous(app: fromargs.App) -> None:
     @app.command
     def ambiguous(*, first: Lenient = 0, second: Lenient = 0, count: int) -> None:
         """AC-11 fixture: two independently-splittable options, both required.
@@ -110,11 +114,15 @@ def build_app() -> fromargs.App:
         """
         _log("ambiguous", {"first": first, "second": second, "count": count})
 
+
+def _register_ranked(app: fromargs.App) -> None:
     @app.command(limit=3)
     def ranked(*, top: int = 5) -> list[int]:
         """AC-6, AC-7 fixture: a truncated sequence result with a splittable option."""
         return list(range(top))
 
+
+def _register_conf(app: fromargs.App) -> None:
     @app.command
     def conf(*, point: Point, numbers: list[int]) -> dict[str, object]:
         """Native-Cyclopts fixture: a dataclass and a ``list[int]`` from JSON text."""
@@ -122,6 +130,30 @@ def build_app() -> fromargs.App:
         _log("conf", result)
         return result
 
+
+def _register_guarded(app: fromargs.App) -> None:
+    @app.command
+    def guarded(text: str = "", *, label: str = "", count: int) -> None:
+        """AC-11 fixture: a required option only a bad split could supply.
+
+        ``count`` has no default, so an argv that omits it is always
+        rejected and the repair probe always runs. ``label`` is free-text
+        ``str`` and ``text`` sits after the end-of-options marker in the
+        double-dash test; the probe must never split either to invent the
+        missing ``count``.
+        """
+        _log("guarded", {"text": text, "label": label, "count": count})
+
+
+def build_app() -> fromargs.App:
+    app = fromargs.App(name="acceptance-cli", help="fromargs end-to-end acceptance fixture.")
+    _register_widget(app)
+    _register_crate(app)
+    _register_fail(app)
+    _register_ambiguous(app)
+    _register_ranked(app)
+    _register_conf(app)
+    _register_guarded(app)
     return app
 
 
@@ -136,13 +168,13 @@ def _register_bad(name: str) -> int:
         if name == "json":
 
             @app.command
-            def bad(*, json: bool = False) -> None:  # noqa: ARG001
-                return None
+            def bad(*, json: bool = False) -> bool:
+                return json
         else:
 
             @app.command
-            def bad(*, full: bool = False) -> None:  # noqa: ARG001
-                return None
+            def bad(*, full: bool = False) -> bool:
+                return full
     except ValueError as exc:
         print(json.dumps({"raised": True, "error": str(exc)}))
         return 0
