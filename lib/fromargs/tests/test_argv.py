@@ -53,7 +53,7 @@ def test_strip_leaves_tokens_after_the_delimiter_untouched() -> None:
     app = App()
 
     @app.command
-    def echo(*words: str) -> None:
+    def echo(*words: str) -> None:  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option.
         pass
 
     tokens, full = strip_global_flags(app, ["echo", "--", "--json", "--full"])
@@ -106,7 +106,7 @@ def test_valid_argv_is_returned_unchanged(capsys: pytest.CaptureFixture[str]) ->
     assert capsys.readouterr().err == ""
 
 
-def _lenient(type_: object, tokens: Sequence[Token]) -> int:
+def _lenient(type_: object, tokens: Sequence[Token]) -> int:  # pyright: ignore[reportUnusedParameter] -- converter signature, not used by body.
     """Accept any value, so a merged and a split token both parse."""
     return 0
 
@@ -120,7 +120,9 @@ def test_ambiguous_candidates_keep_argv(capsys: pytest.CaptureFixture[str]) -> N
     app = App()
 
     @app.command
-    def tag(*, first: Lenient, second: Lenient, count: int) -> None:
+    def tag(
+        *, first: Lenient, second: Lenient, count: int  # pyright: ignore[reportUnusedParameter] -- names bind Cyclopts options; probing never calls this.
+    ) -> None:
         raise AssertionError("probing must not run a handler")
 
     argv = ["tag", "--first", "a --count 1", "--second", "b --count 2"]
@@ -132,7 +134,9 @@ def test_ambiguous_candidates_keep_argv(capsys: pytest.CaptureFixture[str]) -> N
 def test_probing_stops_at_second_candidate(capsys: pytest.CaptureFixture[str]) -> None:
     converted: list[str] = []
 
-    def record(type_: object, tokens: Sequence[Token]) -> int:
+    def record(
+        type_: object, tokens: Sequence[Token]  # pyright: ignore[reportUnusedParameter] -- converter signature, not used by body.
+    ) -> int:
         converted.extend(token.value for token in tokens)
         return 0
 
@@ -141,10 +145,12 @@ def test_probing_stops_at_second_candidate(capsys: pytest.CaptureFixture[str]) -
     @app.command
     def tag(
         *,
-        first: Lenient,
-        second: Lenient,
-        count: int,
-        mark: Annotated[int, Parameter(converter=record)],
+        first: Lenient,  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
+        second: Lenient,  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
+        count: int,  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
+        mark: Annotated[  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
+            int, Parameter(converter=record)
+        ],
     ) -> None:
         raise AssertionError("probing must not run a handler")
 
@@ -170,7 +176,7 @@ def test_plain_str_option_value_is_not_split(
     app = App()
 
     @app.command
-    def note(*, label: str, count: int) -> None:
+    def note(*, label: str, count: int) -> None:  # pyright: ignore[reportUnusedParameter] -- names bind Cyclopts options; probing never calls this.
         raise AssertionError("probing must not run a handler")
 
     argv = ["note", "--label", "a --count 2"]
@@ -185,7 +191,9 @@ def test_token_after_double_dash_is_not_split(
     app = App()
 
     @app.command
-    def triple(first: str, second: str, third: str, *, count: int = 0) -> None:
+    def triple(
+        first: str, second: str, third: str, *, count: int = 0  # pyright: ignore[reportUnusedParameter] -- names bind Cyclopts options; probing never calls this.
+    ) -> None:
         raise AssertionError("probing must not run a handler")
 
     argv = ["triple", "--", "--count", "x -y"]
@@ -200,7 +208,9 @@ def test_value_after_boolean_flag_is_not_split(
     app = App()
 
     @app.command
-    def note(text: str, *, verbose: bool = False, count: int) -> None:
+    def note(
+        text: str, *, verbose: bool = False, count: int  # pyright: ignore[reportUnusedParameter] -- names bind Cyclopts options; probing never calls this.
+    ) -> None:
         raise AssertionError("probing must not run a handler")
 
     argv = ["note", "--verbose", "hello --count 2"]
@@ -223,7 +233,7 @@ def test_app_help_flags_guard_the_split(capsys: pytest.CaptureFixture[str]) -> N
     app = App(help_flags=["--usage"])
 
     @app.command
-    def fetch(*, tags: list[int]) -> None:
+    def fetch(*, tags: list[int]) -> None:  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
         raise AssertionError("probing must not run a handler")
 
     argv = ["fetch", "--tags", "1 --usage"]
@@ -238,7 +248,7 @@ def test_split_without_dash_piece_is_refused(
     app = App()
 
     @app.command
-    def pair(*, point: tuple[int, int]) -> None:
+    def pair(*, point: tuple[int, int]) -> None:  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
         raise AssertionError("probing must not run a handler")
 
     argv = ["pair", "--point", "1 2"]
@@ -255,13 +265,15 @@ def test_path_option_value_is_not_split(
     @app.command
     def p(
         *,
-        path: Annotated[Path, Parameter(validator=validators.Path(exists=True))],
-        force: bool = False,
+        path: Annotated[  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
+            Path, Parameter(validator=validators.Path(exists=True))
+        ],
+        force: bool = False,  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
     ) -> None:
         raise AssertionError("probing must not run a handler")
 
     target = tmp_path / "wheel.toml"
-    target.write_text("")
+    _ = target.write_text("")
     argv = ["p", "--path", f"{target} --force"]
 
     assert repair_rejected(app, argv) is None
@@ -274,7 +286,9 @@ def test_list_str_option_value_is_not_split(
     app = App()
 
     @app.command
-    def label(*, tags: list[str], target: str, force: bool = False) -> None:
+    def label(
+        *, tags: list[str], target: str, force: bool = False  # pyright: ignore[reportUnusedParameter] -- names bind Cyclopts options; probing never calls this.
+    ) -> None:
         raise AssertionError("probing must not run a handler")
 
     argv = ["label", "--tags", "x --target /etc --force"]
@@ -289,7 +303,7 @@ def test_optional_str_option_value_is_not_split(
     app = App()
 
     @app.command
-    def note(*, label: str | None = None, count: int) -> None:
+    def note(*, label: str | None = None, count: int) -> None:  # pyright: ignore[reportUnusedParameter] -- names bind Cyclopts options; probing never calls this.
         raise AssertionError("probing must not run a handler")
 
     argv = ["note", "--label", "a --count 2"]
@@ -304,7 +318,7 @@ def test_split_refused_when_pieces_contain_version_flag(
     app = App()
 
     @app.command
-    def show(*, count: int) -> None:
+    def show(*, count: int) -> None:  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
         raise AssertionError("probing must not run a handler")
 
     argv = ["show", "--count", "2 --version"]
@@ -318,10 +332,10 @@ def test_split_refused_when_pieces_contain_nested_help_flag(
 ) -> None:
     app = App()
     group = App(name="grp", help_flags=["--usage"])
-    app.command(group)
+    _ = app.command(group)
 
     @group.command
-    def fetch(*, tags: list[int]) -> None:
+    def fetch(*, tags: list[int]) -> None:  # pyright: ignore[reportUnusedParameter] -- name binds a Cyclopts option; probing never calls this.
         raise AssertionError("probing must not run a handler")
 
     argv = ["grp", "fetch", "--tags", "1 --usage"]

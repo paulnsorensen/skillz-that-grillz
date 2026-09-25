@@ -119,9 +119,9 @@ def test_none_stdout_writes_to_sys_stdout(capsys: pytest.CaptureFixture[str]) ->
 
 def test_nan_is_rejected() -> None:
     with pytest.raises(ValueError, match="not JSON compliant"):
-        _run(float("nan"))
+        _ = _run(float("nan"))
 
 
 def test_set_is_rejected() -> None:
     with pytest.raises(TypeError, match="not JSON serializable"):
-        _run({1, 2, 3})
+        _ = _run({1, 2, 3})

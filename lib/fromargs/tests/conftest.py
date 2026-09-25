@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -13,7 +14,7 @@ JsonLine = Callable[[str], dict[str, object]]
 def _single_json_line(err: str) -> dict[str, object]:
     lines = err.splitlines()
     assert len(lines) == 1, err
-    envelope = json.loads(lines[0])
+    envelope = cast("dict[str, object]", json.loads(lines[0]))
     assert set(envelope) == {"error", "exit_code"}
     return envelope
 
