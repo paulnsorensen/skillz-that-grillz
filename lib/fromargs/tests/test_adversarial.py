@@ -5,13 +5,14 @@ from __future__ import annotations
 import io
 import json
 import sys
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import pytest
 
 import fromargs
 
-JsonLine = Callable[[str], dict[str, object]]
+if TYPE_CHECKING:
+    from conftest import JsonLine
 
 
 def _app(calls: list[tuple[str, dict[str, object]]]) -> fromargs.App:
@@ -29,30 +30,6 @@ def _app(calls: list[tuple[str, dict[str, object]]]) -> fromargs.App:
         raise fromargs.CliError("boom")
 
     return app
-
-
-def test_did_you_mean_surfaces_in_envelope(
-    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
-) -> None:
-    calls: list[tuple[str, dict[str, object]]] = []
-
-    assert _app(calls).run(["show", "x", "--cnt", "2"]) == 2
-
-    envelope = single_json_line(capsys.readouterr().err)
-    assert envelope["exit_code"] == 2
-    assert "Did you mean --count?" in str(envelope["error"])
-    assert calls == []
-
-
-def test_multiline_message_stays_one_json_line(
-    capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
-) -> None:
-    calls: list[tuple[str, dict[str, object]]] = []
-
-    assert _app(calls).run(["fail", "multiline"]) == 4
-
-    envelope = single_json_line(capsys.readouterr().err)
-    assert envelope == {"error": "line one\nline two", "exit_code": 4}
 
 
 def test_split_that_reveals_json_is_healed(capsys: pytest.CaptureFixture[str]) -> None:

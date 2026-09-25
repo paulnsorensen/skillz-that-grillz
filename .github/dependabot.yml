@@ -1,9 +1,10 @@
 # Dependabot configuration — version updates only.
 # See: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# The github-actions ecosystem covers workflow files and a hard-coded
-# `pip install pyyaml==6.0.2` step in validate.yml, which has no manifest.
-# The uv ecosystem covers lib/fromargs/pyproject.toml. Add another
+# release.yml pins `yamllint` and `pyyaml` through a hard-coded `pip install`
+# step that has no manifest; Dependabot does not track or update those pins.
+# The github-actions ecosystem below covers only action refs (`uses: ...@sha`).
+# The uv ecosystem below covers lib/fromargs/pyproject.toml. Add another
 # ecosystem as soon as a new manifest lands.
 version: 2
 updates:
