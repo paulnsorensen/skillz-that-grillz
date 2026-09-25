@@ -34,4 +34,7 @@ there rather than duplicating it here.
 - Use `uv` for Python: `uv run <script>`, `uv pip install <pkg>`
 - Keep skills self-contained; avoid external dependencies
 - SKILL.md files must pass `validate_skills.py` (YAML frontmatter validation)
+- Repo-local skills (for work on this repo only) live in `.agents/skills/<name>/`
+  with a relative symlink in `.claude/skills/`. Set `metadata.internal: true`
+  so `npx skills add` does not publish them. Keep them out of the README table.
 - Conventional Commits format for all commits

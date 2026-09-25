@@ -10,11 +10,15 @@ description: >
   (/bash-shortening), task-runner recipes (/justfile), dependency-version
   conflicts (/version-doctor), or bug and security review (/age).
 license: MIT
+metadata:
+  internal: true
 ---
 
 # Authoring Python
 
 Produce the smallest readable Python change that satisfies the request and matches the project.
+
+This is a repository-local skill for skillz-that-grillz. It lives under `.agents/skills/python-authoring/`, with a `.claude/skills/` symlink for Claude Code. `metadata.internal: true` hides it from `npx skills add`, and `gh skill install` skips hidden directories. Do not move it into the published `skills/` tree.
 
 ## Work in this order
 
