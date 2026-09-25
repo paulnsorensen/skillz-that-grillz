@@ -36,7 +36,7 @@ This skill does not lock the merge surface. It fills the contributor-facing and 
 | Org-wide settings as code across many repos | `/safe-settings` |
 | Per-task PR / issue / CI ops | `/gh` |
 
-Protect `main` with a ruleset first. Then run `/oss-hygiene`, so contributors can find their way in and supply-chain checks gate PRs.
+Protect the default branch with a ruleset first. Then run `/oss-hygiene`, so contributors can find their way in and supply-chain checks gate PRs.
 
 ## What gets configured
 

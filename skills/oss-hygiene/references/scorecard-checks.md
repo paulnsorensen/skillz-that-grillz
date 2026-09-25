@@ -68,8 +68,9 @@ After running `/oss-hygiene` on a public repo with a default-branch
 ruleset already applied, you should expect to see green check marks on:
 
 - `Branch-Protection`
-- `Code-Review` (gated on the review-count > 0; solo repos with 0
-  required reviews will still see this go yellow)
+- `Code-Review` (requires approving review evidence on recent PRs; solo
+  repos with 0 required reviews or recent unreviewed changes can still see
+  this go yellow)
 - `Dependency-Update-Tool`
 - `Security-Policy`
 - `License` (assuming the user added one)
