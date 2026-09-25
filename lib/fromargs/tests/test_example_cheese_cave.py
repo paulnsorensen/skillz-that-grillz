@@ -14,6 +14,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 from cheese_cave import Wheel, build_app, starter_cave
@@ -32,7 +33,7 @@ def _call(capsys: pytest.CaptureFixture[str], argv: list[str]) -> Outcome:
     return status, captured.out, captured.err, cave
 
 
-HEALS = {
+HEALS: dict[str, tuple[list[str], list[str], list[str]]] = {
     "leading --json before a nested command": (
         ["--json", "wheels", "list"],
         ["wheels", "list"],
@@ -127,7 +128,8 @@ def test_agent_retries_a_typo_from_the_json_error(
 
     assert status == 0
     assert err == "note: showing 3 of 4; pass --full for the rest\n"
-    assert [wheel["name"] for wheel in json.loads(out)] == [
+    wheels = cast("list[dict[str, object]]", json.loads(out))
+    assert [wheel["name"] for wheel in wheels] == [
         "comte",
         "gouda",
         "stilton",
@@ -194,7 +196,7 @@ def test_contract_violation_exits_3_as_json(
     assert (status, out) == (3, "")
     assert single_json_line(err) == {
         "error": "record 'brie:bloomy': not enough values to unpack "
-        "(expected 3, got 2)",
+        + "(expected 3, got 2)",
         "exit_code": 3,
     }
     assert cave == starter_cave()

@@ -36,10 +36,10 @@ def _log(command: str, args: dict[str, object]) -> None:
     if not path:
         return
     with open(path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"command": command, "args": args}) + "\n")
+        _ = handle.write(json.dumps({"command": command, "args": args}) + "\n")
 
 
-def _lenient(type_: object, tokens: Sequence[Token]) -> int:
+def _lenient(_type_: object, _tokens: Sequence[Token]) -> int:
     """Accept any single token as ``0``; used only to build an AC-11 fixture."""
     return 0
 
@@ -126,7 +126,7 @@ def _register_conf(app: fromargs.App) -> None:
     @app.command
     def conf(*, point: Point, numbers: list[int]) -> dict[str, object]:
         """Native-Cyclopts fixture: a dataclass and a ``list[int]`` from JSON text."""
-        result = {"point": asdict(point), "numbers": numbers}
+        result: dict[str, object] = {"point": asdict(point), "numbers": numbers}
         _log("conf", result)
         return result
 
@@ -168,12 +168,12 @@ def _register_bad(name: str) -> int:
         if name == "json":
 
             @app.command
-            def bad(*, json: bool = False) -> bool:
+            def bad_json(*, json: bool = False) -> bool:
                 return json
         else:
 
             @app.command
-            def bad(*, full: bool = False) -> bool:
+            def bad_full(*, full: bool = False) -> bool:
                 return full
     except ValueError as exc:
         print(json.dumps({"raised": True, "error": str(exc)}))

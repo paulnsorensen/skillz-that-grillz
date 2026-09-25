@@ -5,14 +5,13 @@ from __future__ import annotations
 import io
 import json
 import sys
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 import pytest
 
 import fromargs
 
-if TYPE_CHECKING:
-    from conftest import JsonLine
+JsonLine = Callable[[str], dict[str, object]]
 
 
 def _app(calls: list[tuple[str, dict[str, object]]]) -> fromargs.App:
@@ -79,7 +78,7 @@ def test_default_command_runs_on_empty_argv(capsys: pytest.CaptureFixture[str]) 
     calls: list[str] = []
     app = fromargs.App("t")
 
-    @app._cyclopts.default
+    @app._cyclopts.default  # pyright: ignore[reportPrivateUsage] -- App exposes no public way to register a default handler
     def main() -> None:
         calls.append("main")
 
@@ -98,10 +97,14 @@ def test_argv_defaults_to_sys_argv(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_never_reads_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
     class ExplodingStdin(io.StringIO):
-        def read(self, size: int | None = -1) -> str:
+        def read(  # pyright: ignore[reportImplicitOverride] -- typing.override needs py3.12/typing_extensions, not a project dependency
+            self, size: int | None = -1
+        ) -> str:
             raise AssertionError("fromargs must not read a stdin payload")
 
-        def readline(self, size: int | None = -1) -> str:
+        def readline(  # pyright: ignore[reportImplicitOverride] -- typing.override needs py3.12/typing_extensions, not a project dependency
+            self, size: int | None = -1
+        ) -> str:
             raise AssertionError("fromargs must not read a stdin payload")
 
     calls: list[tuple[str, dict[str, object]]] = []

@@ -86,12 +86,12 @@ def test_reserved_parameter_is_rejected_at_registration(reserved: str) -> None:
 
     def register_json() -> None:
         @app.command
-        def bad(*, json: bool = False) -> None:
+        def bad(*, _json: bool = False) -> None:
             pass
 
     def register_full() -> None:
         @app.command
-        def bad(*, full: bool = False) -> None:
+        def bad(*, _full: bool = False) -> None:
             pass
 
     register = {"json": register_json, "full": register_full}[reserved]

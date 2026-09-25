@@ -9,7 +9,7 @@ import io
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import pytest
 from cyclopts import CycloptsError, Parameter, Token
@@ -23,7 +23,7 @@ def _unexpected_envelope(err: str) -> dict[str, object]:
     """Checker: ``err`` is exactly one three-key unexpected-exception envelope; returns it."""
     lines = err.splitlines()
     assert len(lines) == 1, err
-    envelope = json.loads(lines[0])
+    envelope = cast("dict[str, object]", json.loads(lines[0]))
     assert set(envelope) == {"error", "exit_code", "traceback"}
     return envelope
 
@@ -199,7 +199,7 @@ def test_underscore_flag_binds() -> None:
 
 
 def _converter_app(converted: list[str]) -> fromargs.App:
-    def checked(type_: object, tokens: Sequence[Token]) -> str:
+    def checked(_type_: object, tokens: Sequence[Token]) -> str:
         converted.append(tokens[0].value)
         if tokens[0].value == "bad":
             raise fromargs.CliError("custom bad value", exit_code=4)
@@ -209,7 +209,7 @@ def _converter_app(converted: list[str]) -> fromargs.App:
 
     @app.command
     def fetch(
-        item: Annotated[str, Parameter(converter=checked)] = "", *, count: int = 0
+        _item: Annotated[str, Parameter(converter=checked)] = "", *, _count: int = 0
     ) -> None:
         pass
 
@@ -238,9 +238,9 @@ def test_valid_argv_is_parsed_once() -> None:
 def test_converter_rejection_still_tries_repair(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    received: list[tuple[list[str], int]] = []
+    received: list[tuple[list[int], int]] = []
 
-    def no_spaces(type_: object, tokens: Sequence[Token]) -> list[str]:
+    def no_spaces(_type_: object, tokens: Sequence[Token]) -> list[str]:
         values = [token.value for token in tokens]
         if any(" " in value for value in values):
             raise fromargs.CliError(f"bad {values}", exit_code=4)
@@ -395,7 +395,7 @@ def test_async_handler_inside_running_loop_is_refused() -> None:
 
     async def host() -> None:
         with pytest.raises(TypeError, match="running event loop"):
-            app.run(["later"])
+            _ = app.run(["later"])
 
     asyncio.run(host())
     assert ran == []
@@ -409,7 +409,7 @@ def _root_trio_target() -> tuple[fromargs.App, fromargs.App, list[str]]:
 def _nested_trio_target() -> tuple[fromargs.App, fromargs.App, list[str]]:
     app = fromargs.App("t")
     group = app.group("group")
-    group._cyclopts.backend = "trio"
+    group._cyclopts.backend = "trio"  # pyright: ignore[reportPrivateUsage] -- App exposes no public backend setter for a nested group
     return app, group, ["group", "later"]
 
 
@@ -428,7 +428,7 @@ def test_async_handler_on_trio_backend_is_refused(
         return 5
 
     with pytest.raises(TypeError, match="asyncio backend, not 'trio'"):
-        app.run(argv)
+        _ = app.run(argv)
     assert ran == []
 
 
@@ -436,7 +436,7 @@ def test_nested_asyncio_backend_overrides_trio_root() -> None:
     ran: list[str] = []
     app = fromargs.App("t", backend="trio")
     group = app.group("group")
-    group._cyclopts.backend = "asyncio"
+    group._cyclopts.backend = "asyncio"  # pyright: ignore[reportPrivateUsage] -- App exposes no public backend setter for a nested group
 
     @group.command
     async def later() -> int:
@@ -452,7 +452,7 @@ def test_str_argv_is_rejected() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 
     with pytest.raises(TypeError, match="not str"):
-        _app(calls).run("show x")
+        _ = _app(calls).run("show x")
     assert calls == []
 
 
@@ -513,7 +513,7 @@ def test_reserved_option_from_trailing_underscore_name_is_rejected() -> None:
     with pytest.raises(ValueError, match="'--json'"):
 
         @app.command
-        def bad(*, json_: bool = False) -> None:
+        def bad(*, _json_: bool = False) -> None:
             pass
 
 
@@ -523,7 +523,7 @@ def test_reserved_option_from_trailing_underscore_full_name_is_rejected() -> Non
     with pytest.raises(ValueError, match="'--full'"):
 
         @app.command
-        def bad(*, full_: bool = False) -> None:
+        def bad(*, _full_: bool = False) -> None:
             pass
 
 
@@ -533,7 +533,7 @@ def test_reserved_option_from_explicit_parameter_name_is_rejected() -> None:
     with pytest.raises(ValueError, match="'--full'"):
 
         @app.command
-        def bad(*, override: Annotated[bool, Parameter(name="--full")] = False) -> None:
+        def bad(*, _override: Annotated[bool, Parameter(name="--full")] = False) -> None:
             pass
 
 
@@ -553,7 +553,7 @@ def test_limit_works_with_a_bound_method() -> None:
             return [1, 2, 3]
 
     app = fromargs.App("t")
-    app.command(Lister().items, name="items", limit=1)
+    _ = app.command(Lister().items, name="items", limit=1)
 
     buffer = io.StringIO()
     assert app.run(["items"], stdout=buffer) == 0
@@ -566,8 +566,8 @@ def test_one_function_under_two_names_keeps_independent_limits() -> None:
     def items() -> list[int]:
         return [1, 2, 3]
 
-    app.command(items, name="short", limit=1)
-    app.command(items, name="long", limit=2)
+    _ = app.command(items, name="short", limit=1)
+    _ = app.command(items, name="long", limit=2)
 
     short_buffer = io.StringIO()
     assert app.run(["short"], stdout=short_buffer) == 0

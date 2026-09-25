@@ -65,6 +65,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -192,7 +193,7 @@ def test_ac04_parse_failure_exits_two_as_one_json_line(tmp_path: Path) -> None:
     assert result.stdout == ""
     lines = result.stderr.splitlines()
     assert len(lines) == 1
-    envelope = json.loads(lines[0])
+    envelope = cast("dict[str, object]", json.loads(lines[0]))
     assert set(envelope) == {"error", "exit_code"}
     assert envelope["exit_code"] == 2
     assert calls == []
@@ -295,7 +296,7 @@ def test_ac08_reserved_parameter_raises_at_registration(
     )
 
     assert result.returncode == 0
-    envelope = json.loads(result.stdout)
+    envelope = cast("dict[str, object]", json.loads(result.stdout))
     assert envelope == {
         "raised": True,
         "error": f"command option {'--' + reserved!r} is reserved by fromargs",
@@ -390,8 +391,10 @@ def test_ac11_single_verified_candidate_is_split_and_noted(tmp_path: Path) -> No
         result.stderr
         == "note: split quoted argument '2 --dry-run' into ['2', '--dry-run']\n"
     )
-    assert calls[0]["args"]["count"] == 2
-    assert calls[0]["args"]["dry_run"] is True
+    args = calls[0]["args"]
+    assert isinstance(args, dict)
+    assert args["count"] == 2
+    assert args["dry_run"] is True
 
 
 @pytest.mark.ac("AC-11")
@@ -484,4 +487,6 @@ def test_ac14_underscore_flag_binds_max_count(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "ok", "--max_count", "3"])
 
     assert result.returncode == 0
-    assert calls[0]["args"]["max_count"] == 3
+    args = calls[0]["args"]
+    assert isinstance(args, dict)
+    assert args["max_count"] == 3
