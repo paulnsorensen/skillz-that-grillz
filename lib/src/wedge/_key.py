@@ -18,15 +18,15 @@ TARGET_PYTHON = "3.11"
 
 
 def find_repo_root(start: Path) -> Path:
-    """Walk up from ``start`` to the checkout that holds ``lib/fromargs/src/fromargs``."""
+    """Walk up from ``start`` to the checkout that holds ``lib/fromargs``."""
     current = Path(start).resolve()
     for candidate in (current, *current.parents):
         if (candidate / "lib" / "fromargs" / "src" / "fromargs").is_dir() and (
-            candidate / "lib" / "uv.lock"
+            candidate / "lib" / "fromargs" / "uv.lock"
         ).is_file():
             return candidate
     raise FileNotFoundError(
-        f"no repo root (lib/fromargs/src/fromargs, lib/uv.lock) found above {start}"
+        f"no repo root (lib/fromargs/src/fromargs, lib/fromargs/uv.lock) found above {start}"
     )
 
 
@@ -51,12 +51,12 @@ def source_path(skill_dir: Path, config: WedgeConfig, repo_root: Path) -> Path:
 
 def build_inputs(skill_dir: Path, config: WedgeConfig, repo_root: Path) -> list[Path]:
     """Every file whose bytes decide the key: wedge.toml, the CLI source, all
-    of ``lib/fromargs/src/fromargs/``, and ``lib/uv.lock``."""
+    of ``lib/fromargs/src/fromargs/``, and ``lib/fromargs/uv.lock``."""
     skill_dir = Path(skill_dir)
     files = [skill_dir / "wedge.toml"]
     files.extend(_iter_files(source_path(skill_dir, config, repo_root)))
     files.extend(_iter_files(Path(repo_root) / "lib" / "fromargs" / "src" / "fromargs"))
-    files.append(Path(repo_root) / "lib" / "uv.lock")
+    files.append(Path(repo_root) / "lib" / "fromargs" / "uv.lock")
     return files
 
 

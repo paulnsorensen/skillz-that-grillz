@@ -70,7 +70,7 @@ jobs:
 
       - name: Install uv
         if: steps.guard.outputs.already_published != 'true'
-        # `just test` runs the lib pytest suite through `uv run`.
+        # `just test` runs the lib/fromargs pytest suite through `uv run`.
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.11.32"
@@ -88,7 +88,7 @@ jobs:
         # Pin the tools it shells out to so CI matches a developer's machine:
         #   apt: shellcheck, bats   npm: markdownlint-cli2
         #   pip: yamllint + pyyaml (validators)
-        #   uv: pinned by the Install uv step; lib pytest from its uv.lock
+        #   uv: pinned by the Install uv step; lib/fromargs pytest from its uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
         run: |
           set -euo pipefail
@@ -129,19 +129,3 @@ jobs:
           # internally. Create the release directly against the existing tag;
           # the already_published guard keeps re-runs idempotent.
           gh release create "$TAG" --title "$TAG" --generate-notes --latest
-
-  wedge:
-    name: publish wedge assets
-    # Runs after `release` so the tag-on-main check and the gate pass first.
-    # `release` succeeds on a re-pushed tag too, and publish is idempotent.
-    needs: release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Publish wedge assets
-        uses: ./.github/actions/wedge-publish
-        with:
-          repo: ${{ github.repository }}
-          target: ${{ github.sha }}
