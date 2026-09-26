@@ -1,0 +1,3 @@
+name = "cheese-cave"
+entry = "cheese_cave:main"
+source = "../../../fromargs/examples/cheese_cave.py"

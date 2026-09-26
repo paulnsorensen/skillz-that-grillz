@@ -1,0 +1,54 @@
+[project]
+name = "skillz-that-grillz"
+version = "0.0.0"
+description = "Wedge packages agent-friendly skill CLIs as reproducible .pyz assets."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Paul Sorensen", email = "paulnsorensen@gmail.com" }]
+keywords = ["cli", "skills", "shiv", "wedge"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+]
+dependencies = ["fromargs>=0.1.0,<0.2", "shiv>=1.0.8,<2"]
+
+[project.urls]
+Homepage = "https://github.com/paulnsorensen/skillz-that-grillz"
+Source = "https://github.com/paulnsorensen/skillz-that-grillz/tree/main/lib"
+Issues = "https://github.com/paulnsorensen/skillz-that-grillz/issues"
+
+[project.scripts]
+wedge = "wedge:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "basedpyright==1.40.1"]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wedge"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  ".venv",
+  "fromargs/**",
+  "**/__pycache__",
+  "**/.pytest_cache",
+]
+
+[tool.uv.sources]
+fromargs = { path = "fromargs", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests/wedge"]
+markers = ["ac(id): ties a test to an acceptance-criterion ID"]
+addopts = "--strict-markers"
