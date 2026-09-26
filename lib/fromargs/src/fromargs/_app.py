@@ -268,7 +268,16 @@ def _caller_version(module_globals: dict[str, object]) -> Callable[[], str]:
     """
 
     def resolve() -> str:
-        root = str(module_globals.get("__name__", "")).split(".")[0]
+        caller_name = str(module_globals.get("__name__", ""))
+        spec_name = getattr(module_globals.get("__spec__"), "name", None)
+        module_name = (
+            spec_name
+            if caller_name == "__main__"
+            and isinstance(spec_name, str)
+            and spec_name.endswith(".__main__")
+            else caller_name
+        )
+        root = module_name.split(".")[0]
         candidates = [root]
         providers = metadata.packages_distributions().get(root, [])
         if len(providers) == 1:

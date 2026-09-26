@@ -355,6 +355,34 @@ def test_version_maps_an_import_name_to_its_distribution(
     assert capsys.readouterr().out.strip() == version("attrs")
 
 
+def test_version_uses_package_root_from_module_spec(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from importlib.metadata import version
+    from types import SimpleNamespace
+
+    app = _app_built_in(
+        {"__name__": "__main__", "__spec__": SimpleNamespace(name="attr.__main__")}
+    )
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == version("attrs")
+
+
+def test_version_ignores_module_spec_for_non_main_callers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from importlib.metadata import version
+    from types import SimpleNamespace
+
+    app = _app_built_in(
+        {"__name__": "attr.consumer", "__spec__": SimpleNamespace(name="pytest.__main__")}
+    )
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == version("attrs")
+
+
 def test_version_falls_back_to_the_calling_module_dunder_version(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
