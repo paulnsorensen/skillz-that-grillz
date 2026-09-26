@@ -13,3 +13,9 @@
 
 - 2026-09-23 · pr86-coderabbit · merged · toon-versus-json-for-llms.md, sources/improvingagents-toon-benchmarks.md, agent-friendly-cli-design.md · review corrections: scope benchmark claims, remove unsupported training-data claim, attribute vendor claims to the secondary summary, toon-python is an encoder and decoder
 
+
+- 2026-09-23 · bad68b8175321818 · merged · decisions/fromargs-cli-library.md · Cure preserved suggestions for leading flags and resolved nested async backends
+
+
+- 2026-09-24 · fromargs-app-redesign · merged · decisions/fromargs-cli-library.md · ADR-001 and ADR-003 amended for the App redesign; ADR-005 added for decorators and forced JSON output
+

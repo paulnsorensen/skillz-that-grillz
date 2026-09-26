@@ -38,10 +38,16 @@ test:
     bats tests/bash/test_install.bats
     bats tests/bash/test_skillz.bats
     bats tests/bash/test_respond_post_reply.bats
+    uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
+    uv run --locked --project lib/fromargs pytest lib/fromargs/tests -q
 
 # Lint shell scripts
 lint-sh:
     shellcheck scripts/install.sh skills/file-handler/scripts/skillz.sh
+
+# Mutation-test the fromargs acceptance suite (not part of build/ci).
+mutate-fromargs:
+    uv run --locked --project lib/fromargs python lib/fromargs/tests/e2e/mutate.py
 
 # Fix markdown formatting issues
 lint-md-fix:

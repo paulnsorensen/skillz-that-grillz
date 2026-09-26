@@ -1,12 +1,12 @@
 # Dependabot configuration — version updates only.
 # See: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# This repo has no language-package manifest (no package.json / Cargo.toml /
-# pyproject.toml / go.mod / etc.); the only declared deps are GitHub Actions
-# in workflow files and a hard-coded `pip install pyyaml==6.0.2` step in
-# validate.yml. Dependabot can't manage the latter without a manifest, so
-# only the github-actions ecosystem is enabled here. Add other ecosystems
-# as soon as a manifest lands.
+# release.yml and validate.yml pin `yamllint` and `pyyaml` through a
+# hard-coded `pip install` step that has no manifest; Dependabot does not
+# track or update those pins.
+# The github-actions ecosystem below covers only action refs (`uses: ...@sha`).
+# The uv ecosystem below covers lib/fromargs/pyproject.toml. Add another
+# ecosystem as soon as a new manifest lands.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -16,4 +16,12 @@ updates:
     open-pull-requests-limit: 5
     groups:
       actions-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: uv
+    directory: /lib/fromargs
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      uv-minor-and-patch:
         update-types: [minor, patch]
