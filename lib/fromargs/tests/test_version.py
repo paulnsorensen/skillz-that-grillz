@@ -9,7 +9,7 @@ from pathlib import Path
 
 def _run_consumer(tmp_path: Path, source: str) -> subprocess.CompletedProcess[str]:
     consumer = tmp_path / "consumer.py"
-    consumer.write_text(source, encoding="utf-8")
+    _ = consumer.write_text(source, encoding="utf-8")
     return subprocess.run(
         [sys.executable, str(consumer), "--version"],
         capture_output=True,
@@ -21,9 +21,13 @@ def _run_consumer(tmp_path: Path, source: str) -> subprocess.CompletedProcess[st
 def test_version_resolves_from_the_caller_modules_dunder_version(tmp_path: Path) -> None:
     result = _run_consumer(
         tmp_path,
-        '__version__ = "9.9.9"\n'
-        "import fromargs\n"
-        'fromargs.App("consumer").main()\n',
+        "".join(
+            [
+                '__version__ = "9.9.9"\n',
+                "import fromargs\n",
+                'fromargs.App("consumer").main()\n',
+            ]
+        ),
     )
 
     assert result.returncode == 0
@@ -35,9 +39,13 @@ def test_explicit_version_wins_over_the_caller_modules_dunder_version(
 ) -> None:
     result = _run_consumer(
         tmp_path,
-        '__version__ = "9.9.9"\n'
-        "import fromargs\n"
-        'fromargs.App("consumer", version="1.2.3").main()\n',
+        "".join(
+            [
+                '__version__ = "9.9.9"\n',
+                "import fromargs\n",
+                'fromargs.App("consumer", version="1.2.3").main()\n',
+            ]
+        ),
     )
 
     assert result.returncode == 0

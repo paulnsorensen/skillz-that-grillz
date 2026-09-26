@@ -161,7 +161,7 @@ class App:
         obj: T,
         *,
         limit: int | None = None,
-        **kwargs: Unpack[_AppKwargs],
+        validator: Callable[..., object] | None = None,
     ) -> T: ...
 
     @overload
@@ -170,7 +170,7 @@ class App:
         obj: None = None,
         *,
         limit: int | None = None,
-        **kwargs: Unpack[_AppKwargs],
+        validator: Callable[..., object] | None = None,
     ) -> Callable[[T], T]: ...
 
     def default(
@@ -178,7 +178,7 @@ class App:
         obj: T | None = None,
         *,
         limit: int | None = None,
-        **kwargs: Unpack[_AppKwargs],
+        validator: Callable[..., object] | None = None,
     ) -> T | Callable[[T], T]:
         """Register ``obj`` as the handler that runs when argv names no subcommand.
 
@@ -189,13 +189,13 @@ class App:
         if obj is None:
 
             def register(handler: T) -> T:
-                return self.default(handler, limit=limit, **kwargs)
+                return self.default(handler, limit=limit, validator=validator)
 
             return register
         if limit is not None and limit < 0:
             raise ValueError(f"limit must not be negative, got {limit}")
         previous = self._cyclopts.default_command
-        _ = self._cyclopts.default(obj, **kwargs)
+        _ = self._cyclopts.default(obj, validator=validator)
         reserved = _reserved_option(self._cyclopts)
         if reserved is not None:
             self._cyclopts.default_command = previous

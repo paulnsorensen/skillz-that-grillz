@@ -124,12 +124,14 @@ def test_group_nests_further_groups() -> None:
     assert calls == ["deep"]
 
 
-def test_group_passes_extra_kwargs_to_the_nested_cyclopts_app() -> None:
+def test_group_passes_extra_kwargs_to_the_nested_cyclopts_app(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     app = fromargs.App("t")
+    _ = app.group("sub", version="9.9.9")
 
-    group = app.group("sub", version="9.9.9")
-
-    assert group._cyclopts.version == "9.9.9"
+    assert app.run(["sub", "--version"]) == 0
+    assert capsys.readouterr().out.strip() == "9.9.9"
 
 
 def test_bare_default_registers_the_no_subcommand_handler() -> None:
@@ -161,7 +163,7 @@ def test_default_reserved_json_parameter_is_rejected_at_registration() -> None:
     with pytest.raises(ValueError, match="json"):
 
         @app.default
-        def bad(*, json: bool = False) -> None:
+        def bad(*, _json: bool = False) -> None:
             pass
 
 
@@ -171,7 +173,7 @@ def test_default_reserved_full_parameter_is_rejected_at_registration() -> None:
     with pytest.raises(ValueError, match="full"):
 
         @app.default
-        def bad(*, full: bool = False) -> None:
+        def bad(*, _full: bool = False) -> None:
             pass
 
 
