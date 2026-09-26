@@ -77,11 +77,15 @@ runs:
       run: |
         set -euo pipefail
         tarball="$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64.tar.gz"
+        bin_dir="$RUNNER_TEMP/bin"
         curl -fsSL -o "$tarball" "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
         echo "${GH_SHA256}  ${tarball}" | sha256sum -c -
         tar -xzf "$tarball" -C "$RUNNER_TEMP"
-        sudo install -m 755 "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
-        gh --version
+        mkdir -p "$bin_dir"
+        install -m 755 "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin/gh" "$bin_dir/gh"
+        echo "$bin_dir" >>"$GITHUB_PATH"
+        export PATH="$bin_dir:$PATH"
+        "$bin_dir/gh" --version
 
     - name: Run wedge
       id: wedge
@@ -111,7 +115,25 @@ runs:
         if [[ "$WEDGE_COMMAND" == publish ]]; then
           args+=(--repo "$WEDGE_REPO" --target "$WEDGE_TARGET")
         fi
-        result=$(uv run --locked --project "$GITHUB_ACTION_PATH/../../lib" wedge "${args[@]}")
+        work_dir=$(mktemp -d)
+        trap 'rm -rf "$work_dir"' EXIT
+        stdout_file="$work_dir/stdout"
+        stderr_file="$work_dir/stderr"
+        set +e
+        uv run --locked --project "$GITHUB_ACTION_PATH/../../lib" wedge "${args[@]}" >"$stdout_file" 2>"$stderr_file"
+        status=$?
+        set -e
+        if [[ -s "$stdout_file" ]]; then
+          result=$(<"$stdout_file")
+        else
+          result=$(<"$stderr_file")
+        fi
+        if [[ -s "$stderr_file" ]]; then
+          cat "$stderr_file" >&2
+        fi
         printf '%s\n' "$result"
         delimiter="wedge_$(openssl rand -hex 16)"
         printf 'result<<%s\n%s\n%s\n' "$delimiter" "$result" "$delimiter" >>"$GITHUB_OUTPUT"
+        if ((status != 0)); then
+          exit "$status"
+        fi

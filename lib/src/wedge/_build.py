@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZipFile
 
-from wedge._config import load_config
+from wedge._config import ConfigError, load_config
 from wedge._guard import guard_closure
 from wedge._key import TARGET_PYTHON, compute_key, resolve_paths
 from wedge._resolve import export_requirements, resolve_closure
@@ -106,10 +106,13 @@ def _copy_tree(src: Path, dest: Path) -> None:
 def _copy_source(source: Path, site_dir: Path) -> None:
     if source.is_symlink():
         raise ValueError(f"build source must not be a symlink: {source}")
+    destination = site_dir / source.name
+    if destination.exists() or destination.is_symlink():
+        raise ConfigError(f"build source would overwrite installed path: {destination}")
     if source.is_dir():
-        _copy_tree(source, site_dir / source.name)
+        _copy_tree(source, destination)
     else:
-        _ = shutil.copy2(source, site_dir / source.name)
+        _ = shutil.copy2(source, destination)
 
 
 def _strip_volatile(site_dir: Path) -> None:

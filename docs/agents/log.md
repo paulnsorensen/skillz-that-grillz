@@ -43,3 +43,4 @@
 - 2026-09-26 · wedge-action · merged · decisions/wedge-skill-packaging.md · ADR-001 and ADR-003 amended for project-relative keys; ADR-007 added for portable wedge.toml projects, format 5, and the public actions/wedge composite action
 
 - 2026-09-26 · pr93-integration · updated · decisions/wedge-skill-packaging.md · Integrated the portable project model with format 7 and the #89 validation and reproducibility safeguards
+- 2026-09-26 · pr93-hardening · updated · decisions/wedge-skill-packaging.md · Recorded dependency overwrite protection, non-sudo gh installation, exported runner PATH, and failed-result preservation
