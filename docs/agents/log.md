@@ -45,4 +45,4 @@
 - 2026-09-26 · pr93-integration · updated · decisions/wedge-skill-packaging.md · Integrated the portable project model with format 7 and the #89 validation and reproducibility safeguards
 - 2026-09-26 · pr93-hardening · updated · decisions/wedge-skill-packaging.md · Recorded dependency overwrite protection, non-sudo gh installation, exported runner PATH, and failed-result preservation
 
-- 2026-09-26 · wedge-ci-digest · merged · decisions/wedge-skill-packaging.md · ADR-008: re-enable compression; the publish job records each asset sha256 in the lock through a GitHub App auto-merge PR
+- 2026-09-26 · wedge-content-digest · merged · decisions/wedge-skill-packaging.md · ADR-008: pin a digest over uncompressed contents, deflate assets, name them by that digest; bump the asset format to 8

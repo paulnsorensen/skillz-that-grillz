@@ -1,11 +1,11 @@
 """Write and verify a skill's committed lock and launcher.
 
-``wedge lock`` builds the .pyz once to validate it and learn its key, then
+``wedge lock`` builds the .pyz once to learn its key and content digest, then
 writes two files beside the skill's ``wedge.toml``: the lock
-(``scripts/<name>.wedge.json``) and the launcher (``scripts/<name>``). A new
-key leaves ``sha256`` null (pending): only the post-merge publish job records
-the digest of the asset it uploads, so local and CI toolchains never have to
-agree byte-for-byte. ``wedge check`` verifies both files without building.
+(``scripts/<name>.wedge.json``) and the launcher (``scripts/<name>``). The
+content digest does not depend on the zlib build, so a local lock matches the
+compressed asset that the post-merge job builds. ``wedge check`` verifies both
+files without building.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ class LockData:
 
     name: str
     key: str
-    sha256: str | None
+    content_sha256: str
     release: str
     asset: str
     repo: str
@@ -43,7 +43,7 @@ class LockData:
         return {
             "name": self.name,
             "key": self.key,
-            "sha256": self.sha256,
+            "content_sha256": self.content_sha256,
             "release": self.release,
             "asset": self.asset,
             "repo": self.repo,
@@ -69,38 +69,24 @@ def launcher_path(skill_dir: Path, name: str) -> Path:
     return Path(skill_dir) / "scripts" / name
 
 
-def write_lock(skill_dir: Path, data: LockData) -> None:
-    """Write ``data`` as the skill's lock file."""
-    lock_file = lock_path(skill_dir, data.name)
-    lock_file.parent.mkdir(parents=True, exist_ok=True)
-    _ = lock_file.write_text(json.dumps(data.to_dict(), indent=2, sort_keys=True) + "\n")
-
-
-def _recorded_sha256(skill_dir: Path, name: str, key: str) -> str | None:
-    """Keep the published digest while the existing lock's key still matches."""
-    try:
-        existing = load_lock(skill_dir, name)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return None
-    return existing.sha256 if existing.key == key else None
-
-
 def lock(skill_dir: Path) -> LockData:
-    """Build once to validate, then write the lock and the launcher beside it."""
+    """Build once, then write the lock and the launcher beside it."""
     skill_dir = Path(skill_dir)
     config = load_config(skill_dir)
     with tempfile.TemporaryDirectory(prefix="wedge-lock-") as tmp:
         result = build(skill_dir, Path(tmp))
-    data = LockData(
-        name=result.name,
-        key=result.key,
-        sha256=_recorded_sha256(skill_dir, result.name, result.key),
-        release="wedge",
-        asset=f"{result.name}-{result.key[:12]}.pyz",
-        repo=config.repo,
-        format=FORMAT_VERSION,
-    )
-    write_lock(skill_dir, data)
+        data = LockData(
+            name=result.name,
+            key=result.key,
+            content_sha256=result.content_sha256,
+            release="wedge",
+            asset=result.path.name,
+            repo=config.repo,
+            format=FORMAT_VERSION,
+        )
+    lock_file = lock_path(skill_dir, config.name)
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    _ = lock_file.write_text(json.dumps(data.to_dict(), indent=2, sort_keys=True) + "\n")
     launcher_file = launcher_path(skill_dir, config.name)
     _ = launcher_file.write_text(LAUNCHER_SOURCE)
     _ = launcher_file.chmod(_LAUNCHER_MODE)
@@ -114,25 +100,21 @@ def load_lock(skill_dir: Path, name: str) -> LockData:
     if not isinstance(raw, dict):
         raise ValueError("lock must be a JSON object")
     data = cast(dict[object, object], raw)
-    expected = {"name", "key", "sha256", "release", "asset", "repo", "format"}
+    expected = {"name", "key", "content_sha256", "release", "asset", "repo", "format"}
     if set(data) != expected:
         raise ValueError("lock has invalid fields")
     values = {key: data.get(key) for key in expected}
-    if any(not isinstance(values[key], str) for key in expected - {"format", "sha256"}) or not isinstance(values["format"], int):
-        raise ValueError("lock fields have invalid types")
-    if values["sha256"] is not None and not isinstance(values["sha256"], str):
+    if any(not isinstance(values[key], str) for key in expected - {"format"}) or not isinstance(values["format"], int):
         raise ValueError("lock fields have invalid types")
     lock_data = LockData(
         name=cast(str, values["name"]), key=cast(str, values["key"]),
-        sha256=values["sha256"], release=cast(str, values["release"]),
+        content_sha256=cast(str, values["content_sha256"]), release=cast(str, values["release"]),
         asset=cast(str, values["asset"]), repo=cast(str, values["repo"]),
         format=values["format"],
     )
-    if lock_data.name != name or not _HEX64.fullmatch(lock_data.key):
+    if lock_data.name != name or not _HEX64.fullmatch(lock_data.key) or not _HEX64.fullmatch(lock_data.content_sha256):
         raise ValueError("lock name or digest is invalid")
-    if lock_data.sha256 is not None and not _HEX64.fullmatch(lock_data.sha256):
-        raise ValueError("lock name or digest is invalid")
-    if lock_data.format != FORMAT_VERSION or lock_data.release != "wedge" or lock_data.asset != f"{name}-{lock_data.key[:12]}.pyz":
+    if lock_data.format != FORMAT_VERSION or lock_data.release != "wedge" or lock_data.asset != f"{name}-{lock_data.content_sha256[:12]}.pyz":
         raise ValueError("lock invariants are invalid")
     return lock_data
 

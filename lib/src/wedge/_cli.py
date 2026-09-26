@@ -36,7 +36,7 @@ def build_cmd(skill_dir: str, *, out: str = ".") -> dict[str, object]:
     return {
         "name": result.name,
         "key": result.key,
-        "sha256": result.sha256,
+        "content_sha256": result.content_sha256,
         "path": str(result.path),
     }
 

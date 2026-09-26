@@ -24,14 +24,14 @@ These records explain the design of `fromargs`, an independent Python distributi
 - **Context:** Sources disagree on raw JSON payload input for agent CLIs. Microsoft's controlled test found that JSON input never improved correctness and always increased cost.
 - **Decision:** `fromargs` has no `--json-input` flag and no stdin payload reader. Typed flat arguments are the interface.
 - **Alternatives:** A raw `--json` payload mode, as Justin Poehnelt recommends. We rejected it on the Microsoft evidence.
-- **Consequences:** Cyclopts still reads a JSON string into dataclass-style and `list[...]` parameters. Cyclopts 4.25.3 does **not** read a JSON string into a bare `dict` or `dict[str, int]` parameter. Use a dataclass when a command needs a mapping.
+- **Consequences:** Cyclopts still reads a JSON string into dataclass-style and `list[...]` parameters. Cyclopts 4.25.3 and 5.0.0 do **not** read a JSON string into a bare `dict` or `dict[str, int]` parameter. Use a dataclass when a command needs a mapping.
 
 ### ADR-003: Use native Cyclopts underscore flags and suggestions  [status: accepted]
 
 - **Context:** easy-cheese ported `_standardize_flags` and a `difflib` "did you mean" layer for its own command dispatcher. A Cyclopts 4.25.3 prototype showed that `--max_count` already binds to `max_count`. It also showed that unknown commands and options already print `Did you mean ...?`.
 - **Decision:** `fromargs` does not copy those helpers. Tests lock in the native behavior.
 - **Alternatives:** Copy the easy-cheese helpers. We rejected this because it duplicates what the parser already does.
-- **Consequences:** A Cyclopts upgrade can change this behavior. The `cyclopts>=4.25.3,<5` pin and the tests catch the change. The hoist-leading-flags repair is retired: a bare `--json` or `--full` token anywhere before the end-of-options marker is stripped before parsing, silently, with no `note:` line. `--json` is a no-op; `--full` turns off result truncation. Neither flag ever reaches a handler or Cyclopts.[^1] The quote-split repair can turn a merged value like `"3 --force"` into an extra flag; we accept this risk because the repair only fires on a verified single candidate and prints a `note:` line naming the split.
+- **Consequences:** A Cyclopts upgrade can change this behavior. The `cyclopts>=5,<6` pin and the tests catch the change. Cyclopts 5 removed the v4 fuzzy command fallback, so a command name must match exactly; unknown commands still print `Did you mean ...?`. The hoist-leading-flags repair is retired: a bare `--json` or `--full` token anywhere before the end-of-options marker is stripped before parsing, silently, with no `note:` line. `--json` is a no-op; `--full` turns off result truncation. Neither flag ever reaches a handler or Cyclopts.[^1] The quote-split repair can turn a merged value like `"3 --force"` into an extra flag; we accept this risk because the repair only fires on a verified single candidate and prints a `note:` line naming the split.
 
 ### ADR-004: Honor the effective backend for async commands  [status: accepted]
 

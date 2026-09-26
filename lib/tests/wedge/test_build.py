@@ -1,10 +1,11 @@
-"""AC-W2: build() is reproducible across independent checkouts on one host."""
+"""AC-W2: build() is reproducible across independent checkouts."""
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
-from typing import Callable, cast
+from typing import Callable, Protocol, cast
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
@@ -12,12 +13,24 @@ import pytest
 import wedge._build as wedge_build
 from wedge._build import build
 from wedge._config import ConfigError
+import wedge._digest as wedge_digest
+from wedge._digest import content_sha256
+from wedge._lock import load_lock
+
+FIXTURE_NAME = "cheese-cave"
+
+
+class _HashLike(Protocol):
+    def update(self, data: bytes, /) -> None: ...
+
+    def hexdigest(self) -> str: ...
 
 
 @pytest.mark.ac("AC-W2")
 def test_build_is_byte_identical_across_checkouts(
     tmp_path: Path,
     copy_repo_subset: Callable[[Path], Path],
+    fixture_skill_dir: Path,
 ) -> None:
     skill_a = copy_repo_subset(tmp_path / "checkout-a")
     skill_b = copy_repo_subset(tmp_path / "checkout-b")
@@ -26,13 +39,42 @@ def test_build_is_byte_identical_across_checkouts(
     result_b = build(skill_b, tmp_path / "out-b")
 
     assert result_a.key == result_b.key
-    assert result_a.sha256 == result_b.sha256
+    assert result_a.content_sha256 == result_b.content_sha256
     assert result_a.path.read_bytes() == result_b.path.read_bytes()
     with ZipFile(result_a.path) as archive:
         assert not any(name.startswith("site-packages/bin/") for name in archive.namelist())
         files = [info for info in archive.infolist() if not info.is_dir()]
         assert files and all(info.compress_type == ZIP_DEFLATED for info in files)
         assert archive.namelist() == sorted(archive.namelist())
+
+    lock = load_lock(fixture_skill_dir, FIXTURE_NAME)
+    if result_a.content_sha256 != lock.content_sha256:
+        fingerprints = _archive_fingerprints(result_a.path)
+        detail = "\n".join(
+            f"{name}: content={content} metadata={metadata}"
+            for name, (content, metadata) in fingerprints.items()
+        )
+        pytest.fail(f"Archive contents differ from lock:\n{detail}", pytrace=False)
+
+
+
+@pytest.mark.ac("AC-W2")
+def test_content_digest_ignores_compression_but_not_contents(
+    tmp_path: Path,
+    copy_repo_subset: Callable[[Path], Path],
+    rewrite_pyz: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = build(copy_repo_subset(tmp_path / "checkout"), tmp_path / "out")
+    stored = rewrite_pyz(result.path, tmp_path / "level0.pyz", level=0)
+
+    assert stored.read_bytes() != result.path.read_bytes()
+    assert content_sha256(stored) == result.content_sha256
+    assert result.path.name == f"cheese-cave-{result.content_sha256[:12]}.pyz"
+
+    monkeypatch.setattr(wedge_digest, "MAX_UNCOMPRESSED", 1024)
+    with pytest.raises(ValueError, match="expands past"):
+        _ = content_sha256(result.path)
 
 
 @pytest.mark.ac("AC-W2")
@@ -59,7 +101,22 @@ def test_build_ignores_source_modes_and_umask(
         _ = os.umask(old_umask)
 
     assert result_a.key == result_b.key
-    assert result_a.sha256 == result_b.sha256
+    assert result_a.content_sha256 == result_b.content_sha256
+
+def _archive_fingerprints(path: Path) -> dict[str, tuple[str, str]]:
+    """Group archive content and ZIP metadata to diagnose cross-OS drift."""
+    groups: dict[str, tuple[_HashLike, _HashLike]] = {}
+    with ZipFile(path) as archive:
+        for info in sorted(archive.infolist(), key=lambda item: item.filename):
+            parts = info.filename.split("/")
+            group = parts[1] if parts[0] == "site-packages" and len(parts) > 1 else parts[0]
+            content, metadata = groups.setdefault(group, (hashlib.sha256(), hashlib.sha256()))
+            content.update(info.filename.encode())
+            content.update(archive.read(info))
+            metadata.update(
+                repr((info.filename, info.external_attr, info.create_system, info.date_time)).encode()
+            )
+    return {name: (content.hexdigest(), metadata.hexdigest()) for name, (content, metadata) in groups.items()}
 
 
 @pytest.mark.ac("AC-W6")

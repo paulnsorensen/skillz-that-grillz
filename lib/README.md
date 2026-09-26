@@ -6,8 +6,8 @@ library remains a separate distribution at `lib/fromargs/`.
 
 A skill commits `wedge.toml`, a content-keyed lock, and a launcher. Wedge
 builds the `.pyz` from the locked dependency closure and publishes it as a
-GitHub release asset. The publish job records the asset hash in the lock
-through a pull request. The launcher verifies that hash before execution.
+GitHub release asset. The launcher verifies a sha256 over the asset's
+uncompressed contents before execution.
 
 For local development, run `uv run --project lib wedge --help`. Building
 requires `uv`; publishing also requires an authenticated `gh` CLI.

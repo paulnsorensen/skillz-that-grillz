@@ -3,12 +3,7 @@ name: wedge
 # No pull_request trigger: `wedge check` inside `just build` already guards
 # every PR by failing when a lock is missing, stale, or the launcher drifted.
 # This workflow only builds and uploads release assets after a change lands
-# on main. It then opens an auto-merge PR that records each uploaded asset's
-# sha256 in its lock. main-protection requires a PR, and a PR that
-# GITHUB_TOKEN opens never runs the required checks, so the job acts as the
-# wedge GitHub App (vars.WEDGE_APP_CLIENT_ID, secrets.WEDGE_APP_PRIVATE_KEY).
-# The lock PR's merge re-runs this workflow; that run finds every asset
-# published and every lock recorded, so it opens no new PR.
+# on main.
 on:
   push:
     branches: [main]
@@ -19,9 +14,8 @@ on:
       - "skills/**/*.wedge.json"
   workflow_dispatch:
 
-# The App token does every write; GITHUB_TOKEN only checks out.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
@@ -44,18 +38,8 @@ jobs:
 
       # Dogfood the public action from this checkout. Consumers pin
       # paulnsorensen/skillz-that-grillz/actions/wedge@<sha> instead.
-      - name: Mint wedge App token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ vars.WEDGE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.WEDGE_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-
       - name: Publish wedge assets
         uses: ./actions/wedge
         with:
           command: publish
           roots: skills
-          token: ${{ steps.app-token.outputs.token }}

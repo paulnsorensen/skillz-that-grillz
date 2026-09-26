@@ -8,7 +8,7 @@ from typing import Callable, cast
 
 import pytest
 
-from wedge._lock import check, launcher_path, lock
+from wedge._lock import check, launcher_path
 
 FIXTURE_NAME = "cheese-cave"
 
@@ -16,38 +16,6 @@ FIXTURE_NAME = "cheese-cave"
 @pytest.mark.ac("AC-W5")
 def test_fresh_fixture_passes(fixture_skill_dir: Path) -> None:
     assert check([fixture_skill_dir]) == []
-
-
-@pytest.mark.ac("AC-W5")
-def test_recorded_sha256_passes(
-    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]
-) -> None:
-    skill = copy_locked_fixture(tmp_path / "checkout")
-    lock_file = skill / "scripts" / f"{FIXTURE_NAME}.wedge.json"
-    lock_data = cast(dict[str, object], json.loads(lock_file.read_text()))
-    lock_data["sha256"] = "a" * 64
-    _ = lock_file.write_text(json.dumps(lock_data))
-
-    assert check([skill]) == []
-
-
-@pytest.mark.ac("AC-W5")
-def test_relock_keeps_a_recorded_sha256_until_the_key_changes(
-    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]
-) -> None:
-    skill = copy_locked_fixture(tmp_path / "checkout")
-    lock_file = skill / "scripts" / f"{FIXTURE_NAME}.wedge.json"
-    lock_data = cast(dict[str, object], json.loads(lock_file.read_text()))
-    lock_data["sha256"] = "a" * 64
-    _ = lock_file.write_text(json.dumps(lock_data))
-
-    assert lock(skill).sha256 == "a" * 64
-
-    source = skill.parent.parent.parent / "fromargs" / "examples" / "cheese_cave.py"
-    _ = source.write_text(source.read_text() + "\n# touched\n")
-
-    assert lock(skill).sha256 is None
-    assert check([skill]) == []
 
 
 @pytest.mark.ac("AC-W5")
@@ -133,8 +101,7 @@ def test_malformed_config_fields_are_rejected(
         ("format", 5),
         ("repo", "other-owner/other-repo"),
         ("key", "not-a-digest"),
-        ("sha256", "not-a-digest"),
-        ("sha256", 7),
+        ("content_sha256", "not-a-digest"),
     ],
 )
 def test_invalid_lock_metadata_is_rejected(

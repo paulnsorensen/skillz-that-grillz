@@ -13,7 +13,7 @@ as a release asset.
 ## Use
 
 Run the launcher directly. It downloads the matching `.pyz` on first use,
-verifies its sha256 against the lock, caches it, and execs it.
+verifies its content sha256 against the lock, caches it, and execs it.
 
 ```bash
 scripts/cheese-cave wheels list
@@ -21,5 +21,4 @@ scripts/cheese-cave age brie --weeks "2 --dry-run"
 ```
 
 Set `WEDGE_PYZ=<path>` to run a local build instead of downloading a release
-asset. A lock with a null `sha256` is not published yet; only `WEDGE_PYZ`
-runs then. Set `WEDGE_CACHE` to change the cache directory.
+asset. Set `WEDGE_CACHE` to change the cache directory.
