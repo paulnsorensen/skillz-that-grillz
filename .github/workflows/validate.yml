@@ -13,6 +13,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  wedge-action:
+    # Run the public composite action the way a consumer does, including the
+    # consumer example that has its own pyproject.toml and uv.lock.
+    name: wedge action (check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check wedge locks
+        id: wedge
+        uses: ./actions/wedge
+        with:
+          command: check
+          roots: skills lib/examples/skills lib/examples/consumer/skills
+
+      - name: Verify action output
+        env:
+          RESULT: ${{ steps.wedge.outputs.result }}
+        run: |
+          set -euo pipefail
+          jq -e '.ok == true and (.checked | index("lib/examples/consumer/skills/hello"))' <<<"$RESULT"
   gate:
     name: gate (just ci)
     runs-on: ubuntu-latest

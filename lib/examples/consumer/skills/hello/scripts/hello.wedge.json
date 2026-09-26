@@ -1,0 +1,9 @@
+{
+  "asset": "hello-08b2084f6d32.pyz",
+  "format": 7,
+  "key": "08b2084f6d32f776a81fe2364807ce239a64dfd9834fdbe0899d2c54174cc174",
+  "name": "hello",
+  "release": "wedge",
+  "repo": "example-owner/wedge-consumer",
+  "sha256": "85b2beccb22d72232eef49cf209580cdffc417d1665db930d1c0746fa31036d8"
+}

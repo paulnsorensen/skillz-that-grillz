@@ -1,4 +1,10 @@
-"""Parse a skill's ``wedge.toml``."""
+"""Parse a skill's ``wedge.toml``.
+
+Every path in ``wedge.toml`` is relative to the skill directory. ``project``
+names the directory that holds the ``pyproject.toml`` and ``uv.lock`` whose
+non-dev closure the ``.pyz`` bundles. ``source`` and every ``include`` entry
+must resolve inside that project directory.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +17,6 @@ from typing import cast
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
-DEFAULT_REPO = "paulnsorensen/skillz-that-grillz"
-
 
 @dataclass(frozen=True)
 class WedgeConfig:
@@ -22,10 +26,12 @@ class WedgeConfig:
     entry: str
     source: str
     repo: str
+    project: str = "."
+    include: tuple[str, ...] = ()
 
 
 class ConfigError(Exception):
-    """``wedge.toml`` is missing, unreadable, or missing a required key."""
+    """``wedge.toml`` is missing, unreadable, invalid, or names a bad path."""
 
 
 def load_config(skill_dir: Path) -> WedgeConfig:
@@ -42,14 +48,29 @@ def load_config(skill_dir: Path) -> WedgeConfig:
     if not isinstance(parsed, dict):
         raise ConfigError(f"{path}: top level must be a table")
     values = cast(dict[str, object], parsed)
-    name = values.get("name")
-    entry = values.get("entry")
-    source = values.get("source")
-    repo = values.get("repo", DEFAULT_REPO)
-    if not all(isinstance(value, str) and value.strip() for value in (name, entry, source, repo)):
-        raise ConfigError(f"{path}: name, entry, source, and repo must be nonempty strings")
-    if not _SAFE_NAME.fullmatch(cast(str, name)):
+
+    def text_key(key: str, default: str | None = None) -> str:
+        value = values.get(key, default)
+        if value is None:
+            raise ConfigError(f"{path}: missing required key {key!r}")
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"{path}: {key!r} must be a non-empty string")
+        return value
+
+    name = text_key("name")
+    entry = text_key("entry")
+    source = text_key("source")
+    project = text_key("project", ".")
+    repo = text_key("repo")
+    if not _SAFE_NAME.fullmatch(name):
         raise ConfigError(f"{path}: name must be a safe filename component")
-    if not _REPO.fullmatch(cast(str, repo)):
-        raise ConfigError(f"{path}: repo must be owner/name")
-    return WedgeConfig(name=cast(str, name), entry=cast(str, entry), source=cast(str, source), repo=cast(str, repo))
+    if not _REPO.fullmatch(repo):
+        raise ConfigError(f"{path}: 'repo' must be 'owner/name', got {repo!r}")
+    include_raw = values.get("include", [])
+    if not isinstance(include_raw, list):
+        raise ConfigError(f"{path}: 'include' must be a list of non-empty strings")
+    include_items = cast(list[object], include_raw)
+    if not all(isinstance(item, str) and item.strip() for item in include_items):
+        raise ConfigError(f"{path}: 'include' must be a list of non-empty strings")
+    include = cast(list[str], include_items)
+    return WedgeConfig(name=name, entry=entry, source=source, repo=repo, project=project, include=tuple(include))
