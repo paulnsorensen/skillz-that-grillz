@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Protocol, cast
 from zipfile import ZIP_STORED, ZipFile
 
 import pytest
 
+import wedge._build as wedge_build
 from wedge._build import build
+from wedge._config import ConfigError
 from wedge._lock import load_lock
 
 FIXTURE_NAME = "cheese-cave"
@@ -93,3 +95,50 @@ def _archive_fingerprints(path: Path) -> dict[str, tuple[str, str]]:
                 repr((info.filename, info.external_attr, info.create_system, info.date_time)).encode()
             )
     return {name: (content.hexdigest(), metadata.hexdigest()) for name, (content, metadata) in groups.items()}
+
+
+@pytest.mark.ac("AC-W6")
+@pytest.mark.parametrize("collision", ["file", "directory"])
+def test_build_rejects_local_source_over_installed_dependency(
+    tmp_path: Path,
+    copy_repo_subset: Callable[[Path], Path],
+    collision: str,
+) -> None:
+    skill = copy_repo_subset(tmp_path / "checkout")
+    project = skill.parent.parent.parent / "fromargs"
+    config = skill / "wedge.toml"
+    if collision == "file":
+        source = project / "examples" / "rich"
+        _ = source.write_text("# collision fixture\n")
+        text = config.read_text().replace(
+            "../../../fromargs/examples/cheese_cave.py",
+            "../../../fromargs/examples/rich",
+        )
+    else:
+        include = project / "src" / "cyclopts"
+        include.mkdir()
+        _ = (include / "marker.py").write_text("# collision fixture\n")
+        text = config.read_text().replace(
+            'include = ["../../../fromargs/src/fromargs"]',
+            'include = ["../../../fromargs/src/fromargs", "../../../fromargs/src/cyclopts"]',
+        )
+    _ = config.write_text(text)
+
+    with pytest.raises(ConfigError, match="would overwrite installed path"):
+        _ = build(skill, tmp_path / "out")
+
+
+@pytest.mark.ac("AC-W6")
+def test_copy_source_rejects_existing_file_without_overwriting(tmp_path: Path) -> None:
+    source = tmp_path / "source.py"
+    _ = source.write_text("new\n")
+    site_dir = tmp_path / "site"
+    site_dir.mkdir()
+    destination = site_dir / source.name
+    _ = destination.write_text("installed\n")
+
+    copy_source = cast(Callable[[Path, Path], None], getattr(wedge_build, "_copy_source"))
+    with pytest.raises(ConfigError, match="would overwrite installed path"):
+        copy_source(source, site_dir)
+
+    assert destination.read_text() == "installed\n"

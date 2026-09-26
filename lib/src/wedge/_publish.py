@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import cast
 
 from wedge._build import build
-from wedge._config import load_config
-from wedge._key import compute_key, find_repo_root
+from wedge._config import ConfigError, WedgeConfig, load_config
+from wedge._key import compute_key
 from wedge._lock import load_lock
 
 RELEASE = "wedge"
@@ -108,8 +108,9 @@ def _publish_one(skill_dir: Path, repo: str) -> tuple[str, str]:
     skill_dir = Path(skill_dir)
     config = load_config(skill_dir)
     lock_data = load_lock(skill_dir, config.name)
-    repo_root = find_repo_root(skill_dir)
-    key = compute_key(skill_dir, config, repo_root)
+    if lock_data.repo != repo:
+        return "failed", f"lock targets repo {lock_data.repo}, not the publish repo {repo}"
+    key = compute_key(skill_dir, config)
     if key != lock_data.key:
         return "failed", f"lock is stale: key {lock_data.key} != current {key}"
 
@@ -140,18 +141,50 @@ def publish(skill_dirs: list[Path], *, repo: str, target: str) -> dict[str, dict
     """Publish every skill; returns ``{name: {status, reason}}``."""
     if not skill_dirs:
         return {}
-    configs = [load_config(Path(skill_dir)) for skill_dir in skill_dirs]
-    names = [config.name for config in configs]
+    configs: list[tuple[Path, WedgeConfig | None, str | None]] = []
+    for raw_skill in skill_dirs:
+        skill_dir = Path(raw_skill)
+        try:
+            config = load_config(skill_dir)
+        except (ConfigError, OSError) as exc:
+            configs.append((skill_dir, None, str(exc)))
+        else:
+            configs.append((skill_dir, config, None))
+    valid = [(path, config) for path, config, _error in configs if config is not None]
+    names = [config.name for _path, config in valid]
     if len(names) != len(set(names)):
         raise ValueError("duplicate skill names are not publishable")
-    if any(config.repo != repo for config in configs):
+    if any(config.repo != repo for _path, config in valid):
         raise ValueError("publish repository differs from skill configuration")
-    lock_data = [load_lock(Path(skill_dir), config.name) for skill_dir, config in zip(skill_dirs, configs)]
-    if any(data.repo != config.repo for data, config in zip(lock_data, configs)):
-        raise ValueError("lock repository differs from skill configuration")
-    _ensure_release(repo, target)
+
     results: dict[str, dict[str, str]] = {}
-    for skill_dir, config in zip(skill_dirs, configs):
-        status, reason = _publish_one(Path(skill_dir), repo)
+    used_names = set(names)
+    for index, (skill_dir, config, error) in enumerate(configs):
+        if config is None:
+            name = skill_dir.name
+            while name in used_names:
+                name = f"{skill_dir.name}-{index}"
+                index += 1
+            used_names.add(name)
+            results[name] = {"status": "failed", "reason": error or "invalid configuration"}
+
+    prepared: list[tuple[Path, WedgeConfig]] = []
+    for skill_dir, config in valid:
+        try:
+            lock_data = load_lock(skill_dir, config.name)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            results[config.name] = {"status": "failed", "reason": str(exc)}
+            continue
+        if lock_data.repo != config.repo:
+            raise ValueError("lock repository differs from skill configuration")
+        prepared.append((skill_dir, config))
+    if not prepared:
+        return results
+    _ensure_release(repo, target)
+    for skill_dir, config in prepared:
+        try:
+            status, reason = _publish_one(skill_dir, repo)
+        except (ConfigError, OSError, ValueError) as exc:
+            status, reason = "failed", str(exc)
         results[config.name] = {"status": status, "reason": reason}
     return results

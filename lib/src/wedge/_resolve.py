@@ -1,9 +1,4 @@
-"""Resolve fromargs' frozen, non-dev third-party closure from ``lib/fromargs/uv.lock``.
-
-The skill runtime needs only what ``fromargs`` needs. Exporting from the
-Wedge project at ``lib/`` would also pull in shiv's own dependencies
-(``pip``, ``setuptools``, ``click``), which a skill never imports.
-"""
+"""Resolve a project's frozen, non-dev third-party dependency closure."""
 
 from __future__ import annotations
 
@@ -13,53 +8,45 @@ import tomllib
 from pathlib import Path
 from typing import cast
 
-from wedge._guard import ClosureEntry
+from wedge._guard import ClosureEntry, GuardError
 
 _REQUIREMENT_RE = re.compile(
     r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9.+!_-]+)(?:\s*;\s*(.+?))?\s*\\?$"
 )
 
 
-def export_requirements(repo_root: Path) -> str:
-    """``uv export`` text for fromargs' frozen, non-dev dependency closure."""
+def export_requirements(project: Path) -> str:
+    """Return the project's frozen, non-dev dependency closure."""
     result = subprocess.run(
-        [
-            "uv",
-            "export",
-            "--frozen",
-            "--no-dev",
-            "--no-emit-project",
-            "--project",
-            str(Path(repo_root) / "lib" / "fromargs"),
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
+        ["uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--no-emit-local", "--project", str(project)],
+        capture_output=True, text=True, check=True,
     )
     return result.stdout
 
 
 def parse_requirements(text: str) -> list[tuple[str, str, str | None]]:
-    """Parse ``name==version[; marker]`` lines from a ``uv export`` document."""
+    """Parse ``name==version[; marker]`` lines from a ``uv export`` document.
+
+    Raise ``GuardError`` on any other requirement line (an editable, path, or
+    URL dependency): those carry no pinned wheel hash, so they cannot enter a
+    reproducible closure. Vendor such a package through ``include`` instead.
+    """
     results: list[tuple[str, str, str | None]] = []
     for line in text.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        if not stripped or stripped.startswith(("#", "--hash")):
             continue
         match = _REQUIREMENT_RE.match(stripped)
         if match is None:
-            continue
+            raise GuardError(f"unsupported requirement {stripped!r}: a wedge closure takes only pinned index wheels; list local packages under 'include' in wedge.toml")
         name, version, marker = match.groups()
         results.append((name, version, marker))
     return results
 
 
-def resolve_closure(repo_root: Path, exported: str) -> list[ClosureEntry]:
-    """The resolved closure as ``ClosureEntry`` objects, wheel filenames from
-    ``lib/fromargs/uv.lock`` and markers from ``uv export``."""
-    repo_root = Path(repo_root)
-    requirements = parse_requirements(exported)
-    lock = cast(dict[str, object], tomllib.loads((repo_root / "lib" / "fromargs" / "uv.lock").read_text()))
+def resolve_closure(project: Path, requirements: str) -> list[ClosureEntry]:
+    """Resolve requirement wheels from project/uv.lock."""
+    lock = cast(dict[str, object], tomllib.loads((Path(project) / "uv.lock").read_text()))
     packages_raw = lock.get("package")
     if not isinstance(packages_raw, list):
         raise ValueError("uv.lock package must be a list")
@@ -68,22 +55,21 @@ def resolve_closure(repo_root: Path, exported: str) -> list[ClosureEntry]:
         if not isinstance(package_raw, dict):
             continue
         package = cast(dict[str, object], package_raw)
-        name_value = package.get("name")
-        version_value = package.get("version")
-        wheels_value = package.get("wheels")
-        if not isinstance(name_value, str) or not isinstance(version_value, str) or not isinstance(wheels_value, list):
+        name, version, wheels = package.get("name"), package.get("version"), package.get("wheels")
+        if not isinstance(name, str) or not isinstance(version, str) or not isinstance(wheels, list):
             continue
-        wheels = [cast(dict[str, object], wheel) for wheel in cast(list[object], wheels_value) if isinstance(wheel, dict)]
-        wheels_by_key[(name_value, version_value)] = wheels
+        typed_wheels = cast(list[object], wheels)
+        wheels_by_key[(name, version)] = [
+            cast(dict[str, object], item) for item in typed_wheels if isinstance(item, dict)
+        ]
     entries: list[ClosureEntry] = []
-    for name, version, marker in requirements:
+    for name, version, marker in parse_requirements(requirements):
         wheels = wheels_by_key.get((name, version))
         if not wheels:
-            raise ValueError(f"{name}=={version}: no wheel entry in lib/fromargs/uv.lock")
+            raise GuardError(f"{name}=={version}: no wheel entry in {project}/uv.lock")
         for wheel in wheels:
             url = wheel.get("url")
             if not isinstance(url, str):
                 raise ValueError(f"{name}=={version}: wheel URL is invalid")
-            filename = url.rsplit("/", 1)[-1]
-            entries.append(ClosureEntry(name=name, wheel=filename, marker=marker))
+            entries.append(ClosureEntry(name=name, wheel=url.rsplit("/", 1)[-1], marker=marker))
     return entries

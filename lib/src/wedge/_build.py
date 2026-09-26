@@ -1,9 +1,10 @@
 """Build a reproducible .pyz for one skill's CLI.
 
-Resolve and guard the third-party closure, install it plus ``fromargs`` and
-the skill's own CLI source into a fresh site directory, strip volatile
-install metadata, and shiv the result with a fixed shebang and
-``SOURCE_DATE_EPOCH`` so the same key always gives the same bytes.
+Resolve and guard the project's third-party closure, install it plus the
+configured local ``include`` trees and the skill's CLI source into a fresh
+site directory, strip volatile install metadata, and shiv the result with a
+fixed shebang and ``SOURCE_DATE_EPOCH`` so the same key always gives the
+same bytes.
 """
 
 from __future__ import annotations
@@ -13,14 +14,15 @@ import os
 from io import BytesIO
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZipFile
 
-from wedge._config import load_config
+from wedge._config import ConfigError, load_config
 from wedge._guard import guard_closure
-from wedge._key import TARGET_PYTHON, compute_key, find_repo_root, source_path
+from wedge._key import TARGET_PYTHON, compute_key, resolve_paths
 from wedge._resolve import export_requirements, resolve_closure
 
 _VOLATILE_INSTALL_FILES = {"RECORD", "INSTALLER", "REQUESTED", "direct_url.json"}
@@ -45,10 +47,11 @@ def build(skill_dir: Path, out_dir: Path) -> BuildResult:
     skill_dir = Path(skill_dir).resolve()
     out_dir = Path(out_dir).resolve()
     config = load_config(skill_dir)
-    repo_root = find_repo_root(skill_dir)
-    key = compute_key(skill_dir, config, repo_root)
-    requirements = export_requirements(repo_root)
-    guard_closure(resolve_closure(repo_root, requirements))
+    paths = resolve_paths(skill_dir, config)
+    key = compute_key(skill_dir, config)
+    requirements = export_requirements(paths.project)
+    closure = resolve_closure(paths.project, requirements)
+    guard_closure(closure)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{config.name}-{key[:12]}.pyz"
@@ -56,9 +59,10 @@ def build(skill_dir: Path, out_dir: Path) -> BuildResult:
     with tempfile.TemporaryDirectory(prefix="wedge-build-") as tmp:
         site_dir = Path(tmp) / "site"
         site_dir.mkdir()
-        _install_third_party(requirements, site_dir)
-        _copy_tree(repo_root / "lib" / "fromargs" / "src" / "fromargs", site_dir / "fromargs")
-        _copy_source(source_path(skill_dir, config, repo_root), site_dir)
+        if closure:
+            _install_third_party(requirements, site_dir)
+        for local in (*paths.includes, paths.source):
+            _copy_source(local, site_dir)
         _strip_volatile(site_dir)
         _shiv(site_dir, config.entry, out_path)
         _canonicalize_archive(out_path)
@@ -102,10 +106,13 @@ def _copy_tree(src: Path, dest: Path) -> None:
 def _copy_source(source: Path, site_dir: Path) -> None:
     if source.is_symlink():
         raise ValueError(f"build source must not be a symlink: {source}")
+    destination = site_dir / source.name
+    if destination.exists() or destination.is_symlink():
+        raise ConfigError(f"build source would overwrite installed path: {destination}")
     if source.is_dir():
-        _copy_tree(source, site_dir / source.name)
+        _copy_tree(source, destination)
     else:
-        _ = shutil.copy2(source, site_dir / source.name)
+        _ = shutil.copy2(source, destination)
 
 
 def _strip_volatile(site_dir: Path) -> None:
@@ -124,6 +131,8 @@ def _shiv(site_dir: Path, entry: str, out_path: Path) -> None:
     env["SOURCE_DATE_EPOCH"] = _SOURCE_DATE_EPOCH
     _ = subprocess.run(
         [
+            sys.executable,
+            "-m",
             "shiv",
             "--reproducible",
             "--uncompressed",
