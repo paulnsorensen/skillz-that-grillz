@@ -67,7 +67,7 @@ def run(
         except CliError as exc:
             return _report(str(exc), exc.exit_code)
         except CycloptsError as exc:
-            return _report(str(exc), 2)
+            return _report(_safe_message(exc), 2)
         if _is_bare_help(handler) and not _requested_help(apps, tokens):
             return _report("command required", 2)
         try:
@@ -140,6 +140,19 @@ def _await(apps: tuple[App, ...], coroutine: Coroutine[object, object, object]) 
 def _report(message: str, exit_code: int) -> int:
     print(json.dumps({"error": message, "exit_code": exit_code}), file=sys.stderr)
     return exit_code
+
+
+def _safe_message(exc: CycloptsError) -> str:
+    """Render ``exc`` for the ADR-001 envelope, even when ``str(exc)`` itself raises.
+
+    Cyclopts' ``ValidationError.__str__`` raises ``NotImplementedError`` when
+    none of ``argument``, ``group``, or ``command_chain`` is set, which
+    happens for a root default handler's validator.
+    """
+    try:
+        return str(exc)
+    except Exception:
+        return getattr(exc, "exception_message", "") or type(exc).__name__
 
 
 def _report_unexpected(exc: Exception) -> int:

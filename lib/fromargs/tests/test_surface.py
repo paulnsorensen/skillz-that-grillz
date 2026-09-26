@@ -18,8 +18,8 @@ class Point:
 
 
 def test_public_surface() -> None:
-    assert set(fromargs.__all__) == {"App", "CliError", "contract_error"}
-    assert len(fromargs.__all__) == 3
+    assert set(fromargs.__all__) == {"App", "CliError", "contract_error", "Group", "Parameter"}
+    assert len(fromargs.__all__) == 5
     assert Path(fromargs.__file__).with_name("py.typed").is_file()
     for name in fromargs.__all__:
         assert hasattr(fromargs, name)
@@ -124,23 +124,83 @@ def test_group_nests_further_groups() -> None:
     assert calls == ["deep"]
 
 
-@pytest.mark.parametrize("reserved", ["json", "full"])
-def test_reserved_parameter_is_rejected_at_registration(reserved: str) -> None:
+def test_group_passes_extra_kwargs_to_the_nested_cyclopts_app(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+    _ = app.group("sub", version="9.9.9")
+
+    assert app.run(["sub", "--version"]) == 0
+    assert capsys.readouterr().out.strip() == "9.9.9"
+
+
+def test_bare_default_registers_the_no_subcommand_handler() -> None:
     app = fromargs.App("t")
 
-    def register_json() -> None:
+    @app.default
+    def main() -> str:
+        return "ran"
+
+    assert app.run([]) == 0
+
+
+def test_called_default_with_limit_truncates_its_result(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    @app.default(limit=1)
+    def main() -> list[int]:
+        return [1, 2]
+
+    assert app.run([]) == 0
+    assert "note: showing 1 of 2" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("path", ["command", "default"])
+@pytest.mark.parametrize("reserved", ["json", "full"])
+def test_reserved_parameter_is_rejected_at_registration(path: str, reserved: str) -> None:
+    app = fromargs.App("t")
+
+    def existing_validator(**_kwargs: object) -> None:
+        return None
+
+    before_commands = set(app._cyclopts)  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+    before_default_command = app._cyclopts.default_command  # pyright: ignore[reportPrivateUsage] -- App exposes no public default_command getter
+    before_validator = app._cyclopts.validator  # pyright: ignore[reportPrivateUsage] -- App exposes no public validator getter
+
+    def register_command_json() -> None:
         @app.command
         def bad(*, _json: bool = False) -> None:
             pass
 
-    def register_full() -> None:
+    def register_command_full() -> None:
         @app.command
         def bad(*, _full: bool = False) -> None:
             pass
 
-    register = {"json": register_json, "full": register_full}[reserved]
+    def register_default_json() -> None:
+        @app.default(validator=existing_validator)
+        def bad(*, _json: bool = False) -> None:
+            pass
+
+    def register_default_full() -> None:
+        @app.default(validator=existing_validator)
+        def bad(*, _full: bool = False) -> None:
+            pass
+
+    register = {
+        ("command", "json"): register_command_json,
+        ("command", "full"): register_command_full,
+        ("default", "json"): register_default_json,
+        ("default", "full"): register_default_full,
+    }[(path, reserved)]
     with pytest.raises(ValueError, match=reserved):
         register()
+
+    assert set(app._cyclopts) == before_commands  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+    assert app._cyclopts.default_command == before_default_command  # pyright: ignore[reportPrivateUsage] -- App exposes no public default_command getter
+    assert app._cyclopts.validator == before_validator  # pyright: ignore[reportPrivateUsage] -- App exposes no public validator getter
 
 
 def test_reserved_option_via_inherited_default_parameter_is_rejected() -> None:
@@ -198,6 +258,62 @@ def test_default_command_reserving_an_option_is_rejected() -> None:
         _ = fromargs.App("t", default_command=bad)
 
 
+def test_default_registered_twice_raises_value_error() -> None:
+    app = fromargs.App("t", default_command=lambda: None)
+
+    with pytest.raises(ValueError):
+
+        @app.default
+        def second() -> str:
+            return "ran"
+
+
+def test_group_default_command_reserving_an_option_is_rejected() -> None:
+    app = fromargs.App("t")
+
+    def bad(*, _json: bool = False) -> None:
+        pass
+
+    with pytest.raises(ValueError, match="'--json'"):
+        _ = app.group("sub", default_command=bad)
+
+
+def test_group_without_version_inherits_the_root_version(capsys: pytest.CaptureFixture[str]) -> None:
+    app = fromargs.App("t", version="1.2.3")
+    _ = app.group("sub")
+
+    assert app.run(["sub", "--version"]) == 0
+    assert capsys.readouterr().out.strip() == "1.2.3"
+
+
+def test_default_limit_on_a_group_truncates_its_result(capsys: pytest.CaptureFixture[str]) -> None:
+    app = fromargs.App("t")
+    sub = app.group("sub")
+
+    @sub.default(limit=1)
+    def main() -> list[int]:
+        return [1, 2]
+
+    assert app.run(["sub"]) == 0
+    assert "note: showing 1 of 2" in capsys.readouterr().err
+
+
+def test_root_default_validator_error_reports_the_adr001_envelope(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    def rejecting(**_kwargs: object) -> None:
+        raise ValueError("nope")
+
+    @app.default(validator=rejecting)
+    def main() -> str:
+        return "ran"
+
+    assert app.run([]) == 2
+    assert json.loads(capsys.readouterr().err) == {"error": "nope", "exit_code": 2}
+
+
 def test_json_string_parameters_still_parse() -> None:
     received: list[object] = []
     app = fromargs.App("t")
@@ -238,6 +354,35 @@ def test_version_maps_an_import_name_to_its_distribution(
     assert app.run(["--version"]) == 0
     assert capsys.readouterr().out.strip() == version("attrs")
 
+
+def test_version_uses_package_root_from_module_spec(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from importlib.metadata import version
+    from types import SimpleNamespace
+
+    app = _app_built_in(
+        {"__name__": "__main__", "__spec__": SimpleNamespace(name="attr.__main__")}
+    )
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == version("attrs")
+
+
+def test_version_ignores_module_spec_for_non_main_callers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from importlib.metadata import version
+    from types import SimpleNamespace
+
+    app = _app_built_in(
+        {"__name__": "attr.consumer", "__spec__": SimpleNamespace(name="pytest.__main__")}
+    )
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == version("attrs")
+
+
 def test_version_falls_back_to_the_calling_module_dunder_version(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -252,3 +397,12 @@ def test_explicit_version_is_kept(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert app.run(["--version"]) == 0
     assert capsys.readouterr().out.strip() == "1.2.3"
+
+
+def test_version_falls_back_to_0_0_0_with_no_distribution_and_no_dunder_version(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = _app_built_in({"__name__": "fromargs_consumer_probe_unversioned"})
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == "0.0.0"

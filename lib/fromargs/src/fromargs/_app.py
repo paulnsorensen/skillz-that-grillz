@@ -30,7 +30,11 @@ _HelpFormat = Literal["markdown", "md", "plaintext", "restructuredtext", "rst", 
 
 
 class _AppKwargs(TypedDict, total=False):
-    """Keyword-only ``cyclopts.App`` constructor arguments this wrapper forwards untouched."""
+    """Keyword-only ``cyclopts.App`` constructor arguments this wrapper forwards untouched.
+
+    This mirrors the ``cyclopts.App`` constructor by hand; a future cyclopts
+    4.x release can add a keyword here before fromargs re-releases with it.
+    """
 
     usage: str | None
     alias: str | Iterable[str] | None
@@ -88,9 +92,7 @@ class App:
         self._cyclopts: cyclopts.App = cyclopts.App(name=name, help=help, **cyclopts_kwargs)
         self._limits: dict[int, int] = {}
         if cyclopts_kwargs.get("default_command") is not None:
-            reserved = _reserved_option(self._cyclopts)
-            if reserved is not None:
-                raise ValueError(f"command option {reserved!r} is reserved by fromargs")
+            _reject_reserved(self._cyclopts)
 
     @classmethod
     def _wrap(cls, cyclopts_app: cyclopts.App, limits: dict[int, int]) -> App:
@@ -107,6 +109,7 @@ class App:
         *,
         name: str | Sequence[str] | None = None,
         limit: int | None = None,
+        help: str | None = None,
         **kwargs: Unpack[_AppKwargs],
     ) -> T: ...
 
@@ -117,6 +120,7 @@ class App:
         *,
         name: str | Sequence[str] | None = None,
         limit: int | None = None,
+        help: str | None = None,
         **kwargs: Unpack[_AppKwargs],
     ) -> Callable[[T], T]: ...
 
@@ -126,6 +130,7 @@ class App:
         *,
         name: str | Sequence[str] | None = None,
         limit: int | None = None,
+        help: str | None = None,
         **kwargs: Unpack[_AppKwargs],
     ) -> T | Callable[[T], T]:
         """Register ``obj`` as a command.
@@ -137,27 +142,84 @@ class App:
         if obj is None:
 
             def register(handler: T) -> T:
-                return self.command(handler, name=name, limit=limit, **kwargs)
+                return self.command(handler, name=name, limit=limit, help=help, **kwargs)
 
             return register
-        if limit is not None and limit < 0:
-            raise ValueError(f"limit must not be negative, got {limit}")
+        _check_limit(limit)
         before = set(self._cyclopts)
-        _ = self._cyclopts.command(obj, name=name, **kwargs)
+        _ = self._cyclopts.command(obj, name=name, help=help, **kwargs)
         registered = sorted(set(self._cyclopts) - before)
         sub_app = self._cyclopts[registered[0]]
-        reserved = _reserved_option(sub_app)
-        if reserved is not None:
+        try:
+            _reject_reserved(sub_app)
+        except ValueError:
             for key in registered:
                 del self._cyclopts[key]
-            raise ValueError(f"command option {reserved!r} is reserved by fromargs")
+            raise
         if limit is not None:
             self._limits[id(sub_app)] = limit
         return obj
 
-    def group(self, name: str, *, help: str | None = None) -> App:
+    @overload
+    def default(
+        self,
+        obj: T,
+        *,
+        limit: int | None = None,
+        validator: Callable[..., object] | None = None,
+    ) -> T: ...
+
+    @overload
+    def default(
+        self,
+        obj: None = None,
+        *,
+        limit: int | None = None,
+        validator: Callable[..., object] | None = None,
+    ) -> Callable[[T], T]: ...
+
+    def default(
+        self,
+        obj: T | None = None,
+        *,
+        limit: int | None = None,
+        validator: Callable[..., object] | None = None,
+    ) -> T | Callable[[T], T]:
+        """Register ``obj`` as the handler that runs when argv names no subcommand.
+
+        ``limit`` truncates a sequence result to its first ``limit`` items
+        unless ``--full`` is passed; it must not be negative. ``obj`` must
+        not declare a CLI option named ``--json`` or ``--full``. Raises
+        ``ValueError`` when a default handler is already registered.
+        """
+        if obj is None:
+
+            def register(handler: T) -> T:
+                return self.default(handler, limit=limit, validator=validator)
+
+            return register
+        _check_limit(limit)
+        previous = self._cyclopts.default_command
+        previous_validator = self._cyclopts.validator
+        try:
+            _ = self._cyclopts.default(obj, validator=validator)
+        except cyclopts.CommandCollisionError as exc:
+            raise ValueError(str(exc)) from exc
+        try:
+            _reject_reserved(self._cyclopts)
+        except ValueError:
+            self._cyclopts.default_command = previous
+            self._cyclopts.validator = previous_validator
+            raise
+        if limit is not None:
+            self._limits[id(self._cyclopts)] = limit
+        return obj
+
+    def group(self, name: str, *, help: str | None = None, **cyclopts_kwargs: Unpack[_AppKwargs]) -> App:
         """Return a nested command group registered under this app."""
-        sub = cyclopts.App(name=name, help=help)
+        sub = cyclopts.App(name=name, help=help, **cyclopts_kwargs)
+        if cyclopts_kwargs.get("default_command") is not None:
+            _reject_reserved(sub)
         _ = self._cyclopts.command(sub)
         return App._wrap(sub, self._limits)
 
@@ -183,6 +245,19 @@ def _reserved_option(app: cyclopts.App) -> str | None:
     return reserved[0] if reserved else None
 
 
+def _reject_reserved(app: cyclopts.App) -> None:
+    """Raise ``ValueError`` when ``app``'s assembled arguments claim a reserved global flag."""
+    reserved = _reserved_option(app)
+    if reserved is not None:
+        raise ValueError(f"command option {reserved!r} is reserved by fromargs")
+
+
+def _check_limit(limit: int | None) -> None:
+    """Raise ``ValueError`` when ``limit`` is negative."""
+    if limit is not None and limit < 0:
+        raise ValueError(f"limit must not be negative, got {limit}")
+
+
 def _caller_version(module_globals: dict[str, object]) -> Callable[[], str]:
     """Resolve ``--version`` for the module that built the ``App``, not for ``fromargs``.
 
@@ -193,7 +268,16 @@ def _caller_version(module_globals: dict[str, object]) -> Callable[[], str]:
     """
 
     def resolve() -> str:
-        root = str(module_globals.get("__name__", "")).split(".")[0]
+        caller_name = str(module_globals.get("__name__", ""))
+        spec_name = getattr(module_globals.get("__spec__"), "name", None)
+        module_name = (
+            spec_name
+            if caller_name == "__main__"
+            and isinstance(spec_name, str)
+            and spec_name.endswith(".__main__")
+            else caller_name
+        )
+        root = module_name.split(".")[0]
         candidates = [root]
         providers = metadata.packages_distributions().get(root, [])
         if len(providers) == 1:

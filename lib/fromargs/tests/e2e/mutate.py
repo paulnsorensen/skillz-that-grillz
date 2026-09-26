@@ -53,8 +53,8 @@ MUTATIONS: list[Mutation] = [
         ac_id="AC-1",
         label="command registration renames every command",
         rel_file="_app.py",
-        old='        _ = self._cyclopts.command(obj, name=name, **kwargs)',
-        new='        _ = self._cyclopts.command(obj, name=f"broken-{name or \'\'}", **kwargs)',
+        old='        _ = self._cyclopts.command(obj, name=name, help=help, **kwargs)',
+        new='        _ = self._cyclopts.command(obj, name=f"broken-{name or \'\'}", help=help, **kwargs)',
     ),
     Mutation(
         ac_id="AC-2",
@@ -109,8 +109,8 @@ MUTATIONS: list[Mutation] = [
         ac_id="AC-9",
         label="public surface grows an extra name",
         rel_file="__init__.py",
-        old='__all__ = ["App", "CliError", "contract_error"]',
-        new='__all__ = ["App", "CliError", "contract_error", "extra"]',
+        old='__all__ = ["App", "CliError", "Group", "Parameter", "contract_error"]',
+        new='__all__ = ["App", "CliError", "Group", "Parameter", "contract_error", "extra"]',
     ),
     Mutation(
         ac_id="AC-10",
@@ -152,6 +152,27 @@ MUTATIONS: list[Mutation] = [
             "would selectively break the suggestion wording without also "
             "breaking AC-4's envelope tests, which already cover _report."
         ),
+    ),
+    Mutation(
+        ac_id="AC-15",
+        label="resolved version falls back before checking the caller module",
+        rel_file="_app.py",
+        old="            caller = frame.f_back if frame is not None else None",
+        new="            caller = frame",
+    ),
+    Mutation(
+        ac_id="AC-16",
+        label="default handler is never registered with Cyclopts",
+        rel_file="_app.py",
+        old="            _ = self._cyclopts.default(obj, validator=validator)",
+        new="            pass",
+    ),
+    Mutation(
+        ac_id="AC-17",
+        label="group kwargs are dropped from the nested Cyclopts app",
+        rel_file="_app.py",
+        old="        sub = cyclopts.App(name=name, help=help, **cyclopts_kwargs)",
+        new="        sub = cyclopts.App(name=name, help=help)",
     ),
     Mutation(
         ac_id="AC-14",

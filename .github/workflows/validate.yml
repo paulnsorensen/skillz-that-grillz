@@ -57,6 +57,27 @@ jobs:
       - name: Run gate (just ci)
         run: just ci
 
+  fromargs-tests:
+    name: fromargs tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Run fromargs tests
+        run: just test-fromargs ${{ matrix.python }}
+
   install-script:
     name: test install.sh (macOS)
     runs-on: macos-latest

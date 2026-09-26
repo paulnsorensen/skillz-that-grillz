@@ -25,9 +25,12 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Annotated
 
-from cyclopts import Parameter, Token
+from cyclopts import Token
 
 import fromargs
+from fromargs import Parameter
+
+__version__ = "7.1.0"
 
 
 def _log(command: str, args: dict[str, object]) -> None:
@@ -129,6 +132,19 @@ def _register_conf(app: fromargs.App) -> None:
         result: dict[str, object] = {"point": asdict(point), "numbers": numbers}
         _log("conf", result)
         return result
+
+    nested = app.group("nested", version="3.3.3")
+
+    @nested.command
+    def ping() -> None:
+        """AC-17 fixture: a command inside a group given extra cyclopts kwargs."""
+        _log("nested ping", {})
+
+    @nested.default
+    def nested_default() -> dict[str, bool]:
+        """AC-16 fixture: runs when the nested group gets no subcommand."""
+        _log("nested default", {})
+        return {"ran": True}
 
 
 def _register_guarded(app: fromargs.App) -> None:

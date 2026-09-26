@@ -1,19 +1,45 @@
 [project]
 name = "fromargs"
-version = "0.0.0"
+version = "0.1.0"
 description = "Self-healing Cyclopts CLI helpers for agent-friendly command lines."
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Paul Sorensen", email = "paulnsorensen@gmail.com" }]
+keywords = ["cli", "cyclopts", "agent", "json"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+]
 dependencies = ["cyclopts>=4.25.3,<5"]
+
+[project.urls]
+Homepage = "https://github.com/paulnsorensen/skillz-that-grillz/tree/main/lib/fromargs"
+Source = "https://github.com/paulnsorensen/skillz-that-grillz/tree/main/lib/fromargs"
+Issues = "https://github.com/paulnsorensen/skillz-that-grillz/issues"
 
 [dependency-groups]
 dev = ["pytest>=8", "basedpyright==1.40.1"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/fromargs"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+  ".venv",
+  "**/__pycache__",
+  "**/.pytest_cache",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

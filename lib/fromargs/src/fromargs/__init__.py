@@ -14,7 +14,9 @@ each repair on stderr. Every error is one JSON line on stderr:
 ``{"error": <message>, "exit_code": <n>}``. There is no JSON input mode.
 """
 
+from cyclopts import Group, Parameter
+
 from fromargs._app import App
 from fromargs._errors import CliError, contract_error
 
-__all__ = ["App", "CliError", "contract_error"]
+__all__ = ["App", "CliError", "Group", "Parameter", "contract_error"]
