@@ -14,8 +14,8 @@ import tempfile
 from pathlib import Path
 
 from wedge._build import build
-from wedge._config import load_config
-from wedge._key import compute_key, find_repo_root
+from wedge._config import ConfigError, load_config
+from wedge._key import compute_key
 from wedge._lock import load_lock
 
 RELEASE = "wedge"
@@ -99,8 +99,9 @@ def _publish_one(skill_dir: Path, repo: str) -> tuple[str, str]:
     skill_dir = Path(skill_dir)
     config = load_config(skill_dir)
     lock_data = load_lock(skill_dir, config.name)
-    repo_root = find_repo_root(skill_dir)
-    key = compute_key(skill_dir, config, repo_root)
+    if lock_data.repo != repo:
+        return "failed", f"lock targets repo {lock_data.repo}, not the publish repo {repo}"
+    key = compute_key(skill_dir, config)
     if key != lock_data.key:
         return "failed", f"lock is stale: key {lock_data.key} != current {key}"
 
@@ -134,8 +135,12 @@ def publish(skill_dirs: list[Path], *, repo: str, target: str) -> dict[str, dict
         return {}
     _ensure_release(repo, target)
     results: dict[str, dict[str, str]] = {}
-    for skill_dir in skill_dirs:
-        config = load_config(Path(skill_dir))
-        status, reason = _publish_one(Path(skill_dir), repo)
-        results[config.name] = {"status": status, "reason": reason}
+    for skill_dir in map(Path, skill_dirs):
+        # One broken skill fails alone; the loop still publishes the others.
+        try:
+            name = load_config(skill_dir).name
+            status, reason = _publish_one(skill_dir, repo)
+        except (ConfigError, OSError, ValueError) as exc:
+            name, status, reason = skill_dir.name, "failed", str(exc)
+        results[name] = {"status": status, "reason": reason}
     return results

@@ -1,12 +1,19 @@
-"""Parse a skill's ``wedge.toml``."""
+"""Parse a skill's ``wedge.toml``.
+
+Every path in ``wedge.toml`` is relative to the skill directory. ``project``
+names the directory that holds the ``pyproject.toml`` and ``uv.lock`` whose
+non-dev closure the ``.pyz`` bundles. ``source`` and every ``include`` entry
+must resolve inside that project directory.
+"""
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_REPO = "paulnsorensen/skillz-that-grillz"
+_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 @dataclass(frozen=True)
@@ -17,10 +24,12 @@ class WedgeConfig:
     entry: str
     source: str
     repo: str
+    project: str = "."
+    include: tuple[str, ...] = ()
 
 
 class ConfigError(Exception):
-    """``wedge.toml`` is missing, unreadable, or missing a required key."""
+    """``wedge.toml`` is missing, unreadable, invalid, or names a bad path."""
 
 
 def load_config(skill_dir: Path) -> WedgeConfig:
@@ -34,11 +43,26 @@ def load_config(skill_dir: Path) -> WedgeConfig:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"cannot parse {path}: {exc}") from exc
-    try:
-        name = str(data["name"])
-        entry = str(data["entry"])
-        source = str(data["source"])
-    except KeyError as exc:
-        raise ConfigError(f"{path}: missing required key {exc}") from exc
-    repo = str(data.get("repo", DEFAULT_REPO))
-    return WedgeConfig(name=name, entry=entry, source=source, repo=repo)
+
+    def text_key(key: str, default: str | None = None) -> str:
+        value = data.get(key, default)
+        if value is None:
+            raise ConfigError(f"{path}: missing required key {key!r}")
+        if not isinstance(value, str) or not value:
+            raise ConfigError(f"{path}: {key!r} must be a non-empty string")
+        return value
+
+    repo = text_key("repo")
+    if not _REPO_RE.match(repo):
+        raise ConfigError(f"{path}: 'repo' must be 'owner/name', got {repo!r}")
+    include = data.get("include", [])
+    if not isinstance(include, list) or not all(isinstance(item, str) and item for item in include):
+        raise ConfigError(f"{path}: 'include' must be a list of non-empty strings")
+    return WedgeConfig(
+        name=text_key("name"),
+        entry=text_key("entry"),
+        source=text_key("source"),
+        repo=repo,
+        project=text_key("project", "."),
+        include=tuple(include),
+    )

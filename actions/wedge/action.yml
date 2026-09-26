@@ -1,0 +1,117 @@
+name: wedge
+description: >-
+  Check or publish wedge-packaged skill CLIs: content-addressed .pyz assets on
+  a rolling `wedge` GitHub release, verified by a committed sha256 lock.
+author: paulnsorensen
+
+# A composite action cannot set `permissions:`. For `command: publish`, the
+# calling job must grant `contents: write`; `command: check` needs only read.
+# The action runs wedge from its own checkout (lib/ beside this directory),
+# so pinning this action to a commit SHA also pins the wedge version.
+
+inputs:
+  command:
+    description: "`check` verifies every lock and launcher; `publish` builds and uploads missing assets."
+    required: false
+    default: publish
+  roots:
+    description: Space-separated skill discovery roots, relative to the workspace (each is globbed for */wedge.toml).
+    required: false
+    default: skills
+  repo:
+    description: GitHub repository (owner/name) that hosts the `wedge` release. `publish` refuses a lock that names another repository.
+    required: false
+    default: ${{ github.repository }}
+  target:
+    description: Commit-ish the `wedge` release points at if publish must create it.
+    required: false
+    default: ${{ github.sha }}
+  token:
+    description: "Token the gh CLI uses to publish. Needs `contents: write` on `repo`."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  result:
+    description: The JSON document wedge printed (check summary, or per-skill publish status).
+    value: ${{ steps.wedge.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        WEDGE_COMMAND: ${{ inputs.command }}
+        RUNNER_OS_NAME: ${{ runner.os }}
+        RUNNER_ARCH_NAME: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+        case "$WEDGE_COMMAND" in
+          check) ;;
+          publish)
+            if [[ "$RUNNER_OS_NAME" != Linux || "$RUNNER_ARCH_NAME" != X64 ]]; then
+              echo "::error::wedge publish installs a pinned linux_amd64 gh CLI; run it on a Linux X64 runner, not ${RUNNER_OS_NAME}/${RUNNER_ARCH_NAME}."
+              exit 1
+            fi
+            ;;
+          *)
+            echo "::error::command must be 'check' or 'publish', got '${WEDGE_COMMAND}'."
+            exit 1
+            ;;
+        esac
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      with:
+        version: "0.11.32"
+        enable-cache: false
+
+    - name: Install pinned gh CLI
+      if: inputs.command == 'publish'
+      shell: bash
+      env:
+        GH_VERSION: "2.92.0"
+        # sha256 of gh_2.92.0_linux_amd64.tar.gz from the release's checksums file.
+        GH_SHA256: b57848131bdf0c229cd35e1f2a51aa718199858b2e728410b37e89a428943ec4
+      run: |
+        set -euo pipefail
+        tarball="$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64.tar.gz"
+        curl -fsSL -o "$tarball" "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+        echo "${GH_SHA256}  ${tarball}" | sha256sum -c -
+        tar -xzf "$tarball" -C "$RUNNER_TEMP"
+        sudo install -m 755 "$RUNNER_TEMP/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+        gh --version
+
+    - name: Run wedge
+      id: wedge
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        WEDGE_COMMAND: ${{ inputs.command }}
+        WEDGE_ROOTS: ${{ inputs.roots }}
+        WEDGE_REPO: ${{ inputs.repo }}
+        WEDGE_TARGET: ${{ inputs.target }}
+      run: |-
+        set -euo pipefail
+        # -d '' reads every line, so a multi-line YAML `roots: |` value works.
+        read -r -d '' -a roots <<<"$WEDGE_ROOTS" || true
+        if ((${#roots[@]} == 0)); then
+          echo "::error::roots is empty."
+          exit 1
+        fi
+        args=("$WEDGE_COMMAND")
+        for root in "${roots[@]}"; do
+          if [[ ! -d "$root" ]]; then
+            echo "::error::root '${root}' is not a directory in $(pwd)."
+            exit 1
+          fi
+          args+=(--root "$root")
+        done
+        if [[ "$WEDGE_COMMAND" == publish ]]; then
+          args+=(--repo "$WEDGE_REPO" --target "$WEDGE_TARGET")
+        fi
+        result=$(uv run --locked --project "$GITHUB_ACTION_PATH/../../lib" wedge "${args[@]}")
+        printf '%s\n' "$result"
+        delimiter="wedge_$(openssl rand -hex 16)"
+        printf 'result<<%s\n%s\n%s\n' "$delimiter" "$result" "$delimiter" >>"$GITHUB_OUTPUT"

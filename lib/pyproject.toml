@@ -17,7 +17,10 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
 ]
-dependencies = ["fromargs>=0.1.0,<0.2", "shiv>=1.0.8,<2"]
+# Exact shiv pin: shiv writes its version into every .pyz, so a different shiv
+# changes the asset bytes. `uvx --from git+...` ignores uv.lock, so the pin
+# must live here for a local `wedge lock` to match the action's build.
+dependencies = ["fromargs>=0.1.0,<0.2", "shiv==1.0.8"]
 
 [project.urls]
 Homepage = "https://github.com/paulnsorensen/skillz-that-grillz"

@@ -10,10 +10,9 @@ from typing import Callable, TypedDict
 
 import pytest
 
-from wedge._key import find_repo_root
-
-REPO_ROOT = find_repo_root(Path(__file__))
+REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_SKILL_DIR = REPO_ROOT / "lib" / "examples" / "skills" / "cheese-cave"
+CONSUMER_DIR = REPO_ROOT / "lib" / "examples" / "consumer"
 
 
 class FakeGh(TypedDict):
@@ -31,6 +30,25 @@ def repo_root() -> Path:
 def fixture_skill_dir() -> Path:
     """The committed cheese-cave fixture; already ``wedge lock``-ed."""
     return FIXTURE_SKILL_DIR
+
+
+@pytest.fixture(scope="session")
+def consumer_dir() -> Path:
+    """The committed consumer-repo example; its skills are ``wedge lock``-ed."""
+    return CONSUMER_DIR
+
+
+@pytest.fixture
+def copy_consumer() -> Callable[[Path], Path]:
+    """Factory: copy the consumer example to a directory outside this repo."""
+
+    def _copy(dest: Path) -> Path:
+        shutil.copytree(
+            CONSUMER_DIR, dest, ignore=shutil.ignore_patterns(".venv", "__pycache__", "*.pyc")
+        )
+        return dest
+
+    return _copy
 
 
 def _copy_repo_subset(dest: Path) -> Path:
@@ -239,4 +257,5 @@ def fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object
     script.chmod(mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setenv("WEDGE_FAKE_GH_STORE", str(store))
-    return {"store": store, "repo": "example/repo"}
+    # The committed cheese-cave lock names this repo; publish refuses any other.
+    return {"store": store, "repo": "paulnsorensen/skillz-that-grillz"}

@@ -9,24 +9,56 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
-from wedge._config import WedgeConfig
+from wedge._config import ConfigError, WedgeConfig
 
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 TARGET_PYTHON = "3.11"
 
 
-def find_repo_root(start: Path) -> Path:
-    """Walk up from ``start`` to the checkout that holds ``lib/fromargs/src/fromargs``."""
-    current = Path(start).resolve()
-    for candidate in (current, *current.parents):
-        if (candidate / "lib" / "fromargs" / "src" / "fromargs").is_dir() and (
-            candidate / "lib" / "uv.lock"
-        ).is_file():
-            return candidate
-    raise FileNotFoundError(
-        f"no repo root (lib/fromargs/src/fromargs, lib/uv.lock) found above {start}"
+@dataclass(frozen=True)
+class BuildPaths:
+    """The resolved project directory and the local trees copied into the .pyz."""
+
+    config_file: Path
+    project: Path
+    source: Path
+    includes: tuple[Path, ...]
+
+    @property
+    def uv_lock(self) -> Path:
+        return self.project / "uv.lock"
+
+
+def _inside_project(project: Path, raw: str, base: Path, key: str) -> Path:
+    resolved = (base / raw).resolve()
+    if project not in resolved.parents:
+        raise ConfigError(f"{key} {raw!r} must resolve inside the project {project}")
+    if not resolved.exists():
+        raise ConfigError(f"{key} {raw!r} does not exist: {resolved}")
+    return resolved
+
+
+def resolve_paths(skill_dir: Path, config: WedgeConfig) -> BuildPaths:
+    """Resolve ``wedge.toml`` paths; raise ``ConfigError`` on a bad layout."""
+    skill_dir = Path(skill_dir).resolve()
+    project = (skill_dir / config.project).resolve()
+    for required in ("pyproject.toml", "uv.lock"):
+        if not (project / required).is_file():
+            raise ConfigError(f"project {config.project!r} ({project}) has no {required}")
+    source = _inside_project(project, config.source, skill_dir, "source")
+    includes = tuple(_inside_project(project, item, skill_dir, "include") for item in config.include)
+    names = [path.name for path in (source, *includes)]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ConfigError(f"source and include entries share top-level names: {duplicates}")
+    return BuildPaths(
+        config_file=skill_dir / "wedge.toml",
+        project=project,
+        source=source,
+        includes=includes,
     )
 
 
@@ -40,40 +72,30 @@ def _iter_files(root: Path) -> list[Path]:
     return [root]
 
 
-def source_path(skill_dir: Path, config: WedgeConfig, repo_root: Path) -> Path:
-    """Resolve ``config.source``; raise ``ValueError`` when it escapes ``repo_root``."""
-    resolved = (Path(skill_dir) / config.source).resolve()
-    repo_root = Path(repo_root).resolve()
-    if resolved != repo_root and repo_root not in resolved.parents:
-        raise ValueError(f"source {config.source!r} resolves outside the repo root {repo_root}")
-    return resolved
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def build_inputs(skill_dir: Path, config: WedgeConfig, repo_root: Path) -> list[Path]:
-    """Every file whose bytes decide the key: wedge.toml, the CLI source, all
-    of ``lib/fromargs/src/fromargs/``, and ``lib/uv.lock``."""
-    skill_dir = Path(skill_dir)
-    files = [skill_dir / "wedge.toml"]
-    files.extend(_iter_files(source_path(skill_dir, config, repo_root)))
-    files.extend(_iter_files(Path(repo_root) / "lib" / "fromargs" / "src" / "fromargs"))
-    files.append(Path(repo_root) / "lib" / "uv.lock")
-    return files
+def compute_key(skill_dir: Path, config: WedgeConfig) -> str:
+    """The sha256 over ``wedge.toml``, ``uv.lock``, and every copied source file.
 
-
-def compute_key(skill_dir: Path, config: WedgeConfig, repo_root: Path) -> str:
-    """The sha256 over the sorted (repo-relative path, file sha256) pairs."""
-    repo_root = Path(repo_root).resolve()
-    entries = []
-    for file in build_inputs(skill_dir, config, repo_root):
-        rel = file.resolve().relative_to(repo_root).as_posix()
-        digest = hashlib.sha256(file.read_bytes()).hexdigest()
-        entries.append((rel, digest))
-    entries.sort()
+    Source and include files enter the key as (project-relative posix path,
+    file sha256) pairs, so the key does not depend on the checkout path or on
+    where the skill directory sits relative to the project.
+    """
+    paths = resolve_paths(skill_dir, config)
+    inputs = {
+        (file.relative_to(paths.project).as_posix(), _digest(file))
+        for root in (paths.source, *paths.includes)
+        for file in _iter_files(root)
+    }
     canonical = json.dumps(
         {
             "format_version": FORMAT_VERSION,
             "target_python": TARGET_PYTHON,
-            "inputs": entries,
+            "config": _digest(paths.config_file),
+            "uv_lock": _digest(paths.uv_lock),
+            "inputs": sorted(inputs),
         },
         sort_keys=True,
         separators=(",", ":"),
