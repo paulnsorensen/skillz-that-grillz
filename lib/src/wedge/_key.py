@@ -1,8 +1,8 @@
 """The content key: a sha256 over every build input, sorted and canonical.
 
 Two landings racing post-merge each publish their own immutable key; the
-same key from two runs is the same bytes. There is no mutable "latest"
-pointer: git order decides which key HEAD's lock references.
+same key from two runs selects the same normalized content. There is no mutable
+"latest" pointer: git order decides which key HEAD's lock references.
 """
 
 from __future__ import annotations
