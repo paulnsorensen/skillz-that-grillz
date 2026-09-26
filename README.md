@@ -296,6 +296,19 @@ brew install prek              # macOS/Linux (when the formula is available)
 See [prek.j178.dev](https://prek.j178.dev/) for the latest install
 instructions.
 
+## wedge GitHub Action
+
+[`actions/wedge`](actions/wedge/README.md) packages a pure-Python skill CLI
+as a content-addressed `.pyz` release asset in your own repository. Use it to
+check locks on pull requests and to publish assets after a merge:
+
+```yaml
+- uses: paulnsorensen/skillz-that-grillz/actions/wedge@<full-commit-sha>
+  with:
+    command: publish # or: check
+    roots: skills
+```
+
 ## Optional MCP servers
 
 ### Context7 (optional, used by `/prek`)

@@ -14,7 +14,6 @@ import pytest
 import wedge._publish as wedge_publish
 from wedge._lock import load_lock
 from wedge._publish import publish
-from wedge._config import ConfigError
 
 FIXTURE_NAME = "cheese-cave"
 
@@ -85,7 +84,10 @@ def test_config_repository_mismatch_fails_before_gh(
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
     config = skill / "wedge.toml"
-    _ = config.write_text(config.read_text() + 'repo = "other-owner/other-repo"\n')
+    _ = config.write_text(config.read_text().replace(
+        'repo = "paulnsorensen/skillz-that-grillz"',
+        'repo = "other-owner/other-repo"',
+    ))
 
     with pytest.raises(ValueError, match="repository"):
         _ = publish([skill], repo=fake_gh["repo"], target="deadbeef")
@@ -104,10 +106,12 @@ def test_invalid_config_repository_is_rejected_before_gh(
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
     config = skill / "wedge.toml"
-    _ = config.write_text(config.read_text() + f"repo = {repo}\n")
+    _ = config.write_text(config.read_text().replace(
+        'repo = "paulnsorensen/skillz-that-grillz"', f"repo = {repo}"
+    ))
 
-    with pytest.raises(ConfigError):
-        _ = publish([skill], repo=fake_gh["repo"], target="deadbeef")
+    result = publish([skill], repo=fake_gh["repo"], target="deadbeef")
+    assert result[FIXTURE_NAME]["status"] == "failed"
 
     assert not (fake_gh["store"] / "calls.log").exists()
 
@@ -148,6 +152,35 @@ def test_conflicting_existing_asset_fails_on_digest(
 
     assert result[FIXTURE_NAME]["status"] == "failed"
     assert "digest" in result[FIXTURE_NAME]["reason"]
+
+
+@pytest.mark.ac("AC-W6")
+def test_lock_for_another_repo_fails_without_an_upload(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    with pytest.raises(ValueError, match="publish repository"):
+        _ = publish([skill], repo="someone-else/fork", target="deadbeef")
+    assert _upload_count(fake_gh["store"]) == 0
+
+
+@pytest.mark.ac("AC-W6")
+def test_bad_layout_is_a_failed_result_not_a_crash(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    toml = skill / "wedge.toml"
+    _ = toml.write_text(toml.read_text().replace("src/fromargs", "src/missing"))
+
+    result = publish([skill], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "failed"
+    assert "does not exist" in result[FIXTURE_NAME]["reason"]
+    assert _upload_count(fake_gh["store"]) == 0
 
 
 @pytest.mark.ac("AC-W6")
@@ -283,3 +316,60 @@ def test_release_create_uses_full_publish_flags(
         "--target",
         "deadbeef",
     ] in calls
+
+
+
+@pytest.mark.ac("AC-W6")
+def test_malformed_config_does_not_block_later_valid_skill(
+    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
+) -> None:
+    malformed = copy_locked_fixture(tmp_path / "malformed")
+    valid = copy_locked_fixture(tmp_path / "valid")
+    config = malformed / "wedge.toml"
+    _ = config.write_text(config.read_text().replace(
+        'repo = "paulnsorensen/skillz-that-grillz"', 'repo = "not-a-slug"'
+    ))
+
+    result = publish([malformed, valid], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "published"
+    assert result["cheese-cave-0"]["status"] == "failed"
+
+
+@pytest.mark.ac("AC-W6")
+def test_malformed_lock_does_not_block_later_valid_skill(
+    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
+) -> None:
+    malformed = copy_locked_fixture(tmp_path / "malformed")
+    valid = copy_locked_fixture(tmp_path / "valid")
+    config = malformed / "wedge.toml"
+    _ = config.write_text(config.read_text().replace(
+        'name = "cheese-cave"', 'name = "broken-skill"'
+    ))
+    lock = malformed / "scripts" / "broken-skill.wedge.json"
+    _ = lock.write_text("{}\n")
+
+    result = publish([malformed, valid], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result["broken-skill"]["status"] == "failed"
+    assert result[FIXTURE_NAME]["status"] == "published"
+    assert "invalid fields" in result["broken-skill"]["reason"]
+
+
+@pytest.mark.ac("AC-W6")
+def test_all_malformed_locks_make_no_gh_calls(
+    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
+) -> None:
+    malformed = copy_locked_fixture(tmp_path / "malformed")
+    config = malformed / "wedge.toml"
+    _ = config.write_text(config.read_text().replace(
+        'name = "cheese-cave"', 'name = "broken-skill"'
+    ))
+    lock = malformed / "scripts" / "broken-skill.wedge.json"
+    _ = lock.write_text("{}\n")
+
+    result = publish([malformed], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result["broken-skill"]["status"] == "failed"
+    assert not (fake_gh["store"] / "calls.log").exists()
+    assert "invalid fields" in result["broken-skill"]["reason"]
