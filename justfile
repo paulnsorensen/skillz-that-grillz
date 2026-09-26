@@ -39,7 +39,10 @@ test:
     bats tests/bash/test_skillz.bats
     bats tests/bash/test_respond_post_reply.bats
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
+    uv run --locked --project lib basedpyright lib/src/wedge lib/tests/wedge
     just test-fromargs
+    uv run --locked --project lib pytest lib/tests/wedge -q
+    uv run --locked --project lib wedge check --root skills --root lib/examples/skills
 
 # Run fromargs' pytest suite, optionally pinned to one Python version.
 test-fromargs python="":

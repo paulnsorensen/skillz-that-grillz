@@ -1,12 +1,9 @@
 # Dependabot configuration — version updates only.
 # See: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# release.yml and validate.yml pin `yamllint` and `pyyaml` through a
-# hard-coded `pip install` step that has no manifest; Dependabot does not
-# track or update those pins.
-# The github-actions ecosystem below covers only action refs (`uses: ...@sha`).
-# The uv ecosystem below covers lib/fromargs/pyproject.toml. Add another
-# ecosystem as soon as a new manifest lands.
+# GitHub Actions refs and the /lib and /lib/fromargs uv projects have
+# Dependabot updates. lib/fromargs/uv.lock also pins every skill .pyz closure.
+# Workflow pip pins have no manifest. Dependabot does not update them.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -18,7 +15,7 @@ updates:
       actions-minor-and-patch:
         update-types: [minor, patch]
   - package-ecosystem: uv
-    directory: /lib/fromargs
+    directories: [/lib, /lib/fromargs]
     schedule:
       interval: weekly
     open-pull-requests-limit: 5

@@ -8,7 +8,7 @@ sources:
 ---
 # fromargs CLI library decisions
 
-These records explain the design of `fromargs`, a Python library at `lib/fromargs/`. It holds the self-healing Cyclopts CLI helpers from easy-cheese PR 716. The approved spec is `fromargs-cli-library` in the durable cheese spec store. The research behind it is [Agent-friendly CLI design](../agent-friendly-cli-design.md).
+These records explain the design of `fromargs`, an independent Python distribution at `lib/fromargs/`, with import code at `lib/fromargs/src/fromargs/`. It holds the self-healing Cyclopts CLI helpers from easy-cheese PR 716. The approved spec is `fromargs-cli-library` in the durable cheese spec store. The research behind it is [Agent-friendly CLI design](../agent-friendly-cli-design.md).
 
 ## Records
 
@@ -53,7 +53,7 @@ These records explain the design of `fromargs`, a Python library at `lib/fromarg
 - **Alternatives:** Reuse `release.yml`'s `v[0-9]*` trigger for fromargs too. We rejected it: `fromargs-v*` never matches `v[0-9]*`, and conflating the two triggers would fire a PyPI publish on every skill-only tag. A stored `PYPI_API_TOKEN` secret. We rejected it in favor of trusted publishing, which needs no long-lived credential in the repository.
 - **Consequences:** The PyPI project must have a trusted publisher configured before the first `fromargs-v*` tag is pushed: owner `paulnsorensen`, repository `skillz-that-grillz`, workflow filename `publish-fromargs.yml`, environment name `pypi`. The `pypi` GitHub environment must also exist in repository settings. Until both are set up, a tag push fails at the `uv publish` step with an authentication error, not a partial publish. The workflow's own "Verify tag is on main" step is a mistake guard, not a trust boundary: it runs from the tagged commit's own copy of the workflow file, so a side-branch commit that deletes the check before being tagged would still run under `environment: pypi` with `id-token: write`. Before the first tag is pushed, the `pypi` GitHub environment must be configured with a deployment-tag policy restricted to `fromargs-v*` and a required reviewer, and a tag ruleset must restrict who can create a `fromargs-v*` tag. Those two settings, not the ancestor check, are the actual trust boundary.
 
-- **Release lanes (2026-09-26):** `v[0-9]*` publishes the skills GitHub release and will also publish the `skillz-that-grillz` Wedge distribution when that CLI exists. No Wedge PyPI build or upload runs yet. `fromargs-v*` remains the independent `fromargs` PyPI lane. The GitHub `pypi` environment now requires approval from `paulnsorensen` and accepts only `fromargs-v*` tags. The active `release-tag-protection` ruleset limits creation, update, and deletion of both tag namespaces to `paulnsorensen`. PyPI now has a pending trusted publisher for `fromargs`, bound to `publish-fromargs.yml` and `pypi`. The pending record does not reserve the project name.[^4]
+- **Release lanes (2026-09-26):** `v[0-9]*` publishes the skills GitHub release and can later publish the `skillz-that-grillz` Wedge distribution when its PyPI workflow exists. No Wedge PyPI build or upload runs yet. `fromargs-v*` remains the independent `fromargs` PyPI lane. The GitHub `pypi` environment now requires approval from `paulnsorensen` and accepts only `fromargs-v*` tags. The active `release-tag-protection` ruleset limits creation, update, and deletion of both tag namespaces to `paulnsorensen`. The approved `fromargs-v0.1.0` workflow published the wheel and sdist to PyPI on 2026-09-26. The first upload created the `fromargs` project.[^4]
 
 _Source: .cheese/age/fromargs-cli-library.md:18-31, the Cure fixes, and the 2026-09-26 release-lane decision · Updated: 2026-09-26_
 
@@ -61,4 +61,4 @@ _Source: .cheese/age/fromargs-cli-library.md:18-31, the Cure fixes, and the 2026
 [^2]: lib/fromargs/src/fromargs/_run.py:121-135
 [^3]: lib/fromargs/tests/test_run.py:402-448
 
-[^4]: GitHub environment `pypi` and [ruleset `24035194`](https://github.com/paulnsorensen/skillz-that-grillz/rules/24035194), read back through the GitHub API on 2026-09-26; [PyPI pending publisher](https://pypi.org/manage/account/publishing/), confirmed in the signed-in account on 2026-09-26.
+[^4]: GitHub environment `pypi` and [ruleset `24035194`](https://github.com/paulnsorensen/skillz-that-grillz/rules/24035194), read back through the GitHub API on 2026-09-26; [successful publish run](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/36233610069); [PyPI `fromargs` 0.1.0](https://pypi.org/project/fromargs/0.1.0/).

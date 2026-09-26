@@ -1,0 +1,58 @@
+name: wedge
+
+# No pull_request trigger: `wedge check` inside `just build` already guards
+# every PR by failing when a lock is missing, stale, or the launcher drifted.
+# This workflow only builds and uploads release assets after a change lands
+# on main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lib/**"
+      - "skills/**/wedge.toml"
+      - "skills/**/*.wedge.json"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    name: publish wedge assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Verify HEAD is on main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::${GITHUB_SHA} is not an ancestor of origin/main. Refusing to publish wedge assets from an unreviewed commit."
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+
+      - name: Install pinned gh CLI
+        env:
+          GH_VERSION: "2.92.0"
+        run: |
+          set -euo pipefail
+          archive="/tmp/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" -o "$archive"
+          echo "b57848131bdf0c229cd35e1f2a51aa718199858b2e728410b37e89a428943ec4  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C /tmp
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+          gh --version
+
+      - name: Publish wedge assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run --locked --project lib wedge publish --root skills --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA"
