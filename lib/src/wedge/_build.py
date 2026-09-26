@@ -3,8 +3,9 @@
 Resolve and guard the project's third-party closure, install it plus the
 configured local ``include`` trees and the skill's CLI source into a fresh
 site directory, strip volatile install metadata, and shiv the result with a
-fixed shebang and ``SOURCE_DATE_EPOCH`` so the same key always gives the
-same bytes.
+fixed shebang and ``SOURCE_DATE_EPOCH``. One host gives the same bytes for
+the same key. Different zlib builds can compress differently, so the publish
+job, not a local lock, records the published digest.
 """
 
 from __future__ import annotations
@@ -135,7 +136,6 @@ def _shiv(site_dir: Path, entry: str, out_path: Path) -> None:
             "-m",
             "shiv",
             "--reproducible",
-            "--uncompressed",
             "--site-packages",
             str(site_dir),
             "-p",

@@ -21,4 +21,5 @@ scripts/cheese-cave age brie --weeks "2 --dry-run"
 ```
 
 Set `WEDGE_PYZ=<path>` to run a local build instead of downloading a release
-asset. Set `WEDGE_CACHE` to change the cache directory.
+asset. A lock with a null `sha256` is not published yet; only `WEDGE_PYZ`
+runs then. Set `WEDGE_CACHE` to change the cache directory.

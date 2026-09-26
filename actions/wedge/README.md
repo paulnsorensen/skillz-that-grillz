@@ -2,8 +2,9 @@
 
 `wedge` packages a pure-Python skill CLI as one `.pyz` file. Your repository
 commits only a small launcher and a lock with the `.pyz` sha256. This action
-builds the `.pyz` reproducibly and uploads it to a rolling `wedge` prerelease.
-The launcher downloads the asset on first use and runs it only when its sha256
+builds the compressed `.pyz` and uploads it to a rolling `wedge` prerelease.
+It then opens a pull request that records the asset's sha256 in the lock. The
+launcher downloads the asset on first use and runs it only when its sha256
 matches the lock.
 
 The action has two commands:
@@ -11,7 +12,9 @@ The action has two commands:
 - `check` fails when a lock is missing or stale, or when a launcher differs
   from the template. It builds nothing and needs no write access.
 - `publish` builds each locked skill and uploads assets that are missing. It
-  skips assets that are already present with the same digest.
+  skips assets that are already present with the same digest. It writes the
+  uploaded sha256 into each pending lock and opens or updates an auto-merge
+  pull request from `lock-branch` with those locks.
 
 The action runs `wedge` from its own checkout (the `lib/` project beside this
 directory). When you pin the action to a commit SHA, you also pin `wedge`.
@@ -37,7 +40,9 @@ directory). When you pin the action to a commit SHA, you also pin `wedge`.
    `source` and each `include` entry must be inside `project`. Use `include`
    for a local package that is not on an index, such as `fromargs`.
 3. Write the lock and the launcher. Run this from the repository root and
-   commit `scripts/<name>` and `scripts/<name>.wedge.json`:
+   commit `scripts/<name>` and `scripts/<name>.wedge.json`. A new key leaves
+   the lock's `sha256` null. The publish job fills it in after merge, so the
+   local and runner toolchains never have to produce identical bytes:
 
    ```sh
    uvx --from 'skillz-that-grillz @ git+https://github.com/paulnsorensen/skillz-that-grillz@<sha>#subdirectory=lib' \
@@ -46,6 +51,9 @@ directory). When you pin the action to a commit SHA, you also pin `wedge`.
 
    Use the same `<sha>` that your workflows pin. A different `wedge` version
    can compute a different key.
+
+   Until the lock PR merges, the launcher refuses to download. Set
+   `WEDGE_PYZ` to a local `wedge build` output to run the skill before then.
 
 The [consumer example](../../lib/examples/consumer/) shows this layout.
 
@@ -69,8 +77,12 @@ jobs:
           roots: skills
 ```
 
-Publish after a merge to the default branch. Give `contents: write` only to
-this job, and publish only commits that are on the default branch:
+Publish after a merge to the default branch, and publish only commits that
+are on the default branch. Authenticate as a GitHub App with `contents: write`
+and `pull-requests: write`. GitHub does not run workflows for a pull request
+that `GITHUB_TOKEN` opens, so a required check never reports on that lock PR.
+The repository must allow auto-merge and squash merges; otherwise merge the
+lock PR by hand.
 
 ```yaml
 name: wedge-publish
@@ -82,8 +94,6 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@<sha>
         with:
@@ -92,13 +102,24 @@ jobs:
         run: |
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+      - id: app-token
+        uses: actions/create-github-app-token@<sha>
+        with:
+          client-id: ${{ vars.WEDGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.WEDGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - uses: paulnsorensen/skillz-that-grillz/actions/wedge@<sha>
         with:
           command: publish
           roots: skills
+          token: ${{ steps.app-token.outputs.token }}
 ```
 
 Publication is immutable and append-only, so concurrent runs are safe. Do not add cancellation that can drop a pending asset publication.
+Concurrent runs force-push the same `lock-branch`, so one run can replace
+another's lock commit. The lock PR's merge runs the publish workflow again,
+and that run records any lock that is still pending.
 
 Pin every action to a full commit SHA, as GitHub's
 [secure use guide](https://docs.github.com/en/actions/reference/security/secure-use)
@@ -112,13 +133,16 @@ recommends.
 | `roots` | `skills` | Space-separated roots. The action finds `*/wedge.toml` under each root. |
 | `repo` | `${{ github.repository }}` | Repository that hosts the `wedge` release. `publish` refuses a lock that names another repository. |
 | `target` | `${{ github.sha }}` | Commit for the `wedge` release if `publish` creates it. |
-| `token` | `${{ github.token }}` | Token for `gh`. `publish` needs `contents: write`. |
+| `token` | `${{ github.token }}` | Token for `gh` and the lock-branch push. `publish` needs `contents: write` and `pull-requests: write`; use a GitHub App token. |
+| `lock-branch` | `wedge/lock-update` | Branch that `publish` force-pushes with the recorded locks. |
+| `lock-base` | default branch | Base branch of the lock pull request. |
 
 ## Outputs
 
 | Output | Description |
 | --- | --- |
 | `result` | The JSON document that `wedge` printed. |
+| `lock-pr` | URL of the lock pull request, or empty when no lock changed. |
 
 ## Limits
 

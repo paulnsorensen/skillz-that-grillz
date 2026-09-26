@@ -4,8 +4,12 @@ description: >-
   a rolling `wedge` GitHub release, verified by a committed sha256 lock.
 author: paulnsorensen
 
-# A composite action cannot set `permissions:`. For `command: publish`, the
-# calling job must grant `contents: write`; `command: check` needs only read.
+# A composite action cannot set `permissions:`. `command: check` needs only
+# read access. `command: publish` uploads assets, records their sha256 in each
+# pending lock, and opens an auto-merge pull request with the updated locks.
+# Its token needs `contents: write` and `pull-requests: write`. Use a GitHub
+# App token: GitHub does not run workflows for a pull request that
+# GITHUB_TOKEN opens, so required checks never report on the lock PR.
 # The action runs wedge from its own checkout (lib/ beside this directory),
 # so pinning this action to a commit SHA also pins the wedge version.
 
@@ -27,14 +31,25 @@ inputs:
     required: false
     default: ${{ github.sha }}
   token:
-    description: "Token the gh CLI uses to publish. Needs `contents: write` on `repo`."
+    description: "Token the gh CLI uses to publish and to push and open the lock PR. Needs `contents: write` and `pull-requests: write` on `repo`; prefer a GitHub App token."
     required: false
     default: ${{ github.token }}
+  lock-branch:
+    description: Branch that `publish` force-pushes with the recorded lock digests.
+    required: false
+    default: wedge/lock-update
+  lock-base:
+    description: Base branch for the lock pull request.
+    required: false
+    default: ${{ github.event.repository.default_branch }}
 
 outputs:
   result:
     description: The JSON document wedge printed (check summary, or per-skill publish status).
     value: ${{ steps.wedge.outputs.result }}
+  lock-pr:
+    description: URL of the lock pull request `publish` opened or updated; empty when no lock changed.
+    value: ${{ steps.lock-pr.outputs.url }}
 
 runs:
   using: composite
@@ -137,3 +152,43 @@ runs:
         if ((status != 0)); then
           exit "$status"
         fi
+
+    # Runs after a partial publish failure too: a lock that recorded an
+    # uploaded asset must still reach the base branch.
+    - name: Open lock pull request
+      id: lock-pr
+      if: ${{ !cancelled() && inputs.command == 'publish' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        WEDGE_REPO: ${{ inputs.repo }}
+        WEDGE_LOCK_BRANCH: ${{ inputs.lock-branch }}
+        WEDGE_LOCK_BASE: ${{ inputs.lock-base }}
+      run: |-
+        set -euo pipefail
+        mapfile -t locks < <(git diff --name-only -- ':(glob)**/*.wedge.json')
+        if ((${#locks[@]} == 0)); then
+          echo "No lock recorded a new sha256."
+          echo "url=" >>"$GITHUB_OUTPUT"
+          exit 0
+        fi
+        title="chore(wedge): record published .pyz digests"
+        git add -- "${locks[@]}"
+        git -c user.name="github-actions[bot]" \
+          -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+          commit --quiet -m "$title"
+        # Push with inputs.token, not the checkout's persisted GITHUB_TOKEN
+        # header: pushes by GITHUB_TOKEN do not trigger the PR's checks.
+        git -c "http.${GITHUB_SERVER_URL}/.extraheader=" \
+          -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+          push --force "${GITHUB_SERVER_URL}/${WEDGE_REPO}.git" "HEAD:refs/heads/${WEDGE_LOCK_BRANCH}"
+        url=$(gh pr list --repo "$WEDGE_REPO" --head "$WEDGE_LOCK_BRANCH" --state open --json url --jq '.[0].url // empty')
+        if [[ -z "$url" ]]; then
+          url=$(gh pr create --repo "$WEDGE_REPO" --base "$WEDGE_LOCK_BASE" --head "$WEDGE_LOCK_BRANCH" \
+            --title "$title" \
+            --body "The wedge publish job uploaded these assets and recorded their sha256 in the locks: ${locks[*]}")
+        fi
+        if ! gh pr merge "$url" --repo "$WEDGE_REPO" --auto --squash; then
+          echo "::warning::Cannot enable auto-merge on ${url}; merge it by hand."
+        fi
+        echo "url=${url}" >>"$GITHUB_OUTPUT"

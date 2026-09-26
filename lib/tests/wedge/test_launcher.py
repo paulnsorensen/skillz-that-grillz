@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import http.server
 import json
 import os
@@ -70,6 +71,14 @@ def _lock_data(skill_dir: Path) -> dict[str, str]:
     return {key: cast(str, data[key]) for key in ("repo", "release", "asset")}
 
 
+def _record_sha256(skill_dir: Path, pyz: Path) -> None:
+    """Fill the pending lock the way the publish job does after an upload."""
+    lock_file = skill_dir / "scripts" / f"{FIXTURE_NAME}.wedge.json"
+    data = cast(dict[str, object], json.loads(lock_file.read_text()))
+    data["sha256"] = hashlib.sha256(pyz.read_bytes()).hexdigest()
+    _ = lock_file.write_text(json.dumps(data))
+
+
 def _launcher_path(skill_dir: Path) -> Path:
     return skill_dir / "scripts" / FIXTURE_NAME
 
@@ -129,6 +138,7 @@ def test_tampered_wedge_pyz_is_refused(
     built_pyz: Path,
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
+    _record_sha256(skill, built_pyz)
     tampered = tmp_path / "tampered.pyz"
     _ = tampered.write_bytes(built_pyz.read_bytes() + b"\x00")
     env = {**os.environ, "WEDGE_PYZ": str(tampered)}
@@ -152,6 +162,7 @@ def test_download_via_localhost_is_cached_after_the_first_request(
     http_server: tuple[str, Path, type[_CountingHandler]],
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
+    _record_sha256(skill, built_pyz)
     base_url, serve_root, handler_cls = http_server
     lock = _lock_data(skill)
     asset_dir = serve_root / lock["repo"] / "releases" / "download" / lock["release"]
@@ -200,6 +211,7 @@ def test_corrupt_cache_is_replaced_by_verified_download(
     http_server: tuple[str, Path, type[_CountingHandler]],
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
+    _record_sha256(skill, built_pyz)
     base_url, serve_root, handler_cls = http_server
     lock = _lock_data(skill)
     asset_dir = serve_root / lock["repo"] / "releases" / "download" / lock["release"]
@@ -226,9 +238,11 @@ def test_corrupt_cache_is_replaced_by_verified_download(
 def test_corrupt_download_is_rejected_and_not_cached(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
+    built_pyz: Path,
     http_server: tuple[str, Path, type[_CountingHandler]],
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
+    _record_sha256(skill, built_pyz)
     base_url, serve_root, _handler_cls = http_server
     lock = _lock_data(skill)
     asset_dir = serve_root / lock["repo"] / "releases" / "download" / lock["release"]
@@ -246,3 +260,21 @@ def test_corrupt_download_is_rejected_and_not_cached(
     assert result.returncode == 3
     assert "sha256" in result.stderr
     assert not (cache_dir / lock["asset"]).exists()
+
+
+@pytest.mark.ac("AC-W4")
+def test_pending_lock_refuses_to_download(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    http_server: tuple[str, Path, type[_CountingHandler]],
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    base_url, _serve_root, handler_cls = http_server
+    env = {**os.environ, "WEDGE_BASE_URL": base_url, "WEDGE_CACHE": str(tmp_path / "cache")}
+
+    result = _run_launcher(skill, env, "wheels", "list")
+
+    assert result.returncode == 3
+    error = cast(dict[str, object], json.loads(result.stderr.strip()))
+    assert isinstance(error["error"], str) and "no sha256 yet" in error["error"]
+    assert handler_cls.request_count == 0

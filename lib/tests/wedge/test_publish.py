@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Callable, TypedDict, cast
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
 import wedge._publish as wedge_publish
+from wedge._build import build
 from wedge._lock import load_lock
 from wedge._publish import publish
 
@@ -21,6 +24,19 @@ FIXTURE_NAME = "cheese-cave"
 class FakeGh(TypedDict):
     store: Path
     repo: str
+
+
+def _published_sha256(fake_gh: FakeGh, skill: Path) -> str:
+    state = cast(dict[str, dict[str, dict[str, dict[str, dict[str, str]]]]], json.loads((fake_gh["store"] / "state.json").read_text()))
+    asset = load_lock(skill, FIXTURE_NAME).asset
+    return state[fake_gh["repo"]]["wedge"]["assets"][asset]["sha256"]
+
+
+def _set_lock_sha256(skill: Path, sha256: str | None) -> None:
+    lock_path = skill / "scripts" / f"{FIXTURE_NAME}.wedge.json"
+    lock_data = cast(dict[str, object], json.loads(lock_path.read_text()))
+    lock_data["sha256"] = sha256
+    _ = lock_path.write_text(json.dumps(lock_data))
 
 
 def _upload_count(store: Path) -> int:
@@ -39,10 +55,13 @@ def test_publish_then_republish_skips_without_a_second_upload(
     skill = copy_locked_fixture(tmp_path / "checkout")
     repo = fake_gh["repo"]
 
+    assert load_lock(skill, FIXTURE_NAME).sha256 is None
+
     first = publish([skill], repo=repo, target="deadbeef")
     assert first[FIXTURE_NAME]["status"] == "published"
     uploads_after_first = _upload_count(fake_gh["store"])
     assert uploads_after_first == 1
+    assert load_lock(skill, FIXTURE_NAME).sha256 == _published_sha256(fake_gh, skill)
 
     second = publish([skill], repo=repo, target="deadbeef")
     assert second[FIXTURE_NAME]["status"] == "skipped"
@@ -151,7 +170,8 @@ def test_conflicting_existing_asset_fails_on_digest(
     result = publish([skill], repo=repo, target="deadbeef")
 
     assert result[FIXTURE_NAME]["status"] == "failed"
-    assert "digest" in result[FIXTURE_NAME]["reason"]
+    assert "differs from this build" in result[FIXTURE_NAME]["reason"]
+    assert load_lock(skill, FIXTURE_NAME).sha256 is None
 
 
 @pytest.mark.ac("AC-W6")
@@ -207,8 +227,9 @@ def test_a_racing_identical_upload_is_treated_as_skipped(
 
     result = publish([skill], repo=repo, target="deadbeef")
 
-    assert result[FIXTURE_NAME]["status"] == "skipped"
+    assert result[FIXTURE_NAME]["status"] == "recorded"
     assert _upload_count(fake_gh["store"]) == 1
+    assert load_lock(skill, FIXTURE_NAME).sha256 == _published_sha256(fake_gh, skill)
 
 
 
@@ -285,7 +306,8 @@ def test_two_concurrent_publishes_yield_exactly_one_upload(
         assert proc.returncode == 0, stderr
 
     statuses = sorted(json.loads(stdout)[FIXTURE_NAME]["status"] for stdout, _ in outputs)
-    assert statuses == ["published", "skipped"]
+    assert statuses == ["published", "recorded"]
+    assert load_lock(skill_a, FIXTURE_NAME).sha256 == load_lock(skill_b, FIXTURE_NAME).sha256
     assert _upload_count(fake_gh["store"]) == 1
 
 
@@ -373,3 +395,73 @@ def test_all_malformed_locks_make_no_gh_calls(
     assert result["broken-skill"]["status"] == "failed"
     assert not (fake_gh["store"] / "calls.log").exists()
     assert "invalid fields" in result["broken-skill"]["reason"]
+
+
+def _recompress(source: Path, dest: Path, level: int) -> None:
+    """Rewrite ``source`` with other deflate bytes but the same contents."""
+    original = source.read_bytes()
+    shebang, separator, _ = original.partition(b"\n")
+    with ZipFile(source) as archive, dest.open("wb") as output:
+        _ = output.write(shebang + separator)
+        with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=level) as target:
+            for info in archive.infolist():
+                info.compress_type = ZIP_DEFLATED
+                target.writestr(info, archive.read(info), compresslevel=level)
+
+
+@pytest.mark.ac("AC-W6")
+def test_pending_lock_records_an_asset_another_zlib_compressed(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    repo = fake_gh["repo"]
+    built = build(skill, tmp_path / "local")
+    other = tmp_path / "other" / built.path.name
+    other.parent.mkdir()
+    _recompress(built.path, other, level=1)
+    assert other.read_bytes() != built.path.read_bytes()
+    _ = subprocess.run(["gh", "release", "create", "wedge", "--repo", repo], check=True)
+    _ = subprocess.run(["gh", "release", "upload", "wedge", str(other), "--repo", repo], check=True)
+
+    result = publish([skill], repo=repo, target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "recorded"
+    assert load_lock(skill, FIXTURE_NAME).sha256 == hashlib.sha256(other.read_bytes()).hexdigest()
+    assert _upload_count(fake_gh["store"]) == 1
+
+
+@pytest.mark.ac("AC-W6")
+def test_recorded_lock_with_a_missing_asset_refuses_a_different_rebuild(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    _set_lock_sha256(skill, "0" * 64)
+
+    result = publish([skill], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "failed"
+    assert "set the lock sha256 to null" in result[FIXTURE_NAME]["reason"]
+    assert _upload_count(fake_gh["store"]) == 0
+    assert load_lock(skill, FIXTURE_NAME).sha256 == "0" * 64
+
+
+@pytest.mark.ac("AC-W6")
+def test_recorded_lock_with_a_different_asset_fails_without_rewriting(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    repo = fake_gh["repo"]
+    _ = publish([skill], repo=repo, target="deadbeef")
+    _set_lock_sha256(skill, "0" * 64)
+
+    result = publish([skill], repo=repo, target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "failed"
+    assert "lock wants" in result[FIXTURE_NAME]["reason"]
+    assert load_lock(skill, FIXTURE_NAME).sha256 == "0" * 64

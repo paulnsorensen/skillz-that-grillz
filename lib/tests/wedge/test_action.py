@@ -1,7 +1,8 @@
-"""AC-W7: the composite action preserves wedge output and failures."""
+"""AC-W7: the composite action preserves wedge output and opens the lock PR."""
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
@@ -115,3 +116,84 @@ def test_action_installs_gh_in_runner_temp_without_sudo(tmp_path: Path) -> None:
     assert os.access(installed, os.X_OK)
     assert github_path.read_text().strip() == str(runner_temp / "bin")
     assert "sudo" not in result.stderr
+
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
+
+
+def _run_lock_pr(tmp_path: Path, *, change_lock: bool) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+    """Run the lock-PR step in a real checkout against a bare file:// remote."""
+    server = tmp_path / "server"
+    remote = server / "owner" / "repo.git"
+    remote.mkdir(parents=True)
+    _ = _git(remote, "init", "--quiet", "--bare")
+    checkout = tmp_path / "checkout"
+    lock = checkout / "skills" / "demo" / "scripts" / "demo.wedge.json"
+    lock.parent.mkdir(parents=True)
+    _ = lock.write_text('{"sha256": null}\n')
+    _ = _git(checkout.parent, "init", "--quiet", str(checkout))
+    _ = _git(checkout, "add", ".")
+    _ = _git(checkout, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "-m", "init")
+    if change_lock:
+        _ = lock.write_text('{"sha256": "' + "a" * 64 + '"}\n')
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    gh_log = tmp_path / "gh.log"
+    _write_command(
+        commands,
+        "gh",
+        f'printf \'%s\\n\' "$(printf \'%s\\x1f\' "$@")" >>{gh_log}\n'
+        + 'if [[ "$1 $2" == "pr create" ]]; then echo https://github.com/owner/repo/pull/7; fi',
+    )
+    output = tmp_path / "github-output"
+    env = {
+        **os.environ,
+        "PATH": f"{commands}:{os.environ['PATH']}",
+        "GITHUB_OUTPUT": str(output),
+        "GITHUB_SERVER_URL": f"file://{server}",
+        "GH_TOKEN": "token",
+        "WEDGE_REPO": "owner/repo",
+        "WEDGE_LOCK_BRANCH": "wedge/lock-update",
+        "WEDGE_LOCK_BASE": "main",
+    }
+    result = subprocess.run(
+        ["bash", "-c", _run_block("Open lock pull request")],
+        cwd=checkout,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    return result, remote, gh_log
+
+
+def _gh_calls(gh_log: Path) -> list[list[str]]:
+    if not gh_log.exists():
+        return []
+    return [line.split("\x1f")[:-1] for line in gh_log.read_text().splitlines()]
+
+
+@pytest.mark.ac("AC-W7")
+def test_lock_pr_pushes_recorded_locks_and_enables_auto_merge(tmp_path: Path) -> None:
+    result, remote, gh_log = _run_lock_pr(tmp_path, change_lock=True)
+
+    assert result.returncode == 0, result.stderr
+    pushed = _git(remote, "show", "wedge/lock-update:skills/demo/scripts/demo.wedge.json")
+    assert json.loads(pushed) == {"sha256": "a" * 64}
+    assert _git(remote, "log", "-1", "--format=%s", "wedge/lock-update").strip() == (
+        "chore(wedge): record published .pyz digests"
+    )
+    calls = _gh_calls(gh_log)
+    assert [call[:2] for call in calls] == [["pr", "list"], ["pr", "create"], ["pr", "merge"]]
+    assert calls[2][2:] == ["https://github.com/owner/repo/pull/7", "--repo", "owner/repo", "--auto", "--squash"]
+    assert "url=https://github.com/owner/repo/pull/7" in (tmp_path / "github-output").read_text()
+
+
+@pytest.mark.ac("AC-W7")
+def test_lock_pr_does_nothing_when_no_lock_changed(tmp_path: Path) -> None:
+    result, remote, gh_log = _run_lock_pr(tmp_path, change_lock=False)
+
+    assert result.returncode == 0, result.stderr
+    assert _git(remote, "branch", "--list").strip() == ""
+    assert _gh_calls(gh_log) == []
+    assert (tmp_path / "github-output").read_text() == "url=\n"

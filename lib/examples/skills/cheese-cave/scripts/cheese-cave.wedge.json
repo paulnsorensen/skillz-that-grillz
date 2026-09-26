@@ -1,9 +1,9 @@
 {
-  "asset": "cheese-cave-4ea3f7570850.pyz",
-  "format": 7,
-  "key": "4ea3f75708505b09ae29b494c4d94335a70f078c1561779225816c2029b3261e",
+  "asset": "cheese-cave-177116e6514c.pyz",
+  "format": 8,
+  "key": "177116e6514c3e0628e8b8849ab67ed87f1696a45eec50a4f21cfdc0874c64c1",
   "name": "cheese-cave",
   "release": "wedge",
   "repo": "paulnsorensen/skillz-that-grillz",
-  "sha256": "cff6d9919327a31709df5e116e1fb3a63f48784d5fa317572593f792fd80def7"
+  "sha256": null
 }
