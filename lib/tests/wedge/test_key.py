@@ -60,7 +60,7 @@ def test_key_changes_with_uv_lock(
     config = load_config(skill)
     root = find_repo_root(skill)
     before = compute_key(skill, config, root)
-    lock = root / "lib" / "uv.lock"
+    lock = root / "lib" / "fromargs" / "uv.lock"
     lock.write_text(lock.read_text() + "\n# touched\n")
     after = compute_key(skill, config, root)
     assert before != after
@@ -96,7 +96,7 @@ def test_key_is_unchanged_by_pycache(
 
 
 @pytest.mark.ac("AC-W1")
-def test_export_excludes_local_fromargs_but_keeps_transitive_dependencies(
+def test_export_is_the_fromargs_closure_without_builder_dependencies(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
@@ -106,5 +106,5 @@ def test_export_excludes_local_fromargs_but_keeps_transitive_dependencies(
     names = {name for name, _version, _marker in parse_requirements(requirements)}
 
     assert "fromargs" not in names
-    assert "shiv" not in names
+    assert not {"shiv", "pip", "setuptools", "click"} & names
     assert {"cyclopts", "attrs", "docstring-parser"} <= names

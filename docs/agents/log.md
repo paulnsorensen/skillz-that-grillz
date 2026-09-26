@@ -36,3 +36,5 @@
 
 - 2026-09-26 · fromargs-v0.1.0 · merged · decisions/fromargs-cli-library.md · Recorded the approved first PyPI publication and the successful release workflow
 
+- 2026-09-26 · pr89-trim · merged · decisions/wedge-skill-packaging.md · Export the skill closure from lib/fromargs/uv.lock so shiv's pip/setuptools/click stop shipping in every .pyz; publish only from the post-merge wedge workflow
+

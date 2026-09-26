@@ -42,8 +42,7 @@ def _copy_repo_subset(dest: Path) -> Path:
         dest / "lib" / "fromargs" / "src" / "fromargs",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    shutil.copy2(REPO_ROOT / "lib" / "uv.lock", dest / "lib" / "uv.lock")
-    shutil.copy2(REPO_ROOT / "lib" / "pyproject.toml", dest / "lib" / "pyproject.toml")
+    shutil.copy2(REPO_ROOT / "lib" / "fromargs" / "uv.lock", dest / "lib" / "fromargs" / "uv.lock")
     shutil.copy2(
         REPO_ROOT / "lib" / "fromargs" / "pyproject.toml",
         dest / "lib" / "fromargs" / "pyproject.toml",
