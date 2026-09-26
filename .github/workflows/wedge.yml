@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - "lib/**"
+      - "actions/wedge/**"
       - "skills/**/wedge.toml"
       - "skills/**/*.wedge.json"
   workflow_dispatch:
@@ -39,8 +40,12 @@ jobs:
             exit 1
           fi
 
+      # Dogfood the public action from this checkout. Consumers pin
+      # paulnsorensen/skillz-that-grillz/actions/wedge@<sha> instead.
       - name: Publish wedge assets
-        uses: ./.github/actions/wedge-publish
+        uses: ./actions/wedge
         with:
+          command: publish
+          roots: skills
           repo: ${{ github.repository }}
           target: ${{ github.sha }}

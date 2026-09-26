@@ -41,7 +41,7 @@ test:
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
     just test-fromargs
     uv run --locked --project lib pytest lib/tests/wedge -q
-    uv run --locked --project lib wedge check --root skills --root lib/examples/skills
+    uv run --locked --project lib wedge check --root skills --root lib/examples/skills --root lib/examples/consumer/skills
 
 # Run fromargs' pytest suite, optionally pinned to one Python version.
 test-fromargs python="":

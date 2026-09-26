@@ -1,3 +1,8 @@
 name = "cheese-cave"
 entry = "cheese_cave:main"
 source = "../../../fromargs/examples/cheese_cave.py"
+# The lib/ project: its uv.lock pins the third-party closure.
+project = "../../.."
+# fromargs is a local path dependency of that project, so vendor its source tree.
+include = ["../../../fromargs/src/fromargs"]
+repo = "paulnsorensen/skillz-that-grillz"

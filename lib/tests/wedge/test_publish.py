@@ -97,6 +97,38 @@ def test_conflicting_existing_asset_fails_on_digest(
 
 
 @pytest.mark.ac("AC-W6")
+def test_lock_for_another_repo_fails_without_an_upload(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: dict[str, object],
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+
+    result = publish([skill], repo="someone-else/fork", target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "failed"
+    assert "someone-else/fork" in result[FIXTURE_NAME]["reason"]
+    assert _upload_count(fake_gh["store"]) == 0
+
+
+@pytest.mark.ac("AC-W6")
+def test_bad_layout_is_a_failed_result_not_a_crash(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: dict[str, object],
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    toml = skill / "wedge.toml"
+    toml.write_text(toml.read_text().replace("src/fromargs", "src/missing"))
+
+    result = publish([skill], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "failed"
+    assert "does not exist" in result[FIXTURE_NAME]["reason"]
+    assert _upload_count(fake_gh["store"]) == 0
+
+
+@pytest.mark.ac("AC-W6")
 def test_a_racing_identical_upload_is_treated_as_skipped(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],

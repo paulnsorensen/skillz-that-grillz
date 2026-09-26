@@ -15,7 +15,7 @@ from pathlib import Path
 
 from wedge._build import build
 from wedge._config import ConfigError, load_config
-from wedge._key import FORMAT_VERSION, compute_key, find_repo_root
+from wedge._key import FORMAT_VERSION, compute_key
 from wedge._launcher import LAUNCHER_SOURCE
 
 _LAUNCHER_MODE = 0o755
@@ -117,8 +117,11 @@ def check(skill_dirs: list[Path]) -> list[CheckIssue]:
                 CheckIssue(skill_dir=str(skill_dir), reason=f"invalid lock {lock_file}: {exc}")
             )
             continue
-        repo_root = find_repo_root(skill_dir)
-        key = compute_key(skill_dir, config, repo_root)
+        try:
+            key = compute_key(skill_dir, config)
+        except ConfigError as exc:
+            issues.append(CheckIssue(skill_dir=str(skill_dir), reason=str(exc)))
+            continue
         if key != existing.key:
             issues.append(
                 CheckIssue(

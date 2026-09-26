@@ -1,0 +1,5 @@
+name = "hello"
+entry = "hello:main"
+source = "hello.py"
+project = "../.."
+repo = "example-owner/wedge-consumer"

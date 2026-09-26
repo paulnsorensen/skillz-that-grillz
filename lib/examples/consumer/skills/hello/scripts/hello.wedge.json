@@ -1,0 +1,9 @@
+{
+  "asset": "hello-2618a65e8b16.pyz",
+  "format": 5,
+  "key": "2618a65e8b164c7045a7468b8252f3c0b1639e29ae8c883156b38ca87e0d0a7f",
+  "name": "hello",
+  "release": "wedge",
+  "repo": "example-owner/wedge-consumer",
+  "sha256": "f73115f1cf51fe4f2a6f3fe886e175117f0c3536d617018b4f0af368b9a2a8de"
+}
