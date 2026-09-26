@@ -37,13 +37,13 @@ def _copy_repo_subset(dest: Path) -> Path:
     """Copy only the build-input files, at the same relative layout, into
     ``dest`` so a test can exercise a second, independent checkout path."""
     (dest / "lib" / "fromargs" / "src").mkdir(parents=True)
-    shutil.copytree(
+    _ = shutil.copytree(
         REPO_ROOT / "lib" / "fromargs" / "src" / "fromargs",
         dest / "lib" / "fromargs" / "src" / "fromargs",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
-    shutil.copy2(REPO_ROOT / "lib" / "fromargs" / "uv.lock", dest / "lib" / "fromargs" / "uv.lock")
-    shutil.copy2(
+    _ = shutil.copy2(REPO_ROOT / "lib" / "fromargs" / "uv.lock", dest / "lib" / "fromargs" / "uv.lock")
+    _ = shutil.copy2(
         REPO_ROOT / "lib" / "fromargs" / "pyproject.toml",
         dest / "lib" / "fromargs" / "pyproject.toml",
     )
@@ -51,18 +51,18 @@ def _copy_repo_subset(dest: Path) -> Path:
     skill_dir.mkdir(parents=True)
     example_dir = dest / "lib" / "fromargs" / "examples"
     example_dir.mkdir(parents=True)
-    shutil.copy2(
+    _ = shutil.copy2(
         REPO_ROOT / "lib" / "fromargs" / "examples" / "cheese_cave.py",
         example_dir / "cheese_cave.py",
     )
-    shutil.copy2(FIXTURE_SKILL_DIR / "wedge.toml", skill_dir / "wedge.toml")
+    _ = shutil.copy2(FIXTURE_SKILL_DIR / "wedge.toml", skill_dir / "wedge.toml")
     return skill_dir
 
 
 def _copy_locked_fixture(dest: Path) -> Path:
     """``_copy_repo_subset`` plus the committed lock and launcher."""
     skill_dir = _copy_repo_subset(dest)
-    shutil.copytree(FIXTURE_SKILL_DIR / "scripts", skill_dir / "scripts")
+    _ = shutil.copytree(FIXTURE_SKILL_DIR / "scripts", skill_dir / "scripts")
     return skill_dir
 
 
@@ -233,9 +233,9 @@ def fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object
     store = tmp_path / "gh-store"
     store.mkdir()
     script = bin_dir / "gh"
-    script.write_text(_FAKE_GH_SOURCE)
+    _ = script.write_text(_FAKE_GH_SOURCE)
     mode = script.stat().st_mode
-    script.chmod(mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv("WEDGE_FAKE_GH_STORE", str(store))
-    return {"store": store, "repo": "example/repo"}
+    _ = script.chmod(mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    _ = monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    _ = monkeypatch.setenv("WEDGE_FAKE_GH_STORE", str(store))
+    return {"store": store, "repo": "paulnsorensen/skillz-that-grillz"}

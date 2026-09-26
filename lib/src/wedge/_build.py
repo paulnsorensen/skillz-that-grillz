@@ -47,7 +47,8 @@ def build(skill_dir: Path, out_dir: Path) -> BuildResult:
     config = load_config(skill_dir)
     repo_root = find_repo_root(skill_dir)
     key = compute_key(skill_dir, config, repo_root)
-    guard_closure(resolve_closure(repo_root))
+    requirements = export_requirements(repo_root)
+    guard_closure(resolve_closure(repo_root, requirements))
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{config.name}-{key[:12]}.pyz"
@@ -55,7 +56,7 @@ def build(skill_dir: Path, out_dir: Path) -> BuildResult:
     with tempfile.TemporaryDirectory(prefix="wedge-build-") as tmp:
         site_dir = Path(tmp) / "site"
         site_dir.mkdir()
-        _install_third_party(repo_root, site_dir)
+        _install_third_party(requirements, site_dir)
         _copy_tree(repo_root / "lib" / "fromargs" / "src" / "fromargs", site_dir / "fromargs")
         _copy_source(source_path(skill_dir, config, repo_root), site_dir)
         _strip_volatile(site_dir)
@@ -65,11 +66,11 @@ def build(skill_dir: Path, out_dir: Path) -> BuildResult:
     return BuildResult(name=config.name, key=key, sha256=_sha256(out_path), path=out_path)
 
 
-def _install_third_party(repo_root: Path, site_dir: Path) -> None:
+def _install_third_party(requirements: str, site_dir: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="wedge-requirements-") as tmp:
         requirements_path = Path(tmp) / "requirements.txt"
-        requirements_path.write_text(export_requirements(repo_root))
-        subprocess.run(
+        _ = requirements_path.write_text(requirements)
+        _ = subprocess.run(
             [
                 "uv",
                 "pip",
@@ -90,14 +91,21 @@ def _install_third_party(repo_root: Path, site_dir: Path) -> None:
 
 
 def _copy_tree(src: Path, dest: Path) -> None:
-    shutil.copytree(src, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    if src.is_symlink():
+        raise ValueError(f"build source must not be a symlink: {src}")
+    for path in src.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"build source must not contain symlink: {path}")
+    _ = shutil.copytree(src, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
 def _copy_source(source: Path, site_dir: Path) -> None:
+    if source.is_symlink():
+        raise ValueError(f"build source must not be a symlink: {source}")
     if source.is_dir():
         _copy_tree(source, site_dir / source.name)
     else:
-        shutil.copy2(source, site_dir / source.name)
+        _ = shutil.copy2(source, site_dir / source.name)
 
 
 def _strip_volatile(site_dir: Path) -> None:
@@ -114,7 +122,7 @@ def _strip_volatile(site_dir: Path) -> None:
 def _shiv(site_dir: Path, entry: str, out_path: Path) -> None:
     env = dict(os.environ)
     env["SOURCE_DATE_EPOCH"] = _SOURCE_DATE_EPOCH
-    subprocess.run(
+    _ = subprocess.run(
         [
             "shiv",
             "--reproducible",
@@ -142,9 +150,14 @@ def _canonicalize_archive(path: Path) -> None:
     if not separator or not shebang.startswith(b"#!"):
         raise ValueError(f"shiv output lacks a shebang: {path}")
     with ZipFile(BytesIO(original)) as source, path.open("wb") as output:
-        output.write(shebang + separator)
+        _ = output.write(shebang + separator)
         with ZipFile(output, "w") as target:
             for info in sorted(source.infolist(), key=lambda item: item.filename):
+                info.date_time = (1980, 1, 1, 0, 0, 0)
+                info.create_system = 3
+                is_dir = info.filename.endswith("/")
+                mode = 0o40755 if is_dir else 0o100644
+                info.external_attr = (mode << 16) | (0x10 if is_dir else 0)
                 target.writestr(info, source.read(info))
 
 

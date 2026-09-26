@@ -11,6 +11,7 @@ import re
 import subprocess
 import tomllib
 from pathlib import Path
+from typing import cast
 
 from wedge._guard import ClosureEntry
 
@@ -40,7 +41,7 @@ def export_requirements(repo_root: Path) -> str:
 
 def parse_requirements(text: str) -> list[tuple[str, str, str | None]]:
     """Parse ``name==version[; marker]`` lines from a ``uv export`` document."""
-    results = []
+    results: list[tuple[str, str, str | None]] = []
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -53,21 +54,36 @@ def parse_requirements(text: str) -> list[tuple[str, str, str | None]]:
     return results
 
 
-def resolve_closure(repo_root: Path) -> list[ClosureEntry]:
+def resolve_closure(repo_root: Path, exported: str) -> list[ClosureEntry]:
     """The resolved closure as ``ClosureEntry`` objects, wheel filenames from
     ``lib/fromargs/uv.lock`` and markers from ``uv export``."""
     repo_root = Path(repo_root)
-    requirements = parse_requirements(export_requirements(repo_root))
-    lock = tomllib.loads((repo_root / "lib" / "fromargs" / "uv.lock").read_text())
-    wheels_by_key = {
-        (pkg["name"], pkg["version"]): pkg.get("wheels", []) for pkg in lock["package"]
-    }
+    requirements = parse_requirements(exported)
+    lock = cast(dict[str, object], tomllib.loads((repo_root / "lib" / "fromargs" / "uv.lock").read_text()))
+    packages_raw = lock.get("package")
+    if not isinstance(packages_raw, list):
+        raise ValueError("uv.lock package must be a list")
+    wheels_by_key: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for package_raw in cast(list[object], packages_raw):
+        if not isinstance(package_raw, dict):
+            continue
+        package = cast(dict[str, object], package_raw)
+        name_value = package.get("name")
+        version_value = package.get("version")
+        wheels_value = package.get("wheels")
+        if not isinstance(name_value, str) or not isinstance(version_value, str) or not isinstance(wheels_value, list):
+            continue
+        wheels = [cast(dict[str, object], wheel) for wheel in cast(list[object], wheels_value) if isinstance(wheel, dict)]
+        wheels_by_key[(name_value, version_value)] = wheels
     entries: list[ClosureEntry] = []
     for name, version, marker in requirements:
         wheels = wheels_by_key.get((name, version))
         if not wheels:
             raise ValueError(f"{name}=={version}: no wheel entry in lib/fromargs/uv.lock")
         for wheel in wheels:
-            filename = wheel["url"].rsplit("/", 1)[-1]
+            url = wheel.get("url")
+            if not isinstance(url, str):
+                raise ValueError(f"{name}=={version}: wheel URL is invalid")
+            filename = url.rsplit("/", 1)[-1]
             entries.append(ClosureEntry(name=name, wheel=filename, marker=marker))
     return entries

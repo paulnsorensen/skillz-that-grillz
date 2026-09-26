@@ -38,3 +38,4 @@
 
 - 2026-09-26 · pr89-trim · merged · decisions/wedge-skill-packaging.md · Export the skill closure from lib/fromargs/uv.lock so shiv's pip/setuptools/click stop shipping in every .pyz; publish only from the post-merge wedge workflow
 
+- 2026-09-26 · pr89-cure · updated · decisions/wedge-skill-packaging.md · Recorded format 6 metadata normalization across umask 002/022, symlink and lock publication invariants, and no shared concurrency for pending-run safety

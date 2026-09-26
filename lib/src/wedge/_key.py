@@ -13,7 +13,7 @@ from pathlib import Path
 
 from wedge._config import WedgeConfig
 
-FORMAT_VERSION = 4
+FORMAT_VERSION = 6
 TARGET_PYTHON = "3.11"
 
 
@@ -35,15 +35,32 @@ def _is_excluded(path: Path) -> bool:
 
 
 def _iter_files(root: Path) -> list[Path]:
+    if root.is_symlink():
+        raise ValueError(f"build source must not be a symlink: {root}")
     if root.is_dir():
-        return sorted(p for p in root.rglob("*") if p.is_file() and not _is_excluded(p))
+        files: list[Path] = []
+        for path in sorted(root.rglob("*")):
+            if path.is_symlink():
+                raise ValueError(f"build source must not contain symlink: {path}")
+            if path.is_file() and not _is_excluded(path):
+                files.append(path)
+        return files
+    if not root.is_file():
+        raise FileNotFoundError(root)
     return [root]
 
 
 def source_path(skill_dir: Path, config: WedgeConfig, repo_root: Path) -> Path:
-    """Resolve ``config.source``; raise ``ValueError`` when it escapes ``repo_root``."""
-    resolved = (Path(skill_dir) / config.source).resolve()
+    """Resolve ``config.source``; reject symlinks before containment checks."""
+    skill_dir = Path(skill_dir).resolve()
     repo_root = Path(repo_root).resolve()
+    raw = skill_dir / config.source
+    cursor = raw
+    while cursor != repo_root and repo_root in cursor.parents:
+        if cursor.is_symlink():
+            raise ValueError(f"source path must not contain symlink: {cursor}")
+        cursor = cursor.parent
+    resolved = raw.resolve()
     if resolved != repo_root and repo_root not in resolved.parents:
         raise ValueError(f"source {config.source!r} resolves outside the repo root {repo_root}")
     return resolved
@@ -63,7 +80,7 @@ def build_inputs(skill_dir: Path, config: WedgeConfig, repo_root: Path) -> list[
 def compute_key(skill_dir: Path, config: WedgeConfig, repo_root: Path) -> str:
     """The sha256 over the sorted (repo-relative path, file sha256) pairs."""
     repo_root = Path(repo_root).resolve()
-    entries = []
+    entries: list[tuple[str, str]] = []
     for file in build_inputs(skill_dir, config, repo_root):
         rel = file.resolve().relative_to(repo_root).as_posix()
         digest = hashlib.sha256(file.read_bytes()).hexdigest()

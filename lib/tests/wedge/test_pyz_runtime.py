@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from typing import cast
 from pathlib import Path
 
 import pytest
@@ -33,7 +34,7 @@ def _run_pyz(pyz: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def test_pyz_runs_under_a_clean_interpreter_with_no_project_on_path(built_pyz: Path) -> None:
     result = _run_pyz(built_pyz, "--json", "wheels", "list")
     assert result.returncode == 0, result.stderr
-    payload = json.loads(result.stdout)
+    payload = cast(object, json.loads(result.stdout))
     assert isinstance(payload, list)
     assert payload
 
@@ -43,5 +44,5 @@ def test_pyz_self_heals_a_merged_argument(built_pyz: Path) -> None:
     result = _run_pyz(built_pyz, "age", "brie", "--weeks", "2 --dry-run")
     assert result.returncode == 0, result.stderr
     assert "note:" in result.stderr
-    payload = json.loads(result.stdout)
+    payload = cast(dict[str, object], json.loads(result.stdout))
     assert payload["dry_run"] is True

@@ -40,8 +40,7 @@ def guard_closure(entries: list[ClosureEntry]) -> None:
     for entry in entries:
         if entry.marker and any(name in entry.marker for name in _PLATFORM_MARKER_NAMES):
             raise GuardError(
-                f"{entry.name}: platform marker {entry.marker!r} is not allowed "
-                "in a wedge closure"
+                f"{entry.name}: platform marker {entry.marker!r} is not allowed in a wedge closure"
             )
         if not entry.wheel.endswith("-py3-none-any.whl"):
             raise GuardError(f"{entry.name}: wheel {entry.wheel!r} is not py3-none-any")

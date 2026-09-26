@@ -9,8 +9,11 @@ two files beside the skill's ``wedge.toml``: the lock
 from __future__ import annotations
 
 import json
+import stat
+import re
 import tempfile
 from dataclasses import dataclass
+from typing import cast
 from pathlib import Path
 
 from wedge._build import build
@@ -19,6 +22,7 @@ from wedge._key import FORMAT_VERSION, compute_key, find_repo_root
 from wedge._launcher import LAUNCHER_SOURCE
 
 _LAUNCHER_MODE = 0o755
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True)
@@ -80,18 +84,37 @@ def lock(skill_dir: Path) -> LockData:
         )
     lock_file = lock_path(skill_dir, config.name)
     lock_file.parent.mkdir(parents=True, exist_ok=True)
-    lock_file.write_text(json.dumps(data.to_dict(), indent=2, sort_keys=True) + "\n")
+    _ = lock_file.write_text(json.dumps(data.to_dict(), indent=2, sort_keys=True) + "\n")
     launcher_file = launcher_path(skill_dir, config.name)
-    launcher_file.write_text(LAUNCHER_SOURCE)
-    launcher_file.chmod(_LAUNCHER_MODE)
+    _ = launcher_file.write_text(LAUNCHER_SOURCE)
+    _ = launcher_file.chmod(_LAUNCHER_MODE)
     return data
 
 
 def load_lock(skill_dir: Path, name: str) -> LockData:
-    """Read a skill's already-written lock file."""
+    """Read and validate a skill's already-written lock file."""
     path = lock_path(skill_dir, name)
-    data = json.loads(path.read_text())
-    return LockData(**data)
+    raw: object = cast(object, json.loads(path.read_text()))
+    if not isinstance(raw, dict):
+        raise ValueError("lock must be a JSON object")
+    data = cast(dict[object, object], raw)
+    expected = {"name", "key", "sha256", "release", "asset", "repo", "format"}
+    if set(data) != expected:
+        raise ValueError("lock has invalid fields")
+    values = {key: data.get(key) for key in expected}
+    if any(not isinstance(values[key], str) for key in expected - {"format"}) or not isinstance(values["format"], int):
+        raise ValueError("lock fields have invalid types")
+    lock_data = LockData(
+        name=cast(str, values["name"]), key=cast(str, values["key"]),
+        sha256=cast(str, values["sha256"]), release=cast(str, values["release"]),
+        asset=cast(str, values["asset"]), repo=cast(str, values["repo"]),
+        format=values["format"],
+    )
+    if lock_data.name != name or not _HEX64.fullmatch(lock_data.key) or not _HEX64.fullmatch(lock_data.sha256):
+        raise ValueError("lock name or digest is invalid")
+    if lock_data.format != FORMAT_VERSION or lock_data.release != "wedge" or lock_data.asset != f"{name}-{lock_data.key[:12]}.pyz":
+        raise ValueError("lock invariants are invalid")
+    return lock_data
 
 
 def check(skill_dirs: list[Path]) -> list[CheckIssue]:
@@ -112,10 +135,13 @@ def check(skill_dirs: list[Path]) -> list[CheckIssue]:
             continue
         try:
             existing = load_lock(skill_dir, config.name)
-        except (OSError, json.JSONDecodeError, TypeError) as exc:
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             issues.append(
                 CheckIssue(skill_dir=str(skill_dir), reason=f"invalid lock {lock_file}: {exc}")
             )
+            continue
+        if existing.repo != config.repo:
+            issues.append(CheckIssue(skill_dir=str(skill_dir), reason="lock repository differs from config"))
             continue
         repo_root = find_repo_root(skill_dir)
         key = compute_key(skill_dir, config, repo_root)
@@ -131,6 +157,8 @@ def check(skill_dirs: list[Path]) -> list[CheckIssue]:
             issues.append(
                 CheckIssue(skill_dir=str(skill_dir), reason=f"missing launcher {launcher_file}")
             )
+        elif launcher_file.stat().st_mode & stat.S_IXUSR == 0:
+            issues.append(CheckIssue(skill_dir=str(skill_dir), reason=f"launcher {launcher_file} is not executable"))
         elif launcher_file.read_text() != LAUNCHER_SOURCE:
             issues.append(
                 CheckIssue(

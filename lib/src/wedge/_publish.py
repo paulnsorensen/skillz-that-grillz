@@ -12,6 +12,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import cast
 
 from wedge._build import build
 from wedge._config import load_config
@@ -66,12 +67,20 @@ def _asset_digest(repo: str, asset: str) -> str | None:
     result = _run(["release", "view", RELEASE, "--repo", repo, "--json", "assets"])
     if result.returncode != 0:
         raise RuntimeError(f"cannot view release {RELEASE!r} in {repo}: {result.stderr}")
-    assets = json.loads(result.stdout)["assets"]
-    match = next((entry for entry in assets if entry["name"] == asset), None)
-    if match is None:
+    payload_raw: object = cast(object, json.loads(result.stdout))
+    if not isinstance(payload_raw, dict):
+        raise ValueError("release assets response is invalid")
+    payload = cast(dict[str, object], payload_raw)
+    assets_raw: object = payload.get("assets")
+    if not isinstance(assets_raw, list):
+        raise ValueError("release assets response is invalid")
+    assets = cast(list[object], assets_raw)
+    typed_assets = [cast(dict[str, object], entry) for entry in assets if isinstance(entry, dict)]
+    match = next((entry for entry in typed_assets if entry.get("name") == asset), None)
+    if not isinstance(match, dict):
         return None
     digest = match.get("digest")
-    if digest:
+    if isinstance(digest, str) and digest:
         return digest.removeprefix("sha256:")
     with tempfile.TemporaryDirectory(prefix="wedge-digest-") as tmp:
         downloaded = Path(tmp) / asset
@@ -110,8 +119,7 @@ def _publish_one(skill_dir: Path, repo: str) -> tuple[str, str]:
             return "skipped", f"asset {lock_data.asset} already published"
         return (
             "failed",
-            f"asset {lock_data.asset} exists with digest {existing}, "
-            f"lock wants {lock_data.sha256}",
+            f"asset {lock_data.asset} exists with digest {existing}, lock wants {lock_data.sha256}",
         )
 
     with tempfile.TemporaryDirectory(prefix="wedge-publish-") as tmp:
@@ -132,10 +140,18 @@ def publish(skill_dirs: list[Path], *, repo: str, target: str) -> dict[str, dict
     """Publish every skill; returns ``{name: {status, reason}}``."""
     if not skill_dirs:
         return {}
+    configs = [load_config(Path(skill_dir)) for skill_dir in skill_dirs]
+    names = [config.name for config in configs]
+    if len(names) != len(set(names)):
+        raise ValueError("duplicate skill names are not publishable")
+    if any(config.repo != repo for config in configs):
+        raise ValueError("publish repository differs from skill configuration")
+    lock_data = [load_lock(Path(skill_dir), config.name) for skill_dir, config in zip(skill_dirs, configs)]
+    if any(data.repo != config.repo for data, config in zip(lock_data, configs)):
+        raise ValueError("lock repository differs from skill configuration")
     _ensure_release(repo, target)
     results: dict[str, dict[str, str]] = {}
-    for skill_dir in skill_dirs:
-        config = load_config(Path(skill_dir))
+    for skill_dir, config in zip(skill_dirs, configs):
         status, reason = _publish_one(Path(skill_dir), repo)
         results[config.name] = {"status": status, "reason": reason}
     return results
