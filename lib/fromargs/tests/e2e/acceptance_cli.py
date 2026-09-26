@@ -25,9 +25,10 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Annotated
 
-from cyclopts import Parameter, Token
+from cyclopts import Token
 
 import fromargs
+from fromargs import Parameter
 
 __version__ = "7.1.0"
 

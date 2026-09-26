@@ -36,8 +36,8 @@ AC-7: WHEN a command is registered with a limit and its result is a sequence
 AC-8: WHEN a command handler declares a parameter named json or full THE
     SYSTEM SHALL raise ValueError at registration time and SHALL NOT
     register the command.
-AC-9: THE SYSTEM SHALL export exactly App, CliError, and contract_error from
-    fromargs.__all__.
+AC-9: THE SYSTEM SHALL export exactly App, CliError, contract_error, Group,
+    and Parameter from fromargs.__all__.
 AC-10: THE SYSTEM SHALL provide no command-line flag and no stdin reader for
     JSON input; a run's behavior SHALL be identical whether or not garbage
     text is piped to stdin.
@@ -58,9 +58,9 @@ AC-14: WHEN argv uses an underscore variant of a dashed flag name THE SYSTEM
     behavior).
 AC-15: WHEN the caller does not pass version= to App, THE SYSTEM SHALL
     resolve the --version string from the calling module's installed
-    distribution version, else its __version__ attribute, else Cyclopts'
-    own default; WHEN the caller passes version= explicitly THE SYSTEM
-    SHALL print it unchanged.
+    distribution version, else its __version__ attribute, else `0.0.0`;
+    WHEN the caller passes version= explicitly THE SYSTEM SHALL print it
+    unchanged.
 AC-16: WHEN app.default registers a handler, bare or called, and argv names
     no subcommand THE SYSTEM SHALL invoke that handler exactly once, with
     the same reserved-parameter check and the same JSON result handling as
@@ -321,9 +321,9 @@ def test_ac08_reserved_parameter_raises_at_registration(
 
 
 @pytest.mark.ac("AC-9")
-def test_ac09_public_surface_is_exactly_three_names() -> None:
-    assert set(fromargs.__all__) == {"App", "CliError", "contract_error"}
-    assert len(fromargs.__all__) == 3
+def test_ac09_public_surface_is_exactly_five_names() -> None:
+    assert set(fromargs.__all__) == {"App", "CliError", "contract_error", "Group", "Parameter"}
+    assert len(fromargs.__all__) == 5
     for name in fromargs.__all__:
         assert hasattr(fromargs, name)
 

@@ -18,13 +18,20 @@ pip install fromargs
 ## Quick start
 
 ```python
+from typing import Annotated
+
 import fromargs
 
 app = fromargs.App("cheese-cave", help="Track wheels of cheese as they ripen.")
 
 
 @app.command
-def age(name: str, *, weeks: int, dry_run: bool = False) -> dict[str, object]:
+def age(
+    name: str,
+    *,
+    weeks: Annotated[int, fromargs.Parameter(help="Number of weeks to age.")],
+    dry_run: bool = False,
+) -> dict[str, object]:
     """Age one wheel for more weeks."""
     if weeks < 1:
         raise fromargs.CliError(f"--weeks must be at least 1, got {weeks}")
@@ -83,7 +90,8 @@ same `limit` keyword.
 `@app.default` (bare or called, matching `@app.command`) registers the
 handler that runs when argv names no subcommand at that app or group level.
 It is rejected at registration if it declares a `json` or `full` parameter,
-the same rule `@app.command` enforces.
+the same rule `@app.command` enforces. Registering a second default on the
+same app or group raises `ValueError`.
 
 ## Self-healing
 
