@@ -1,8 +1,9 @@
 # Dependabot configuration — version updates only.
 # See: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# release.yml pins `yamllint` and `pyyaml` through a hard-coded `pip install`
-# step that has no manifest; Dependabot does not track or update those pins.
+# release.yml and validate.yml pin `yamllint` and `pyyaml` through a
+# hard-coded `pip install` step that has no manifest; Dependabot does not
+# track or update those pins.
 # The github-actions ecosystem below covers only action refs (`uses: ...@sha`).
 # The uv ecosystem below covers lib/fromargs/pyproject.toml. Add another
 # ecosystem as soon as a new manifest lands.

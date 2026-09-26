@@ -60,7 +60,7 @@ MUTATIONS: list[Mutation] = [
         ac_id="AC-2",
         label="JSON result payload is discarded",
         rel_file="_output.py",
-        old="    print(json.dumps(payload, indent=2, default=_default, allow_nan=False), file=stream)",
+        old="    print(serialized, file=stream)",
         new='    print(json.dumps({"broken": True}), file=stream)',
     ),
     Mutation(

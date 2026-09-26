@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
+import os
 import sys
 import tempfile
 import traceback
@@ -141,12 +143,25 @@ def _report(message: str, exit_code: int) -> int:
 
 
 def _report_unexpected(exc: Exception) -> int:
-    """Report an unexpected exception as a three-key envelope; write its traceback; return 1."""
-    descriptor, path = tempfile.mkstemp(prefix="fromargs-", suffix=".traceback")
-    with open(descriptor, "w") as handle:
-        _ = handle.write(traceback.format_exc())
-    print(
-        json.dumps({"error": f"{type(exc).__name__}: {exc}", "exit_code": 1, "traceback": path}),
-        file=sys.stderr,
-    )
+    """Report an unexpected exception as a two- or three-key envelope; return 1.
+
+    The envelope gets a ``traceback`` path when the traceback file writes
+    successfully. An ``OSError`` while creating or writing that file omits
+    the ``traceback`` key instead of escaping the ADR-001 envelope.
+    """
+    envelope: dict[str, object] = {"error": f"{type(exc).__name__}: {exc}", "exit_code": 1}
+    try:
+        descriptor, path = tempfile.mkstemp(prefix="fromargs-", suffix=".traceback")
+    except OSError:
+        pass
+    else:
+        try:
+            with open(descriptor, "w") as handle:
+                _ = handle.write(traceback.format_exc())
+        except OSError:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        else:
+            envelope["traceback"] = path
+    print(json.dumps(envelope), file=sys.stderr)
     return 1

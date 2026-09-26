@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import io
 import json
+import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, cast
@@ -260,8 +261,9 @@ def test_converter_rejection_still_tries_repair(
 
 
 def test_handler_cyclopts_error_is_an_unexpected_envelope(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     app = fromargs.App("t")
 
     @app.command
@@ -272,12 +274,15 @@ def test_handler_cyclopts_error_is_an_unexpected_envelope(
     envelope = _unexpected_envelope(capsys.readouterr().err)
     assert envelope["error"] == "CycloptsError: inner"
     assert envelope["exit_code"] == 1
-    assert Path(str(envelope["traceback"])).is_file()
+    traceback_path = Path(str(envelope["traceback"]))
+    assert traceback_path.parent == tmp_path
+    assert "CycloptsError" in traceback_path.read_text()
 
 
 def test_handler_value_error_is_an_unexpected_envelope(
-    capsys: pytest.CaptureFixture[str],
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     app = fromargs.App("t")
 
     @app.command
@@ -288,7 +293,51 @@ def test_handler_value_error_is_an_unexpected_envelope(
     envelope = _unexpected_envelope(capsys.readouterr().err)
     assert envelope["error"] == "ValueError: bad shape"
     assert envelope["exit_code"] == 1
-    assert Path(str(envelope["traceback"])).is_file()
+    traceback_path = Path(str(envelope["traceback"]))
+    assert traceback_path.parent == tmp_path
+    assert "bad shape" in traceback_path.read_text()
+
+
+def test_traceback_write_failure_still_reports_an_envelope_without_traceback(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, single_json_line: JsonLine
+) -> None:
+    def _broken_mkstemp(*_args: object, **_kwargs: object) -> tuple[int, str]:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(tempfile, "mkstemp", _broken_mkstemp)
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    envelope = single_json_line(capsys.readouterr().err)
+    assert envelope == {"error": "ValueError: bad shape", "exit_code": 1}
+
+
+def test_traceback_write_failure_removes_the_partial_file(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    single_json_line: JsonLine,
+) -> None:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    def _broken_open(*_args: object, **_kwargs: object) -> object:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("builtins.open", _broken_open)
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    envelope = single_json_line(capsys.readouterr().err)
+    assert envelope == {"error": "ValueError: bad shape", "exit_code": 1}
+    assert list(tmp_path.glob("fromargs-*.traceback")) == []
 
 
 def test_handler_returning_nan_is_an_unexpected_envelope(

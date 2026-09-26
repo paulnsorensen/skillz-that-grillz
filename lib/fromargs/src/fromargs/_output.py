@@ -24,15 +24,16 @@ def write_result(
     """
     stream = stdout if stdout is not None else sys.stdout
     payload = value
+    note: str | None = None
     if limit is not None and isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         total = len(value)
         if not full and total > limit:
             payload = list(itertools.islice(value, limit))
-            print(
-                f"note: showing {limit} of {total}; pass --full for the rest",
-                file=sys.stderr,
-            )
-    print(json.dumps(payload, indent=2, default=_default, allow_nan=False), file=stream)
+            note = f"note: showing {limit} of {total}; pass --full for the rest"
+    serialized = json.dumps(payload, indent=2, default=_default, allow_nan=False)
+    if note is not None:
+        print(note, file=sys.stderr)
+    print(serialized, file=stream)
 
 
 def _default(value: object) -> object:

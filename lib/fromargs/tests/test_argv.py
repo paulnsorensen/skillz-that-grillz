@@ -4,7 +4,7 @@
 # hints of commands defined inside tests, which reference local converters.
 
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 import pytest
@@ -275,6 +275,21 @@ def test_path_option_value_is_not_split(
     target = tmp_path / "wheel.toml"
     _ = target.write_text("")
     argv = ["p", "--path", f"{target} --force"]
+
+    assert repair_rejected(app, argv) is None
+    assert capsys.readouterr().err == ""
+
+
+def test_purepath_option_value_is_not_split(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = App()
+
+    @app.command
+    def p(*, _path: PurePosixPath, _force: bool = False) -> None:
+        raise AssertionError("probing must not run a handler")
+
+    argv = ["p", "--path", "/tmp/wheel.toml --force"]
 
     assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""

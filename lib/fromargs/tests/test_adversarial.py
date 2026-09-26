@@ -76,11 +76,11 @@ def test_lone_leading_json_before_empty_argv_is_command_required(
 
 def test_default_command_runs_on_empty_argv(capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
-    app = fromargs.App("t")
 
-    @app._cyclopts.default  # pyright: ignore[reportPrivateUsage] -- App exposes no public way to register a default handler
     def main() -> None:
         calls.append("main")
+
+    app = fromargs.App("t", default_command=main)
 
     assert app.run([]) == 0
     assert calls == ["main"]

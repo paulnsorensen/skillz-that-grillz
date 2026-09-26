@@ -13,7 +13,6 @@ import shlex
 import sys
 from collections.abc import Callable, Sequence
 from inspect import BoundArguments
-from pathlib import Path
 from typing import cast, get_args, get_origin
 
 from cyclopts import App, CycloptsError
@@ -148,9 +147,11 @@ def _splittable_options(app: App, argv: Sequence[str]) -> set[str] | None:
 
 
 def _is_free_text(hint: object) -> bool:
-    """True when ``hint`` is unstructured text: ``str``, ``Path``, or a sequence of them."""
-    if isinstance(hint, type) and issubclass(hint, (str, Path)):
-        return True
+    """True when ``hint`` is unstructured text: ``str``, a path-like, or a sequence of them."""
+    if isinstance(hint, type):
+        cls = cast("type[object]", hint)
+        if issubclass(cls, str) or hasattr(cls, "__fspath__"):
+            return True
     if is_union(hint):  # pyright: ignore[reportArgumentType]  # cyclopts types this as type | None but accepts UnionType/Annotated hints at runtime
         return all(
             argument is type(None) or _is_free_text(argument)

@@ -125,3 +125,13 @@ def test_nan_is_rejected() -> None:
 def test_set_is_rejected() -> None:
     with pytest.raises(TypeError, match="not JSON serializable"):
         _ = _run({1, 2, 3})
+
+
+def test_truncation_note_is_suppressed_when_the_kept_prefix_fails_to_serialize() -> None:
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stderr(stderr):
+        with pytest.raises(ValueError, match="not JSON compliant"):
+            write_result([float("nan"), 1, 2], limit=1, full=False, stdout=stdout)
+
+    assert stderr.getvalue() == ""
+    assert stdout.getvalue() == ""

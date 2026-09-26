@@ -81,6 +81,10 @@ class App:
     ) -> None:
         self._cyclopts: cyclopts.App = cyclopts.App(name=name, help=help, **cyclopts_kwargs)
         self._limits: dict[int, int] = {}
+        if cyclopts_kwargs.get("default_command") is not None:
+            reserved = _reserved_option(self._cyclopts)
+            if reserved is not None:
+                raise ValueError(f"command option {reserved!r} is reserved by fromargs")
 
     @classmethod
     def _wrap(cls, cyclopts_app: cyclopts.App, limits: dict[int, int]) -> App:
@@ -132,10 +136,17 @@ class App:
             return register
         if limit is not None and limit < 0:
             raise ValueError(f"limit must not be negative, got {limit}")
-        _reject_reserved_options(obj)
+        before = set(self._cyclopts)
         _ = self._cyclopts.command(obj, name=name, **kwargs)
+        registered = sorted(set(self._cyclopts) - before)
+        sub_app = self._cyclopts[registered[0]]
+        reserved = _reserved_option(sub_app)
+        if reserved is not None:
+            for key in registered:
+                del self._cyclopts[key]
+            raise ValueError(f"command option {reserved!r} is reserved by fromargs")
         if limit is not None:
-            self._limits[id(self._sub_app(obj, name))] = limit
+            self._limits[id(sub_app)] = limit
         return obj
 
     def group(self, name: str, *, help: str | None = None) -> App:
@@ -152,28 +163,15 @@ class App:
         """Run with ``sys.argv`` and exit the process with the returned status."""
         sys.exit(self.run())
 
-    def _sub_app(self, obj: Callable[..., object], name: str | Sequence[str] | None) -> cyclopts.App:
-        """The ``cyclopts.App`` that ``self._cyclopts.command`` just registered ``obj`` under."""
-        if isinstance(name, str):
-            key = name
-        elif name:
-            key = name[0]
-        else:
-            key = self._cyclopts.name_transform(obj.__name__)
-        return self._cyclopts[key]
 
-
-def _reject_reserved_options(handler: Callable[..., object]) -> None:
-    """Raise ``ValueError`` when ``handler``'s assembled CLI options reserve a global flag."""
-    scratch = cyclopts.App()
-    _ = scratch.default(handler)
+def _reserved_option(app: cyclopts.App) -> str | None:
+    """The first reserved global flag name ``app``'s assembled arguments claim, or ``None``."""
     try:
-        arguments = scratch.assemble_argument_collection()
+        arguments = app.assemble_argument_collection()
     except ValueError:
-        return
+        return None
     names: set[str] = set()
     for argument in arguments:
         names.update(argument.names)
     reserved = sorted(GLOBAL_FLAGS.intersection(names))
-    if reserved:
-        raise ValueError(f"command option {reserved[0]!r} is reserved by fromargs")
+    return reserved[0] if reserved else None
