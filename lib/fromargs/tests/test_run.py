@@ -521,7 +521,7 @@ def test_multiline_message_stays_one_stderr_line(
     }
 
 
-def test_ambiguous_command_is_a_json_envelope(
+def test_near_miss_command_is_not_fuzzy_matched(
     capsys: pytest.CaptureFixture[str], single_json_line: JsonLine
 ) -> None:
     app = fromargs.App("t")
@@ -537,7 +537,8 @@ def test_ambiguous_command_is_a_json_envelope(
     assert app.run(["Show_Items"]) == 2
     envelope = single_json_line(capsys.readouterr().err)
     assert envelope["exit_code"] == 2
-    assert "Ambiguous command" in str(envelope["error"])
+    assert "Unknown command" in str(envelope["error"])
+    assert "Did you mean" in str(envelope["error"])
 
 
 def test_async_handler_cli_error_json_envelope(

@@ -17,7 +17,7 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
 ]
-dependencies = ["cyclopts>=4.25.3,<5"]
+dependencies = ["cyclopts>=5,<6"]
 
 [project.urls]
 Homepage = "https://github.com/paulnsorensen/skillz-that-grillz/tree/main/lib/fromargs"
