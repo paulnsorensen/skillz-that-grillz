@@ -5,11 +5,11 @@ The CLI tracks wheels of cheese as they ripen. Run it from the repository root:
     uv run --project lib/fromargs python lib/fromargs/examples/cheese_cave.py wheels list
 
 Agents often send malformed argv. Each call below still runs the intended
-command, and ``run`` prints one ``note:`` line on stderr for each repair:
+command. ``run`` prints one ``note:`` line on stderr only for quote-split repairs:
 
     cheese_cave.py --json wheels list              # --json is a no-op, dropped
     cheese_cave.py age brie --weeks "2 --dry-run"  # splits the merged argument
-    cheese_cave.py --json age brie --weeks "2 --dry-run"  # both repairs
+    cheese_cave.py --json age brie --weeks "2 --dry-run"  # drops --json silently; notes the split
 
 Cyclopts itself binds ``--dry_run`` to ``--dry-run``. It also answers a
 misspelled command such as ``wheels lst`` with ``Did you mean "list"?``.
