@@ -208,3 +208,37 @@ def test_json_string_parameters_still_parse() -> None:
 
     assert app.run(["conf", "--point", '{"a": 1}', "--numbers", "[1, 2]"]) == 0
     assert received == [Point(a=1), [1, 2]]
+
+
+def _app_built_in(module_globals: dict[str, object], **kwargs: object) -> fromargs.App:
+    """Build ``fromargs.App("t", **kwargs)`` as if a module with ``module_globals`` called it."""
+    namespace: dict[str, object] = {**module_globals, "fromargs": fromargs, "kwargs": kwargs}
+    exec("app = fromargs.App('t', **kwargs)", namespace)
+    app = namespace["app"]
+    assert isinstance(app, fromargs.App)
+    return app
+
+
+def test_version_comes_from_the_calling_distribution(capsys: pytest.CaptureFixture[str]) -> None:
+    from importlib.metadata import version
+
+    app = _app_built_in({"__name__": "pytest.consumer"})
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == version("pytest")
+
+
+def test_version_falls_back_to_the_calling_module_dunder_version(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = _app_built_in({"__name__": "fromargs_consumer_probe", "__version__": "9.9.9"})
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == "9.9.9"
+
+
+def test_explicit_version_is_kept(capsys: pytest.CaptureFixture[str]) -> None:
+    app = _app_built_in({"__name__": "pytest.consumer"}, version="1.2.3")
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == "1.2.3"

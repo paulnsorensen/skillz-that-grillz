@@ -9,8 +9,10 @@ global flags that ``run`` owns.
 
 from __future__ import annotations
 
+import inspect
 import sys
 from collections.abc import Callable, Coroutine, Iterable, Sequence
+from importlib import metadata
 from typing import TYPE_CHECKING, Literal, TextIO, TypedDict, TypeVar, Unpack, overload
 
 import cyclopts
@@ -79,6 +81,10 @@ class App:
         help: str | None = None,
         **cyclopts_kwargs: Unpack[_AppKwargs],
     ) -> None:
+        if "version" not in cyclopts_kwargs:
+            frame = inspect.currentframe()
+            caller = frame.f_back if frame is not None else None
+            cyclopts_kwargs["version"] = _caller_version(caller.f_globals if caller is not None else {})
         self._cyclopts: cyclopts.App = cyclopts.App(name=name, help=help, **cyclopts_kwargs)
         self._limits: dict[int, int] = {}
         if cyclopts_kwargs.get("default_command") is not None:
@@ -175,3 +181,22 @@ def _reserved_option(app: cyclopts.App) -> str | None:
         names.update(argument.names)
     reserved = sorted(GLOBAL_FLAGS.intersection(names))
     return reserved[0] if reserved else None
+
+
+def _caller_version(module_globals: dict[str, object]) -> Callable[[], str]:
+    """Resolve ``--version`` for the module that built the ``App``, not for ``fromargs``.
+
+    Cyclopts reads the version of the module that constructs ``cyclopts.App``;
+    here that is always ``fromargs._app``. This mirrors Cyclopts' lookup for
+    the caller instead: its distribution version, then its ``__version__``,
+    then ``0.0.0``.
+    """
+
+    def resolve() -> str:
+        root = str(module_globals.get("__name__", "")).split(".")[0]
+        try:
+            return metadata.version(root)
+        except (metadata.PackageNotFoundError, ValueError):
+            return str(module_globals.get("__version__", "0.0.0"))
+
+    return resolve
