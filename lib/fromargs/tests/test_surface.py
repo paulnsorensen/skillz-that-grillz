@@ -228,6 +228,16 @@ def test_version_comes_from_the_calling_distribution(capsys: pytest.CaptureFixtu
     assert capsys.readouterr().out.strip() == version("pytest")
 
 
+def test_version_maps_an_import_name_to_its_distribution(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from importlib.metadata import version
+
+    app = _app_built_in({"__name__": "attr.consumer"})  # import name attr, distribution attrs
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == version("attrs")
+
 def test_version_falls_back_to_the_calling_module_dunder_version(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

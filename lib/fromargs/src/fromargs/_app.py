@@ -187,16 +187,22 @@ def _caller_version(module_globals: dict[str, object]) -> Callable[[], str]:
     """Resolve ``--version`` for the module that built the ``App``, not for ``fromargs``.
 
     Cyclopts reads the version of the module that constructs ``cyclopts.App``;
-    here that is always ``fromargs._app``. This mirrors Cyclopts' lookup for
-    the caller instead: its distribution version, then its ``__version__``,
-    then ``0.0.0``.
+    here that is always ``fromargs._app``. This looks up the caller instead:
+    its distribution version (by import name, then by the one distribution
+    that provides that import name), then its ``__version__``, then ``0.0.0``.
     """
 
     def resolve() -> str:
         root = str(module_globals.get("__name__", "")).split(".")[0]
-        try:
-            return metadata.version(root)
-        except (metadata.PackageNotFoundError, ValueError):
-            return str(module_globals.get("__version__", "0.0.0"))
+        candidates = [root]
+        providers = metadata.packages_distributions().get(root, [])
+        if len(providers) == 1:
+            candidates.append(providers[0])
+        for candidate in candidates:
+            try:
+                return metadata.version(candidate)
+            except (metadata.PackageNotFoundError, ValueError):
+                continue
+        return str(module_globals.get("__version__", "0.0.0"))
 
     return resolve
