@@ -19,10 +19,12 @@ _REQUIREMENT_RE = re.compile(
 def export_requirements(project: Path, groups: Sequence[str] = ()) -> str:
     """Return the project's frozen, non-dev dependency closure plus ``groups``."""
     group_args = [arg for group in groups for arg in ("--group", group)]
+    # --color never: uv honours FORCE_COLOR and CLICOLOR_FORCE even on a pipe,
+    # and parse_requirements must read plain text.
     result = subprocess.run(
         [
-            "uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--no-emit-local",
-            *group_args, "--project", str(project),
+            "uv", "export", "--color", "never", "--frozen", "--no-dev", "--no-emit-project",
+            "--no-emit-local", *group_args, "--project", str(project),
         ],
         capture_output=True, text=True, check=True,
     )
