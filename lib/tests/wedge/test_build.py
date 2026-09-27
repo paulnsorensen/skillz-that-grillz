@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
 from pathlib import Path
 from typing import Callable, Protocol, cast
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -16,6 +17,7 @@ from wedge._config import ConfigError
 import wedge._digest as wedge_digest
 from wedge._digest import content_sha256
 from wedge._lock import load_lock
+from wedge._resolve import export_requirements
 
 FIXTURE_NAME = "cheese-cave"
 
@@ -102,6 +104,51 @@ def test_build_ignores_source_modes_and_umask(
 
     assert result_a.key == result_b.key
     assert result_a.content_sha256 == result_b.content_sha256
+
+@pytest.mark.ac("AC-W2")
+def test_build_ignores_an_edited_uv_cache(
+    tmp_path: Path,
+    copy_repo_subset: Callable[[Path], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """uv checks a wheel's hash only when it downloads it and hardlinks cached
+    files into every install, so an edited cache entry reaches every later
+    build that reads the cache. The builder must not read it."""
+    skill = copy_repo_subset(tmp_path / "checkout")
+    cache = tmp_path / "uv-cache"
+    monkeypatch.setenv("UV_CACHE_DIR", str(cache))
+    clean = build(skill, tmp_path / "out-clean")
+
+    # Warm the cache the way any other uv install on the host does, then
+    # edit one cached dependency file in place.
+    project = skill.parent.parent.parent / "fromargs"
+    requirements = tmp_path / "requirements.txt"
+    _ = requirements.write_text(export_requirements(project))
+    _ = subprocess.run(
+        [
+            "uv", "pip", "install", "--require-hashes", "--no-deps",
+            "--target", str(tmp_path / "warm"), "--python-version", "3.11",
+            "-r", str(requirements),
+        ],
+        check=True, capture_output=True, text=True,
+    )
+    with ZipFile(clean.path) as archive:
+        member = next(
+            name for name in archive.namelist()
+            if name.startswith("site-packages/") and name.endswith(".py")
+            and not name.startswith(("site-packages/fromargs/", "site-packages/cheese_cave"))
+        )
+    relative = member.removeprefix("site-packages/")
+    cached = list(cache.glob(f"archive-v0/*/{relative}"))
+    assert cached, f"{relative} is not in the warmed uv cache"
+    for path in cached:
+        with path.open("a") as handle:
+            _ = handle.write("\n# edited in the uv cache\n")
+
+    after = build(skill, tmp_path / "out-after")
+
+    assert after.content_sha256 == clean.content_sha256
+
 
 def _archive_fingerprints(path: Path) -> dict[str, tuple[str, str]]:
     """Group archive content and ZIP metadata to diagnose cross-OS drift."""

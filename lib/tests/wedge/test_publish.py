@@ -13,6 +13,7 @@ import pytest
 
 import wedge._publish as wedge_publish
 from wedge._build import build
+from wedge._digest import content_sha256
 from wedge._lock import load_lock
 from wedge._publish import publish
 
@@ -393,4 +394,39 @@ def test_asset_from_another_zlib_build_counts_as_published(
     result = publish([skill], repo=repo, target="deadbeef")
 
     assert result[FIXTURE_NAME]["status"] == "skipped"
+    assert _upload_count(fake_gh["store"]) == 1
+
+
+@pytest.mark.ac("AC-W6")
+def test_published_asset_is_not_trusted_when_this_host_builds_other_content(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+    rewrite_pyz: Callable[..., Path],
+) -> None:
+    """A lock and asset written on another host agree with each other, but
+    this host builds different content from the same key. Publish must fail
+    rather than skip, or a corrupt build from that host ships unverified."""
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    repo = fake_gh["repo"]
+    built = build(skill, tmp_path / "local")
+    foreign = rewrite_pyz(
+        built.path, tmp_path / "foreign.pyz", extra={"site-packages/edited.py": b"# other host\n"}
+    )
+    foreign_digest = content_sha256(foreign)
+    foreign_asset = foreign.rename(tmp_path / f"{FIXTURE_NAME}-{foreign_digest[:12]}.pyz")
+    lock_path = skill / "scripts" / f"{FIXTURE_NAME}.wedge.json"
+    lock_data = cast(dict[str, object], json.loads(lock_path.read_text()))
+    lock_data["content_sha256"] = foreign_digest
+    lock_data["asset"] = foreign_asset.name
+    _ = lock_path.write_text(json.dumps(lock_data))
+    _ = subprocess.run(["gh", "release", "create", "wedge", "--repo", repo], check=True)
+    _ = subprocess.run(
+        ["gh", "release", "upload", "wedge", str(foreign_asset), "--repo", repo], check=True
+    )
+
+    result = publish([skill], repo=repo, target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "failed"
+    assert "built content digest" in result[FIXTURE_NAME]["reason"]
     assert _upload_count(fake_gh["store"]) == 1

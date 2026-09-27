@@ -2,8 +2,9 @@
 
 Idempotent and race-safe: two runs (or two racing processes) that build the
 same key converge on exactly one uploaded asset. An existing asset counts as
-published only when its content digest matches the lock; its compressed
-bytes may come from another zlib build. Everything goes through the
+published only when this run's own build and the asset's downloaded content
+digest both match the lock; the asset's compressed bytes may come from
+another zlib build. Everything goes through the
 ``gh`` CLI so ``GH_TOKEN`` and auth stay in one place.
 """
 
@@ -97,7 +98,12 @@ def _verdict(lock_data: LockData, repo: str, found: str) -> tuple[str, str]:
 
 
 def _publish_one(skill_dir: Path, repo: str) -> tuple[str, str]:
-    """Publish one skill; returns ``(status, reason)``."""
+    """Publish one skill; returns ``(status, reason)``.
+
+    Every run builds and compares the digest to the lock before it trusts a
+    published asset. An asset uploaded from another host counts as published
+    only after this host reproduces the same content.
+    """
     skill_dir = Path(skill_dir)
     config = load_config(skill_dir)
     lock_data = load_lock(skill_dir, config.name)
@@ -107,9 +113,6 @@ def _publish_one(skill_dir: Path, repo: str) -> tuple[str, str]:
     if key != lock_data.key:
         return "failed", f"lock is stale: key {lock_data.key} != current {key}"
 
-    if _asset_exists(repo, lock_data.asset):
-        return _verdict(lock_data, repo, "already published")
-
     with tempfile.TemporaryDirectory(prefix="wedge-publish-") as tmp:
         result = build(skill_dir, Path(tmp))
         if result.content_sha256 != lock_data.content_sha256:
@@ -117,6 +120,8 @@ def _publish_one(skill_dir: Path, repo: str) -> tuple[str, str]:
                 "failed",
                 f"built content digest {result.content_sha256} != lock {lock_data.content_sha256}",
             )
+        if _asset_exists(repo, lock_data.asset):
+            return _verdict(lock_data, repo, "already published")
         upload = _run(["release", "upload", RELEASE, str(result.path), "--repo", repo])
         if upload.returncode == 0:
             return "published", f"uploaded {lock_data.asset}"
