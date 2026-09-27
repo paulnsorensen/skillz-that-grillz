@@ -158,6 +158,24 @@ def test_a_site_that_cannot_be_populated_fails_each_skill_that_shares_it(
 
 
 @pytest.mark.ac("AC-W9")
+def test_two_skills_with_one_name_both_fail_and_the_rest_build(
+    tmp_path: Path, copy_consumer: Callable[[Path], Path]
+) -> None:
+    consumer = copy_consumer(tmp_path / "consumer")
+    twin = _second_skill(consumer, "hello-twin")
+    _ = (twin / "wedge.toml").write_text(
+        (twin / "wedge.toml").read_text().replace('name = "hello-twin"', 'name = "hello"')
+    )
+    other = _second_skill(consumer, "goodbye")
+
+    outcomes = build_many([consumer / SKILLS / "hello", twin, other], tmp_path / "dist")
+
+    assert [o.error for o in outcomes[:2]] == ["duplicate skill name 'hello'"] * 2
+    assert outcomes[2].error is None and outcomes[2].value is not None
+    assert sorted(p.name for p in (tmp_path / "dist").iterdir()) == [outcomes[2].value.path.name]
+
+
+@pytest.mark.ac("AC-W9")
 def test_fan_out_reports_a_subprocess_failure_with_its_stderr(tmp_path: Path) -> None:
     def operation(_skill_dir: Path) -> None:
         raise subprocess.CalledProcessError(2, ["uv", "pip"], stderr="no such wheel\n")

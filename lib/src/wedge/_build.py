@@ -126,13 +126,18 @@ def build_many(
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     prepared = fan_out(list(skill_dirs), _prepare, jobs=jobs)
-    sites = sorted({p.value.site for p in prepared if p.value is not None}, key=repr)
+    # Two skills with one name would write one asset name and collapse into
+    # one entry of the name-keyed result; both fail instead, the rest build.
+    names = [p.value.config.name for p in prepared if p.value is not None]
+    duplicates = {name for name in names if names.count(name) > 1}
+    valid = [p.value for p in prepared if p.value is not None and p.value.config.name not in duplicates]
+    sites = sorted({p.site for p in valid}, key=repr)
 
     with tempfile.TemporaryDirectory(prefix="wedge-site-") as tmp:
         site_dirs = {site: Path(tmp) / f"site-{index}" for index, site in enumerate(sites)}
         populated = fan_out(sites, lambda site: _populate_site(site, site_dirs[site]), jobs=jobs)
         site_errors = {o.item: o.error for o in populated if o.error is not None}
-        ready = [p.value for p in prepared if p.value is not None and p.value.site not in site_errors]
+        ready = [p for p in valid if p.site not in site_errors]
         shivved = fan_out(ready, lambda p: _shiv_skill(p, site_dirs[p.site], out_dir), jobs=jobs)
         built = {id(p): o for p, o in zip(ready, shivved)}
 
@@ -141,6 +146,8 @@ def build_many(
         path = Path(skill_dir)
         if o.value is None:
             outcomes.append(Outcome(path, error=o.error))
+        elif o.value.config.name in duplicates:
+            outcomes.append(Outcome(path, error=f"duplicate skill name {o.value.config.name!r}"))
         elif o.value.site in site_errors:
             outcomes.append(Outcome(path, error=site_errors[o.value.site]))
         else:
