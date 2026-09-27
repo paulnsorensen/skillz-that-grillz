@@ -19,9 +19,9 @@ The action has two commands:
 
 The action runs `wedge` from its own checkout (the `lib/` project beside this
 directory). When you pin the action to a commit SHA, you also pin `wedge`. A
-repository that already pins `wedge` in its own `uv.lock` (step 3 below) can
-run the same commands with `uv run --locked --only-group wedge wedge …` in
-its workflows instead, so one pin serves local runs and CI.
+repository that pins `wedge` in a uv project of its own (step 3 below) can
+run the same commands with `uv run --locked --project tools/wedge wedge …`
+in its workflows instead, so one pin serves local runs and CI.
 
 ## Set up a skill
 
@@ -47,19 +47,26 @@ its workflows instead, so one pin serves local runs and CI.
    `groups` when the CLI's dependencies live in a uv dependency group rather
    than in the project's own dependencies, as they do when the project also
    publishes a library.
-3. Pin `wedge` in the project's own `uv.lock` through a dependency group
-   that stays out of `default-groups`, so it never enters the `.pyz` closure:
+3. Pin `wedge` in a small uv project of its own, for example
+   `tools/wedge/pyproject.toml`, and commit that directory's `uv.lock`:
 
    ```toml
-   [dependency-groups]
-   wedge = ["skillz-that-grillz @ git+https://github.com/paulnsorensen/skillz-that-grillz@<sha>#subdirectory=lib"]
+   [project]
+   name = "wedge-tool"
+   version = "0"
+   requires-python = ">=3.11"
+   dependencies = ["skillz-that-grillz @ git+https://github.com/paulnsorensen/skillz-that-grillz@<sha>#subdirectory=lib"]
    ```
+
+   Keep it out of the skill project's own lock: `wedge` resolves `fromargs`
+   from its checkout, and uv carries that source into any lock that depends
+   on `wedge`, which would replace the `fromargs` wheel in the `.pyz` closure.
 
 4. Write the locks and the launchers. Run this from the repository root and
    commit each `scripts/<name>` and `scripts/<name>.wedge.json`:
 
    ```sh
-   uv run --locked --only-group wedge wedge lock --root skills
+   uv run --locked --project tools/wedge wedge lock --root skills
    ```
 
    Every command finds `*/wedge.toml` under `--root`; `lock`, `build`, and
