@@ -18,12 +18,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
-from wedge._config import ConfigError, load_config
+from wedge._config import ConfigError, WedgeConfig, load_config
 from wedge._digest import content_sha256
+from wedge._fanout import Outcome, fan_out
 from wedge._guard import guard_closure
 from wedge._key import TARGET_PYTHON, compute_key, resolve_paths
 from wedge._resolve import export_requirements, resolve_closure
@@ -45,35 +47,115 @@ class BuildResult:
     path: Path
 
 
-def build(skill_dir: Path, out_dir: Path) -> BuildResult:
-    """Build ``<out_dir>/<name>-<content_sha256[:12]>.pyz``; returns its key and digest."""
+@dataclass(frozen=True)
+class SiteInputs:
+    """Everything that goes into a site directory; skills that share it share the site."""
+
+    project: Path
+    source: Path
+    includes: tuple[Path, ...]
+    groups: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _Prepared:
+    """One skill, resolved and keyed, ready to be shivved from a site directory."""
+
+    skill_dir: Path
+    config: WedgeConfig
+    key: str
+    site: SiteInputs
+
+
+def _prepare(skill_dir: Path) -> _Prepared:
     skill_dir = Path(skill_dir).resolve()
-    out_dir = Path(out_dir).resolve()
     config = load_config(skill_dir)
     paths = resolve_paths(skill_dir, config)
     key = compute_key(skill_dir, config)
-    requirements = export_requirements(paths.project)
-    closure = resolve_closure(paths.project, requirements)
+    site = SiteInputs(paths.project, paths.source, paths.includes, config.groups)
+    return _Prepared(skill_dir, config, key, site)
+
+
+def _populate_site(site: SiteInputs, site_dir: Path) -> None:
+    """Install the closure and copy the local trees into an empty ``site_dir``."""
+    requirements = export_requirements(site.project, site.groups)
+    closure = resolve_closure(site.project, requirements)
     guard_closure(closure)
+    site_dir.mkdir()
+    if closure:
+        _install_third_party(requirements, site_dir)
+    for local in (*site.includes, site.source):
+        _copy_source(local, site_dir)
+    _strip_volatile(site_dir)
 
-    out_dir.mkdir(parents=True, exist_ok=True)
 
+def _shiv_skill(prepared: _Prepared, site_dir: Path, out_dir: Path) -> BuildResult:
+    """Shiv one skill from a populated site directory into ``out_dir``."""
+    config = prepared.config
     with tempfile.TemporaryDirectory(prefix="wedge-build-") as tmp:
-        site_dir = Path(tmp) / "site"
-        site_dir.mkdir()
-        if closure:
-            _install_third_party(requirements, site_dir)
-        for local in (*paths.includes, paths.source):
-            _copy_source(local, site_dir)
-        _strip_volatile(site_dir)
         built = Path(tmp) / f"{config.name}.pyz"
         _shiv(site_dir, config.entry, built)
         _canonicalize_archive(built)
         digest = content_sha256(built)
         out_path = out_dir / f"{config.name}-{digest[:12]}.pyz"
         _ = shutil.move(built, out_path)
+    return BuildResult(name=config.name, key=prepared.key, content_sha256=digest, path=out_path)
 
-    return BuildResult(name=config.name, key=key, content_sha256=digest, path=out_path)
+
+def build(skill_dir: Path, out_dir: Path) -> BuildResult:
+    """Build ``<out_dir>/<name>-<content_sha256[:12]>.pyz``; returns its key and digest."""
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prepared = _prepare(skill_dir)
+    with tempfile.TemporaryDirectory(prefix="wedge-site-") as tmp:
+        site_dir = Path(tmp) / "site"
+        _populate_site(prepared.site, site_dir)
+        return _shiv_skill(prepared, site_dir, out_dir)
+
+
+def build_many(
+    skill_dirs: Sequence[Path], out_dir: Path, *, jobs: int | None = None
+) -> list[Outcome[Path, BuildResult]]:
+    """Build every skill into ``out_dir``, ``jobs`` at a time.
+
+    Skills with the same project, trees, and groups share one site directory,
+    so a repository of many skills over one package downloads and copies its
+    closure once. Returns one outcome per skill in input order; a failure
+    while populating a site fails every skill that shares it.
+    """
+    out_dir = Path(out_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prepared = fan_out(list(skill_dirs), _prepare, jobs=jobs)
+    # Two skills with one name collapse into one entry of the name-keyed
+    # result. Both fail instead; the rest still build.
+    names = [p.value.config.name for p in prepared if p.value is not None]
+    duplicates = {name for name in names if names.count(name) > 1}
+    valid = [p.value for p in prepared if p.value is not None and p.value.config.name not in duplicates]
+    sites = list(dict.fromkeys(p.site for p in valid))
+
+    with tempfile.TemporaryDirectory(prefix="wedge-site-") as tmp:
+        site_dirs = {site: Path(tmp) / f"site-{index}" for index, site in enumerate(sites)}
+        populated = fan_out(sites, lambda site: _populate_site(site, site_dirs[site]), jobs=jobs)
+        site_errors = {o.item: o.error for o in populated if o.error is not None}
+        ready = [p for p in valid if p.site not in site_errors]
+        shivved = fan_out(ready, lambda p: _shiv_skill(p, site_dirs[p.site], out_dir), jobs=jobs)
+        built = {p.skill_dir: o for p, o in zip(ready, shivved)}
+
+    outcomes: list[Outcome[Path, BuildResult]] = []
+    for skill_dir, o in zip(skill_dirs, prepared):
+        path = Path(skill_dir)
+        if o.error is not None:
+            outcomes.append(Outcome(path, error=o.error))
+            continue
+        assert o.value is not None
+        if o.value.config.name in duplicates:
+            outcomes.append(Outcome(path, error=f"duplicate skill name {o.value.config.name!r}"))
+        elif o.value.site in site_errors:
+            outcomes.append(Outcome(path, error=site_errors[o.value.site]))
+        else:
+            result = built[o.value.skill_dir]
+            outcomes.append(Outcome(path, value=result.value, error=result.error))
+    return outcomes
 
 
 def _install_third_party(requirements: str, site_dir: Path) -> None:

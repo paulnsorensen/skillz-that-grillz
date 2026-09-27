@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from wedge._config import ConfigError, WedgeConfig
+from wedge._config import ConfigError, WedgeConfig, defaults_path
 
 FORMAT_VERSION = 8
 TARGET_PYTHON = "3.11"
@@ -27,6 +27,7 @@ class BuildPaths:
     project: Path
     source: Path
     includes: tuple[Path, ...]
+    defaults_file: Path | None = None
 
     @property
     def uv_lock(self) -> Path:
@@ -63,7 +64,7 @@ def resolve_paths(skill_dir: Path, config: WedgeConfig) -> BuildPaths:
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
         raise ConfigError(f"source and include entries share top-level names: {duplicates}")
-    return BuildPaths(skill_dir / "wedge.toml", project, source, includes)
+    return BuildPaths(skill_dir / "wedge.toml", project, source, includes, defaults_path(skill_dir))
 
 
 def _is_excluded(path: Path) -> bool:
@@ -97,11 +98,15 @@ def compute_key(skill_dir: Path, config: WedgeConfig) -> str:
         for root in (paths.source, *paths.includes)
         for file in _iter_files(root)
     }
-    canonical = json.dumps({
+    document: dict[str, object] = {
         "format_version": FORMAT_VERSION,
         "target_python": TARGET_PYTHON,
         "config": _digest(paths.config_file),
         "uv_lock": _digest(paths.uv_lock),
         "inputs": sorted(inputs),
-    }, sort_keys=True, separators=(",", ":"))
+    }
+    # Only when present, so a skill without shared defaults keeps its key.
+    if paths.defaults_file is not None:
+        document["defaults"] = _digest(paths.defaults_file)
+    canonical = json.dumps(document, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

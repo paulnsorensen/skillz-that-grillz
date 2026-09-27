@@ -145,6 +145,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -192,6 +193,27 @@ def _flag(args, name):
 def main():
     args = sys.argv[1:]
     _log(args)
+    if args[:1] == ["api"]:
+        # repos/<owner>/<name>/compare/<base>...<head> --jq .status, answered
+        # from state[repo]["branches"][base]: the shas on that branch, tip last.
+        match = re.fullmatch(r"repos/([^/]+/[^/]+)/compare/([^.]+)[.]{3}(.+)", args[1])
+        if match is None or _flag(args, "--jq") != ".status":
+            print(f"fake gh: unsupported api call {args}", file=sys.stderr)
+            sys.exit(1)
+        api_repo, base, head = match.groups()
+        base = base.removeprefix("refs/heads/")
+
+        def op(state):
+            return list(state.get(api_repo, {}).get("branches", {}).get(base, []))
+
+        history = _with_lock(op)
+        if head not in history:
+            print("ahead")
+        elif head == history[-1]:
+            print("identical")
+        else:
+            print("behind")
+        sys.exit(0)
     if args[:1] != ["release"]:
         print(f"fake gh: unsupported command {args}", file=sys.stderr)
         sys.exit(1)

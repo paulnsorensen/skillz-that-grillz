@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 import tomllib
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
@@ -15,10 +16,14 @@ _REQUIREMENT_RE = re.compile(
 )
 
 
-def export_requirements(project: Path) -> str:
-    """Return the project's frozen, non-dev dependency closure."""
+def export_requirements(project: Path, groups: Sequence[str] = ()) -> str:
+    """Return the project's frozen, non-dev dependency closure plus ``groups``."""
+    group_args = [arg for group in groups for arg in ("--group", group)]
     result = subprocess.run(
-        ["uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--no-emit-local", "--project", str(project)],
+        [
+            "uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--no-emit-local",
+            *group_args, "--project", str(project),
+        ],
         capture_output=True, text=True, check=True,
     )
     return result.stdout
