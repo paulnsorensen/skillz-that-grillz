@@ -126,12 +126,12 @@ def build_many(
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     prepared = fan_out(list(skill_dirs), _prepare, jobs=jobs)
-    # Two skills with one name would write one asset name and collapse into
-    # one entry of the name-keyed result; both fail instead, the rest build.
+    # Two skills with one name collapse into one entry of the name-keyed
+    # result. Both fail instead; the rest still build.
     names = [p.value.config.name for p in prepared if p.value is not None]
     duplicates = {name for name in names if names.count(name) > 1}
     valid = [p.value for p in prepared if p.value is not None and p.value.config.name not in duplicates]
-    sites = sorted({p.site for p in valid}, key=repr)
+    sites = list(dict.fromkeys(p.site for p in valid))
 
     with tempfile.TemporaryDirectory(prefix="wedge-site-") as tmp:
         site_dirs = {site: Path(tmp) / f"site-{index}" for index, site in enumerate(sites)}
@@ -139,19 +139,21 @@ def build_many(
         site_errors = {o.item: o.error for o in populated if o.error is not None}
         ready = [p for p in valid if p.site not in site_errors]
         shivved = fan_out(ready, lambda p: _shiv_skill(p, site_dirs[p.site], out_dir), jobs=jobs)
-        built = {id(p): o for p, o in zip(ready, shivved)}
+        built = {p.skill_dir: o for p, o in zip(ready, shivved)}
 
     outcomes: list[Outcome[Path, BuildResult]] = []
     for skill_dir, o in zip(skill_dirs, prepared):
         path = Path(skill_dir)
-        if o.value is None:
+        if o.error is not None:
             outcomes.append(Outcome(path, error=o.error))
-        elif o.value.config.name in duplicates:
+            continue
+        assert o.value is not None
+        if o.value.config.name in duplicates:
             outcomes.append(Outcome(path, error=f"duplicate skill name {o.value.config.name!r}"))
         elif o.value.site in site_errors:
             outcomes.append(Outcome(path, error=site_errors[o.value.site]))
         else:
-            result = built[id(o.value)]
+            result = built[o.value.skill_dir]
             outcomes.append(Outcome(path, value=result.value, error=result.error))
     return outcomes
 

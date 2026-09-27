@@ -75,8 +75,6 @@ def test_export_is_the_project_closure_without_builder_dependencies(
 def test_export_adds_each_configured_dependency_group(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
-    import wedge._resolve as wedge_resolve
-
     seen: list[list[str]] = []
 
     def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -84,7 +82,6 @@ def test_export_adds_each_configured_dependency_group(monkeypatch: pytest.Monkey
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    assert wedge_resolve.export_requirements is export_requirements
 
     _ = export_requirements(Path("/project"), groups=("runtime", "cli"))
 
@@ -101,6 +98,59 @@ def test_groups_must_be_a_list_of_names(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="'groups' must be a list"):
         _ = load_config(tmp_path)
+
+
+@pytest.mark.ac("AC-W1")
+def test_groups_may_not_include_dev(tmp_path: Path) -> None:
+    _ = (tmp_path / "wedge.toml").write_text(
+        'name = "x"\nentry = "x:main"\nsource = "x.py"\nrepo = "o/r"\ngroups = ["dev"]\n'
+    )
+
+    with pytest.raises(ConfigError, match="move the CLI dependencies"):
+        _ = load_config(tmp_path)
+
+
+@pytest.mark.ac("AC-W9")
+def test_unknown_key_is_a_config_error(tmp_path: Path) -> None:
+    _ = (tmp_path / "wedge.toml").write_text(
+        'name = "x"\nentry = "x:main"\nsource = "x.py"\nrepo = "o/r"\ngroup = ["cli"]\n'
+    )
+
+    with pytest.raises(ConfigError, match="unknown key 'group'"):
+        _ = load_config(tmp_path)
+
+
+@pytest.mark.ac("AC-W9")
+def test_a_bad_shared_default_names_the_shared_file(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    skill = root / "hello"
+    skill.mkdir(parents=True)
+    _ = (root / "wedge.toml").write_text('groups = "runtime"\n')
+    _ = (skill / "wedge.toml").write_text(
+        'name = "hello"\nentry = "hello:main"\nsource = "hello.py"\nrepo = "o/r"\n'
+    )
+
+    with pytest.raises(ConfigError) as raised:
+        _ = load_config(skill)
+
+    assert str(root / "wedge.toml") in str(raised.value)
+    assert str(skill / "wedge.toml") not in str(raised.value)
+
+
+@pytest.mark.ac("AC-W9")
+def test_a_bad_own_value_names_the_skill_file(tmp_path: Path) -> None:
+    root = tmp_path / "skills"
+    skill = root / "hello"
+    skill.mkdir(parents=True)
+    _ = (root / "wedge.toml").write_text('repo = "o/r"\n')
+    _ = (skill / "wedge.toml").write_text(
+        'name = "hello"\nentry = "hello:main"\nsource = "hello.py"\ngroups = "oops"\n'
+    )
+
+    with pytest.raises(ConfigError) as raised:
+        _ = load_config(skill)
+
+    assert str(skill / "wedge.toml") in str(raised.value)
 
 
 @pytest.mark.ac("AC-W1")

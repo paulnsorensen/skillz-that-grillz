@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from typing import cast
 from pathlib import Path
 
-from wedge._build import BuildResult, build, build_many
-from wedge._config import ConfigError, load_config
+from wedge._build import BuildResult, build_many
+from wedge._config import ConfigError, WedgeConfig, load_config
 from wedge._fanout import Outcome
 from wedge._key import FORMAT_VERSION, compute_key
 from wedge._launcher import LAUNCHER_SOURCE
@@ -92,19 +92,12 @@ def _write_lock(skill_dir: Path, result: BuildResult) -> LockData:
     return data
 
 
-def lock(skill_dir: Path) -> LockData:
-    """Build once, then write the lock and the launcher beside it."""
-    skill_dir = Path(skill_dir)
-    with tempfile.TemporaryDirectory(prefix="wedge-lock-") as tmp:
-        return _write_lock(skill_dir, build(skill_dir, Path(tmp)))
-
-
 def lock_many(skill_dirs: Sequence[Path], *, jobs: int | None = None) -> list[Outcome[Path, LockData]]:
     """Build every skill (sharing site directories), then write each lock and launcher."""
     outcomes: list[Outcome[Path, LockData]] = []
     with tempfile.TemporaryDirectory(prefix="wedge-lock-") as tmp:
         for built in build_many(skill_dirs, Path(tmp), jobs=jobs):
-            if built.value is None:
+            if built.error is not None or built.value is None:
                 outcomes.append(Outcome(built.item, error=built.error))
                 continue
             try:
@@ -143,17 +136,24 @@ def load_lock(skill_dir: Path, name: str) -> LockData:
 def check(skill_dirs: list[Path]) -> list[CheckIssue]:
     """Verify every skill's lock and launcher without building."""
     issues: list[CheckIssue] = []
-    for skill_dir in skill_dirs:
-        skill_dir = Path(skill_dir)
+    configs: dict[Path, WedgeConfig] = {}
+    for raw_skill_dir in skill_dirs:
+        skill_dir = Path(raw_skill_dir)
         try:
-            config = load_config(skill_dir)
+            configs[skill_dir] = load_config(skill_dir)
         except ConfigError as exc:
             issues.append(CheckIssue(skill_dir=str(skill_dir), reason=str(exc)))
-            continue
-        # The launcher downloads the release asset; a committed archive beside
-        # it is a stale copy that the skill would ship and never run.
+    names = [config.name for config in configs.values()]
+    duplicate_names = {name for name in names if names.count(name) > 1}
+    for skill_dir, config in configs.items():
+        if config.name in duplicate_names:
+            issues.append(
+                CheckIssue(skill_dir=str(skill_dir), reason=f"duplicate skill name {config.name!r}")
+            )
+        # The launcher downloads the release asset; an archive beside it is
+        # a stale copy that the skill would ship and never run.
         for archive in sorted((skill_dir / "scripts").glob("*.pyz")):
-            issues.append(CheckIssue(skill_dir=str(skill_dir), reason=f"committed archive {archive}"))
+            issues.append(CheckIssue(skill_dir=str(skill_dir), reason=f"archive {archive} beside the launcher"))
         lock_file = lock_path(skill_dir, config.name)
         if not lock_file.is_file():
             issues.append(

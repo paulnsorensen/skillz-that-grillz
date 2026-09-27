@@ -8,6 +8,7 @@ error rather than a silent no-op.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -20,7 +21,7 @@ import wedge._build as wedge_build
 from wedge._build import build_many
 from wedge._cli import build_cmd, check_cmd, lock_cmd
 from wedge._fanout import fan_out
-from wedge._lock import check, load_lock
+from wedge._lock import check, load_lock, lock_many
 
 SKILLS = Path("skills")
 
@@ -119,6 +120,23 @@ def test_fan_out_runs_skills_concurrently_and_keeps_input_order(tmp_path: Path) 
 
 
 @pytest.mark.ac("AC-W9")
+def test_fan_out_with_one_job_never_overlaps(tmp_path: Path) -> None:
+    running = 0
+    overlapped = False
+
+    def operation(_skill_dir: Path) -> None:
+        nonlocal running, overlapped
+        running += 1
+        overlapped = overlapped or running > 1
+        running -= 1
+
+    outcomes = fan_out([tmp_path / "a", tmp_path / "b", tmp_path / "c"], operation, jobs=1)
+
+    assert not overlapped
+    assert all(o.error is None for o in outcomes)
+
+
+@pytest.mark.ac("AC-W9")
 def test_skills_over_one_project_share_one_site_directory(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -197,5 +215,40 @@ def test_check_refuses_a_committed_archive(
 
     issues = check([skill])
 
-    assert [issue.reason for issue in issues] == [f"committed archive {stale}"]
+    assert [issue.reason for issue in issues] == [f"archive {stale} beside the launcher"]
     assert json.loads((skill / "scripts" / "hello.wedge.json").read_text())["name"] == "hello"
+
+
+@pytest.mark.ac("AC-W9")
+def test_check_reports_every_duplicate_skill_name(
+    tmp_path: Path, copy_consumer: Callable[[Path], Path]
+) -> None:
+    consumer = copy_consumer(tmp_path / "consumer")
+    hello = consumer / SKILLS / "hello"
+    twin = _second_skill(consumer, "hello-twin")
+    _ = (twin / "wedge.toml").write_text(
+        (twin / "wedge.toml").read_text().replace('name = "hello-twin"', 'name = "hello"')
+    )
+
+    issues = check([hello, twin])
+
+    assert any(i.skill_dir == str(hello) and i.reason == "duplicate skill name 'hello'" for i in issues)
+    assert any(i.skill_dir == str(twin) and i.reason == "duplicate skill name 'hello'" for i in issues)
+
+
+@pytest.mark.ac("AC-W9")
+def test_lock_many_isolates_a_lock_write_failure(
+    tmp_path: Path, copy_consumer: Callable[[Path], Path]
+) -> None:
+    consumer = copy_consumer(tmp_path / "consumer")
+    second = _second_skill(consumer)
+    broken = consumer / SKILLS / "hello"
+    scripts_dir = broken / "scripts"
+    shutil.rmtree(scripts_dir)
+    _ = scripts_dir.write_text("not a directory")
+
+    outcomes = {o.item: o for o in lock_many([broken, second])}
+
+    error = outcomes[broken].error
+    assert error is not None and "hello" in error
+    assert outcomes[second].value is not None

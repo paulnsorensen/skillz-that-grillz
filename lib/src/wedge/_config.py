@@ -20,6 +20,7 @@ from typing import cast
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_ALLOWED_KEYS = {"name", "entry", "source", "project", "repo", "include", "groups"}
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ class ConfigError(Exception):
 
 def defaults_path(skill_dir: Path) -> Path | None:
     """``<skill_dir>/../wedge.toml``: defaults shared by every skill under that root."""
-    candidate = Path(skill_dir).parent / "wedge.toml"
+    candidate = Path(skill_dir).resolve().parent / "wedge.toml"
     return candidate if candidate.is_file() else None
 
 
@@ -67,21 +68,31 @@ def load_config(skill_dir: Path) -> WedgeConfig:
     in both files are relative to the skill directory.
     """
     path = Path(skill_dir) / "wedge.toml"
-    values = _read_table(path)
+    own = _read_table(path)
+    values = dict(own)
+    sources: dict[str, Path] = dict.fromkeys(own, path)
     shared = defaults_path(skill_dir)
     if shared is not None:
         defaults = _read_table(shared)
         owned = sorted({"name", "entry"} & set(defaults))
         if owned:
             raise ConfigError(f"{shared}: shared defaults must not set {', '.join(owned)}")
-        values = {**defaults, **values}
+        for key in defaults:
+            if key not in own:
+                sources[key] = shared
+        values = {**defaults, **own}
+
+    unknown = sorted(set(values) - _ALLOWED_KEYS)
+    if unknown:
+        bad_key = unknown[0]
+        raise ConfigError(f"{sources.get(bad_key, path)}: unknown key {bad_key!r}")
 
     def text_key(key: str, default: str | None = None) -> str:
         value = values.get(key, default)
         if value is None:
             raise ConfigError(f"{path}: missing required key {key!r}")
         if not isinstance(value, str) or not value.strip():
-            raise ConfigError(f"{path}: {key!r} must be a non-empty string")
+            raise ConfigError(f"{sources.get(key, path)}: {key!r} must be a non-empty string")
         return value
 
     name = text_key("name")
@@ -96,11 +107,16 @@ def load_config(skill_dir: Path) -> WedgeConfig:
     def list_key(key: str) -> tuple[str, ...]:
         raw = values.get(key, [])
         if not isinstance(raw, list):
-            raise ConfigError(f"{path}: {key!r} must be a list of non-empty strings")
+            raise ConfigError(f"{sources.get(key, path)}: {key!r} must be a list of non-empty strings")
         items = cast(list[object], raw)
         if not all(isinstance(item, str) and item.strip() for item in items):
-            raise ConfigError(f"{path}: {key!r} must be a list of non-empty strings")
+            raise ConfigError(f"{sources.get(key, path)}: {key!r} must be a list of non-empty strings")
         return tuple(cast(list[str], items))
+
+    groups = list_key("groups")
+    if "dev" in groups:
+        source = sources.get("groups", path)
+        raise ConfigError(f"{source}: 'groups' must not include 'dev'; move the CLI dependencies to another group")
 
     return WedgeConfig(
         name=name,
@@ -109,5 +125,5 @@ def load_config(skill_dir: Path) -> WedgeConfig:
         repo=repo,
         project=project,
         include=list_key("include"),
-        groups=list_key("groups"),
+        groups=groups,
     )

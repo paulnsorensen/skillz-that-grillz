@@ -9,7 +9,7 @@ import pytest
 
 from wedge._config import ConfigError, load_config
 from wedge._key import compute_key
-from wedge._lock import check, lock
+from wedge._lock import check, lock_many
 
 SKILLS = Path("skills")
 
@@ -70,9 +70,35 @@ def test_shared_defaults_are_part_of_the_key(
     # The committed lock predates the defaults file, so the key moved.
     assert any("stale" in issue.reason for issue in check([skill]))
 
-    locked = lock(skill)
+    outcomes = lock_many([skill])
+    assert outcomes[0].error is None and outcomes[0].value is not None
+    locked = outcomes[0].value
 
     assert check([skill]) == []
     shared = consumer / SKILLS / "wedge.toml"
     _ = shared.write_text(shared.read_text() + "# a comment changes the digest\n")
     assert compute_key(skill, load_config(skill)) != locked.key
+
+
+@pytest.mark.ac("AC-W10")
+def test_check_dot_reads_the_parent_directorys_defaults(
+    tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relative skill_dir like ``.`` must not read its own file as its defaults."""
+    consumer = copy_consumer(tmp_path / "consumer")
+    skill = _split_defaults(consumer)
+    monkeypatch.chdir(skill)
+
+    assert load_config(Path(".")) == load_config(skill)
+
+
+@pytest.mark.ac("AC-W10")
+def test_a_symlinked_skill_reads_the_real_parents_defaults(
+    tmp_path: Path, copy_consumer: Callable[[Path], Path]
+) -> None:
+    consumer = copy_consumer(tmp_path / "consumer")
+    skill = _split_defaults(consumer)
+    alias = tmp_path / "alias"
+    alias.symlink_to(skill, target_is_directory=True)
+
+    assert load_config(alias) == load_config(skill)

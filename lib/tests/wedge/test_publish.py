@@ -13,6 +13,7 @@ import pytest
 
 import wedge._publish as wedge_publish
 from wedge._build import build
+from wedge._cli import publish_cmd
 from wedge._digest import content_sha256
 from wedge._lock import load_lock
 from wedge._publish import publish
@@ -59,6 +60,43 @@ def _seed_branch(fake_gh: FakeGh, branch: str, history: list[str]) -> None:
     _ = state_path.write_text(json.dumps(state))
 
 
+def _git(*args: str, cwd: Path) -> str:
+    result = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True)
+    return result.stdout.strip()
+
+
+def _commit(skill_dir: Path, message: str) -> str:
+    _ = _git("add", "-A", cwd=skill_dir)
+    _ = subprocess.run(
+        [
+            "git", "-c", "user.name=t", "-c", "user.email=t@t",
+            "-C", str(skill_dir), "commit", "-q", "-m", message,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return _git("rev-parse", "HEAD", cwd=skill_dir)
+
+
+def _init_git_repo(skill_dir: Path) -> str:
+    """Make ``skill_dir`` a real git repo at one commit; returns its HEAD sha."""
+    _ = subprocess.run(["git", "init", "-q", "-b", "main", str(skill_dir)], check=True, capture_output=True)
+    return _commit(skill_dir, "seed")
+
+
+def _init_git_repo_with_second_commit(skill_dir: Path) -> tuple[str, str]:
+    """Two commits on ``main``; ``skill_dir``'s checkout is left detached at the first.
+
+    Returns ``(first_sha, second_sha)``."""
+    first = _init_git_repo(skill_dir)
+    marker = skill_dir / ".second-commit"
+    _ = marker.write_text("second\n")
+    second = _commit(skill_dir, "second")
+    _ = _git("checkout", "-q", first, cwd=skill_dir)
+    return first, second
+
+
 @pytest.mark.ac("AC-W6")
 def test_publish_refuses_a_target_the_branch_does_not_contain(
     tmp_path: Path,
@@ -66,10 +104,11 @@ def test_publish_refuses_a_target_the_branch_does_not_contain(
     fake_gh: FakeGh,
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
+    sha = _init_git_repo(skill)
     _seed_branch(fake_gh, "main", ["c0ffee", "deadbeef"])
 
-    with pytest.raises(ValueError, match="feedface is not on main"):
-        _ = publish([skill], repo=fake_gh["repo"], target="feedface", branch="main")
+    with pytest.raises(ValueError, match="is not on main"):
+        _ = publish([skill], repo=fake_gh["repo"], target=sha, branch="main")
 
     calls = (fake_gh["store"] / "calls.log").read_text().splitlines()
     assert all(json.loads(call)[0] == "api" for call in calls), "refused before any release call"
@@ -77,19 +116,73 @@ def test_publish_refuses_a_target_the_branch_does_not_contain(
 
 
 @pytest.mark.ac("AC-W6")
-@pytest.mark.parametrize("target", ["deadbeef", "c0ffee"])
+@pytest.mark.parametrize("tip_last", [True, False])
 def test_publish_accepts_the_branch_tip_or_an_ancestor(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
     fake_gh: FakeGh,
-    target: str,
+    tip_last: bool,
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
-    _seed_branch(fake_gh, "main", ["c0ffee", "deadbeef"])
+    sha = _init_git_repo(skill)
+    history = ["c0ffee", sha] if tip_last else [sha, "deadbeef"]
+    _seed_branch(fake_gh, "main", history)
 
-    result = publish([skill], repo=fake_gh["repo"], target=target, branch="main")
+    result = publish([skill], repo=fake_gh["repo"], target=sha, branch="main")
 
     assert result[FIXTURE_NAME]["status"] == "published"
+
+
+@pytest.mark.ac("AC-W6")
+def test_publish_accepts_a_shallow_checkout_of_the_target(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    """``_resolve_commit`` needs only the target object, not its ancestry, so
+    a shallow clone of the target commit must still pass."""
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    sha = _init_git_repo(skill)
+    _ = subprocess.run(["git", "-C", str(skill), "repack", "-adq"], check=True, capture_output=True)
+    _seed_branch(fake_gh, "main", ["c0ffee", sha])
+
+    result = publish([skill], repo=fake_gh["repo"], target=sha, branch="main")
+
+    assert result[FIXTURE_NAME]["status"] == "published"
+
+
+@pytest.mark.ac("AC-W6")
+@pytest.mark.parametrize("use_branch_name", [False, True])
+def test_publish_refuses_a_target_that_is_not_the_checkout_head(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+    use_branch_name: bool,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    _first, second = _init_git_repo_with_second_commit(skill)
+    target = "main" if use_branch_name else second
+
+    with pytest.raises(ValueError, match="resolves to"):
+        _ = publish([skill], repo=fake_gh["repo"], target=target, branch="main")
+
+    assert not (fake_gh["store"] / "calls.log").exists(), "refused before any gh call"
+
+
+@pytest.mark.ac("AC-W6")
+def test_publish_cmd_refuses_a_target_the_branch_does_not_contain(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    sha = _init_git_repo(skill)
+    _seed_branch(fake_gh, "main", ["c0ffee", "deadbeef"])
+
+    with pytest.raises(ValueError, match="is not on main"):
+        _ = publish_cmd([str(skill)], repo=fake_gh["repo"], target=sha, branch="main")
+
+    assert _upload_count(fake_gh["store"]) == 0
 
 
 @pytest.mark.ac("AC-W6")
@@ -471,3 +564,37 @@ def test_published_asset_is_not_trusted_when_this_host_builds_other_content(
     assert result[FIXTURE_NAME]["status"] == "failed"
     assert "built content digest" in result[FIXTURE_NAME]["reason"]
     assert _upload_count(fake_gh["store"]) == 1
+
+
+def _rename_skill(skill_dir: Path, new_name: str) -> None:
+    """Rename a locked ``cheese-cave`` copy's config and lock to ``new_name``."""
+    config = skill_dir / "wedge.toml"
+    _ = config.write_text(config.read_text().replace(f'name = "{FIXTURE_NAME}"', f'name = "{new_name}"'))
+    lock_path = skill_dir / "scripts" / f"{FIXTURE_NAME}.wedge.json"
+    lock_data = cast(dict[str, object], json.loads(lock_path.read_text()))
+    lock_data["name"] = new_name
+    digest12 = cast(str, lock_data["content_sha256"])[:12]
+    lock_data["asset"] = f"{new_name}-{digest12}.pyz"
+    _ = lock_path.write_text(json.dumps(lock_data))
+    _ = lock_path.rename(skill_dir / "scripts" / f"{new_name}.wedge.json")
+
+
+@pytest.mark.ac("AC-W6")
+def test_two_skills_one_stale_the_other_still_publishes(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    """A reversed pairing of build outcomes and locks must not let the stale
+    skill's failure silently swap with the fresh skill's success."""
+    stale = copy_locked_fixture(tmp_path / "stale")
+    fresh = copy_locked_fixture(tmp_path / "fresh")
+    _rename_skill(stale, "cheese-cave-stale")
+    source = stale.parent.parent.parent / "fromargs" / "examples" / "cheese_cave.py"
+    _ = source.write_text(source.read_text() + "\n# touched\n")
+
+    result = publish([stale, fresh], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result["cheese-cave-stale"]["status"] == "failed"
+    assert "stale" in result["cheese-cave-stale"]["reason"]
+    assert result[FIXTURE_NAME]["status"] == "published"

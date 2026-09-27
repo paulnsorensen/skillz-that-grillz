@@ -19,9 +19,9 @@ The action has two commands:
 
 The action runs `wedge` from its own checkout (the `lib/` project beside this
 directory). When you pin the action to a commit SHA, you also pin `wedge`. A
-repository that pins `wedge` in a uv project of its own (step 3 below) can
-run the same commands with `uv run --locked --project tools/wedge wedge …`
-in its workflows instead, so one pin serves local runs and CI.
+repository can pin `wedge` in a uv project of its own instead (step 3
+below). It then runs the same commands with `uv run --locked --project
+tools/wedge wedge …` in its workflows. One pin serves both local runs and CI.
 
 ## Set up a skill
 
@@ -75,12 +75,14 @@ in its workflows instead, so one pin serves local runs and CI.
 
    Every command finds `*/wedge.toml` under `--root`; `lock`, `build`, and
    `publish` run the skills in parallel and share one installed site
-   directory between skills that share a project. Use the same `<sha>` that
+   directory between skills that share a project, source, includes, and
+   groups. Use the same `<sha>` that
    your workflows pin. A different `wedge` version can compute a different
    key. A project without uv can run the same command through
    `uvx --from 'skillz-that-grillz @ git+…@<sha>#subdirectory=lib' wedge`.
 
-The [consumer example](../../lib/examples/consumer/) shows this layout.
+The [consumer example](../../lib/examples/consumer/) shows this skill
+directory layout.
 
 ## Workflows
 
@@ -103,8 +105,9 @@ jobs:
 ```
 
 Publish after a merge to the default branch. Give `contents: write` only to
-this job. `branch: main` makes `publish` refuse a commit that `main` does not
-contain, so a manual dispatch from another ref cannot publish:
+this job. `branch: main` makes `publish` refuse unless `target` resolves to
+the checked-out HEAD of every skill directory. `publish` then confirms that
+commit is on `main`, so a manual dispatch from another ref cannot publish:
 
 ```yaml
 name: wedge-publish
@@ -141,7 +144,7 @@ recommends.
 | `roots` | `skills` | Space-separated roots. The action finds `*/wedge.toml` under each root. |
 | `repo` | `${{ github.repository }}` | Repository that hosts the `wedge` release. `publish` refuses a lock that names another repository. |
 | `target` | `${{ github.sha }}` | Commit for the `wedge` release if `publish` creates it. |
-| `branch` | none | With `publish`, refuse a `target` that this branch does not contain. Uses the compare API, so the checkout needs no history. |
+| `branch` | none | With `publish`, refuse unless `target` resolves to every skill's checked-out HEAD. Then compare that commit against this branch through the compare API. |
 | `token` | `${{ github.token }}` | Token for `gh`. `publish` needs `contents: write`. |
 
 ## Outputs

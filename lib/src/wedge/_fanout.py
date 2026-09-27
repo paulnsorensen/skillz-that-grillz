@@ -1,7 +1,7 @@
 """Run one operation across many items at once.
 
-Every skill operation (build, lock, publish) spends its time in ``uv``, shiv,
-and ``gh`` subprocesses, so threads give the parallelism and one item's
+Every skill operation (build, lock, publish) spends its time in ``uv``,
+shiv, and ``gh`` subprocesses. Threads give the parallelism, and one item's
 failure never stops the others. Callers get one outcome per item, in the
 order the items were given, and decide how to report the failures.
 """
@@ -22,7 +22,7 @@ I = TypeVar("I")
 T = TypeVar("T")
 
 # Errors an operation raises on purpose; their message stands alone.
-_EXPECTED_ERRORS = (ConfigError, GuardError, ValueError, OSError)
+_EXPECTED_ERRORS = (ConfigError, GuardError, ValueError, OSError, RuntimeError)
 
 
 @dataclass(frozen=True)
@@ -69,7 +69,7 @@ def fan_out(
     def run(item: I) -> Outcome[I, T]:
         try:
             return Outcome(item, value=operation(item))
-        except Exception as exc:  # noqa: BLE001 - one item's failure is data, not a crash
+        except Exception as exc:  # ADR-009: isolate one item's failure; it is data, not a crash.
             return Outcome(item, error=describe_error(exc))
 
     with ThreadPoolExecutor(max_workers=workers) as pool:

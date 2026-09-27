@@ -12,8 +12,8 @@ uncompressed contents before execution.
 Every command takes skill directories as arguments or finds `*/wedge.toml`
 under `--root` (default `skills`). A `wedge.toml` in the root itself holds
 defaults for every skill beside it. `build`, `lock`, and `publish` run the
-skills in parallel (`--jobs`), and skills that share a project, source, and
-groups share one installed site directory, so a repository of many skills
+skills in parallel (`--jobs`). Skills that share a project, source, includes,
+and groups share one installed site directory. A repository of many skills
 over one package downloads its closure once per run.
 
 ```sh
@@ -23,8 +23,9 @@ wedge build --root skills --out dist     # one <name>-<digest12>.pyz per skill
 wedge publish --root skills --repo owner/name --target <sha> --branch main
 ```
 
-`--branch` refuses to publish a `--target` that the branch does not contain,
-so a publish job needs neither full history nor a guard step of its own.
+`--branch` refuses to publish unless `--target` resolves to the checked-out
+HEAD of every skill directory. It then compares that commit against the
+branch through the compare API, so a shallow checkout still passes.
 
 For local development, run `uv run --project lib wedge --help`. Building
 requires `uv`; publishing also requires an authenticated `gh` CLI.

@@ -201,6 +201,7 @@ def main():
             print(f"fake gh: unsupported api call {args}", file=sys.stderr)
             sys.exit(1)
         api_repo, base, head = match.groups()
+        base = base.removeprefix("refs/heads/")
 
         def op(state):
             return list(state.get(api_repo, {}).get("branches", {}).get(base, []))

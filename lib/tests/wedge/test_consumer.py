@@ -43,6 +43,9 @@ def test_consumer_checks_relocks_and_runs_outside_this_repo(
     assert relocked["key"] == committed["key"]
     assert relocked["content_sha256"] == committed["content_sha256"]
 
+    positional_locked = cast(dict[str, object], _wedge(consumer, "lock", str(SKILL))["hello"])
+    assert positional_locked["key"] == committed["key"]
+
     built = cast(dict[str, object], _wedge(consumer, "build", "--root", "skills", "--out", "dist")["hello"])
     assert built["path"] == str(consumer / "dist" / str(committed["asset"]))
     run = subprocess.run(

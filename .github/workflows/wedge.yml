@@ -30,6 +30,9 @@ jobs:
       # `branch: main` refuses a commit that main does not contain, so a
       # workflow_dispatch from another ref cannot publish.
       - name: Publish wedge assets
+        # Skip when no skill under `roots: skills` is wedged yet, so this
+        # workflow stays green on a merge that only touches lib/**.
+        if: hashFiles('skills/*/wedge.toml') != ''
         uses: ./actions/wedge
         with:
           command: publish

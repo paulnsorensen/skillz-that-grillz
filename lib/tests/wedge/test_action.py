@@ -31,7 +31,7 @@ def _write_command(directory: Path, name: str, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
-def _run_wedge(tmp_path: Path, uv_body: str) -> subprocess.CompletedProcess[str]:
+def _run_wedge(tmp_path: Path, uv_body: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     commands = tmp_path / "commands"
     commands.mkdir()
     _write_command(commands, "uv", uv_body)
@@ -45,7 +45,11 @@ def _run_wedge(tmp_path: Path, uv_body: str) -> subprocess.CompletedProcess[str]
         "GITHUB_OUTPUT": str(output),
         "WEDGE_COMMAND": "check",
         "WEDGE_ROOTS": "workspace",
+        "WEDGE_REPO": "",
+        "WEDGE_TARGET": "",
+        "WEDGE_BRANCH": "",
         "RUNNER_TEMP": str(tmp_path / "runner-temp"),
+        **(extra_env or {}),
     }
     (tmp_path / "runner-temp").mkdir()
     return subprocess.run(
@@ -115,3 +119,27 @@ def test_action_installs_gh_in_runner_temp_without_sudo(tmp_path: Path) -> None:
     assert os.access(installed, os.X_OK)
     assert github_path.read_text().strip() == str(runner_temp / "bin")
     assert "sudo" not in result.stderr
+
+
+@pytest.mark.ac("AC-W7")
+@pytest.mark.parametrize(("branch", "expect_branch_flag"), [("main", True), ("", False)])
+def test_action_wires_branch_input_to_wedge_publish(
+    tmp_path: Path, branch: str, expect_branch_flag: bool
+) -> None:
+    argv_file = tmp_path / "argv"
+    result = _run_wedge(
+        tmp_path,
+        f'printf \'%s\\n\' "$@" >"{argv_file}"; printf \'{{"status":"ok"}}\\n\'',
+        {
+            "WEDGE_COMMAND": "publish",
+            "WEDGE_BRANCH": branch,
+            "WEDGE_REPO": "owner/name",
+            "WEDGE_TARGET": "deadbeef",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_file.read_text().splitlines()
+    assert ("--branch" in argv) == expect_branch_flag
+    if expect_branch_flag:
+        assert argv[argv.index("--branch") + 1] == "main"
