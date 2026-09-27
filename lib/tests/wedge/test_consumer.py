@@ -41,7 +41,7 @@ def test_consumer_checks_relocks_and_runs_outside_this_repo(
 
     relocked = _wedge(consumer, "lock", str(SKILL))
     assert relocked["key"] == committed["key"]
-    assert relocked["sha256"] == committed["sha256"]
+    assert relocked["content_sha256"] == committed["content_sha256"]
 
     built = _wedge(consumer, "build", str(SKILL), "--out", "dist")
     run = subprocess.run(

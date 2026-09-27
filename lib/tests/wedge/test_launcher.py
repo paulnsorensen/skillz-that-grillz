@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Callable, ParamSpec, TypeVar, cast
+from zipfile import ZIP_BZIP2, ZipFile
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -25,6 +26,8 @@ except ImportError:
 import pytest
 
 from wedge._build import build
+from wedge._digest import content_sha256
+from wedge._launcher import LAUNCHER_SOURCE
 
 FIXTURE_NAME = "cheese-cave"
 
@@ -122,15 +125,48 @@ def test_launcher_runs_when_invoked_directly(
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)
+
+
 @pytest.mark.ac("AC-W4")
+def test_asset_from_another_zlib_build_runs(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    built_pyz: Path,
+    rewrite_pyz: Callable[..., Path],
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    other = rewrite_pyz(built_pyz, tmp_path / "other.pyz", level=1)
+    assert other.read_bytes() != built_pyz.read_bytes()
+    env = {**os.environ, "WEDGE_PYZ": str(other)}
+
+    result = _run_launcher(skill, env, "--json", "wheels", "list")
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)
+
+
+@pytest.mark.ac("AC-W4")
+@pytest.mark.parametrize("tamper", ["replace", "extra", "duplicate", "not-a-zip"])
 def test_tampered_wedge_pyz_is_refused(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
     built_pyz: Path,
+    rewrite_pyz: Callable[..., Path],
+    tamper: str,
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
     tampered = tmp_path / "tampered.pyz"
-    _ = tampered.write_bytes(built_pyz.read_bytes() + b"\x00")
+    with ZipFile(built_pyz) as archive:
+        first = archive.infolist()[-1].filename
+    if tamper == "replace":
+        _ = rewrite_pyz(built_pyz, tampered, replace={first: b"raise SystemExit(0)\n"})
+    elif tamper == "extra":
+        _ = rewrite_pyz(built_pyz, tampered, extra={"sitecustomize.py": b"print('pwned')\n"})
+    elif tamper == "duplicate":
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            _ = rewrite_pyz(built_pyz, tampered, extra={first: b"raise SystemExit(0)\n"})
+    else:
+        _ = tampered.write_bytes(b"#!/usr/bin/env python3\nnot a zip\n")
     env = {**os.environ, "WEDGE_PYZ": str(tampered)}
 
     result = _run_launcher(skill, env, "wheels", "list")
@@ -246,3 +282,45 @@ def test_corrupt_download_is_rejected_and_not_cached(
     assert result.returncode == 3
     assert "sha256" in result.stderr
     assert not (cache_dir / lock["asset"]).exists()
+
+
+def _launcher_digest(path: Path) -> str | None:
+    namespace: dict[str, object] = {"__name__": "wedge_launcher_under_test"}
+    exec(compile(LAUNCHER_SOURCE, "launcher", "exec"), namespace)
+    digest = cast(Callable[[Path], "str | None"], namespace["_content_sha256"])
+    return digest(path)
+
+
+@pytest.mark.ac("AC-W4")
+def test_archive_with_a_method_zipimport_cannot_read_is_refused(
+    tmp_path: Path, built_pyz: Path, copy_locked_fixture: Callable[[Path], Path]
+) -> None:
+    """A bzip2 archive holds the same members, so a digest over contents alone
+    would accept it, but Python cannot import from it. Both digests refuse it."""
+    bzip2 = tmp_path / "bzip2.pyz"
+    with ZipFile(built_pyz) as archive, ZipFile(bzip2, "w") as target:
+        for info in archive.infolist():
+            data = archive.read(info)
+            info.compress_type = ZIP_BZIP2
+            target.writestr(info, data)
+
+    assert _launcher_digest(bzip2) is None
+    with pytest.raises(ValueError, match="zipimport cannot read"):
+        _ = content_sha256(bzip2)
+
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    result = _run_launcher(skill, {**os.environ, "WEDGE_PYZ": str(bzip2)}, "wheels", "list")
+    assert result.returncode == 3
+    assert "does not match the lock" in json.loads(result.stderr)["error"]
+
+
+@pytest.mark.ac("AC-W4")
+def test_launcher_digest_matches_the_builder(
+    tmp_path: Path, built_pyz: Path, rewrite_pyz: Callable[..., Path]
+) -> None:
+    other = rewrite_pyz(built_pyz, tmp_path / "other.pyz", level=9)
+    changed = rewrite_pyz(built_pyz, tmp_path / "changed.pyz", extra={"x.py": b"x = 1\n"})
+
+    assert _launcher_digest(built_pyz) == content_sha256(built_pyz)
+    assert _launcher_digest(other) == content_sha256(other) == content_sha256(built_pyz)
+    assert _launcher_digest(changed) == content_sha256(changed) != content_sha256(built_pyz)

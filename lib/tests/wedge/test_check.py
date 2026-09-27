@@ -101,6 +101,7 @@ def test_malformed_config_fields_are_rejected(
         ("format", 5),
         ("repo", "other-owner/other-repo"),
         ("key", "not-a-digest"),
+        ("content_sha256", "not-a-digest"),
     ],
 )
 def test_invalid_lock_metadata_is_rejected(

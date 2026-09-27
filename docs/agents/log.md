@@ -44,3 +44,7 @@
 
 - 2026-09-26 · pr93-integration · updated · decisions/wedge-skill-packaging.md · Integrated the portable project model with format 7 and the #89 validation and reproducibility safeguards
 - 2026-09-26 · pr93-hardening · updated · decisions/wedge-skill-packaging.md · Recorded dependency overwrite protection, non-sudo gh installation, exported runner PATH, and failed-result preservation
+
+- 2026-09-26 · wedge-content-digest · merged · decisions/wedge-skill-packaging.md · ADR-008: pin a digest over uncompressed contents, deflate assets, name them by that digest; bump the asset format to 8
+
+- 2026-09-27 · wedge-mac-path · updated · decisions/wedge-skill-packaging.md · ADR-003 and ADR-008: build with `--no-cache`; publish rebuilds before it trusts an existing asset; record the hardlinked-cache drift evidence

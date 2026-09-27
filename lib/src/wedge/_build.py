@@ -3,13 +3,15 @@
 Resolve and guard the project's third-party closure, install it plus the
 configured local ``include`` trees and the skill's CLI source into a fresh
 site directory, strip volatile install metadata, and shiv the result with a
-fixed shebang and ``SOURCE_DATE_EPOCH`` so the same key always gives the
-same bytes.
+fixed shebang and ``SOURCE_DATE_EPOCH``. The same key always gives the same
+uncompressed contents, so the content digest (``wedge._digest``) matches on
+every host even when two zlib builds compress those contents differently.
+Third-party wheels download fresh on every build (``--no-cache``), so a
+modified uv cache cannot change the contents. The digest names the asset.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 from io import BytesIO
 import shutil
@@ -18,9 +20,10 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 from wedge._config import ConfigError, load_config
+from wedge._digest import content_sha256
 from wedge._guard import guard_closure
 from wedge._key import TARGET_PYTHON, compute_key, resolve_paths
 from wedge._resolve import export_requirements, resolve_closure
@@ -34,16 +37,16 @@ _SOURCE_DATE_EPOCH = "315532800"
 
 @dataclass(frozen=True)
 class BuildResult:
-    """The built ``.pyz``: its key, sha256, and where it landed on disk."""
+    """The built ``.pyz``: its key, content digest, and where it landed on disk."""
 
     name: str
     key: str
-    sha256: str
+    content_sha256: str
     path: Path
 
 
 def build(skill_dir: Path, out_dir: Path) -> BuildResult:
-    """Build ``<out_dir>/<name>-<key[:12]>.pyz``; returns its key and sha256."""
+    """Build ``<out_dir>/<name>-<content_sha256[:12]>.pyz``; returns its key and digest."""
     skill_dir = Path(skill_dir).resolve()
     out_dir = Path(out_dir).resolve()
     config = load_config(skill_dir)
@@ -54,7 +57,6 @@ def build(skill_dir: Path, out_dir: Path) -> BuildResult:
     guard_closure(closure)
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{config.name}-{key[:12]}.pyz"
 
     with tempfile.TemporaryDirectory(prefix="wedge-build-") as tmp:
         site_dir = Path(tmp) / "site"
@@ -64,13 +66,22 @@ def build(skill_dir: Path, out_dir: Path) -> BuildResult:
         for local in (*paths.includes, paths.source):
             _copy_source(local, site_dir)
         _strip_volatile(site_dir)
-        _shiv(site_dir, config.entry, out_path)
-        _canonicalize_archive(out_path)
+        built = Path(tmp) / f"{config.name}.pyz"
+        _shiv(site_dir, config.entry, built)
+        _canonicalize_archive(built)
+        digest = content_sha256(built)
+        out_path = out_dir / f"{config.name}-{digest[:12]}.pyz"
+        _ = shutil.move(built, out_path)
 
-    return BuildResult(name=config.name, key=key, sha256=_sha256(out_path), path=out_path)
+    return BuildResult(name=config.name, key=key, content_sha256=digest, path=out_path)
 
 
 def _install_third_party(requirements: str, site_dir: Path) -> None:
+    # --no-cache: uv checks a wheel's hash only when it downloads it, and it
+    # hardlinks cached unpacked wheels into every install. An edit to any
+    # hardlinked copy changes the cache, and every later build would inherit
+    # the change. A fresh download keeps the contents a function of the
+    # locked wheel hashes alone.
     with tempfile.TemporaryDirectory(prefix="wedge-requirements-") as tmp:
         requirements_path = Path(tmp) / "requirements.txt"
         _ = requirements_path.write_text(requirements)
@@ -79,6 +90,7 @@ def _install_third_party(requirements: str, site_dir: Path) -> None:
                 "uv",
                 "pip",
                 "install",
+                "--no-cache",
                 "--require-hashes",
                 "--no-deps",
                 "--target",
@@ -153,7 +165,11 @@ def _shiv(site_dir: Path, entry: str, out_path: Path) -> None:
 
 
 def _canonicalize_archive(path: Path) -> None:
-    """Sort ZIP members; shiv does not sort its bundled bootstrap files."""
+    """Sort, normalize, and deflate ZIP members.
+
+    shiv does not sort its bundled bootstrap files. The deflate bytes can vary
+    with the zlib build; the content digest ignores them.
+    """
     original = path.read_bytes()
     shebang, separator, _ = original.partition(b"\n")
     if not separator or not shebang.startswith(b"#!"):
@@ -162,17 +178,11 @@ def _canonicalize_archive(path: Path) -> None:
         _ = output.write(shebang + separator)
         with ZipFile(output, "w") as target:
             for info in sorted(source.infolist(), key=lambda item: item.filename):
+                data = source.read(info)
                 info.date_time = (1980, 1, 1, 0, 0, 0)
                 info.create_system = 3
                 is_dir = info.filename.endswith("/")
                 mode = 0o40755 if is_dir else 0o100644
                 info.external_attr = (mode << 16) | (0x10 if is_dir else 0)
-                target.writestr(info, source.read(info))
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+                info.compress_type = ZIP_STORED if is_dir else ZIP_DEFLATED
+                target.writestr(info, data)

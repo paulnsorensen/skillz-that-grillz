@@ -1,17 +1,20 @@
 # wedge GitHub Action
 
 `wedge` packages a pure-Python skill CLI as one `.pyz` file. Your repository
-commits only a small launcher and a lock with the `.pyz` sha256. This action
-builds the `.pyz` reproducibly and uploads it to a rolling `wedge` prerelease.
-The launcher downloads the asset on first use and runs it only when its sha256
-matches the lock.
+commits only a small launcher and a lock with the `.pyz` content sha256: a
+digest over the archive's member names and uncompressed bytes. This action
+builds the compressed `.pyz` and uploads it to a rolling `wedge` prerelease.
+The launcher downloads the asset on first use and runs it only when its content
+sha256 matches the lock. The digest ignores compression, so a lock written on
+any host matches the asset that the runner builds.
 
 The action has two commands:
 
 - `check` fails when a lock is missing or stale, or when a launcher differs
   from the template. It builds nothing and needs no write access.
-- `publish` builds each locked skill and uploads assets that are missing. It
-  skips assets that are already present with the same digest.
+- `publish` builds each locked skill, checks that the build matches the lock,
+  and uploads assets that are missing. It skips an asset that is already
+  present only when the fresh build and the asset both match the lock.
 
 The action runs `wedge` from its own checkout (the `lib/` project beside this
 directory). When you pin the action to a commit SHA, you also pin `wedge`.

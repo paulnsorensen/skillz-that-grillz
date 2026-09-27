@@ -7,6 +7,7 @@ import shutil
 import stat
 from pathlib import Path
 from typing import Callable, TypedDict
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
@@ -94,6 +95,43 @@ def copy_repo_subset() -> Callable[[Path], Path]:
 def copy_locked_fixture() -> Callable[[Path], Path]:
     """Factory: ``copy_repo_subset`` plus the committed lock and launcher."""
     return _copy_locked_fixture
+
+
+RewritePyz = Callable[..., Path]
+
+
+def _rewrite_pyz(
+    source: Path,
+    dest: Path,
+    *,
+    level: int = 1,
+    replace: dict[str, bytes] | None = None,
+    extra: dict[str, bytes] | None = None,
+) -> Path:
+    """Rewrite ``source`` at another deflate level, optionally changing members.
+
+    With no ``replace`` or ``extra`` the result has other compressed bytes but
+    the same contents, as another zlib build would produce.
+    """
+    original = source.read_bytes()
+    shebang, separator, _ = original.partition(b"\n")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(source) as archive, dest.open("wb") as output:
+        _ = output.write(shebang + separator)
+        with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=level) as target:
+            for info in archive.infolist():
+                data = (replace or {}).get(info.filename, archive.read(info))
+                info.compress_type = ZIP_DEFLATED
+                target.writestr(info, data, compresslevel=level)
+            for name, data in (extra or {}).items():
+                target.writestr(name, data)
+    return dest
+
+
+@pytest.fixture
+def rewrite_pyz() -> RewritePyz:
+    """Factory: recompress a .pyz, optionally replacing or adding members."""
+    return _rewrite_pyz
 
 
 _FAKE_GH_SOURCE = """#!/usr/bin/env python3
