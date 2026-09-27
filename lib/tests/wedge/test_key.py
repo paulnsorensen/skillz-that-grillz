@@ -72,6 +72,25 @@ def test_export_is_the_project_closure_without_builder_dependencies(
 
 
 @pytest.mark.ac("AC-W1")
+@pytest.mark.parametrize("variable", ["FORCE_COLOR", "CLICOLOR_FORCE"])
+def test_export_is_plain_text_when_the_caller_forces_color(
+    tmp_path: Path,
+    copy_repo_subset: Callable[[Path], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    variable: str,
+) -> None:
+    # Playwright and many CI runners set FORCE_COLOR; an ANSI escape in the
+    # export reaches parse_requirements as an unsupported requirement.
+    root = tmp_path / "checkout"
+    _ = copy_repo_subset(root)
+    monkeypatch.setenv(variable, "1")
+    requirements = export_requirements(root / "lib" / "fromargs")
+    assert "\x1b" not in requirements
+    names = {name for name, _version, _marker in parse_requirements(requirements)}
+    assert {"cyclopts", "attrs", "docstring-parser"} <= names
+
+
+@pytest.mark.ac("AC-W1")
 def test_export_adds_each_configured_dependency_group(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
