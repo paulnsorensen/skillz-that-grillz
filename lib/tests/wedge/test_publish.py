@@ -51,6 +51,47 @@ def test_publish_then_republish_skips_without_a_second_upload(
     assert _upload_count(fake_gh["store"]) == uploads_after_first
 
 
+def _seed_branch(fake_gh: FakeGh, branch: str, history: list[str]) -> None:
+    """Tell the fake gh which commits ``branch`` contains, tip last."""
+    state_path = fake_gh["store"] / "state.json"
+    state = cast(dict[str, dict[str, object]], json.loads(state_path.read_text())) if state_path.is_file() else {}
+    state.setdefault(fake_gh["repo"], {})["branches"] = {branch: history}
+    _ = state_path.write_text(json.dumps(state))
+
+
+@pytest.mark.ac("AC-W6")
+def test_publish_refuses_a_target_the_branch_does_not_contain(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    _seed_branch(fake_gh, "main", ["c0ffee", "deadbeef"])
+
+    with pytest.raises(ValueError, match="feedface is not on main"):
+        _ = publish([skill], repo=fake_gh["repo"], target="feedface", branch="main")
+
+    calls = (fake_gh["store"] / "calls.log").read_text().splitlines()
+    assert all(json.loads(call)[0] == "api" for call in calls), "refused before any release call"
+    assert _upload_count(fake_gh["store"]) == 0
+
+
+@pytest.mark.ac("AC-W6")
+@pytest.mark.parametrize("target", ["deadbeef", "c0ffee"])
+def test_publish_accepts_the_branch_tip_or_an_ancestor(
+    tmp_path: Path,
+    copy_locked_fixture: Callable[[Path], Path],
+    fake_gh: FakeGh,
+    target: str,
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    _seed_branch(fake_gh, "main", ["c0ffee", "deadbeef"])
+
+    result = publish([skill], repo=fake_gh["repo"], target=target, branch="main")
+
+    assert result[FIXTURE_NAME]["status"] == "published"
+
+
 @pytest.mark.ac("AC-W6")
 def test_no_wedged_skills_makes_no_gh_calls(fake_gh: FakeGh) -> None:
     # main has no wedged skills yet; a merge must not create an empty release.

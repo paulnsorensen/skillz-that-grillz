@@ -57,6 +57,20 @@ def _ensure_release(repo: str, target: str) -> None:
     raise RuntimeError(f"cannot create or find release {RELEASE!r} in {repo}: {created.stderr}")
 
 
+def _require_on_branch(repo: str, branch: str, target: str) -> None:
+    """Refuse a target commit that ``branch`` does not contain.
+
+    The compare API answers without any local history, so a shallow checkout
+    is enough: ``identical`` is the branch tip, ``behind`` an ancestor of it.
+    """
+    result = _run(["api", f"repos/{repo}/compare/{branch}...{target}", "--jq", ".status"])
+    if result.returncode != 0:
+        raise RuntimeError(f"cannot compare {target} with {branch} in {repo}: {result.stderr}")
+    status = result.stdout.strip()
+    if status not in {"identical", "behind"}:
+        raise ValueError(f"{target} is not on {branch} in {repo} (compare status {status!r})")
+
+
 def _asset_exists(repo: str, asset: str) -> bool:
     result = _run(["release", "view", RELEASE, "--repo", repo, "--json", "assets"])
     if result.returncode != 0:
@@ -122,12 +136,18 @@ def _publish_built(lock_data: LockData, result: BuildResult, repo: str) -> tuple
 
 
 def publish(
-    skill_dirs: list[Path], *, repo: str, target: str, jobs: int | None = None
+    skill_dirs: list[Path],
+    *,
+    repo: str,
+    target: str,
+    jobs: int | None = None,
+    branch: str | None = None,
 ) -> dict[str, dict[str, str]]:
     """Publish every skill, ``jobs`` at a time; returns ``{name: {status, reason}}``.
 
-    Skills that share build inputs share one site directory, so a repository
-    of many skills over one package downloads its closure once per run.
+    With ``branch``, refuse before any side effect unless ``target`` is on
+    that branch. Skills that share build inputs share one site directory, so
+    a repository of many skills over one package downloads its closure once.
     """
     if not skill_dirs:
         return {}
@@ -170,6 +190,8 @@ def publish(
         prepared.append((skill_dir, config, lock_data))
     if not prepared:
         return results
+    if branch is not None:
+        _require_on_branch(repo, branch, target)
     _ensure_release(repo, target)
     with tempfile.TemporaryDirectory(prefix="wedge-publish-") as tmp:
         built = build_many([skill_dir for skill_dir, _config, _lock in prepared], Path(tmp), jobs=jobs)

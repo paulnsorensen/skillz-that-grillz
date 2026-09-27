@@ -46,7 +46,11 @@ in its workflows instead, so one pin serves local runs and CI.
    for a local package that is not on an index, such as `fromargs`. Use
    `groups` when the CLI's dependencies live in a uv dependency group rather
    than in the project's own dependencies, as they do when the project also
-   publishes a library.
+   publishes a library. A `wedge.toml` in the root directory
+   (`skills/wedge.toml`) holds defaults for every skill beside it: any key
+   except `name` and `entry`, with the skill's own file winning. A repository
+   of many skills over one package states `source`, `include`, `project`,
+   `groups`, and `repo` once there.
 3. Pin `wedge` in a small uv project of its own, for example
    `tools/wedge/pyproject.toml`, and commit that directory's `uv.lock`:
 
@@ -99,7 +103,8 @@ jobs:
 ```
 
 Publish after a merge to the default branch. Give `contents: write` only to
-this job, and publish only commits that are on the default branch:
+this job. `branch: main` makes `publish` refuse a commit that `main` does not
+contain, so a manual dispatch from another ref cannot publish:
 
 ```yaml
 name: wedge-publish
@@ -115,16 +120,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@<sha>
-        with:
-          fetch-depth: 0
-      - name: Verify HEAD is on main
-        run: |
-          git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: paulnsorensen/skillz-that-grillz/actions/wedge@<sha>
         with:
           command: publish
           roots: skills
+          branch: main
 ```
 
 Publication is immutable and append-only, so concurrent runs are safe. Do not add cancellation that can drop a pending asset publication.
@@ -141,6 +141,7 @@ recommends.
 | `roots` | `skills` | Space-separated roots. The action finds `*/wedge.toml` under each root. |
 | `repo` | `${{ github.repository }}` | Repository that hosts the `wedge` release. `publish` refuses a lock that names another repository. |
 | `target` | `${{ github.sha }}` | Commit for the `wedge` release if `publish` creates it. |
+| `branch` | none | With `publish`, refuse a `target` that this branch does not contain. Uses the compare API, so the checkout needs no history. |
 | `token` | `${{ github.token }}` | Token for `gh`. `publish` needs `contents: write`. |
 
 ## Outputs

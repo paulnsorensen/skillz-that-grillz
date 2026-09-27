@@ -101,10 +101,14 @@ def publish_cmd(
     repo: str,
     target: str,
     jobs: int | None = None,
+    branch: str | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Publish every skill's .pyz to the rolling ``wedge`` release."""
+    """Publish every skill's .pyz to the rolling ``wedge`` release.
+
+    ``--branch`` refuses to publish a ``--target`` that the branch does not contain.
+    """
     dirs = _resolve_skill_dirs(root, skill_dir, "wedge publish")
-    results = publish_skills(dirs, repo=repo, target=target, jobs=jobs)
+    results = publish_skills(dirs, repo=repo, target=target, jobs=jobs, branch=branch)
     failed = {name: r for name, r in results.items() if r["status"] == "failed"}
     if failed:
         detail = "; ".join(f"{name}: {r['reason']}" for name, r in failed.items())

@@ -26,6 +26,10 @@ inputs:
     description: Commit-ish the `wedge` release points at if publish must create it.
     required: false
     default: ${{ github.sha }}
+  branch:
+    description: With `publish`, refuse a `target` that this branch does not contain (checked through the compare API, so the checkout needs no history).
+    required: false
+    default: ""
   token:
     description: "Token the gh CLI uses to publish. Needs `contents: write` on `repo`."
     required: false
@@ -96,6 +100,7 @@ runs:
         WEDGE_ROOTS: ${{ inputs.roots }}
         WEDGE_REPO: ${{ inputs.repo }}
         WEDGE_TARGET: ${{ inputs.target }}
+        WEDGE_BRANCH: ${{ inputs.branch }}
       run: |-
         set -euo pipefail
         # -d '' reads every line, so a multi-line YAML `roots: |` value works.
@@ -114,6 +119,9 @@ runs:
         done
         if [[ "$WEDGE_COMMAND" == publish ]]; then
           args+=(--repo "$WEDGE_REPO" --target "$WEDGE_TARGET")
+          if [[ -n "$WEDGE_BRANCH" ]]; then
+            args+=(--branch "$WEDGE_BRANCH")
+          fi
         fi
         work_dir=$(mktemp -d)
         trap 'rm -rf "$work_dir"' EXIT

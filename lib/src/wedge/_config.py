@@ -1,6 +1,9 @@
 """Parse a skill's ``wedge.toml``.
 
-Every path in ``wedge.toml`` is relative to the skill directory. ``project``
+Every path in ``wedge.toml`` is relative to the skill directory. A
+``wedge.toml`` in the parent directory (the discovery root) holds defaults
+for every skill beside it, so a repository of many skills over one package
+states ``project``, ``source``, ``include``, ``groups``, and ``repo`` once. ``project``
 names the directory that holds the ``pyproject.toml`` and ``uv.lock`` whose
 non-dev closure the ``.pyz`` bundles; ``groups`` adds the project's named
 dependency groups to that closure. ``source`` and every ``include`` entry
@@ -36,9 +39,13 @@ class ConfigError(Exception):
     """``wedge.toml`` is missing, unreadable, invalid, or names a bad path."""
 
 
-def load_config(skill_dir: Path) -> WedgeConfig:
-    """Read and validate ``<skill_dir>/wedge.toml``."""
-    path = Path(skill_dir) / "wedge.toml"
+def defaults_path(skill_dir: Path) -> Path | None:
+    """``<skill_dir>/../wedge.toml``: defaults shared by every skill under that root."""
+    candidate = Path(skill_dir).parent / "wedge.toml"
+    return candidate if candidate.is_file() else None
+
+
+def _read_table(path: Path) -> dict[str, object]:
     try:
         text = path.read_text()
     except OSError as exc:
@@ -49,7 +56,25 @@ def load_config(skill_dir: Path) -> WedgeConfig:
         raise ConfigError(f"cannot parse {path}: {exc}") from exc
     if not isinstance(parsed, dict):
         raise ConfigError(f"{path}: top level must be a table")
-    values = cast(dict[str, object], parsed)
+    return cast(dict[str, object], parsed)
+
+
+def load_config(skill_dir: Path) -> WedgeConfig:
+    """Read and validate ``<skill_dir>/wedge.toml`` over the root's shared defaults.
+
+    A ``wedge.toml`` in the skill directory's parent supplies defaults for
+    every key except ``name`` and ``entry``; the skill's own file wins. Paths
+    in both files are relative to the skill directory.
+    """
+    path = Path(skill_dir) / "wedge.toml"
+    values = _read_table(path)
+    shared = defaults_path(skill_dir)
+    if shared is not None:
+        defaults = _read_table(shared)
+        owned = sorted({"name", "entry"} & set(defaults))
+        if owned:
+            raise ConfigError(f"{shared}: shared defaults must not set {', '.join(owned)}")
+        values = {**defaults, **values}
 
     def text_key(key: str, default: str | None = None) -> str:
         value = values.get(key, default)
