@@ -14,11 +14,14 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 # Refuse archives that claim more than this many uncompressed bytes, so a
 # crafted asset cannot exhaust memory or disk before verification fails.
 MAX_UNCOMPRESSED = 512 * 1024 * 1024
+# zipimport reads only these two methods; an archive that hashes right but
+# cannot run is refused up front instead of failing inside Python.
+_RUNNABLE_METHODS = (ZIP_STORED, ZIP_DEFLATED)
 _DOMAIN = b"wedge-content-v1\0"
 
 
@@ -28,6 +31,8 @@ def content_sha256(path: Path) -> str:
     total = 0
     with ZipFile(path) as archive:
         for info in archive.infolist():
+            if info.compress_type not in _RUNNABLE_METHODS:
+                raise ValueError(f"{path} member {info.filename} uses a ZIP method zipimport cannot read")
             total += info.file_size
             if total > MAX_UNCOMPRESSED:
                 raise ValueError(f"{path} expands past {MAX_UNCOMPRESSED} bytes")

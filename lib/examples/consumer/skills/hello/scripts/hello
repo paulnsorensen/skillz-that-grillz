@@ -16,6 +16,7 @@ import zipfile
 from pathlib import Path
 
 MAX_UNCOMPRESSED = 512 * 1024 * 1024
+RUNNABLE_METHODS = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
 
 
 def _fail(message: str) -> None:
@@ -30,6 +31,8 @@ def _content_sha256(path: Path):
     try:
         with zipfile.ZipFile(path) as archive:
             for info in archive.infolist():
+                if info.compress_type not in RUNNABLE_METHODS:
+                    return None
                 total += info.file_size
                 if total > MAX_UNCOMPRESSED:
                     return None

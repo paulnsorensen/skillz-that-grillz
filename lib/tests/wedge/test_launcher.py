@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Callable, ParamSpec, TypeVar, cast
-from zipfile import ZipFile
+from zipfile import ZIP_BZIP2, ZipFile
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -289,6 +289,29 @@ def _launcher_digest(path: Path) -> str | None:
     exec(compile(LAUNCHER_SOURCE, "launcher", "exec"), namespace)
     digest = cast(Callable[[Path], "str | None"], namespace["_content_sha256"])
     return digest(path)
+
+
+@pytest.mark.ac("AC-W4")
+def test_archive_with_a_method_zipimport_cannot_read_is_refused(
+    tmp_path: Path, built_pyz: Path, copy_locked_fixture: Callable[[Path], Path]
+) -> None:
+    """A bzip2 archive holds the same members, so a digest over contents alone
+    would accept it, but Python cannot import from it. Both digests refuse it."""
+    bzip2 = tmp_path / "bzip2.pyz"
+    with ZipFile(built_pyz) as archive, ZipFile(bzip2, "w") as target:
+        for info in archive.infolist():
+            data = archive.read(info)
+            info.compress_type = ZIP_BZIP2
+            target.writestr(info, data)
+
+    assert _launcher_digest(bzip2) is None
+    with pytest.raises(ValueError, match="zipimport cannot read"):
+        _ = content_sha256(bzip2)
+
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    result = _run_launcher(skill, {**os.environ, "WEDGE_PYZ": str(bzip2)}, "wheels", "list")
+    assert result.returncode == 3
+    assert "does not match the lock" in json.loads(result.stderr)["error"]
 
 
 @pytest.mark.ac("AC-W4")
