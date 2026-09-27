@@ -10,14 +10,18 @@ any host matches the asset that the runner builds.
 
 The action has two commands:
 
-- `check` fails when a lock is missing or stale, or when a launcher differs
-  from the template. It builds nothing and needs no write access.
+- `check` fails when a lock is missing or stale, when a launcher differs
+  from the template, or when a `.pyz` is committed beside a launcher. It
+  builds nothing and needs no write access.
 - `publish` builds each locked skill, checks that the build matches the lock,
   and uploads assets that are missing. It skips an asset that is already
   present only when the fresh build and the asset both match the lock.
 
 The action runs `wedge` from its own checkout (the `lib/` project beside this
-directory). When you pin the action to a commit SHA, you also pin `wedge`.
+directory). When you pin the action to a commit SHA, you also pin `wedge`. A
+repository that already pins `wedge` in its own `uv.lock` (step 3 below) can
+run the same commands with `uv run --locked --only-group wedge wedge …` in
+its workflows instead, so one pin serves local runs and CI.
 
 ## Set up a skill
 
@@ -34,21 +38,36 @@ directory). When you pin the action to a commit SHA, you also pin `wedge`.
    source = "hello.py"               # module file or package directory
    project = "../.."                 # directory with pyproject.toml + uv.lock
    include = []                      # optional local packages to vendor
+   groups = []                       # optional uv dependency groups to bundle
    repo = "your-org/your-repo"       # repository that hosts the release
    ```
 
    `source` and each `include` entry must be inside `project`. Use `include`
-   for a local package that is not on an index, such as `fromargs`.
-3. Write the lock and the launcher. Run this from the repository root and
-   commit `scripts/<name>` and `scripts/<name>.wedge.json`:
+   for a local package that is not on an index, such as `fromargs`. Use
+   `groups` when the CLI's dependencies live in a uv dependency group rather
+   than in the project's own dependencies, as they do when the project also
+   publishes a library.
+3. Pin `wedge` in the project's own `uv.lock` through a dependency group
+   that stays out of `default-groups`, so it never enters the `.pyz` closure:
 
-   ```sh
-   uvx --from 'skillz-that-grillz @ git+https://github.com/paulnsorensen/skillz-that-grillz@<sha>#subdirectory=lib' \
-     wedge lock skills/hello
+   ```toml
+   [dependency-groups]
+   wedge = ["skillz-that-grillz @ git+https://github.com/paulnsorensen/skillz-that-grillz@<sha>#subdirectory=lib"]
    ```
 
-   Use the same `<sha>` that your workflows pin. A different `wedge` version
-   can compute a different key.
+4. Write the locks and the launchers. Run this from the repository root and
+   commit each `scripts/<name>` and `scripts/<name>.wedge.json`:
+
+   ```sh
+   uv run --locked --only-group wedge wedge lock --root skills
+   ```
+
+   Every command finds `*/wedge.toml` under `--root`; `lock`, `build`, and
+   `publish` run the skills in parallel and share one installed site
+   directory between skills that share a project. Use the same `<sha>` that
+   your workflows pin. A different `wedge` version can compute a different
+   key. A project without uv can run the same command through
+   `uvx --from 'skillz-that-grillz @ git+…@<sha>#subdirectory=lib' wedge`.
 
 The [consumer example](../../lib/examples/consumer/) shows this layout.
 

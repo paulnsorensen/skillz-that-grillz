@@ -48,3 +48,5 @@
 - 2026-09-26 · wedge-content-digest · merged · decisions/wedge-skill-packaging.md · ADR-008: pin a digest over uncompressed contents, deflate assets, name them by that digest; bump the asset format to 8
 
 - 2026-09-27 · wedge-mac-path · updated · decisions/wedge-skill-packaging.md · ADR-003 and ADR-008: build with `--no-cache`; publish rebuilds before it trusts an existing asset; record the hardlinked-cache drift evidence
+
+- 2026-09-27 · wedge-fanout · updated · decisions/wedge-skill-packaging.md · ADR-009: every command discovers skills under `--root`; build, lock, and publish fan out with `--jobs` and share one site directory per project; `groups` in wedge.toml; check rejects committed `.pyz`; consumers pin wedge in their own uv.lock

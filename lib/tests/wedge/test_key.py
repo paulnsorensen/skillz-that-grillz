@@ -72,6 +72,38 @@ def test_export_is_the_project_closure_without_builder_dependencies(
 
 
 @pytest.mark.ac("AC-W1")
+def test_export_adds_each_configured_dependency_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    import wedge._resolve as wedge_resolve
+
+    seen: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert wedge_resolve.export_requirements is export_requirements
+
+    _ = export_requirements(Path("/project"), groups=("runtime", "cli"))
+
+    assert seen[0][:2] == ["uv", "export"]
+    assert "--no-dev" in seen[0]
+    assert seen[0][-6:] == ["--group", "runtime", "--group", "cli", "--project", "/project"]
+
+
+@pytest.mark.ac("AC-W1")
+def test_groups_must_be_a_list_of_names(tmp_path: Path) -> None:
+    _ = (tmp_path / "wedge.toml").write_text(
+        'name = "x"\nentry = "x:main"\nsource = "x.py"\nrepo = "o/r"\ngroups = "runtime"\n'
+    )
+
+    with pytest.raises(ConfigError, match="'groups' must be a list"):
+        _ = load_config(tmp_path)
+
+
+@pytest.mark.ac("AC-W1")
 def test_key_rejects_source_symlink(tmp_path: Path, copy_repo_subset: Callable[[Path], Path]) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
     source = skill / "alias.py"

@@ -16,10 +16,10 @@ import tempfile
 from pathlib import Path
 from typing import cast
 
-from wedge._build import build
+from wedge._build import BuildResult, build_many
 from wedge._config import ConfigError, WedgeConfig, load_config
 from wedge._digest import content_sha256
-from wedge._key import compute_key
+from wedge._fanout import fan_out
 from wedge._lock import LockData, load_lock
 
 RELEASE = "wedge"
@@ -97,42 +97,38 @@ def _verdict(lock_data: LockData, repo: str, found: str) -> tuple[str, str]:
     )
 
 
-def _publish_one(skill_dir: Path, repo: str) -> tuple[str, str]:
-    """Publish one skill; returns ``(status, reason)``.
+def _publish_built(lock_data: LockData, result: BuildResult, repo: str) -> tuple[str, str]:
+    """Publish one freshly built skill; returns ``(status, reason)``.
 
     Every run builds and compares the digest to the lock before it trusts a
     published asset. An asset uploaded from another host counts as published
     only after this host reproduces the same content.
     """
-    skill_dir = Path(skill_dir)
-    config = load_config(skill_dir)
-    lock_data = load_lock(skill_dir, config.name)
-    if lock_data.repo != repo:
-        return "failed", f"lock targets repo {lock_data.repo}, not the publish repo {repo}"
-    key = compute_key(skill_dir, config)
-    if key != lock_data.key:
-        return "failed", f"lock is stale: key {lock_data.key} != current {key}"
-
-    with tempfile.TemporaryDirectory(prefix="wedge-publish-") as tmp:
-        result = build(skill_dir, Path(tmp))
-        if result.content_sha256 != lock_data.content_sha256:
-            return (
-                "failed",
-                f"built content digest {result.content_sha256} != lock {lock_data.content_sha256}",
-            )
-        if _asset_exists(repo, lock_data.asset):
-            return _verdict(lock_data, repo, "already published")
-        upload = _run(["release", "upload", RELEASE, str(result.path), "--repo", repo])
-        if upload.returncode == 0:
-            return "published", f"uploaded {lock_data.asset}"
-
+    if result.key != lock_data.key:
+        return "failed", f"lock is stale: key {lock_data.key} != current {result.key}"
+    if result.content_sha256 != lock_data.content_sha256:
+        return (
+            "failed",
+            f"built content digest {result.content_sha256} != lock {lock_data.content_sha256}",
+        )
+    if _asset_exists(repo, lock_data.asset):
+        return _verdict(lock_data, repo, "already published")
+    upload = _run(["release", "upload", RELEASE, str(result.path), "--repo", repo])
+    if upload.returncode == 0:
+        return "published", f"uploaded {lock_data.asset}"
     if _asset_exists(repo, lock_data.asset):
         return _verdict(lock_data, repo, "published by a racing run")
     return "failed", f"upload failed: {upload.stderr}"
 
 
-def publish(skill_dirs: list[Path], *, repo: str, target: str) -> dict[str, dict[str, str]]:
-    """Publish every skill; returns ``{name: {status, reason}}``."""
+def publish(
+    skill_dirs: list[Path], *, repo: str, target: str, jobs: int | None = None
+) -> dict[str, dict[str, str]]:
+    """Publish every skill, ``jobs`` at a time; returns ``{name: {status, reason}}``.
+
+    Skills that share build inputs share one site directory, so a repository
+    of many skills over one package downloads its closure once per run.
+    """
     if not skill_dirs:
         return {}
     configs: list[tuple[Path, WedgeConfig | None, str | None]] = []
@@ -162,7 +158,7 @@ def publish(skill_dirs: list[Path], *, repo: str, target: str) -> dict[str, dict
             used_names.add(name)
             results[name] = {"status": "failed", "reason": error or "invalid configuration"}
 
-    prepared: list[tuple[Path, WedgeConfig]] = []
+    prepared: list[tuple[Path, WedgeConfig, LockData]] = []
     for skill_dir, config in valid:
         try:
             lock_data = load_lock(skill_dir, config.name)
@@ -171,14 +167,20 @@ def publish(skill_dirs: list[Path], *, repo: str, target: str) -> dict[str, dict
             continue
         if lock_data.repo != config.repo:
             raise ValueError("lock repository differs from skill configuration")
-        prepared.append((skill_dir, config))
+        prepared.append((skill_dir, config, lock_data))
     if not prepared:
         return results
     _ensure_release(repo, target)
-    for skill_dir, config in prepared:
-        try:
-            status, reason = _publish_one(skill_dir, repo)
-        except (ConfigError, OSError, ValueError) as exc:
-            status, reason = "failed", str(exc)
-        results[config.name] = {"status": status, "reason": reason}
+    with tempfile.TemporaryDirectory(prefix="wedge-publish-") as tmp:
+        built = build_many([skill_dir for skill_dir, _config, _lock in prepared], Path(tmp), jobs=jobs)
+        ready: list[tuple[str, LockData, BuildResult]] = []
+        for (_skill_dir, config, lock_data), outcome in zip(prepared, built):
+            if outcome.value is None:
+                results[config.name] = {"status": "failed", "reason": outcome.error or ""}
+            else:
+                ready.append((config.name, lock_data, outcome.value))
+        uploads = fan_out(ready, lambda item: _publish_built(item[1], item[2], repo), jobs=jobs)
+    for (name, _lock, _result), outcome in zip(ready, uploads):
+        status, reason = outcome.value if outcome.value is not None else ("failed", outcome.error or "")
+        results[name] = {"status": status, "reason": reason}
     return results

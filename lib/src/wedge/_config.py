@@ -2,7 +2,8 @@
 
 Every path in ``wedge.toml`` is relative to the skill directory. ``project``
 names the directory that holds the ``pyproject.toml`` and ``uv.lock`` whose
-non-dev closure the ``.pyz`` bundles. ``source`` and every ``include`` entry
+non-dev closure the ``.pyz`` bundles; ``groups`` adds the project's named
+dependency groups to that closure. ``source`` and every ``include`` entry
 must resolve inside that project directory.
 """
 
@@ -28,6 +29,7 @@ class WedgeConfig:
     repo: str
     project: str = "."
     include: tuple[str, ...] = ()
+    groups: tuple[str, ...] = ()
 
 
 class ConfigError(Exception):
@@ -66,11 +68,21 @@ def load_config(skill_dir: Path) -> WedgeConfig:
         raise ConfigError(f"{path}: name must be a safe filename component")
     if not _REPO.fullmatch(repo):
         raise ConfigError(f"{path}: 'repo' must be 'owner/name', got {repo!r}")
-    include_raw = values.get("include", [])
-    if not isinstance(include_raw, list):
-        raise ConfigError(f"{path}: 'include' must be a list of non-empty strings")
-    include_items = cast(list[object], include_raw)
-    if not all(isinstance(item, str) and item.strip() for item in include_items):
-        raise ConfigError(f"{path}: 'include' must be a list of non-empty strings")
-    include = cast(list[str], include_items)
-    return WedgeConfig(name=name, entry=entry, source=source, repo=repo, project=project, include=tuple(include))
+    def list_key(key: str) -> tuple[str, ...]:
+        raw = values.get(key, [])
+        if not isinstance(raw, list):
+            raise ConfigError(f"{path}: {key!r} must be a list of non-empty strings")
+        items = cast(list[object], raw)
+        if not all(isinstance(item, str) and item.strip() for item in items):
+            raise ConfigError(f"{path}: {key!r} must be a list of non-empty strings")
+        return tuple(cast(list[str], items))
+
+    return WedgeConfig(
+        name=name,
+        entry=entry,
+        source=source,
+        repo=repo,
+        project=project,
+        include=list_key("include"),
+        groups=list_key("groups"),
+    )

@@ -39,11 +39,12 @@ def test_consumer_checks_relocks_and_runs_outside_this_repo(
     checked = _wedge(consumer, "check", "--root", "skills")
     assert checked == {"checked": [str(SKILL)], "ok": True}
 
-    relocked = _wedge(consumer, "lock", str(SKILL))
+    relocked = cast(dict[str, object], _wedge(consumer, "lock", "--root", "skills")["hello"])
     assert relocked["key"] == committed["key"]
     assert relocked["content_sha256"] == committed["content_sha256"]
 
-    built = _wedge(consumer, "build", str(SKILL), "--out", "dist")
+    built = cast(dict[str, object], _wedge(consumer, "build", "--root", "skills", "--out", "dist")["hello"])
+    assert built["path"] == str(consumer / "dist" / str(committed["asset"]))
     run = subprocess.run(
         [sys.executable, "-I", str(built["path"]), "cave"],
         capture_output=True,
