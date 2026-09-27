@@ -12,8 +12,9 @@ The action has two commands:
 
 - `check` fails when a lock is missing or stale, or when a launcher differs
   from the template. It builds nothing and needs no write access.
-- `publish` builds each locked skill and uploads assets that are missing. It
-  skips assets that are already present with the same content digest.
+- `publish` builds each locked skill, checks that the build matches the lock,
+  and uploads assets that are missing. It skips an asset that is already
+  present only when the fresh build and the asset both match the lock.
 
 The action runs `wedge` from its own checkout (the `lib/` project beside this
 directory). When you pin the action to a commit SHA, you also pin `wedge`.

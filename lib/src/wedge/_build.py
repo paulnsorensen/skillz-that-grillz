@@ -6,7 +6,8 @@ site directory, strip volatile install metadata, and shiv the result with a
 fixed shebang and ``SOURCE_DATE_EPOCH``. The same key always gives the same
 uncompressed contents, so the content digest (``wedge._digest``) matches on
 every host even when two zlib builds compress those contents differently.
-The digest names the asset.
+Third-party wheels download fresh on every build (``--no-cache``), so a
+modified uv cache cannot change the contents. The digest names the asset.
 """
 
 from __future__ import annotations
@@ -76,6 +77,11 @@ def build(skill_dir: Path, out_dir: Path) -> BuildResult:
 
 
 def _install_third_party(requirements: str, site_dir: Path) -> None:
+    # --no-cache: uv checks a wheel's hash only when it downloads it, and it
+    # hardlinks cached unpacked wheels into every install. An edit to any
+    # hardlinked copy changes the cache, and every later build would inherit
+    # the change. A fresh download keeps the contents a function of the
+    # locked wheel hashes alone.
     with tempfile.TemporaryDirectory(prefix="wedge-requirements-") as tmp:
         requirements_path = Path(tmp) / "requirements.txt"
         _ = requirements_path.write_text(requirements)
@@ -84,6 +90,7 @@ def _install_third_party(requirements: str, site_dir: Path) -> None:
                 "uv",
                 "pip",
                 "install",
+                "--no-cache",
                 "--require-hashes",
                 "--no-deps",
                 "--target",
