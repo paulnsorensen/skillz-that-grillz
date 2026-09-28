@@ -54,7 +54,8 @@ ensure_db() {
     fi
 }
 
-run() { duckdb -readonly -init /dev/null "$DB" -cmd "SET memory_limit='$(sessions_duckdb_memory_limit)'" -markdown -c "$1" 2>/dev/null || echo "(query failed)"; }
+# Let DuckDB errors reach stderr and exit non-zero, so callers can omit Usage.
+run() { duckdb -readonly -init /dev/null "$DB" -cmd "SET memory_limit='$(sessions_duckdb_memory_limit)'" -markdown -c "$1"; }
 
 ensure_db
 
