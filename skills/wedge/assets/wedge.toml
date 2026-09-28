@@ -1,0 +1,4 @@
+name = "records"
+entry = "records:main"
+source = "records.py"
+repo = "OWNER/REPO"

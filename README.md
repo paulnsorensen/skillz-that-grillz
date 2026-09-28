@@ -52,6 +52,7 @@ harness can load it progressively.
 | `skills/release/SKILL.md` | `/release` | Cut a versioned release end to end: decide the next semantic version from the Conventional Commits since the last tag (with the `0.x` exception), draft proper release notes (auto-generated via `.github/release.yml`, hand-curated grouped by change type with highlights + upgrade notes, or hybrid), update `CHANGELOG.md`, create and push an annotated tag, and publish the GitHub release. Stops at the tag push when a tag-driven release workflow already publishes. |
 | `skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
 | `skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
+| `skills/wedge/SKILL.md` | `/wedge` | Extract repeatable deterministic work into a fromargs CLI and package it with wedge. Covers output contracts, builder limits, and installed-launcher verification. |
 
 ## Scope
 
@@ -69,6 +70,7 @@ Most skills wrap a single CLI you probably already use.
 | `release` | `git` + `gh` CLI (`gh release`) | git, gh | `.github/release.yml` (for `--generate-notes` grouping), `CHANGELOG.md` (when the repo keeps one) |
 | `respond` | `gh` CLI + `git` | gh, git | — |
 | `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
+| `wedge` | `wedge` CLI | Supported build checkout, uv, locked wedge/shiv environment; Python 3.11+ for installed helpers | Authorized release publication through gh |
 
 What that means in practice:
 

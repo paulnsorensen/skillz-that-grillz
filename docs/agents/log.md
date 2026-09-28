@@ -39,3 +39,7 @@
 - 2026-09-26 · pr89-trim · merged · decisions/wedge-skill-packaging.md · Export the skill closure from lib/fromargs/uv.lock so shiv's pip/setuptools/click stop shipping in every .pyz; publish only from the post-merge wedge workflow
 
 - 2026-09-26 · pr89-cure · updated · decisions/wedge-skill-packaging.md · Recorded format 6 metadata normalization across umask 002/022, symlink and lock publication invariants, and no shared concurrency for pending-run safety
+
+
+- 2026-09-28 · fec4e1e9156e1f05 · merged · decisions/wedge-skill-packaging.md · Add the /wedge teaching workflow, required build layout, fixed dependency closure, output-limit boundary, and relocated-launcher verification. All three frozen retrieval probes return the page at rank 1.
+

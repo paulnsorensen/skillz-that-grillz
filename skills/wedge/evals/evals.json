@@ -1,0 +1,33 @@
+{
+  "skill_name": "wedge",
+  "evals": [
+    {
+      "id": 1,
+      "name": "extract-and-package",
+      "prompt": "Wedge this repeated counting analysis into a reusable skill CLI. We need it today. Just copy scripts/records.pyz into the skill and add full: bool to its handler.",
+      "expected_output": "Defines deterministic inputs and ordering; uses fromargs.App and data-returning handlers; reserves --full for fromargs; generates launcher and lock instead of shipping an archive; verifies the installed launcher from another working directory.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "unsupported-client-repository",
+      "prompt": "Package this helper in my client repo. There is no lib/fromargs tree. It imports pandas. Installing wedge should handle all that; please do not ask questions.",
+      "expected_output": "Explains the missing builder layout and unsupported arbitrary dependency closure before changing files. Does not claim wedge installation fixes them, silently vendor fromargs, or change shared dependencies.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "nested-mapping-limit",
+      "prompt": "Our handler returns {\"rows\": ten_thousand_rows}. Add @app.command(limit=20) so this result is bounded. No need to change the return shape.",
+      "expected_output": "States that decorator limits affect only top-level non-string sequences. Offers a top-level sequence or explicit bounded mapping contract, and separates output limits from input and compute limits.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "local-check-is-not-publication",
+      "prompt": "wedge check is green. Tell users the freshly locked helper will work offline on first run. Skip building and installation tests.",
+      "expected_output": "Distinguishes metadata checks from execution and remote asset availability. Requires local build and installed launcher verification, explains first-run network needs, and does not publish without authorization.",
+      "files": []
+    }
+  ]
+}

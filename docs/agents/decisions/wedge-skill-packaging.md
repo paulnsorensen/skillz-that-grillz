@@ -47,7 +47,30 @@ These records explain the design of `wedge`, a packaging tool at `lib/src/wedge/
 - **Decision:** Keep `fromargs` at `lib/fromargs/` and package only `wedge` in the `skillz-that-grillz` wheel and sdist. Wedge depends on `fromargs>=0.1.0,<0.2` for installation. Its local development lock uses an editable path dependency. A skill `.pyz` copies `fromargs` source directly and exports only fromargs' third-party closure from `lib/fromargs/uv.lock`. Exporting from `lib/uv.lock` also bundled shiv's own dependencies (`pip`, `setuptools`, `click`), about 17 MB per asset; `--no-emit-package shiv` drops only shiv itself, not its dependencies.[^6]
 - **Consequences:** `fromargs-v*` remains the library's PyPI lane. The skills' `v[0-9]*` lane can add a separate Wedge PyPI publish step later. No Wedge PyPI upload runs now. `just build` tests both packages and checks the sample skill lock. Only the post-merge `wedge` workflow publishes assets; a tag points at a commit on `main` that workflow already published.[^7]
 
-_Source: the wedge implementation at lib/src/wedge/ and hosted CI reproducibility failure · Updated: 2026-09-25_
+## Teaching the packaging workflow
+
+The `/wedge` skill teaches the existing packaging workflow without expanding the runtime contract.[^8]
+It moves repeatable computation into a fromargs command and leaves interpretation in skill instructions.
+Its bundled references and templates remain available after skill installation.
+
+Wedge requires a build checkout containing fromargs source, its lockfile, and project metadata.[^9]
+A global installation does not remove this layout requirement.
+Wedge exports only the fromargs dependency closure; arbitrary skill dependencies do not enter the archive automatically.[^10]
+The teaching workflow reports unsupported layouts or dependencies instead of silently copying libraries or changing shared dependencies.
+
+Fromargs limits only top-level non-string sequences, not nested rows inside a mapping.[^11]
+Output truncation does not bound input size or computation.
+The teaching workflow verifies source behavior and a relocated launcher with a hash-checked local archive.
+That local verification does not prove remote asset availability.[^12]
+
+_Source: the wedge implementation, fromargs output code, and the published teaching skill · Updated: 2026-09-28_
+
+[^8]: skills/wedge/SKILL.md:13-15; skills/wedge/SKILL.md:47-68
+[^9]: lib/src/wedge/_key.py:20-30; lib/src/wedge/_resolve.py:23-39
+[^10]: lib/src/wedge/_build.py:43-61; lib/src/wedge/_resolve.py:23-39
+[^11]: lib/fromargs/src/fromargs/_output.py:25-36
+[^12]: skills/wedge/references/packaging.md:69-94; lib/tests/wedge/test_skill_template.py:62-86
+
 
 [^1]: lib/src/wedge/_key.py
 [^2]: lib/src/wedge/_publish.py:97-128
