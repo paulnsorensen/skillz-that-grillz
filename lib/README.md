@@ -4,10 +4,9 @@ Wedge packages a `fromargs` CLI as a compressed shiv `.pyz` for a skill.
 It is the CLI in the `skillz-that-grillz` distribution. The `fromargs`
 library remains a separate distribution at `lib/fromargs/`.
 
-A skill commits `wedge.toml`, a content-keyed lock, and a launcher. Wedge
-builds the `.pyz` from the locked dependency closure and publishes it as a
-GitHub release asset. The launcher verifies a sha256 over the asset's
-uncompressed contents before execution.
+A skill may commit a direct executable bundle at `scripts/<name>.pyz`. Wedge
+also supports the legacy content-keyed lock, launcher, and release workflow.
+The archive digest covers normalized uncompressed contents.
 
 Every command takes skill directories as arguments or finds `*/wedge.toml`
 under `--root` (default `skills`). A `wedge.toml` in the root itself holds
@@ -16,10 +15,13 @@ skills in parallel (`--jobs`). Skills that share a project, source, includes,
 and groups share one installed site directory. A repository of many skills
 over one package downloads its closure once per run.
 
+When `source_paths` is present, each entry selects an explicit relative path under `source`; its path remains in the archive namespace, including package initializers. When it is absent, the complete source tree is selected.
+
 ```sh
-wedge lock --root skills                 # rewrite every lock and launcher
-wedge check --root skills                # verify locks, launchers, no committed .pyz
-wedge build --root skills --out dist     # one <name>-<digest12>.pyz per skill
+wedge bundle --root skills              # write scripts/<name>.pyz
+wedge bundle --root skills --check       # verify committed bundles
+wedge lock --root skills                 # legacy lock and launcher workflow
+wedge build --root skills --out dist     # content-keyed build artifact
 wedge publish --root skills --repo owner/name --target <sha> --branch main
 ```
 
