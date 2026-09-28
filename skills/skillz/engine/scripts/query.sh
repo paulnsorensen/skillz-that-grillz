@@ -37,7 +37,12 @@ ensure_db() {
     if [[ -z "${SESSIONS_DB:-}" ]]; then
         if [[ ! -f "$DB" || -z "$(find "$DB" -mmin -60 2>/dev/null)" ]]; then
             if [[ -f "$SCRIPT_DIR/ingest.py" ]]; then
-                python3 "$SCRIPT_DIR/ingest.py" >/dev/null 2>&1 || true
+                local status=0
+                python3 "$SCRIPT_DIR/ingest.py" >/dev/null 2>&1 || status=$?
+                if (( status != 0 )) && [[ -f "$DB" ]]; then
+                    echo "Automatic ingestion failed (exit $status); refusing to query stale data." >&2
+                    exit "$status"
+                fi
             fi
         fi
     fi
