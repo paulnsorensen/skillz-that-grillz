@@ -27,6 +27,7 @@ class BuildPaths:
     project: Path
     source: Path
     includes: tuple[Path, ...]
+    source_paths: tuple[str, ...] = ()
     defaults_file: Path | None = None
 
     @property
@@ -52,6 +53,22 @@ def _inside_project(project: Path, raw: str, base: Path, key: str) -> Path:
     return resolved
 
 
+def _selected_path(source: Path, selector: str) -> Path:
+    relative = Path(selector)
+    selected = source / relative
+    cursor = source
+    for component in relative.parts:
+        cursor = cursor / component
+        if cursor.is_symlink():
+            raise ValueError(f"source_paths path must not contain symlink: {cursor}")
+    resolved = selected.resolve()
+    if resolved != source and source not in resolved.parents:
+        raise ConfigError(f"source_paths path must resolve inside source: {selector!r}")
+    if not resolved.exists():
+        raise ConfigError(f"source_paths path does not exist: {selected}")
+    return resolved
+
+
 def resolve_paths(skill_dir: Path, config: WedgeConfig) -> BuildPaths:
     skill_dir = Path(skill_dir).resolve()
     project = (skill_dir / config.project).resolve()
@@ -60,11 +77,24 @@ def resolve_paths(skill_dir: Path, config: WedgeConfig) -> BuildPaths:
             raise ConfigError(f"project {config.project!r} ({project}) has no {required}")
     source = _inside_project(project, config.source, skill_dir, "source")
     includes = tuple(_inside_project(project, item, skill_dir, "include") for item in config.include)
+    if config.source_paths:
+        if not source.is_dir():
+            raise ConfigError("source_paths requires a source directory")
+        for selector in config.source_paths:
+            selector_path = Path(selector)
+            if selector_path.is_absolute() or ".." in selector_path.parts or not selector_path.parts:
+                raise ConfigError(f"source_paths path must be relative and inside source: {selector!r}")
+            _ = _selected_path(source, selector)
     names = [path.name for path in (source, *includes)]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
         raise ConfigError(f"source and include entries share top-level names: {duplicates}")
-    return BuildPaths(skill_dir / "wedge.toml", project, source, includes, defaults_path(skill_dir))
+    return BuildPaths(skill_dir / "wedge.toml", project, source, includes, config.source_paths, defaults_path(skill_dir))
+
+
+def selected_files(source: Path, selectors: tuple[str, ...]) -> list[Path]:
+    roots = [source / selector for selector in selectors] if selectors else [source]
+    return [file for root in roots for file in _iter_files(root)]
 
 
 def _is_excluded(path: Path) -> bool:
@@ -84,7 +114,7 @@ def _iter_files(root: Path) -> list[Path]:
         return files
     if not root.is_file():
         raise FileNotFoundError(root)
-    return [root]
+    return [] if _is_excluded(root) else [root]
 
 
 def _digest(path: Path) -> str:
@@ -95,8 +125,11 @@ def compute_key(skill_dir: Path, config: WedgeConfig) -> str:
     paths = resolve_paths(skill_dir, config)
     inputs = {
         (file.relative_to(paths.project).as_posix(), _digest(file))
-        for root in (paths.source, *paths.includes)
+        for root in (*paths.includes,)
         for file in _iter_files(root)
+    } | {
+        (file.relative_to(paths.project).as_posix(), _digest(file))
+        for file in selected_files(paths.source, paths.source_paths)
     }
     document: dict[str, object] = {
         "format_version": FORMAT_VERSION,

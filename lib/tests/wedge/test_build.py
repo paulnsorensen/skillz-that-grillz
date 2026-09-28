@@ -211,3 +211,44 @@ def test_copy_source_rejects_existing_file_without_overwriting(tmp_path: Path) -
         copy_source(source, site_dir)
 
     assert destination.read_text() == "installed\n"
+
+
+@pytest.mark.ac("AC-W2")
+def test_build_source_paths_preserve_namespace_and_exclude_unselected(
+    tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
+) -> None:
+    skill = copy_repo_subset(tmp_path / "checkout")
+    config = skill / "wedge.toml"
+    text = config.read_text().replace(
+        'source = "../../../fromargs/examples/cheese_cave.py"',
+        'source = "../../../fromargs/src/fromargs"',
+    ).replace(
+        'include = ["../../../fromargs/src/fromargs"]',
+        'source_paths = ["__init__.py", "_errors.py"]',
+    )
+    _ = config.write_text(text)
+    result = build(skill, tmp_path / "out")
+    with ZipFile(result.path) as archive:
+        names = set(archive.namelist())
+    assert "site-packages/fromargs/__init__.py" in names
+    assert "site-packages/fromargs/_errors.py" in names
+    assert "site-packages/fromargs/_fromargs.py" not in names
+
+
+@pytest.mark.ac("AC-W2")
+def test_source_selections_do_not_share_sites(
+    tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
+) -> None:
+    skill = copy_repo_subset(tmp_path / "checkout")
+    import wedge._build as wedge_build
+    first = wedge_build._prepare(skill)  # pyright: ignore[reportPrivateUsage]
+    config = skill / "wedge.toml"
+    _ = config.write_text(config.read_text().replace(
+        'source = "../../../fromargs/examples/cheese_cave.py"',
+        'source = "../../../fromargs/src/fromargs"',
+    ).replace(
+        'include = ["../../../fromargs/src/fromargs"]',
+        'source_paths = ["__init__.py"]',
+    ))
+    second = wedge_build._prepare(skill)  # pyright: ignore[reportPrivateUsage]
+    assert first.site != second.site

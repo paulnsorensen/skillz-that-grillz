@@ -50,3 +50,6 @@
 - 2026-09-27 · wedge-mac-path · updated · decisions/wedge-skill-packaging.md · ADR-003 and ADR-008: build with `--no-cache`; publish rebuilds before it trusts an existing asset; record the hardlinked-cache drift evidence
 
 - 2026-09-27 · wedge-fanout · updated · decisions/wedge-skill-packaging.md · ADR-009: every command discovers skills under `--root`; build, lock, and publish fan out with `--jobs` and share one site directory per project; `groups` in wedge.toml; check rejects committed `.pyz`; consumers pin wedge in a uv project of their own
+
+- 2026-09-27 · ab3884d42165d951 · merged · decisions/wedge-skill-packaging.md · ADR-010 scopes direct committed bundles as an opt-in exception to legacy release-asset delivery; records source selection and corrupt-bundle checks.
+

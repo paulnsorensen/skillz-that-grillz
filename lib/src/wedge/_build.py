@@ -27,7 +27,7 @@ from wedge._config import ConfigError, WedgeConfig, load_config
 from wedge._digest import content_sha256
 from wedge._fanout import Outcome, fan_out
 from wedge._guard import guard_closure
-from wedge._key import TARGET_PYTHON, compute_key, resolve_paths
+from wedge._key import TARGET_PYTHON, compute_key, resolve_paths, selected_files
 from wedge._resolve import export_requirements, resolve_closure
 
 _VOLATILE_INSTALL_FILES = {"RECORD", "INSTALLER", "REQUESTED", "direct_url.json"}
@@ -54,6 +54,7 @@ class SiteInputs:
     project: Path
     source: Path
     includes: tuple[Path, ...]
+    source_paths: tuple[str, ...]
     groups: tuple[str, ...]
 
 
@@ -72,7 +73,7 @@ def _prepare(skill_dir: Path) -> _Prepared:
     config = load_config(skill_dir)
     paths = resolve_paths(skill_dir, config)
     key = compute_key(skill_dir, config)
-    site = SiteInputs(paths.project, paths.source, paths.includes, config.groups)
+    site = SiteInputs(paths.project, paths.source, paths.includes, paths.source_paths, config.groups)
     return _Prepared(skill_dir, config, key, site)
 
 
@@ -84,8 +85,9 @@ def _populate_site(site: SiteInputs, site_dir: Path) -> None:
     site_dir.mkdir()
     if closure:
         _install_third_party(requirements, site_dir)
-    for local in (*site.includes, site.source):
+    for local in site.includes:
         _copy_source(local, site_dir)
+    _copy_source(site.source, site_dir, site.source_paths)
     _strip_volatile(site_dir)
 
 
@@ -197,16 +199,24 @@ def _copy_tree(src: Path, dest: Path) -> None:
     _ = shutil.copytree(src, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
-def _copy_source(source: Path, site_dir: Path) -> None:
+def _copy_source(source: Path, site_dir: Path, selectors: tuple[str, ...] = ()) -> None:
     if source.is_symlink():
         raise ValueError(f"build source must not be a symlink: {source}")
     destination = site_dir / source.name
     if destination.exists() or destination.is_symlink():
         raise ConfigError(f"build source would overwrite installed path: {destination}")
-    if source.is_dir():
-        _copy_tree(source, destination)
-    else:
-        _ = shutil.copy2(source, destination)
+    if not selectors:
+        if source.is_dir():
+            _copy_tree(source, destination)
+        else:
+            _ = shutil.copy2(source, destination)
+        return
+    destination.mkdir()
+    for selected in selected_files(source, selectors):
+        relative = selected.relative_to(source)
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _ = shutil.copy2(selected, target)
 
 
 def _strip_volatile(site_dir: Path) -> None:

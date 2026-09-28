@@ -20,7 +20,7 @@ from typing import cast
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-_ALLOWED_KEYS = {"name", "entry", "source", "project", "repo", "include", "groups"}
+_ALLOWED_KEYS = {"name", "entry", "source", "source_paths", "project", "repo", "include", "groups"}
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,7 @@ class WedgeConfig:
     entry: str
     source: str
     repo: str
+    source_paths: tuple[str, ...] = ()
     project: str = "."
     include: tuple[str, ...] = ()
     groups: tuple[str, ...] = ()
@@ -113,6 +114,13 @@ def load_config(skill_dir: Path) -> WedgeConfig:
             raise ConfigError(f"{sources.get(key, path)}: {key!r} must be a list of non-empty strings")
         return tuple(cast(list[str], items))
 
+    source_paths = list_key("source_paths")
+    if "source_paths" in values and not source_paths:
+        raise ConfigError(f"{sources.get('source_paths', path)}: 'source_paths' must not be empty")
+    for selector in source_paths:
+        selector_path = Path(selector)
+        if selector_path.is_absolute() or ".." in selector_path.parts:
+            raise ConfigError(f"{sources.get('source_paths', path)}: source_paths must be relative")
     groups = list_key("groups")
     if "dev" in groups:
         source = sources.get("groups", path)
@@ -122,6 +130,7 @@ def load_config(skill_dir: Path) -> WedgeConfig:
         name=name,
         entry=entry,
         source=source,
+        source_paths=source_paths,
         repo=repo,
         project=project,
         include=list_key("include"),

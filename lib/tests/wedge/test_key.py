@@ -8,7 +8,7 @@ from typing import Callable
 
 import pytest
 
-from wedge._config import ConfigError, load_config
+from wedge._config import ConfigError, WedgeConfig, load_config
 from wedge._key import compute_key
 from wedge._resolve import export_requirements, parse_requirements
 
@@ -341,3 +341,52 @@ def test_repo_is_required_and_validated(
     _ = toml.write_text("\n".join(kept + ([repo_line] if repo_line else [])) + "\n")
     with pytest.raises(ConfigError, match=message):
         _ = load_config(skill)
+
+
+@pytest.mark.ac("AC-W1")
+def test_source_paths_select_only_explicit_files(tmp_path: Path) -> None:
+    _ = (tmp_path / "wedge.toml").write_text(
+        'name = "x"\nentry = "x:main"\nsource = "pkg"\nsource_paths = ["__init__.py"]\nrepo = "o/r"\n'
+    )
+    project = tmp_path / "pkg"
+    project.mkdir()
+    _ = (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\nversion='0'\n")
+    _ = (tmp_path / "uv.lock").write_text("version = 1\n")
+    _ = (project / "__init__.py").write_text("one\n")
+    _ = (project / "other.py").write_text("two\n")
+    before = _key(tmp_path)
+    _ = (project / "other.py").write_text("changed\n")
+    assert _key(tmp_path) == before
+    _ = (project / "__init__.py").write_text("changed\n")
+    assert _key(tmp_path) != before
+
+
+@pytest.mark.ac("AC-W9")
+@pytest.mark.parametrize("selector", [[], [""], ["../outside"], ["/absolute"]])
+def test_source_paths_rejects_unsafe_selectors(tmp_path: Path, selector: list[str]) -> None:
+    _ = (tmp_path / "wedge.toml").write_text(
+        f'name = "x"\nentry = "x:main"\nsource = "pkg"\nsource_paths = {selector!r}\nrepo = "o/r"\n'
+    )
+    with pytest.raises((ConfigError, ValueError)):
+        _ = load_config(tmp_path)
+
+
+@pytest.mark.ac("AC-W9")
+def test_compute_key_rejects_intermediate_source_selector_symlink(tmp_path: Path) -> None:
+    _ = (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\nversion='0'\n")
+    _ = (tmp_path / "uv.lock").write_text("version = 1\n")
+    source = tmp_path / "pkg"
+    source.mkdir()
+    actual = source / "actual"
+    actual.mkdir()
+    _ = (actual / "file.py").write_text("pass\n")
+    (source / "linked_dir").symlink_to(actual, target_is_directory=True)
+    config = WedgeConfig(
+        name="x",
+        entry="x:main",
+        source="pkg",
+        repo="o/r",
+        source_paths=("linked_dir/file.py",),
+    )
+    with pytest.raises(ValueError, match="must not contain symlink"):
+        _ = compute_key(tmp_path, config)

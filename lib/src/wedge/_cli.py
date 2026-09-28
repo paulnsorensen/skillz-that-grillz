@@ -14,6 +14,7 @@ from typing import TypeVar
 import fromargs
 
 from wedge._build import build_many
+from wedge._bundle import bundle_many
 from wedge._discover import discover_skills
 from wedge._fanout import Outcome
 from wedge._lock import check as check_skills
@@ -97,6 +98,24 @@ def build_cmd(
     _check_jobs(jobs, "wedge build")
     dirs = _resolve_skill_dirs(root, skill_dir, "wedge build")
     results = _raise_failures(build_many(dirs, Path(out), jobs=jobs), "wedge build")
+    return {
+        r.name: {"key": r.key, "content_sha256": r.content_sha256, "path": str(r.path)}
+        for r in results
+    }
+
+
+@app.command(name="bundle")
+def bundle_cmd(
+    skill_dir: list[str] | None = None,
+    *,
+    root: list[str] | None = None,
+    jobs: int | None = None,
+    check: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Write or check executable scripts/<name>.pyz bundles."""
+    _check_jobs(jobs, "wedge bundle")
+    dirs = _resolve_skill_dirs(root, skill_dir, "wedge bundle")
+    results = _raise_failures(bundle_many(dirs, jobs=jobs, check=check), "wedge bundle")
     return {
         r.name: {"key": r.key, "content_sha256": r.content_sha256, "path": str(r.path)}
         for r in results
