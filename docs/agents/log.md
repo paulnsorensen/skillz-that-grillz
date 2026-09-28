@@ -54,4 +54,5 @@
 - 2026-09-27 · ab3884d42165d951 · merged · decisions/wedge-skill-packaging.md · ADR-010 scopes direct committed bundles as an opt-in exception to legacy release-asset delivery; records source selection and corrupt-bundle checks.
 
 - 2026-09-28 · skills-to-git-gouda · removed · README.md, .github/copilot-instructions.md, scripts/install.sh, skills/github-copilot-personal-instructions/SKILL.md · Moved prek, oss-hygiene, safe-settings, release, justfile, and github-copilot-repo-instructions to paulnsorensen/git-gouda; dropped them from the skill tables, install.sh known tools, and updated the remaining cross-reference to point at git-gouda
+- 2026-09-28 · remove-respond · removed · README.md, .github/copilot-instructions.md, .github/workflows/validate.yml, justfile · Removed the respond skill and its post-reply tests; easy-cheese /affinage covers PR review-comment triage
 

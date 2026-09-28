@@ -37,7 +37,6 @@ test:
     python3 .github/scripts/validate_skills.py
     bats tests/bash/test_install.bats
     bats tests/bash/test_skillz.bats
-    bats tests/bash/test_respond_post_reply.bats
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
     uv run --locked --project lib basedpyright lib/src/wedge lib/tests/wedge
     just test-fromargs

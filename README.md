@@ -7,17 +7,18 @@
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-spec-blueviolet?style=flat-square)](https://agentskills.io/specification)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/pulls)
 
-> _Tight little toolbelt of git, GitHub, project-runner, and shell-craft skills._
+> _Tight little toolbelt of GitHub and file-handling skills._
 
 A focused, skills-only repository of [Agent Skills](https://agentskills.io/specification)
 for the everyday plumbing around a project: working a GitHub PR and
-triaging review comments.
+keeping skill artifacts on disk.
 No agents and no orchestration. There are no required MCP servers — just
 self-contained `SKILL.md` files that any spec-compliant harness can load.
 
 Repository setup and maintenance skills (`release`, `justfile`, `prek`,
 `oss-hygiene`, `safe-settings`, `github-copilot-repo-instructions`) now live in
-[git-gouda](https://github.com/paulnsorensen/git-gouda).
+[git-gouda](https://github.com/paulnsorensen/git-gouda). The `respond` skill
+is removed; easy-cheese's `/affinage` triages PR review comments.
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
 covers the design / implement / review workflow (mold, cook, press, age, cure)
@@ -48,7 +49,6 @@ harness can load it progressively.
 | `skills/file-handler/SKILL.md` | `/file-handler` | Persist, fetch, and search skill artifacts under a shared `.skillz/<type>/<slug>` tree. Wraps a dependency-free `skillz.sh` exposing `save_file`, `get_file`, and `search_files` (titles + body grep). The on-disk convention every other skill in this repo delegates to for scratch space. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PR inspection / review / merge, issues, CI checks, releases, workflow runs, code search, repo and label management — via the `gh` CLI, with idiomatic `--jq` and `--body-file` patterns. Committing, pushing, and PR creation live in easy-cheese's `/plate`. |
 | `skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
-| `skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
 
 ## Scope
 
@@ -59,7 +59,6 @@ Most skills wrap a single CLI you probably already use.
 | `file-handler` | `bash` + standard POSIX tools (`find`, `grep`) | bash 4+, `find`, `grep` | — |
 | `gh` | `gh` CLI | gh | — |
 | `github-copilot-personal-instructions` | github.com Copilot UI | — | — |
-| `respond` | `gh` CLI + `git` | gh, git | — |
 
 What that means in practice:
 
@@ -75,9 +74,6 @@ What that means in practice:
 work on a branch
     ├── /plate (easy-cheese) ──►  stage + commit + push + create PR (single or stacked)
     └── /gh                  ──►  watch checks + review + merge
-
-review comments
-    └── /respond            ──►  triage PR review comments and act on them
 ```
 
 `/gh` pairs with easy-cheese's `/plate` for everyday change flow: `/plate`
@@ -108,7 +104,7 @@ npx skills add paulnsorensen/skillz-that-grillz --all
 Install specific skills:
 
 ```sh
-npx skills add paulnsorensen/skillz-that-grillz --skill gh --skill respond
+npx skills add paulnsorensen/skillz-that-grillz --skill gh --skill file-handler
 ```
 
 Target specific agents at user scope, non-interactive (CI-friendly):
