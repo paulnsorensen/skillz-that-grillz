@@ -7,14 +7,17 @@
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-spec-blueviolet?style=flat-square)](https://agentskills.io/specification)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/pulls)
 
-> _Tight little toolbelt of git, GitHub, project-runner, and shell-craft skills._
+> _Tight little toolbelt of git, GitHub, project-runner, shell-craft, and skill-authoring skills._
 
 A focused, skills-only repository of [Agent Skills](https://agentskills.io/specification)
 for the everyday plumbing around a project: working a GitHub PR, cutting a
-release, scaffolding a justfile, and wiring up prek pre-commit hooks.
-No agents and no orchestration. There are no _required_ MCP servers — one
-skill (`prek`) _optionally_ uses Context7 for current docs; when that tool is
-absent it falls back to bundled guidance and CLI help — just self-contained `SKILL.md` files that any spec-compliant harness can load.
+release, scaffolding a justfile, wiring up prek pre-commit hooks, and
+authoring or auditing the skills themselves.
+No bundled agents and no orchestration. There are no _required_ MCP servers
+or sub-agents — `prek` _optionally_ uses Context7 for current docs, and
+`skillz` _optionally_ reads a session-analytics database for usage data; when
+those are absent each falls back to bundled guidance — just self-contained
+`SKILL.md` files that any spec-compliant harness can load.
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
 covers the design / implement / review workflow (mold, cook, press, age, cure)
@@ -52,6 +55,7 @@ harness can load it progressively.
 | `skills/release/SKILL.md` | `/release` | Cut a versioned release end to end: decide the next semantic version from the Conventional Commits since the last tag (with the `0.x` exception), draft proper release notes (auto-generated via `.github/release.yml`, hand-curated grouped by change type with highlights + upgrade notes, or hybrid), update `CHANGELOG.md`, create and push an annotated tag, and publish the GitHub release. Stops at the tag push when a tag-driven release workflow already publishes. |
 | `skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
 | `skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
+| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, or self-update a skill or sub-agent definition so it runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. Scores the target against a twelve-lens rubric (predictability, invocation, portability, information hierarchy, tool scoping, calibration, …), tags every finding with severity × confidence, and ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `self-update` add a best-effort Usage lens when a `session-analytics` database is present. |
 
 ## Scope
 
@@ -69,6 +73,7 @@ Most skills wrap a single CLI you probably already use.
 | `release` | `git` + `gh` CLI (`gh release`) | git, gh | `.github/release.yml` (for `--generate-notes` grouping), `CHANGELOG.md` (when the repo keeps one) |
 | `respond` | `gh` CLI + `git` | gh, git | — |
 | `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
+| `skillz` | `SKILL.md` and agent definition files (no CLI) | — | `duckdb` CLI + a `session-analytics` database (Usage lens in `audit` / `self-update`); a fresh-context sub-agent when the host offers one |
 
 What that means in practice:
 
@@ -97,6 +102,11 @@ new project setup
 
 org-wide policy as code
     └── /safe-settings     ──►  scaffold admin repo + GitHub App for declarative settings across many repos
+
+author or tune a skill
+    ├── /skillz add <name>      ──►  scaffold a spec-compliant skill + Codex sidecar
+    ├── /skillz improve <path>  ──►  apply rubric fixes without changing protocol semantics
+    └── /skillz audit <path>    ──►  calibrated findings report, no writes
 ```
 
 `/gh` pairs with easy-cheese's `/plate` for everyday change flow: `/plate`
