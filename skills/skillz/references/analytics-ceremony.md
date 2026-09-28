@@ -6,7 +6,8 @@ shares that skill's database path and one-hour cache. It requires Python 3, the
 `duckdb` CLI, readable local session logs, and a writable database directory.
 It does not require the Python `duckdb` module. If DuckDB is absent, offer
 **Skip Usage** or an opt-in sampled raw-log scan. Never start the scan before
-the user chooses it. Follow `references/raw-log-fallback.md` only after consent.
+the user chooses it. `references/raw-log-fallback.md` step 1 asks the Skip vs
+scan question; dispatch starts at its step 2, only after consent.
 If the user skips, or if ingestion or another prerequisite fails, omit Usage,
 state why, and continue the audit.
 
@@ -16,17 +17,20 @@ state why, and continue the audit.
    absolute `XDG_CACHE_HOME` selects
    `<cache>/dotfiles/session-analytics/sessions.duckdb`; a relative or unset
    value uses `~/.cache/dotfiles/session-analytics/sessions.duckdb`.
-3. Run `python3 <abs-skillz>/engine/scripts/ingest.py` before querying. The
+3. Check `command -v duckdb`. If absent, ask the Skip vs scan question from
+   `references/raw-log-fallback.md` step 1 and do not run ingest.
+4. Run `python3 <abs-skillz>/engine/scripts/ingest.py` before querying. The
    one-hour cache makes a fresh database a no-op. If no logs are accessible or
    ingestion fails, omit Usage. `engine/scripts/query.sh` also auto-ingests an
-   old or absent default database, but not a `SESSIONS_DB` override.
-4. Run **one pack per fresh read-only context**, in parallel, so raw query
+   old or absent default database, but not a `SESSIONS_DB` override, and
+   exits 3 when DuckDB is missing.
+5. Run **one pack per fresh read-only context**, in parallel, so raw query
    output never lands in the audit's window. Pass absolute paths for every
    input; the runner applies no defaults. Each context returns one ~2 KB digest.
    Do not collapse the packs into one all-domains run. Claude Code `Agent`,
    Codex `spawn_agent`, and OMP `task` are example hosts. Without sub-agents,
-   run each pack's SQL with `duckdb "<abs-database>" -json -c "<sql>"` and keep
-   only the digest.
+   run each pack's SQL with `duckdb -readonly "<abs-database>" -json -c "<sql>"`
+   and keep only the digest.
 
    ```text
    Run analytics pack <abs-pack> for target <name>. harness=all
@@ -40,12 +44,11 @@ state why, and continue the audit.
    | `agent-orchestration.md` | undeclared spawns, fork behavior, error rate |
    | `drift-regression.md` | declining usage, single-project concentration, hook interruptions |
 
-5. Carry the digests into the Usage lens.
+6. Carry the digests into the Usage lens.
 
 The packs live in `references/`. The bundled schema, conventions, coverage
 notes, and ingest script live in `engine/references/` and `engine/scripts/`.
-Pass those paths to each pack context. Where a pack names an installed
-`session-analytics` skill, use this bundled engine instead.
+Pass those paths to each pack context.
 
 `skill_invocations` and `agent_spawns` are Claude-dominant. Codex and OMP lack
 hook and permission-denial rows. Cursor has no tool results. Read

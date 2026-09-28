@@ -1,8 +1,8 @@
 # Query & Pack-Authoring Conventions
 
 Conventions every analytics **pack** relies on. A pack is a skill-owned file at
-`skills/<skill>/references/<domain>.md` describing one analytics domain. The
-`duckdb-expert` agent runs exactly one pack per spawn, reading the *queries* from
+`skills/<skill>/references/<domain>.md` describing one analytics domain. One
+fresh read-only pack context runs exactly one pack, reading the *queries* from
 the pack and the *schema* from `canonical-schema.md` (in this data layer).
 
 ## Pack file shape
@@ -63,12 +63,11 @@ Resolve the database with `engine/scripts/db-path.sh` and its
 `sessions_db_path` function. Then run each query through the CLI:
 
 ```bash
-duckdb "<abs-database>" -json -c "SQL"
+duckdb -readonly "<abs-database>" -json -c "SQL"
 ```
 
-Ensure the database exists first with
-`python3 <abs-skillz>/engine/scripts/ingest.py`. The one-hour TTL skips a
-fresh database. `-json` gives machine-readable output.
+Ensure the database exists first with `python3 <abs-ingest>`. The one-hour
+TTL skips a fresh database. `-json` gives machine-readable output.
 
 ## Signal-quality honesty
 
@@ -80,4 +79,4 @@ Three domains are known low/medium-signal and must degrade gracefully:
 
 Record the caveat in the pack and emit "insufficient signal" rather than
 fabricate a confident finding. This pairs with the confidence axis in
-`calibration.md` (`<don't know>` is never surfaced).
+`../../references/calibration.md` (`<don't know>` is never surfaced).

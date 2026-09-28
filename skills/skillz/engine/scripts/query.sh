@@ -30,6 +30,10 @@ fi
 hf() { [[ "$HARNESS" == all ]] || printf "AND %sharness = '%s'" "${1:-}" "${HARNESS//\'/\'\'}"; }
 
 ensure_db() {
+    if ! command -v duckdb >/dev/null 2>&1; then
+        echo "DuckDB CLI not found — install duckdb or use the raw-log fallback." >&2
+        exit 3
+    fi
     if [[ -z "${SESSIONS_DB:-}" ]]; then
         if [[ ! -f "$DB" || -z "$(find "$DB" -mmin -60 2>/dev/null)" ]]; then
             if [[ -f "$SCRIPT_DIR/ingest.py" ]]; then
@@ -42,7 +46,7 @@ ensure_db() {
         exit 0
     fi
     local n
-    n="$(duckdb -init /dev/null "$DB" -cmd "SET memory_limit='$(sessions_duckdb_memory_limit)'" -noheader -list -c \
+    n="$(duckdb -readonly -init /dev/null "$DB" -cmd "SET memory_limit='$(sessions_duckdb_memory_limit)'" -noheader -list -c \
         "SELECT count(*) FROM information_schema.tables WHERE table_name = 'tool_uses'" 2>/dev/null || echo 0)"
     if [[ "$n" != 1 ]]; then
         echo "Session database at $DB has no ingested tables."
@@ -50,13 +54,13 @@ ensure_db() {
     fi
 }
 
-run() { duckdb -init /dev/null "$DB" -cmd "SET memory_limit='$(sessions_duckdb_memory_limit)'" -markdown -c "$1" 2>/dev/null || echo "(query failed)"; }
+run() { duckdb -readonly -init /dev/null "$DB" -cmd "SET memory_limit='$(sessions_duckdb_memory_limit)'" -markdown -c "$1" 2>/dev/null || echo "(query failed)"; }
 
 ensure_db
 
 case "$REPORT" in
     sql)
-        duckdb -init /dev/null "$DB" -cmd "SET memory_limit='$(sessions_duckdb_memory_limit)'" -markdown -c "$RAW_SQL"
+        duckdb -readonly -init /dev/null "$DB" -cmd "SET memory_limit='$(sessions_duckdb_memory_limit)'" -markdown -c "$RAW_SQL"
         ;;
     tools)
         run "SELECT tool_name, count(*) AS uses

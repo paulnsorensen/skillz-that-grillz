@@ -19,6 +19,7 @@ database is less than 1 hour old.
 Usage: python3 ingest.py [--force]
 """
 
+import fcntl
 import json
 import os
 import re
@@ -30,15 +31,17 @@ from datetime import datetime, timedelta
 
 
 def _configured_path(name, default):
+    # Matches db-path.sh: no `~` expansion; a relative value joins to cwd.
     value = os.environ.get(name) or default
-    return os.path.abspath(os.path.expanduser(value))
+    return os.path.abspath(value)
 
 
 def _xdg_cache_home():
     # The XDG Base Directory spec requires ignoring a relative value.
+    # Matches db-path.sh: no `~` expansion; only an absolute value counts.
     value = os.environ.get("XDG_CACHE_HOME")
-    if value and os.path.isabs(os.path.expanduser(value)):
-        return os.path.abspath(os.path.expanduser(value))
+    if value and value.startswith("/"):
+        return os.path.abspath(value)
     return os.path.abspath(os.path.expanduser("~/.cache"))
 
 
@@ -718,17 +721,20 @@ def db_is_fresh():
     return age < TTL_SECONDS
 
 
-def run_sql(sql, db_path=None):
+def run_sql(sql, db_path=None, readonly=False):
     limit = os.environ.get("SESSIONS_DUCKDB_MEMORY_LIMIT") or "8GB"
+    argv = ["duckdb", "-init", "/dev/null"]
+    if readonly:
+        argv.append("-readonly")
+    argv += [
+        db_path or DB_TMP_PATH,
+        "-cmd",
+        f"SET memory_limit='{limit}'",
+        "-c",
+        sql,
+    ]
     result = subprocess.run(
-        [
-            "duckdb",
-            db_path or DB_TMP_PATH,
-            "-cmd",
-            f"SET memory_limit='{limit}'",
-            "-c",
-            sql,
-        ],
+        argv,
         capture_output=True,
         text=True,
         timeout=600,
@@ -777,17 +783,7 @@ def columns_struct():
     return "{" + ", ".join(f"{k}: '{v}'" for k, v in RAW_COLUMNS.items()) + "}"
 
 
-def main():
-    force = "--force" in sys.argv
-
-    if db_is_fresh() and not force:
-        age_min = (time.time() - os.path.getmtime(DB_PATH)) / 60
-        print(f"Database is {age_min:.0f}m old (TTL=60m). Skipping ingestion.")
-        print("Use --force to re-ingest.")
-        return
-
-    os.makedirs(DB_DIR, exist_ok=True)
-
+def _do_ingest_and_swap():
     print("Discovering + normalizing harness sessions...")
     loaded = stage_harnesses()
     if not loaded:
@@ -799,9 +795,12 @@ def main():
 
     if os.path.exists(DB_TMP_PATH):
         if os.path.isdir(DB_TMP_PATH):
-            shutil.rmtree(DB_TMP_PATH)
-        else:
-            os.remove(DB_TMP_PATH)
+            print(
+                f"ERROR: {DB_TMP_PATH} is a directory, expected a file.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        os.remove(DB_TMP_PATH)
 
     print("Loading canonical rows into DuckDB...")
     t0 = time.time()
@@ -1020,8 +1019,43 @@ def main():
     """)
 
     os.replace(DB_TMP_PATH, DB_PATH)
+    return time.time() - t0
 
-    elapsed = time.time() - t0
+
+def main():
+    os.umask(0o077)
+    force = "--force" in sys.argv
+
+    if db_is_fresh() and not force:
+        age_min = (time.time() - os.path.getmtime(DB_PATH)) / 60
+        print(f"Database is {age_min:.0f}m old (TTL=60m). Skipping ingestion.")
+        print("Use --force to re-ingest.")
+        return
+
+    if not shutil.which("duckdb"):
+        print(
+            "DuckDB CLI not found — install duckdb or use the raw-log fallback.",
+            file=sys.stderr,
+        )
+        sys.exit(3)
+
+    os.makedirs(DB_DIR, exist_ok=True)
+
+    lock_path = f"{DB_PATH}.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+    if db_is_fresh() and not force:
+        age_min = (time.time() - os.path.getmtime(DB_PATH)) / 60
+        print(f"Database is {age_min:.0f}m old (TTL=60m). Skipping ingestion.")
+        print("Use --force to re-ingest.")
+        return
+
+    try:
+        elapsed = _do_ingest_and_swap()
+    finally:
+        shutil.rmtree(STAGE_DIR, ignore_errors=True)
+
     print(f"\nIngestion complete in {elapsed:.1f}s")
 
     run_sql(
@@ -1037,6 +1071,7 @@ def main():
             (SELECT count(*) FROM permission_denials) AS permission_denials;
     """,
         db_path=DB_PATH,
+        readonly=True,
     )
 
     # Coverage stanza (issue #704): measurement quality per harness, so
@@ -1063,6 +1098,7 @@ def main():
         ORDER BY u.harness;
     """,
         db_path=DB_PATH,
+        readonly=True,
     )
 
 

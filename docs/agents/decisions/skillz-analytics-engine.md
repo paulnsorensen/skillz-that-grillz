@@ -25,3 +25,19 @@ The user can skip Usage instead. Neither path blocks the audit.
 
 The three `skillz` analytics packs resolve their schema from the bundled
 engine. Keep their paths local when updating the upstream snapshot.
+
+## Local deltas from f6f0cbf5
+
+The bundled engine carries these local fixes. They are not upstream yet.
+
+- Every query path opens DuckDB read-only, so parallel packs do not collide.
+- An `fcntl` lock serializes ingest runs. A waiting run checks freshness again.
+- Ingest uses umask `077` for staged transcripts and the database.
+- Ingest removes the stage directory after every run.
+- Ingest and `query.sh` exit 3 with a clear message when DuckDB is absent.
+- Python path resolution matches `db-path.sh` and does not expand `~`.
+- Ingest passes `-init /dev/null`, so it ignores `~/.duckdbrc`.
+- Ingest stops when `DB_TMP_PATH` is a directory and does not delete it.
+
+These items stay with the upstream engine: a schema-version guard for the
+shared database, incremental ingest, and removal of unused canned reports.
