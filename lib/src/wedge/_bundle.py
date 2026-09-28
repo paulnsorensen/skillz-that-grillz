@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import zlib
 from pathlib import Path
 from zipfile import BadZipFile
 
@@ -48,7 +49,7 @@ def bundle_many(
                             error = f"bundle has non-canonical shebang {target}"
                         elif digest != outcome.value.content_sha256:
                             error = f"stale bundle {target}"
-                    except (BadZipFile, OSError, ValueError) as exc:
+                    except (BadZipFile, OSError, ValueError, zlib.error) as exc:
                         error = f"invalid bundle {target}: {exc}"
                 checked.append(Outcome(
                     outcome.item,

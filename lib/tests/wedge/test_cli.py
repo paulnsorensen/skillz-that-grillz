@@ -262,3 +262,46 @@ def test_bundle_isolates_scripts_file_error_and_continues_other_skills(
     world_scripts = world / "scripts"
     assert (world_scripts / "world.pyz").is_file()
     assert not list(world_scripts.glob(".*.pyz.*"))
+
+@pytest.mark.ac("AC-W9")
+def test_bundle_check_rejects_corrupt_deflate_for_every_skill_without_mutation(
+    tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    consumer = copy_consumer(tmp_path / "consumer")
+    monkeypatch.chdir(consumer)
+    hello = consumer / SKILLS / "hello"
+    world = consumer / SKILLS / "world"
+    _ = shutil.copytree(hello, world)
+    _ = (world / "wedge.toml").write_text(
+        (world / "wedge.toml").read_text().replace('name = "hello"', 'name = "world"')
+    )
+
+    import zlib
+    from wedge._cli import bundle_cmd
+    from wedge._digest import content_sha256
+    from zipfile import ZIP_DEFLATED, ZipFile
+
+    result = bundle_cmd(skill_dir=[str(hello), str(world)])
+    bundles = {name: Path(data["path"]) for name, data in result.items()}
+    unchanged: dict[str, bytes] = {}
+    for name, path in bundles.items():
+        before = path.read_bytes()
+        with ZipFile(path) as archive:
+            member = next(info for info in archive.infolist() if info.compress_type == ZIP_DEFLATED)
+        data_start = member.header_offset + 30 + len(member.filename.encode("utf-8")) + len(member.extra)
+        corrupted = bytearray(before)
+        corrupted[data_start : data_start + member.compress_size] = b"\0" * member.compress_size
+        _ = path.write_bytes(corrupted)
+        with pytest.raises(zlib.error):
+            _ = content_sha256(path)
+        unchanged[name] = bytes(corrupted)
+
+    with pytest.raises(fromargs.CliError) as raised:
+        _ = bundle_cmd(skill_dir=[str(hello), str(world)], check=True)
+
+    message = str(raised.value)
+    assert message.count("invalid bundle") == 2
+    assert "hello" in message
+    assert "world" in message
+    for name, path in bundles.items():
+        assert path.read_bytes() == unchanged[name]
