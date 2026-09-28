@@ -37,6 +37,9 @@ Ask for a target when the mode requires one.
 | `improve <path>` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
 | `audit <path>` | a `SKILL.md` or agent file | yes | none | calibrated report |
 | `self-update` | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
+| `experiment` | an explicit case manifest or public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
+
+For `experiment`, read `references/experiments.md` and follow its workflow instead of the shared audit protocol.
 
 ## Shared protocol
 
@@ -44,6 +47,9 @@ Ask for a target when the mode requires one.
 
 Read the target. Read a linked reference only when its stated trigger matches the run.
 A full-package audit may explicitly read every file in the target package.
+For `audit`, run `python3 <this-skill-directory>/scripts/inspect_skill.py <target>` before applying the rubric.
+Use its JSON as objective package facts, not a fitness score.
+Report a helper error without treating it as a successful audit.
 Classify it as **agent** (`tools:` / `disallowedTools:` or an `agents/registry.yaml` entry) or **skill** (`name:` + `description:`).
 Measure the body: bytes/4 after the frontmatter block; report `~N tok` against the 5k budget.
 List the deploy targets the definition reaches (`references/harness-layout.md § Layout`).
@@ -178,3 +184,4 @@ Read on demand:
 - `references/hooks-catalog.md` — a finding needs 100%-of-the-time enforcement.
 - `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs.
 - `references/calibration.md` — the confidence × severity kernel.
+- `references/experiments.md` — `experiment`; bounded GEPA search, case schema, isolation, and the frozen inspection contract.

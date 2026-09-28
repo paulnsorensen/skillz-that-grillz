@@ -25,9 +25,11 @@ creation — single or stacked).
 | --- | --- | --- |
 | `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, or self-update a skill or sub-agent definition so it runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. Scores the target against a twelve-lens rubric (predictability, invocation, portability, information hierarchy, tool scoping, calibration, …), tags every finding with severity × confidence, and ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `self-update` add a best-effort Usage lens when a `session-analytics` database is present. |
 
-`skillz` needs no CLI and no MCP server. Its Usage lens optionally uses the
-`duckdb` CLI and a `session-analytics` database; without them it falls back to
-the bundled guidance.
+`skillz` uses a bundled, standard-library Python inspection helper during audits.
+It needs no installed CLI or MCP server. Its Usage lens optionally uses `duckdb`
+and a `session-analytics` database. The optional `experiment` mode uses GEPA and
+Codex to compare isolated candidates without installing a winner.
+See [the experiment workflow](skills/skillz/references/experiments.md).
 
 ```sh
 npx skills add paulnsorensen/skillz-that-grillz --skill skillz

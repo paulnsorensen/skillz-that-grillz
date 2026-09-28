@@ -35,9 +35,9 @@ test:
     python3 .github/scripts/test_validate_evals.py
     python3 .github/scripts/validate_skills.py
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
-    uv run --locked --project lib basedpyright lib/src/wedge lib/tests/wedge
+    uv run --locked --extra experiments --project lib basedpyright lib/src/wedge lib/tests/wedge lib/src/skillz_experiments lib/tests/skillz_experiments skills/skillz/scripts/inspect_skill.py
     just test-fromargs
-    uv run --locked --project lib pytest lib/tests/wedge -q
+    uv run --locked --extra experiments --project lib pytest lib/tests/wedge lib/tests/skillz_experiments -q
     uv run --locked --project lib wedge check --root lib/examples/skills --root lib/examples/consumer/skills
 
 # Run fromargs' pytest suite, optionally pinned to one Python version.

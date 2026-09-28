@@ -3,7 +3,8 @@
 GEPA can search skill text and CLI source, but session analytics cannot establish whether a candidate improves task outcomes.
 The missing connection is a verified dataset and evaluator, not another prompt-rewrite step.[^gepa][^analytics]
 This report gathers prior easy-cheese and vaudeville work and checks current primary sources.
-It does not claim a measured improvement or approve an implementation.
+The initial research does not claim a measured improvement.
+The user subsequently approves implementation and the bounded self-test described below.
 
 ## Findings and evidence
 
@@ -98,22 +99,59 @@ The preferred researcher model is unavailable; a fresh-context fallback research
 Raw captures remain outside Git; this curated report is the durable repository artifact.
 
 No private session database or transcript is scanned.
-No candidate is executed, no paid evaluation runs, and no improvement rate is measured.
-The repository build verifies this documentation change, not GEPA effectiveness.
+The initial research phase executes no candidate and measures no improvement rate.
+A repository build alone does not establish GEPA effectiveness.
 
-## Open questions and next step
+## Accepted first experiment
 
-The research is certain about documented mechanisms and inspected repository state.
-Personalization benefits remain speculating because no session-derived benchmark runs.
+The user approves skillz as its own first optimization target on Codex.
+The approved live profile uses the existing ChatGPT login and an explicit deployment model.
+One global budget permits at most 20 Codex invocations, including reflection, within 20 minutes.
+An isolation failure stops execution rather than enabling an unsafe fallback.
+The first comparison uses public fixtures, not private session transcripts.
 
-- Which skill, CLI, and deployment harness should form the first experiment?
-- Should the first release expose prompt-only search before enabling guarded CLI mutation?
-- Which success labels can the user approve without trusting model self-report?
-- What accuracy tolerance, monetary cap, and runtime cap should govern promotion?
-- Should skillz own the reusable loop or call an extracted easy-cheese runner?
+The selected implementation uses optional GEPA 0.1.4 and its installed `GEPAConfig`, `EngineConfig`, and `ReflectionConfig` interface.
+A custom candidate proposer supplies the Codex reflection call instead of GEPA's default model client.[^runtime]
 
-Next, turn [the feature proposal](../ideas/session-driven-skill-optimization.md) into a bounded proof experiment.
-Do not interpret this research PR as implementation approval.
+OpenAI's [Codex 0.154 skill discovery and isolation](../sources/codex-skill-discovery-isolation.md) evidence changes the isolation design.
+The `--ignore-user-config` option does not disable user skill discovery.
+Separate host discovery isolation and generated-command checks are required.
+A local model-free check passes with isolated home directories and a restricted Codex command profile.
+That check does not establish live optimization success.[^runtime]
+
+The [feature design](../ideas/session-driven-skill-optimization.md) distinguishes this bounded experiment from broader personalization goals.
+Session-derived benefit, repeated-run robustness, monetary pricing, and generic deployment adapters remain unverified.
+
+## First live self-test result
+
+The authenticated Codex self-test completes on 2026-09-28 with public repository fixtures.
+It evaluates three distinct candidate packages through GEPA's two search modes.
+Both search modes retain the original skill after validation.
+The result does not demonstrate improvement or real-session personalization.[^selftest]
+
+| Measurement | Observed result |
+| --- | --- |
+| Model and harness | `gpt-6-astra`, Codex CLI 0.154.0. |
+| Charged invocations | 19 total: one failed startup, then 18 successful-run invocations. |
+| Reflection invocations | Two, included in the total. |
+| Task evaluations | 16 passed out of 16. |
+| Paired holdout evaluations | Six passed out of six; all locked arms retain the seed. |
+| Budget check | Completion confirmed within 920 seconds of the original start; limit 1,200 seconds. |
+| Export | Both private exports succeed; no candidate installs. |
+| Improvement | Inconclusive bounded smoke test; original skill retained. |
+
+The first startup attempt reveals that `codex exec` does not accept sandbox's `-P` flag.
+The corrected runner uses `default_permissions="skillz"` and validates exec arguments without calling a model.
+The retry preserves the original overall deadline and reduces its allowance to 19 invocations.
+
+GEPA evaluation caching remains disabled so the application records independent validation executions.
+GEPA's raw proposal output is suppressed because proposed text can contain private training content.
+Exact JSON grading distinguishes booleans from numbers.
+These corrections have regression coverage in the canonical build.[^runtime]
+
+[^selftest]: Authenticated local run `skillz-live-20260928-retry`, 2026-09-28; aggregate evidence computed from private run records. Seed hash `40d663101dc626aa1b55cf6d97ffb32e1603830814f924d858d91bd614b217da`. Frozen public cases: `lib/src/skillz_experiments/fixtures/self-test.json:1-106`. Implementation and verification are published in [PR #107](https://github.com/paulnsorensen/skillz-that-grillz/pull/107).
+
+[^runtime]: GEPA 0.1.4 installed public signatures, inspected 2026-09-28; `lib/src/skillz_experiments/_search.py` and `_codex.py`. Model-free `Codex.preflight()` returns `isolation: passed` with zero live calls on Codex 0.154.0, 2026-09-28.
 
 [^gepa]: [GEPA source note](../sources/gepa-optimize-anything.md), primary documentation verified 2026-09-28.
 [^analytics]: [PR #105 source note](../sources/skillz-session-analytics-pr-105.md), pinned schema and coverage verified 2026-09-28.

@@ -31,3 +31,11 @@ branch through the compare API, so a shallow checkout still passes.
 
 For local development, run `uv run --project lib wedge --help`. Building
 requires `uv`; publishing also requires an authenticated `gh` CLI.
+
+## Optional skill experiments
+
+Install the `experiments` extra to use pinned GEPA 0.1.4.
+Run `uv run --project lib --extra experiments skillz-experiment --help` from the repository root.
+The commands are `dataset`, `baseline`, `search`, `evaluate`, `export`, and `self-test`.
+They do not change wedge or fromargs behavior.
+See [the experiment contract](../skills/skillz/references/experiments.md) before making live calls.

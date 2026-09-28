@@ -1,0 +1,233 @@
+from __future__ import annotations
+
+import difflib
+import fcntl
+import json
+import time
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from typing import Protocol, cast, final
+
+from skillz_experiments._candidate import Candidate
+from skillz_experiments._cases import Case, digest, load_cases, mapping, text_map
+from skillz_experiments._codex import Codex, VERSION
+from skillz_experiments._records import read, write
+from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._search import optimize
+
+
+class _Provider(Protocol):
+    def preflight(self) -> dict[str, object]: ...
+    def close(self) -> None: ...
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]: ...
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
+
+
+Factory = Callable[[str, Budget, Callable[[], None]], _Provider]
+
+
+def _engine_hash() -> str:
+    return digest({path.name: path.read_text() for path in Path(__file__).parent.glob("*.py")})
+
+
+@final
+class _Session:
+    def __init__(self, out: Path, model: str, maximum: int, seconds: float, factory: Factory) -> None:
+        self.out = out
+        self.record = read(out / "run.json")
+        cases_document = read(out / "cases.json")
+        if self.record["dataset_hash"] != digest(cases_document):
+            raise ValueError("frozen dataset changed")
+        self.cases = [case for case in load_cases(out / "cases.json") if case.eligible]
+        self.seed = Candidate(text_map(self.record["seed"]), tuple(cast(list[str], self.record["editable"])))
+        if self.seed.identity != self.record["seed_hash"]:
+            raise ValueError("frozen seed changed")
+        _ = self.record.setdefault("engine_hash", _engine_hash())
+        if self.record["engine_hash"] != _engine_hash():
+            raise ValueError("frozen evaluator changed; create a new run")
+        _ = self.record.setdefault("started", time.time())
+        _ = self.record.setdefault("started_monotonic", time.monotonic())
+        _ = self.record.setdefault("max_seconds", seconds)
+        _ = self.record.setdefault("max_invocations", maximum)
+        _ = self.record.setdefault("model", model)
+        if (self.record["max_seconds"], self.record["max_invocations"], self.record["model"]) != (seconds, maximum, model):
+            raise ValueError("run configuration changed; create a new run")
+        elapsed = time.monotonic() - cast(float, self.record["started_monotonic"])
+        if elapsed < 0:
+            raise ValueError("run cannot resume after a monotonic clock reset")
+        remaining = seconds - elapsed
+        self.budget = Budget(maximum, remaining, calls=cast(int, self.record["calls"]))
+        self.provider = factory(model, self.budget, self.checkpoint)
+        self.arms = mapping(self.record["arms"])
+        self.outcomes = cast(list[dict[str, object]], self.record["outcomes"])
+
+    def checkpoint(self) -> None:
+        self.record["calls"] = self.budget.calls
+        write(self.out / "run.json", self.record)
+
+    def cases_for(self, split: str) -> list[Case]:
+        return [case for case in self.cases if case.split == split]
+
+    def evaluate_case(self, candidate: Candidate, case: Case, arm: str, *, holdout: bool = False) -> dict[str, object]:
+        result = self.provider.evaluate(candidate, case, holdout=holdout)
+        result.update({"arm": arm, "split": case.split})
+        self.outcomes.append(result)
+        self.checkpoint()
+        return result
+
+    def baseline(self) -> None:
+        if self.record["phase"] != "prepared":
+            raise ValueError("baseline requires a new prepared run")
+        cases = self.cases_for("train") + self.cases_for("validation")
+        if not cases:
+            raise ValueError("baseline requires eligible train and validation cases")
+        self.arms["original"] = self.seed.files
+        for case in cases:
+            result = self.evaluate_case(self.seed, case, "original")
+            if result.get("status") == "candidate-contract-rejected":
+                raise ValueError("original candidate fails the frozen native/helper contract")
+        self.record["phase"] = "baseline"
+        self.checkpoint()
+
+    def search(self, mode: str) -> None:
+        if self.record["phase"] not in {"baseline", "search"} or mode in self.arms:
+            raise ValueError("search requires baseline and an unsearched arm")
+        candidates: dict[str, Candidate] = {self.seed.identity: self.seed}
+        validation: dict[str, list[dict[str, object]]] = {}
+
+        def evaluate(components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
+            if not isinstance(example, Case) or example.split == "holdout":
+                raise ValueError("holdout must not enter optimization")
+            candidate = self.seed.changed(components)
+            candidates[candidate.identity] = candidate
+            result = self.evaluate_case(candidate, example, mode)
+            if example.split == "validation":
+                validation.setdefault(candidate.identity, []).append(result)
+            return cast(float, result["score"]), {"task_correct": result["score"], "request": example.request}
+
+        def propose(candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                    components: list[str]) -> dict[str, str]:
+            schema: dict[str, object] = {"type": "object",
+                "properties": {key: {"type": "string"} for key in components},
+                "required": components, "additionalProperties": False}
+            prompt = ("Improve only the supplied skill text components. Preserve the helper CLI contract. "
+                      + "Return complete component contents. Do not alter independent checks or permissions.\n"
+                      + json.dumps({"candidate": candidate, "feedback": feedback}, default=str))
+            result = self.provider.invoke(prompt, schema=schema)
+            self.outcomes.append({"arm": mode, "split": "reflection", "usage": result.get("usage"),
+                                  "latency_seconds": result.get("latency_seconds")})
+            self.checkpoint()
+            answer = mapping(result["answer"])
+            if set(answer) != set(components) or not all(isinstance(value, str) for value in answer.values()):
+                raise ValueError("reflection changed frozen component keys")
+            return cast(dict[str, str], answer)
+
+        editable = {key: self.seed.files[key] for key in self.seed.editable}
+        try:
+            _ = optimize(editable, mode, list(self.cases_for("train")), list(self.cases_for("validation")), evaluate, propose)
+            winner = _select(candidates, validation, len(self.cases_for("validation")), self.seed)
+            reason = "validation-selection"
+        except BudgetExhausted:
+            winner, reason = self.seed, "budget-exhausted-seed-retained"
+        self.arms[mode] = winner.files
+        self.record[mode + "_selection"] = {"reason": reason, "retained_seed": winner.identity == self.seed.identity}
+        self.record["phase"] = "search"
+        self.checkpoint()
+
+    def holdout(self) -> None:
+        if set(self.arms) != {"original", "prompt", "prompt-cli"} or self.record.get("holdout_consumed"):
+            raise ValueError("holdout requires three locked arms and cannot be resumed")
+        cases = self.cases_for("holdout")
+        if len(cases) != 2:
+            raise ValueError("bounded comparison requires exactly two holdout cases")
+        self.record["locked_arms"] = {name: digest(files) for name, files in self.arms.items()}
+        self.record["holdout_consumed"] = True
+        self.checkpoint()
+        for name, files in self.arms.items():
+            candidate = Candidate(text_map(files), self.seed.editable)
+            for case in cases:
+                _ = self.evaluate_case(candidate, case, name, holdout=True)
+        self.record["phase"] = "complete"
+        self.record["improvement"] = "inconclusive-bounded-smoke-test"
+        self.checkpoint()
+
+
+def _select(candidates: dict[str, Candidate], validation: dict[str, list[dict[str, object]]],
+            count: int, seed: Candidate) -> Candidate:
+    ranked: list[tuple[float, float, str]] = []
+    for identity, results in validation.items():
+        if len(results) != count:
+            continue
+        score = sum(cast(float, result["score"]) for result in results) / count
+        tokens = [mapping(result["usage"]).get("input_tokens") for result in results]
+        output = [mapping(result["usage"]).get("output_tokens") for result in results]
+        measured = tokens + output
+        total = sum(cast(int, value) for value in measured) if all(isinstance(value, int) for value in measured) else float("inf")
+        ranked.append((-score, total, identity))
+    return candidates[min(ranked)[2]] if ranked else seed
+
+
+def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: int = 20,
+            seconds: float = 1200, factory: Factory = Codex, mode: str = "prompt") -> dict[str, object]:
+    if not live:
+        raise ValueError("live model calls require --live")
+    with (out / "run.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if read(out / "run.json").get("holdout_consumed"):
+            raise ValueError("holdout is consumed; completed evidence is immutable")
+        session = _Session(out, model, maximum, seconds, factory)
+        try:
+            preflight = session.provider.preflight()
+            environment_hash = preflight.get("environment_hash")
+            _ = session.record.setdefault("environment_hash", environment_hash)
+            if session.record["environment_hash"] != environment_hash:
+                raise ValueError("frozen runtime environment changed")
+            session.record["preflight"] = preflight
+            session.record["codex_version"] = VERSION
+            session.checkpoint()
+            if stage in {"baseline", "self-test"}:
+                session.baseline()
+            if stage == "search":
+                session.search(mode)
+            if stage == "self-test":
+                session.search("prompt")
+                session.search("prompt-cli")
+            if stage in {"evaluate", "self-test"}:
+                session.holdout()
+            return summary(session.record)
+        except (OSError, ValueError, RuntimeError):
+            session.record["phase"] = "infrastructure-failure"
+            session.checkpoint()
+            raise
+        finally:
+            session.provider.close()
+
+
+def summary(record: dict[str, object]) -> dict[str, object]:
+    return {key: record.get(key) for key in
+            ("schema_version", "phase", "calls", "model", "codex_version", "improvement", "locked_arms")}
+
+
+def export(out: Path, destination: Path, arm: str) -> dict[str, object]:
+    record = read(out / "run.json")
+    if record.get("phase") != "complete":
+        raise ValueError("export requires a completed locked evaluation")
+    arms = mapping(record["arms"])
+    if arm not in {"prompt", "prompt-cli"} or arm not in arms:
+        raise ValueError("export arm must be prompt or prompt-cli")
+    seed, candidate = text_map(record["seed"]), text_map(arms[arm])
+    lines = (line for name in seed if seed[name] != candidate[name]
+             for line in difflib.unified_diff(seed[name].splitlines(keepends=True),
+                   candidate[name].splitlines(keepends=True), fromfile="a/" + name, tofile="b/" + name))
+    patch = "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
+    destination.mkdir(mode=0o700)
+    patch_path = destination / "candidate.patch"
+    descriptor = patch_path.open("x", encoding="utf-8")
+    patch_path.chmod(0o600)
+    with descriptor:
+        _ = descriptor.write(patch)
+    report = summary(record) | {"sharing": "private-local-only", "arm": arm,
+                                "outcomes": record["outcomes"], "cost_usd": None}
+    write(destination / "report.json", report)
+    return {"export": str(destination), "sharing": "private-local-only", "installed": False}

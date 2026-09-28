@@ -1,182 +1,128 @@
 # Session-driven skill prompt and CLI optimization
 
-Skillz could turn a user's task history into a bounded GEPA experiment for a complete skill package.
-Session analytics would select cases; an independent evaluator would measure improvement; the user would approve deployment.
-Status: proposal, not an accepted specification or implemented feature.
-The goal is “best measured for this use case,” not a globally optimal skill.
+Session-driven skill prompt and CLI optimization uses a bounded GEPA experiment in skillz.
+The editable package contains its prompt, selected references, and inspection helper.
+Approved task cases drive evaluation; session frequency is not a success label.
+The first adapter targets skillz audit tasks on Codex, not arbitrary skill-owned programs.
+The goal remains “best measured for this use case,” not a globally optimal skill.[^implementation]
 
-## Evidence behind the proposal
+## Evidence and scope
 
-The [GEPA research synthesis](../research/gepa-session-optimization.md) separates verified capabilities from design inference.
-The GEPA team's [gskill guide](../sources/gepa-gskill.md) demonstrates test-feedback skill learning.
-Its [Universal API article](../sources/gepa-optimize-anything.md) supports named prompt and code components.
-[PR #105](../sources/skillz-session-analytics-pr-105.md) supplies the proposed analytics input, not evaluation labels.
+The [GEPA research synthesis](../research/gepa-session-optimization.md) separates verified mechanisms from personalization claims.
+GEPA's [Universal API](../sources/gepa-optimize-anything.md) supports named prompt and code components.
+The implementation pins GEPA 0.1.4 and supplies its own Codex candidate proposer.
+It does not invoke either gskill package as a black-box optimizer.[^search]
+
+[PR #105](../sources/skillz-session-analytics-pr-105.md) supplies proposed analytics data, not evaluation labels.
+The experiment imports approved normalized cases without depending on that unmerged database implementation.
+It does not scan native transcripts.[^cases]
 
 ## User workflow
 
-The proposed skillz workflow has six explicit stages.
-The following command names illustrate a possible interface; none exists today.
-Do not replace the existing `optimize` alias, which currently means `improve`.[^alias]
+The optional `skillz-experiment` executable exposes six commands.
+The skill routes `experiment` to its experiment reference.
+Existing `optimize` and `tighten` aliases still mean `improve`.[^implementation]
 
-| Stage | Illustrative action | Observable result |
-| --- | --- | --- |
-| Profile | `skillz experiment profile <skill>` | Target paths, use case, deployment harnesses, success criteria, and spend limits. |
-| Dataset | `skillz experiment dataset <profile>` | Redacted, provenance-backed task cases; explicit exclusions and coverage. |
-| Baseline | `skillz experiment baseline <dataset>` | Paired seed measurements and verified graders. |
-| Search | `skillz experiment search <run>` | Budgeted candidate history, reflection feedback, and best measured candidates. |
-| Evaluate | `skillz experiment evaluate <run>` | Locked-candidate holdout comparison and promote/hold/inconclusive result. |
-| Export | `skillz experiment export <run>` | Reviewable patch and evidence report; no automatic install, merge, or push. |
+| Command | Result |
+| --- | --- |
+| `dataset` | Validated case manifest, frozen seed, and private run directory. |
+| `baseline` | Original candidate measurements on train and validation cases. |
+| `search --mode prompt` | One GEPA proposal restricted to declared Markdown components. |
+| `search --mode prompt-cli` | One GEPA proposal that can also change the inspection helper. |
+| `evaluate` | Paired holdout outcomes for three locked arms. |
+| `export` | Private local patch and evidence report, without installation. |
+| `self-test` | The bounded workflow over public repository-authored cases. |
 
-A user could start from a written use case when session data is absent.
-User-approved cases would supply the evaluator before search begins.
-Synthetic cases may test plumbing, but cannot establish personalization from real work.
+Run `uv run --project lib --extra experiments skillz-experiment --help` from the repository root.
+The skill's `references/experiments.md` documents exact commands and the version-one case schema.
+Normal skill installation does not require GEPA.
 
-## From sessions to evaluation cases
+## From sessions to approved cases
 
-The proposed dataset builder would treat session history as sampling evidence, not ground truth.
-It would first filter by project, time, harness, and target skill.
-It would sample successful, failed, corrected, and ambiguous episodes.
-It would report missing signals rather than convert them into success.
+The dataset boundary accepts authored use cases or a user-approved normalized analytics export.
+Each case supplies an ID, task-family group, split, request, fixture files, expected JSON, provenance, provider approval, and visibility.
+Missing request, fixture, oracle, or approval leaves a case diagnostic-only.[^cases]
 
-Each approved case would record:
+All variants of one task family must remain in one split.
+Paths reject traversal, aliases, hidden components, and runtime-owned collisions.
+Private is the default visibility.
+Provider approval permits submission, not publication.
+Inferred attribution and missing signals remain explicit in provenance.
 
-- A stable case ID and private provenance pointer.
-- Repository revision, fixture or environment digest, and dependency snapshot.
-- The user request before the solution appears.
-- The target skill version and observed harness; inferred attribution stays labeled.
-- Required tools and permitted external services.
-- An independent success check and evidence for its expected result.
-- A task-family group, dataset split, and privacy classification.
+Analytics cannot reconstruct every replay input.
+PR #105 truncates materialized results and omits some native events.
+Users must supply reproducible fixtures and independent expected outcomes.
+Synthetic cases test the mechanism; they do not demonstrate personalization from real sessions.
 
-Analytics cannot reliably reconstruct every field.
-PR #105 truncates materialized result text and omits some native events.
-Native transcript access therefore needs a separate consent boundary.[^analytics]
-A case lacking its request, reproducible state, or trustworthy oracle would remain diagnostic-only.
+## Frozen candidate and evaluator
 
-The builder would deduplicate repeated sessions, retries, forks, and related issue variants.
-All variants of one task family would stay in one split.
-A later time window could test drift.
-The optimizer would see training and selection-validation data, never sealed holdout answers or reference patches.
+GEPA optimizes only declared text components.
+The seed includes `SKILL.md`, the skill-owned inspection helper, and explicitly selected Markdown references.
+Other package files remain frozen.
+The engine, permission policy, dataset, splits, output contract, and evaluator stay outside the candidate.[^candidate]
 
-## Optimization loop
+The inspection helper reports lexical frontmatter keys, body line count, and local Markdown link targets.
+It does not grade prose or assign fitness.
+Independent checks validate helper behavior inside the Codex sandbox.
+Task fitness requires the expected JSON result and candidate execution evidence.[^evaluator]
 
-The proposed GEPA loop would optimize a map of approved text components.
-It would not mutate the evaluator that assigns fitness.
+Correctness controls selection.
+Measured input-plus-output tokens break correctness ties.
+Cached input is already part of input tokens.
+Missing usage and dollar cost remain unknown.
 
-```text
-use case or approved sessions
-  -> frozen dataset and evaluator
-  -> seed baseline
-  -> GEPA candidate
-  -> path, contract, build, and test checks
-  -> isolated real-agent runs
-  -> scores plus redacted failure feedback
-  -> next candidate within budget
-  -> locked winner and sealed holdout
-  -> human-reviewed export
-```
+## Codex isolation and native loading
 
-The runner would install each candidate through the deployment harness's real skill-loading path.
-A fixture would prove that the intended candidate loaded and its references and CLI resolved.
-System-prompt injection alone would not prove activation or package behavior.
+The Codex adapter pins CLI 0.154.0 and requires an explicit model.
+The user selects the existing ChatGPT login for the first smoke test.
+Temporary isolated home directories keep user configuration and host skills out of candidate discovery.
+A temporary authentication symlink references the existing login without engine-side credential copying.[^runtime]
 
-## Prompt and CLI mutation boundary
+[Codex skill discovery evidence](../sources/codex-skill-discovery-isolation.md) explains why `--ignore-user-config` alone is insufficient.
+Host skill discovery and generated-command isolation are different boundaries.
+An existing administrator skill directory stops the run.
 
-The proposed candidate scope would include `SKILL.md`, selected references, and declared skill-owned CLI source.
-It could move repeated mechanical instructions into tested CLI behavior.
-Existing public commands, schemas, exit codes, and safety rules would remain frozen unless the user approves a separate contract change.
+Candidate commands receive a deny-by-default filesystem profile and no network access.
+The candidate package is read-only.
+Holdout files, expected answers, the original checkout, and credentials remain outside candidate visibility.
+Model-free checks test denied reads, symlink escapes, environment restrictions, and network denial.
+A failed isolation check stops execution without an unsafe fallback.
 
-Generated archives, command indexes, and packaging metadata would be rebuilt from source.
-The optimizer would not patch a binary `.pyz` directly.
-For targets that use them, [fromargs](../decisions/fromargs-cli-library.md) and [wedge](../decisions/wedge-skill-packaging.md) supply established CLI and packaging conventions.
-Other consumers would supply their own build and test contract.
+## Budget and sealed holdout
 
-The runner would reject edits to graders, hidden tests, dataset splits, shared libraries, dependency policy, and permission configuration.
-Path normalization would reject traversal and symlink escapes.
-Changed-file checks would run outside the candidate environment.
+The live run permits at most 20 Codex invocations within 1,200 seconds.
+Baseline, search, reflection, failures, and holdout share the same counter and deadline.
+Pauses between separate commands consume the same deadline.
+Six calls remain reserved for two holdout cases across three arms.[^workflow]
 
-Builds and generated CLI execution would require an enforced disposable sandbox.
-A Git worktree alone would not provide isolation.
-The sandbox would exclude host credentials and unrelated files, restrict network access, and enforce resource limits.
-Model calls would use a controlled broker rather than expose provider keys to generated code.
+Selection finishes before holdout evaluation.
+The runner locks original, prompt-only, and prompt-plus-CLI candidate hashes.
+Holdout feedback never returns to GEPA.
+A consumed holdout cannot resume selection or rewrite completed evidence.
 
-## What the evaluator measures
+The bounded smoke result remains inconclusive for statistical improvement.
+Even a higher observed score does not establish robustness or long-term personalization.
+An infrastructure failure remains distinct from a task failure.
 
-The proposed evaluator would use task-specific outcomes rather than a universal prose-quality score.
+## Export and remaining work
 
-| Target behavior | Primary check | Useful diagnostic |
-| --- | --- | --- |
-| Skill activation | Labeled should-trigger and should-not-trigger cases, where automatic invocation is supported | False activations and missed activations. |
-| Coding task | Immutable fail-to-pass tests plus regression tests | Test output, patch scope, and missing checks. |
-| Review task | Labeled defects and false-positive controls | Recall, precision, and unsupported findings. |
-| Research task | Verified evidence requirements and output contract | Missing claims, unsupported citations, and trace failures. |
-| CLI task | Actual command behavior and error contracts | Invalid arguments, parser retries, exit status, and structured output. |
+Exports contain a patch and measurements, not raw requests or expected answers.
+Candidates can memorize approved training content.
+Therefore, all exports remain private and local until a separate human review.
+The runner never applies, installs, merges, or pushes a candidate.[^export]
 
-A CLI could receive direct command tests and end-to-end agent tasks.
-A parser improvement is not sufficient if the skill stops teaching the correct invocation.
-A prose improvement is not sufficient if its referenced command fails.
+The current adapter evaluates the frozen inspection-helper contract.
+Generic CLI contracts, additional harnesses, automatic analytics sampling, repeated-run statistics, and monetary pricing remain future work.
+Session-based personalization needs real approved cases and a task-specific evaluator.
+Do not describe the public self-test as a real-session benchmark.
 
-A model judge, when unavoidable, would remain frozen and calibrated against human labels.
-Its score would not replace executable checks where those checks exist.
-Transcript instructions and candidate-generated feedback would remain untrusted data.
+[^implementation]: `lib/src/skillz_experiments/_cli.py:14-73`; `skills/skillz/SKILL.md:33-52`; `skills/skillz/references/experiments.md:1-135`.
+[^search]: `lib/src/skillz_experiments/_search.py:26-52`.
+[^cases]: `lib/src/skillz_experiments/_cases.py:42-94`; `_records.py:28-50`.
+[^candidate]: `lib/src/skillz_experiments/_candidate.py:14-51`; `_records.py:28-38`.
+[^evaluator]: `lib/src/skillz_experiments/_evaluation.py:11-84`; `skills/skillz/scripts/inspect_skill.py:12-49`.
+[^runtime]: `lib/src/skillz_experiments/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
+[^workflow]: `lib/src/skillz_experiments/_workflow.py:35-202`; `_runtime.py:15-56`.
+[^export]: `lib/src/skillz_experiments/_workflow.py:210-231`.
 
-## Personalization and promotion
-
-The proposed user profile would define the task distribution, deployment models, tools, latency constraints, and privacy requirements.
-Observed frequency could suggest weights; the user would approve them.
-Rare, high-consequence cases would remain mandatory gates.
-Global discovery precision would not be an objective for a user-invoked-only skill.
-
-The evaluator would report correctness, policy violations, full run tokens, latency, and cost separately.
-Token accounting would include input, output, cache reads, and cache writes where available.
-Missing token fields would remain unknown, not zero.
-Costs would use pinned prices rather than treat all tokens as equally priced.
-
-GEPA could retain candidates that trade accuracy against cost.
-The release gate would apply the user's stricter policy.
-A Pareto-front position alone would not authorize promotion.[^gepa]
-The selected candidate and seed would run on the same holdout tasks and deployment harness.
-Repeated runs and paired uncertainty estimates would distinguish improvement from noise.
-
-Candidate selection would finish before holdout evaluation.
-Holdout results would not feed reflection or another search round.
-Repeated human selection against one holdout would also contaminate it; later experiments would need a fresh sealed set.
-
-The default proposed result would be hold or inconclusive when coverage, replay quality, or evidence is insufficient.
-No candidate would install itself.
-An export would include rollback instructions and a profile-specific compatibility statement.
-
-## Budget and experiment record
-
-The proposed budget would cover baseline, candidate builds, agent runs, reflection, validation, final evaluation, and retries.
-A metric-call limit alone would not bound total spend.
-The runner would reserve final-evaluation budget and stop before that reserve is consumed.
-
-The run record would pin dataset and candidate hashes, model identifiers, harness versions, tools, seeds, evaluator version, and environment.
-It would record actual usage, failed infrastructure runs, resume state, and provenance.
-Infrastructure failures would not silently become zero-quality skill outcomes.
-Resuming with changed inputs would start a new experiment identity.
-
-Private session text would remain local by default.
-Redaction would remove credentials, unrelated content, and private identifiers before any approved provider submission.
-A public PR would contain only approved summaries and non-sensitive fixtures.
-Revoked cases would be excluded from future datasets and retained exports according to the user's retention policy.
-
-## First proof experiment and unresolved decisions
-
-The proposed first experiment would target one skill-owned CLI with reproducible tests and enough approved real cases.
-It would compare the seed, prompt-only search, and prompt-plus-CLI search under the same frozen evaluator.
-This comparison would test whether CLI mutation adds value beyond prompt rewriting.
-
-Before implementation, choose the pilot skill, deployment harness, execution sandbox, budget, and acceptable regression threshold.
-Confirm whether skillz owns the reusable loop or consumes an extracted easy-cheese runner.
-Validate PR #105's integration after it lands; this documentation PR does not depend on merging its code.
-
-Done would mean a reproducible dataset, verified candidate loading, enforced mutation boundaries, and an independently graded comparison.
-A successful result could be “no improvement”; that is better than promoting an unproven candidate.
-
-[^alias]: `skills/skillz/SKILL.md:25-39` at `b068dacbae5b8afd8c3abe2f531adc5193a99e25`.
-[^analytics]: [Session analytics source and limitations](../sources/skillz-session-analytics-pr-105.md), verified 2026-09-28.
-[^gepa]: [GEPA research corrections](../research/gepa-session-optimization.md), including the distinction between non-domination and promotion.
-
-_Source: user request, recovered local research, and the linked primary-source synthesis · Updated: 2026-09-28_
+_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-09-28 · Supersedes: proposal-only status and unresolved first-harness choice_

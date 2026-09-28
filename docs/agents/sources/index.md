@@ -1,6 +1,7 @@
 # sources
 
 <!-- HALLOUMINATE:INDEX-START -->
+- [codex-skill-discovery-isolation](./codex-skill-discovery-isolation.md) — Codex 0.154 skill discovery and isolation
 - [gepa-adapters](./gepa-adapters.md) — Creating Adapters
 - [gepa-faq](./gepa-faq.md) — Frequently Asked Questions
 - [gepa-gskill](./gepa-gskill.md) — gskill: Learning Repository-Specific Skills
