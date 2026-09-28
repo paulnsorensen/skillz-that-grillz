@@ -57,16 +57,34 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("validated 1", out)
 
-    def test_skills_dir_missing(self) -> None:
+    def test_no_skills_at_all_fails(self) -> None:
+        # No skills/ and no .agents/skills/ — nothing to validate is an error,
+        # not a silent pass.
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
-        self.assertIn("skills/ directory not found", err)
+        self.assertIn("no SKILL.md files found", err)
 
-    def test_no_skill_files(self) -> None:
+    def test_empty_skills_dir_fails(self) -> None:
         (self.tmpdir / "skills").mkdir()
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
         self.assertIn("no SKILL.md files found", err)
+
+    def test_skills_dir_absent_but_agents_skills_present_passes(self) -> None:
+        # This repo publishes no skills under skills/ but still ships the
+        # repo-local python-authoring skill under .agents/skills/.
+        self._write_skill("foo", parent=".agents/skills")
+        rc, out, _ = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("validated 1", out)
+
+    def test_agents_skills_name_mismatch_fails(self) -> None:
+        # .agents/skills/<name>/SKILL.md is validated exactly like a
+        # published skill — a name/directory mismatch still fails.
+        self._write(".agents/skills/foo/SKILL.md", VALID_BODY.format(name="bar"))
+        rc, _, err = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("does not match parent directory", err)
 
     def test_stray_outside_skills_fails(self) -> None:
         # Guard against a copy-pasted plugin tree silently passing validation.
@@ -84,12 +102,16 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertIn("nested sub-skills are not supported", err)
 
     def test_hidden_dirs_skipped(self) -> None:
+        # .agents/skills/ is the one hidden root that IS validated; every
+        # other dot-prefixed directory stays excluded.
         self._write_skill("foo")
+        self._write_skill("bar", parent=".agents/skills")
         self._write(".github/SKILL.md", VALID_BODY.format(name="github"))
         self._write(".cache/plugins/x/skills/y/SKILL.md", VALID_BODY.format(name="y"))
+        self._write(".claude/skills/z/SKILL.md", VALID_BODY.format(name="z"))
         rc, out, _ = self._run()
         self.assertEqual(rc, 0)
-        self.assertIn("validated 1", out)
+        self.assertIn("validated 2", out)
 
     def test_missing_frontmatter(self) -> None:
         self._write("skills/foo/SKILL.md", "no frontmatter here\n")

@@ -1,7 +1,7 @@
 # The one command to run after every change.
 default: build
 
-# Canonical gate (default) — autofix lint, then verify markdown/yaml/shell + tests.
+# Canonical gate (default) — autofix lint, then verify markdown/yaml + tests.
 build: (_gate "fix")
 
 # CI gate — identical checks, NO autofix. A clean run here == a clean CI.
@@ -23,33 +23,26 @@ _gate mode:
         step yaml-fmt    just lint-yaml-fmt
     fi
     step yaml  just lint-yaml
-    step shell just lint-sh
     step test  just test
 
 # List all available commands
 list:
     @just --list
 
-# Run tests (skill validators + self-tests + bash unit tests — mirrors CI)
+# Run tests (skill validators + self-tests — mirrors CI)
 test:
     python3 .github/scripts/test_validate_skills.py
     python3 .github/scripts/test_validate_evals.py
     python3 .github/scripts/validate_skills.py
-    bats tests/bash/test_install.bats
-    bats tests/bash/test_skillz.bats
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
     uv run --locked --project lib basedpyright lib/src/wedge lib/tests/wedge
     just test-fromargs
     uv run --locked --project lib pytest lib/tests/wedge -q
-    uv run --locked --project lib wedge check --root skills --root lib/examples/skills --root lib/examples/consumer/skills
+    uv run --locked --project lib wedge check --root lib/examples/skills --root lib/examples/consumer/skills
 
 # Run fromargs' pytest suite, optionally pinned to one Python version.
 test-fromargs python="":
     uv run --locked {{ if python != "" { "--python " + python } else { "" } }} --project lib/fromargs pytest lib/fromargs/tests -q
-
-# Lint shell scripts
-lint-sh:
-    shellcheck scripts/install.sh skills/file-handler/scripts/skillz.sh
 
 # Mutation-test the fromargs acceptance suite (not part of build/ci).
 mutate-fromargs:
@@ -57,11 +50,11 @@ mutate-fromargs:
 
 # Fix markdown formatting issues
 lint-md-fix:
-    markdownlint-cli2 --fix "skills/**/*.md" "*.md"
+    markdownlint-cli2 --fix "*.md"
 
 # Verify markdown (no autofix)
 lint-md:
-    markdownlint-cli2 "skills/**/*.md" "*.md"
+    markdownlint-cli2 "*.md"
 
 # Fix YAML formatting issues
 lint-yaml-fmt-fix:

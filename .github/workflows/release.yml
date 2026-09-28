@@ -86,14 +86,12 @@ jobs:
         if: steps.guard.outputs.already_published != 'true'
         # `just ci` is the single source of truth — the same gate runs locally.
         # Pin the tools it shells out to so CI matches a developer's machine:
-        #   apt: shellcheck, bats   npm: markdownlint-cli2
+        #   npm: markdownlint-cli2
         #   pip: yamllint + pyyaml (validators)
         #   uv: pinned by the Install uv step; lib/fromargs pytest from its uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y shellcheck bats
           npm install -g markdownlint-cli2@0.22.1
           pip install --no-cache-dir \
             yamllint==1.35.1 \
@@ -107,25 +105,14 @@ jobs:
         # same gate that guards every PR (validate.yml); a release must clear it.
         run: just ci
 
-      - name: Validate skills
-        if: steps.guard.outputs.already_published != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh skill publish --dry-run
-
-      - name: Publish agent skills
+      - name: Publish GitHub release
+        # This repo publishes no Agent Skills (see README "Where the skills
+        # went"), so there is nothing for `gh skill publish` to validate or
+        # package — create the release directly against the trigger tag.
         if: steps.guard.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |-
           set -euo pipefail
-          # `gh skill publish --tag` *creates* the tag, so it errors ("tag
-          # already exists") whenever the trigger tag is already present — which
-          # it always is here, because the tag push is what started this run.
-          # The "Validate skills" step already ran `gh skill publish --dry-run`
-          # (spec validation + install-metadata check), so all that remains is
-          # release creation — which is exactly what `gh skill publish` does
-          # internally. Create the release directly against the existing tag;
-          # the already_published guard keeps re-runs idempotent.
           gh release create "$TAG" --title "$TAG" --generate-notes --latest
