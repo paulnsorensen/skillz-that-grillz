@@ -1,0 +1,179 @@
+# Harness Coverage
+
+Which coding-agent harnesses the analytics layer ingests, where their session
+logs live, and how each is parsed. `ingest.py` runs one **normalizing adapter**
+per harness; every adapter is discovery-gated and best-effort. A harness with no
+accessible logs is recorded here and skipped non-fatally — full coverage of what
+is reachable, not parsing the unparseable.
+
+Every canonical table carries a `harness` column (`claude` / `codex` / `omp` /
+`pi` / `cursor` / `copilot`) so one query can compare sources. See
+`canonical-schema.md` for the table shapes.
+
+## Coverage status
+
+| Harness | Log location | Format | Adapter | Status |
+|---------|-------------|--------|---------|--------|
+| claude | `~/.claude/projects/**/*.jsonl` | JSONL, one turn per line; assistant/user `message.content[]` blocks | `claude_normalize` (pass-through, already canonical) | parsed |
+| codex | `~/.codex/sessions/**/*.jsonl` | JSONL rollout; `session_meta` + `response_item`/`event_msg` payloads | `codex_normalize` | parsed |
+| omp | `~/.omp/agent/sessions/<flattened-project-dir>/*.jsonl` | JSONL; `session` header + `message` entries with `toolCall` / `toolResult` | `omp_normalize` | parsed |
+| pi | `~/.pi/agent/sessions/<flattened-project-dir>/*.jsonl` | Pi-family JSONL | `pi_normalize` | parsed |
+| cursor | `~/.cursor/projects/<project-slug>/agent-transcripts/<uuid>/<uuid>.jsonl` (+ `subagents/*.jsonl`) | JSONL, one message per line; `role`/`message.content[]` blocks, plus `turn_ended` status lines | `cursor_normalize` | parsed |
+| copilot | `~/.copilot/` | holds `skills/` + `mcp-config.json` only; no local transcript found | none | **no accessible logs** |
+
+## Per-harness format notes
+
+### claude
+
+Native format is already the canonical envelope (`type`, `timestamp`,
+`sessionId`, `cwd`, `gitBranch`, `message.content[]`). The adapter only tags
+`harness='claude'`. Subagent JSONL lives in `subagents/` subdirectories — picked
+up by the recursive walk, but those turns have no direct user interaction (no
+stop events, no denials).
+
+Claude omits `is_error` on most successful tool results; the flattener
+backfills those to `'false'` and marks them `is_error_explicit = false`
+(measured: ~99.5% of absent-flag results carry non-error content, so claude
+error rates are floors — a handful of harness-side truncation notices lack the
+flag).
+
+**`bash_cmd` is the model-typed command, pre-hook.** A PreToolUse
+`updatedInput` rewrite can execute a different command while the transcript
+records the original. Hook rewrite coverage is therefore not measurable from
+Claude transcripts.
+
+### codex
+
+Rollout JSONL. Each line is `{timestamp, type, payload}`:
+
+- `session_meta` — `payload.id` (session id) + `payload.cwd`. Threaded onto every
+  following row in the file.
+- `turn_context` — refreshes `payload.cwd`.
+- `response_item / function_call` and `custom_tool_call` → an assistant
+  `tool_use` block. The tool name (`shell`, `exec_command`, `exec`,
+  `apply_patch`, custom tools) is kept verbatim; `arguments` is JSON-parsed
+  into `input`. For shell-ish tools, `input.command` is **normalized to the
+  executed command string** so `bash_cmd` populates: `exec_command` copies
+  `cmd`, legacy `shell` argv arrays collapse to the `-lc`/`-c` payload (or a
+  space-join), and the `exec` custom tool's raw code-string argument becomes
+  the command.
+- `response_item / function_call_output` **and `custom_tool_call_output`** → a
+  user `tool_result` block. (Dropping the custom outputs was the ~50%
+  result-join gap — issue #704.) `tool_search_output` items have no matching
+  call item and are dropped.
+
+Codex has no `Skill` / `Agent` tool primitives, so `skill_invocations` and
+`agent_spawns` stay claude-centric. `reasoning` items (encrypted) are dropped.
+
+- Structured `exit_code` (including negative values), failed status, `isError`/`is_error` true, and legacy `Process exited with code N` markers set `is_error`. Pending and successful session outputs remain non-errors. Wrapper parsing trusts complete JSON or an `Output:` JSON envelope, not arbitrary prose. Content-block arrays require an execution header in the first `input_text` block. The parser processes later JSON blocks independently.
+- Wrapper-level errors are lower bounds. Nested function or MCP calls can produce different counts. The adapter omits native Codex timing, user, model, and `event_msg` records.
+- Codex `is_error` values are adapter-derived. `explicit_error_flag_pct` does not establish source evidence for inferred wrapper, status, or exit-code signals.
+
+### omp and pi
+
+Both harnesses use Pi-family session JSONL, one file per session under a flattened-path project dir
+(e.g. `-Dev-dotfiles`). The `session` header entry (`{type:'session', id, cwd,
+timestamp, title}`) supplies sessionId + cwd for every row. `message` entries:
+
+- assistant `toolCall` content blocks → `tool_use` (`arguments` becomes `input`,
+  so `bash_cmd` extracts from `input.command`); `text`/`thinking` blocks pass
+  through;
+- role `toolResult` → a user `tool_result` block, joined on `toolCallId`;
+- role `user` passes through;
+- assistant `model`, `usage`, `duration`, `ttft`, `contextSnapshot.promptTokens`,
+  `stopReason`, and `errorMessage` map to Claude key names and feed
+  `model_turns`. `stopReason` `error` and `aborted` also land in `stop_events`.
+
+Error flag: every `toolResult` message carries a **msg-level `isError` boolean**
+— one convention for builtin and MCP tools. For MCP tools a duplicate flag lives
+at `details.xdev.inner.isError`; verified perfectly consistent with the
+msg-level flag across all sessions, so the adapter reads only the msg-level one.
+
+OMP-specific caveats:
+
+- **MCP naming** is a third scheme: `mcp__tilth_search` = `mcp__` + server +
+  *single* underscore + tool. These rows land in `mcp_calls` (the `mcp__%`
+  prefix filter matches), but any query that splits server/method on a
+  double-underscore separator will misparse omp names — split on the prefix +
+  first `_` instead when filtering `harness='omp'`.
+- **Shaken content**: context-compacted tool results are stored as a stub like
+  `[shaken ~275 tokens — recover: artifact://46 (region 2)]`. Kept verbatim —
+  content-based metrics (result length, error-text matching) undercount for
+  shaken rows.
+- **Tool-call id reuse**: `toolCall` ids (`write_0|fc_...`) are not globally
+  unique — a small fraction (~0.3%) repeat across sessions, so session-agnostic
+  `tool_use_id` joins can slightly overcount; join on `sessionId` too when
+  exactness matters.
+
+### cursor
+
+Each transcript file (top-level or `subagents/<uuid>.jsonl`) is one session,
+session id = the uuid filename. Lines are `{"role": "user"|"assistant",
+"message": {"content": [...]}}` or `{"type": "turn_ended", "status": ...}`;
+content blocks are only `text` and `tool_use` (`{"type":"tool_use","name":...,
+"input":{...}}`).
+
+`cwd` is decoded from the project-slug directory name (dashes stand in for
+slashes). A directory whose own name contains a dash is ambiguous if every dash
+is treated as a separator, so the adapter walks left-to-right and at each step
+takes the longest prefix of remaining segments that exists on disk
+(`Users-paul-Dev-easy-cheese` → `/Users/paul/Dev/easy-cheese` when that path is
+real). Unresolved tails fall back to a naive split. `gitBranch` is always null
+(not recorded).
+
+Cursor tool_use blocks carry no id, and there are no `tool_result` blocks at
+all — no result content, no `is_error`, no per-call timestamps. The adapter
+synthesizes a deterministic `tool_use_id` (`session:line:block_idx`) since
+nothing needs to join against it, and stamps every row with the most recent
+`<timestamp>Weekday, Mon D, YYYY, H:MM AM (UTC±N)</timestamp>` tag seen in a
+prior user turn (embedded alongside `<user_query>`), converted to UTC and
+carried forward — so cursor timestamps are turn-granularity, not per-call.
+Because of this, cursor has 0% `results_joined_pct` by construction (not a
+measurement gap) and is excluded from any error-rate query.
+
+`CallMcpTool` calls that carry both `server` and `toolName`
+(`{"name":"CallMcpTool","input":{"server":..., "toolName":...}}`) are remapped
+to `mcp__<server>__<toolName>` to match the `mcp__%` filter and the
+double-underscore split convention used by claude/codex. Incomplete wrappers
+(missing either key — observed on a subset of live transcripts) keep the native
+`CallMcpTool` name rather than collapsing to `mcp__None__None`. The remapped
+row's `input` stays the wrapper object (`server` / `toolName` / `arguments`);
+packs that read MCP args from `input.query` / `input.cwd` will see those fields
+under `input.arguments` for cursor.
+
+Cursor dispatches sub-agents with `Task` (not Claude's `Agent`). `agent_spawns`
+includes both names so cursor Task rows land there; `subagent_type` still fills
+`agent_type`. Each `subagents/<uuid>.jsonl` file is its own `sessionId`, but the
+adapter sets `isSidechain=true` and `parentUuid` to the parent transcript uuid
+so reconstruction can join the same way Claude packs use `isSidechain`.
+Discovery only walks `**/agent-transcripts/**/*.jsonl` — other JSONL under
+`~/.cursor/projects` is ignored.
+
+`turn_ended` lines (`{"status":"success"|"error"}`) become a stop_events row
+with `stop_reason` set to the status string. User-abort errors
+(`"error": "User aborted request"`) map to `aborted` instead of sharing
+`error` with model failures. The flattening SQL's stop_reason filter lists
+claude's `end_turn`/`stop_sequence`/`max_tokens` and cursor's
+`success`/`error`/`aborted`.
+
+### copilot — no accessible logs
+
+The GitHub Copilot CLI keeps no local session transcript we can locate
+(`~/.copilot` holds only `skills/` and `mcp-config.json`). Discover returns `[]`.
+Re-evaluate if a transcript store appears.
+
+## Signal-quality caveats
+
+Some metrics are only reliable on harnesses that record the underlying field —
+e.g. token/cost data is absent from most logs (`token-economics` degrades to
+"insufficient signal"), and Codex/OMP/Pi lack Claude's hook + permission-denial
+entries, so `stop_hooks` / `permission_denials` are effectively claude-only.
+Packs must degrade gracefully rather than fabricate.
+
+`ingest.py` prints a per-harness **coverage stanza** after every run:
+`results_joined_pct` (tool calls with a joined result — low means per-tool
+error rates for that harness are floors, not estimates) and
+`explicit_error_flag_pct` (results whose error flag came from the source
+rather than the `'false'` backfill). Read it before quoting cross-harness
+error-rate comparisons.
+An empty latency report or zero errors is not evidence of speed or no failures. Unsupported native events and missing result joins can produce both outcomes. Inspect native Codex JSONL read-only before making either claim.

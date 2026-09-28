@@ -1,17 +1,32 @@
 # Analytics ceremony (`audit`, `self-update`)
 
-Empirical usage data, best-effort.
-The Usage lens reads the database that the `session-analytics` skill builds from coding-agent session logs; that skill is an optional sibling, not part of this package.
-When that skill, the database, the logs, or ingestion is missing or fails, drop the Usage lens and say so in the report.
-Never block the audit on it.
+Empirical usage data is best-effort. This skill bundles its analytics engine under
+`engine/`; it does not need an installed `session-analytics` skill. The engine
+shares that skill's database path and one-hour cache. It requires Python 3, the
+`duckdb` CLI, readable local session logs, and a writable database directory.
+It does not require the Python `duckdb` module. If DuckDB is absent, offer
+**Skip Usage** or an opt-in sampled raw-log scan. Never start the scan before
+the user chooses it. Follow `references/raw-log-fallback.md` only after consent.
+If the user skips, or if ingestion or another prerequisite fails, omit Usage,
+state why, and continue the audit.
 
-1. Resolve the installed `session-analytics` skill directory from its loaded `SKILL.md` path. When it is not installed, drop the Usage lens.
-2. Compute the database path with the scripts' resolver: `$SESSIONS_DB` when set; else `$XDG_CACHE_HOME/dotfiles/session-analytics/sessions.duckdb` when `XDG_CACHE_HOME` is absolute; else `~/.cache/dotfiles/session-analytics/sessions.duckdb`.
-3. Run **one pack per fresh read-only context**, in parallel, so raw query output never lands in the audit's window. Pass absolute paths for everything; the runner applies no defaults.
-
-   Contract: fresh context, read-only, one pack, one ~2 KB digest in the pack's output format. Do not collapse to one all-domains run.
-   Host syntax is an example, not the contract: Claude Code `Agent(subagent_type: "duckdb-expert", ...)`, Codex `spawn_agent`, OMP `task(...)`.
-   A host without sub-agents runs each pack's SQL itself with `duckdb "<abs-database>" -json -c "<sql>"` and keeps only the digest.
+1. Resolve this installed `skillz` directory from its loaded `SKILL.md` path.
+2. Resolve the database path with `engine/scripts/db-path.sh` and its
+   `sessions_db_path` function. `SESSIONS_DB` overrides it. Otherwise, an
+   absolute `XDG_CACHE_HOME` selects
+   `<cache>/dotfiles/session-analytics/sessions.duckdb`; a relative or unset
+   value uses `~/.cache/dotfiles/session-analytics/sessions.duckdb`.
+3. Run `python3 <abs-skillz>/engine/scripts/ingest.py` before querying. The
+   one-hour cache makes a fresh database a no-op. If no logs are accessible or
+   ingestion fails, omit Usage. `engine/scripts/query.sh` also auto-ingests an
+   old or absent default database, but not a `SESSIONS_DB` override.
+4. Run **one pack per fresh read-only context**, in parallel, so raw query
+   output never lands in the audit's window. Pass absolute paths for every
+   input; the runner applies no defaults. Each context returns one ~2 KB digest.
+   Do not collapse the packs into one all-domains run. Claude Code `Agent`,
+   Codex `spawn_agent`, and OMP `task` are example hosts. Without sub-agents,
+   run each pack's SQL with `duckdb "<abs-database>" -json -c "<sql>"` and keep
+   only the digest.
 
    ```text
    Run analytics pack <abs-pack> for target <name>. harness=all
@@ -25,8 +40,13 @@ Never block the audit on it.
    | `agent-orchestration.md` | undeclared spawns, fork behavior, error rate |
    | `drift-regression.md` | declining usage, single-project concentration, hook interruptions |
 
-4. Carry the digests into the Usage lens.
+5. Carry the digests into the Usage lens.
 
-Contract paths, inside the installed `session-analytics` skill: schema `references/canonical-schema.md`, conventions `references/query-conventions.md`, ingest `scripts/ingest.py`.
+The packs live in `references/`. The bundled schema, conventions, coverage
+notes, and ingest script live in `engine/references/` and `engine/scripts/`.
+Pass those paths to each pack context. Where a pack names an installed
+`session-analytics` skill, use this bundled engine instead.
 
-Signal caveats: `skill_invocations` and `agent_spawns` are Claude-dominant; Codex and OMP lack hook and permission-denial rows; Cursor has no tool results. Read `references/harness-coverage.md` in that skill before quoting a cross-harness comparison.
+`skill_invocations` and `agent_spawns` are Claude-dominant. Codex and OMP lack
+hook and permission-denial rows. Cursor has no tool results. Read
+`engine/references/harness-coverage.md` before cross-harness comparisons.
