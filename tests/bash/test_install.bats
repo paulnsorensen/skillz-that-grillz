@@ -62,8 +62,6 @@ make_stub() {
 
 @test "sg_tool_binary returns identity for non-aliased tools" {
     [[ "$(sg_tool_binary gh)" == "gh" ]]
-    [[ "$(sg_tool_binary just)" == "just" ]]
-    [[ "$(sg_tool_binary prek)" == "prek" ]]
     [[ "$(sg_tool_binary sd)" == "sd" ]]
     [[ "$(sg_tool_binary fd)" == "fd" ]]
 }
@@ -72,14 +70,12 @@ make_stub() {
 
 @test "sg_tool_formula returns identity for core formulas" {
     [[ "$(sg_tool_formula gh)" == "gh" ]]
-    [[ "$(sg_tool_formula just)" == "just" ]]
-    [[ "$(sg_tool_formula prek)" == "prek" ]]
 }
 
 # -- sg_validate_selection ---------------------------------------------------
 
 @test "sg_validate_selection accepts subset of allowed list" {
-    run sg_validate_selection "gh,just" "$SG_KNOWN_TOOLS"
+    run sg_validate_selection "foo,bar" "foo bar baz"
     [ "$status" -eq 0 ]
 }
 
@@ -105,22 +101,20 @@ make_stub() {
 @test "sg_parse_args defaults match the documented set" {
     sg_parse_args
     [[ "$SG_TOOLS" == *"gh"* ]]
-    [[ "$SG_TOOLS" == *"just"* ]]
-    [[ "$SG_TOOLS" == *"prek"* ]]
     [[ "$SG_MCP" == "context7" ]]
     [[ "$SG_HARNESS" == "auto" ]]
     [[ "$SG_DRY_RUN" == "0" ]]
     [[ "$SG_DO_HELP" == "0" ]]
 }
 
-@test "sg_parse_args --tools with value parses comma list" {
-    sg_parse_args --tools gh,just
-    [[ "$SG_TOOLS" == "gh,just" ]]
+@test "sg_parse_args --tools with value parses the tool selection" {
+    sg_parse_args --tools gh
+    [[ "$SG_TOOLS" == "gh" ]]
 }
 
 @test "sg_parse_args --tools=value parses inline value" {
-    sg_parse_args --tools=prek
-    [[ "$SG_TOOLS" == "prek" ]]
+    sg_parse_args --tools=gh
+    [[ "$SG_TOOLS" == "gh" ]]
 }
 
 @test "sg_parse_args --skip-mcp sets MCP to none" {
@@ -248,9 +242,9 @@ STUB
 }
 
 @test "sg_brew_install_if_missing dry-run prints would-run line for core formula" {
-    SG_DRY_RUN=1 run sg_brew_install_if_missing just
+    SG_DRY_RUN=1 run sg_brew_install_if_missing gh
     [ "$status" -eq 0 ]
-    [[ "$output" == *"would run 'brew install just'"* ]]
+    [[ "$output" == *"would run 'brew install gh'"* ]]
 }
 
 @test "sg_brew_install_if_missing installs mapped formula when mapped binary is missing" {
@@ -264,7 +258,7 @@ STUB
 @test "sg_brew_install_if_missing surfaces brew failure" {
     make_stub brew 1
     export SG_BREW="$STUB_BIN/brew"
-    run sg_brew_install_if_missing prek
+    run sg_brew_install_if_missing gh
     [ "$status" -ne 0 ]
 }
 
@@ -273,18 +267,18 @@ STUB
 @test "sg_install_tools visits each comma-separated tool" {
     make_stub brew
     export SG_BREW="$STUB_BIN/brew"
-    run sg_install_tools "gh,just,prek"
+    run sg_install_tools "gh,curl,wget"
     [ "$status" -eq 0 ]
     grep -q "^brew install gh$" "$STUB_LOG"
-    grep -q "^brew install just$" "$STUB_LOG"
-    grep -q "^brew install prek$" "$STUB_LOG"
+    grep -q "^brew install curl$" "$STUB_LOG"
+    grep -q "^brew install wget$" "$STUB_LOG"
 }
 
 @test "sg_install_tools dry-run lists every tool without invoking brew" {
-    SG_DRY_RUN=1 run sg_install_tools "gh,just"
+    SG_DRY_RUN=1 run sg_install_tools "gh,curl"
     [ "$status" -eq 0 ]
     [[ "$output" == *"would run 'brew install gh'"* ]]
-    [[ "$output" == *"would run 'brew install just'"* ]]
+    [[ "$output" == *"would run 'brew install curl'"* ]]
     [ ! -s "$STUB_LOG" ] || ! grep -q "^brew install" "$STUB_LOG"
 }
 

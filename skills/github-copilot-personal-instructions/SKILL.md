@@ -13,7 +13,8 @@ description: >
   "make Copilot use my preferred tone", "personal Copilot prompt", "user-level
   Copilot config", "Copilot is ignoring my preferences", or invokes
   /github-copilot-personal-instructions. Do NOT use for repository-scoped
-  instructions — that is /github-copilot-repo-instructions.
+  instructions — that is the github-copilot-repo-instructions skill in
+  paulnsorensen/git-gouda.
 license: MIT
 ---
 
@@ -47,8 +48,8 @@ Active immediately. They persist until edited or removed.
 | Copilot coding agent (cloud agent) | No |
 
 **Implication:** for IDE chat or the coding agent to follow the same
-guidance, mirror the relevant rules into repository instructions
-(`/github-copilot-repo-instructions`).
+guidance, mirror the relevant rules into repository instructions (see the
+`github-copilot-repo-instructions` skill in paulnsorensen/git-gouda).
 
 ---
 
@@ -58,7 +59,8 @@ All three layers — when present — are merged and sent to Copilot together.
 Stated priority order (highest → lowest):
 
 1. **Personal** (this skill).
-2. **Repository** (`/github-copilot-repo-instructions`).
+2. **Repository** (the `github-copilot-repo-instructions` skill in
+   paulnsorensen/git-gouda).
 3. **Organization**.
 
 Conflicts are not auto-resolved. If a repo's guidance contradicts personal
@@ -123,8 +125,8 @@ the UI.
 
 - **github.com Chat only.** Don't promise IDE behavior.
 - **Don't store secrets.** No tokens, no API keys, no internal URLs.
-- **Keep them about you, not the project.** Project guidance belongs in
-  `/github-copilot-repo-instructions`.
+- **Keep them about you, not the project.** Project guidance belongs in the
+  `github-copilot-repo-instructions` skill in paulnsorensen/git-gouda.
 - **No documented length limit**, but the same "be concise" rule applies —
   long prompts crowd out the actual question.
 
@@ -148,7 +150,8 @@ the UI.
 
 ## What this skill is not
 
-- Not repository-scoped — see `/github-copilot-repo-instructions`.
+- Not repository-scoped — see the `github-copilot-repo-instructions` skill
+  in paulnsorensen/git-gouda.
 - Not org-scoped — those are configured by org admins in GitHub Enterprise
   settings.
 - Not IDE settings — VS Code's `github.copilot.chat.*` settings are separate

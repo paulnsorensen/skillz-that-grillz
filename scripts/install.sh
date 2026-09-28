@@ -18,7 +18,7 @@
 # CLI tools wrapped by the skills in this repo. Names listed here are the
 # brew formula names, which sometimes differ from the binary name (see
 # sg_tool_binary).
-SG_KNOWN_TOOLS="gh just prek"
+SG_KNOWN_TOOLS="gh"
 
 # Repository the installer pulls skills from. Centralized so the installer
 # and the help text reference the same source.
@@ -66,7 +66,7 @@ Usage:
 
 Options:
   --tools <list>       Comma-separated CLI tools to install. Default: all.
-                       Choices: gh, just, prek
+                       Choices: gh
   --mcp <list>         Comma-separated MCP servers to register. Default:
                        context7. Choices: context7, none
   --skip-mcp           Same as --mcp none.

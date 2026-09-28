@@ -13,7 +13,7 @@ model *why* not just *what*, and whether bundled resources earn their keep.
 ## What this repo is and isn't
 
 - **Is**: self-contained `SKILL.md` files for everyday plumbing (gh,
-  release, justfile, prek). Each skill wraps a single CLI, with a narrow
+  respond, file handling). Each skill wraps a single CLI, with a narrow
   exception for same-domain alternative tools — drop-in replacements for
   the same workflow may share one skill (see
   `.github/instructions/skills.instructions.md` "Scope discipline").

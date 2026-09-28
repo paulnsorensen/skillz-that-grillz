@@ -10,11 +10,14 @@
 > _Tight little toolbelt of git, GitHub, project-runner, and shell-craft skills._
 
 A focused, skills-only repository of [Agent Skills](https://agentskills.io/specification)
-for the everyday plumbing around a project: working a GitHub PR, cutting a
-release, scaffolding a justfile, and wiring up prek pre-commit hooks.
-No agents and no orchestration. There are no _required_ MCP servers — one
-skill (`prek`) _optionally_ uses Context7 for current docs; when that tool is
-absent it falls back to bundled guidance and CLI help — just self-contained `SKILL.md` files that any spec-compliant harness can load.
+for the everyday plumbing around a project: working a GitHub PR and
+triaging review comments.
+No agents and no orchestration. There are no required MCP servers — just
+self-contained `SKILL.md` files that any spec-compliant harness can load.
+
+Repository setup and maintenance skills (`release`, `justfile`, `prek`,
+`oss-hygiene`, `safe-settings`, `github-copilot-repo-instructions`) now live in
+[git-gouda](https://github.com/paulnsorensen/git-gouda).
 
 The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
 covers the design / implement / review workflow (mold, cook, press, age, cure)
@@ -45,13 +48,7 @@ harness can load it progressively.
 | `skills/file-handler/SKILL.md` | `/file-handler` | Persist, fetch, and search skill artifacts under a shared `.skillz/<type>/<slug>` tree. Wraps a dependency-free `skillz.sh` exposing `save_file`, `get_file`, and `search_files` (titles + body grep). The on-disk convention every other skill in this repo delegates to for scratch space. |
 | `skills/gh/SKILL.md` | `/gh` | All GitHub plumbing — PR inspection / review / merge, issues, CI checks, releases, workflow runs, code search, repo and label management — via the `gh` CLI, with idiomatic `--jq` and `--body-file` patterns. Committing, pushing, and PR creation live in easy-cheese's `/plate`. |
 | `skills/github-copilot-personal-instructions/SKILL.md` | `/github-copilot-personal-instructions` | Configure or audit per-user GitHub Copilot instructions on github.com (response language, tone, default example language). Doc-faithful walkthrough of the github.com Chat-only surface, precedence vs repo/org instructions, and verification. |
-| `skills/github-copilot-repo-instructions/SKILL.md` | `/github-copilot-repo-instructions` | Add or audit `.github/copilot-instructions.md` and `.github/instructions/*.instructions.md` so Copilot Chat, code review, and the coding agent pick up project-wide guidance. Covers `applyTo`/`excludeAgent` frontmatter, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md` alternates, surfaces, verification, **and the full `copilot_code_review` ruleset knob inventory** (see `references/code-review-knobs.md`). |
-| `skills/justfile/SKILL.md` | `/justfile` | Generate or migrate to a justfile, detect the project ecosystem (Rust / Python / TypeScript / Go / Ruby), and write idiomatic recipes with token-optimized output for LLM-driven builds. |
-| `skills/oss-hygiene/SKILL.md` | `/oss-hygiene` | Bring a public repo up to the GitHub Community Standards baseline and the OpenSSF Scorecard supply-chain baseline: scaffold `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, issue + PR templates, `dependabot.yml`, the dependency-review / Scorecard / CodeQL workflows; toggle Dependabot alerts and secret scanning; audit existing workflows for `Token-Permissions` and `Dangerous-Workflow`. Idempotent. |
-| `skills/prek/SKILL.md` | `/prek` | Onboard [prek](https://prek.j178.dev/) and pick language-appropriate pre-commit hooks. Migrates `.pre-commit-config.yaml` → `prek.toml` when asked. |
-| `skills/release/SKILL.md` | `/release` | Cut a versioned release end to end: decide the next semantic version from the Conventional Commits since the last tag (with the `0.x` exception), draft proper release notes (auto-generated via `.github/release.yml`, hand-curated grouped by change type with highlights + upgrade notes, or hybrid), update `CHANGELOG.md`, create and push an annotated tag, and publish the GitHub release. Stops at the tag push when a tag-driven release workflow already publishes. |
 | `skills/respond/SKILL.md` | `/respond` | Triage PR review comments by 0–100 confidence score (FIX / ASK / PUSH BACK / SKIP) and act — fixes the high-scoring ones, pushes back on the low, asks about borderline. Checks build + merge state first. Every reply ends with an `agent on behalf of;` attribution line so reviewers know an agent posted on a teammate's behalf. |
-| `skills/safe-settings/SKILL.md` | `/safe-settings` | Onboard [`github/safe-settings`](https://github.com/github/safe-settings) for declarative, org-wide repo policy as code. Scaffolds the admin-repo layout (`settings.yml` + `suborgs/` + `repos/`), the GitHub App install steps, and a scheduled `full-sync` GitHub Actions workflow. |
 
 ## Scope
 
@@ -62,21 +59,13 @@ Most skills wrap a single CLI you probably already use.
 | `file-handler` | `bash` + standard POSIX tools (`find`, `grep`) | bash 4+, `find`, `grep` | — |
 | `gh` | `gh` CLI | gh | — |
 | `github-copilot-personal-instructions` | github.com Copilot UI | — | — |
-| `github-copilot-repo-instructions` | repo files + `gh api repos/.../rulesets` | — | — |
-| `justfile` | `just` | just | — |
-| `oss-hygiene` | `gh` CLI (`gh api`) + scaffolded GitHub Actions (Dependabot, Scorecard, dependency review, CodeQL) | gh | — |
-| `prek` | `prek` | prek | Context7 MCP (for current hook revisions) |
-| `release` | `git` + `gh` CLI (`gh release`) | git, gh | `.github/release.yml` (for `--generate-notes` grouping), `CHANGELOG.md` (when the repo keeps one) |
 | `respond` | `gh` CLI + `git` | gh, git | — |
-| `safe-settings` | `gh` CLI + [`github/safe-settings`](https://github.com/github/safe-settings) GitHub App | gh, Node 20+ on the runner that executes the GHA `full-sync` workflow | — |
 
 What that means in practice:
 
 - **No orchestration, no intent classification.** Each skill is a single
   focused step the user (or another skill) explicitly invokes.
-- **No required MCP servers.** Only `prek` touches an MCP server at all,
-  and only optionally: it uses Context7 for current hook revisions and falls
-  back to documented hook revisions when Context7 is missing.
+- **No required MCP servers.** No skill in this repo touches an MCP server.
 - **Composes freely with any other skill set** — install just these, install
   alongside something larger, or pick individual skills.
 
@@ -87,22 +76,13 @@ work on a branch
     ├── /plate (easy-cheese) ──►  stage + commit + push + create PR (single or stacked)
     └── /gh                  ──►  watch checks + review + merge
 
-ship a release
-    └── /release           ──►  decide semver bump + draft notes + tag + publish
-
-new project setup
-    ├── /justfile          ──►  scaffold task runner
-    ├── /prek              ──►  scaffold pre-commit hooks
-    └── /oss-hygiene       ──►  community files + supply-chain workflows + Scorecard / OSSF Badge
-
-org-wide policy as code
-    └── /safe-settings     ──►  scaffold admin repo + GitHub App for declarative settings across many repos
+review comments
+    └── /respond            ──►  triage PR review comments and act on them
 ```
 
 `/gh` pairs with easy-cheese's `/plate` for everyday change flow: `/plate`
 commits, pushes, and opens the PR (single or stacked); `/gh` watches checks,
-reviews, and merges. `/justfile` and `/prek` are one-shot scaffolding skills
-you run when bootstrapping a repo.
+reviews, and merges.
 
 ## Install
 
@@ -128,7 +108,7 @@ npx skills add paulnsorensen/skillz-that-grillz --all
 Install specific skills:
 
 ```sh
-npx skills add paulnsorensen/skillz-that-grillz --skill gh --skill release
+npx skills add paulnsorensen/skillz-that-grillz --skill gh --skill respond
 ```
 
 Target specific agents at user scope, non-interactive (CI-friendly):
@@ -209,13 +189,14 @@ and works in any compliant client.
 
 `scripts/install.sh` does the whole setup in one shot:
 
-1. Installs the CLI tools the skills wrap (`gh`, `just`, `prek`) via Homebrew.
+1. Installs the CLI tools the skills wrap (`gh`) via Homebrew.
 2. Auto-detects installed Claude Code, Cursor, Codex, and opencode CLIs and
    installs every skill into each via `npx skills` (pass `--harness <name>` to
    target other agents — gemini, copilot, vscode, etc.).
-3. Optionally registers the `context7` MCP server (used by the `prek` skill).
-   Auto-registration currently covers Claude Code only; for other harnesses it
-   prints a manual-config hint (see the Context7 section below).
+3. Optionally registers the `context7` MCP server. No skill in this repo
+   requires it. Auto-registration currently covers Claude Code only; for
+   other harnesses it prints a manual-config hint (see the Context7 section
+   below).
 
 Currently macOS only — it relies on Homebrew. Skill install goes through
 `npx skills`, so Node.js (which provides `npx`) must be available.
@@ -237,9 +218,9 @@ bash /tmp/skillz-install.sh --dry-run
 Common flags:
 
 ```sh
-# Just the gh + just CLIs, no MCP registration
+# Just the gh CLI, no MCP registration
 curl -fsSL https://raw.githubusercontent.com/paulnsorensen/skillz-that-grillz/main/scripts/install.sh \
-  | bash -s -- --tools gh,just --skip-mcp
+  | bash -s -- --tools gh --skip-mcp
 
 # Register MCP servers only (skills + tools already in place)
 curl -fsSL https://raw.githubusercontent.com/paulnsorensen/skillz-that-grillz/main/scripts/install.sh \
@@ -274,28 +255,6 @@ gh auth login
 
 Minimum version for `gh skill`: **v2.90.0**.
 
-### `just`
-
-Project task runner. Used by the `justfile` skill.
-
-```sh
-brew install just              # macOS/Linux
-cargo install just             # Rust/Cargo
-winget install Casey.Just      # Windows
-```
-
-### `prek`
-
-Rust-powered pre-commit replacement. Used by the `prek` skill.
-
-```sh
-cargo install prek             # Rust/Cargo
-brew install prek              # macOS/Linux (when the formula is available)
-```
-
-See [prek.j178.dev](https://prek.j178.dev/) for the latest install
-instructions.
-
 ## wedge GitHub Action
 
 [`actions/wedge`](actions/wedge/README.md) packages a pure-Python skill CLI
@@ -311,11 +270,11 @@ check locks on pull requests and to publish assets after a merge:
 
 ## Optional MCP servers
 
-### Context7 (optional, used by `/prek`)
+### Context7 (optional)
 
 [Context7](https://github.com/upstash/context7) fetches up-to-date library
-docs into the session. The `prek` skill uses it to pin current revisions of
-community hook repos (ruff-pre-commit, shellcheck-py, etc.).
+docs into the session. No skill in this repo requires it; `scripts/install.sh`
+registers it by default so it is available if you add skills that use it.
 
 Add it to your harness's MCP config file (works for any harness):
 
@@ -339,9 +298,6 @@ claude mcp add context7 -- npx -y @upstash/context7-mcp@latest
 For higher rate limits, get a free API key at
 [context7.com](https://context7.com) and append `--api-key YOUR_API_KEY` to
 the `args` array. Requires Node.js v18+.
-
-If Context7 is missing, the `prek` skill falls back to the hook revisions
-documented inline.
 
 ## Validate
 
