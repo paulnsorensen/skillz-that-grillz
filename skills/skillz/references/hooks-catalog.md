@@ -105,6 +105,21 @@ const pathKey = toolInput.path === undefined ? 'file_path' : 'path';
 const filePath = toolInput[pathKey] === undefined ? '' : toolInput[pathKey];
 if (!filePath) process.exit(0);
 
+function removeGenerated(tempDir, preprocessed, marker) {
+  for (const generated of [preprocessed, marker]) {
+    try {
+      fs.unlinkSync(generated);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+  }
+  try {
+    fs.rmdirSync(tempDir);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+
 if (filePath.endsWith('.log')) {
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n');
@@ -112,16 +127,85 @@ if (filePath.endsWith('.log')) {
   if (filtered.length < lines.length * 0.5) {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-preprocess-'));
     const preprocessed = path.join(tempDir, 'filtered.txt');
-    fs.writeFileSync(preprocessed, `[${lines.length} lines → ${filtered.length}]\n\n${filtered.join('\n')}`);
-    console.log(JSON.stringify({
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        updatedInput: { ...toolInput, [pathKey]: preprocessed },
-      },
-    }));
+    const marker = path.join(tempDir, '.skillz-preprocessed');
+    try {
+      fs.writeFileSync(marker, 'skillz-preprocess-v1\n', { mode: 0o600 });
+      fs.writeFileSync(
+        preprocessed,
+        `[${lines.length} lines → ${filtered.length}]\n\n${filtered.join('\n')}`,
+        { mode: 0o600 },
+      );
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          updatedInput: { ...toolInput, [pathKey]: preprocessed },
+        },
+      }));
+    } catch (error) {
+      removeGenerated(tempDir, preprocessed, marker);
+      throw error;
+    }
   }
 }
 ```
+
+Clean the generated path after the corresponding read succeeds or fails during execution:
+
+```javascript
+// .claude/hooks/cleanup-preprocessed.js
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
+const toolInput = payload.tool_input === undefined ? {} : payload.tool_input;
+const rawPath = toolInput.path === undefined ? toolInput.file_path : toolInput.path;
+if (!rawPath) process.exit(0);
+
+const filePath = path.resolve(rawPath);
+const tempRoot = path.resolve(os.tmpdir());
+const tempDir = path.dirname(filePath);
+const marker = path.join(tempDir, '.skillz-preprocessed');
+const dirName = path.basename(tempDir);
+const expectedOwner = typeof process.getuid === 'function' ? process.getuid() : null;
+
+if (path.basename(filePath) !== 'filtered.txt'
+    || path.dirname(tempDir) !== tempRoot
+    || !dirName.startsWith('claude-preprocess-')) process.exit(0);
+
+let dirStat;
+let markerStat;
+try {
+  dirStat = fs.lstatSync(tempDir);
+  markerStat = fs.lstatSync(marker);
+} catch (error) {
+  if (error.code === 'ENOENT') process.exit(0);
+  throw error;
+}
+if (!dirStat.isDirectory() || !markerStat.isFile()
+    || (expectedOwner !== null
+      && (dirStat.uid !== expectedOwner || markerStat.uid !== expectedOwner))
+    || fs.readFileSync(marker, 'utf8') !== 'skillz-preprocess-v1\n') process.exit(0);
+
+try {
+  const fileStat = fs.lstatSync(filePath);
+  if (!fileStat.isFile()
+      || (expectedOwner !== null && fileStat.uid !== expectedOwner)) process.exit(0);
+  fs.unlinkSync(filePath);
+} catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+}
+fs.unlinkSync(marker);
+try {
+  fs.rmdirSync(tempDir);
+} catch (error) {
+  if (!['ENOENT', 'ENOTEMPTY'].includes(error.code)) throw error;
+}
+```
+
+Use this cleanup hook for `PostToolUse` and `PostToolUseFailure` with a `Read` matcher.
+`PostToolUseFailure` covers execution failures, not permission denial or pre-execution rejection.
+A denied, cancelled, interrupted, or host-terminated read can leave the owned directory.
+Clean those residual directories through an explicit session-start or external maintenance policy.
 
 ### 4. Banned Pattern Detection (Guardrails)
 
@@ -191,16 +275,38 @@ if (counter.count % 20 === 0) {
 ## Hook Installation
 
 Hooks use an event, a matcher group, a `hooks` array, and a command definition.
-Match file-write checks to `Write|Edit`. Use `Read` for the preprocessing example.
+Match preprocessing and cleanup to `Read`. Match file-write checks to `Write|Edit`.
 
 ```json
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/preprocess-context.js" }
+        ]
+      }
+    ],
     "PostToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/cleanup-preprocessed.js" }
+        ]
+      },
       {
         "matcher": "Write|Edit",
         "hooks": [
           { "type": "command", "command": "node .claude/hooks/validate-output.js" }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/cleanup-preprocessed.js" }
         ]
       }
     ]
@@ -208,8 +314,8 @@ Match file-write checks to `Write|Edit`. Use `Read` for the preprocessing exampl
 }
 ```
 
-Events used by this catalog are `UserPromptSubmit`, `PreToolUse`, and `PostToolUse`.
-Claude Code also supports other events; check current documentation before selecting one.
+Events used by this catalog are `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+and `PostToolUseFailure`. Check current documentation before selecting other events.
 
 Exit 0 accepts the hook result. Exit 2 sends stderr to Claude and blocks only when the event supports prevention.
 For `PostToolUse`, the tool has already completed, so exit 2 supplies remediation feedback only.

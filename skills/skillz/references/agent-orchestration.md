@@ -45,7 +45,7 @@ WHERE EXISTS (
     WHERE w.harness = asp.harness AND w.sessionId = asp.sessionId
       AND asp.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
 )
-GROUP BY asp.agent_type, substr(asp.description, 1, 80), asp.mode
+GROUP BY asp.agent_type, asp.description, asp.mode
 ORDER BY spawns DESC;
 ```
 

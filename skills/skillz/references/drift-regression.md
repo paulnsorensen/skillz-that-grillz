@@ -14,11 +14,15 @@ in the installed `session-analytics` skill.
 ```sql
 WITH inv AS (SELECT timestamp::DATE AS d FROM skill_invocations WHERE skill_name = '{SKILL}')
 SELECT
-    sum(CASE WHEN d >= CURRENT_DATE - INTERVAL '28' DAY THEN 1 ELSE 0 END) AS recent_4w,
+    sum(CASE WHEN d >= CURRENT_DATE - INTERVAL '28' DAY
+              AND d < CURRENT_DATE THEN 1 ELSE 0 END) AS recent_4w,
     sum(CASE WHEN d >= CURRENT_DATE - INTERVAL '56' DAY
-             AND d < CURRENT_DATE - INTERVAL '28' DAY THEN 1 ELSE 0 END) AS prior_4w
+              AND d < CURRENT_DATE - INTERVAL '28' DAY THEN 1 ELSE 0 END) AS prior_4w
 FROM inv;
 ```
+
+Each window contains exactly 28 completed calendar dates.
+Both windows exclude today and future dates.
 
 ## 2. Error-rate trend for correlated tool events
 
@@ -65,11 +69,12 @@ correlated_calls AS (
     SELECT tu.harness, tu.sessionId, tu.tool_use_id,
            tu.timestamp::DATE AS event_day
     FROM tool_uses tu
-    WHERE EXISTS (
+    WHERE tu.timestamp::DATE < CURRENT_DATE
+      AND EXISTS (
         SELECT 1 FROM windows w
         WHERE w.harness = tu.harness AND w.sessionId = tu.sessionId
           AND tu.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
-    )
+      )
 )
 SELECT substr(tr.content, 1, 120) AS error, count(*) AS occurrences,
        min(cc.event_day) AS first_seen
@@ -79,10 +84,15 @@ JOIN tool_results tr
  AND tr.sessionId = cc.sessionId
  AND tr.tool_use_id = cc.tool_use_id
 WHERE tr.is_error = 'true'
-GROUP BY error
+GROUP BY tr.content
 HAVING min(cc.event_day) >= CURRENT_DATE - INTERVAL '14' DAY
+   AND min(cc.event_day) < CURRENT_DATE
 ORDER BY occurrences DESC LIMIT 10;
 ```
+
+The 14-day window contains completed calendar dates from 14 days ago through yesterday.
+The historical `first_seen` test uses all earlier completed tool-event dates.
+Grouping uses the full error content; truncation affects display only.
 
 ## Output Format
 
