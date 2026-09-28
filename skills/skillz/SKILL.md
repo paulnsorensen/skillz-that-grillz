@@ -42,7 +42,8 @@ Ask for a target when the mode requires one.
 
 ### 1. Read and classify
 
-Read the target and every file it links.
+Read the target. Read a linked reference only when its stated trigger matches the run.
+A full-package audit may explicitly read every file in the target package.
 Classify it as **agent** (`tools:` / `disallowedTools:` or an `agents/registry.yaml` entry) or **skill** (`name:` + `description:`).
 Measure the body: bytes/4 after the frontmatter block; report `~N tok` against the 5k budget.
 List the deploy targets the definition reaches (`references/harness-layout.md § Layout`).
@@ -61,7 +62,7 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
-| **Tool scoping** | Read-only / write-scoped / focused; hard `disallowedTools`, not prose → «prose-only constraint» | A "read-only" claim is backed by `disallowedTools`; nothing listed that is unused. |
+| **Tool scoping** | Read-only / write-scoped / focused; use host enforcement when available → «prose-only constraint» | Claude skills use `disallowed-tools` to remove tools for the current turn. Their `allowed-tools` grants permission without prompts; it is not a deny list. Claude agents use `disallowedTools`. Report actual enforcement per mode and mark prose-only limits as degraded. Do not disable writes for `improve`. |
 | **Context & fork** | Fork when output > ~500 lines or only a digest is needed → «monolithic output» | Fork matches size; a wrap-up signal exists; `model:` + `effort:` set on model-invoked skills, absent on user-only skills. |
 | **Prompt quality** | Positive framing, why-over-what, one strong example, "What this never does" → «negation-heavy», «rules without reasons» | Judgment tasks use a scaffold, not always/never. `references/decision-frameworks.md`. |
 | **Calibration** | Judgment agents tag confidence × severity → «judgment without calibration» | `<certain>` / `<speculative>` / `<don't know>`; don't-know never surfaces. |
@@ -106,7 +107,7 @@ Done means: the file exists, the repo index names it (or every repo-local host p
 6. Run the repo's deploy step when the target lives under a `skills/` or `agents/` tree that a sync distributes.
    Confirm the deployed copy matches the source; a vendored skill with the same name overwrites a local one (`harness-layout.md § Layout`).
 
-Done means: the rubric passes with no `<certain>` finding above `low`, the user has approved or declined every item submitted for approval, the body is ≤5k tok, and the repo's quality gate exits 0.
+Done means: every `<certain>` finding above `low` is fixed or recorded as an explicitly accepted residual, the user has approved or declined every item submitted for approval, the body is ≤5k tok, and the repo's quality gate exits 0.
 
 ## Mode: audit
 

@@ -1,6 +1,6 @@
 # Cross-harness skill layout
 
-Checked: 2026-09-12. `self-update` rewrites this date and this file.
+Checked: 2026-09-12. Focused recheck on 2026-09-28 covered Claude, Pi, Zed, and `npx skills` discovery only.
 Read when the Portability lens fires, in `add`, and in `self-update`.
 
 ## Layout
@@ -15,7 +15,8 @@ Read when the Portability lens fires, in `add`, and in `self-update`.
 
 ## Registration
 
-`add` is done only when the repo's skill index names the new skill.
+`add` is done only when the applicable registration requirement for its repository type is satisfied.
+The README is an index, not a discovery gate. `npx skills` discovers both `.agents/skills` and `.claude/skills` without a README entry.
 
 - A skills repository (for example `skillz-that-grillz`): the `## Skills` table in `README.md`, plus its Scope table when the skill wraps a CLI.
 - A dotfiles repository: the harness selection list its sync reads (for example `claude.skills` in the chezmoi data file); that list feeds every harness.
@@ -23,9 +24,9 @@ Read when the Portability lens fires, in `add`, and in `self-update`.
 
 ## Repo-local skills
 
-A skill for one repository only stays out of every global selection list, so it never deploys globally.
+Keep a skill for one repository only out of every global selection list.
 
-- Source: `.agents/skills/<name>/`. Codex, Pi, Zed, and other `.agents` hosts read it directly.
+- Source: `.agents/skills/<name>/`. Set `metadata.internal: true` in a distributed skills repository to exclude it from default installation. Codex, Pi, Zed, and other `.agents` hosts read it directly.
 - For each host without `.agents` project discovery, add a relative symlink in its project skill directory. Claude Code reads `.claude/skills/<name>`.
 - When `.gitignore` ignores these trees, re-include only the named paths: `dir/*`, then `!dir/skills/`, `dir/skills/*`, `!dir/skills/<name>`.
 
@@ -36,8 +37,9 @@ A skill for one repository only stays out of every global selection list, so it 
 | `name` (≤64, kebab) | required | yes | yes | yes | yes | yes |
 | `description` (≤1024) | required | yes; listing truncates `description`+`when_to_use` at 1536 | yes (implicit match) | yes | yes | yes |
 | `license`, `compatibility` (≤500), `metadata` (string map) | optional | kept | kept | kept | kept | kept |
-| `allowed-tools` | optional | enforced | accepted | accepted | accepted | accepted |
-| `disable-model-invocation` | — | yes | **no** → `agents/openai.yaml` `policy.allow_implicit_invocation: false` | yes (`disableModelInvocation`) | ignored | ignored |
+| `allowed-tools` | optional | permission grant without prompts; not a deny list | accepted; verify enforcement | accepted; verify enforcement | accepted; verify enforcement | accepted; verify enforcement |
+| `disallowed-tools` | — | removes listed tools for the current turn | host-specific; verify | host-specific; verify | host-specific; verify | host-specific; verify |
+| `disable-model-invocation` | — | yes | **no** → `agents/openai.yaml` `policy.allow_implicit_invocation: false` | yes (`disableModelInvocation`) | yes | yes |
 | `user-invocable`, `argument-hint`, `arguments`, `model`, `effort`, `context: fork`, `agent`, `background`, `hooks`, `paths`, `shell`, `when_to_use` | — | yes | ignored | ignored | ignored | ignored |
 | `$ARGUMENTS`, `$0`, `$N` substitution | — | yes | no; free text follows the mention | no | no | no |
 
@@ -47,15 +49,16 @@ Claude's cloud Skills API rejects non-spec keys; that surface is out of scope fo
 ## Rules (the Portability lens)
 
 1. Use only spec fields plus the Claude extensions above. Do not invent keys.
-2. A user-only skill sets `disable-model-invocation: true` **and** ships `agents/openai.yaml` with `allow_implicit_invocation: false`.
-3. State arguments with `argument-hint`. Parse them in prose as "the text after the skill name". Never depend on `$ARGUMENTS`.
-4. Reference helpers by repo-relative path (`skills/<name>/scripts/...`) or by the loaded `SKILL.md` directory. Never use `${CLAUDE_SKILL_DIR}`.
-5. Cross-reference skills by `/name`. Never `@file`.
-6. Name a sub-agent dispatch by contract first (fresh context, read-only, tier, synchronous), then show the host syntax as an example (`Agent(...)`, Codex `spawn_agent`, OMP `task(...)`).
-7. State a GitHub action first, then the transport: host primitive, then `gh`.
-8. Keep the body ≤5k tokens (o200k). Keep references one level deep, each with a read trigger.
-9. Model policy: a model-invoked skill sets `model` + `effort` (haiku/low, sonnet/medium, opus/high); a user-only skill omits both and inherits the session model.
-10. Put the trigger in the first sentence of `description`, in third person, with a "Do NOT use for" clause.
+2. Claude skills use `disallowed-tools` to remove tools for the current turn. Their `allowed-tools` grants permission without prompts. Claude agent files use `disallowedTools` for denials. For every other limit, state whether the host enforces it or only receives prose.
+3. A user-only skill sets `disable-model-invocation: true` **and** ships `agents/openai.yaml` with `allow_implicit_invocation: false`.
+4. State arguments with `argument-hint`. Parse them in prose as "the text after the skill name". Never depend on `$ARGUMENTS`.
+5. Reference helpers by repo-relative path (`skills/<name>/scripts/...`) or by the loaded `SKILL.md` directory. Never use `${CLAUDE_SKILL_DIR}`.
+6. Cross-reference skills by `/name`. Never `@file`.
+7. Name a sub-agent dispatch by contract first (fresh context, read-only, tier, synchronous), then show the host syntax as an example (`Agent(...)`, Codex `spawn_agent`, OMP `task(...)`).
+8. State a GitHub action first, then the transport: host primitive, then `gh`.
+9. Keep the body ≤5k tokens (o200k). Keep references one level deep, each with a read trigger.
+10. Model policy: a model-invoked skill sets `model` + `effort` (haiku/low, sonnet/medium, opus/high); a user-only skill omits both and inherits the session model.
+11. Put the trigger in the first sentence of `description`, in third person, with a "Do NOT use for" clause.
 
 ## Sidecar
 

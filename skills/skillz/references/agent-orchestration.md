@@ -4,90 +4,114 @@
 - harness: `harness='all'` (`agent_spawns` / `mcp_calls` are claude-dominant — note that)
 - owner: skillz
 
-What `{SKILL}` actually does after it fires: which tools, agents, and MCPs it
-drives in the 10-minute window after each invocation. Run in one fresh
-read-only context. Schema: `references/canonical-schema.md` in the installed
-`session-analytics` skill.
+Report tools, agents, and MCP calls inside each 10-minute post-invocation window.
+These events are temporally correlated. The window does not prove causation or concurrency.
+Run in one fresh read-only context. Schema: `references/canonical-schema.md` in
+the installed `session-analytics` skill.
 
-## 1. Tools used within 10-minute windows after invocation
+## 1. Tools correlated with invocation windows
 
 ```sql
-WITH w AS (
-    SELECT sessionId, timestamp::TIMESTAMP AS t0,
+WITH windows AS (
+    SELECT harness, sessionId, timestamp::TIMESTAMP AS t0,
            timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
     FROM skill_invocations WHERE skill_name = '{SKILL}'
 )
 SELECT tu.tool_name, count(*) AS uses
-FROM tool_uses tu JOIN w ON tu.sessionId = w.sessionId
-    AND tu.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+FROM tool_uses tu
+WHERE EXISTS (
+    SELECT 1 FROM windows w
+    WHERE w.harness = tu.harness AND w.sessionId = tu.sessionId
+      AND tu.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+)
 GROUP BY tu.tool_name ORDER BY uses DESC;
 ```
 
-## 2. Agent types spawned during windows
+`EXISTS` counts each tool event once when invocation windows overlap.
+
+## 2. Agent types correlated with invocation windows
 
 ```sql
-WITH w AS (
-    SELECT sessionId, timestamp::TIMESTAMP AS t0,
+WITH windows AS (
+    SELECT harness, sessionId, timestamp::TIMESTAMP AS t0,
            timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
     FROM skill_invocations WHERE skill_name = '{SKILL}'
 )
-SELECT asp.agent_type, substr(asp.description, 1, 80) AS desc, asp.mode,
-       count(*) AS spawns
-FROM agent_spawns asp JOIN w ON asp.sessionId = w.sessionId
-    AND asp.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
-GROUP BY asp.agent_type, desc, asp.mode ORDER BY spawns DESC;
+SELECT asp.agent_type, substr(asp.description, 1, 80) AS agent_description,
+       asp.mode, count(*) AS spawns
+FROM agent_spawns asp
+WHERE EXISTS (
+    SELECT 1 FROM windows w
+    WHERE w.harness = asp.harness AND w.sessionId = asp.sessionId
+      AND asp.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+)
+GROUP BY asp.agent_type, substr(asp.description, 1, 80), asp.mode
+ORDER BY spawns DESC;
 ```
 
-## 3. MCP servers called during windows
+## 3. MCP calls correlated with invocation windows
 
 ```sql
-WITH w AS (
-    SELECT sessionId, timestamp::TIMESTAMP AS t0,
+WITH windows AS (
+    SELECT harness, sessionId, timestamp::TIMESTAMP AS t0,
            timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
     FROM skill_invocations WHERE skill_name = '{SKILL}'
 )
-SELECT split_part(mc.tool_name, '__', 2) AS server,
-       split_part(mc.tool_name, '__', 3) AS method, count(*) AS calls
-FROM mcp_calls mc JOIN w ON mc.sessionId = w.sessionId
-    AND mc.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
-GROUP BY server, method ORDER BY calls DESC;
+SELECT mc.harness, mc.tool_name, count(*) AS calls
+FROM mcp_calls mc
+WHERE EXISTS (
+    SELECT 1 FROM windows w
+    WHERE w.harness = mc.harness AND w.sessionId = mc.sessionId
+      AND mc.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+)
+GROUP BY mc.harness, mc.tool_name ORDER BY calls DESC;
 ```
 
-## 4. Parallel-spawn shape (fan-out width per invocation)
+Keep the full MCP tool name because Pi-family and Claude-family names use different separators.
+
+## 4. Largest correlated spawn windows
 
 ```sql
-WITH w AS (
-    SELECT sessionId, timestamp AS inv_ts, timestamp::TIMESTAMP AS t0,
-           timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
+WITH windows AS (
+    SELECT harness, sessionId, timestamp::TIMESTAMP AS window_start,
+           timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS window_end
     FROM skill_invocations WHERE skill_name = '{SKILL}'
 )
-SELECT w.sessionId, w.inv_ts, count(*) AS agents_spawned
-FROM agent_spawns asp JOIN w ON asp.sessionId = w.sessionId
-    AND asp.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
-GROUP BY w.sessionId, w.inv_ts ORDER BY agents_spawned DESC LIMIT 10;
+SELECT w.harness, w.sessionId, w.window_start,
+       count(asp.sessionId) AS correlated_spawns
+FROM windows w
+LEFT JOIN agent_spawns asp
+    ON asp.harness = w.harness AND asp.sessionId = w.sessionId
+   AND asp.timestamp::TIMESTAMP BETWEEN w.window_start AND w.window_end
+GROUP BY w.harness, w.sessionId, w.window_start
+ORDER BY correlated_spawns DESC, w.window_start DESC LIMIT 10;
 ```
+
+This ranking includes zero-spawn windows. It does not measure parallel fan-out.
+One spawn can appear in multiple overlapping windows, so do not sum this table.
 
 ## Output Format
 
 ```
 ## Orchestration Analytics: {SKILL}
 
-### Tool Usage (post-invocation windows)
+### Tool Usage (correlated windows)
 | Tool | Uses |
 |------|------|
 
-### Agent Spawns
+### Agent Spawns (correlated windows)
 | Agent Type | Description | Mode | Count |
 |------------|-------------|------|-------|
 
-### MCP Usage
-| Server | Method | Calls |
-|--------|--------|-------|
+### MCP Usage (correlated windows)
+| Harness | MCP Tool | Calls |
+|---------|----------|-------|
 
-### Fan-out Shape
-- Typical agents spawned per invocation: N
-- Widest fan-out: N (session …)
+### Largest Correlated Spawn Windows
+| Harness | Session | Window Start | Correlated Spawns |
+|---------|---------|--------------|-------------------|
 
 ### Findings
-- [Declared-vs-actual tool/agent/MCP mismatches, surprising delegations]
+- [Declared-vs-observed tool, agent, or MCP mismatch]
+- [State that temporal correlation does not establish causation or concurrency]
 ```

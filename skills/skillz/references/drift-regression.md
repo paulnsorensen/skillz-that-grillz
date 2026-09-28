@@ -4,10 +4,10 @@
 - harness: `harness='all'` (`skill_invocations` is claude-dominant — note that)
 - owner: skillz
 
-Detects behavioral drift over time for `{SKILL}`: usage decay, error-rate
-regression, and friction creep that static audit can't see. Run in one fresh
-read-only context. Schema: `references/canonical-schema.md` in the installed
-`session-analytics` skill.
+Detect usage decay and error-rate changes for `{SKILL}`.
+Tool events inside invocation windows are temporal correlations, not attributed effects.
+Run in one fresh read-only context. Schema: `references/canonical-schema.md`
+in the installed `session-analytics` skill.
 
 ## 1. Usage decay (recent vs prior 4 weeks)
 
@@ -16,44 +16,72 @@ WITH inv AS (SELECT timestamp::DATE AS d FROM skill_invocations WHERE skill_name
 SELECT
     sum(CASE WHEN d >= CURRENT_DATE - INTERVAL '28' DAY THEN 1 ELSE 0 END) AS recent_4w,
     sum(CASE WHEN d >= CURRENT_DATE - INTERVAL '56' DAY
-             AND d <  CURRENT_DATE - INTERVAL '28' DAY THEN 1 ELSE 0 END) AS prior_4w
+             AND d < CURRENT_DATE - INTERVAL '28' DAY THEN 1 ELSE 0 END) AS prior_4w
 FROM inv;
 ```
 
-## 2. Error-rate regression in skill windows over time
+## 2. Error-rate trend for correlated tool events
 
 ```sql
-WITH w AS (
-    SELECT sessionId, timestamp::DATE AS day, timestamp::TIMESTAMP AS t0,
+WITH windows AS (
+    SELECT harness, sessionId, timestamp::TIMESTAMP AS t0,
            timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
     FROM skill_invocations WHERE skill_name = '{SKILL}'
+),
+correlated_calls AS (
+    SELECT tu.harness, tu.sessionId, tu.tool_use_id,
+           tu.timestamp::DATE AS event_day
+    FROM tool_uses tu
+    WHERE EXISTS (
+        SELECT 1 FROM windows w
+        WHERE w.harness = tu.harness AND w.sessionId = tu.sessionId
+          AND tu.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+    )
 )
-SELECT date_trunc('week', w.day) AS week,
+SELECT date_trunc('week', cc.event_day) AS week,
        count(*) AS calls,
-       round(sum(CASE WHEN tr.is_error='true' THEN 1 ELSE 0 END)*100.0/count(*),1) AS error_pct
-FROM tool_uses tu
-JOIN tool_results tr ON tu.tool_use_id = tr.tool_use_id
-JOIN w ON tu.sessionId = w.sessionId AND tu.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+       round(sum(CASE WHEN tr.is_error = 'true' THEN 1 ELSE 0 END)
+             * 100.0 / count(*), 1) AS error_pct
+FROM correlated_calls cc
+JOIN tool_results tr
+  ON tr.harness = cc.harness
+ AND tr.sessionId = cc.sessionId
+ AND tr.tool_use_id = cc.tool_use_id
 GROUP BY week ORDER BY week;
 ```
 
-## 3. New error signatures in the last 2 weeks
+`EXISTS` counts each tool event once across overlapping windows.
+The week comes from the tool event, not the invocation.
+
+## 3. New correlated error signatures in the last 2 weeks
 
 ```sql
-WITH w AS (
-    SELECT sessionId, timestamp::TIMESTAMP AS t0,
-           timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1,
-           timestamp::DATE AS day
+WITH windows AS (
+    SELECT harness, sessionId, timestamp::TIMESTAMP AS t0,
+           timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
     FROM skill_invocations WHERE skill_name = '{SKILL}'
+),
+correlated_calls AS (
+    SELECT tu.harness, tu.sessionId, tu.tool_use_id,
+           tu.timestamp::DATE AS event_day
+    FROM tool_uses tu
+    WHERE EXISTS (
+        SELECT 1 FROM windows w
+        WHERE w.harness = tu.harness AND w.sessionId = tu.sessionId
+          AND tu.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+    )
 )
-SELECT substr(tr.content, 1, 120) AS error, count(*) AS occ,
-       min(w.day) AS first_seen
-FROM tool_uses tu
-JOIN tool_results tr ON tu.tool_use_id = tr.tool_use_id
-JOIN w ON tu.sessionId = w.sessionId AND tu.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+SELECT substr(tr.content, 1, 120) AS error, count(*) AS occurrences,
+       min(cc.event_day) AS first_seen
+FROM correlated_calls cc
+JOIN tool_results tr
+  ON tr.harness = cc.harness
+ AND tr.sessionId = cc.sessionId
+ AND tr.tool_use_id = cc.tool_use_id
 WHERE tr.is_error = 'true'
-GROUP BY error HAVING min(w.day) >= CURRENT_DATE - INTERVAL '14' DAY
-ORDER BY occ DESC LIMIT 10;
+GROUP BY error
+HAVING min(cc.event_day) >= CURRENT_DATE - INTERVAL '14' DAY
+ORDER BY occurrences DESC LIMIT 10;
 ```
 
 ## Output Format
@@ -66,16 +94,17 @@ ORDER BY occ DESC LIMIT 10;
 - Prior 4 weeks: N invocations
 - Verdict: growing / stable / decaying / dormant
 
-### Error-Rate Trend
-| Week | Calls | Error % |
-|------|-------|---------|
+### Correlated Error-Rate Trend
+| Tool Event Week | Calls | Error % |
+|-----------------|-------|---------|
 - Direction: improving / stable / regressing
 
-### New Error Signatures (last 2 weeks)
-| Error | Count | First seen |
-|-------|-------|-----------|
+### New Correlated Error Signatures (last 2 weeks)
+| Error | Count | First seen from tool event |
+|-------|-------|----------------------------|
 
 ### Findings
-- [Decay worth retiring/merging, error regression, newly-appeared failures]
+- [Usage decay, correlated error-rate regression, or newly observed failures]
+- [State that temporal correlation does not establish causation]
 - "Insufficient signal" if <4 weeks of data or all-empty.
 ```

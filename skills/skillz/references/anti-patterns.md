@@ -42,11 +42,11 @@ skill-authoring-consensus failure modes (Anthropic progressive disclosure, Pococ
 ## Enforcement
 
 1. **Critical rules as instructions only** — CLAUDE.md says "always run tests."
-    Claude doesn't. Implement as a hook — instructions are requests, hooks are laws.
+    Add the strongest supported hook control. Label it as prevention, detection, or a reminder; no hook guarantees blanket compliance.
 2. **No primacy/recency anchoring** — Most-violated rules buried in the middle.
     Place the 3 most critical rules at TOP and BOTTOM of CLAUDE.md.
 3. **Missing companion hooks** — Skill works in testing but fails in real use.
-    Add the trinity: Skill (knowledge) + Hook (enforcement) + Command (invocation).
+    Add the trinity: Skill (knowledge) + Hook (event control) + Command (invocation).
 
 ## Architecture
 

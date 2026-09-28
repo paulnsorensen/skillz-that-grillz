@@ -1,30 +1,30 @@
-# Hooks Catalog for Skill Enforcement
+# Hooks Catalog for Skill Controls
 
-Rules in SKILL.md and CLAUDE.md are *requests*. Hooks are *laws*. If a behavior
-must happen 100% of the time, implement it as a hook.
+Rules in SKILL.md and CLAUDE.md guide the model. Hooks provide event-specific controls, but they do not guarantee 100% compliance.
+Classify each hook as prevention, detection, or a reminder. Match the claim to the event's actual control point.
 
 ## The Skill + Hook + Command Trinity
 
-The most robust skill architecture uses all three:
+A robust skill architecture can use all three:
 
 - **Skill** — Progressive-disclosure knowledge that loads on demand
-- **Hook** — Runtime enforcement that cannot be overridden by the model
+- **Hook** — Event-specific prevention, detection, or feedback
 - **Command** — User-invoked workflow (slash command) for explicit activation
 
-The snippets below are illustrative patterns, not drop-in hooks: Claude Code
+The snippets below are illustrative patterns, not drop-in hooks. Claude Code
 passes hook input as a JSON payload on **stdin** (fields like `tool_name`,
 `tool_input`, `prompt`), not env vars. Adapt before installing.
 
 ## Hook Categories
 
-### 1. Forced Skill Evaluation (Activation)
+### 1. Skill Evaluation Reminder (Activation)
 
 **Problem:** Skills frequently under-trigger — Claude skips skill evaluation for
 tasks it thinks it can handle directly.
 
-**Fix:** `UserPromptSubmit` hook forces Claude to evaluate available skills.
-Community testing reports large activation gains from this (specific rates vary
-by setup and are not an official benchmark).
+**Reminder:** A `UserPromptSubmit` hook can ask Claude to evaluate available skills.
+It improves visibility but cannot prove that Claude evaluated or used a skill.
+Community testing reports activation gains, but rates vary and are not an official benchmark.
 
 ```javascript
 // .claude/hooks/force-skill-eval.js
@@ -53,7 +53,8 @@ Reported cost (community, not benchmarked): ~$0.007/prompt, ~7s overhead.
 
 **Problem:** Skill says "always include tests" but Claude skips them.
 
-**Fix:** `PostToolUse` hook validates requirements after file writes.
+**Detection:** A `PostToolUse` hook checks requirements after a write completes.
+It cannot prevent that completed write. Return feedback on stderr with exit 2 so Claude can remediate it.
 
 ```javascript
 // .claude/hooks/validate-output.js
@@ -80,7 +81,8 @@ if (isSourceFile) {
     path.join(dir, '__tests__', `${base}.test${ext}`),
   ];
   if (!testPatterns.some(p => fs.existsSync(p))) {
-    console.log(`WARNING: ${filePath} written without a test file.`);
+    console.error(`WARNING: ${filePath} was written without a test file.`);
+    process.exit(2);
   }
 }
 ```
@@ -89,17 +91,18 @@ if (isSourceFile) {
 
 **Problem:** Skill reads 10,000-line log, burning context on irrelevant lines.
 
-**Fix:** `PreToolUse` hook preprocesses data before Claude sees it.
+**Prevention:** A `PreToolUse` hook can replace the pending read path before the tool runs.
+Return `hookSpecificOutput.updatedInput`. Preserve every unchanged input field.
 
 ```javascript
 // .claude/hooks/preprocess-context.js
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
 const toolInput = payload.tool_input === undefined ? {} : payload.tool_input;
-const filePath = toolInput.path === undefined
-  ? (toolInput.file_path === undefined ? '' : toolInput.file_path)
-  : toolInput.path;
+const pathKey = toolInput.path === undefined ? 'file_path' : 'path';
+const filePath = toolInput[pathKey] === undefined ? '' : toolInput[pathKey];
 if (!filePath) process.exit(0);
 
 if (filePath.endsWith('.log')) {
@@ -107,9 +110,15 @@ if (filePath.endsWith('.log')) {
   const lines = content.split('\n');
   const filtered = lines.filter(l => /\b(ERROR|WARN|FATAL)\b/i.test(l));
   if (filtered.length < lines.length * 0.5) {
-    const preprocessed = path.join('/tmp', `preprocessed-${path.basename(filePath)}`);
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-preprocess-'));
+    const preprocessed = path.join(tempDir, 'filtered.txt');
     fs.writeFileSync(preprocessed, `[${lines.length} lines → ${filtered.length}]\n\n${filtered.join('\n')}`);
-    console.log(`Filtered ${filePath}: ${lines.length} → ${filtered.length} lines. See ${preprocessed}`);
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: { ...toolInput, [pathKey]: preprocessed },
+      },
+    }));
   }
 }
 ```
@@ -118,7 +127,8 @@ if (filePath.endsWith('.log')) {
 
 **Problem:** Skill says "never use console.log" but Claude does it anyway.
 
-**Fix:** `PostToolUse` hook scans written files for banned patterns.
+**Detection:** A `PostToolUse` hook scans a file after the write completes.
+It reports violations for remediation; it does not undo or prevent the write.
 
 ```javascript
 // .claude/hooks/banned-patterns.js
@@ -144,7 +154,8 @@ for (const rule of rules) {
   if (matches) violations.push(`  ${rule.message} (${matches.length}x)`);
 }
 if (violations.length > 0) {
-  console.log(`Pattern violations in ${filePath}:\n${violations.join('\n')}`);
+  console.error(`Pattern violations in ${filePath}:\n${violations.join('\n')}`);
+  process.exit(2);
 }
 ```
 
@@ -179,22 +190,28 @@ if (counter.count % 20 === 0) {
 
 ## Hook Installation
 
-All hooks go in settings.json or `.claude/settings.json`:
+Hooks use an event, a matcher group, a `hooks` array, and a command definition.
+Match file-write checks to `Write|Edit`. Use `Read` for the preprocessing example.
 
 ```json
 {
   "hooks": {
-    "EventName": [
-      { "type": "command", "command": "node .claude/hooks/your-hook.js" }
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/validate-output.js" }
+        ]
+      }
     ]
   }
 }
 ```
 
-Events used by this catalog: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`
-(Claude Code also supports `Stop`, `SubagentStop`, `SessionStart`, `SessionEnd`,
-`PreCompact`, `Notification`).
+Events used by this catalog are `UserPromptSubmit`, `PreToolUse`, and `PostToolUse`.
+Claude Code also supports other events; check current documentation before selecting one.
 
-Exit 0 = allow; exit 2 = block (stderr is fed back to Claude); other non-zero =
-non-blocking error. On `UserPromptSubmit` and `SessionStart`, stdout is injected
-into Claude's context. Keep hooks fast (<5 seconds for prompt-level hooks).
+Exit 0 accepts the hook result. Exit 2 sends stderr to Claude and blocks only when the event supports prevention.
+For `PostToolUse`, the tool has already completed, so exit 2 supplies remediation feedback only.
+Supported JSON output can make event-specific decisions or update a pending tool input.
+On `UserPromptSubmit` and `SessionStart`, stdout is injected into Claude's context. Keep prompt-level hooks under five seconds.

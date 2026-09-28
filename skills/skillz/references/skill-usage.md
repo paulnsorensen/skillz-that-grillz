@@ -45,23 +45,47 @@ ORDER BY uses DESC
 LIMIT 10;
 ```
 
-## 4. Peer comparison (top 15 skills by usage)
+## 4. Peer comparison across the full skill distribution
 
 ```sql
-SELECT skill_name, count(*) AS total, count(DISTINCT sessionId) AS sessions
-FROM skill_invocations
-GROUP BY skill_name
-ORDER BY total DESC
-LIMIT 15;
+WITH counts AS (
+    SELECT skill_name AS target, count(*) AS total,
+           count(DISTINCT (harness, sessionId)) AS sessions
+    FROM skill_invocations GROUP BY skill_name
+), distribution AS (
+    SELECT target, total, sessions,
+           rank() OVER (ORDER BY total DESC) AS target_rank,
+           count(*) OVER () AS population,
+           median(total) OVER () AS median_total
+    FROM counts
+)
+SELECT target, total, sessions, target_rank, population, median_total,
+       CASE WHEN total > median_total THEN 'above'
+            WHEN total < median_total THEN 'below' ELSE 'at' END AS versus_median
+FROM distribution WHERE target = '{SKILL}';
 ```
 
-## 5. If the target is an agent type, also check agent_spawns
+The distribution uses every tracked skill before it filters the target.
+An absent target or an empty table returns zero rows; report rank and median as unavailable.
+
+## 5. If the target is an agent type, rank the full agent distribution
 
 ```sql
-SELECT agent_type, count(*) AS spawns, count(DISTINCT sessionId) AS sessions
-FROM agent_spawns
-WHERE agent_type = '{SKILL}'
-GROUP BY agent_type;
+WITH counts AS (
+    SELECT agent_type AS target, count(*) AS total,
+           count(DISTINCT (harness, sessionId)) AS sessions
+    FROM agent_spawns GROUP BY agent_type
+), distribution AS (
+    SELECT target, total, sessions,
+           rank() OVER (ORDER BY total DESC) AS target_rank,
+           count(*) OVER () AS population,
+           median(total) OVER () AS median_total
+    FROM counts
+)
+SELECT target, total, sessions, target_rank, population, median_total,
+       CASE WHEN total > median_total THEN 'above'
+            WHEN total < median_total THEN 'below' ELSE 'at' END AS versus_median
+FROM distribution WHERE target = '{SKILL}';
 ```
 
 ## Output Format
@@ -84,8 +108,11 @@ GROUP BY agent_type;
 |---------|------|
 
 ### Peer Ranking
-- Rank N of M tracked skills
+- Target total: N
+- Rank N of M tracked skills or agent types
+- Population median: N
 - Usage relative to median: above / at / below
+- If the target is absent or the table is empty: rank and median unavailable
 
 ### Findings
 - [Notable patterns: zero usage, sharp decline, single-project concentration]
