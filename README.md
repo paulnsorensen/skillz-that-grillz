@@ -6,11 +6,11 @@
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow?style=flat-square)](https://www.conventionalcommits.org)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/pulls)
 
-> _Library and tooling home: wedge, fromargs, and the wedge GitHub Action._
+> _Skill-authoring and skill-packaging toolbelt: skillz, wedge, fromargs, and the wedge GitHub Action._
 
-This repository publishes no Agent Skills. It hosts two Python libraries under
-`lib/` — `wedge` (packages a skill CLI as a content-addressed `.pyz`) and
-`fromargs` (the CLI library wedge builds on) — plus the public
+This repository publishes one Agent Skill, `skillz`. It also hosts two Python
+libraries under `lib/` — `wedge` (packages a skill CLI as a content-addressed
+`.pyz`) and `fromargs` (the CLI library wedge builds on) — plus the public
 [`actions/wedge`](actions/wedge/README.md) GitHub Action that runs `wedge` in
 a consumer repository.
 
@@ -19,9 +19,23 @@ covers the design / implement / review workflow (mold, cook, press, age, cure)
 and local-to-review publication (`/plate`: staging, commits, pushes, and PR
 creation — single or stacked).
 
-## Where the skills went
+## Skills
 
-This repo used to publish Agent Skills under `skills/`. It no longer does:
+| Skill path | Command | Purpose |
+| --- | --- | --- |
+| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, or self-update a skill or sub-agent definition so it runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. Scores the target against a twelve-lens rubric (predictability, invocation, portability, information hierarchy, tool scoping, calibration, …), tags every finding with severity × confidence, and ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `self-update` add a best-effort Usage lens when a `session-analytics` database is present. |
+
+`skillz` needs no CLI and no MCP server. Its Usage lens optionally uses the
+`duckdb` CLI and a `session-analytics` database; without them it falls back to
+the bundled guidance.
+
+```sh
+npx skills add paulnsorensen/skillz-that-grillz --skill skillz
+```
+
+## Where the other skills went
+
+This repo used to publish more Agent Skills under `skills/`:
 
 - Repository setup and maintenance skills (`release`, `justfile`, `prek`,
   `oss-hygiene`, `safe-settings`, `github-copilot-repo-instructions`) moved to

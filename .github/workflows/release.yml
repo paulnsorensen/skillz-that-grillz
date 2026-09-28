@@ -105,14 +105,25 @@ jobs:
         # same gate that guards every PR (validate.yml); a release must clear it.
         run: just ci
 
-      - name: Publish GitHub release
-        # This repo publishes no Agent Skills (see README "Where the skills
-        # went"), so there is nothing for `gh skill publish` to validate or
-        # package — create the release directly against the trigger tag.
+      - name: Validate skills
+        if: steps.guard.outputs.already_published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh skill publish --dry-run
+
+      - name: Publish agent skills
         if: steps.guard.outputs.already_published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |-
           set -euo pipefail
+          # `gh skill publish --tag` *creates* the tag, so it errors ("tag
+          # already exists") whenever the trigger tag is already present — which
+          # it always is here, because the tag push is what started this run.
+          # The "Validate skills" step already ran `gh skill publish --dry-run`
+          # (spec validation + install-metadata check), so all that remains is
+          # release creation — which is exactly what `gh skill publish` does
+          # internally. Create the release directly against the existing tag;
+          # the already_published guard keeps re-runs idempotent.
           gh release create "$TAG" --title "$TAG" --generate-notes --latest

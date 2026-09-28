@@ -71,8 +71,8 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertIn("no SKILL.md files found", err)
 
     def test_skills_dir_absent_but_agents_skills_present_passes(self) -> None:
-        # This repo publishes no skills under skills/ but still ships the
-        # repo-local python-authoring skill under .agents/skills/.
+        # A repo with only repo-local skills under .agents/skills/ (no
+        # published skills/ tree) still validates.
         self._write_skill("foo", parent=".agents/skills")
         rc, out, _ = self._run()
         self.assertEqual(rc, 0)

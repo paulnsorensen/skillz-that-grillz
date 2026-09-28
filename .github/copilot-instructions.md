@@ -1,24 +1,23 @@
 # Copilot review instructions — skillz-that-grillz
 
-This repo is a library and tooling collection: `wedge` and `fromargs` under
-`lib/`, and the public `actions/wedge` GitHub Action. It publishes no Agent
-Skills (see the README's "Where the skills went" section). Review focuses on
-**code quality and test coverage** for `lib/` and the Action, not skill
-design.
+This repo is a skill-authoring and skill-packaging toolbelt: the published
+`skillz` skill under `skills/`, `wedge` and `fromargs` under `lib/`, and the
+public `actions/wedge` GitHub Action. Review `lib/` and the Action for
+**code quality and test coverage**.
 
-The one exception is `.agents/skills/python-authoring/`, a repo-local skill
-(not published) that only applies to work on this repository. Review changes
-to it the way the `/skill-creator` skill would: care about whether it will
+Review `skills/skillz/` and the repo-local `.agents/skills/python-authoring/`
+the way the `/skill-creator` skill would: care about whether a skill will
 *trigger* when it should, whether it teaches the model *why* not just
 *what*, and whether bundled resources earn their keep.
 
 ## What this repo is and isn't
 
-- **Is**: a Python library repo (`lib/wedge`, `lib/fromargs`) and a public
-  composite GitHub Action (`actions/wedge`) that packages a skill CLI as a
-  content-addressed `.pyz` for other repositories to consume.
-- **Isn't**: an agent framework, an orchestrator, an MCP server, or a skills
-  collection. No required MCPs.
+- **Is**: one published Agent Skill (`skillz`), a Python library repo
+  (`lib/wedge`, `lib/fromargs`), and a public composite GitHub Action
+  (`actions/wedge`) that packages a skill CLI as a content-addressed `.pyz`
+  for other repositories to consume.
+- **Isn't**: an agent framework, an orchestrator, or an MCP server. No
+  required MCPs.
 
 Flag scope creep the same way you would in any library repo: new
 abstractions without a demonstrated need, or coupling between `wedge` and

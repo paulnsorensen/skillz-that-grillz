@@ -24,24 +24,26 @@ just build   # runs all formatters, linters, validators, and test suites
 and test suites. It doesn’t install dependencies for you; see `justfile` for the required tools.
 Install [`just`](https://github.com/casey/just) first if you don't have it (`brew install just` / `cargo install just`).
 
-## Adding a repo-local skill
+## Adding a skill
 
-This repo publishes no Agent Skills (see the README's "Where the skills
-went" section). The only skills here are repo-local, under
-`.agents/skills/<name>/` (mirrored at `.claude/skills/<name>/` via a
-symlink) — tooling for work on this repository only. The authoring
-contract — frontmatter keys, description-writing guidance, and the
-validation rules CI enforces — is in
+Published skills live under `skills/<name>/`. Repo-local skills (tooling for
+work on this repository only) live under `.agents/skills/<name>/`, mirrored at
+`.claude/skills/<name>/` via a symlink. The authoring contract — frontmatter
+keys, description-writing guidance, and the validation rules CI enforces — is
+in
 [`.github/instructions/skills.instructions.md`](.github/instructions/skills.instructions.md).
 Read it before opening a skill PR.
 
 The essentials:
 
-- One directory per skill: `.agents/skills/<name>/SKILL.md` (plus optional
-  `references/`, `scripts/`, `assets/`).
+- One directory per skill: `skills/<name>/SKILL.md` or
+  `.agents/skills/<name>/SKILL.md` (plus optional `references/`, `scripts/`,
+  `assets/`).
 - `SKILL.md` needs YAML frontmatter with at least `name` and `description`, and
   **`name` must match the parent directory name** — the validator fails
   otherwise.
+- Add a published skill to the [`## Skills` table in `README.md`](README.md#skills);
+  it is the single source of truth for the skill list.
 - Run `just build` until it reports 0 failures (this runs
   `validate_skills.py`).
 
