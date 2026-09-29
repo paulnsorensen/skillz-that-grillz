@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, cast, final
 
+from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, digest, load_cases, mapping, text_map
 from skillz_experiments._codex import Codex, VERSION
@@ -39,7 +40,17 @@ class _Session:
         cases_document = read(out / "cases.json")
         if self.record["dataset_hash"] != digest(cases_document):
             raise ValueError("frozen dataset changed")
-        self.cases = [case for case in load_cases(out / "cases.json") if case.eligible]
+        imported = load_cases(out / "cases.json")
+        audits = [case for case in imported if case.kind == "audit"]
+        if audits and (any(not case.eligible for case in imported)
+                       or not all(any(case.split == split for case in imported) for split in ("train", "validation"))
+                       or sum(case.split == "holdout" for case in imported) != 2):
+            raise ValueError("audit comparison requires reviewed, provider-approved cases and complete splits")
+        self.cases = [case for case in imported if case.eligible]
+        if audits:
+            _ = self.record.setdefault("judge", judge_identity(model))
+            if self.record["judge"] != judge_identity(model):
+                raise ValueError("frozen judge changed; create a new run")
         self.seed = Candidate(text_map(self.record["seed"]), tuple(cast(list[str], self.record["editable"])))
         if self.seed.identity != self.record["seed_hash"]:
             raise ValueError("frozen seed changed")
@@ -57,7 +68,9 @@ class _Session:
         if elapsed < 0:
             raise ValueError("run cannot resume after a monotonic clock reset")
         remaining = seconds - elapsed
-        self.budget = Budget(maximum, remaining, calls=cast(int, self.record["calls"]))
+        reserve = 3 * sum(2 if case.kind == "audit" else 1 for case in self.cases_for("holdout"))
+        self.record["holdout_reserve"] = reserve
+        self.budget = Budget(maximum, remaining, reserve=reserve, calls=cast(int, self.record["calls"]))
         self.provider = factory(model, self.budget, self.checkpoint)
         self.arms = mapping(self.record["arms"])
         self.outcomes = cast(list[dict[str, object]], self.record["outcomes"])
@@ -96,15 +109,18 @@ class _Session:
         candidates: dict[str, Candidate] = {self.seed.identity: self.seed}
         validation: dict[str, list[dict[str, object]]] = {}
 
+        examples = {case.identifier: case for case in self.cases if case.split != "holdout"}
+
         def evaluate(components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
-            if not isinstance(example, Case) or example.split == "holdout":
+            if not isinstance(example, str) or example not in examples:
                 raise ValueError("holdout must not enter optimization")
+            case = examples[example]
             candidate = self.seed.changed(components)
             candidates[candidate.identity] = candidate
-            result = self.evaluate_case(candidate, example, mode)
-            if example.split == "validation":
+            result = self.evaluate_case(candidate, case, mode)
+            if case.split == "validation":
                 validation.setdefault(candidate.identity, []).append(result)
-            return cast(float, result["score"]), {"task_correct": result["score"], "request": example.request}
+            return cast(float, result["score"]), {"task_correct": result["score"], "request": case.request}
 
         def propose(candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
                     components: list[str]) -> dict[str, str]:
@@ -125,7 +141,8 @@ class _Session:
 
         editable = {key: self.seed.files[key] for key in self.seed.editable}
         try:
-            _ = optimize(editable, mode, list(self.cases_for("train")), list(self.cases_for("validation")), evaluate, propose)
+            _ = optimize(editable, mode, [case.identifier for case in self.cases_for("train")],
+                         [case.identifier for case in self.cases_for("validation")], evaluate, propose)
             winner = _select(candidates, validation, len(self.cases_for("validation")), self.seed)
             reason = "validation-selection"
         except BudgetExhausted:
@@ -209,10 +226,27 @@ def summary(record: dict[str, object]) -> dict[str, object]:
             ("schema_version", "phase", "calls", "model", "codex_version", "improvement", "locked_arms")}
 
 
+def _export_outcome(item: dict[str, object]) -> dict[str, object]:
+    allowed = {"arm", "split", "score", "status", "loaded", "helper_executed", "candidate_hash", "case_hash",
+               "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
+               "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate"}
+    result = {key: value for key, value in item.items() if key in allowed}
+    for key in ("usage", "task_usage", "judge_usage"):
+        if key in item:
+            value = item[key]
+            result[key] = None if value is None else {
+                name: mapping(value).get(name) for name in ("input_tokens", "cached_input_tokens", "output_tokens")}
+    return result
+
+
 def export(out: Path, destination: Path, arm: str) -> dict[str, object]:
     record = read(out / "run.json")
     if record.get("phase") != "complete":
         raise ValueError("export requires a completed locked evaluation")
+    if record.get("engine_hash") != _engine_hash():
+        raise ValueError("frozen evaluator changed; create a new run")
+    if "judge" in record and record["judge"] != judge_identity(cast(str, record["model"])):
+        raise ValueError("frozen judge changed; create a new run")
     arms = mapping(record["arms"])
     if arm not in {"prompt", "prompt-cli"} or arm not in arms:
         raise ValueError("export arm must be prompt or prompt-cli")
@@ -228,6 +262,6 @@ def export(out: Path, destination: Path, arm: str) -> dict[str, object]:
     with descriptor:
         _ = descriptor.write(patch)
     report = summary(record) | {"sharing": "private-local-only", "arm": arm,
-                                "outcomes": record["outcomes"], "cost_usd": None}
+                                "outcomes": [_export_outcome(item) for item in cast(list[dict[str, object]], record["outcomes"])], "cost_usd": None}
     write(destination / "report.json", report)
     return {"export": str(destination), "sharing": "private-local-only", "installed": False}

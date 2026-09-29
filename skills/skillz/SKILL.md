@@ -1,15 +1,15 @@
 ---
 name: skillz
 description: >
-  Add, improve, audit, or self-update a skill or sub-agent definition so it
+  Add, improve, audit, self-update, or evaluate a skill or sub-agent definition so it
   runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts.
-  Use for /skillz <add|improve|audit|self-update>, "improve this skill",
+  Use for /skillz <add|improve|audit|self-update|experiment>, "improve this skill",
   "optimize this skill", "tighten this skill",
   "audit this agent", "new skill for X", "skill not triggering", or "fix
   trigger rate". Do NOT use for CLAUDE.md or system-prompt edits, or for
   code changes that a cheese pipeline skill owns.
 disable-model-invocation: true
-argument-hint: "<add|improve|audit|self-update> [<path>|<name>]"
+argument-hint: "<add|improve|audit|self-update|experiment> [<path>|<name>]"
 license: MIT
 metadata:
   author: paulnsorensen
@@ -37,7 +37,7 @@ Ask for a target when the mode requires one.
 | `improve <path>` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
 | `audit <path>` | a `SKILL.md` or agent file | yes | none | calibrated report |
 | `self-update` | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
-| `experiment` | an explicit case manifest or public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
+| `experiment` | an inspection or audit manifest, or public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
 For `experiment`, read `references/experiments.md` and follow its workflow instead of the shared audit protocol.
 

@@ -21,8 +21,8 @@ class Budget:
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
-        if not 1 <= self.maximum <= 20 or not 0 < self.seconds <= 1200:
-            raise ValueError("budget exceeds 20 calls or 1200 seconds")
+        if not 1 <= self.maximum <= 40 or not 0 < self.seconds <= 2400:
+            raise ValueError("budget exceeds 40 calls or 2400 seconds")
         if not 0 <= self.reserve <= self.maximum:
             raise ValueError("invalid holdout reservation")
 
@@ -32,11 +32,14 @@ class Budget:
             raise BudgetExhausted("global deadline exhausted")
         return remaining
 
-    def claim(self, *, holdout: bool = False) -> None:
+    def check(self, count: int, *, holdout: bool = False) -> None:
         _ = self.remaining()
         limit = self.maximum if holdout else self.maximum - self.reserve
-        if self.calls >= limit:
+        if self.calls + count > limit:
             raise BudgetExhausted("global invocation budget exhausted")
+
+    def claim(self, *, holdout: bool = False) -> None:
+        self.check(1, holdout=holdout)
         self.calls += 1
 
 

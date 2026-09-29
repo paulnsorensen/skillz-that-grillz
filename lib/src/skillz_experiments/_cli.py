@@ -6,8 +6,9 @@ from pathlib import Path
 
 import fromargs
 
+from skillz_experiments._cases import load_cases
 from skillz_experiments._codex import Codex
-from skillz_experiments._records import prepare
+from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget
 from skillz_experiments._workflow import execute, export as export_run
 
@@ -49,9 +50,22 @@ def export_command(run: str, *, out: str, arm: str = "prompt") -> dict[str, obje
 
 @app.command(name="self-test")
 def self_test(*, model: str, out: str = "skillz-self-test", target: str = "skills/skillz",
-              preflight_only: bool = False, live: bool = False,
+              preflight_only: bool = False, live: bool = False, profile: str = "inspection",
+              prepare_only: bool = False, manifest: str | None = None,
               max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Compare the original, prompt-only, and prompt-plus-CLI arms."""
+    if profile not in ("inspection", "audit"):
+        raise ValueError("profile must be inspection or audit")
+    if sum((preflight_only, prepare_only, live)) != 1:
+        raise ValueError("choose exactly one of --preflight-only, --prepare-only, or --live")
+    source = Path(manifest) if manifest else Path(__file__).parent / (
+        "fixtures/audit-self-test.json" if profile == "audit" else "fixtures/self-test.json")
+    if prepare_only:
+        cases = load_cases(source)
+        destination = Path(out)
+        destination.mkdir(mode=0o700)
+        write(destination / "manifest.json", read(source))
+        return {"review_manifest": str(destination / "manifest.json"), "cases": len(cases), "live_calls": 0}
     if preflight_only:
         adapter = Codex(model, Budget(max_invocations, max_seconds), lambda: None)
         try:
@@ -60,8 +74,11 @@ def self_test(*, model: str, out: str = "skillz-self-test", target: str = "skill
             adapter.close()
     if not live:
         raise ValueError("self-test requires --preflight-only or explicit --live")
-    manifest = Path(__file__).parent / "fixtures/self-test.json"
-    _ = prepare(manifest, Path(target), Path(out))
+    if profile == "audit":
+        cases = load_cases(source)
+        if not cases or any(case.kind != "audit" or not case.eligible for case in cases):
+            raise ValueError("audit self-test requires human label review and separate provider approval in --manifest")
+    _ = prepare(source, Path(target), Path(out))
     return execute(Path(out), "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds)
 
 

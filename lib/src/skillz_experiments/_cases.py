@@ -40,6 +40,68 @@ def digest(value: object) -> str:
 
 
 @dataclass(frozen=True)
+class Citation:
+    path: str
+    start: int
+    end: int
+    quote: str
+
+
+@dataclass(frozen=True)
+class Label:
+    id: str
+    severity: str
+    explanation: str
+    evidence: tuple[Citation, ...]
+
+
+@dataclass(frozen=True)
+class Audit:
+    labels: tuple[Label, ...]
+
+
+def citation(value: object, files: dict[str, str]) -> Citation:
+    item = mapping(value)
+    if set(item) != {"path", "start", "end", "quote"}:
+        raise ValueError("citation requires path, start, end, and quote")
+    path = relative(string(item["path"], "citation path"))
+    start, end = item["start"], item["end"]
+    if type(start) is not int or type(end) is not int or path not in files:
+        raise ValueError("citation requires integer lines and a fixture path")
+    lines = files[path].splitlines()
+    if not 1 <= start <= end <= len(lines) or item["quote"] != "\n".join(lines[start - 1:end]):
+        raise ValueError("citation must quote the exact inclusive fixture lines")
+    return Citation(path, start, end, cast(str, item["quote"]))
+
+
+def severity(value: object) -> str:
+    if value not in ("critical", "high", "medium", "low"):
+        raise ValueError("severity must be critical, high, medium, or low")
+    return cast(str, value)
+
+
+def audit_labels(value: object, files: dict[str, str]) -> Audit:
+    expected = mapping(value)
+    if set(expected) != {"labels"} or not isinstance(expected["labels"], list):
+        raise ValueError("audit expected requires a labels list")
+    labels: list[Label] = []
+    for raw in cast(list[object], expected["labels"]):
+        item = mapping(raw)
+        if set(item) != {"id", "severity", "explanation", "evidence"}:
+            raise ValueError("label requires id, severity, explanation, and evidence")
+        evidence = item["evidence"]
+        if not isinstance(evidence, list) or not evidence:
+            raise ValueError("label requires nonempty evidence")
+        label = Label(string(item["id"], "label id"), severity(item["severity"]),
+                      string(item["explanation"], "label explanation"),
+                      tuple(citation(entry, files) for entry in cast(list[object], evidence)))
+        if any(existing.id == label.id for existing in labels):
+            raise ValueError("duplicate label id")
+        labels.append(label)
+    return Audit(tuple(labels))
+
+
+@dataclass(frozen=True)
 class Case:
     identifier: str
     family: str
@@ -50,10 +112,13 @@ class Case:
     provenance: str
     provider_approved: bool
     visibility: str = "private"
+    kind: str = "inspection"
+    labels_reviewed: bool = False
 
     @property
     def eligible(self) -> bool:
-        return bool(self.request and self.files and self.expected is not None and self.provider_approved)
+        return bool(self.request and self.files and self.expected is not None and self.provider_approved
+                    and (self.kind != "audit" or self.labels_reviewed))
 
 
 def _case(value: object) -> Case:
@@ -67,11 +132,19 @@ def _case(value: object) -> Case:
     visibility = item.get("visibility", "private")
     if visibility not in {"public", "private"}:
         raise ValueError("visibility must be public or private")
+    kind = item.get("kind", "inspection")
+    if kind not in ("inspection", "audit"):
+        raise ValueError("kind must be inspection or audit")
+    reviewed = item.get("labels_reviewed", False)
+    if type(reviewed) is not bool:
+        raise ValueError("labels_reviewed must be boolean")
+    files = text_map(item.get("files", {}))
+    expected = audit_labels(item.get("expected"), files) if kind == "audit" else item.get("expected")
     return Case(
         string(item.get("id"), "id"), string(item.get("family"), "family"), split,
-        request, text_map(item.get("files", {})), item.get("expected"),
+        request, files, expected,
         string(item.get("provenance"), "provenance"), item.get("provider_approved") is True,
-        cast(str, visibility),
+        cast(str, visibility), cast(str, kind), reviewed,
     )
 
 
