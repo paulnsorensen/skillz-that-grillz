@@ -121,5 +121,37 @@ class EngineSmokeTest(unittest.TestCase):
             self.assertIn("Skipping ingestion", cached.stdout)
 
 
+    @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
+    def test_query_fails_when_automatic_ingest_fails(self):
+        for has_database in (False, True):
+            with self.subTest(has_database=has_database), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                database = root / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
+                if has_database:
+                    database.parent.mkdir(parents=True)
+                    database.touch()
+                    os.utime(database, (0, 0))
+                env = os.environ | {
+                    "HOME": str(root),
+                    "CLAUDE_CONFIG_DIR": str(root / "claude"),
+                    "CODEX_HOME": str(root / "codex"),
+                    "CURSOR_HOME": str(root / "cursor"),
+                    "XDG_CACHE_HOME": str(root / "cache"),
+                }
+                env.pop("SESSIONS_DB", None)
+                query = subprocess.run(
+                    ["bash", str(ENGINE / "scripts" / "query.sh"), "sql", "SELECT 1"],
+                    env=env, capture_output=True, text=True,
+                )
+                self.assertEqual(query.returncode, 1)
+                self.assertEqual(query.stdout, "")
+                self.assertIn("Automatic ingestion failed (exit 1)", query.stderr)
+                if has_database:
+                    self.assertIn("stale data", query.stderr)
+                else:
+                    self.assertIn("no session database is available", query.stderr)
+                    self.assertNotIn("stale data", query.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,8 +39,12 @@ ensure_db() {
             if [[ -f "$SCRIPT_DIR/ingest.py" ]]; then
                 local status=0
                 python3 "$SCRIPT_DIR/ingest.py" >/dev/null 2>&1 || status=$?
-                if (( status != 0 )) && [[ -f "$DB" ]]; then
-                    echo "Automatic ingestion failed (exit $status); refusing to query stale data." >&2
+                if (( status != 0 )); then
+                    if [[ -f "$DB" ]]; then
+                        echo "Automatic ingestion failed (exit $status); refusing to query stale data." >&2
+                    else
+                        echo "Automatic ingestion failed (exit $status); no session database is available." >&2
+                    fi
                     exit "$status"
                 fi
             fi
