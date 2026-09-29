@@ -120,14 +120,24 @@ class _Session:
             result = self.evaluate_case(candidate, case, mode)
             if case.split == "validation":
                 validation.setdefault(candidate.identity, []).append(result)
-            return cast(float, result["score"]), {"task_correct": result["score"], "request": case.request}
+            feedback: dict[str, object] = {"task_correct": result["score"], "request": case.request}
+            if mode == "cli":
+                usage = mapping(result.get("usage") or {})
+                feedback["usage"] = {key: value if type(value := usage.get(key)) is int and value >= 0 else None
+                                     for key in ("input_tokens", "output_tokens")}
+            return cast(float, result["score"]), feedback
 
         def propose(candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
                     components: list[str]) -> dict[str, str]:
             schema: dict[str, object] = {"type": "object",
                 "properties": {key: {"type": "string"} for key in components},
                 "required": components, "additionalProperties": False}
-            prompt = ("Improve only the supplied skill text components. Preserve the helper CLI contract. "
+            instruction = ("Improve only scripts/inspect_skill.py. Preserve all skill text and the helper CLI contract. "
+                           + "Preserve correctness first; reduce measured input-plus-output tokens for correctness ties. "
+                           + "Token feedback combines task and judge usage; null means unknown. "
+                           if mode == "cli" else
+                           "Improve only the supplied skill text components. Preserve the helper CLI contract. ")
+            prompt = (instruction
                       + "Return complete component contents. Do not alter independent checks or permissions.\n"
                       + json.dumps({"candidate": candidate, "feedback": feedback}, default=str))
             result = self.provider.invoke(prompt, schema=schema)
@@ -153,7 +163,7 @@ class _Session:
         self.checkpoint()
 
     def holdout(self) -> None:
-        if set(self.arms) != {"original", "prompt", "prompt-cli"} or self.record.get("holdout_consumed"):
+        if set(self.arms) not in ({"original", "prompt", "prompt-cli"}, {"original", "prompt", "cli"}) or self.record.get("holdout_consumed"):
             raise ValueError("holdout requires three locked arms and cannot be resumed")
         cases = self.cases_for("holdout")
         if len(cases) != 2:
@@ -248,8 +258,8 @@ def export(out: Path, destination: Path, arm: str) -> dict[str, object]:
     if "judge" in record and record["judge"] != judge_identity(cast(str, record["model"])):
         raise ValueError("frozen judge changed; create a new run")
     arms = mapping(record["arms"])
-    if arm not in {"prompt", "prompt-cli"} or arm not in arms:
-        raise ValueError("export arm must be prompt or prompt-cli")
+    if arm not in {"prompt", "prompt-cli", "cli"} or arm not in arms:
+        raise ValueError("export arm must be an evaluated prompt, prompt-cli, or cli arm")
     seed, candidate = text_map(record["seed"]), text_map(arms[arm])
     lines = (line for name in seed if seed[name] != candidate[name]
              for line in difflib.unified_diff(seed[name].splitlines(keepends=True),

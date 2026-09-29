@@ -31,7 +31,7 @@ def baseline(run: str, *, model: str, live: bool = False,
 @app.command
 def search(run: str, *, model: str, mode: str = "prompt", live: bool = False,
            max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
-    """Search prompt or prompt-cli components with pinned GEPA."""
+    """Search prompt, prompt-cli, or cli components with pinned GEPA."""
     return execute(Path(run), "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds)
 
 

@@ -25,14 +25,18 @@ class _API(Protocol):
 
 def optimize(seed: dict[str, str], mode: str, train: list[object], validation: list[object],
              evaluate: Evaluate, propose: Propose) -> dict[str, str]:
-    if mode not in {"prompt", "prompt-cli"}:
-        raise ValueError("mode must be prompt or prompt-cli")
+    if mode not in {"prompt", "prompt-cli", "cli"}:
+        raise ValueError("mode must be prompt, prompt-cli, or cli")
     if not train or not validation:
         raise ValueError("search needs independent training and validation cases")
     if importlib.metadata.version("gepa") != "0.1.4":
         raise ValueError("install the experiments extra with GEPA 0.1.4")
     api = cast(_API, cast(object, importlib.import_module("gepa.optimize_anything")))
-    editable = {key: text for key, text in seed.items() if mode == "prompt-cli" or key.endswith(".md")}
+    editable = {key: text for key, text in seed.items()
+                if mode == "prompt-cli" or (mode == "prompt" and key.endswith(".md"))
+                or (mode == "cli" and key == "scripts/inspect_skill.py")}
+    if not editable:
+        raise ValueError("search mode has no editable components")
 
     def score(candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
         if set(candidate) != set(editable):

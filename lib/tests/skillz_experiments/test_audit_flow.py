@@ -187,3 +187,96 @@ def test_invalid_judge_charges_calls_and_stops_run(tmp_path: Path, monkeypatch: 
     assert record["phase"] == "infrastructure-failure"
     assert record["calls"] == 2
     assert record["outcomes"] == []
+
+
+@pytest.mark.parametrize(("correct", "known"), [(True, True), (False, True), (True, False)])
+def test_cli_staged_flow_feedback_and_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, correct: bool, known: bool,
+) -> None:
+    manifest, target = corpus(tmp_path)
+    (target / "scripts").mkdir()
+    _ = (target / "scripts/inspect_skill.py").write_text("original")
+    (target / "references").mkdir()
+    _ = (target / "references/selected.md").write_text("frozen reference")
+    run = tmp_path / "run"
+    _ = prepare(manifest, target, run, ["references/selected.md"])
+    calls: list[str] = []
+    factory = provider_factory(monkeypatch, calls)
+    boundary = Codex.invoke
+    reflections: list[str] = []
+
+    def invoke(self: Codex, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        result = boundary(self, prompt, candidate, case, holdout=holdout, schema=schema)
+        if case is not None and candidate is not None:
+            changed = candidate.files["scripts/inspect_skill.py"] == "improved"
+            result["usage"] = {"input_tokens": (1 if changed else 10) if known else None,
+                               "output_tokens": (1 if changed else 3) if known else None}
+            if changed and not correct and case.split == "validation":
+                mapping(result["answer"])["load_marker"] = "wrong"
+        elif schema is not None and "matches" not in mapping(schema["properties"]):
+            reflections.append(prompt)
+        return result
+
+    monkeypatch.setattr(Codex, "invoke", invoke)
+    for stage, mode in [("baseline", "prompt"), ("search", "prompt"), ("search", "cli"), ("evaluate", "prompt")]:
+        result = execute(run, stage, "controlled", live=True, maximum=40, seconds=2400,
+                         factory=factory, mode=mode)
+    assert result["phase"] == "complete"
+    record = read(run / "run.json")
+    arms = mapping(record["arms"])
+    assert set(arms) == {"original", "prompt", "cli"}
+    cli = mapping(arms["cli"])
+    assert cli["SKILL.md"] == "seed"
+    assert cli["references/selected.md"] == "frozen reference"
+    if known:
+        assert cli["scripts/inspect_skill.py"] == ("improved" if correct else "original")
+    assert record["holdout_reserve"] == 12
+    assert calls.count("task:holdout") == 6
+    assert calls.count("judge:holdout") == 6
+    assert record["calls"] == len(calls)
+    assert len(reflections) == 2
+    cli_prompt = reflections[1]
+    assert "Preserve correctness first" in cli_prompt
+    assert "reduce measured input-plus-output tokens for correctness ties" in cli_prompt
+    payload = mapping(cast(object, json.loads(cli_prompt.split("\n", 1)[1])))
+    assert payload["candidate"] == {"scripts/inspect_skill.py": "original"}
+    feedback = mapping(payload["feedback"])
+    assert set(feedback) == {"scripts/inspect_skill.py"}
+    rows = cast(list[dict[str, object]], feedback["scripts/inspect_skill.py"])
+    assert rows
+    expected_usage = {"input_tokens": 20 if known else None, "output_tokens": 6 if known else None}
+    for row in rows:
+        assert row["task_correct"] == 1.0
+        assert row["request"] == "Audit safety only."
+        assert row["usage"] == expected_usage
+    for secret in ("LABEL_SENTINEL", "/TASK", "Delete everything.", "holdout", "raw_judge_response"):
+        assert secret not in cli_prompt
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    changed = Candidate(dict(cast(dict[str, str], arms["original"])) | {"scripts/inspect_skill.py": "improved"}, ()).identity
+    assert any(item.get("candidate_hash") == changed and item["split"] == "validation" for item in outcomes)
+    _ = export(run, tmp_path / "export-cli", "cli")
+    assert mapping(read(tmp_path / "export-cli/report.json"))["phase"] == "complete"
+
+
+@pytest.mark.parametrize("arm_names", [
+    ["original", "prompt"], ["original", "cli", "prompt-cli"],
+    ["original", "prompt", "cli", "prompt-cli"],
+])
+def test_holdout_rejects_invalid_arm_sets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arm_names: list[str],
+) -> None:
+    manifest, target = corpus(tmp_path)
+    run = tmp_path / "run"
+    _ = prepare(manifest, target, run)
+    calls: list[str] = []
+    factory = provider_factory(monkeypatch, calls)
+    _ = execute(run, "baseline", "controlled", live=True, maximum=40, seconds=2400, factory=factory)
+    record = read(run / "run.json")
+    record["arms"] = {name: mapping(record["seed"]) for name in arm_names}
+    write(run / "run.json", record)
+    before = calls.copy()
+    with pytest.raises(ValueError, match="holdout requires three locked arms"):
+        _ = execute(run, "evaluate", "controlled", live=True, maximum=40, seconds=2400, factory=factory)
+    assert calls == before
+    assert read(run / "run.json").get("holdout_consumed") is None

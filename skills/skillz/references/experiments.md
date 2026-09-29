@@ -112,6 +112,15 @@ uv run --project lib --extra experiments skillz-experiment search /tmp/skillz-ru
 uv run --project lib --extra experiments skillz-experiment evaluate /tmp/skillz-run --model gpt-6-astra --live
 ```
 
+For CLI-only optimization, replace `--mode prompt-cli` with `--mode cli`.
+CLI-only search changes only `scripts/inspect_skill.py` and freezes all skill text, including selected references.
+Its reflection receives measured task-plus-judge input and output tokens. Unknown usage stays null.
+Correctness remains primary; token use breaks correctness ties.
+Evaluate exactly `original`, `prompt`, and either `cli` or `prompt-cli`, never all four arms.
+Export the CLI-only result with `export /tmp/skillz-run --out /tmp/skillz-export --arm cli`.
+For audit cases, pass the same `--max-invocations 40 --max-seconds 2400` to every live stage.
+The three-arm audit reserves 12 calls for holdout. The default self-test remains unchanged.
+
 Add `--component references/name.md` during dataset preparation to select an editable reference.
 Other references, sidecars, libraries, dependencies, evaluators, and permissions remain frozen.
 Search makes one GEPA proposal per arm.
