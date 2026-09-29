@@ -34,6 +34,7 @@ test:
     python3 .github/scripts/test_validate_skills.py
     python3 .github/scripts/test_validate_evals.py
     python3 .github/scripts/validate_skills.py
+    python3 -B -m unittest discover -s skills/skillz/engine/tests -p 'test_*.py'
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
     uv run --locked --project lib basedpyright lib/src/wedge lib/tests/wedge
     just test-fromargs

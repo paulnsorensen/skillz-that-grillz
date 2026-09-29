@@ -6,8 +6,8 @@
 
 Report tools, agents, and MCP calls inside each 10-minute post-invocation window.
 These events are temporally correlated. The window does not prove causation or concurrency.
-Run in one fresh read-only context. Schema: `references/canonical-schema.md` in
-the installed `session-analytics` skill.
+Run in one fresh read-only context. Schema: `engine/references/canonical-schema.md`
+in this `skillz` skill.
 
 ## 1. Tools correlated with invocation windows
 

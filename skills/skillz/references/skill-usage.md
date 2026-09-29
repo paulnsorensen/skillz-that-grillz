@@ -5,7 +5,7 @@
 - owner: skillz
 
 Measures invocation patterns for `{SKILL}`. Run in one fresh read-only context.
-Schema: `references/canonical-schema.md` in the installed `session-analytics` skill.
+Schema: `engine/references/canonical-schema.md` in this `skillz` skill.
 
 ## 1. Total invocations and date range
 
