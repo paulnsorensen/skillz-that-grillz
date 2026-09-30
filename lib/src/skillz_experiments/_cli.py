@@ -7,7 +7,7 @@ from pathlib import Path
 import fromargs
 
 from skillz_experiments._cases import load_cases
-from skillz_experiments._codex import Codex
+from skillz_experiments._harness import Configuration
 from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget
 from skillz_experiments._workflow import execute, export as export_run
@@ -22,24 +22,27 @@ def dataset(manifest: str, *, target: str, out: str, component: list[str] | None
 
 
 @app.command
-def baseline(run: str, *, model: str, live: bool = False,
+def baseline(run: str, *, model: str, live: bool = False, harness_config: str | None = None,
              max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Measure the frozen original on training and validation cases."""
-    return execute(Path(run), "baseline", model, live=live, maximum=max_invocations, seconds=max_seconds)
+    return execute(Path(run), "baseline", model, live=live, maximum=max_invocations, seconds=max_seconds,
+                   harness_config=Path(harness_config) if harness_config else None)
 
 
 @app.command
-def search(run: str, *, model: str, mode: str = "prompt", live: bool = False,
+def search(run: str, *, model: str, mode: str = "prompt", live: bool = False, harness_config: str | None = None,
            max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Search prompt, prompt-cli, or cli components with pinned GEPA."""
-    return execute(Path(run), "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds)
+    return execute(Path(run), "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds,
+                   harness_config=Path(harness_config) if harness_config else None)
 
 
 @app.command
-def evaluate(run: str, *, model: str, live: bool = False,
+def evaluate(run: str, *, model: str, live: bool = False, harness_config: str | None = None,
              max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Consume the paired holdout once, without feedback to search."""
-    return execute(Path(run), "evaluate", model, live=live, maximum=max_invocations, seconds=max_seconds)
+    return execute(Path(run), "evaluate", model, live=live, maximum=max_invocations, seconds=max_seconds,
+                   harness_config=Path(harness_config) if harness_config else None)
 
 
 @app.command(name="export")
@@ -49,9 +52,9 @@ def export_command(run: str, *, out: str, arm: str = "prompt") -> dict[str, obje
 
 
 @app.command(name="self-test")
-def self_test(*, model: str, out: str = "skillz-self-test", target: str = "skills/skillz",
+def self_test(*, model: str, out: str = "skillz-self-test", target: str | None = None,
               preflight_only: bool = False, live: bool = False, profile: str = "inspection",
-              prepare_only: bool = False, manifest: str | None = None,
+              prepare_only: bool = False, manifest: str | None = None, harness_config: str | None = None,
               max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Compare the original, prompt-only, and prompt-plus-CLI arms."""
     if profile not in ("inspection", "audit"):
@@ -67,7 +70,8 @@ def self_test(*, model: str, out: str = "skillz-self-test", target: str = "skill
         write(destination / "manifest.json", read(source))
         return {"review_manifest": str(destination / "manifest.json"), "cases": len(cases), "live_calls": 0}
     if preflight_only:
-        adapter = Codex(model, Budget(max_invocations, max_seconds), lambda: None)
+        configuration = Configuration.load(Path(harness_config) if harness_config else None, model)
+        adapter = configuration.create(model, Budget(max_invocations, max_seconds), lambda: None)
         try:
             return adapter.preflight()
         finally:
@@ -78,8 +82,14 @@ def self_test(*, model: str, out: str = "skillz-self-test", target: str = "skill
         cases = load_cases(source)
         if not cases or any(case.kind != "audit" or not case.eligible for case in cases):
             raise ValueError("audit self-test requires human label review and separate provider approval in --manifest")
+    if target is None:
+        archive = Path(sys.argv[0]).resolve()
+        if archive.name != "skillz-experiment.pyz" or not archive.is_file():
+            raise ValueError("source execution requires an explicit --target")
+        target = str(archive.parent.parent)
     _ = prepare(source, Path(target), Path(out))
-    return execute(Path(out), "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds)
+    return execute(Path(out), "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds,
+                   harness_config=Path(harness_config) if harness_config else None)
 
 
 def main(argv: list[str] | None = None) -> int:

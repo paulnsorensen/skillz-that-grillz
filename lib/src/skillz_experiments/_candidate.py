@@ -3,7 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from skillz_experiments._cases import digest, relative
+from skillz_experiments._cases import digest, mapping, relative
+
+
+def candidate_files(value: object) -> dict[str, str]:
+    files: dict[str, str] = {}
+    for name, content in mapping(value).items():
+        if not isinstance(content, str):
+            raise ValueError("candidate content must be text")
+        files[relative(name)] = content
+    return files
 
 
 @dataclass(frozen=True)
@@ -21,6 +30,8 @@ class Candidate:
                 raise ValueError("candidate symlinks are forbidden")
             if path.is_file():
                 name = relative(path.relative_to(root).as_posix())
+                if name == "scripts/skillz-experiment.pyz":
+                    continue
                 if path.stat().st_size > 262144:
                     raise ValueError("candidate file exceeds size limit")
                 files[name] = path.read_text(encoding="utf-8")

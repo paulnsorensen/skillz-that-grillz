@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Protocol, cast, final
 
 from skillz_experiments._audit import identity as judge_identity
-from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, digest, load_cases, mapping, text_map
+from skillz_experiments._candidate import Candidate, candidate_files
+from skillz_experiments._cases import Case, digest, load_cases, mapping
 from skillz_experiments._codex import Codex, VERSION
+from skillz_experiments._harness import Configuration
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
 from skillz_experiments._search import optimize
@@ -34,7 +35,8 @@ def _engine_hash() -> str:
 
 @final
 class _Session:
-    def __init__(self, out: Path, model: str, maximum: int, seconds: float, factory: Factory) -> None:
+    def __init__(self, out: Path, model: str, maximum: int, seconds: float, factory: Factory,
+                 configuration: Configuration | None = None) -> None:
         self.out = out
         self.record = read(out / "run.json")
         cases_document = read(out / "cases.json")
@@ -47,11 +49,22 @@ class _Session:
                        or sum(case.split == "holdout" for case in imported) != 2):
             raise ValueError("audit comparison requires reviewed, provider-approved cases and complete splits")
         self.cases = [case for case in imported if case.eligible]
+        judge_model = configuration.roles["judge"].model if configuration is not None else model
+        if configuration is not None:
+            target = self.record.get("target_root")
+            if not isinstance(target, str):
+                raise ValueError("run lacks candidate boundary; prepare a new run")
+            configuration.check_boundary(Path(target))
+            identity = configuration.identity()
+            _ = self.record.setdefault("harness", identity)
+            if self.record["harness"] != identity:
+                raise ValueError("frozen harness configuration changed; create a new run")
         if audits:
-            _ = self.record.setdefault("judge", judge_identity(model))
-            if self.record["judge"] != judge_identity(model):
+            _ = self.record.setdefault("judge_model", judge_model)
+            _ = self.record.setdefault("judge", judge_identity(judge_model))
+            if self.record["judge"] != judge_identity(judge_model):
                 raise ValueError("frozen judge changed; create a new run")
-        self.seed = Candidate(text_map(self.record["seed"]), tuple(cast(list[str], self.record["editable"])))
+        self.seed = Candidate(candidate_files(self.record["seed"]), tuple(cast(list[str], self.record["editable"])))
         if self.seed.identity != self.record["seed_hash"]:
             raise ValueError("frozen seed changed")
         _ = self.record.setdefault("engine_hash", _engine_hash())
@@ -172,11 +185,15 @@ class _Session:
         self.record["holdout_consumed"] = True
         self.checkpoint()
         for name, files in self.arms.items():
-            candidate = Candidate(text_map(files), self.seed.editable)
+            candidate = Candidate(candidate_files(files), self.seed.editable)
             for case in cases:
                 _ = self.evaluate_case(candidate, case, name, holdout=True)
         self.record["phase"] = "complete"
         self.record["improvement"] = "inconclusive-bounded-smoke-test"
+        measured = [mapping(result.get("usage") or {}).get(key) for result in self.outcomes
+                    if result.get("split") == "holdout" for key in ("input_tokens", "output_tokens")]
+        self.record["token_comparison"] = ("measured-bounded-smoke-test" if all(type(value) is int for value in measured)
+                                            else "inconclusive-unknown-usage")
         self.checkpoint()
 
 
@@ -196,14 +213,17 @@ def _select(candidates: dict[str, Candidate], validation: dict[str, list[dict[st
 
 
 def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: int = 20,
-            seconds: float = 1200, factory: Factory = Codex, mode: str = "prompt") -> dict[str, object]:
+            seconds: float = 1200, factory: Factory = Codex, mode: str = "prompt",
+            harness_config: Path | None = None) -> dict[str, object]:
     if not live:
         raise ValueError("live model calls require --live")
     with (out / "run.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if read(out / "run.json").get("holdout_consumed"):
             raise ValueError("holdout is consumed; completed evidence is immutable")
-        session = _Session(out, model, maximum, seconds, factory)
+        configuration = Configuration.load(harness_config, model) if factory is Codex or harness_config is not None else None
+        session = _Session(out, model, maximum, seconds,
+                           configuration.create if configuration is not None else factory, configuration)
         try:
             preflight = session.provider.preflight()
             environment_hash = preflight.get("environment_hash")
@@ -211,7 +231,8 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
             if session.record["environment_hash"] != environment_hash:
                 raise ValueError("frozen runtime environment changed")
             session.record["preflight"] = preflight
-            session.record["codex_version"] = VERSION
+            if configuration is None or any(role.adapter == "codex" for role in configuration.roles.values()):
+                session.record["codex_version"] = VERSION
             session.checkpoint()
             if stage in {"baseline", "self-test"}:
                 session.baseline()
@@ -233,7 +254,8 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
 
 def summary(record: dict[str, object]) -> dict[str, object]:
     return {key: record.get(key) for key in
-            ("schema_version", "phase", "calls", "model", "codex_version", "improvement", "locked_arms")}
+            ("schema_version", "phase", "calls", "model", "codex_version", "harness", "judge",
+             "improvement", "token_comparison", "locked_arms")}
 
 
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:
@@ -255,12 +277,12 @@ def export(out: Path, destination: Path, arm: str) -> dict[str, object]:
         raise ValueError("export requires a completed locked evaluation")
     if record.get("engine_hash") != _engine_hash():
         raise ValueError("frozen evaluator changed; create a new run")
-    if "judge" in record and record["judge"] != judge_identity(cast(str, record["model"])):
+    if "judge" in record and record["judge"] != judge_identity(cast(str, record.get("judge_model", record["model"]))):
         raise ValueError("frozen judge changed; create a new run")
     arms = mapping(record["arms"])
     if arm not in {"prompt", "prompt-cli", "cli"} or arm not in arms:
         raise ValueError("export arm must be an evaluated prompt, prompt-cli, or cli arm")
-    seed, candidate = text_map(record["seed"]), text_map(arms[arm])
+    seed, candidate = candidate_files(record["seed"]), candidate_files(arms[arm])
     lines = (line for name in seed if seed[name] != candidate[name]
              for line in difflib.unified_diff(seed[name].splitlines(keepends=True),
                    candidate[name].splitlines(keepends=True), fromfile="a/" + name, tofile="b/" + name))

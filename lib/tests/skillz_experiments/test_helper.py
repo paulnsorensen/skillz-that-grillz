@@ -21,3 +21,38 @@ def test_helper_reports_facts_and_rejects_escape(tmp_path: Path) -> None:
     run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
     assert run.returncode == 2
     assert json.loads(run.stdout)["error"] == "link escapes package"
+
+
+def test_helper_accepts_host_alias_but_rejects_package_symlinks(tmp_path: Path) -> None:
+    host = tmp_path / "physical"
+    package = host / "skill"
+    package.mkdir(parents=True)
+    target = package / "SKILL.md"
+    _ = target.write_text("---\nname: example\n---\n[Guide](references/guide.md)\n")
+    references = package / "references"
+    references.mkdir()
+    guide = references / "guide.md"
+    _ = guide.write_text("Guide")
+    alias = tmp_path / "host-alias"
+    alias.symlink_to(host, target_is_directory=True)
+    supplied = alias / "skill/SKILL.md"
+    run = subprocess.run([sys.executable, str(HELPER), str(supplied)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stdout
+    guide.unlink()
+    guide.symlink_to(target)
+    run = subprocess.run([sys.executable, str(HELPER), str(supplied)], capture_output=True, text=True)
+    assert run.returncode == 2
+    assert json.loads(run.stdout)["error"] == "symlinks are forbidden"
+    guide.unlink()
+    references.rmdir()
+    internal = package / "internal-guides"
+    internal.mkdir()
+    _ = (internal / "guide.md").write_text("Guide")
+    references.symlink_to(internal, target_is_directory=True)
+    run = subprocess.run([sys.executable, str(HELPER), str(supplied)], capture_output=True, text=True)
+    assert run.returncode == 2
+    assert json.loads(run.stdout)["error"] == "symlinks are forbidden"
+    direct = package / "linked.md"
+    direct.symlink_to(target)
+    run = subprocess.run([sys.executable, str(HELPER), str(direct)], capture_output=True, text=True)
+    assert run.returncode == 2

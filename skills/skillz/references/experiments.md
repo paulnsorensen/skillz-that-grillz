@@ -5,16 +5,25 @@ The `optimize` and `tighten` aliases still mean `improve`.
 
 ## Run the public self-test
 
-Use Linux, Python 3.11 or later, and Codex CLI 0.154.0.
-Keep the existing ChatGPT login. Do not create provider credentials.
-Install the optional GEPA 0.1.4 extra only when the user requests experiments.
+Use Linux and Python 3.11 or later.
+The installed skill includes the runner, public fixtures, GEPA 0.1.4, and CLI dependencies.
+It needs no source checkout or runtime package installation.
 
-Run from the repository root:
+Ask the user which harness command and model to use before setup.
+The built-in adapter uses Codex CLI 0.154.0 and the existing ChatGPT login.
+Put the actual Codex binary directory first on `PATH`, not a multicall version-manager shim.
+Do not create provider credentials.
+For another harness, read [the custom command protocol](experiment-harness.md).
+A plain CLI command requires a trusted wrapper unless it implements that protocol.
+Pass its private `--harness-config` file to every preflight and live stage.
+
+Set the installed skill path, then run from any directory:
 
 ```sh
-uv run --project lib --extra experiments skillz-experiment self-test --model gpt-6-astra --preflight-only
-uv run --project lib --extra experiments skillz-experiment self-test --model gpt-6-astra --out /tmp/skillz-run --live --max-invocations 20 --max-seconds 1200
-uv run --project lib --extra experiments skillz-experiment export /tmp/skillz-run --out /tmp/skillz-export --arm prompt
+SKILLZ=/absolute/path/to/installed/skillz
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --model gpt-6-astra --preflight-only
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --model gpt-6-astra --out /tmp/skillz-run --live --max-invocations 20 --max-seconds 1200
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-run --out /tmp/skillz-export --arm prompt
 ```
 
 Pass an explicit available model. The example model is not an availability guarantee.
@@ -24,7 +33,9 @@ A failed isolation check stops the run. Never add an unsafe fallback.
 
 The original arm includes the unoptimized inspection helper.
 The other arms search prompt text and prompt-plus-helper text.
-The public fixture corpus and evaluator remain outside the editable skill.
+The public fixture corpus and evaluator remain outside the editable candidate.
+Candidate capture excludes only `scripts/skillz-experiment.pyz`, after rejecting symlinks.
+It does not exempt arbitrary binaries.
 Two holdout cases compare all three locked arms.
 The result is a bounded smoke test, not evidence of statistical improvement.
 
@@ -37,7 +48,7 @@ These synthetic cases test execution, not personalization or the full skill rubr
 Prepare an editable review manifest without model calls:
 
 ```sh
-uv run --project lib --extra experiments skillz-experiment self-test --profile audit --model gpt-6-astra --prepare-only --out /tmp/skillz-audit-review
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --profile audit --model gpt-6-astra --prepare-only --out /tmp/skillz-audit-review
 ```
 
 Read every request, fixture, proposed label, severity, and evidence range in `/tmp/skillz-audit-review/manifest.json`.
@@ -52,9 +63,9 @@ Neither `--live` nor implementation approval supplies these approvals.
 After approval, use a new run directory:
 
 ```sh
-uv run --project lib --extra experiments skillz-experiment self-test --profile audit --model gpt-6-astra --preflight-only
-uv run --project lib --extra experiments skillz-experiment self-test --profile audit --manifest /tmp/skillz-audit-review/manifest.json --model gpt-6-astra --out /tmp/skillz-audit-run --live --max-invocations 40 --max-seconds 2400
-uv run --project lib --extra experiments skillz-experiment export /tmp/skillz-audit-run --out /tmp/skillz-audit-export --arm prompt
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --profile audit --model gpt-6-astra --preflight-only
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --profile audit --manifest /tmp/skillz-audit-review/manifest.json --model gpt-6-astra --out /tmp/skillz-audit-run --live --max-invocations 40 --max-seconds 2400
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-audit-run --out /tmp/skillz-audit-export --arm prompt
 ```
 
 The live audit comparison requires complete approved train, validation, and two-case holdout splits.
@@ -105,11 +116,11 @@ Keep manifests below two megabytes.
 Use one train case, one validation case, and two holdout cases for the bounded comparison.
 
 ```sh
-uv run --project lib --extra experiments skillz-experiment dataset cases.json --target skills/skillz --out /tmp/skillz-run
-uv run --project lib --extra experiments skillz-experiment baseline /tmp/skillz-run --model gpt-6-astra --live
-uv run --project lib --extra experiments skillz-experiment search /tmp/skillz-run --model gpt-6-astra --mode prompt --live
-uv run --project lib --extra experiments skillz-experiment search /tmp/skillz-run --model gpt-6-astra --mode prompt-cli --live
-uv run --project lib --extra experiments skillz-experiment evaluate /tmp/skillz-run --model gpt-6-astra --live
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" dataset cases.json --target "$SKILLZ" --out /tmp/skillz-run
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" baseline /tmp/skillz-run --model gpt-6-astra --live
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" search /tmp/skillz-run --model gpt-6-astra --mode prompt --live
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" search /tmp/skillz-run --model gpt-6-astra --mode prompt-cli --live
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" evaluate /tmp/skillz-run --model gpt-6-astra --live
 ```
 
 For CLI-only optimization, replace `--mode prompt-cli` with `--mode cli`.
@@ -127,6 +138,7 @@ Search makes one GEPA proposal per arm.
 Correctness determines selection. Measured input-plus-output tokens break correctness ties.
 Cached input tokens are a subset of input tokens, not an additional charge.
 Unknown usage and dollar cost remain unknown.
+Unknown holdout usage produces `token_comparison: inconclusive-unknown-usage`.
 
 ## Audit manifest and report contract
 
@@ -196,7 +208,8 @@ score = detection_F1 * (0.5 + 0.25 * severity_accuracy + 0.25 * actionability_ra
 A clean case scores one only when the report contains no findings.
 Evidence validity is a separate deterministic gate.
 The run freezes the judge model, rubric, schemas, and scoring policy.
-The judge uses the explicitly selected task model in a separate context.
+The judge defaults to the task model in a separate context.
+A role configuration can select a different judge model before the run freezes.
 Task and judge token usage remain separate and also sum for selection.
 Unknown usage stays unknown.
 Labels never enter task prompts, task schemas, GEPA examples, reflection feedback, or measurement exports.
@@ -205,7 +218,7 @@ Prompt injection remains a model-judge risk despite deterministic evidence check
 
 ## Isolation and records
 
-The trusted Codex host receives an isolated home and an isolated Codex configuration directory.
+The built-in Codex host receives an isolated home and an isolated Codex configuration directory.
 A temporary symbolic link references the existing login without copying credential bytes.
 Candidate commands cannot access either authentication directory.
 Cleanup removes the temporary directory and link.
@@ -213,7 +226,10 @@ Cleanup removes the temporary directory and link.
 Candidate commands use a deny-by-default filesystem profile and no network access.
 The staged candidate is read-only. The task workspace is writable.
 External skills, user configuration, hooks, plugins, apps, and web search are disabled or excluded.
-An existing administrator skill directory stops the run.
+An existing administrator skill directory stops the Codex run.
+Custom wrappers must enforce equivalent restrictions through their own tool sandbox.
+The runner rejects failed probes or missing discovery before inference.
+A wrapper remains trusted code; a successful probe does not prove honesty.
 
 Baseline, search, reflection, failures, and holdout share one persisted invocation budget.
 Inspection reserves six holdout calls. Audit reserves two calls per holdout case per arm: twelve calls for two cases.
@@ -249,7 +265,7 @@ It ignores external links and fragment-only links.
 It rejects package escapes and symlinks without reading linked contents.
 Failure returns exit two with `schema_version` and a descriptive `error`.
 
-Independent positive and negative contract checks run inside the same Codex sandbox.
+Independent positive and negative contract checks run inside the selected adapter's tool sandbox.
 Candidate helper code never executes on the host outside that boundary.
 Inspection grading requires exact JSON task results, candidate-load evidence, and an actual helper command.
 Audit grading preserves the load and helper requirements, then checks evidence and uses the separate judge.

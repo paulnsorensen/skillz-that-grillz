@@ -1,0 +1,7 @@
+name = "skillz-experiment"
+entry = "skillz_experiments._cli:main"
+source = "../../lib/src/skillz_experiments"
+project = "../.."
+include = ["../../lib/fromargs/src/fromargs"]
+groups = ["experiments"]
+repo = "paulnsorensen/skillz-that-grillz"

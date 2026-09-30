@@ -29,7 +29,11 @@ def optimize(seed: dict[str, str], mode: str, train: list[object], validation: l
         raise ValueError("mode must be prompt, prompt-cli, or cli")
     if not train or not validation:
         raise ValueError("search needs independent training and validation cases")
-    if importlib.metadata.version("gepa") != "0.1.4":
+    try:
+        version = importlib.metadata.version("gepa")
+    except importlib.metadata.PackageNotFoundError:
+        raise ValueError("GEPA 0.1.4 is unavailable; use the bundled runner or install the experiments extra") from None
+    if version != "0.1.4":
         raise ValueError("install the experiments extra with GEPA 0.1.4")
     api = cast(_API, cast(object, importlib.import_module("gepa.optimize_anything")))
     editable = {key: text for key, text in seed.items()

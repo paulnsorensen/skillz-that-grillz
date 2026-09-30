@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import importlib.metadata
 
 import pytest
 from collections.abc import Callable
@@ -49,6 +50,8 @@ def test_real_gepa_full_flow_freezes_holdout_and_exports_privately(tmp_path: Pat
     target = tmp_path / "skill"
     target.mkdir()
     _ = (target / "SKILL.md").write_text("seed")
+    _ = (target / "empty.txt").write_text("")
+    _ = (target / "AGENTS.md").write_text(" \n")
     manifest = tmp_path / "manifest.json"
     cases = [{"id": str(index), "family": str(index), "split": split,
               "request": "holdout-secret" if split == "holdout" else "inspect",
@@ -74,3 +77,22 @@ def test_real_gepa_full_flow_freezes_holdout_and_exports_privately(tmp_path: Pat
     with pytest.raises(ValueError, match="consumed"):
         _ = execute(out, "evaluate", "local-test", live=True, factory=LocalProvider)
     assert read(out / "run.json")["phase"] == "complete"
+
+
+def test_missing_gepa_records_actionable_infrastructure_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "skill"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("seed")
+    out = tmp_path / "run"
+    fixtures = Path(__file__).resolve().parents[2] / "src/skillz_experiments/fixtures/self-test.json"
+    _ = prepare(fixtures, target, out)
+    _ = execute(out, "baseline", "local-test", live=True, factory=LocalProvider)
+
+    def missing(distribution: str) -> str:
+        raise importlib.metadata.PackageNotFoundError(distribution)
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    with pytest.raises(ValueError, match="GEPA 0.1.4"):
+        _ = execute(out, "search", "local-test", live=True, factory=LocalProvider)
+    assert read(out / "run.json")["phase"] == "infrastructure-failure"
+    assert read(out / "run.json")["calls"] == 2

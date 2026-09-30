@@ -18,7 +18,11 @@ def test_deadline_kills_process_group(tmp_path: Path) -> None:
                     timeout=0.5, environment={"PATH": os.defpath})
     pid = int((tmp_path / "descendant.pid").read_text())
     status = Path(f"/proc/{pid}/stat")
-    assert not status.exists() or status.read_text().split()[2] == "Z"
+    try:
+        state = status.read_text().split()[2]
+    except (FileNotFoundError, ProcessLookupError):
+        return
+    assert state == "Z"
 
 
 def test_candidate_forbidden_change(tmp_path: Path) -> None:

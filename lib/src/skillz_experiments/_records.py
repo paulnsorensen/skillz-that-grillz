@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import asdict
 from pathlib import Path
 from typing import cast
@@ -11,12 +12,15 @@ from skillz_experiments._cases import digest, load_cases, mapping
 
 
 def write(path: Path, value: object) -> None:
-    temporary = path.with_suffix(".tmp")
-    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        json.dump(value, stream, sort_keys=True, indent=2)
-        _ = stream.write("\n")
-    _ = temporary.replace(path)
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, sort_keys=True, indent=2)
+            _ = stream.write("\n")
+        _ = temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def read(path: Path) -> dict[str, object]:
@@ -40,6 +44,7 @@ def prepare(manifest: Path, target: Path, out: Path, components: list[str] | Non
     document = {"schema_version": 1, "cases": [dict(asdict(case), id=case.identifier) for case in cases]}
     record: dict[str, object] = {
         "schema_version": 1, "phase": "prepared", "calls": 0,
+        "target_root": str(target.resolve()),
         "dataset_hash": digest(document), "seed_hash": seed.identity,
         "seed": seed.files, "editable": list(seed.editable), "arms": {}, "outcomes": [],
         "visibility": "public" if all(case.visibility == "public" for case in cases) else "private",

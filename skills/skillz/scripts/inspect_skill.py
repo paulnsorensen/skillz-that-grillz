@@ -10,8 +10,9 @@ from urllib.parse import unquote, urlsplit
 
 
 def inspect(path: Path) -> dict[str, object]:
-    if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+    if path.is_symlink():
         raise ValueError("symlinks are forbidden")
+    path = path.parent.resolve() / path.name
     if not path.is_file() or path.stat().st_size > 262144:
         raise ValueError("input must be a regular file of at most 262144 bytes")
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -29,7 +30,8 @@ def inspect(path: Path) -> dict[str, object]:
         destination = path.parent / target
         if not destination.resolve().is_relative_to(path.parent.resolve()):
             raise ValueError("link escapes package")
-        if any(parent.is_symlink() for parent in (destination, *destination.parents)):
+        if any(parent.is_symlink() for parent in (destination, *destination.parents)
+               if parent.is_relative_to(path.parent)):
             raise ValueError("symlinks are forbidden")
         links.add(target)
     return {"schema_version": 1, "frontmatter_keys": keys,
