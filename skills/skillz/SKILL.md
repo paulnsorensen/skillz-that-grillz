@@ -119,7 +119,7 @@ Done means: every `<certain>` finding above `low` is fixed or recorded as an exp
 
 ## Mode: audit
 
-1. Run the analytics ceremony in `references/analytics-ceremony.md` (one fresh read-only context per pack, best-effort).
+1. Run `references/analytics-ceremony.md`. If DuckDB is absent, offer its opt-in raw-log fallback; never run it automatically.
 2. Run the shared protocol with the Usage lens.
 3. Emit the report below. Write nothing else.
 4. Close with `Run /skillz improve <path> to apply.`
@@ -178,12 +178,14 @@ N findings were `<don't know>` or trivial (not shown).
 Read on demand:
 
 - `references/harness-layout.md` — Portability lens fires, `add` (global or repo-local), or `self-update`; the frontmatter matrix, rules, template, sidecar, and sources.
-- `references/analytics-ceremony.md` — `audit` and `self-update`; the per-pack analytics fan-out.
+- `references/analytics-ceremony.md` — `audit` and `self-update`; use the bundled engine for best-effort per-pack analytics.
+- `references/raw-log-fallback.md` — DuckDB is absent and the user opts into a sampled, read-only Usage scan.
 - `references/anti-patterns.md` — a finding needs the expanded failure mode.
 - `references/progressive-disclosure.md` — Information hierarchy fires.
 - `references/description-optimization.md` — Invocation fires.
 - `references/decision-frameworks.md` — Prompt quality flags rigid rules on a judgment task.
 - `references/hooks-catalog.md` — a finding needs 100%-of-the-time enforcement.
 - `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs.
+- `engine/scripts/` and `engine/references/` — internal analytics ingestion, query, schema, conventions, and coverage; not a separate skill.
 - `references/calibration.md` — the confidence × severity kernel.
 - `references/experiments.md` — `experiment`; bounded GEPA search, case schema, isolation, and the frozen inspection contract.

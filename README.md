@@ -23,12 +23,19 @@ creation — single or stacked).
 
 | Skill path | Command | Purpose |
 | --- | --- | --- |
-| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, or self-update a skill or sub-agent definition so it runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. Scores the target against a twelve-lens rubric (predictability, invocation, portability, information hierarchy, tool scoping, calibration, …), tags every finding with severity × confidence, and ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `self-update` add a best-effort Usage lens when a `session-analytics` database is present. `experiment` uses bundled GEPA and isolated harness execution to compare candidates on paired holdouts and export a private patch. |
+| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, or self-update a skill or sub-agent definition so it runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. Scores the target against a twelve-lens rubric (predictability, invocation, portability, information hierarchy, tool scoping, calibration, …), tags every finding with severity × confidence, and ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `self-update` add a best-effort Usage lens through a bundled analytics engine. `experiment` uses bundled GEPA and isolated harness execution to compare candidates on paired holdouts and export a private patch. |
 
 `skillz` uses a bundled, standard-library Python inspection helper during audits.
-It needs no installed CLI or MCP server. Its Usage lens optionally uses `duckdb`
-and a `session-analytics` database. The optional `experiment` mode bundles GEPA
-and its runner. It supports Codex or a configured trusted harness wrapper.
+It needs no MCP server or separate `session-analytics` skill. Its Usage
+lens uses Python 3, the `duckdb` CLI, readable local session logs, and a
+writable cache. The bundled engine keeps the existing
+`dotfiles/session-analytics` database path and one-hour cache. Without DuckDB,
+`skillz` offers a slower, sampled raw-log scan by read-only subagents. It runs
+only with user consent, may omit metrics, and does not replace the database
+results. The user can skip Usage.
+
+The optional `experiment` mode bundles GEPA and its runner.
+It supports Codex or a configured trusted harness wrapper.
 It compares isolated candidates without installing a winner or requiring a checkout.
 See [the experiment workflow](skills/skillz/references/experiments.md).
 

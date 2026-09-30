@@ -1,0 +1,133 @@
+# Canonical Schema
+
+The shape every harness adapter normalizes into and every analytics pack queries
+against. `ingest.py` loads one canonical row shape (the Claude envelope plus a
+`harness` tag) into `${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/session-analytics/sessions.duckdb` by default, then flattens it into
+the tables below. **Pack authors: write SQL against these tables; never reach
+into a harness's native format.**
+
+Every session-scoped table carries a `harness` column
+(`claude`/`codex`/`omp`/`pi`/`cursor`/`copilot`). Filter or group by it to
+compare sources; omit it to aggregate across all reachable harnesses.
+
+## `tool_uses`
+
+Flattened from assistant `message.content[]` blocks where `type='tool_use'`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| harness | VARCHAR | Source harness |
+| tool_name | VARCHAR | Tool invoked (Bash, Read, Edit, Agent, Skill, mcp__*, or a harness-native name like `shell`/`apply_patch`) |
+| tool_use_id | VARCHAR | Unique ID for joining with `tool_results` |
+| input | JSON | Full input object |
+| bash_cmd | VARCHAR | Extracted command (Bash only) |
+| skill_name | VARCHAR | Extracted skill (Skill only — claude) |
+| skill_args | VARCHAR | Extracted args (Skill only — claude) |
+| agent_type | VARCHAR | Extracted subagent_type (Agent only — claude) |
+| agent_desc | VARCHAR | Extracted description (Agent only) |
+| agent_mode | VARCHAR | Extracted mode (Agent only) |
+| grep_pattern | VARCHAR | Extracted pattern (Grep only) |
+| file_path | VARCHAR | Extracted file_path (Read/Edit/Write) |
+| query | VARCHAR | Extracted query (ToolSearch) |
+| timestamp | VARCHAR | ISO timestamp |
+| sessionId | VARCHAR | Session identifier |
+| cwd | VARCHAR | Working directory |
+| gitBranch | VARCHAR | Git branch (claude only) |
+
+## `tool_results`
+
+Flattened from user `message.content[]` blocks where `type='tool_result'`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| harness | VARCHAR | Source harness |
+| tool_use_id | VARCHAR | Matches `tool_uses.tool_use_id` |
+| content | VARCHAR | Result text (truncated to 500 chars) |
+| is_error | VARCHAR | `'true'` if the call failed (string, not boolean). Never NULL — an absent source flag backfills to `'false'` |
+| is_error_explicit | BOOLEAN | Whether the source block carried the flag. `false` means `is_error` was backfilled (claude omits the flag on most successes) |
+| timestamp | VARCHAR | ISO timestamp |
+| sessionId | VARCHAR | Session identifier |
+
+## `stop_events`
+
+Assistant messages where the model stopped generating (claude, cursor, omp, and pi;
+omp and pi quota stalls show as `error`). Columns: `harness`,
+`stop_reason`, `timestamp`, `sessionId`, `cwd`, `gitBranch`.
+
+## `model_turns`
+
+One row per assistant turn that names a model. Use it for round-trip latency,
+batching, and quota analysis (`query.sh latency`). Claude splits one message
+into several raw entries; this table groups them by `message.id`.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| harness | VARCHAR | Source harness (claude, omp, and pi; codex and cursor name no model) |
+| model | VARCHAR | Model id; omp and pi use `<provider>/<model>`, or the bare model when the log names no provider |
+| stop_reason | VARCHAR | Canonical stop reason; omp and pi `toolUse`/`stop` map to `tool_use`/`end_turn` |
+| error_message | VARCHAR | Provider error text on an `error` stop (omp and pi) |
+| input_tokens / output_tokens / cache_read_tokens | BIGINT | Token usage for the turn |
+| prompt_tokens | BIGINT | Full context size sent for the turn (omp and pi) |
+| duration_ms / ttft_ms | DOUBLE | Model round-trip time and time to first token (omp and pi) |
+| tool_calls | BIGINT | Tool calls issued in the turn; 1 means the turn did not batch |
+| timestamp, sessionId, cwd | VARCHAR | Join keys |
+
+## `agent_spawns`
+
+Subset of `tool_uses` for `Agent` (claude) and `Task` (cursor) calls. Columns: `harness`,
+`agent_type` (defaults to `general-purpose`), `description`, `mode`, `timestamp`,
+`sessionId`, `cwd`.
+
+## `skill_invocations`
+
+Subset of `tool_uses` for `Skill` calls (claude). Columns: `harness`,
+`skill_name`, `args`, `timestamp`, `sessionId`, `cwd`.
+
+## `mcp_calls`
+
+Subset of `tool_uses` where `tool_name LIKE 'mcp__%'`. Same columns as
+`tool_uses`. Names are harness-specific: Claude and Cursor use
+`mcp__<server>__<method>`, while Pi and OMP preserve
+`mcp__<server>_<method>`. Consumers must branch on `harness`; for Pi-family
+rows, split the suffix once at the first underscore.
+
+## `sessions`
+
+One row per `(harness, sessionId, cwd, branch)`. Columns: `harness`,
+`sessionId`, `first_seen`, `last_seen`, `project` (cwd), `branch`,
+`entry_count`.
+
+## `stop_hooks`
+
+System entries with subtype `stop_hook_summary` (claude only — codex/omp emit
+none). Columns: `harness`, `timestamp`, `sessionId`, `hookCount`,
+`hookInfos` (JSON), `hookErrors` (JSON), `preventedContinuation`, `stopReason`,
+`hasOutput`, `level`.
+
+## `permission_denials`
+
+Pre-filtered `tool_results` for permission/hook denials (claude-dominant).
+Columns: `harness`, `content`, `sessionId`, `timestamp`.
+
+## `raw_entries`
+
+The full unflattened canonical rows (post-adapter). Carries `harness` plus every
+column in `ingest.py`'s `RAW_COLUMNS`. Use only when the materialized tables
+lack a field you need.
+
+## Type gotchas
+
+- `is_error` is VARCHAR `'true'`/`'false'` — compare as strings. It is never
+  NULL: an absent source flag is backfilled to `'false'` (`is_error_explicit`
+  records which rows were backfilled). Measured on claude logs: ~99.5% of
+  absent-flag results carry non-error content, so the backfill is sound;
+  claude error rates remain floors, not exact estimates.
+- `is_error_explicit` is a real BOOLEAN — `-json` prints it bare
+  (`true`/`false`), unlike the VARCHAR `is_error`.
+- Timestamps are VARCHAR ISO strings — cast for date math (`timestamp::TIMESTAMP`,
+  `timestamp::DATE`).
+- DuckDB CLI `-json` preserves column types: BOOLEAN/BIGINT print bare, the
+  schema's many VARCHAR columns print as strings.
+- Empty result sets print `[]`.
+- `input` is JSON — use `json_extract_string()` for fields not already
+  materialized as columns.

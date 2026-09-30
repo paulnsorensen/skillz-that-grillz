@@ -6,8 +6,8 @@
 
 Detect usage decay and error-rate changes for `{SKILL}`.
 Tool events inside invocation windows are temporal correlations, not attributed effects.
-Run in one fresh read-only context. Schema: `references/canonical-schema.md`
-in the installed `session-analytics` skill.
+Run in one fresh read-only context. Schema: `engine/references/canonical-schema.md`
+in this `skillz` skill.
 
 ## 1. Usage decay (recent vs prior 4 weeks)
 
