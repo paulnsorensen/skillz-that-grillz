@@ -73,11 +73,11 @@
 
 
 
-2026-09-28 · 472a0c67d38bf2c8 · merged · research/gepa-session-optimization.md; ideas/session-driven-skill-optimization.md · Record approved bounded implementation, normalized case boundary, immutable evaluation, and private export. Six frozen retrieval probes pass after one lead repair.
+- 2026-09-28 · 472a0c67d38bf2c8 · merged · research/gepa-session-optimization.md; ideas/session-driven-skill-optimization.md · Recorded approved bounded implementation, normalized case boundary, immutable evaluation, and private export. Six frozen retrieval probes passed after one lead repair.
 
-2026-09-28 · 472a0c67d38bf2c8 · new-page · sources/codex-skill-discovery-isolation.md · Preserve pinned OpenAI skill-discovery evidence; ignore-user-config does not exclude host skill roots.
+- 2026-09-28 · 472a0c67d38bf2c8 · new-page · sources/codex-skill-discovery-isolation.md · Preserved pinned OpenAI skill-discovery evidence that ignore-user-config did not exclude host skill roots.
 
 
 
-2026-09-28 · skillz-live-20260928 · merged · research/gepa-session-optimization.md; sources/codex-skill-discovery-isolation.md · Record authenticated self-test: 19 charged invocations, 16/16 tasks and 6/6 holdout runs pass; both search modes retain the seed. Preserve Codex exec argument and independent-validation corrections. All six frozen retrieval probes pass.
+- 2026-09-28 · skillz-live-20260928 · merged · research/gepa-session-optimization.md; sources/codex-skill-discovery-isolation.md · Recorded authenticated self-test: 19 charged invocations, 16/16 tasks and 6/6 holdout runs passed; both search modes retained the seed. Preserved Codex exec argument and independent-validation corrections. All six frozen retrieval probes passed.
 

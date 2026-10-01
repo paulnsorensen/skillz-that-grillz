@@ -14,7 +14,7 @@ The GEPA research supports these claims as of 2026-09-28.
 | --- | --- | --- | --- | --- |
 | GEPA can optimize named text artifacts, including code. | [Universal API article](../sources/gepa-optimize-anything.md) | Upstream documentation | certain | The application supplies execution, grading, and isolation. |
 | Official gskill and itsmostafa/gskill differ. | [Official guide](../sources/gepa-gskill.md), [standalone repository](../sources/itsmostafa-gskill.md) | Upstream documentation | certain | Do not mix entry points, seed policy, or output paths. |
-| Session analytics is proposed inside skillz. | [PR #105 snapshot](../sources/skillz-session-analytics-pr-105.md) | GitHub PR and pinned schema | certain | Open PR; not the checked-out implementation. |
+| PR #105 proposes session analytics inside skillz. | [PR #105 snapshot](../sources/skillz-session-analytics-pr-105.md) | GitHub PR and pinned schema | certain | Open PR; not the checked-out implementation. |
 | Easy-cheese has an experimental GEPA agent loop. | PR #722 and pinned `agent_lab.py`.[^prototype] | GitHub PR and code | certain | Synthetic fixtures, prompt append, no demonstrated quality gain. |
 | Prior easy-cheese decisions include CLI mutation. | Whole-skill candidate ADR, described below.[^prior] | Local repository knowledge | certain | Accepted there; not automatically accepted for skillz. |
 | Vaudeville supplies evaluation-design precedent. | Inline-case and calibration ADRs, described below.[^vaudeville] | Local repository knowledge | certain | Not evidence of a working GEPA integration. |
@@ -62,7 +62,7 @@ A separate calibration ADR warns against treating self-reported confidence as ca
 
 These records support separating the task dataset, grader, and optimizer.
 The typed-rule-core spec explicitly defers tuning-loop redesign.
-No standalone gskill study was found in the checked vaudeville Markdown scope.
+The search finds no standalone gskill study in the checked vaudeville Markdown scope.
 This is a search limit, not proof that the earlier discussion never happened.
 
 ## Corrections to preserve
@@ -79,7 +79,7 @@ A single repetition does not establish model robustness.
 
 ## Repository fit
 
-The checked-out skillz supports add, improve, audit, and self-update.
+At that revision, the checked-out skillz supports add, improve, audit, and self-update.
 Its `optimize` alias currently means `improve`; it is not a GEPA command.[^skillz]
 A future experiment must not silently replace that behavior.
 
@@ -94,11 +94,11 @@ The active Hallouminate configuration does not register the easy-cheese or vaude
 Local Markdown retrieval supplies that missing coverage; it does not claim a cross-corpus Hallouminate result.
 
 The external researcher uses three searches and nine retrieved URLs.
-The capture budget extension is recorded retrospectively.
-The preferred researcher model is unavailable; a fresh-context fallback researcher supplies the evidence.
-Raw captures remain outside Git; this curated report is the durable repository artifact.
+This report records the capture budget extension retrospectively.
+The preferred researcher model is unavailable. A fresh-context fallback researcher supplies the evidence.
+Raw captures remain outside Git. This curated report is the durable repository artifact.
 
-No private session database or transcript is scanned.
+The research scans no private session database or transcript.
 The initial research phase executes no candidate and measures no improvement rate.
 A repository build alone does not establish GEPA effectiveness.
 
@@ -115,7 +115,7 @@ A custom candidate proposer supplies the Codex reflection call instead of GEPA's
 
 OpenAI's [Codex 0.154 skill discovery and isolation](../sources/codex-skill-discovery-isolation.md) evidence changes the isolation design.
 The `--ignore-user-config` option does not disable user skill discovery.
-Separate host discovery isolation and generated-command checks are required.
+Isolation requires separate host-discovery and generated-command checks.
 A local model-free check passes with isolated home directories and a restricted Codex command profile.
 That check does not establish live optimization success.[^runtime]
 
@@ -126,7 +126,7 @@ Session-derived benefit, repeated-run robustness, monetary pricing, and generic 
 
 The authenticated Codex self-test completes on 2026-09-28 with public repository fixtures.
 It evaluates three distinct candidate packages through GEPA's two search modes.
-Both search modes retain the original skill after validation.
+Both search modes retain the original candidate (the seed) after validation.
 The result does not demonstrate improvement or real-session personalization.[^selftest]
 
 | Measurement | Observed result |
@@ -135,17 +135,17 @@ The result does not demonstrate improvement or real-session personalization.[^se
 | Charged invocations | 19 total: one failed startup, then 18 successful-run invocations. |
 | Reflection invocations | Two, included in the total. |
 | Task evaluations | 16 passed out of 16. |
-| Paired holdout evaluations | Six passed out of six; all locked arms retain the seed. |
-| Budget check | Completion confirmed within 920 seconds of the original start; limit 1,200 seconds. |
+| Paired holdout evaluations | Six passed out of six; all locked arms retain the original. |
+| Budget check | The run finishes within 920 seconds of the original start. The limit is 1,200 seconds. |
 | Export | Both private exports succeed; no candidate installs. |
-| Improvement | Inconclusive bounded smoke test; original skill retained. |
+| Improvement | Inconclusive bounded smoke test; the original is retained. |
 
 The first startup attempt reveals that `codex exec` does not accept sandbox's `-P` flag.
 The corrected runner uses `default_permissions="skillz"` and validates exec arguments without calling a model.
 The retry preserves the original overall deadline and reduces its allowance to 19 invocations.
 
 GEPA evaluation caching remains disabled so the application records independent validation executions.
-GEPA's raw proposal output is suppressed because proposed text can contain private training content.
+The runner suppresses GEPA's raw proposal output because proposed text can contain private training content.
 Exact JSON grading distinguishes booleans from numbers.
 These corrections have regression coverage in the canonical build.[^runtime]
 

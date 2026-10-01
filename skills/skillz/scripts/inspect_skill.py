@@ -11,13 +11,13 @@ from urllib.parse import unquote, urlsplit
 
 def inspect(path: Path) -> dict[str, object]:
     if path.is_symlink():
-        raise ValueError("symlinks are forbidden")
+        raise ValueError("input must not be a symlink")
     path = path.parent.resolve() / path.name
     if not path.is_file() or path.stat().st_size > 262144:
         raise ValueError("input must be a regular file of at most 262144 bytes")
     lines = path.read_text(encoding="utf-8").splitlines()
     if not lines or lines[0] != "---" or "---" not in lines[1:]:
-        raise ValueError("frontmatter delimiters are required")
+        raise ValueError("file needs frontmatter delimiters")
     end = lines.index("---", 1)
     keys = sorted({match[1] for line in lines[1:end]
                    if (match := re.match(r"^([A-Za-z_][A-Za-z0-9_-]*):", line))})
@@ -32,7 +32,7 @@ def inspect(path: Path) -> dict[str, object]:
             raise ValueError("link escapes package")
         if any(parent.is_symlink() for parent in (destination, *destination.parents)
                if parent.is_relative_to(path.parent)):
-            raise ValueError("symlinks are forbidden")
+            raise ValueError("package must not contain symlinks")
         links.add(target)
     return {"schema_version": 1, "frontmatter_keys": keys,
             "body_line_count": len(lines[end + 1:]), "local_link_targets": sorted(links)}

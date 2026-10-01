@@ -94,7 +94,7 @@ def test_resume_rejects_each_frozen_role_or_command_file(tmp_path: Path, change:
         document = read(config)
         document["roles"] = {change: {"model": "different"}}
         _ = config.write_text(json.dumps(document))
-    with pytest.raises(ValueError, match="frozen harness"):
+    with pytest.raises(ValueError, match="harness .* differs"):
         _ = execute(run, "search", "offline", live=True, harness_config=config)
     assert log.read_text() == before
 

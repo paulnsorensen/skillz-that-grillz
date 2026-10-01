@@ -5,8 +5,9 @@ import importlib
 import importlib.metadata
 import os
 from collections.abc import Callable, Mapping, Sequence
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast, get_args
 
+Mode = Literal["prompt", "prompt-cli", "cli"]
 Evaluate = Callable[[dict[str, str], object], tuple[float, dict[str, object]]]
 Propose = Callable[[dict[str, str], Mapping[str, Sequence[Mapping[str, object]]], list[str]], dict[str, str]]
 
@@ -23,12 +24,12 @@ class _API(Protocol):
     def optimize_anything(self, seed_candidate: dict[str, str], **kwargs: object) -> _Result: ...
 
 
-def optimize(seed: dict[str, str], mode: str, train: list[object], validation: list[object],
+def optimize(seed: dict[str, str], mode: Mode, train: list[object], validation: list[object],
              evaluate: Evaluate, propose: Propose) -> dict[str, str]:
-    if mode not in {"prompt", "prompt-cli", "cli"}:
+    if mode not in get_args(Mode):
         raise ValueError("mode must be prompt, prompt-cli, or cli")
     if not train or not validation:
-        raise ValueError("search needs independent training and validation cases")
+        raise ValueError("search needs independent train and validation cases")
     try:
         version = importlib.metadata.version("gepa")
     except importlib.metadata.PackageNotFoundError:
@@ -44,7 +45,7 @@ def optimize(seed: dict[str, str], mode: str, train: list[object], validation: l
 
     def score(candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
         if set(candidate) != set(editable):
-            raise ValueError("proposal changed frozen components")
+            raise ValueError("proposal components differ from the frozen set")
         return evaluate(seed | candidate, example)
 
     config = api.GEPAConfig(

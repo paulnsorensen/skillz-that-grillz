@@ -17,7 +17,7 @@ For another harness, read [the custom command protocol](experiment-harness.md).
 A plain CLI command requires a trusted wrapper unless it implements that protocol.
 Pass its private `--harness-config` file to every preflight and live stage.
 
-Set the installed skill path, then run from any directory:
+Set the installed skill path. Run the commands from any directory.
 
 ```sh
 SKILLZ=/absolute/path/to/installed/skillz
@@ -27,12 +27,12 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-run --out /tm
 ```
 
 Pass an explicit available model. The example model is not an availability guarantee.
-The preflight makes zero model calls.
-Live calls require `--live` and a successful isolation preflight.
+The preflight makes zero model invocations.
+Live invocations require `--live` and a successful isolation preflight.
 A failed isolation check stops the run. Never add an unsafe fallback.
 
 The original arm includes the unoptimized inspection helper.
-The other arms search prompt text and prompt-plus-helper text.
+The other arms search prompt text and prompt-plus-helper text (the prompt-plus-helper arm, `prompt-cli`).
 The public fixture corpus and evaluator remain outside the editable candidate.
 Candidate capture excludes only `scripts/skillz-experiment.pyz`, after rejecting symlinks.
 It does not exempt arbitrary binaries.
@@ -52,7 +52,7 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --profile audit --mode
 ```
 
 Read every request, fixture, proposed label, severity, and evidence range in `/tmp/skillz-audit-review/manifest.json`.
-Ask the human to approve or correct the labels, including the empty labels for the clean case.
+Ask the user to approve or correct the labels, including the empty labels for the clean case.
 Set `labels_reviewed` to `true` in the review copy only after that approval.
 Obtain separate permission to submit the fixture and labels to the selected provider.
 Set `provider_approved` to `true` only after that permission.
@@ -73,7 +73,7 @@ Partially approved datasets remain diagnostic-only and cannot start a comparison
 The original, prompt-only, and prompt-plus-helper arms share the same frozen evaluator.
 The helper contract stays unchanged.
 
-## Prepare use cases or approved analytics exports
+## Prepare cases or approved analytics exports
 
 Import a version-one JSON manifest.
 The same boundary accepts an approved, normalized analytics export.
@@ -111,7 +111,7 @@ Preserve inferred attribution and missing signals in the provenance text.
 Visibility defaults to `private`. Provider approval does not grant publication approval.
 
 Paths must be canonical relative paths without traversal, symlinks, or hidden components.
-Runtime-owned paths and instruction files are forbidden.
+Do not use runtime-owned paths or instruction files.
 Keep manifests below two megabytes.
 Use one train case, one validation case, and two holdout cases for the bounded comparison.
 
@@ -125,19 +125,19 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" evaluate /tmp/skillz-run --model
 
 For CLI-only optimization, replace `--mode prompt-cli` with `--mode cli`.
 CLI-only search changes only `scripts/inspect_skill.py` and freezes all skill text, including selected references.
-Its reflection receives measured task-plus-judge input and output tokens. Unknown usage stays null.
+Its reflection receives measured task-plus-judge input and output tokens. The runner records unknown usage as null.
 Correctness remains primary; token use breaks correctness ties.
 Evaluate exactly `original`, `prompt`, and either `cli` or `prompt-cli`, never all four arms.
 Export the CLI-only result with `export /tmp/skillz-run --out /tmp/skillz-export --arm cli`.
 For audit cases, pass the same `--max-invocations 40 --max-seconds 2400` to every live stage.
-The three-arm audit reserves 12 calls for holdout. The default self-test remains unchanged.
+The three-arm audit reserves 12 invocations for holdout. The default self-test remains unchanged.
 
 Add `--component references/name.md` during dataset preparation to select an editable reference.
 Other references, sidecars, libraries, dependencies, evaluators, and permissions remain frozen.
 Search makes one GEPA proposal per arm.
 Correctness determines selection. Measured input-plus-output tokens break correctness ties.
 Cached input tokens are a subset of input tokens, not an additional charge.
-Unknown usage and dollar cost remain unknown.
+The runner records unknown usage as null. Dollar cost remains unknown.
 Unknown holdout usage produces `token_comparison: inconclusive-unknown-usage`.
 
 ## Audit manifest and report contract
@@ -211,31 +211,31 @@ The run freezes the judge model, rubric, schemas, and scoring policy.
 The judge defaults to the task model in a separate context.
 A role configuration can select a different judge model before the run freezes.
 Task and judge token usage remain separate and also sum for selection.
-Unknown usage stays unknown.
+The runner records unknown usage as null.
 Labels never enter task prompts, task schemas, GEPA examples, reflection feedback, or measurement exports.
 Raw judge responses never enter exports.
 Prompt injection remains a model-judge risk despite deterministic evidence checks.
 
 ## Isolation and records
 
-The built-in Codex host receives an isolated home and an isolated Codex configuration directory.
+The built-in Codex adapter gives Codex an isolated home and an isolated configuration directory.
 A temporary symbolic link references the existing login without copying credential bytes.
 Candidate commands cannot access either authentication directory.
 Cleanup removes the temporary directory and link.
 
 Candidate commands use a deny-by-default filesystem profile and no network access.
 The staged candidate is read-only. The task workspace is writable.
-External skills, user configuration, hooks, plugins, apps, and web search are disabled or excluded.
+The runner disables external skills, user configuration, hooks, plugins, apps, and web search.
 An existing administrator skill directory stops the Codex run.
 Custom wrappers must enforce equivalent restrictions through their own tool sandbox.
 The runner rejects failed probes or missing discovery before inference.
 A wrapper remains trusted code; a successful probe does not prove honesty.
 
 Baseline, search, reflection, failures, and holdout share one persisted invocation budget.
-Inspection reserves six holdout calls. Audit reserves two calls per holdout case per arm: twelve calls for two cases.
-Each audit task checks capacity for both task and judge calls before it starts.
-The explicit upper limit is 40 calls and 2400 seconds. Defaults remain 20 calls and 1200 seconds.
-Use the same explicit limits on every command when running stages separately.
+Inspection reserves six holdout invocations. Audit reserves two invocations per holdout case per arm: twelve invocations for two cases.
+Each audit task checks capacity for both task and judge invocations before it starts.
+The explicit upper limit is 40 invocations and 2400 seconds. Defaults remain 20 invocations and 1200 seconds.
+When you run stages separately, use the same explicit limits on every command.
 The deadline spans the entire live run, including pauses between separate commands.
 Process-group cancellation enforces the deadline. The runner does not retry automatically.
 A consumed holdout cannot resume candidate selection.

@@ -2,7 +2,7 @@
 
 Session-driven skill prompt and CLI optimization uses a bounded GEPA experiment in skillz.
 The editable package contains its prompt, selected references, and inspection helper.
-Approved task cases drive evaluation; session frequency is not a success label.
+Approved cases drive evaluation; session frequency is not a success label.
 The first adapter targets skillz audit tasks on Codex, not arbitrary skill-owned programs.
 The goal remains “best measured for this use case,” not a globally optimal skill.[^implementation]
 
@@ -39,11 +39,11 @@ Normal skill installation does not require GEPA.
 
 ## From sessions to approved cases
 
-The dataset boundary accepts authored use cases or a user-approved normalized analytics export.
+The dataset boundary accepts authored cases or a user-approved normalized analytics export.
 Each case supplies an ID, task-family group, split, request, fixture files, expected JSON, provenance, provider approval, and visibility.
 Missing request, fixture, oracle, or approval leaves a case diagnostic-only.[^cases]
 
-All variants of one task family must remain in one split.
+Keep all cases of one task family in one split.
 Paths reject traversal, aliases, hidden components, and runtime-owned collisions.
 Private is the default visibility.
 Provider approval permits submission, not publication.
@@ -69,7 +69,7 @@ Task fitness requires the expected JSON result and candidate execution evidence.
 Correctness controls selection.
 Measured input-plus-output tokens break correctness ties.
 Cached input is already part of input tokens.
-Missing usage and dollar cost remain unknown.
+The runner records unknown usage as null. Dollar cost remains unknown.
 
 ## Codex isolation and native loading
 
@@ -93,10 +93,10 @@ A failed isolation check stops execution without an unsafe fallback.
 The live run permits at most 20 Codex invocations within 1,200 seconds.
 Baseline, search, reflection, failures, and holdout share the same counter and deadline.
 Pauses between separate commands consume the same deadline.
-Six calls remain reserved for two holdout cases across three arms.[^workflow]
+The runner reserves six invocations for two holdout cases across three arms.[^workflow]
 
 Selection finishes before holdout evaluation.
-The runner locks original, prompt-only, and prompt-plus-CLI candidate hashes.
+The runner locks the candidate hashes of the original, prompt, and prompt-plus-helper (`prompt-cli`) arms.
 Holdout feedback never returns to GEPA.
 A consumed holdout cannot resume selection or rewrite completed evidence.
 
@@ -108,7 +108,7 @@ An infrastructure failure remains distinct from a task failure.
 
 Exports contain a patch and measurements, not raw requests or expected answers.
 Candidates can memorize approved training content.
-Therefore, all exports remain private and local until a separate human review.
+Therefore, all exports remain private and local until the user completes a separate review.
 The runner never applies, installs, merges, or pushes a candidate.[^export]
 
 The current adapter evaluates the frozen inspection-helper contract.

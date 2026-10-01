@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._candidate import Candidate
+from skillz_experiments._candidate import Candidate, make_workspace, stage_task
 from skillz_experiments._cases import Case, digest, mapping, string
 from skillz_experiments._discovery import discover
 from skillz_experiments._evaluation import HELPER_INPUTS, helper_result, usage
@@ -44,8 +44,6 @@ def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> li
     return [part for setting in settings for part in ("-c", setting)]
 
 
-
-
 @final
 class Codex:
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
@@ -70,10 +68,6 @@ class Codex:
         return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                 "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
 
-    def _workspace(self, workspace: Path) -> None:
-        for directory in ("home", "tmp", ".agents/skills"):
-            (workspace / directory).mkdir(parents=True, exist_ok=True)
-
     def preflight(self) -> dict[str, object]:
         version = process([str(self.executable), "--version"], cwd=Path("/tmp"), timeout=min(10, self.budget.remaining()),
                           environment={"PATH": "/usr/bin:/bin"})
@@ -82,7 +76,7 @@ class Codex:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             root = Path(directory)
             workspace = root / "workspace"
-            self._workspace(workspace)
+            _ = make_workspace(workspace)
             sealed = root / "sealed"
             _ = sealed.write_text("sealed sentinel")
             (workspace / "escape").symlink_to(sealed)
@@ -95,17 +89,17 @@ class Codex:
             result = process(command, cwd=workspace, timeout=min(30, self.budget.remaining()),
                              environment=self._environment(workspace))
             if result.returncode or result.stdout.strip() != "isolation-ok":
-                raise RuntimeError("Codex isolation preflight failed; no unsafe fallback")
+                raise RuntimeError("Codex isolation preflight fails; no unsafe fallback")
             skill = workspace / ".agents/skills/skillz"
             skill.mkdir()
             _ = (skill / "SKILL.md").write_text("---\nname: skillz\ndescription: Inspect public fixtures\n---\nInspection probe.\n")
             if not self._discover(workspace):
-                raise RuntimeError("native Codex skill discovery preflight failed")
+                raise RuntimeError("native Codex skill discovery preflight fails")
             parser = process(self._execution_command(workspace, root / "schema.json", root / "answer.json") + ["--help"],
                              cwd=workspace, timeout=min(10, self.budget.remaining()), environment=self._environment(workspace))
             if parser.returncode:
                 evidence = failure_details(parser.returncode, parser.stderr, [])
-                raise RuntimeError(f"Codex execution options preflight failed: {evidence['reason']}")
+                raise RuntimeError(f"Codex execution options preflight fails: {evidence['reason']}")
         return {"codex_version": VERSION, "model": self.model, "isolation": "passed",
                 "host_skill_discovery": "isolated-home", "live_calls": 0,
                 "environment_hash": digest(configuration(Path("/TASK"), self.executable, []))}
@@ -113,16 +107,8 @@ class Codex:
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
-            workspace = Path(directory) / "workspace"
-            self._workspace(workspace)
-            if candidate is not None:
-                candidate.materialize(workspace / ".agents/skills/skillz")
-                _ = (workspace / ".agents/skills/skillz/EXPERIMENT_MARKER").write_text(candidate.identity)
-            if case is not None:
-                for name, content in case.files.items():
-                    path = workspace / name
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    _ = path.write_text(content)
+            workspace = make_workspace(Path(directory) / "workspace")
+            stage_task(workspace, candidate, case)
             schema_path = Path(directory) / "response-schema.json"
             _ = schema_path.write_text(json.dumps(schema or answer_schema()))
             output = Path(directory) / "answer.json"
@@ -138,7 +124,7 @@ class Codex:
                 descriptor, filename = tempfile.mkstemp(prefix="skillz-execution-failure-", suffix=".json")
                 with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                     json.dump(evidence, stream, sort_keys=True)
-                raise RuntimeError(f"Codex failed: {evidence['reason']} (exit {result.returncode}); invocation charged; private evidence: {filename}")
+                raise RuntimeError(f"Codex fails: {evidence['reason']} (exit {result.returncode}); the invocation counts against the budget; private evidence: {filename}")
             answer = mapping(cast(object, json.loads(output.read_text())))
             return {"answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
                     "latency_seconds": time.monotonic() - started}
@@ -155,8 +141,7 @@ class Codex:
 
     def check_candidate(self, candidate: Candidate) -> bool:
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
-            workspace = Path(directory)
-            self._workspace(workspace)
+            workspace = make_workspace(Path(directory))
             candidate.materialize(workspace / ".agents/skills/skillz")
             if not self._discover(workspace):
                 return False
@@ -183,11 +168,9 @@ def _events(stdout: str) -> list[dict[str, object]]:
     for line in stdout.splitlines():
         try:
             events.append(mapping(cast(object, json.loads(line))))
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:
             raise RuntimeError("invalid Codex JSON event stream") from None
     return events
-
-
 
 
 def failure_details(returncode: int, stderr: str, events: list[dict[str, object]]) -> dict[str, object]:

@@ -27,18 +27,18 @@ The PR schema explains why session logs are not directly replayable evaluation c
 | `tool_uses` | Arguments, tool names, session, timestamp | Observed commands do not establish intended outcomes. |
 | `tool_results` | Error flags and result text | Materialized result text truncates at 500 characters. |
 | `model_turns` | Model and usage fields for supported sources | Coverage differs; historical token totals can be incomplete. |
-| `raw_entries` | Canonical post-adapter rows | These are not guaranteed lossless copies of native transcripts. |
+| `raw_entries` | Canonical post-adapter rows | Rows can differ from native transcripts. |
 
 The coverage document excludes Cursor from error-rate comparisons because its transcripts lack tool-result blocks.
 The Codex adapter omits native user, model, timing, and `event_msg` records.
 Thus a user prompt may require approved access to the native transcript.
-Claude error flags can be backfilled, so measured error rates remain lower bounds.[^4]
+PR #105 can backfill Claude error flags, so error rates are lower bounds.[^4]
 
 ## Proposed use in skillz
 
 A future dataset builder could use this engine to select candidate sessions and failure patterns.
 It must then recover permitted task context, label an independent outcome, and verify replayability.
-Join calls and results with `harness`, `sessionId`, and `tool_use_id`; tool IDs can repeat across sessions.[^3][^4]
+Join calls and results with `harness`, `sessionId`, and `tool_use_id`. Tool IDs can repeat across sessions.[^3][^4]
 Keep unknown outcomes distinct from failures.
 Report adapter coverage with every dataset.
 

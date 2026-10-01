@@ -42,7 +42,7 @@ def test_helper_accepts_host_alias_but_rejects_package_symlinks(tmp_path: Path) 
     guide.symlink_to(target)
     run = subprocess.run([sys.executable, str(HELPER), str(supplied)], capture_output=True, text=True)
     assert run.returncode == 2
-    assert json.loads(run.stdout)["error"] == "symlinks are forbidden"
+    assert json.loads(run.stdout)["error"] == "package must not contain symlinks"
     guide.unlink()
     references.rmdir()
     internal = package / "internal-guides"
@@ -51,7 +51,7 @@ def test_helper_accepts_host_alias_but_rejects_package_symlinks(tmp_path: Path) 
     references.symlink_to(internal, target_is_directory=True)
     run = subprocess.run([sys.executable, str(HELPER), str(supplied)], capture_output=True, text=True)
     assert run.returncode == 2
-    assert json.loads(run.stdout)["error"] == "symlinks are forbidden"
+    assert json.loads(run.stdout)["error"] == "package must not contain symlinks"
     direct = package / "linked.md"
     direct.symlink_to(target)
     run = subprocess.run([sys.executable, str(HELPER), str(direct)], capture_output=True, text=True)

@@ -1,7 +1,7 @@
 ---
 name: skillz
 description: >
-  Add, improve, audit, self-update, or evaluate a skill or sub-agent definition so it
+  Add, improve, audit, self-update, or experiment on a skill or sub-agent definition so it
   runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts.
   Use for /skillz <add|improve|audit|self-update|experiment>, "improve this skill",
   "optimize this skill", "tighten this skill",
@@ -39,9 +39,9 @@ Ask for a target when the mode requires one.
 | `self-update` | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
 | `experiment` | an inspection or audit manifest, or public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
-For `experiment`, read `references/experiments.md` and follow its workflow instead of the shared audit protocol.
+For `experiment`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
 Ask which harness command and model the user wants before setup.
-Use the installed `scripts/skillz-experiment.pyz`; do not require a source checkout.
+Use the installed `scripts/skillz-experiment.pyz`. Do not require a source checkout.
 
 ## Shared protocol
 

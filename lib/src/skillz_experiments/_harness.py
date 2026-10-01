@@ -118,7 +118,7 @@ class Harness:
 
     def _unchanged(self) -> None:
         if self.configuration.identity() != self.identity:
-            raise ValueError("frozen harness executable or script changed")
+            raise ValueError("harness executable or script differs from the frozen record")
 
     def preflight(self) -> dict[str, object]:
         self._unchanged()

@@ -21,13 +21,13 @@ GEPA components are candidate text fields.
 Objectives are measured outcomes.
 The gskill guide uses side information's `scores` for multi-objective tracking.
 The [Creating Adapters guide](./gepa-adapters.md) exposes `EvaluationBatch.objective_scores` and component-specific reflection records.[^2][^3]
-A bare two-number return must not be mistaken for two objectives: the documented tuple means score and side information.
+Do not read a bare two-number return as two objectives. The documented tuple means score and side information.
 
 ## Version and quality constraints
 
 [GEPA release notes](./gepa-releases.md) for v0.1.4 add `batch_evaluator` and `reflection_strategy`.
 They remove `EngineConfig.num_parallel_proposals`.
-Pin and test the selected version before integration; this article is not an exhaustive current signature.[^4]
+Pin and test the selected version before integration. This article is not an exhaustive current signature.[^4]
 
 GEPA's [Frequently Asked Questions](./gepa-faq.md) states that brevity needs an explicit objective.
 It also describes example memorization and output-contract drift.

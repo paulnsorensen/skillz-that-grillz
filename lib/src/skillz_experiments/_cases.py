@@ -4,7 +4,11 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import Literal, cast, get_args
+
+Split = Literal["train", "validation", "holdout"]
+Kind = Literal["inspection", "audit"]
+Visibility = Literal["public", "private"]
 
 def mapping(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
@@ -23,7 +27,7 @@ def relative(value: str) -> str:
     if path.is_absolute() or ".." in path.parts or not path.parts or "\\" in value or "\x00" in value or path.as_posix() != value:
         raise ValueError("unsafe relative path")
     if any(part.startswith(".") for part in path.parts):
-        raise ValueError("hidden paths are forbidden")
+        raise ValueError("path must not be hidden")
     return value
 
 
@@ -105,14 +109,14 @@ def audit_labels(value: object, files: dict[str, str]) -> Audit:
 class Case:
     identifier: str
     family: str
-    split: str
+    split: Split
     request: str
     files: dict[str, str]
     expected: object
     provenance: str
     provider_approved: bool
-    visibility: str = "private"
-    kind: str = "inspection"
+    visibility: Visibility = "private"
+    kind: Kind = "inspection"
     labels_reviewed: bool = False
 
     @property
@@ -124,16 +128,16 @@ class Case:
 def _case(value: object) -> Case:
     item = mapping(value)
     split = string(item.get("split"), "split")
-    if split not in {"train", "validation", "holdout"}:
+    if split not in get_args(Split):
         raise ValueError("split must be train, validation, or holdout")
     request = item.get("request", "")
     if not isinstance(request, str):
         raise ValueError("request must be text")
     visibility = item.get("visibility", "private")
-    if visibility not in {"public", "private"}:
+    if visibility not in get_args(Visibility):
         raise ValueError("visibility must be public or private")
     kind = item.get("kind", "inspection")
-    if kind not in ("inspection", "audit"):
+    if kind not in get_args(Kind):
         raise ValueError("kind must be inspection or audit")
     reviewed = item.get("labels_reviewed", False)
     if type(reviewed) is not bool:
@@ -141,15 +145,15 @@ def _case(value: object) -> Case:
     files = text_map(item.get("files", {}))
     expected = audit_labels(item.get("expected"), files) if kind == "audit" else item.get("expected")
     return Case(
-        string(item.get("id"), "id"), string(item.get("family"), "family"), split,
+        string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split),
         request, files, expected,
         string(item.get("provenance"), "provenance"), item.get("provider_approved") is True,
-        cast(str, visibility), cast(str, kind), reviewed,
+        cast(Visibility, visibility), cast(Kind, kind), reviewed,
     )
 
 
 def load_cases(path: Path) -> list[Case]:
-    if not path.is_file() or any(part.is_symlink() for part in (path, *path.parents)) or path.stat().st_size > 2_000_000:
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > 2_000_000:
         raise ValueError("manifest must be a bounded regular file, not a symlink")
     document = mapping(cast(object, json.loads(path.read_text(encoding="utf-8"))))
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1 or not isinstance(document.get("cases"), list):

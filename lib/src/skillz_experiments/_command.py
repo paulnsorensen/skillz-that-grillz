@@ -8,19 +8,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._candidate import Candidate
+from skillz_experiments._candidate import Candidate, make_workspace, stage_task
 from skillz_experiments._cases import Case, mapping
 from skillz_experiments._evaluation import HELPER_INPUTS, helper_result, usage
 from skillz_experiments._evaluator import answer_schema
 from skillz_experiments._isolation import probe
 from skillz_experiments._runtime import Budget, process
-
-
-def _workspace(root: Path) -> Path:
-    workspace = root / "workspace"
-    for directory in ("home", "tmp", ".agents/skills"):
-        (workspace / directory).mkdir(parents=True, exist_ok=True)
-    return workspace
 
 
 def _response(value: object, operation: str) -> dict[str, object]:
@@ -104,7 +97,7 @@ class Command:
         result = process(list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
                          environment={"PATH": "/usr/bin:/bin"}, input_text=json.dumps(request))
         if result.returncode:
-            raise RuntimeError("harness command failed; no unsafe fallback")
+            raise RuntimeError("harness command fails; no unsafe fallback")
         if len(result.stdout) > 1_000_000:
             raise ValueError("harness response exceeds size limit")
         return _response(cast(object, json.loads(result.stdout)), operation)
@@ -126,24 +119,24 @@ class Command:
     def preflight(self) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             root = Path(directory)
-            workspace = _workspace(root)
+            workspace = make_workspace(root / "workspace")
             sealed = root / "sealed"
             _ = sealed.write_text("sealed sentinel")
             (workspace / "escape").symlink_to(sealed)
             script = probe(workspace, sealed, Path(__file__).resolve())
             result = self._sandbox(workspace, ["/usr/bin/python3", "-c", script])
             if result["returncode"] != 0 or cast(str, result["stdout"]).strip() != "isolation-ok":
-                raise RuntimeError("harness isolation preflight failed; no unsafe fallback")
+                raise RuntimeError("harness isolation preflight fails; no unsafe fallback")
             skill = workspace / ".agents/skills/skillz"
             skill.mkdir()
             _ = (skill / "SKILL.md").write_text("---\nname: skillz\ndescription: Inspect public fixtures\n---\nProbe.\n")
             if not self._discover(workspace):
-                raise RuntimeError("harness skill discovery preflight failed")
+                raise RuntimeError("harness skill discovery preflight fails")
         return {"adapter": "command", "model": self.model, "isolation": "passed", "live_calls": 0}
 
     def check_candidate(self, candidate: Candidate) -> bool:
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
-            workspace = _workspace(Path(directory))
+            workspace = make_workspace(Path(directory) / "workspace")
             candidate.materialize(workspace / ".agents/skills/skillz")
             if not self._discover(workspace):
                 return False
@@ -158,15 +151,8 @@ class Command:
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
-            workspace = _workspace(Path(directory))
-            if candidate is not None:
-                candidate.materialize(workspace / ".agents/skills/skillz")
-                _ = (workspace / ".agents/skills/skillz/EXPERIMENT_MARKER").write_text(candidate.identity)
-            if case is not None:
-                for name, content in case.files.items():
-                    path = workspace / name
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    _ = path.write_text(content)
+            workspace = make_workspace(Path(directory) / "workspace")
+            stage_task(workspace, candidate, case)
             self.budget.claim(holdout=holdout)
             self.checkpoint()
             started = time.monotonic()

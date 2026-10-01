@@ -50,7 +50,7 @@ def test_installed_bundle_loads_public_fixtures_outside_checkout(tmp_path: Path)
     assert (out / "manifest.json").is_file()
 
 
-def test_bundle_runs_actual_gepa_and_evaluator_from_installed_target(tmp_path: Path) -> None:
+def run_installed_self_test(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     installed = tmp_path / "installed"
     _ = shutil.copytree(ROOT / "skills/skillz", installed)
     wrapper = tmp_path / "wrapper.py"
@@ -70,6 +70,11 @@ def test_bundle_runs_actual_gepa_and_evaluator_from_installed_target(tmp_path: P
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, result.stderr
+    return installed, wrapper, settings, run
+
+
+def test_bundle_runs_actual_gepa_and_evaluator_from_installed_target(tmp_path: Path) -> None:
+    installed, wrapper, settings, run = run_installed_self_test(tmp_path)
     record = read(run / "run.json")
     assert record["phase"] == "complete"
     assert record["holdout_consumed"] is True

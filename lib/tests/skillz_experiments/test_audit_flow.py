@@ -14,7 +14,10 @@ from skillz_experiments._cli import main
 from skillz_experiments._codex import Codex
 from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._search import Mode
 from skillz_experiments._workflow import execute, export
+
+TOKEN_COUNTS = {"input_tokens": 10, "cached_input_tokens": 2, "output_tokens": 3}
 
 
 def corpus(tmp_path: Path, *, reviewed: bool = True) -> tuple[Path, Path]:
@@ -32,6 +35,30 @@ def corpus(tmp_path: Path, *, reviewed: bool = True) -> tuple[Path, Path]:
     return manifest, target
 
 
+def task_reply(candidate: Candidate, case: Case, calls: list[str]) -> dict[str, object]:
+    assert isinstance(case.expected, Audit)
+    calls.append("task:" + case.split)
+    label = case.expected.labels[0]
+    finding = {"description": "Unsafe deletion", "severity": label.severity,
+               "correction": "Ask first", "citation": asdict(label.evidence[0])}
+    return {"answer": {"load_marker": candidate.identity, "result_json": json.dumps({"findings": [finding]})},
+            "usage": TOKEN_COUNTS.copy(), "workspace": "/TASK", "latency_seconds": 1.0,
+            "events": [{"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0,
+                        "command": command}} for command in
+                       ["cat .agents/skills/skillz/SKILL.md",
+                        "python3 -I .agents/skills/skillz/scripts/inspect_skill.py fixture.md"]]}
+
+
+def support_reply(prompt: str, schema: dict[str, object], *, holdout: bool, calls: list[str]) -> dict[str, object]:
+    if "matches" in mapping(schema["properties"]):
+        calls.append("judge:holdout" if holdout else "judge:search")
+        return {"answer": {"matches": [{"finding": 0, "label": "unsafe", "actionable": True}]}, "usage": TOKEN_COUNTS.copy()}
+    calls.append("reflection")
+    assert "LABEL_SENTINEL" not in prompt
+    assert "holdout" not in prompt
+    return {"answer": {key: "improved" for key in cast(list[str], schema["required"])}, "usage": TOKEN_COUNTS.copy()}
+
+
 def provider_factory(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> Callable[[str, Budget, Callable[[], None]], Codex]:
     def check(self: Codex, candidate: Candidate) -> bool:
         return bool(self.model and candidate.files)
@@ -46,28 +73,11 @@ def provider_factory(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> Calla
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
         self.checkpoint()
-        counts = {"input_tokens": 10, "cached_input_tokens": 2, "output_tokens": 3}
         if case is not None:
             assert candidate is not None
-            assert isinstance(case.expected, Audit)
-            calls.append("task:" + case.split)
-            label = case.expected.labels[0]
-            finding = {"description": "Unsafe deletion", "severity": label.severity,
-                       "correction": "Ask first", "citation": asdict(label.evidence[0])}
-            return {"answer": {"load_marker": candidate.identity, "result_json": json.dumps({"findings": [finding]})},
-                    "usage": counts, "workspace": "/TASK", "latency_seconds": 1.0,
-                    "events": [{"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0,
-                                "command": command}} for command in
-                               ["cat .agents/skills/skillz/SKILL.md",
-                                "python3 -I .agents/skills/skillz/scripts/inspect_skill.py fixture.md"]]}
+            return task_reply(candidate, case, calls)
         assert candidate is None and schema is not None
-        if "matches" in mapping(schema["properties"]):
-            calls.append("judge:holdout" if holdout else "judge:search")
-            return {"answer": {"matches": [{"finding": 0, "label": "unsafe", "actionable": True}]}, "usage": counts}
-        calls.append("reflection")
-        assert "LABEL_SENTINEL" not in prompt
-        assert "holdout" not in prompt
-        return {"answer": {key: "improved" for key in cast(list[str], schema["required"])}, "usage": counts}
+        return support_reply(prompt, schema, holdout=holdout, calls=calls)
 
     def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> Codex:
         adapter = object.__new__(Codex)
@@ -104,7 +114,7 @@ def test_audit_full_flow_reserves_pairs_and_redacts_export(tmp_path: Path, monke
     assert "LABEL_SENTINEL" not in report
     assert "raw_judge_response" not in report
     assert (target / "SKILL.md").read_text() == "seed"
-    with pytest.raises(ValueError, match="consumed"):
+    with pytest.raises(ValueError, match="holdout ran"):
         _ = execute(run, "evaluate", "controlled", live=True, maximum=40, seconds=2400, factory=factory)
 
 
@@ -160,7 +170,7 @@ def test_resume_rejects_changed_judge_before_calls(tmp_path: Path, monkeypatch: 
     mapping(record["judge"])[field] = "changed"
     write(run / "run.json", record)
     calls.clear()
-    with pytest.raises(ValueError, match="frozen judge"):
+    with pytest.raises(ValueError, match="judge differs"):
         _ = execute(run, "search", "controlled", live=True, maximum=40, seconds=2400, factory=factory)
     assert calls == []
 
@@ -189,10 +199,8 @@ def test_invalid_judge_charges_calls_and_stops_run(tmp_path: Path, monkeypatch: 
     assert record["outcomes"] == []
 
 
-@pytest.mark.parametrize(("correct", "known"), [(True, True), (False, True), (True, False)])
-def test_cli_staged_flow_feedback_and_selection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, correct: bool, known: bool,
-) -> None:
+def run_cli_stages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, correct: bool,
+                   known: bool) -> tuple[Path, list[str], list[str]]:
     manifest, target = corpus(tmp_path)
     (target / "scripts").mkdir()
     _ = (target / "scripts/inspect_skill.py").write_text("original")
@@ -219,27 +227,17 @@ def test_cli_staged_flow_feedback_and_selection(
         return result
 
     monkeypatch.setattr(Codex, "invoke", invoke)
-    for stage, mode in [("baseline", "prompt"), ("search", "prompt"), ("search", "cli"), ("evaluate", "prompt")]:
-        result = execute(run, stage, "controlled", live=True, maximum=40, seconds=2400,
-                         factory=factory, mode=mode)
-    assert result["phase"] == "complete"
-    record = read(run / "run.json")
-    arms = mapping(record["arms"])
-    assert set(arms) == {"original", "prompt", "cli"}
-    cli = mapping(arms["cli"])
-    assert cli["SKILL.md"] == "seed"
-    assert cli["references/selected.md"] == "frozen reference"
-    if known:
-        assert cli["scripts/inspect_skill.py"] == ("improved" if correct else "original")
-    assert record["holdout_reserve"] == 12
-    assert calls.count("task:holdout") == 6
-    assert calls.count("judge:holdout") == 6
-    assert record["calls"] == len(calls)
-    assert len(reflections) == 2
-    cli_prompt = reflections[1]
-    assert "Preserve correctness first" in cli_prompt
-    assert "reduce measured input-plus-output tokens for correctness ties" in cli_prompt
-    payload = mapping(cast(object, json.loads(cli_prompt.split("\n", 1)[1])))
+    stages: list[tuple[str, Mode]] = [("baseline", "prompt"), ("search", "prompt"), ("search", "cli"), ("evaluate", "prompt")]
+    for stage, mode in stages:
+        _ = execute(run, stage, "controlled", live=True, maximum=40, seconds=2400, factory=factory, mode=mode)
+    assert read(run / "run.json")["phase"] == "complete"
+    return run, calls, reflections
+
+
+def assert_cli_reflection(prompt: str, *, known: bool) -> None:
+    assert "Preserve correctness first" in prompt
+    assert "reduce measured input-plus-output tokens for correctness ties" in prompt
+    payload = mapping(cast(object, json.loads(prompt.split("\n", 1)[1])))
     assert payload["candidate"] == {"scripts/inspect_skill.py": "original"}
     feedback = mapping(payload["feedback"])
     assert set(feedback) == {"scripts/inspect_skill.py"}
@@ -251,7 +249,26 @@ def test_cli_staged_flow_feedback_and_selection(
         assert row["request"] == "Audit safety only."
         assert row["usage"] == expected_usage
     for secret in ("LABEL_SENTINEL", "/TASK", "Delete everything.", "holdout", "raw_judge_response"):
-        assert secret not in cli_prompt
+        assert secret not in prompt
+
+
+@pytest.mark.parametrize(("correct", "known"), [(True, True), (False, True), (True, False)])
+def test_cli_staged_flow_feedback_and_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, correct: bool, known: bool,
+) -> None:
+    run, calls, reflections = run_cli_stages(tmp_path, monkeypatch, correct=correct, known=known)
+    record = read(run / "run.json")
+    arms = mapping(record["arms"])
+    assert set(arms) == {"original", "prompt", "cli"}
+    cli = mapping(arms["cli"])
+    assert cli["SKILL.md"] == "seed"
+    assert cli["references/selected.md"] == "frozen reference"
+    assert cli["scripts/inspect_skill.py"] == ("improved" if correct and known else "original")
+    assert record["holdout_reserve"] == 12
+    assert calls.count("task:holdout") == calls.count("judge:holdout") == 6
+    assert record["calls"] == len(calls)
+    assert len(reflections) == 2
+    assert_cli_reflection(reflections[1], known=known)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     changed = Candidate(dict(cast(dict[str, str], arms["original"])) | {"scripts/inspect_skill.py": "improved"}, ()).identity
     assert any(item.get("candidate_hash") == changed and item["split"] == "validation" for item in outcomes)

@@ -34,9 +34,8 @@ writable cache. The bundled engine keeps the existing
 only with user consent, may omit metrics, and does not replace the database
 results. The user can skip Usage.
 
-The optional `experiment` mode bundles GEPA and its runner.
-It supports Codex or a configured trusted harness wrapper.
-It compares isolated candidates without installing a winner or requiring a checkout.
+The optional `experiment` mode needs Codex or a configured trusted harness wrapper.
+It needs no source checkout.
 See [the experiment workflow](skills/skillz/references/experiments.md).
 
 ```sh

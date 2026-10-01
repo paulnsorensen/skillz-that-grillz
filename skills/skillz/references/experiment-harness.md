@@ -32,7 +32,7 @@ Create a private configuration file outside the skill:
 Task, reflection, and judge roles inherit the top-level adapter, command, and CLI model.
 Each role can override inherited fields.
 A Codex role accepts only `adapter` and `model`, without inherited command or identity fields.
-For mixed adapters, omit top-level adapter fields and define every role completely:
+For mixed adapters, omit the top-level adapter fields. Define each role completely:
 
 ```json
 {
@@ -54,11 +54,11 @@ Use one command configuration for all roles unless the user requests separate se
 
 Pass `--harness-config /absolute/path/to/harness.json` to every preflight and live stage.
 The option applies to `self-test`, `baseline`, `search`, and `evaluate`.
-Dataset preparation and export make no harness calls.
+Dataset preparation and export make no harness invocations.
 
 The runner resolves executable paths and existing file arguments before freezing each role.
 Pass script and configuration paths as separate arguments, not embedded `--config=PATH` strings.
-Executable, script, file-argument, model, or role changes reject continuation.
+The runner stops when an executable, script, file argument, model, or role changes.
 Transitive imports and wrapper-managed resources remain the trusted wrapper's responsibility.
 Reports contain adapter names, model names, and fingerprints, never command arguments.
 
@@ -84,7 +84,7 @@ Malformed responses stop the run.
 ### Sandbox
 
 The request adds `argv`, an explicit command array.
-Run this command unchanged through the same sandbox used by inference tools.
+Run this command unchanged through the same sandbox that inference tools use.
 Use the requested workspace as its working directory.
 Return the actual process result:
 
@@ -120,7 +120,7 @@ Return exactly the one isolated candidate:
 }
 ```
 
-Missing, additional, or incorrectly located skills reject the check before inference.
+The runner rejects the check when a skill is missing, extra, or in the wrong location.
 Disable other skill roots, hooks, plugins, apps, and external configuration.
 
 ### Inference
@@ -164,9 +164,9 @@ The wrapper is trusted executable code, not a security boundary against its owne
 A dishonest wrapper can fabricate probe results and traces.
 The probe detects accidental configuration failures; it does not attest sandbox integrity.
 Protocol fixtures test runner behavior, not real operating-system isolation.
-Verify the actual harness sandbox before authorizing private data or paid calls.
+Verify the actual harness sandbox before authorizing private data or paid invocations.
 
-Preflight makes no inference calls.
+Preflight makes no inference invocations.
 Every attempted inference, including a failed response, consumes the shared invocation budget.
 All roles share the same deadline and holdout reservation.
 The runner terminates the process group at the deadline and does not retry.

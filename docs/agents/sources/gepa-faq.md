@@ -7,7 +7,7 @@ Canonical source: [Frequently Asked Questions](https://gepa-ai.github.io/gepa/gu
 
 ## Supported finding and limits
 
-The FAQ discusses examples copied into prompts and changes to required output formats. Validation and preservation constraints address these risks, but prose constraints do not enforce an execution boundary. This distinction motivates the proposed immutable evaluator and held-out tests.[^1]
+The FAQ discusses examples copied into prompts and changes to required output formats. Validation and preservation constraints address these risks, but prose constraints do not enforce an execution boundary. This distinction motivates the immutable evaluator in the [local implementation](../../../lib/src/skillz_experiments/_evaluator.py) and the held-out tests.[^1]
 
 ## Skillz relevance
 

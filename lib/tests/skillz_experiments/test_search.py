@@ -4,11 +4,11 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
-from skillz_experiments._search import optimize
+from skillz_experiments._search import Mode, optimize
 
 
 @pytest.mark.parametrize("mode", ["prompt", "prompt-cli"])
-def test_real_gepa_evaluates_changed_components(mode: str, capsys: pytest.CaptureFixture[str]) -> None:
+def test_real_gepa_evaluates_changed_components(mode: Mode, capsys: pytest.CaptureFixture[str]) -> None:
     seed = {"SKILL.md": "seed", "scripts/inspect_skill.py": "original"}
     replacement = "better PRIVATE_CANDIDATE_SENTINEL"
     seen: list[tuple[dict[str, str], object]] = []

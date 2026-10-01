@@ -11,9 +11,9 @@ from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
-from skillz_experiments._records import prepare, read
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import execute, export
+from skillz_experiments._records import prepare, read, write
+from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._workflow import _Session, execute, export  # pyright: ignore[reportPrivateUsage]
 
 
 @final
@@ -74,7 +74,7 @@ def test_real_gepa_full_flow_freezes_holdout_and_exports_privately(tmp_path: Pat
     assert json.loads((destination / "report.json").read_text())["sharing"] == "private-local-only"
     check = subprocess.run(["git", "apply", "--check", str(destination / "candidate.patch")], cwd=target, capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
-    with pytest.raises(ValueError, match="consumed"):
+    with pytest.raises(ValueError, match="holdout ran"):
         _ = execute(out, "evaluate", "local-test", live=True, factory=LocalProvider)
     assert read(out / "run.json")["phase"] == "complete"
 
@@ -96,3 +96,41 @@ def test_missing_gepa_records_actionable_infrastructure_failure(tmp_path: Path, 
         _ = execute(out, "search", "local-test", live=True, factory=LocalProvider)
     assert read(out / "run.json")["phase"] == "infrastructure-failure"
     assert read(out / "run.json")["calls"] == 2
+
+
+def _search_ready_run(tmp_path: Path) -> Path:
+    target = tmp_path / "skill"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("seed")
+    out = tmp_path / "run"
+    fixtures = Path(__file__).resolve().parents[2] / "src/skillz_experiments/fixtures/self-test.json"
+    _ = prepare(fixtures, target, out)
+    _ = execute(out, "baseline", "local-test", live=True, factory=LocalProvider)
+    _ = execute(out, "search", "local-test", live=True, factory=LocalProvider, mode="prompt")
+    _ = execute(out, "search", "local-test", live=True, factory=LocalProvider, mode="prompt-cli")
+    return out
+
+
+def test_holdout_checks_time_before_consuming_the_holdout(tmp_path: Path) -> None:
+    out = _search_ready_run(tmp_path)
+    calls = read(out / "run.json")["calls"]
+    session = _Session(out, "local-test", 20, 1200, LocalProvider)
+    session.budget.started -= 10_000
+    with pytest.raises(BudgetExhausted, match="deadline"):
+        session.holdout()
+    record = read(out / "run.json")
+    assert "holdout_consumed" not in record
+    assert record["calls"] == calls
+
+
+def test_resume_rejects_missing_record_field_with_a_clear_error(tmp_path: Path) -> None:
+    out = _search_ready_run(tmp_path)
+    record = read(out / "run.json")
+    del record["dataset_hash"]
+    write(out / "run.json", record)
+    with pytest.raises(ValueError, match="run record lacks dataset_hash"):
+        _ = execute(out, "evaluate", "local-test", live=True, factory=LocalProvider)
+    record["dataset_hash"] = 7
+    write(out / "run.json", record)
+    with pytest.raises(ValueError, match="dataset_hash must be text"):
+        _ = execute(out, "evaluate", "local-test", live=True, factory=LocalProvider)
