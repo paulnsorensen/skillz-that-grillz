@@ -1,5 +1,3 @@
-# 🧀 skillz-that-grillz 🧀
-
 ![Grilled cheese ASCII art with the skillz-that-grillz title](assets/skillz-that-grillz-logo.png)
 
 [![CI](https://img.shields.io/github/actions/workflow/status/paulnsorensen/skillz-that-grillz/validate.yml?branch=main&label=CI&style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/actions/workflows/validate.yml)
