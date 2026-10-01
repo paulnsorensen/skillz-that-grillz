@@ -40,6 +40,45 @@
 
 - 2026-09-26 · pr89-cure · updated · decisions/wedge-skill-packaging.md · Recorded format 6 metadata normalization across umask 002/022, symlink and lock publication invariants, and no shared concurrency for pending-run safety
 
+- 2026-09-26 · wedge-action · merged · decisions/wedge-skill-packaging.md · ADR-001 and ADR-003 amended for project-relative keys; ADR-007 added for portable wedge.toml projects, format 5, and the public actions/wedge composite action
+
+- 2026-09-26 · pr93-integration · updated · decisions/wedge-skill-packaging.md · Integrated the portable project model with format 7 and the #89 validation and reproducibility safeguards
+- 2026-09-26 · pr93-hardening · updated · decisions/wedge-skill-packaging.md · Recorded dependency overwrite protection, non-sudo gh installation, exported runner PATH, and failed-result preservation
+
+- 2026-09-26 · wedge-content-digest · merged · decisions/wedge-skill-packaging.md · ADR-008: pin a digest over uncompressed contents, deflate assets, name them by that digest; bump the asset format to 8
+
+- 2026-09-27 · wedge-mac-path · updated · decisions/wedge-skill-packaging.md · ADR-003 and ADR-008: build with `--no-cache`; publish rebuilds before it trusts an existing asset; record the hardlinked-cache drift evidence
+
+- 2026-09-27 · wedge-fanout · updated · decisions/wedge-skill-packaging.md · ADR-009: every command discovers skills under `--root`; build, lock, and publish fan out with `--jobs` and share one site directory per project; `groups` in wedge.toml; check rejects committed `.pyz`; consumers pin wedge in a uv project of their own
+
+- 2026-09-27 · ab3884d42165d951 · merged · decisions/wedge-skill-packaging.md · ADR-010 scopes direct committed bundles as an opt-in exception to legacy release-asset delivery; records source selection and corrupt-bundle checks.
+
+- 2026-09-28 · skills-to-git-gouda · removed · README.md, .github/copilot-instructions.md, scripts/install.sh, skills/github-copilot-personal-instructions/SKILL.md · Moved prek, oss-hygiene, safe-settings, release, justfile, and github-copilot-repo-instructions to paulnsorensen/git-gouda; dropped them from the skill tables, install.sh known tools, and updated the remaining cross-reference to point at git-gouda
+- 2026-09-28 · remove-respond · removed · README.md, .github/copilot-instructions.md, .github/workflows/validate.yml, justfile · Removed the respond skill and its post-reply tests; easy-cheese /affinage covers PR review-comment triage
+- 2026-09-28 · retire-last-skills · removed · README.md, AGENTS.md, CONTRIBUTING.md, .github/copilot-instructions.md, .github/instructions/skills.instructions.md, .github/scripts/validate_skills.py, .github/workflows/validate.yml, .github/workflows/release.yml, justfile, .gitignore · Removed skills/gh, skills/file-handler, and skills/github-copilot-personal-instructions — the repo publishes no Agent Skills under skills/; deleted scripts/install.sh and its tests (no skills left to install); validate_skills.py now tolerates an absent skills/ and validates .agents/skills/ instead
+- 2026-09-28 · merge-main-skillz · merged · README.md, AGENTS.md, CONTRIBUTING.md, .github/copilot-instructions.md, .github/instructions/skills.instructions.md, .github/workflows/release.yml · Kept skills/skillz from main (#102) as the one published skill; restored the README Skills table and the gh skill publish release steps
+
+
+
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · research/gepa-session-optimization.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · ideas/session-driven-skill-optimization.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/skillz-session-analytics-pr-105.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-gskill.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-optimize-anything.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/itsmostafa-gskill.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-faq.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-adapters.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-releases.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · conflict-flagged · research/gepa-session-optimization.md · Resolved gskill identity, Pareto terminology, and prototype holdout claims with primary evidence; prior repositories remain unchanged.
+
+
+
+- 2026-09-28 · 472a0c67d38bf2c8 · merged · research/gepa-session-optimization.md; ideas/session-driven-skill-optimization.md · Recorded approved bounded implementation, normalized case boundary, immutable evaluation, and private export. Six frozen retrieval probes passed after one lead repair.
+
+- 2026-09-28 · 472a0c67d38bf2c8 · new-page · sources/codex-skill-discovery-isolation.md · Preserved pinned OpenAI skill-discovery evidence that ignore-user-config did not exclude host skill roots.
+
+
+
+- 2026-09-28 · skillz-live-20260928 · merged · research/gepa-session-optimization.md; sources/codex-skill-discovery-isolation.md · Recorded authenticated self-test: 19 charged invocations, 16/16 tasks and 6/6 holdout runs passed; both search modes retained the seed. Preserved Codex exec argument and independent-validation corrections. All six frozen retrieval probes passed.
 
 - 2026-09-28 · fec4e1e9156e1f05 · merged · decisions/wedge-skill-packaging.md · Add the /wedge teaching workflow, required build layout, fixed dependency closure, output-limit boundary, and relocated-launcher verification. All three frozen retrieval probes return the page at rank 1.
-

@@ -2,7 +2,9 @@
 """Validate every SKILL.md in the repository.
 
 Per-file checks:
-- Lives at exactly skills/<name>/SKILL.md (no scope, no nested sub-skills).
+- Lives at exactly skills/<name>/SKILL.md (published) or
+  .agents/skills/<name>/SKILL.md (repo-local) — no other scope, no nested
+  sub-skills.
 - Begins with a YAML frontmatter block (--- ... ---). CRLF and missing
   trailing newline are tolerated.
 - Frontmatter parses as a YAML mapping.
@@ -89,12 +91,35 @@ HEADING_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)$")
 
 def validate_path_shape(path: Path) -> str | None:
     parts = path.parts
-    if len(parts) != 3 or parts[0] != "skills" or parts[2] != "SKILL.md":
+    is_published = len(parts) == 3 and parts[0] == "skills" and parts[2] == "SKILL.md"
+    is_repo_local = (
+        len(parts) == 4
+        and parts[0] == ".agents"
+        and parts[1] == "skills"
+        and parts[3] == "SKILL.md"
+    )
+    if not is_published and not is_repo_local:
         return (
             f"{path}: file is not at the documented path skills/<name>/SKILL.md "
-            f"(nested sub-skills are not supported)"
+            f"or .agents/skills/<name>/SKILL.md (nested sub-skills are not supported)"
         )
     return None
+
+
+def _under_hidden_dir(path: Path) -> bool:
+    """True when a hidden directory component hides `path` from discovery.
+
+    `.agents/skills/` is the one hidden root that carries real, validated
+    skills (repo-local tooling); every other dot-prefixed directory (`.github`,
+    `.cache`, a `plugins/.../skills` copy, ...) stays excluded.
+    """
+    parts = path.parts
+    for i, part in enumerate(parts[:-1]):
+        if part == ".agents" and i + 1 < len(parts) - 1 and parts[i + 1] == "skills":
+            return False
+        if part.startswith("."):
+            return True
+    return False
 
 
 def validate_frontmatter(path: Path) -> list[str]:
@@ -192,16 +217,15 @@ def validate(path: Path) -> list[str]:
 
 
 def main() -> int:
-    if not Path("skills").is_dir():
-        print("ERROR: skills/ directory not found", file=sys.stderr)
-        return 1
-
     skill_files = sorted(
         p for p in Path(".").rglob("SKILL.md")
-        if not any(part.startswith(".") for part in p.parts)
+        if not _under_hidden_dir(p)
     )
     if not skill_files:
-        print("ERROR: no SKILL.md files found in repository", file=sys.stderr)
+        print(
+            "ERROR: no SKILL.md files found under skills/ or .agents/skills/",
+            file=sys.stderr,
+        )
         return 1
 
     all_errors: list[str] = []

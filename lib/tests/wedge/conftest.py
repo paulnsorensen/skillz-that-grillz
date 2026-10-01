@@ -7,13 +7,13 @@ import shutil
 import stat
 from pathlib import Path
 from typing import Callable, TypedDict
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
-from wedge._key import find_repo_root
-
-REPO_ROOT = find_repo_root(Path(__file__))
+REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_SKILL_DIR = REPO_ROOT / "lib" / "examples" / "skills" / "cheese-cave"
+CONSUMER_DIR = REPO_ROOT / "lib" / "examples" / "consumer"
 
 
 class FakeGh(TypedDict):
@@ -31,6 +31,25 @@ def repo_root() -> Path:
 def fixture_skill_dir() -> Path:
     """The committed cheese-cave fixture; already ``wedge lock``-ed."""
     return FIXTURE_SKILL_DIR
+
+
+@pytest.fixture(scope="session")
+def consumer_dir() -> Path:
+    """The committed consumer-repo example; its skills are ``wedge lock``-ed."""
+    return CONSUMER_DIR
+
+
+@pytest.fixture
+def copy_consumer() -> Callable[[Path], Path]:
+    """Factory: copy the consumer example to a directory outside this repo."""
+
+    def _copy(dest: Path) -> Path:
+        _ = shutil.copytree(
+            CONSUMER_DIR, dest, ignore=shutil.ignore_patterns(".venv", "__pycache__", "*.pyc")
+        )
+        return dest
+
+    return _copy
 
 
 def _copy_repo_subset(dest: Path) -> Path:
@@ -78,6 +97,43 @@ def copy_locked_fixture() -> Callable[[Path], Path]:
     return _copy_locked_fixture
 
 
+RewritePyz = Callable[..., Path]
+
+
+def _rewrite_pyz(
+    source: Path,
+    dest: Path,
+    *,
+    level: int = 1,
+    replace: dict[str, bytes] | None = None,
+    extra: dict[str, bytes] | None = None,
+) -> Path:
+    """Rewrite ``source`` at another deflate level, optionally changing members.
+
+    With no ``replace`` or ``extra`` the result has other compressed bytes but
+    the same contents, as another zlib build would produce.
+    """
+    original = source.read_bytes()
+    shebang, separator, _ = original.partition(b"\n")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(source) as archive, dest.open("wb") as output:
+        _ = output.write(shebang + separator)
+        with ZipFile(output, "w", ZIP_DEFLATED, compresslevel=level) as target:
+            for info in archive.infolist():
+                data = (replace or {}).get(info.filename, archive.read(info))
+                info.compress_type = ZIP_DEFLATED
+                target.writestr(info, data, compresslevel=level)
+            for name, data in (extra or {}).items():
+                target.writestr(name, data)
+    return dest
+
+
+@pytest.fixture
+def rewrite_pyz() -> RewritePyz:
+    """Factory: recompress a .pyz, optionally replacing or adding members."""
+    return _rewrite_pyz
+
+
 _FAKE_GH_SOURCE = """#!/usr/bin/env python3
 # Fake `gh` CLI for wedge publish tests. Understands only the subset of
 # `gh release ...` invocations wedge._publish uses. Every call is appended
@@ -89,6 +145,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -136,6 +193,27 @@ def _flag(args, name):
 def main():
     args = sys.argv[1:]
     _log(args)
+    if args[:1] == ["api"]:
+        # repos/<owner>/<name>/compare/<base>...<head> --jq .status, answered
+        # from state[repo]["branches"][base]: the shas on that branch, tip last.
+        match = re.fullmatch(r"repos/([^/]+/[^/]+)/compare/([^.]+)[.]{3}(.+)", args[1])
+        if match is None or _flag(args, "--jq") != ".status":
+            print(f"fake gh: unsupported api call {args}", file=sys.stderr)
+            sys.exit(1)
+        api_repo, base, head = match.groups()
+        base = base.removeprefix("refs/heads/")
+
+        def op(state):
+            return list(state.get(api_repo, {}).get("branches", {}).get(base, []))
+
+        history = _with_lock(op)
+        if head not in history:
+            print("ahead")
+        elif head == history[-1]:
+            print("identical")
+        else:
+            print("behind")
+        sys.exit(0)
     if args[:1] != ["release"]:
         print(f"fake gh: unsupported command {args}", file=sys.stderr)
         sys.exit(1)

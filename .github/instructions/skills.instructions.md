@@ -1,5 +1,5 @@
 ---
-applyTo: "skills/**/SKILL.md"
+applyTo: "skills/**/SKILL.md,.agents/skills/**/SKILL.md"
 ---
 
 # SKILL.md review checklist
@@ -57,25 +57,13 @@ Spend your review budget on the things linters cannot see.
 
 ## Scope discipline (this repo specifically)
 
-- Each skill wraps exactly one CLI. Adding a second CLI is a new skill, not
-  a new section.
-- **Narrow exception — same-domain alternative tools.** When two CLIs are
-  drop-in replacements for the *same* user-facing workflow (one mental
-  model, one set of verbs, only the binary differs), a single skill may
-  wrap both. The skill must: (a) detect which is installed up front, (b)
-  load the per-tool surface from `references/<tool>.md` rather than
-  inlining a runtime branch on every command, and (c) refuse to fake the
-  workflow with lower-level tooling when neither is installed (the former
-  `pr-stack` skill — `gt` / `git town` / `gh stack`, all implementing
-  stacked PRs — was the canonical case). Multi-domain orchestration is
-  still out.
-- No skill *requires* an MCP server. MCPs may be **preferred** (e.g., the
-  GitHub MCP plugin in `gh`) but the skill must degrade cleanly to the CLI.
-- Skills do not invoke other skills programmatically. If a workflow needs
-  two skills back-to-back, document it in the README's "Suggested flow" and
-  let the user (or the harness) chain them.
+This repo carries the published `skillz` skill under `skills/` and repo-local
+skills under `.agents/skills/`. Each wraps exactly one concern:
+
+- No skill *requires* an MCP server; it must degrade cleanly without one.
+- Skills do not invoke other skills programmatically.
 - No orchestration, no intent classification, no automatic dispatching
-  inside a skill body — outside the narrow same-domain exception above.
+  inside a skill body.
 
 ## Quick triage prompt for review comments
 

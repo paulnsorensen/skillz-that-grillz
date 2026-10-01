@@ -13,7 +13,7 @@ uv add fromargs
 pip install fromargs
 ```
 
-`fromargs` pins `cyclopts>=4.25.3,<5`; it does not yet track Cyclopts 5.
+`fromargs` pins `cyclopts>=5,<6`.
 
 ## Quick start
 

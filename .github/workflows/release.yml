@@ -86,14 +86,12 @@ jobs:
         if: steps.guard.outputs.already_published != 'true'
         # `just ci` is the single source of truth — the same gate runs locally.
         # Pin the tools it shells out to so CI matches a developer's machine:
-        #   apt: shellcheck, bats   npm: markdownlint-cli2
+        #   npm: markdownlint-cli2
         #   pip: yamllint + pyyaml (validators)
         #   uv: pinned by the Install uv step; lib/fromargs pytest from its uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y shellcheck bats
           npm install -g markdownlint-cli2@0.22.1
           pip install --no-cache-dir \
             yamllint==1.35.1 \

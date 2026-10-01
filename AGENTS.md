@@ -8,8 +8,9 @@ This project has ONE canonical verification command. ALWAYS run it after changin
 code, and treat a non-zero exit as a hard stop — fix the reported failures before
 doing anything else.
 
-- `just build` — autofix (markdown + YAML format), then verify markdown/YAML/shell
-  and run the skill validators + bats suites. Run after every change.
+- `just build` — autofix (markdown + YAML format), then verify markdown/YAML
+  and run the skill validators, fromargs/wedge suites, and wedge check. Run
+  after every change.
 - `just ci` — the same gate with NO autofixes; this is what CI runs.
 
 ```bash
@@ -28,7 +29,7 @@ locally, run `just build`, commit the autofixes, and push.
 The [`## Skills` table in `README.md`](README.md#skills) is the single source of
 truth for every published skill in this repo — paths, commands, and purpose.
 Read it there rather than duplicating it here. `.agents/skills/` is the source
-of truth for repo-local skills.
+of truth for repo-local skills (tooling for work on this repository only).
 
 ## Development notes
 

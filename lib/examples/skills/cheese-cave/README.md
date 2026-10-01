@@ -13,7 +13,7 @@ as a release asset.
 ## Use
 
 Run the launcher directly. It downloads the matching `.pyz` on first use,
-verifies its sha256 against the lock, caches it, and execs it.
+verifies its content sha256 against the lock, caches it, and execs it.
 
 ```bash
 scripts/cheese-cave wheels list

@@ -1,30 +1,28 @@
 # Copilot review instructions — skillz-that-grillz
 
-This repo is a skills-only collection following the
-[Agent Skills spec](https://agentskills.io/specification). Every change either
-adds, edits, or supports a skill under `skills/<name>/`. There is no
-production runtime: review focuses on **skill quality**, not application
-behavior.
+This repo is a skill-authoring and skill-packaging toolbelt: the published
+`skillz` skill under `skills/`, `wedge` and `fromargs` under `lib/`, and the
+public `actions/wedge` GitHub Action. Review `lib/` and the Action for
+**code quality and test coverage**.
 
-When reviewing a PR, treat it the way the `/skill-creator` skill would: care
-about whether the skill will *trigger* when it should, whether it teaches the
-model *why* not just *what*, and whether bundled resources earn their keep.
+Review `skills/skillz/` and the repo-local `.agents/skills/python-authoring/`
+the way the `/skill-creator` skill would: care about whether a skill will
+*trigger* when it should, whether it teaches the model *why* not just
+*what*, and whether bundled resources earn their keep.
 
 ## What this repo is and isn't
 
-- **Is**: self-contained `SKILL.md` files for everyday plumbing (gh,
-  release, justfile, prek). Each skill wraps a single CLI, with a narrow
-  exception for same-domain alternative tools — drop-in replacements for
-  the same workflow may share one skill (see
-  `.github/instructions/skills.instructions.md` "Scope discipline").
-- **Isn't**: an agent framework, an orchestrator, an MCP server. No required
-  MCPs. Skills compose freely; they do not call each other implicitly.
+- **Is**: one published Agent Skill (`skillz`), a Python library repo
+  (`lib/wedge`, `lib/fromargs`), and a public composite GitHub Action
+  (`actions/wedge`) that packages a skill CLI as a content-addressed `.pyz`
+  for other repositories to consume.
+- **Isn't**: an agent framework, an orchestrator, or an MCP server. No
+  required MCPs.
 
-Keep this scope in mind — flag scope creep (multi-domain orchestration,
-intent classification, fan-out across unrelated tools) inside an individual
-skill. The same-domain detect-and-dispatch pattern is allowed; arbitrary
-dispatch is not. Cross-skill handoffs belong in the README's "Suggested
-flow", not in skill bodies.
+Flag scope creep the same way you would in any library repo: new
+abstractions without a demonstrated need, or coupling between `wedge` and
+`fromargs` beyond the documented dependency (see
+`docs/agents/decisions/wedge-skill-packaging.md` ADR-006).
 
 ## Skill review priorities (in order)
 

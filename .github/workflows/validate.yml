@@ -13,6 +13,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  wedge-action:
+    # Run the public composite action the way a consumer does, including the
+    # consumer example that has its own pyproject.toml and uv.lock.
+    name: wedge action (check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Check wedge locks
+        id: wedge
+        uses: ./actions/wedge
+        with:
+          command: check
+          roots: lib/examples/skills lib/examples/consumer/skills
+
+      - name: Verify action output
+        env:
+          RESULT: ${{ steps.wedge.outputs.result }}
+        run: |
+          set -euo pipefail
+          jq -e '.ok == true and (.checked | index("lib/examples/consumer/skills/hello"))' <<<"$RESULT"
   gate:
     name: gate (just ci)
     runs-on: ubuntu-latest
@@ -39,22 +61,26 @@ jobs:
       - name: Install gate tooling
         # `just ci` is the single source of truth — the same gate runs locally.
         # Pin the tools it shells out to so CI matches a developer's machine:
-        #   apt: shellcheck, bats   npm: markdownlint-cli2
+        #   npm: markdownlint-cli2
         #   pip: yamllint + pyyaml (validators)
         #   uv: pinned by the Install uv step; lib pytest from its uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
+        #   release binary: duckdb CLI (the skillz engine test suite)
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y shellcheck bats
           npm install -g markdownlint-cli2@0.22.1
           pip install --no-cache-dir \
             yamllint==1.35.1 \
             pyyaml==6.0.2
           curl -fsSL https://github.com/google/yamlfmt/releases/download/v0.21.0/yamlfmt_0.21.0_Linux_x86_64.tar.gz \
             | sudo tar -xz -C /usr/local/bin yamlfmt
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
+            -o /tmp/duckdb_cli.zip
+          sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
 
       - name: Run gate (just ci)
+        env:
+          REQUIRE_DUCKDB: "1"
         run: just ci
 
   fromargs-tests:
@@ -77,45 +103,6 @@ jobs:
 
       - name: Run fromargs tests
         run: just test-fromargs ${{ matrix.python }}
-
-  install-script:
-    name: test install.sh (macOS)
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Install shellcheck
-        run: brew install shellcheck
-
-      - name: Lint install.sh
-        run: shellcheck scripts/install.sh
-
-      - name: Lint skillz.sh
-        run: shellcheck skills/file-handler/scripts/skillz.sh
-
-      - name: Install bats
-        run: brew install bats-core
-
-      - name: Run install.sh unit tests
-        run: bats tests/bash/test_install.bats
-
-      - name: Run skillz.sh unit tests
-        run: bats tests/bash/test_skillz.bats
-
-      - name: Run attribution unit tests
-        run: bats tests/bash/test_respond_post_reply.bats
-
-      # Dry-run smoke: exercises arg parsing, selection validation, and
-      # the skill-install dispatch path. Does NOT actually run brew or
-      # gh skill install, so it will not catch regressions in the real
-      # install paths (broken tap, renamed formula, etc.). Promote to a
-      # real install (drop --dry-run) once the repo is published and CI
-      # has authenticated gh available.
-      - name: install.sh dry-run smoke test
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash scripts/install.sh --skip-mcp --dry-run
 
   pr-title:
     name: conventional commits pr title
