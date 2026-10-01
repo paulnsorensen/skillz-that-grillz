@@ -40,7 +40,7 @@ These records explain the design of `wedge`, a packaging tool at `lib/src/wedge/
 - **Consequences:**
   - No asset garbage collection. The rolling `wedge` release keeps every published asset forever; nothing deletes an old key's `.pyz`.
   - The launcher and the build both require Python 3.11 or newer on the host; there is no fallback for older interpreters.
-  - Only a pure-Python dependency closure is supported. `wedge build` rejects any resolved wheel that is not `py3-none-any` or that carries a platform marker (`sys_platform`, `platform_system`, …), with a clear error naming the offending package.
+  - Only a pure-Python dependency closure is supported. `wedge build` rejects any resolved wheel that is not `py3-none-any` or that carries a platform marker (`sys_platform`, `platform_system`, …), with a clear error naming the offending package. The guard reads PEP 425 tags, so a compressed universal tag such as `py2.py3-none-any` (shiv's only wheel) passes; abi must be `none` and platform `any`.
 
 ### ADR-006: Keep Wedge and fromargs as separate distributions  [status: accepted]
 
@@ -76,7 +76,7 @@ These records explain the design of `wedge`, a packaging tool at `lib/src/wedge/
 - **Context:** Some consumers copy a self-contained skill archive and cannot depend on a first-run download. They accept a committed binary in exchange for direct execution.
 - **Decision:** `wedge bundle` writes an executable `scripts/<name>.pyz` without a lock or launcher. It builds each skill, writes through a temporary file, and atomically replaces the target. `wedge bundle --check` rebuilds and compares the uncompressed-content digest, the canonical shebang, and executable permission without changing the committed archive.[^10] A corrupt DEFLATE stream is an invalid-bundle outcome for its skill; checking continues for later skills. Optional `source_paths` selects paths below `source`, preserves their archive paths, and joins the selection to the content key. An absent selection retains the full source tree.[^11]
 - **Alternatives:** Keep the release-asset launcher as the only delivery mode. Rejected for consumers that need a copied skill to run without a network fetch.
-- **Consequences:** Direct consumers commit the larger `.pyz` and run `wedge bundle --check` in CI. The legacy lock, launcher, and release-asset workflow remain available. The `wedge check` restriction on a `.pyz` beside a launcher still applies only to that legacy mode.
+- **Consequences:** Direct consumers commit the larger `.pyz` and run `wedge bundle --check` in CI. The legacy lock, launcher, and release-asset workflow remain available. The `wedge check` restriction on a `.pyz` beside a launcher still applies only to that legacy mode. `wedge publish` reports a skill with `scripts/<name>.pyz` and no lock as `skipped`, because no release asset exists for it; a missing lock without a bundle still fails. The repository's own `skillz` and `wedge` skills are direct bundles.
 
 _Source: PR #103, `lib/src/wedge/`, `lib/tests/wedge/test_cli.py`, and `lib/README.md` · Updated: 2026-09-27 · Supersedes: ADR-002's blanket ban on committed `.pyz` files for opt-in direct bundles_
 
@@ -101,6 +101,11 @@ The teaching workflow reports unsupported layouts or dependencies instead of sil
 It verifies source behavior and a relocated launcher with a hash-checked local archive.
 That local verification does not prove remote asset availability.[^13]
 
+The skill ships the builder as its own direct bundle, `skills/wedge/scripts/wedge.pyz`, built from `lib/src/wedge` with a `wedge` dependency group that pins shiv.[^15]
+A user who installs only the skill can then build without a wedge checkout or tool project; `uv` stays a host requirement because it is a native binary.
+Inside an archive, `sys.executable` is the host interpreter, so the builder runs `python -m shiv` with `PYTHONPATH` set to the directory that holds the imported shiv.
+CI consumers still pin wedge in a tool project (ADR-009).
+
 `/skillz wedge` finds the candidates and writes each behavior contract; `/wedge` builds from it.[^14]
 The split keeps judgment about what to offload in the rubric and keeps packaging facts in one skill.
 `/skillz` never invokes `/wedge`, because skills in this repository do not invoke other skills programmatically.
@@ -111,6 +116,7 @@ _Source: the published teaching skill and the records above · Updated: 2026-10-
 [^12]: `skills/wedge/SKILL.md`
 [^13]: `skills/wedge/references/packaging.md`; `lib/tests/wedge/test_skill_template.py`
 [^14]: `skills/skillz/SKILL.md`; `.github/instructions/skills.instructions.md`
+[^15]: `skills/wedge/wedge.toml`; `pyproject.toml`; `lib/src/wedge/_build.py`; `lib/tests/wedge/test_bundled_cli.py`
 
 [^1]: `lib/src/wedge/_key.py`
 [^2]: `lib/src/wedge/_publish.py`

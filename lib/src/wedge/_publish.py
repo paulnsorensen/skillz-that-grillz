@@ -21,7 +21,7 @@ from wedge._build import BuildResult, build_many
 from wedge._config import ConfigError, WedgeConfig, load_config
 from wedge._digest import content_sha256
 from wedge._fanout import fan_out
-from wedge._lock import LockData, load_lock
+from wedge._lock import LockData, load_lock, lock_path
 
 RELEASE = "wedge"
 
@@ -198,6 +198,11 @@ def _load_publishable(
 
     prepared: list[tuple[Path, WedgeConfig, LockData]] = []
     for skill_dir, config in valid:
+        scripts = skill_dir / "scripts"
+        if not lock_path(skill_dir, config.name).exists() and (scripts / f"{config.name}.pyz").is_file():
+            # ADR-010 direct bundle: no release asset; `wedge bundle --check` verifies it.
+            results[config.name] = {"status": "skipped", "reason": "direct bundle; no release asset"}
+            continue
         try:
             lock_data = load_lock(skill_dir, config.name)
         except (OSError, ValueError, json.JSONDecodeError) as exc:

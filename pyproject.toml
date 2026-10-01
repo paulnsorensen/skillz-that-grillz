@@ -6,6 +6,9 @@ dependencies = ["fromargs>=0.1.0,<0.2"]
 
 [dependency-groups]
 experiments = ["gepa==0.1.4"]
+# skills/wedge bundles the wedge CLI. Keep this pin equal to lib/pyproject.toml:
+# shiv writes its version into every archive it builds.
+wedge = ["shiv==1.0.8"]
 
 [tool.uv]
 package = false

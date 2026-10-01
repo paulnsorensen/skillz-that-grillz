@@ -40,10 +40,12 @@ The optional `experiment` mode needs Codex or a configured trusted harness wrapp
 It needs no source checkout.
 See [the experiment workflow](skills/skillz/references/experiments.md).
 
-`wedge` wraps the `wedge` CLI. It needs a uv project with a committed
-`uv.lock`, uv, and a locked wedge/shiv environment. Dependencies must be
-pure-Python wheels. Installed helpers need Python 3.11+. Release publication
-through gh is optional and needs authorization.
+`wedge` ships the `wedge` CLI as a bundled `scripts/wedge.pyz`, so it needs no
+wedge checkout. The target needs a uv project with a committed `uv.lock`, and
+the host needs uv on `PATH`. Dependencies must be pure-Python wheels.
+Installed helpers need Python 3.11+. Release publication through gh is
+optional and needs authorization. `/skillz wedge` writes the brief that
+`/wedge` builds from; install both skills to use that handoff.
 
 ## Install
 

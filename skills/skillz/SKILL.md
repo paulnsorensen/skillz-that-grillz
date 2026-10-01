@@ -142,6 +142,7 @@ The user runs `/wedge`; this mode writes no code and starts no build, because pa
    Name the prose that stays and the target line that will call the command.
 4. Rank candidates by how often a run repeats the work. With zero candidates, report `No offload candidates` and stop.
 5. Emit the brief below. Close with `Run /wedge with candidate <n> of this brief.`
+   When `/wedge` is not installed, add its install command: `npx skills add paulnsorensen/skillz-that-grillz --skill wedge`.
 
 Done means: every candidate cites a line and has all seven contract fields.
 

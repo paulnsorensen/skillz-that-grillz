@@ -12,6 +12,7 @@ modified uv cache cannot change the contents. The digest names the asset.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 from io import BytesIO
 import shutil
@@ -233,6 +234,12 @@ def _strip_volatile(site_dir: Path) -> None:
 def _shiv(site_dir: Path, entry: str, out_path: Path) -> None:
     env = dict(os.environ)
     env["SOURCE_DATE_EPOCH"] = _SOURCE_DATE_EPOCH
+    # Inside a wedge.pyz, sys.executable is the host interpreter, which cannot
+    # import the archive's shiv. Point the child at the directory that holds it.
+    shiv_spec = importlib.util.find_spec("shiv")
+    if shiv_spec is not None and shiv_spec.origin is not None:
+        shiv_root = str(Path(shiv_spec.origin).parent.parent)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [shiv_root, env.get("PYTHONPATH")]))
     _ = subprocess.run(
         [
             sys.executable,

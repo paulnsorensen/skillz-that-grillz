@@ -47,6 +47,10 @@ In this repository, do not change the `lib/fromargs` closure to make packaging p
 Resolve this skill's resources from the loaded `SKILL.md` location, not the current working directory.
 Keep the installed teaching skill separate from the target skill you edit.
 
+Run the builder from `scripts/wedge.pyz` in this skill with `python3`.
+It bundles wedge and shiv, so no wedge checkout or tool project is needed.
+It still needs `uv` on `PATH`, and `publish` also needs `gh`.
+
 ## Implement the smallest command
 
 Read [fromargs](references/fromargs.md) before writing handlers.
@@ -54,7 +58,7 @@ Read [fromargs](references/fromargs.md) before writing handlers.
 Use [the Python template](assets/records.py) for a small typed, read-only CLI.
 Use [the manifest template](assets/wedge.toml) only after verifying packaging support.
 Copy them into the target skill, then replace the example names, repository, and behavior.
-Do not create a manifest for this teaching skill itself.
+This skill's own `wedge.toml` builds `scripts/wedge.pyz`; leave it out of the target's changes.
 
 1. Keep the helper noninteractive with explicit inputs and concise generated help.
 2. Validate domain constraints, not only argument types.

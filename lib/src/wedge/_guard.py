@@ -1,7 +1,8 @@
 """Guard checks for the resolved third-party dependency closure.
 
 ``wedge`` refuses to build a ``.pyz`` whose closure could differ by platform:
-a wheel that is not ``py3-none-any``, or a dependency edge whose marker tests
+a wheel whose tags are not ``py3-none-any`` (a compressed ``py2.py3`` python
+tag counts), or a dependency edge whose marker tests
 the platform (``sys_platform``, ``platform_system``, and similar). A pure,
 marker-free closure is what makes the same key give a byte-identical build
 on any machine.
@@ -42,5 +43,16 @@ def guard_closure(entries: list[ClosureEntry]) -> None:
             raise GuardError(
                 f"{entry.name}: platform marker {entry.marker!r} is not allowed in a wedge closure"
             )
-        if not entry.wheel.endswith("-py3-none-any.whl"):
+        if not _is_pure_py3(entry.wheel):
             raise GuardError(f"{entry.name}: wheel {entry.wheel!r} is not py3-none-any")
+
+
+def _is_pure_py3(wheel: str) -> bool:
+    # PEP 425: the last three dash fields are the python, abi, and platform
+    # tags, and a dotted field is a compressed set (``py2.py3`` covers ``py3``).
+    stem = wheel.removesuffix(".whl")
+    parts = stem.split("-")
+    if stem == wheel or len(parts) < 5:
+        return False
+    python, abi, platform = parts[-3:]
+    return "py3" in python.split(".") and abi == "none" and platform == "any"
