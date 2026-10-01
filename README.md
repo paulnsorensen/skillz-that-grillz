@@ -1,10 +1,9 @@
-# 🧀 skillz-that-grillz 🧀
-
-![Grilled cheese ASCII art with the skillz-that-grillz title](assets/skillz-that-grillz-logo.png)
+# ![Grilled cheese ASCII art with the skillz-that-grillz title](assets/skillz-that-grillz-logo.png)
 
 [![CI](https://img.shields.io/github/actions/workflow/status/paulnsorensen/skillz-that-grillz/validate.yml?branch=main&label=CI&style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/github/license/paulnsorensen/skillz-that-grillz?style=flat-square)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/paulnsorensen/skillz-that-grillz?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/releases/latest)
+[![skills.sh](https://skills.sh/b/paulnsorensen/skillz-that-grillz)](https://skills.sh/paulnsorensen/skillz-that-grillz)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow?style=flat-square)](https://www.conventionalcommits.org)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/pulls)
 
@@ -46,9 +45,17 @@ See [the experiment workflow](skills/skillz/references/experiments.md).
 pure-Python wheels. Installed helpers need Python 3.11+. Release publication
 through gh is optional and needs authorization.
 
+## Install
+
+Install both skills with the [skills.sh](https://skills.sh) installer:
+
 ```sh
-npx skills add paulnsorensen/skillz-that-grillz --skill skillz --skill wedge
+npx skills@latest add paulnsorensen/skillz-that-grillz --skill skillz --skill wedge
 ```
+
+Add `--global` to install user-wide, so the skills are available in every repo.
+Without it, the skills install into the current repo under `.agents/skills/`.
+To install one skill, pass only its `--skill` flag.
 
 ## Where the other skills went
 
