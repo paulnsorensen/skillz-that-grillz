@@ -63,49 +63,6 @@ No claim uses those partial retrievals.
 Raw files contain concise capture notes, not complete copyrighted page copies.
 The prior local research report provides leads only; this report does not inherit its claims.
 
-The requested directory is `docs/research/skill-cli-packaging/`.
-The layout helper rejects the three-word slug.
-The valid slug `agent-skill-cli-packaging` resolves outside the writable roots.
-This report follows the parent's explicit repository path and records that deviation.
-The resolved durable report path is
-`/home/paul/.local/share/cheese/paulnsorensen-skillz-that-grillz/research/agent-skill-cli-packaging/agent-skill-cli-packaging.md`.
-
-## Agent resolution
-
-```yaml
-agent_resolution:
-  request:
-    work: Inspect primary guidance for agent skill CLI packaging
-    preferred_types: [researcher]
-    required_tools: [native-web, tilth]
-    permissions: write
-    isolation: fresh-context
-    minimum_power: default
-    effort: medium
-  attempts:
-    - type: researcher
-      model: gpt-6-sol
-      power: default
-      result: rejected
-      reason: Parent reports that the configured model is unsupported.
-    - type: default
-      model: unknown
-      power: unknown
-      result: accepted
-      reason: Final fallback has required tools and scoped artifact write access.
-  resolved:
-    type: default
-    model: unknown
-    power: unknown
-    effort: medium
-    topology: parallel
-  fallback_reason: Named researcher cannot start with its configured model.
-  degraded: true
-  permission_enforcement: tool-restricted
-```
-
-Artifact scope is limited by the task; filesystem permissions enforce the outer workspace boundary.
-
 ## Next step
 
 Return this evidence to the parent for integration.

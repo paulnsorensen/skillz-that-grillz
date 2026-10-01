@@ -85,27 +85,26 @@ _Source: PR #103, `lib/src/wedge/`, `lib/tests/wedge/test_cli.py`, and `lib/READ
 
 ## Teaching the packaging workflow
 
-The `/wedge` skill teaches the existing packaging workflow without expanding the runtime contract.[^12]
+The `/wedge` skill teaches the packaging workflow without expanding the runtime contract.[^12]
 It moves repeatable computation into a fromargs command and leaves interpretation in skill instructions.
 Its bundled references and templates remain available after skill installation.
 
-Wedge requires a build checkout containing fromargs source, its lockfile, and project metadata.[^13]
-A global installation does not remove this layout requirement.
-Wedge exports only the fromargs dependency closure; arbitrary skill dependencies do not enter the archive automatically.[^14]
+The skill states no runtime facts of its own.
+The records above own them:
+
+- Project layout, `include`, and the action: ADR-007 and ADR-009.
+- Pure-Python wheels and Python 3.11 or later: ADR-005.
+- Lock and launcher mode, and the opt-in direct mode: ADR-004 and ADR-010.
+- Output limits and the reserved `--full` flag: the fromargs record, `fromargs-cli-library.md`.
+
 The teaching workflow reports unsupported layouts or dependencies instead of silently copying libraries or changing shared dependencies.
+It verifies source behavior and a relocated launcher with a hash-checked local archive.
+That local verification does not prove remote asset availability.[^13]
 
-Fromargs limits only top-level non-string sequences, not nested rows inside a mapping.[^15]
-Output truncation does not bound input size or computation.
-The teaching workflow verifies source behavior and a relocated launcher with a hash-checked local archive.
-That local verification does not prove remote asset availability.[^16]
+_Source: the published teaching skill and the records above · Updated: 2026-09-28_
 
-_Source: the wedge implementation, fromargs output code, and the published teaching skill · Updated: 2026-09-28_
-
-[^12]: skills/wedge/SKILL.md:13-15; skills/wedge/SKILL.md:47-68
-[^13]: lib/src/wedge/_key.py:20-30; lib/src/wedge/_resolve.py:23-39
-[^14]: lib/src/wedge/_build.py:43-61; lib/src/wedge/_resolve.py:23-39
-[^15]: lib/fromargs/src/fromargs/_output.py:25-36
-[^16]: skills/wedge/references/packaging.md:69-94; lib/tests/wedge/test_skill_template.py:62-86
+[^12]: `skills/wedge/SKILL.md`
+[^13]: `skills/wedge/references/packaging.md`; `lib/tests/wedge/test_skill_template.py`
 
 [^1]: `lib/src/wedge/_key.py`
 [^2]: `lib/src/wedge/_publish.py`

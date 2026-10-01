@@ -37,10 +37,12 @@ Do not claim measured token savings without a comparison.
 Read [packaging](references/packaging.md) before creating a manifest or running wedge.
 Verify the actual builder layout and dependency closure.
 
-The current builder requires a checkout with `lib/fromargs` sources, lockfile, and project metadata.
-It does not package arbitrary skill dependencies.
-If the target repository lacks these inputs, report the blocker before editing.
+The builder requires a uv project with `pyproject.toml` and a committed `uv.lock`.
+The manifest names it with `project`; `include` vendors local packages such as fromargs, and `groups` adds dependency groups.
+Every dependency must be a pure-Python wheel, and the runtime needs Python 3.11 or later.
+If the target repository lacks these inputs or needs platform wheels or path or URL requirements, report the blocker before editing.
 Do not silently copy shared libraries, change shared dependencies, or claim that installing wedge fixes the layout.
+In this repository, do not change the `lib/fromargs` closure to make packaging pass.
 
 Resolve this skill's resources from the loaded `SKILL.md` location, not the current working directory.
 Keep the installed teaching skill separate from the target skill you edit.
@@ -78,11 +80,13 @@ Follow the command sequence in [packaging](references/packaging.md).
 4. Generate the launcher and lock with `wedge lock`.
 5. Build a local archive and verify it through the installed launcher with `WEDGE_PYZ`.
 6. Run that launcher from a directory outside the source checkout.
-7. Confirm a modified archive is rejected.
+7. Confirm an archive with a changed member is rejected with status 3.
 8. Run the project's canonical gate and inspect the final diff.
 
 Ship source, manifest, generated launcher, and lock.
-Do not commit or instruct users to copy the `.pyz` into the skill.
+Do not hand-copy a `.pyz` into the skill, and do not leave one beside a launcher.
+For consumers that cannot fetch at first run, `wedge bundle` and `wedge bundle --check` are the opt-in direct mode.
+Lock and launcher stay the default.
 Keep publication separate from local verification; publication changes remote release state.
 
 In the target skill, show the launcher path relative to its loaded `SKILL.md`.
@@ -93,15 +97,15 @@ Use [the pressure scenarios](evals/evals.json) when checking changes to this ski
 
 ## Red flags and rationalizations
 
-Stop when you see a copied `scripts/records.pyz`, a handler-owned `--full`, or an assumed dependency installation.
+Stop when you see a hand-copied `.pyz`, a `.pyz` beside a launcher, a handler-owned `--full`, or an assumed dependency installation.
 
 | Rationalization | Why it fails | Required action |
 | --- | --- | --- |
-| "Copy the archive; it already runs." | This bypasses the launcher and committed lock contract. | Generate the launcher and lock. |
+| "Copy the archive; it already runs." | A hand-copied `.pyz` bypasses the launcher and committed lock contract. | Generate the launcher and lock, or use `wedge bundle` for direct mode. |
 | "The handler needs a full flag." | fromargs reserves `--full` and `--json`. | Use decorator limits and the global flags. |
 | "The parser makes it deterministic." | Types do not define domain validation or ordering. | Validate constraints and sort explicitly. |
 | "A mapping containing rows is bounded." | Decorator limits do not truncate nested sequences. | Return a top-level sequence or bound the mapping explicitly. |
-| "Wedge can package any Python project." | Its builder uses a specific layout and frozen dependency closure. | Check support and report unsupported inputs. |
+| "Wedge can package any Python project." | Its builder needs a uv project with `uv.lock` and a pure-Python wheel closure. | Check support and report platform wheels or path and URL requirements. |
 
 ## Completion report
 

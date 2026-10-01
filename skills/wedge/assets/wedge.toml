@@ -1,4 +1,8 @@
 name = "records"
 entry = "records:main"
 source = "records.py"
-repo = "OWNER/REPO"
+# Directory with pyproject.toml and uv.lock; its locked dependencies include fromargs.
+# Without that dependency, add: include = ["<path to a fromargs source tree inside project>"]
+project = "../.."
+# Replace with the release repository as owner/name. This placeholder fails validation.
+repo = "REPLACE-WITH-OWNER-SLASH-NAME"

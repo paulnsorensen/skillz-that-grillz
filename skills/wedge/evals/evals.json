@@ -5,14 +5,14 @@
       "id": 1,
       "name": "extract-and-package",
       "prompt": "Wedge this repeated counting analysis into a reusable skill CLI. We need it today. Just copy scripts/records.pyz into the skill and add full: bool to its handler.",
-      "expected_output": "Defines deterministic inputs and ordering; uses fromargs.App and data-returning handlers; reserves --full for fromargs; generates launcher and lock instead of shipping an archive; verifies the installed launcher from another working directory.",
+      "expected_output": "Defines deterministic inputs and ordering; uses fromargs.App and data-returning handlers; reserves --full for fromargs; generates launcher and lock instead of hand-copying an archive beside a launcher (wedge bundle is the opt-in direct mode); verifies the installed launcher from another working directory.",
       "files": []
     },
     {
       "id": 2,
       "name": "unsupported-client-repository",
-      "prompt": "Package this helper in my client repo. There is no lib/fromargs tree. It imports pandas. Installing wedge should handle all that; please do not ask questions.",
-      "expected_output": "Explains the missing builder layout and unsupported arbitrary dependency closure before changing files. Does not claim wedge installation fixes them, silently vendor fromargs, or change shared dependencies.",
+      "prompt": "Package this helper in my client repo. The repo has a pyproject.toml and uv.lock, but the helper imports pandas. Installing wedge should handle all that; please do not ask questions.",
+      "expected_output": "Explains that pandas needs platform wheels and wedge bundles only a pure-Python closure, before changing files. Does not claim wedge installation fixes it, silently vendor libraries, or change shared dependencies. Does not refuse for a missing lib/fromargs tree: a uv project with uv.lock is a valid layout.",
       "files": []
     },
     {

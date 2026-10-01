@@ -57,8 +57,9 @@ Spend your review budget on the things linters cannot see.
 
 ## Scope discipline (this repo specifically)
 
-This repo carries the published `skillz` skill under `skills/` and repo-local
-skills under `.agents/skills/`. Each wraps exactly one concern:
+This repo carries the published skills under `skills/` (see the README
+`## Skills` table) and repo-local skills under `.agents/skills/`. Each wraps
+exactly one concern:
 
 - No skill *requires* an MCP server; it must degrade cleanly without one.
 - Skills do not invoke other skills programmatically.

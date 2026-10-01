@@ -10,7 +10,7 @@ on:
     paths:
       - "lib/**"
       - "actions/wedge/**"
-      - "skills/**/wedge.toml"
+      - "skills/*/wedge.toml"
       - "skills/**/*.wedge.json"
   workflow_dispatch:
 

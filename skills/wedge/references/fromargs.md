@@ -69,12 +69,14 @@ Write correct invocations; treat repair notes as diagnostics, not a workflow dep
 
 Input → Output: `gouda\nbrie\nedam\nbrie\n` → counts sorted by frequency and value.
 
-With the template copied into a supported target skill:
+With the template copied into a target skill, run it in the target's uv project.
+Set `TARGET_PROJECT` to the project that has fromargs as a locked dependency.
+In the skillz-that-grillz repository only, use `$REPO_ROOT/lib`.
 
 ```bash
-uv run --locked --project "$REPO_ROOT/lib" python "$SKILL_DIR/records.py" counts "$INPUT"
-uv run --locked --project "$REPO_ROOT/lib" python "$SKILL_DIR/records.py" counts "$INPUT" --full
-uv run --locked --project "$REPO_ROOT/lib" python "$SKILL_DIR/records.py" counts "$INPUT" --minimum 0
+uv run --locked --project "$TARGET_PROJECT" python "$SKILL_DIR/records.py" counts "$INPUT"
+uv run --locked --project "$TARGET_PROJECT" python "$SKILL_DIR/records.py" counts "$INPUT" --full
+uv run --locked --project "$TARGET_PROJECT" python "$SKILL_DIR/records.py" counts "$INPUT" --minimum 0
 ```
 
 The first call returns brie and edam, plus a truncation note.

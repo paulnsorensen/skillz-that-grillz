@@ -16,7 +16,7 @@ def counts(path: Path, *, minimum: int = 1) -> list[dict[str, str | int]]:
     if minimum < 1:
         raise fromargs.CliError("--minimum must be at least 1")
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = path.read_text(encoding="utf-8-sig").split("\n")
     except (OSError, UnicodeError) as exc:
         raise fromargs.contract_error(exc, context=f"cannot read {path}") from exc
     totals = Counter(value for line in lines if (value := line.strip()))
