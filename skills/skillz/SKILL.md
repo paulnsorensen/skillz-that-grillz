@@ -1,15 +1,16 @@
 ---
 name: skillz
 description: >
-  Add, improve, audit, self-update, or experiment on a skill or sub-agent definition so it
+  Add, improve, audit, self-update, wedge, or experiment on a skill or sub-agent definition so it
   runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts.
-  Use for /skillz <add|improve|audit|self-update|experiment>, "improve this skill",
+  Use for /skillz <add|improve|audit|self-update|wedge|experiment>, "improve this skill",
   "optimize this skill", "tighten this skill",
-  "audit this agent", "new skill for X", "skill not triggering", or "fix
-  trigger rate". Do NOT use for CLAUDE.md or system-prompt edits, or for
-  code changes that a cheese pipeline skill owns.
+  "audit this agent", "new skill for X", "skill not triggering", "fix
+  trigger rate", or "what in this skill should be a CLI". Do NOT use for
+  CLAUDE.md or system-prompt edits, or for code changes that a cheese
+  pipeline skill owns.
 disable-model-invocation: true
-argument-hint: "<add|improve|audit|self-update|experiment> [<path>|<name>]"
+argument-hint: "<add|improve|audit|self-update|wedge|experiment> [<path>|<name>]"
 license: MIT
 metadata:
   author: paulnsorensen
@@ -18,13 +19,13 @@ metadata:
 
 # skillz
 
-Add, improve, audit, and self-update skill and agent definitions.
+Add, improve, audit, wedge, and self-update skill and agent definitions.
 The product is a **predictable** definition: the same process on every run and on every harness.
 Every lens asks one question of each line: *does this make the run more predictable, or is it sediment?*
 
 The mode is the first word after the skill name.
 `optimize` and `tighten` are aliases for `improve`.
-Require a target only for `add`, `improve`, and `audit`.
+Require a target only for `add`, `improve`, `audit`, and `wedge`.
 `self-update` has no target.
 Ask for the mode when it is missing.
 Ask for a target when the mode requires one.
@@ -37,6 +38,7 @@ Ask for a target when the mode requires one.
 | `improve <path>` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
 | `audit <path>` | a `SKILL.md` or agent file | yes | none | calibrated report |
 | `self-update` | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
+| `wedge <path>` | a `SKILL.md` or agent file | no | none | a `/wedge` handoff brief per offload candidate |
 | `experiment` | an inspection or audit manifest, or public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
 For `experiment`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
@@ -70,6 +72,7 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
+| **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; each bundled script has an invocation line and an output contract. Fix through `wedge`. |
 | **Tool scoping** | Read-only / write-scoped / focused; use host enforcement when available → «prose-only constraint» | Claude skills use `disallowed-tools` to remove tools for the current turn. Their `allowed-tools` grants permission without prompts; it is not a deny list. Claude agents use `disallowedTools`. Report actual enforcement per mode and mark prose-only limits as degraded. Do not disable writes for `improve`. |
 | **Context & fork** | Fork when output > ~500 lines or only a digest is needed → «monolithic output» | Fork matches size; a wrap-up signal exists; `model:` + `effort:` set on model-invoked skills, absent on user-only skills. |
 | **Prompt quality** | Positive framing, why-over-what, one strong example, "What this never does" → «negation-heavy», «rules without reasons» | Judgment tasks use a scaffold, not always/never. `references/decision-frameworks.md`. |
@@ -82,7 +85,7 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 Tag each finding with severity × confidence.
 The kernel is `references/calibration.md`; the defaults:
 
-- **Severity by lens** — Predictability, Invocation, Portability, Tool scoping, Calibration → `high`; Information hierarchy, Context & fork, Pruning → `high`/`medium`; Leading words, Output format, Usage → `medium`.
+- **Severity by lens** — Predictability, Invocation, Portability, Tool scoping, Calibration → `high`; Information hierarchy, Context & fork, Pruning → `high`/`medium`; Leading words, Deterministic offload, Output format, Usage → `medium`.
 - **Confidence** — a cited line plus a concrete failure, a reference that does it right, or analytics data → `<certain>`; a checkable but unverified observation → `<speculative>`; a misread → `<don't know>`, dropped.
 - **Re-derive** — re-read the target and re-derive each `<speculative>` finding once without the first pass. Drop it when it does not reproduce.
 - Order by severity, then `<certain>` first.
@@ -106,6 +109,7 @@ Done means: the file exists, the repo index names it (or every repo-local host p
 
 1. Run the shared protocol without analytics.
 2. Apply every `<certain>` finding of severity medium or higher that does not change protocol semantics.
+   Record each Deterministic offload finding as a residual for `/skillz wedge`; a new CLI is a redesign.
 3. Put every `<speculative>` finding and every protocol-semantic change to the user as one approval question, with your recommendation for each.
    Apply the approved ones and record the declined ones.
    A delegated run returns these findings to its parent, and the parent asks.
@@ -125,6 +129,31 @@ Done means: every `<certain>` finding above `low` is fixed or recorded as an exp
 4. Close with `Run /skillz improve <path> to apply.`
 
 Done means: the report lists every surfaced finding with a cited line, and the below-bar count is stated.
+
+## Mode: wedge
+
+Find the work in the target that belongs in a bundled CLI, then write the brief that `/wedge` builds from.
+The user runs `/wedge`; this mode writes no code and starts no build, because packaging is `/wedge`'s contract.
+
+1. Read the target and its `scripts/`. Score the Deterministic offload lens only.
+2. List each candidate with its line: a fixed parse, validation, count, filter, sort, or projection that every run repeats, or a bundled script without an output contract.
+   Classification, recommendations, and user decisions stay in prose; they are never candidates.
+3. Write each candidate's behavior contract: command name, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects.
+   Name the prose that stays and the target line that will call the command.
+4. Rank candidates by how often a run repeats the work. With zero candidates, report `No offload candidates` and stop.
+5. Emit the brief below. Close with `Run /wedge with candidate <n> of this brief.`
+
+Done means: every candidate cites a line and has all seven contract fields.
+
+```markdown
+## skillz wedge: <name>
+
+| # | Step (line) | Transformation | Command | Stays in prose |
+|---|---|---|---|---|
+
+### Candidate <n>: <command>
+**Inputs** · **Output** · **Ordering** · **Empty** · **Errors** · **Side effects** · **Caller line**
+```
 
 ## Mode: self-update
 
@@ -161,7 +190,7 @@ N findings were `<don't know>` or trivial (not shown).
 
 ## What this skill never does
 
-- `audit` never writes; `improve` never redesigns; `add` never registers a skill whose description fails the Invocation lens.
+- `audit` and `wedge` never write; `improve` never redesigns; `add` never registers a skill whose description fails the Invocation lens.
 - It never surfaces `<don't know>`.
 - It never exempts itself; a finding against `skillz` is filed like any other.
 

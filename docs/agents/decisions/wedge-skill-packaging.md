@@ -101,10 +101,16 @@ The teaching workflow reports unsupported layouts or dependencies instead of sil
 It verifies source behavior and a relocated launcher with a hash-checked local archive.
 That local verification does not prove remote asset availability.[^13]
 
-_Source: the published teaching skill and the records above · Updated: 2026-09-28_
+`/skillz wedge` finds the candidates and writes each behavior contract; `/wedge` builds from it.[^14]
+The split keeps judgment about what to offload in the rubric and keeps packaging facts in one skill.
+`/skillz` never invokes `/wedge`, because skills in this repository do not invoke other skills programmatically.
+The `improve` mode records offload findings as residuals, because a new CLI is a redesign.
+
+_Source: the published teaching skill and the records above · Updated: 2026-10-01_
 
 [^12]: `skills/wedge/SKILL.md`
 [^13]: `skills/wedge/references/packaging.md`; `lib/tests/wedge/test_skill_template.py`
+[^14]: `skills/skillz/SKILL.md`; `.github/instructions/skills.instructions.md`
 
 [^1]: `lib/src/wedge/_key.py`
 [^2]: `lib/src/wedge/_publish.py`

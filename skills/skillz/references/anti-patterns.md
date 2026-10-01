@@ -20,8 +20,10 @@ skill-authoring-consensus failure modes (Anthropic progressive disclosure, Pococ
 3. **Deep reference chains** — SKILL.md → ref-a.md → ref-b.md. Max one level deep.
 4. **Monolithic SKILL.md** — body over the ~5k-token Level-2 budget (bytes/4;
    the 500-line rule is a backstop, not the budget). Split into SKILL.md + references.
-5. **Inline scripts** — Step-by-step instructions that are really a script.
-   Extract to `scripts/` — executes without loading into context.
+5. **Inline scripts** — Step-by-step instructions that are really a script, or a
+   step that makes the model regenerate the same parser or counter on every run.
+   Extract to `scripts/` — executes without loading into context. `/skillz wedge`
+   writes the behavior contract; `/wedge` packages it as a bundled CLI.
 
 ## Instructions
 
