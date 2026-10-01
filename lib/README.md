@@ -31,3 +31,16 @@ branch through the compare API, so a shallow checkout still passes.
 
 For local development, run `uv run --project lib wedge --help`. Building
 requires `uv`; publishing also requires an authenticated `gh` CLI.
+
+## Optional skill experiments
+
+The installed skill ships `scripts/skillz-experiment.pyz` with pinned GEPA 0.1.4.
+Run `python3 /path/to/skillz/scripts/skillz-experiment.pyz --help` from any directory.
+For source development, use `uv run --project lib --extra experiments skillz-experiment --help`.
+Source self-tests require an explicit `--target skills/skillz`.
+Regenerate the committed archive with `uv run --project lib wedge bundle skills/skillz`.
+The virtual root manifest selects runtime dependencies without bundling wedge tooling.
+`just build` verifies archive freshness.
+The commands are `dataset`, `baseline`, `search`, `evaluate`, `export`, and `self-test`.
+They do not change wedge or fromargs behavior.
+See [the experiment contract](../skills/skillz/references/experiments.md) before making live calls.

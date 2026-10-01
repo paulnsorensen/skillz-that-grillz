@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "public-0",
+      "family": "missing-description",
+      "split": "train",
+      "request": "Audit fixture.md. Run the bundled inspect_skill.py helper. Return an object with facts equal to the helper JSON and findings as sorted codes. Use missing-name if name is absent, missing-description if description is absent, placeholder-description if description is TODO, otherwise no findings. Do not rewrite the fixture.",
+      "files": {
+        "fixture.md": "---\nname: sample\n---\n# Example\n"
+      },
+      "expected": {
+        "facts": {
+          "schema_version": 1,
+          "frontmatter_keys": [
+            "name"
+          ],
+          "body_line_count": 1,
+          "local_link_targets": []
+        },
+        "findings": [
+          "missing-description"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "public-1",
+      "family": "placeholder",
+      "split": "validation",
+      "request": "Audit fixture.md. Run the bundled inspect_skill.py helper. Return an object with facts equal to the helper JSON and findings as sorted codes. Use missing-name if name is absent, missing-description if description is absent, placeholder-description if description is TODO, otherwise no findings. Do not rewrite the fixture.",
+      "files": {
+        "fixture.md": "---\nname: sample\ndescription: TODO\n---\n# Example\n"
+      },
+      "expected": {
+        "facts": {
+          "schema_version": 1,
+          "frontmatter_keys": [
+            "description",
+            "name"
+          ],
+          "body_line_count": 1,
+          "local_link_targets": []
+        },
+        "findings": [
+          "placeholder-description"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "public-2",
+      "family": "missing-name",
+      "split": "holdout",
+      "request": "Audit fixture.md. Run the bundled inspect_skill.py helper. Return an object with facts equal to the helper JSON and findings as sorted codes. Use missing-name if name is absent, missing-description if description is absent, placeholder-description if description is TODO, otherwise no findings. Do not rewrite the fixture.",
+      "files": {
+        "fixture.md": "---\ndescription: Inspect a fixture\n---\n# Example\n\nUse this fixture.\n"
+      },
+      "expected": {
+        "facts": {
+          "schema_version": 1,
+          "frontmatter_keys": [
+            "description"
+          ],
+          "body_line_count": 3,
+          "local_link_targets": []
+        },
+        "findings": [
+          "missing-name"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "public-3",
+      "family": "complete",
+      "split": "holdout",
+      "request": "Audit fixture.md. Run the bundled inspect_skill.py helper. Return an object with facts equal to the helper JSON and findings as sorted codes. Use missing-name if name is absent, missing-description if description is absent, placeholder-description if description is TODO, otherwise no findings. Do not rewrite the fixture.",
+      "files": {
+        "fixture.md": "---\nname: complete\ndescription: Inspect a fixture\n---\n# Complete\n[Guide](references/guide.md)\n"
+      },
+      "expected": {
+        "facts": {
+          "schema_version": 1,
+          "frontmatter_keys": [
+            "description",
+            "name"
+          ],
+          "body_line_count": 2,
+          "local_link_targets": [
+            "references/guide.md"
+          ]
+        },
+        "findings": []
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    }
+  ]
+}

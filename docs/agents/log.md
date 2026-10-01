@@ -58,3 +58,26 @@
 - 2026-09-28 · retire-last-skills · removed · README.md, AGENTS.md, CONTRIBUTING.md, .github/copilot-instructions.md, .github/instructions/skills.instructions.md, .github/scripts/validate_skills.py, .github/workflows/validate.yml, .github/workflows/release.yml, justfile, .gitignore · Removed skills/gh, skills/file-handler, and skills/github-copilot-personal-instructions — the repo publishes no Agent Skills under skills/; deleted scripts/install.sh and its tests (no skills left to install); validate_skills.py now tolerates an absent skills/ and validates .agents/skills/ instead
 - 2026-09-28 · merge-main-skillz · merged · README.md, AGENTS.md, CONTRIBUTING.md, .github/copilot-instructions.md, .github/instructions/skills.instructions.md, .github/workflows/release.yml · Kept skills/skillz from main (#102) as the one published skill; restored the README Skills table and the gh skill publish release steps
 
+
+
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · research/gepa-session-optimization.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · ideas/session-driven-skill-optimization.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/skillz-session-analytics-pr-105.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-gskill.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-optimize-anything.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/itsmostafa-gskill.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-faq.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-adapters.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · new-page · sources/gepa-releases.md · GEPA/session-analytics research ingest; exact identity and natural retrieval probes pass.
+- 2026-09-28 · f7dd2d362d5fa3c5 · conflict-flagged · research/gepa-session-optimization.md · Resolved gskill identity, Pareto terminology, and prototype holdout claims with primary evidence; prior repositories remain unchanged.
+
+
+
+- 2026-09-28 · 472a0c67d38bf2c8 · merged · research/gepa-session-optimization.md; ideas/session-driven-skill-optimization.md · Recorded approved bounded implementation, normalized case boundary, immutable evaluation, and private export. Six frozen retrieval probes passed after one lead repair.
+
+- 2026-09-28 · 472a0c67d38bf2c8 · new-page · sources/codex-skill-discovery-isolation.md · Preserved pinned OpenAI skill-discovery evidence that ignore-user-config did not exclude host skill roots.
+
+
+
+- 2026-09-28 · skillz-live-20260928 · merged · research/gepa-session-optimization.md; sources/codex-skill-discovery-isolation.md · Recorded authenticated self-test: 19 charged invocations, 16/16 tasks and 6/6 holdout runs passed; both search modes retained the seed. Preserved Codex exec argument and independent-validation corrections. All six frozen retrieval probes passed.
+

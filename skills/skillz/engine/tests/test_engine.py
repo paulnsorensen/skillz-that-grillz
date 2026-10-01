@@ -21,11 +21,11 @@ def _bash_db_path(env, cwd):
     return result.stdout.strip()
 
 
-def _python_db_path(env, cwd):
+def _python_db_path(env, cwd, engine=ENGINE):
     result = subprocess.run(
-        ["python3", "-c",
+        ["python3", "-B", "-c",
          "import sys; sys.path.insert(0, sys.argv[1]); import ingest; "
-         "print(ingest.DB_PATH)", str(ENGINE / "scripts")],
+         "print(ingest.DB_PATH)", str(engine / "scripts")],
         env=env, cwd=cwd, capture_output=True, text=True, check=True,
     )
     return result.stdout.strip()
@@ -43,6 +43,18 @@ class DbPathParityTest(unittest.TestCase):
         "xdg_cache_tilde": lambda root: {"XDG_CACHE_HOME": "~/c"},
         "unset": lambda root: {},
     }
+
+    def test_python_path_does_not_create_package_bytecode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            engine = shutil.copytree(ENGINE, root / "engine",
+                                     ignore=shutil.ignore_patterns("__pycache__"))
+            env = os.environ.copy()
+            env.pop("PYTHONDONTWRITEBYTECODE", None)
+            env.pop("PYTHONPYCACHEPREFIX", None)
+            env["SESSIONS_DB"] = str(root / "sessions.duckdb")
+            self.assertEqual(_python_db_path(env, root, engine), env["SESSIONS_DB"])
+            self.assertEqual(list(engine.rglob("__pycache__")), [])
 
     def test_paths_match_for_every_case(self):
         for name, make_overrides in self.CASES.items():
