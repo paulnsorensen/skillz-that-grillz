@@ -10,7 +10,7 @@
 
 > _Skill-authoring and skill-packaging toolbelt: skillz, wedge, fromargs, and the wedge GitHub Action._
 
-This repository publishes one Agent Skill, `skillz`. It also hosts two Python
+This repository publishes two Agent Skills, `skillz` and `wedge`. It also hosts two Python
 libraries under `lib/` — `wedge` (packages a skill CLI as a content-addressed
 `.pyz`) and `fromargs` (the CLI library wedge builds on) — plus the public
 [`actions/wedge`](actions/wedge/README.md) GitHub Action that runs `wedge` in
@@ -26,6 +26,7 @@ creation — single or stacked).
 | Skill path | Command | Purpose |
 | --- | --- | --- |
 | `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, or self-update a skill or sub-agent definition so it runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. Scores the target against a twelve-lens rubric (predictability, invocation, portability, information hierarchy, tool scoping, calibration, …), tags every finding with severity × confidence, and ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `self-update` add a best-effort Usage lens through a bundled analytics engine. `experiment` uses bundled GEPA and isolated harness execution to compare candidates on paired holdouts and export a private patch. |
+| `skills/wedge/SKILL.md` | `/wedge` | Extract repeatable deterministic work into a fromargs CLI and package it with wedge. Covers output contracts, builder limits, and installed-launcher verification. |
 
 `skillz` uses a bundled, standard-library Python inspection helper during audits.
 It needs no MCP server or separate `session-analytics` skill. Its Usage
@@ -40,8 +41,13 @@ The optional `experiment` mode needs Codex or a configured trusted harness wrapp
 It needs no source checkout.
 See [the experiment workflow](skills/skillz/references/experiments.md).
 
+`wedge` wraps the `wedge` CLI. It needs a uv project with a committed
+`uv.lock`, uv, and a locked wedge/shiv environment. Dependencies must be
+pure-Python wheels. Installed helpers need Python 3.11+. Release publication
+through gh is optional and needs authorization.
+
 ```sh
-npx skills add paulnsorensen/skillz-that-grillz --skill skillz
+npx skills add paulnsorensen/skillz-that-grillz --skill skillz --skill wedge
 ```
 
 ## Where the other skills went

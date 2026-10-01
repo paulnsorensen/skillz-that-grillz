@@ -81,3 +81,5 @@
 
 - 2026-09-28 · skillz-live-20260928 · merged · research/gepa-session-optimization.md; sources/codex-skill-discovery-isolation.md · Recorded authenticated self-test: 19 charged invocations, 16/16 tasks and 6/6 holdout runs passed; both search modes retained the seed. Preserved Codex exec argument and independent-validation corrections. All six frozen retrieval probes passed.
 
+- 2026-09-28 · fec4e1e9156e1f05 · merged · decisions/wedge-skill-packaging.md · Add the /wedge teaching workflow, required build layout, fixed dependency closure, output-limit boundary, and relocated-launcher verification. All three frozen retrieval probes return the page at rank 1.
+- 2026-10-01 · pr106-cure · updated · decisions/wedge-skill-packaging.md · Rebased the /wedge teaching section on ADR-004, ADR-005, ADR-007, ADR-009, and ADR-010 after the merge with main; dropped the superseded lib/fromargs layout and fixed-closure claims; cited files without line ranges.

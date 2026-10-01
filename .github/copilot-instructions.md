@@ -1,21 +1,21 @@
 # Copilot review instructions — skillz-that-grillz
 
 This repo is a skill-authoring and skill-packaging toolbelt: the published
-`skillz` skill under `skills/`, `wedge` and `fromargs` under `lib/`, and the
+skills under `skills/`, `wedge` and `fromargs` under `lib/`, and the
 public `actions/wedge` GitHub Action. Review `lib/` and the Action for
 **code quality and test coverage**.
 
-Review `skills/skillz/` and the repo-local `.agents/skills/python-authoring/`
+Review the published skills under `skills/` and the repo-local `.agents/skills/python-authoring/`
 the way the `/skill-creator` skill would: care about whether a skill will
 *trigger* when it should, whether it teaches the model *why* not just
 *what*, and whether bundled resources earn their keep.
 
 ## What this repo is and isn't
 
-- **Is**: one published Agent Skill (`skillz`), a Python library repo
-  (`lib/wedge`, `lib/fromargs`), and a public composite GitHub Action
-  (`actions/wedge`) that packages a skill CLI as a content-addressed `.pyz`
-  for other repositories to consume.
+- **Is**: the published Agent Skills under `skills/` (listed in the README
+  `## Skills` table), a Python library repo (`lib/wedge`, `lib/fromargs`),
+  and a public composite GitHub Action (`actions/wedge`) that packages a
+  skill CLI as a content-addressed `.pyz` for other repositories to consume.
 - **Isn't**: an agent framework, an orchestrator, or an MCP server. No
   required MCPs.
 
