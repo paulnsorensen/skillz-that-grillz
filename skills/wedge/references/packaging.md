@@ -81,6 +81,8 @@ python3 "$WEDGE" check "$SKILL_DIR"
 
 For CI, pin wedge in a locked tool project, for example `tools/wedge`, and run `uv run --locked --project tools/wedge wedge …`.
 The [wedge action README](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/actions/wedge/README.md) explains that pin.
+Run `lock` with the same wedge revision that CI pins.
+A different builder can change the archive bytes, and `publish` then rejects the lock digest.
 
 `lock` builds and writes `scripts/NAME` and `scripts/NAME.wedge.json`.
 Regenerate both after a manifest, source, fromargs, or dependency-lock change.

@@ -38,7 +38,7 @@ Ask for a target when the mode requires one.
 | `improve <path>` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
 | `audit <path>` | a `SKILL.md` or agent file | yes | none | calibrated report |
 | `self-update` | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
-| `wedge <path>` | a `SKILL.md` or agent file | no | none | a `/wedge` handoff brief per offload candidate |
+| `wedge <path>` | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
 | `experiment` | an inspection or audit manifest, or public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
 For `experiment`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
@@ -136,11 +136,14 @@ Find the work in the target that belongs in a bundled CLI, then write the brief 
 The user runs `/wedge`; this mode writes no code and starts no build, because packaging is `/wedge`'s contract.
 
 1. Read the target and its `scripts/`. Score the Deterministic offload lens only.
-2. List each candidate with its line: a fixed parse, validation, count, filter, sort, or projection that every run repeats, or a bundled script without an output contract.
+   For an agent file, report that `/wedge` packages only skills, then stop.
+2. List each candidate with its line.
+   A candidate is a fixed parse, validation, count, filter, sort, or projection that every run repeats.
+   A bundled script without an output contract is also a candidate.
    Classification, recommendations, and user decisions stay in prose; they are never candidates.
 3. Write each candidate's behavior contract: command name, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects.
    Name the prose that stays and the target line that will call the command.
-4. Rank candidates by how often a run repeats the work. With zero candidates, report `No offload candidates` and stop.
+4. Rank candidates by how often a run repeats the work, then by target line, ascending. With zero candidates, report `No offload candidates` and stop.
 5. Emit the brief below. Close with `Run /wedge with candidate <n> of this brief.`
    When `/wedge` is not installed, add its install command: `npx skills add paulnsorensen/skillz-that-grillz --skill wedge`.
 
