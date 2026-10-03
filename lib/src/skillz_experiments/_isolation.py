@@ -36,5 +36,13 @@ def probe(workspace: Path, sealed: Path, engine: Path, port: int) -> str:
         f" try: sock.connect(('127.0.0.1',{port}))\n"
         " except OSError: pass\n"
         " else: raise SystemExit('network isolation failed')\n"
+        " sock.close()\n"
+        " sock=socket.socket(socket.AF_INET,socket.SOCK_STREAM)\n"
+        " sock.settimeout(1)\n"
+        f" try: sock.connect(('192.0.2.1',{port}))\n"
+        " except OSError as error:\n"
+        "  import errno\n"
+        "  if error.errno not in (errno.ENETUNREACH,errno.EPERM,errno.EACCES): raise SystemExit('routed network isolation failed')\n"
+        " else: raise SystemExit('network isolation failed')\n"
         "print('isolation-ok')\n"
     )

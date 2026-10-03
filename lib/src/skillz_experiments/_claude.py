@@ -26,7 +26,8 @@ AUTHENTICATION = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUT
 
 PERMISSION_DENY_ROOTS = ("/home", "/root", "/Users", "/mnt", "/media", "/opt", "/srv", "/workspaces", "/data")
 RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/self", "/etc/ld.so.cache", "/etc/ld.so.conf",
-                "/etc/ld.so.conf.d", "/etc/alternatives", "/etc/localtime", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf")
+                "/etc/ld.so.conf.d", "/etc/alternatives", "/etc/localtime", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf",
+                "/dev/null", "/dev/zero", "/dev/random", "/dev/urandom")
 MACOS_READ = ("/System", "/Library")
 SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
 
@@ -148,7 +149,25 @@ def _declares(text: str, skill: str) -> bool:
     return fields.get("name") == skill and bool(fields.get("description"))
 
 
-def _read_failure(events: list[dict[str, object]], sealed_token: str, sealed: str, control_token: str) -> str | None:
+def _bash_control_passed(events: list[dict[str, object]], command_marker: str, control_token: str) -> bool:
+    """Accept the control token only from the Bash `tool_result` that answers the `cat` of the control file."""
+    uses: set[str] = set()
+    for event in events:
+        message = event.get("message")
+        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
+        for block in cast(list[object], content) if isinstance(content, list) else []:
+            item = mapping(block)
+            if item.get("type") == "tool_use" and item.get("name") == "Bash":
+                command = mapping(item.get("input", {})).get("command")
+                if isinstance(command, str) and command_marker in command and isinstance(item.get("id"), str):
+                    uses.add(cast(str, item["id"]))
+            if item.get("type") == "tool_result" and item.get("tool_use_id") in uses and control_token in json.dumps(item):
+                return True
+    return False
+
+
+def _read_failure(events: list[dict[str, object]], sealed_token: str, sealed: str, control_token: str,
+                  control_file: str) -> str | None:
     """Judge the read probe. It needs evidence that Bash ran: a command on the sealed path, and the workspace token."""
     text = json.dumps(events)
     if sealed_token in text:
@@ -156,7 +175,7 @@ def _read_failure(events: list[dict[str, object]], sealed_token: str, sealed: st
     commands = [cast(str, mapping(item["item"])["command"]) for item in _trace(events)]
     if not any(sealed in command for command in commands):
         return "read probe has no evidence: no Bash command read the sealed host file"
-    if control_token not in text:
+    if not _bash_control_passed(events, control_file, control_token):
         return "read probe has no positive control: Bash cannot read a workspace file"
     return None
 
@@ -246,19 +265,32 @@ class ClaudeCode:
         return digest({"settings": settings(Path("/TASK")), "environment": environment, "tools": TOOLS,
                        "skill": PROBE_SKILL, "platform": sys.platform})
 
+    def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
+        with listening() as port:
+            script = probe(workspace, sealed, Path(__file__).resolve(), port)
+            code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
+        if code != 0 or output.strip() != "isolation-ok":
+            raise RuntimeError("Claude Code isolation preflight fails: sandbox probe failed; no unsafe fallback")
+
+    def _sealed(self, root: Path) -> tuple[Path, Path, str]:
+        workspace = make_workspace(root / "workspace")
+        sealed = root / "sealed"
+        token = secrets.token_hex(16)
+        _ = sealed.write_text(token)
+        (workspace / "escape").symlink_to(sealed)
+        return workspace, sealed, token
+
+    def check_sandbox(self) -> None:
+        """Run the free helper sandbox probe. It makes no model call, so every stage can run it."""
+        with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
+            workspace, sealed, _token = self._sealed(Path(directory))
+            self._probe_sandbox(workspace, sealed)
+
     def preflight(self) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             root = Path(directory)
-            workspace = make_workspace(root / "workspace")
-            sealed = root / "sealed"
-            token = secrets.token_hex(16)
-            _ = sealed.write_text(token)
-            (workspace / "escape").symlink_to(sealed)
-            with listening() as port:
-                script = probe(workspace, sealed, Path(__file__).resolve(), port)
-                code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
-            if code != 0 or output.strip() != "isolation-ok":
-                raise RuntimeError("Claude Code isolation preflight fails: sandbox probe failed; no unsafe fallback")
+            workspace, sealed, token = self._sealed(root)
+            self._probe_sandbox(workspace, sealed)
             skill = workspace / ".agents/skills" / PROBE_SKILL
             skill.mkdir()
             _ = (skill / "SKILL.md").write_text(
@@ -274,7 +306,7 @@ class ClaudeCode:
                 None, min(120, self.budget.remaining()))
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
         if reason is None:
-            reason = _read_failure(events, token, str(sealed), control)
+            reason = _read_failure(events, token, str(sealed), control, str(control_file))
         if reason is not None:
             raise RuntimeError(f"Claude Code isolation preflight fails: {reason}; no unsafe fallback")
         return {"adapter": "claude", "model": self.model, "isolation": "passed", "live_calls": 1,

@@ -425,6 +425,7 @@ def test_a_helper_cannot_forge_a_sandbox_setup_failure_through_stderr(tmp_path: 
 @pytest.mark.parametrize(("mode", "reason"), [
     ("skips-cat", "no Bash command read the sealed host file"),
     ("bash-broken", "positive control"),
+    ("read-fallback", "positive control"),
 ])
 def test_preflight_needs_evidence_that_bash_ran_and_read_the_workspace(
         tmp_path: Path, mode: str, reason: str, sandbox_passes: None) -> None:
@@ -471,7 +472,7 @@ def test_preflight_reuses_the_recorded_pass_without_a_live_call(tmp_path: Path, 
     assert second["live_calls"] == first["live_calls"] == logged
 
 
-def test_preflight_runs_and_charges_again_when_the_role_fingerprint_changes(
+def test_preflight_fails_without_a_charge_when_the_role_fingerprint_changes(
         tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
     executable = fake_claude(tmp_path)
@@ -481,13 +482,14 @@ def test_preflight_runs_and_charges_again_when_the_role_fingerprint_changes(
         first = session.preflight()
         logged = len(calls(executable))
         stale = dict(first) | {"reuse_keys": {name: "other-fingerprint" for name in session.transports}}
-        _ = session.preflight(stale)
+        with pytest.raises(ValueError, match="runtime environment differs"):
+            _ = session.preflight(stale)
     finally:
         session.close()
-    assert len(calls(executable)) == budget.calls == 2 * logged
+    assert len(calls(executable)) == budget.calls == logged
 
 
-def test_preflight_runs_and_charges_again_when_the_environment_changes(
+def test_preflight_fails_without_a_charge_when_the_environment_changes(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
     executable = fake_claude(tmp_path)
@@ -497,7 +499,36 @@ def test_preflight_runs_and_charges_again_when_the_environment_changes(
         first = session.preflight()
         logged = len(calls(executable))
         monkeypatch.setattr(_claude, "TOOLS", "Bash,Read,Skill,Write")
-        _ = session.preflight(first)
+        with pytest.raises(ValueError, match="runtime environment differs"):
+            _ = session.preflight(first)
     finally:
         session.close()
-    assert len(calls(executable)) == budget.calls == 2 * logged
+    assert len(calls(executable)) == budget.calls == logged
+
+
+def test_preflight_runs_the_free_sandbox_probe_when_it_reuses_a_pass(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runs: list[int] = []
+
+    def sandbox(self: object, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        del self, workspace, argv
+        runs.append(1)
+        return (0, "isolation-ok\n") if len(runs) <= len(session.transports) else (1, "")
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable, Budget(10, 120, 0))
+    try:
+        first = session.preflight()
+        logged = len(calls(executable))
+        with pytest.raises(RuntimeError, match="sandbox probe failed"):
+            _ = session.preflight(first)
+    finally:
+        session.close()
+    assert len(calls(executable)) == logged
+
+
+def test_settings_allow_only_the_minimal_device_nodes(tmp_path: Path) -> None:
+    filesystem = cast(dict[str, dict[str, list[str]]], _claude.settings(tmp_path)["sandbox"])["filesystem"]
+    allowed = set(filesystem["allowRead"])
+    assert {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"} <= allowed
+    assert not {"/dev", "/dev/tty"} & allowed

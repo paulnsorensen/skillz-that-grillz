@@ -77,9 +77,12 @@ Before the first live task, a live isolation preflight runs. It runs once per ru
 The preflight asks Claude Code to run `cat` on a sealed host file and on a workspace file.
 It passes only when a Bash command read the sealed path, the host read failed, and the workspace read returned its token.
 The run record keeps the pass and its live calls under `preflight`.
-The single preflight counts against `--max-invocations`. Later stages reuse the recorded pass and make no new call.
+Each Claude role makes one live preflight per run. Each one counts against `--max-invocations`.
+Later stages reuse the recorded pass and make no new live call.
+Every stage still runs the free helper sandbox probe, which makes no model call.
 The reuse key joins the role fingerprint and the Claude environment hash.
-A changed key runs the live preflight again, and it counts again.
+A changed key fails the run with "runtime environment differs from the frozen record".
+The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
 A missing sandbox tool stops the run.
@@ -122,7 +125,10 @@ Return the actual process result:
 ```
 
 The runner supplies its own probe before inference.
-The probe requires denied host reads, denied symlink escapes, denied candidate writes, denied network access, and a clean tool environment.
+The probe requires denied host reads, denied symlink escapes, and denied candidate writes.
+It also requires a clean tool environment.
+It requires denied network access: the host loopback connect fails, and a routed connect fails at once with an unreachable or denied error.
+A connect timeout counts as a failure.
 Only `PATH`, `HOME`, `TMPDIR`, `LANG`, and `LC_CTYPE` may reach tools.
 The task workspace must remain writable.
 The staged `.agents` tree must remain read-only.

@@ -75,13 +75,38 @@ def test_network_probe_fails_when_the_host_loopback_listener_is_reachable(tmp_pa
     assert "network isolation failed" in result.stderr
 
 
+def _routed(outcome: str) -> str:
+    """Prefix that fakes the routed connect. The loopback connect stays real."""
+    return (
+        "import socket,errno\n"
+        "real=socket.socket.connect\n"
+        "def connect(self,address):\n"
+        " if address[0]!='192.0.2.1': return real(self,address)\n"
+        f" outcome={outcome!r}\n"
+        " if outcome=='unreachable': raise OSError(errno.ENETUNREACH,'unreachable')\n"
+        " if outcome=='timeout': raise socket.timeout('timed out')\n"
+        " return None\n"
+        "socket.socket.connect=connect\n")
+
+
 def test_network_probe_passes_when_the_connection_or_the_socket_is_refused(tmp_path: Path) -> None:
     from skillz_experiments._isolation import listening
 
     with listening() as port:
         pass
-    refused = _run_probe(tmp_path, port)
+    refused = _run_probe(tmp_path, port, _routed("unreachable"))
     assert (refused.returncode, refused.stdout.strip()) == (0, "isolation-ok")
     with listening() as open_port:
         no_socket = _run_probe(tmp_path, open_port, "import socket\ndef deny(*a,**k): raise PermissionError()\nsocket.socket=deny\n")
     assert (no_socket.returncode, no_socket.stdout.strip()) == (0, "isolation-ok")
+
+
+@pytest.mark.parametrize("outcome", ["connected", "timeout"])
+def test_network_probe_fails_when_a_namespace_has_its_own_loopback_but_routed_egress(tmp_path: Path, outcome: str) -> None:
+    from skillz_experiments._isolation import listening
+
+    with listening() as port:
+        pass
+    result = _run_probe(tmp_path, port, _routed(outcome))
+    assert result.returncode != 0
+    assert "network isolation failed" in result.stderr

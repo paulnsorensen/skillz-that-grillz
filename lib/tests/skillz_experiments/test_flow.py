@@ -316,3 +316,9 @@ def test_claude_preflight_runs_once_per_run_so_a_spent_search_pool_still_reaches
         _ = execute(out, "evaluate", "claude-test", live=True, harness_config=config)
     assert live_calls() == 3
     assert cast(dict[str, object], read(out / "run.json")["preflight"])["live_calls"] == 3
+    monkeypatch.setenv("HOME", str(tmp_path / "otherhome"))
+    for _attempt in range(2):
+        with pytest.raises(ValueError, match="runtime environment differs"):
+            _ = execute(out, "evaluate", "claude-test", live=True, harness_config=config)
+    assert live_calls() == 3
+    assert read(out / "run.json")["calls"] == 20 - cast(int, record["holdout_reserve"])

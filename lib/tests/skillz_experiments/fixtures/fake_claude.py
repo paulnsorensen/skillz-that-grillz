@@ -41,13 +41,20 @@ def probe(targets: list[str], mode: str, config: dict[str, object]) -> int:
         return 0
     texts: list[str] = []
     for index, path in enumerate(targets):
-        reads = (mode == "read-host" and index == 0) or (mode != "bash-broken" and _readable(path, config))
+        reads = (mode == "read-host" and index == 0) or (mode not in {"bash-broken", "read-fallback"} and _readable(path, config))
+        reads = reads or (mode == "read-fallback" and index == 0 and _readable(path, config))
         text = Path(path).read_text() if reads and Path(path).is_file() else "denied"
         texts.append(text)
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"p{index}", "name": "Bash",
               "input": {"command": f"cat {path}"}}]}})
         emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"p{index}",
               "is_error": text == "denied", "content": text}]}})
+    if mode == "read-fallback":
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "r1", "name": "Read",
+              "input": {"file_path": targets[-1]}}]}})
+        emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1",
+              "is_error": False, "content": Path(targets[-1]).read_text()}]}})
+        texts[-1] = Path(targets[-1]).read_text()
     emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts), "usage": USAGE})
     return 0
 

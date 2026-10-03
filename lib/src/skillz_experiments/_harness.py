@@ -138,22 +138,25 @@ class Harness:
     def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         """Run each role preflight. A Claude role reuses its recorded live pass when its reuse key is unchanged.
 
-        The reuse key joins the role fingerprint and the Claude environment key. A changed key runs the live
-        preflight again, and it is charged again. Codex and Command roles always run.
+        The reuse key joins the role fingerprint and the Claude environment key. A changed key means that the
+        runtime environment differs from the frozen record. It fails before any live call, so it costs nothing.
+        A reused role still runs the free sandbox probe. Codex and Command roles always run.
         """
         self._unchanged()
         keys = mapping(recorded.get("reuse_keys", {})) if recorded else {}
         passes = mapping(recorded.get("roles", {})) if recorded else {}
+        reuse_keys = {name: self._reuse_key(name, adapter) for name, adapter in self.transports.items()
+                      if isinstance(adapter, ClaudeCode)}
+        if any(name in keys and keys[name] != key for name, key in reuse_keys.items()):
+            raise ValueError("runtime environment differs from the frozen record")
         evidence: dict[str, object] = {}
-        reuse_keys: dict[str, str] = {}
         for name, adapter in self.transports.items():
-            if isinstance(adapter, ClaudeCode):
-                reuse_keys[name] = self._reuse_key(name, adapter)
-                kept = passes.get(name)
-                if (keys.get(name) == reuse_keys[name] and isinstance(kept, dict)
-                        and cast(dict[str, object], kept).get("isolation") == "passed"):
-                    evidence[name] = kept
-                    continue
+            kept = passes.get(name)
+            if (isinstance(adapter, ClaudeCode) and keys.get(name) == reuse_keys[name] and isinstance(kept, dict)
+                    and cast(dict[str, object], kept).get("isolation") == "passed"):
+                adapter.check_sandbox()
+                evidence[name] = kept
+                continue
             evidence[name] = adapter.preflight()
         live = sum(cast(int, mapping(item).get("live_calls", 0)) for item in evidence.values())
         return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live, "reuse_keys": reuse_keys}
