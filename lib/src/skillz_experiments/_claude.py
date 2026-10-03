@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
+import sys
 import tempfile
 import time
 from collections.abc import Callable
@@ -14,6 +16,7 @@ from skillz_experiments._cases import Case, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
+from skillz_experiments._isolation import probe
 from skillz_experiments._runtime import Budget, process
 
 TOOLS = "Bash,Read,Skill"
@@ -21,11 +24,29 @@ PROBE_SKILL = "skillz"
 AUTHENTICATION = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
-def settings() -> dict[str, object]:
-    """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox."""
+HOST_READ_ROOTS = ("/home", "/root", "/Users", "/mnt", "/media")
+TEMPORARY_ROOTS = ("/tmp", "/var/tmp")
+SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
+
+
+def _unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+def settings(workspace: Path) -> dict[str, object]:
+    """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
+
+    Sandboxed commands read only the workspace. The Read tool follows permission rules, not the sandbox,
+    so a deny rule covers the host home roots for that tool.
+    """
+    temporary = [tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())]
+    denied = _unique([*HOST_READ_ROOTS, *TEMPORARY_ROOTS, str(Path.home()), str(Path.home().resolve()), *temporary])
     return {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
-                        "network": {"allowedDomains": [], "strictAllowlist": True}},
-            "permissions": {"allow": ["Skill"]}}
+                        "network": {"allowedDomains": [], "strictAllowlist": True},
+                        "filesystem": {"denyRead": denied, "allowRead": _unique([str(workspace), str(workspace.resolve())])}},
+            "disableBundledSkills": True,
+            "permissions": {"allow": ["Skill"],
+                            "deny": [f"Read(/{root}/**)" for root in _unique([*HOST_READ_ROOTS, str(Path.home())])]}}
 
 
 def _events(stdout: str) -> list[dict[str, object]]:
@@ -67,8 +88,10 @@ def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skil
     loaded = _loaded_skills(events)
     if loaded is None:
         return "no init event" if returncode == 0 else f"execution failed (exit {returncode})"
-    if loaded != skills:
+    if set(loaded) - set(skills):
         return f"foreign skill in init event: {loaded}"
+    if loaded != sorted(skills):
+        return f"expected skill missing from init event: {loaded}"
     if errored or final is None:
         return f"execution failed (exit {returncode})"
     return None
@@ -113,9 +136,42 @@ def _token_events(final: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _declares(text: str, skill: str) -> bool:
-    """Check that the SKILL.md frontmatter names the contract skill."""
+    """Check that the SKILL.md frontmatter names the contract skill and has a description."""
     parts = text.split("---", 2)
-    return text.startswith("---") and len(parts) == 3 and f"name: {skill}" in (line.strip() for line in parts[1].splitlines())
+    if not text.startswith("---") or len(parts) != 3:
+        return False
+    fields = {key.strip(): value.strip().strip("\"'") for key, _, value in
+              (line.partition(":") for line in parts[1].splitlines())}
+    return fields.get("name") == skill and bool(fields.get("description"))
+
+
+def seatbelt_profile(workspace: Path) -> str:
+    """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
+
+    The profile allows no network. It allows reads of the system runtime and the workspace, and writes
+    to the workspace except `.agents`. Later rules win, so the `.agents` deny follows the write allow.
+    """
+    path = str(workspace)
+    rules = ["(version 1)", "(deny default)", "(allow process-fork)", "(allow process-exec)",
+             "(allow signal (target self))", "(allow sysctl-read)", "(allow file-read-metadata)",
+             *[f'(allow file-read* (subpath "{root}"))' for root in SEATBELT_RUNTIME],
+             '(allow file-read* (literal "/dev/null") (literal "/dev/urandom"))',
+             f'(allow file-read* (subpath "{path}"))', f'(allow file-write* (subpath "{path}"))',
+             f'(deny file-write* (subpath "{path}/.agents"))', '(allow file-write* (literal "/dev/null"))']
+    return "\n".join(rules) + "\n"
+
+
+def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str]) -> list[str]:
+    """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No network, no host files."""
+    assignments = [f"{name}={value}" for name, value in environment.items()]
+    if system == "darwin":
+        return [tool, "-p", seatbelt_profile(workspace), "/usr/bin/env", "-i", *assignments, *argv]
+    path = str(workspace)
+    return [tool, "--unshare-all", "--die-with-parent", "--clearenv",
+            "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",
+            "--symlink", "usr/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev",
+            "--bind", path, path, "--ro-bind", f"{path}/.agents", f"{path}/.agents", "--chdir", path,
+            "/usr/bin/env", "-i", *assignments, *argv]
 
 
 def _answer(final: dict[str, object]) -> dict[str, object]:
@@ -146,6 +202,7 @@ class ClaudeCode:
     def _environment(self, workspace: Path) -> dict[str, str]:
         environment = {"PATH": f"{self.executable.parent}:/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
+        environment |= {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1"}
         return environment | {name: os.environ[name] for name in AUTHENTICATION if name in os.environ}
 
     def _command(self, settings_path: Path, schema: dict[str, object] | None) -> list[str]:
@@ -157,21 +214,34 @@ class ClaudeCode:
     def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float) -> tuple[int, str, list[dict[str, object]]]:
         _ = shutil.copytree(workspace / ".agents/skills", workspace / ".claude/skills")
         settings_path = workspace.parent / "settings.json"
-        _ = settings_path.write_text(json.dumps(settings()))
+        _ = settings_path.write_text(json.dumps(settings(workspace)))
         result = process(self._command(settings_path, schema), cwd=workspace, timeout=timeout,
                          environment=self._environment(workspace), input_text=prompt)
         return result.returncode, result.stderr, _events(result.stdout)
 
     def preflight(self) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
-            workspace = make_workspace(Path(directory) / "workspace")
+            root = Path(directory)
+            workspace = make_workspace(root / "workspace")
+            sealed = root / "sealed"
+            token = secrets.token_hex(16)
+            _ = sealed.write_text(token)
+            (workspace / "escape").symlink_to(sealed)
+            code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", probe(workspace, sealed, Path(__file__).resolve())])
+            if code != 0 or output.strip() != "isolation-ok":
+                raise RuntimeError("Claude Code isolation preflight fails: sandbox probe failed; no unsafe fallback")
             skill = workspace / ".agents/skills" / PROBE_SKILL
             skill.mkdir()
             _ = (skill / "SKILL.md").write_text(
                 f"---\nname: {PROBE_SKILL}\ndescription: Inspect public fixtures\n---\nInspection probe.\n")
-            returncode, stderr, events = self._run(workspace, "Reply with the word ok.", None,
-                                                   min(120, self.budget.remaining()))
+            self.budget.claim()
+            self.checkpoint()
+            returncode, stderr, events = self._run(
+                workspace, f"Run `cat {sealed}` with the Bash tool. Reply with its output, or the word denied if it fails.",
+                None, min(120, self.budget.remaining()))
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
+        if reason is None and token in json.dumps(events):
+            reason = "read isolation failed: a host file is readable"
         if reason is not None:
             raise RuntimeError(f"Claude Code isolation preflight fails: {reason}; no unsafe fallback")
         return {"adapter": "claude", "model": self.model, "isolation": "passed", "live_calls": 1}
@@ -186,12 +256,18 @@ class ClaudeCode:
             started = time.monotonic()
             returncode, stderr, events = self._run(workspace, prompt, schema or answer_schema(), self.budget.remaining())
             expected = [] if candidate is None else [candidate.skill]
-            loaded = _loaded_skills(events)
-            if candidate is not None and loaded != expected:
-                raise RuntimeError(f"Claude Code isolation fails: skills in init event {loaded}, expected {expected}; "
-                                   + "the invocation counts against the budget")
             final = _final(events)
-            if returncode or final is None or final.get("is_error") is True:
+            failed = bool(returncode) or final is None or final.get("is_error") is True
+            loaded = _loaded_skills(events)
+            if candidate is not None and loaded is not None:
+                if set(loaded) - set(expected):
+                    raise RuntimeError(f"Claude Code isolation fails: skills in init event {loaded}, expected {expected}; "
+                                       + "the invocation counts against the budget")
+                if not loaded and not failed:
+                    return {"answer": {"result_json": "", "load_marker": ""}, "events": [], "usage": usage([]),
+                            "workspace": str(workspace), "latency_seconds": time.monotonic() - started,
+                            "output_files": snapshot_outputs(workspace)}
+            if failed or final is None:
                 reason = _failure(returncode, stderr, events, expected) or "missing-final-response"
                 raise RuntimeError(f"Claude Code fails: {reason} (exit {returncode}); the invocation counts against the budget")
             trace = _trace(events) + _token_events(final)
@@ -199,19 +275,18 @@ class ClaudeCode:
                     "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        """Run `argv` in bubblewrap, the mechanism that Claude Code uses on Linux. No network, no host files."""
-        bubblewrap = shutil.which("bwrap")
-        if bubblewrap is None:
-            raise RuntimeError("bubblewrap is unavailable; no unsafe fallback")
+        """Run `argv` in the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. Fail closed without it."""
+        system = "darwin" if sys.platform == "darwin" else "linux"
+        name = "sandbox-exec" if system == "darwin" else "bwrap"
+        tool = shutil.which(name)
+        if tool is None:
+            raise RuntimeError(f"{name} is unavailable; no unsafe fallback")
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
-        command = [bubblewrap, "--unshare-all", "--die-with-parent", "--clearenv",
-                   "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",
-                   "--symlink", "usr/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev",
-                   "--bind", str(workspace), str(workspace), "--chdir", str(workspace),
-                   *[part for name, value in environment.items() for part in ("--setenv", name, value)], *argv]
-        result = process(command, cwd=workspace, timeout=min(20, self.budget.remaining()),
-                         environment={"PATH": "/usr/bin:/bin"})
+        result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment), cwd=workspace,
+                         timeout=min(20, self.budget.remaining()), environment={"PATH": "/usr/bin:/bin"})
+        if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
+            raise RuntimeError(f"sandbox setup fails: {result.stderr[:200].strip()}; no unsafe fallback")
         return result.returncode, result.stdout
 
     def check_candidate(self, candidate: Candidate) -> bool:
