@@ -135,7 +135,8 @@ class Harness:
     def preflight(self) -> dict[str, object]:
         self._unchanged()
         evidence = {name: adapter.preflight() for name, adapter in self.transports.items()}
-        return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": 0}
+        live = sum(cast(int, item.get("live_calls", 0)) for item in evidence.values())
+        return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live}
 
     def close(self) -> None:
         for adapter in self.transports.values():

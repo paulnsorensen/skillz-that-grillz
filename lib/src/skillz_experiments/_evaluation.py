@@ -80,7 +80,6 @@ HELPER_FIXTURES: tuple[dict[str, object], ...] = (
     {"input": "---\nname: contract\n---\n[Escape](../secret)\n", "returncode": 2,
      "output": {"schema_version": 2, "error": "link escapes package"}},
 )
-HELPER_INPUTS = tuple(cast(str, fixture["input"]) for fixture in HELPER_FIXTURES)
 
 
 def fixture_result(fixture: Mapping[str, object], returncode: int, stdout: str) -> bool:
