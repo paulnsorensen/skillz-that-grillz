@@ -9,10 +9,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._candidate import Candidate, make_workspace, stage_task
+from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, digest, mapping, string
+from skillz_experiments._contract import resolve
 from skillz_experiments._discovery import discover
-from skillz_experiments._evaluation import HELPER_INPUTS, helper_result, usage
+from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema, evaluate
 from skillz_experiments._isolation import probe
 from skillz_experiments._runtime import Budget, process
@@ -93,7 +94,7 @@ class Codex:
             skill = workspace / ".agents/skills/skillz"
             skill.mkdir()
             _ = (skill / "SKILL.md").write_text("---\nname: skillz\ndescription: Inspect public fixtures\n---\nInspection probe.\n")
-            if not self._discover(workspace):
+            if not self._discover(workspace, "skillz"):
                 raise RuntimeError("native Codex skill discovery preflight fails")
             parser = process(self._execution_command(workspace, root / "schema.json", root / "answer.json") + ["--help"],
                              cwd=workspace, timeout=min(10, self.budget.remaining()), environment=self._environment(workspace))
@@ -127,7 +128,8 @@ class Codex:
                 raise RuntimeError(f"Codex fails: {evidence['reason']} (exit {result.returncode}); the invocation counts against the budget; private evidence: {filename}")
             answer = mapping(cast(object, json.loads(output.read_text())))
             return {"answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
-                    "latency_seconds": time.monotonic() - started}
+                    "latency_seconds": time.monotonic() - started,
+                    "output_files": snapshot_outputs(workspace)}
 
     def _execution_command(self, workspace: Path, schema: Path, output: Path) -> list[str]:
         return [str(self.executable), "exec", *configuration(workspace, self.executable, []),
@@ -135,27 +137,35 @@ class Codex:
                 "--skip-git-repo-check", "-C", str(workspace), "--model", self.model,
                 "--output-schema", str(schema), "--output-last-message", str(output), "-"]
 
-    def _discover(self, workspace: Path) -> bool:
+    def _discover(self, workspace: Path, skill: str) -> bool:
         command = [str(self.executable), "app-server", *configuration(workspace, self.executable, [])]
-        return discover(command, workspace, self._environment(workspace), min(30, self.budget.remaining()))
+        return discover(command, workspace, self._environment(workspace), min(30, self.budget.remaining()), skill)
+
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
+                "TMPDIR=" + str(workspace / "tmp"), "LANG=C.UTF-8"]
+        command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
+                   "-P", "skillz", "--include-managed-config", "-C", str(workspace), "--",
+                   "/usr/bin/env", "-i", *safe, *argv]
+        result = process(command, cwd=workspace, timeout=min(20, self.budget.remaining()),
+                         environment=self._environment(workspace))
+        return result.returncode, result.stdout
 
     def check_candidate(self, candidate: Candidate) -> bool:
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory))
-            candidate.materialize(workspace / ".agents/skills/skillz")
-            if not self._discover(workspace):
+            rules = resolve(candidate.contract)
+            candidate.materialize(workspace / ".agents/skills" / rules.skill)
+            if not self._discover(workspace, rules.skill):
                 return False
-            safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
-                    "TMPDIR=" + str(workspace / "tmp"), "LANG=C.UTF-8"]
-            for index, content in enumerate(HELPER_INPUTS):
-                _ = (workspace / "fixture.md").write_text(content)
-                command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
-                           "-P", "skillz", "--include-managed-config", "-C", str(workspace), "--",
-                           "/usr/bin/env", "-i", *safe, "/usr/bin/python3", "-I",
-                           ".agents/skills/skillz/scripts/inspect_skill.py", "fixture.md"]
-                result = process(command, cwd=workspace, timeout=min(20, self.budget.remaining()),
-                                 environment=self._environment(workspace))
-                if not helper_result(index, result.returncode, result.stdout):
+            helper = rules.helper
+            if helper is None:
+                return True
+            for fixture in helper.fixtures:
+                _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
+                returncode, stdout = self.sandbox(workspace, [
+                    "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
+                if not fixture_result(fixture, returncode, stdout):
                     return False
         return True
 

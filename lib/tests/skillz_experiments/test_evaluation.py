@@ -27,18 +27,26 @@ def test_command_trace_rejects_spoofed_helper_names() -> None:
     assert executed(events("cat .agents/skills/skillz/SKILL.md"), "SKILL.md")
     assert executed(events("python3 -I .agents/skills/skillz/scripts/inspect_skill.py fixture.md"), "inspect_skill.py")
     assert not executed(events("echo yes; python3 .agents/skills/skillz/scripts/inspect_skill.py fixture.md"), "inspect_skill.py")
+    assert executed(events("cat .agents/skills/echo/SKILL.md"), "SKILL.md", skill="echo")
+    assert not executed(events("cat .agents/skills/skillz/SKILL.md"), "SKILL.md", skill="echo")
+    assert executed(events("python3 -I .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo", isolated=True)
+    assert not executed(events("python3 .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo", isolated=True)
+    assert executed(events("python3 .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo")
 
 
 def test_frozen_helper_contract_rejects_constant_answers() -> None:
     from skillz_experiments._evaluation import helper_result
 
-    assert helper_result(1, 2, '{"schema_version":1,"error":"link escapes package"}')
-    assert not helper_result(0, 0, '{"schema_version":1,"error":"link escapes package"}')
-    assert not helper_result(1, 0, '{"schema_version":1,"error":"link escapes package"}')
+    assert helper_result(1, 2, '{"schema_version":2,"error":"link escapes package"}')
+    assert not helper_result(1, 2, '{"schema_version":1,"error":"link escapes package"}')
+    assert not helper_result(0, 0, '{"schema_version":2,"error":"link escapes package"}')
+    assert not helper_result(1, 0, '{"schema_version":2,"error":"link escapes package"}')
 
 
 def test_exact_json_distinguishes_boolean_from_number() -> None:
-    from skillz_experiments._evaluation import helper_result
+    from skillz_experiments._evaluation import fixture_result, helper_result
 
     assert grade("true", 1, loaded=True, helper_executed=True) == 0.0
     assert not helper_result(1, 2, '{"schema_version":true,"error":"link escapes package"}')
+    assert fixture_result({"returncode": 0, "output": {"ok": 1}}, 0, '{"ok": 1}')
+    assert not fixture_result({"returncode": 0, "output": {"ok": 1}}, 0, '{"ok": true}')

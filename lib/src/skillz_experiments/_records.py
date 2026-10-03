@@ -9,6 +9,7 @@ from typing import cast
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import digest, load_cases, mapping
+from skillz_experiments._contract import Contract, resolve
 
 
 def write(path: Path, value: object) -> None:
@@ -29,17 +30,19 @@ def read(path: Path) -> dict[str, object]:
     return mapping(cast(object, json.loads(path.read_text(encoding="utf-8"))))
 
 
-def prepare(manifest: Path, target: Path, out: Path, components: list[str] | None = None) -> dict[str, object]:
-    cases = load_cases(manifest)
-    editable = ["SKILL.md"]
-    if (target / "scripts/inspect_skill.py").is_file():
-        editable.append("scripts/inspect_skill.py")
+def prepare(manifest: Path, target: Path, out: Path, components: list[str] | None = None,
+            contract: Contract | None = None) -> dict[str, object]:
+    rules = resolve(contract)
+    cases = load_cases(manifest, rules.grader_types())
+    editable = list(rules.editable) or ["SKILL.md"]
+    if rules.helper is not None and (target / rules.helper.path).is_file() and rules.helper.path not in editable:
+        editable.append(rules.helper.path)
     for name in components or []:
         if not (name.startswith("references/") and name.endswith(".md")):
             raise ValueError("extra editable components must be Markdown references")
         if name not in editable:
             editable.append(name)
-    seed = Candidate.capture(target, editable)
+    seed = Candidate.capture(target, editable, rules)
     out.mkdir(mode=0o700)
     document = {"schema_version": 1, "cases": [dict(asdict(case), id=case.identifier) for case in cases]}
     record: dict[str, object] = {
@@ -47,9 +50,12 @@ def prepare(manifest: Path, target: Path, out: Path, components: list[str] | Non
         "target_root": str(target.resolve()),
         "dataset_hash": digest(document), "seed_hash": seed.identity,
         "seed": seed.files, "editable": list(seed.editable), "arms": {}, "outcomes": [],
+        "contract": rules.data(), "contract_hash": rules.identity, "contract_source": rules.source,
+        "contract_override": rules.overrides_skill_file,
         "visibility": "public" if all(case.visibility == "public" for case in cases) else "private",
     }
     write(out / "cases.json", document)
     write(out / "run.json", record)
     return {"run": str(out), "eligible": sum(case.eligible for case in cases),
-            "diagnostic": sum(not case.eligible for case in cases), "live_calls": 0}
+            "diagnostic": sum(not case.eligible for case in cases), "live_calls": 0,
+            "contract_source": rules.source}

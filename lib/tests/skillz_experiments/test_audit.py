@@ -38,9 +38,12 @@ def test_cli_rejects_invalid_label_evidence(tmp_path: Path, capsys: pytest.Captu
     target = tmp_path / "skill"
     target.mkdir()
     _ = (target / "SKILL.md").write_text("seed")
+    (target / "evals").mkdir()
+    _ = (target / "evals/autoimprove.json").write_text(
+        (Path(__file__).resolve().parents[3] / "skills/skillz/evals/autoimprove.json").read_text())
     assert main(["dataset", str(manifest(tmp_path, case)), "--target", str(target),
                  "--out", str(tmp_path / "run")]) == 1
-    assert "error" in capsys.readouterr().err
+    assert "unsafe relative path" in capsys.readouterr().err
     assert not (tmp_path / "run").exists()
 
 

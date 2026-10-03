@@ -27,7 +27,7 @@ def test_runtime_exclusion_is_exact_and_rejects_symlinks(tmp_path: Path) -> None
     assert Candidate.capture(tmp_path, ["SKILL.md"]).files == {"SKILL.md": "seed"}
     other = scripts / "other.pyz"
     _ = other.write_bytes(b"\xff")
-    with pytest.raises(UnicodeDecodeError):
+    with pytest.raises(ValueError, match="scripts/other.pyz is not UTF-8"):
         _ = Candidate.capture(tmp_path, ["SKILL.md"])
     other.unlink()
     runtime.unlink()

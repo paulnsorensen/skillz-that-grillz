@@ -15,6 +15,7 @@ from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case, Split, digest, load_cases, mapping
 from skillz_experiments._codex import Codex, VERSION
+from skillz_experiments._contract import Contract, parse, resolve
 from skillz_experiments._harness import Configuration
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
@@ -68,6 +69,7 @@ class _Resume:
     dataset_hash: str
     seed_hash: str
     seed: Candidate
+    contract: Contract | None
     calls: int
     arms: dict[str, object]
     outcomes: list[dict[str, object]]
@@ -82,9 +84,14 @@ def _resume_fields(record: dict[str, object]) -> _Resume:
     if type(calls) is not int or calls < 0:
         raise ValueError("run record field calls must be a nonnegative integer")
     _ = _text_field(record, "phase")
+    contract: Contract | None = None
+    if "contract" in record:
+        contract = parse(record["contract"], _text_field(record, "contract_source"))
+        if contract.identity != _text_field(record, "contract_hash"):
+            raise ValueError("contract differs from the frozen record; create a new run")
     return _Resume(_text_field(record, "dataset_hash"), _text_field(record, "seed_hash"),
-                   Candidate(candidate_files(_field(record, "seed")), tuple(cast(list[str], editable))),
-                   calls, mapping(_field(record, "arms")), _outcomes(record))
+                   Candidate(candidate_files(_field(record, "seed")), tuple(cast(list[str], editable)), contract),
+                   contract, calls, mapping(_field(record, "arms")), _outcomes(record))
 
 
 @final
@@ -94,10 +101,12 @@ class _Session:
         self.out = out
         self.record = read(out / "run.json")
         resume = _resume_fields(self.record)
+        self.contract = resolve(resume.contract)
         imported = self._import_cases(resume.dataset_hash)
         self.cases = [case for case in imported if case.eligible]
         self.seed = resume.seed
-        self._freeze_identities(model, configuration, any(case.kind == "audit" for case in imported), resume.seed_hash)
+        self._freeze_identities(model, configuration, any(self.contract.grader(case.kind).type == "audit" for case in imported),
+                                 resume.seed_hash)
         self.budget = self._open_budget(model, maximum, seconds, resume.calls)
         self.provider = factory(model, self.budget, self.checkpoint)
         self.arms = resume.arms
@@ -108,8 +117,8 @@ class _Session:
     def _import_cases(self, dataset_hash: str) -> list[Case]:
         if dataset_hash != digest(read(self.out / "cases.json")):
             raise ValueError("dataset differs from the frozen record")
-        imported = load_cases(self.out / "cases.json")
-        if any(case.kind == "audit" for case in imported) and (
+        imported = load_cases(self.out / "cases.json", self.contract.grader_types())
+        if any(grader == "audit" for grader in self.contract.grader_types().values()) and (
                 any(not case.eligible for case in imported)
                 or not all(any(case.split == split for case in imported) for split in ("train", "validation"))
                 or sum(case.split == "holdout" for case in imported) != 2):
@@ -151,7 +160,7 @@ class _Session:
             raise ValueError("run cannot resume after a monotonic clock reset")
         if seconds - elapsed <= 0:
             raise BudgetExhausted("global deadline exhausted")
-        reserve = 3 * sum(2 if case.kind == "audit" else 1 for case in self.cases_for("holdout"))
+        reserve = 3 * sum(self.contract.calls(case.kind) for case in self.cases_for("holdout"))
         self.record["holdout_reserve"] = reserve
         return Budget(maximum, seconds - elapsed, reserve=reserve, calls=calls)
 
@@ -241,7 +250,7 @@ class _Session:
         self.record["holdout_consumed"] = True
         self.checkpoint()
         for name, files in self.arms.items():
-            candidate = Candidate(candidate_files(files), self.seed.editable)
+            candidate = Candidate(candidate_files(files), self.seed.editable, self.seed.contract, self.seed.script)
             for case in cases:
                 _ = self.evaluate_case(candidate, case, name, holdout=True)
         self.record["phase"] = "complete"

@@ -1,12 +1,50 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from skillz_experiments._cases import load_cases
+from skillz_experiments._candidate import Candidate, make_workspace, stage_task
+from skillz_experiments._cases import load_cases, mapping
+from skillz_experiments._cli import main
+from skillz_experiments._codex import Codex
+from skillz_experiments._contract import parse
 from skillz_experiments._runtime import Budget, BudgetExhausted
+
+ECHO = Path(__file__).parent / "fixtures/echo-skill"
+
+
+def echo_skill(tmp_path: Path) -> Path:
+    target = tmp_path / "echo-skill"
+    _ = shutil.copytree(ECHO, target)
+    return target
+
+
+def echo_cases(tmp_path: Path, kind: str = "echo", extra: dict[str, object] | None = None) -> Path:
+    cases = [{"id": split, "family": split, "split": split, "kind": kind, "request": "Echo hello",
+              "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello"},
+              "provenance": "test", "provider_approved": True} for split in ("train", "validation", "holdout")]
+    path = tmp_path / "cases.json"
+    _ = path.write_text(json.dumps({"schema_version": 1, "cases": cases} | (extra or {})))
+    return path
+
+
+def dataset(tmp_path: Path, target: Path, manifest: Path, capsys: pytest.CaptureFixture[str]) -> tuple[int, dict[str, object], dict[str, object]]:
+    code = main(["dataset", str(manifest), "--target", str(target), "--out", str(tmp_path / "run")])
+    captured = capsys.readouterr()
+    out = cast(dict[str, object], json.loads(captured.out)) if captured.out.strip() else {}
+    err = cast(dict[str, object], json.loads(captured.err)) if captured.err.strip() else {}
+    return code, out, err
+
+
+def set_contract(target: Path, **changes: object) -> None:
+    path = target / "evals/autoimprove.json"
+    document = cast(dict[str, object], json.loads(path.read_text()))
+    _ = path.write_text(json.dumps(document | changes))
 
 
 def test_grouped_splits_reject_leakage(tmp_path: Path) -> None:
@@ -58,3 +96,108 @@ def test_manifest_version_is_not_boolean(tmp_path: Path) -> None:
     _ = manifest.write_text('{"schema_version":true,"cases":[]}')
     with pytest.raises(ValueError, match="schema_version"):
         _ = load_cases(manifest)
+
+
+def test_contract_staging_uses_the_declared_skill_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = echo_skill(tmp_path)
+    code, out, _ = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
+    assert code == 0 and out["contract_source"] == "skill"
+    record = mapping(cast(object, json.loads((tmp_path / "run/run.json").read_text())))
+    assert mapping(record["contract"])["skill"] == "echo-skill"
+    assert "evals/autoimprove.json" not in mapping(record["seed"])
+    from skillz_experiments._contract import load_contract
+
+    contract = load_contract(target, {})
+    candidate = Candidate.capture(target, ["SKILL.md"], contract)
+    workspace = make_workspace(tmp_path / "workspace")
+    stage_task(workspace, candidate, None)
+    assert (workspace / ".agents/skills/echo-skill/SKILL.md").is_file()
+    assert not (workspace / ".agents/skills/skillz").exists()
+
+
+def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    contract = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
+                      "kinds": {"echo": {"grader": "exact-json"}},
+                      "helper": {"path": "scripts/echo.py", "input": "fixture.md", "fixtures": [
+                          {"input": "hi", "returncode": 0, "output": {"ok": True}}]}}, "skill")
+    candidate = Candidate({"SKILL.md": "seed", "scripts/echo.py": "print(1)"}, ("SKILL.md",), contract=contract)
+    adapter = object.__new__(Codex)
+    adapter.executable, adapter.codex_home, adapter.budget = Path("/bin/codex"), tmp_path, Budget(5, 60, reserve=0)
+    seen: list[str] = []
+    commands: list[list[str]] = []
+    reply = {"stdout": '{"ok": true}'}
+
+    def discover(self: Codex, workspace: Path, skill: str) -> bool:
+        seen.append(skill)
+        return (workspace / ".agents/skills/echo-skill/SKILL.md").is_file()
+
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, reply["stdout"], "")
+
+    monkeypatch.setattr(Codex, "_discover", discover)
+    monkeypatch.setattr("skillz_experiments._codex.process", process)
+    assert adapter.check_candidate(candidate)
+    assert seen == ["echo-skill"]
+    assert commands[0][-2:] == [".agents/skills/echo-skill/scripts/echo.py", "fixture.md"]
+    reply["stdout"] = '{"ok": false}'
+    assert not adapter.check_candidate(candidate)
+
+
+def test_contract_manifest_block_overrides_the_skill_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = echo_skill(tmp_path)
+    block = {"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill other",
+             "kinds": {"echo": {"grader": "exact-json"}}}
+    code, out, _ = dataset(tmp_path, target, echo_cases(tmp_path, extra={"target": block}), capsys)
+    assert code == 0 and out["contract_source"] == "manifest"
+    record = mapping(cast(object, json.loads((tmp_path / "run/run.json").read_text())))
+    assert record["contract_source"] == "manifest" and record["contract_override"] is True
+    assert mapping(record["contract"])["invocation"] == "$echo-skill other"
+
+
+def test_contract_missing_names_both_locations(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = echo_skill(tmp_path)
+    (target / "evals/autoimprove.json").unlink()
+    code, _, err = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
+    assert code == 1 and err["code"] == "contract-missing"
+    assert "evals/autoimprove.json" in str(err["error"]) and "target" in str(err["error"])
+    assert not (tmp_path / "run").exists()
+
+
+def test_contract_unapproved_stops_a_draft(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = echo_skill(tmp_path)
+    set_contract(target, status="draft")
+    code, _, err = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
+    assert code == 1 and err["code"] == "contract-unapproved"
+    assert not (tmp_path / "run").exists()
+
+
+@pytest.mark.parametrize(("kind", "accepted"), [("rewrite", True), ("poem", False)])
+def test_kind_must_be_declared_in_the_contract(tmp_path: Path, capsys: pytest.CaptureFixture[str],
+                                               kind: str, accepted: bool) -> None:
+    target = echo_skill(tmp_path)
+    code, _, err = dataset(tmp_path, target, echo_cases(tmp_path, kind), capsys)
+    assert (code == 0) is accepted
+    assert accepted or "not declared" in str(err["error"])
+    assert (tmp_path / "run").exists() is accepted
+
+
+def test_undecodable_file_is_a_structured_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = echo_skill(tmp_path)
+    (target / "__pycache__").mkdir()
+    _ = (target / "__pycache__/x.pyc").write_bytes(b"\xff\xfe\x00")
+    code, _, err = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
+    assert code == 1 and err["code"] == "undecodable-file"
+    assert "__pycache__/x.pyc" in str(err["error"])
+
+
+def test_ignored_file_is_skipped_by_capture(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _ = subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    _ = (tmp_path / ".gitignore").write_text("__pycache__/\n")
+    target = echo_skill(tmp_path)
+    (target / "__pycache__").mkdir()
+    _ = (target / "__pycache__/x.pyc").write_bytes(b"\xff\xfe\x00")
+    code, _, _ = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
+    assert code == 0
+    record = mapping(cast(object, json.loads((tmp_path / "run/run.json").read_text())))
+    assert list(mapping(record["seed"])) == ["SKILL.md"]

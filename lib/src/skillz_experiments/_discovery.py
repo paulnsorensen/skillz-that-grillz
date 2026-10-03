@@ -14,7 +14,7 @@ from typing import IO, cast
 from skillz_experiments._cases import mapping
 
 
-def valid_listing(value: object, workspace: Path) -> bool:
+def valid_listing(value: object, workspace: Path, skill: str) -> bool:
     result = mapping(value)
     data = result.get("data")
     if not isinstance(data, list) or len(cast(list[object], data)) != 1:
@@ -25,10 +25,10 @@ def valid_listing(value: object, workspace: Path) -> bool:
     skills = listing.get("skills")
     if not isinstance(skills, list) or len(cast(list[object], skills)) != 1:
         return False
-    skill = mapping(cast(list[object], skills)[0])
-    return (skill.get("name") == "skillz" and skill.get("enabled") is True
-            and skill.get("scope") == "repo" and skill.get("pluginId") is None
-            and skill.get("path") == str(workspace / ".agents/skills/skillz/SKILL.md"))
+    listed = mapping(cast(list[object], skills)[0])
+    return (listed.get("name") == skill and listed.get("enabled") is True
+            and listed.get("scope") == "repo" and listed.get("pluginId") is None
+            and listed.get("path") == str(workspace / ".agents/skills" / skill / "SKILL.md"))
 
 
 def _send(stream: IO[bytes], messages: list[dict[str, object]]) -> None:
@@ -36,7 +36,7 @@ def _send(stream: IO[bytes], messages: list[dict[str, object]]) -> None:
     stream.flush()
 
 
-def _reply(message: dict[str, object], stream: IO[bytes], workspace: Path) -> bool | None:
+def _reply(message: dict[str, object], stream: IO[bytes], workspace: Path, skill: str) -> bool | None:
     """Return the discovery verdict, or None while the server has more to say."""
     if message.get("id") == 0:
         if "error" in message:
@@ -44,11 +44,12 @@ def _reply(message: dict[str, object], stream: IO[bytes], workspace: Path) -> bo
         _send(stream, [{"method": "initialized", "params": {}},
                        {"id": 1, "method": "skills/list", "params": {"cwds": [str(workspace)], "forceReload": True}}])
     elif message.get("id") == 1:
-        return "error" not in message and valid_listing(message.get("result"), workspace)
+        return "error" not in message and valid_listing(message.get("result"), workspace, skill)
     return None
 
 
-def _verdict(child: subprocess.Popen[bytes], stream: IO[bytes], deadline: float, workspace: Path) -> bool | None:
+def _verdict(child: subprocess.Popen[bytes], stream: IO[bytes], deadline: float, workspace: Path,
+             skill: str) -> bool | None:
     assert child.stdout is not None
     buffer = bytearray()
     while time.monotonic() < deadline:
@@ -63,13 +64,14 @@ def _verdict(child: subprocess.Popen[bytes], stream: IO[bytes], deadline: float,
             end = buffer.index(b"\n")
             line = bytes(buffer[:end])
             del buffer[:end + 1]
-            verdict = _reply(mapping(cast(object, json.loads(line))), stream, workspace)
+            verdict = _reply(mapping(cast(object, json.loads(line))), stream, workspace, skill)
             if verdict is not None:
                 return verdict
     return None
 
 
-def discover(command: list[str], workspace: Path, environment: dict[str, str], timeout: float) -> bool:
+def discover(command: list[str], workspace: Path, environment: dict[str, str], timeout: float,
+             skill: str) -> bool:
     deadline = time.monotonic() + timeout
     with tempfile.TemporaryFile() as errors, subprocess.Popen(command, cwd=workspace, env=environment, stdin=subprocess.PIPE,
                           stdout=subprocess.PIPE, stderr=errors, start_new_session=True) as child:
@@ -78,7 +80,7 @@ def discover(command: list[str], workspace: Path, environment: dict[str, str], t
             "clientInfo": {"name": "skillz-experiment", "version": "1"},
             "capabilities": {"experimentalApi": True}}}])
         try:
-            verdict = _verdict(child, child.stdin, deadline, workspace)
+            verdict = _verdict(child, child.stdin, deadline, workspace, skill)
             if verdict is None:
                 _ = errors.seek(0)
                 detail = errors.read(4096).decode("utf-8", errors="replace")

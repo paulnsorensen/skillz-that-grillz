@@ -11,11 +11,15 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import load_cases, mapping
 
+SKILLZ_CONTRACT = Path(__file__).resolve().parents[3] / "skills/skillz/evals/autoimprove.json"
+
 
 def test_cli_dataset_is_local_and_complete(tmp_path: Path) -> None:
     target = tmp_path / "skill"
     target.mkdir()
     _ = (target / "SKILL.md").write_text("---\nname: skillz\ndescription: test\n---\nInspect.\n")
+    (target / "evals").mkdir()
+    _ = (target / "evals/autoimprove.json").write_text(SKILLZ_CONTRACT.read_text())
     manifest = tmp_path / "cases.json"
     _ = manifest.write_text(json.dumps({"schema_version": 1, "cases": [
         {"id": split, "family": split, "split": split, "request": "Inspect SKILL.md",
@@ -30,6 +34,8 @@ def test_cli_dataset_is_local_and_complete(tmp_path: Path) -> None:
     record = mapping(cast(object, json.loads((out / "run.json").read_text())))
     assert record["phase"] == "prepared"
     assert record["calls"] == 0
+    assert record["contract_source"] == "skill" and mapping(record["contract"])["skill"] == "skillz"
+    assert "evals/autoimprove.json" not in mapping(record["seed"])
     assert (out / "run.json").stat().st_mode & 0o077 == 0
     assert "feedback" not in mapping(cast(object, json.loads(result.stdout)))
 
