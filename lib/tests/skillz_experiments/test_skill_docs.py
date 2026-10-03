@@ -68,11 +68,11 @@ def _steps(section: str) -> list[str]:
     return cast(list[str], re.findall(r"^\d+\. .*?(?=^\d+\. |^Done means|\Z)", section, re.M | re.S))
 
 
-@pytest.mark.parametrize("mode", ["add", "improve"])
-def test_add_improve_steps_run_prose_check_on_skill_md(mode: str) -> None:
+@pytest.mark.parametrize(("mode", "subject"), [("add", "`SKILL.md`"), ("improve", "the target file")])
+def test_add_improve_steps_run_prose_check_on_their_subject(mode: str, subject: str) -> None:
     section = _section(SKILL.read_text(), f"Mode: {mode}")
     step = next(text for text in _steps(section) if "prose check" in text)
-    assert "`SKILL.md`" in step
+    assert subject in step
     assert "each changed reference" in step
     assert "before you report" in step
 
@@ -92,10 +92,11 @@ def test_no_contract_step_offers_judge_only_or_draft_contract() -> None:
     choices = cast(list[str], re.findall(r"^\d+\. .*?(?=^\d+\. |^\S|\Z)", section, re.M | re.S))
     assert len(choices) == 2
     assert "judge-only" in choices[0] and "`judge`" in choices[0] and "powerful model" in choices[0]
+    assert "approved" not in choices[0]
     assert "find" in choices[1].lower() and "draft" in choices[1].lower() and "contract" in choices[1].lower()
     ask = section.splitlines().index(next(line for line in section.splitlines() if line.startswith("1. ")))
     assert any("ask the user" in line for line in section.splitlines()[:ask])
-    assert "judge-only" in choices[0] and "Draft a contract" in choices[0] and "approved contract" not in choices[0]
+    assert "Draft a contract" in choices[0]
     tail = section.split(choices[1])[1]
     assert 'Save every drafted contract with `"status": "draft"`, for both choices.' in tail
     assert "until the user approves" in tail and '`"status": "approved"` only after the user approves' in tail
@@ -110,9 +111,9 @@ def _long(path: Path) -> list[dict[str, int]]:
     return [hit for hit in long_sentences(lines, start) if hit["words"] > MAX_WORDS]
 
 
-PROSE_FILES = [SKILL, *sorted((SKILL_DIR / "references").glob("*.md"))]
+PROSE_FILES = [SKILL, *sorted((SKILL_DIR / "references").glob("*.md")), *sorted((SKILL_DIR / "engine/references").glob("*.md"))]
 
 
-@pytest.mark.parametrize("path", PROSE_FILES, ids=[path.name for path in PROSE_FILES])
+@pytest.mark.parametrize("path", PROSE_FILES, ids=[str(path.relative_to(SKILL_DIR)) for path in PROSE_FILES])
 def test_skill_prose_has_no_sentence_over_limit(path: Path) -> None:
     assert _long(path) == []

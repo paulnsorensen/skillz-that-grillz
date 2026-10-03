@@ -31,10 +31,11 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-run --out /tm
 
 Pass an explicit available model. The example model is not an availability guarantee.
 The Codex and command preflights make zero model invocations.
-A `claude` role makes one live preflight call per role, once per run (see [the claude adapter](experiment-harness.md#the-claude-adapter)).
+Each `claude` role makes one live preflight call per run (see [the claude adapter](experiment-harness.md#the-claude-adapter)).
 Under `self-test --preflight-only`, each `claude` role makes one live call, even without `--live`.
 Other live invocations require `--live` and a successful isolation preflight.
 A failed isolation check stops the run. Never add an unsafe fallback.
+`self-test --live` loads the target contract first. It stops with `contract-missing` when there is none.
 
 The original arm includes the unoptimized inspection helper.
 The other arms search prompt text and prompt-plus-helper text (the prompt-plus-helper arm, `prompt-cli`).
@@ -46,7 +47,7 @@ It excludes these paths:
 - `evals/`
 - the in-target case manifest
 - git-ignored files
-- VCS metadata: `.git`, `.github`, `.gitignore`, and `.gitattributes`
+- VCS and host metadata: `.git`, `.github`, `.gitignore`, `.gitattributes`, `.gitkeep`, `.gitmodules`, and `.DS_Store`
 - bytecode caches: `__pycache__` and `*.pyc`
 
 Any other hidden file stops capture with `hidden-file`.
@@ -104,10 +105,11 @@ It does not read native transcripts or assume a session database schema.
       "request": "Inspect fixture.md and return its helper facts.",
       "files": {"fixture.md": "---\nname: example\n---\n# Example\n"},
       "expected": {
-        "schema_version": 1,
+        "schema_version": 2,
         "frontmatter_keys": ["name"],
         "body_line_count": 1,
-        "local_link_targets": []
+        "local_link_targets": [],
+        "long_sentences": []
       },
       "provenance": "user-authored",
       "provider_approved": true,
@@ -126,6 +128,7 @@ Visibility defaults to `private`. Provider approval does not grant publication a
 
 Paths must be canonical relative paths without traversal, symlinks, or hidden components.
 Do not use runtime-owned paths or instruction files.
+`output/` is reserved. A case fixture under `output/` collides with runtime-owned paths and the import fails.
 Keep manifests below two megabytes.
 Use one train case, one validation case, and two holdout cases for the bounded comparison.
 
@@ -138,8 +141,9 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" evaluate /tmp/skillz-run --model
 ```
 
 For CLI-only optimization, replace `--mode prompt-cli` with `--mode cli`.
+Both modes edit `contract.helper.path`. A contract without a `helper` fails with `helper-missing`.
 For wedge optimization, read `Wedge mode` below.
-CLI-only search changes only `scripts/inspect_skill.py` and freezes all skill text, including selected references.
+CLI-only search changes only the helper script and freezes all skill text, including selected references.
 Its reflection receives measured task-plus-judge input and output tokens. The runner records unknown usage as null.
 Correctness remains primary; token use breaks correctness ties.
 Evaluate exactly `original`, `prompt`, and one third arm: `cli`, `prompt-cli`, or `wedge`.
@@ -196,16 +200,19 @@ The runner reports `contract-unapproved` for a draft.
 
 Each kind in `kinds` names one grader:
 
-- `exact-json`: compares the task result with the case `expected` JSON.
+- `exact-json`: compares the task result with the case `expected` JSON. A `result_json` that is not a string scores 0 with status `invalid-answer`.
 - `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100.
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
-- `hybrid`: runs the `command` gate first. A failed gate scores 0 and skips the judge.
+- `hybrid`: runs the `command` gate first. A failed gate scores 0, skips the judge, and records `scores.judge` as null.
 - `audit`: the labelled-findings grader from the audit contract below.
 
 A `command` or `hybrid` grader needs a nonempty `argv`.
 A `judge` or `hybrid` grader needs a `rubric`.
+A case of a `command` kind without `expected` stops with `expected-missing`.
 A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: one for the task and one for the judge.
-A `hybrid` kind with a failed gate spends only one.
+A kind spends one invocation when the judge does not run.
+This covers a failed hybrid gate, a failed activation, and an invalid audit report.
+Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the judge.
 
 ## Wedge mode
 
@@ -213,7 +220,9 @@ Use `search --mode wedge --brief PATH` to offload fixed work from the skill to a
 The `--brief` option is required in this mode.
 The brief is a `/skillz wedge` handoff.
 A proposal adds exactly one new stdlib `scripts/<name>.py`.
-SKILL.md must reference that script.
+SKILL.md must reference that script as a path token.
+This is a mention check. A negated mention still counts.
+The candidate package obeys a 1 MB limit.
 The script runs as `python3 -I`. The proposal changes no other file.
 The arms lock as `original`, `prompt`, and `wedge`.
 Ranking is correctness first, then tokens.
@@ -323,6 +332,9 @@ Process-group cancellation enforces the deadline. The runner does not retry auto
 A consumed holdout cannot resume candidate selection.
 Changed frozen inputs require a new run.
 
+`summary` and `report.json` carry `contract_hash` and `contract_source`.
+Exported outcomes carry `scores`.
+
 Run records contain private local inputs.
 Exports contain a candidate patch and measurements, not requests or expected answers.
 A candidate can memorize training content. Therefore, every export remains private and local.
@@ -342,6 +354,7 @@ Success returns exit zero and one JSON object:
 - `body_line_count`: lines after the closing frontmatter delimiter.
 - `local_link_targets`: sorted local inline Markdown link paths.
 - `long_sentences`: prose sentences over 20 words, each as `{line, words}`.
+  The helper measures fence indent from list-item content, as CommonMark does.
 
 The helper reports facts. It does not parse full YAML or compute task fitness.
 It ignores external links and fragment-only links.

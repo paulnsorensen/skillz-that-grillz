@@ -81,6 +81,7 @@ Each Claude role makes one live preflight per run. Each one counts against `--ma
 Later stages reuse the recorded pass and make no new live call.
 Every stage still runs the free helper sandbox probe, which makes no model call.
 The reuse key joins the role fingerprint and the Claude environment hash.
+The environment hash includes the names, not the values, of the set authentication variables.
 A changed key fails the run with "runtime environment differs from the frozen record".
 The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
@@ -128,6 +129,8 @@ The runner supplies its own probe before inference.
 The probe requires denied host reads, denied symlink escapes, and denied candidate writes.
 It also requires a clean tool environment.
 It requires denied network access: the host loopback connect fails, and a routed connect fails at once with an unreachable or denied error.
+The routed check connects by UDP to `192.0.2.1`. `ENETUNREACH`, `EPERM`, `EACCES`, or a failed `socket()` call passes.
+The probe covers IPv4 only.
 A connect timeout counts as a failure.
 Only `PATH`, `HOME`, `TMPDIR`, `LANG`, and `LC_CTYPE` may reach tools.
 The task workspace must remain writable.
@@ -195,7 +198,8 @@ The probe detects accidental configuration failures; it does not attest sandbox 
 Protocol fixtures test runner behavior, not real operating-system isolation.
 Verify the actual harness sandbox before authorizing private data or paid invocations.
 
-Preflight makes no inference invocations.
+Codex and command preflights make no inference invocation.
+Each `claude` role makes one live preflight call per run.
 Every attempted inference, including a failed response, consumes the shared invocation budget.
 All roles share the same deadline and holdout reservation.
 The runner terminates the process group at the deadline and does not retry.

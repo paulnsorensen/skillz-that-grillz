@@ -20,7 +20,7 @@ metadata:
 
 # skillz
 
-Add, improve, audit, wedge, and self-update skill and agent definitions.
+Add, improve, audit, wedge, autoimprove, and self-update skill and agent definitions.
 The product is a **predictable** definition: the same process on every run and on every harness.
 Every lens asks one question of each line: *does this make the run more predictable, or is it sediment?*
 
@@ -95,7 +95,7 @@ The kernel is `references/calibration.md`; the defaults:
 
 ## Prose check
 
-`add` and `improve` run this check once, after the shared protocol.
+`add` step 5 and `improve` step 5 run this check.
 
 1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <target file>` on the `SKILL.md` or agent file.
 2. Rewrite every sentence over 25 words that it reports.
@@ -133,7 +133,7 @@ The inspector reports no sentence over 25 words.
    A delegated run returns these findings to its parent, and the parent asks.
    A PR body or a report is not approval.
 4. Keep the target's voice and protocol semantics. Tighten; do not redesign.
-5. Run the prose check on `SKILL.md` and on each changed reference before you report the mode as done.
+5. Run the prose check on the target file and on each changed reference before you report the mode as done.
 6. Re-measure the body. Report before/after tokens and the residual findings.
 7. Run the repo's deploy step when the target lives under a `skills/` or `agents/` tree that a sync distributes.
    Confirm the deployed copy matches the source; a vendored skill with the same name overwrites a local one (`harness-layout.md § Layout`).
