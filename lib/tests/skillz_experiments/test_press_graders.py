@@ -50,8 +50,8 @@ class Task:
         self.cases: list[Case | None] = []
         self.workspaces: list[dict[str, str]] = []
         self.argvs: list[list[str]] = []
-        self.stdout = stdout
-        self.code = code
+        self.stdout: str | None = stdout
+        self.code: int = code
 
     def preflight(self) -> dict[str, object]:
         return {}
@@ -334,7 +334,7 @@ def test_command_grader_runs_the_declared_argv_without_a_shell_or_expansion(
 def test_command_kind_on_a_transport_without_sandbox_fails_before_any_task_call(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class Bare(Task):
-        sandbox = None  # type: ignore[assignment]
+        sandbox: object = None  # pyright: ignore[reportIncompatibleMethodOverride]
 
     rules = contract()
     case, candidate = case_for(tmp_path, "rewrite", rules)

@@ -5,6 +5,7 @@ import json
 import shutil
 import stat
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
@@ -43,7 +44,7 @@ def fake_claude(tmp_path: Path, mode: str = "ok") -> Path:
     return executable
 
 
-def scripted(tmp_path: Path, lines: list[object], code: int = 0) -> Path:
+def scripted(tmp_path: Path, lines: Sequence[object], code: int = 0) -> Path:
     executable = tmp_path / "bin" / "claude"
     executable.parent.mkdir(exist_ok=True)
     _ = executable.write_text(SCRIPTED)
@@ -86,7 +87,7 @@ def candidate() -> Candidate:
 
 # ---- the sandbox floor on every call (AC-10) ------------------------------------------------------
 
-FLOOR = {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
+FLOOR: dict[str, object] = {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
          "network": {"allowedDomains": [], "strictAllowlist": True}}
 
 
@@ -97,7 +98,7 @@ def assert_floor(call: dict[str, object]) -> None:
     assert "--strict-mcp-config" in argv
     settings = cast(dict[str, dict[str, object]], json.loads(cast(str, call["settings"])))
     assert {key: settings["sandbox"][key] for key in FLOOR} == FLOOR
-    assert settings["sandbox"]["filesystem"]["denyRead"] == ["/"]  # type: ignore[index]
+    assert cast(dict[str, dict[str, object]], settings["sandbox"])["filesystem"]["denyRead"] == ["/"]
 
 
 @pytest.mark.parametrize("schema", [None, {"type": "object"}])
@@ -137,7 +138,7 @@ def test_floor_settings_are_unaffected_by_a_hostile_home_directory(
     settings = _claude.settings(tmp_path)
     deny = cast(dict[str, list[str]], settings["permissions"])["deny"]
     assert "Read(///**)" in deny or any("/**" in rule for rule in deny)
-    assert settings["sandbox"]["allowUnsandboxedCommands"] is False  # type: ignore[index]
+    assert cast(dict[str, object], settings["sandbox"])["allowUnsandboxedCommands"] is False
     allowed = cast(dict[str, dict[str, list[str]]], settings["sandbox"])["filesystem"]["allowRead"]
     assert "/" not in allowed
 
@@ -162,9 +163,11 @@ def test_the_claude_child_environment_holds_only_the_allowed_names(
 
 def test_claude_role_rejects_a_shell_string_a_second_argument_and_an_unknown_field(tmp_path: Path) -> None:
     executable = fake_claude(tmp_path)
-    for document in ({"command": f"{executable} --dangerously-skip-permissions"},
-                     {"command": [str(executable), "--dangerously-skip-permissions"]},
-                     {"command": []}, {"identity": "x"}, {"extra": 1}):
+    documents: list[dict[str, object]] = [
+        {"command": f"{executable} --dangerously-skip-permissions"},
+        {"command": [str(executable), "--dangerously-skip-permissions"]},
+        {"command": []}, {"identity": "x"}, {"extra": 1}]
+    for document in documents:
         config = tmp_path / "h.json"
         _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude"} | document))
         with pytest.raises(ValueError):
@@ -218,7 +221,9 @@ def test_preflight_stops_before_any_live_call_when_the_sandbox_probe_does_not_pa
 
 def test_preflight_without_the_os_sandbox_tool_fails_closed_before_any_live_call(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_claude.shutil, "which", lambda name: None)
+    def no_tool(name: str) -> None:
+        del name
+    monkeypatch.setattr(shutil, "which", no_tool)
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
@@ -400,8 +405,10 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
         monkeypatch.setattr(_claude, "settings", weaker)
     else:
         original_environment = ClaudeCode._environment  # pyright: ignore[reportPrivateUsage]
-        monkeypatch.setattr(ClaudeCode, "_environment", lambda self, workspace: original_environment(self, workspace)
-                            | {"CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "0"})
+
+        def changed(self: ClaudeCode, workspace: Path) -> dict[str, str]:
+            return original_environment(self, workspace) | {"CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "0"}
+        monkeypatch.setattr(ClaudeCode, "_environment", changed)
     session = harness(tmp_path, executable)
     try:
         with pytest.raises(ValueError, match="differs from the frozen record"):
@@ -460,7 +467,7 @@ def test_a_tampered_record_never_grants_a_reuse_pass_and_runs_the_live_probe_aga
         tmp_path: Path, probes: list[list[str]], tamper: str) -> None:
     del probes
     executable = fake_claude(tmp_path)
-    recorded = json.loads(json.dumps(recorded_pass(tmp_path, executable)))
+    recorded = cast(dict[str, object], json.loads(json.dumps(recorded_pass(tmp_path, executable))))
     roles = cast(dict[str, object], recorded["roles"])
     if tamper == "isolation-failed":
         for role in roles.values():
@@ -509,7 +516,7 @@ def test_reuse_key_for_one_role_does_not_unlock_another_role_with_a_different_ke
         tmp_path: Path, probes: list[list[str]]) -> None:
     del probes
     executable = fake_claude(tmp_path)
-    recorded = json.loads(json.dumps(recorded_pass(tmp_path, executable)))
+    recorded = cast(dict[str, object], json.loads(json.dumps(recorded_pass(tmp_path, executable))))
     keys = cast(dict[str, str], recorded["reuse_keys"])
     keys["judge"] = "0" * 64
     session = harness(tmp_path, executable)

@@ -103,7 +103,7 @@ HOSTILE: dict[str, object] = {
     "helper-input-traversal": broken(helper={"path": "scripts/x.py", "input": "../secret"}),
     "helper-fixtures-text": broken(helper={"path": "scripts/x.py", "fixtures": "x"}),
     "helper-fixture-bool-code": broken(helper={"path": "scripts/x.py", "fixtures": [
-        {"input": "a", "returncode": True, "output": {}}]}),
+        {"input": "a", "returncode": True, "output": cast(dict[str, object], {})}]}),
     "helper-fixture-missing-key": broken(helper={"path": "scripts/x.py", "fixtures": [{"input": "a"}]}),
     "helper-extra": broken(helper={"path": "scripts/x.py", "shell": True}),
     "editable-text": broken(editable="SKILL.md"),
@@ -239,7 +239,7 @@ def test_dataset_with_an_undeclared_case_kind_is_rejected_before_the_run_directo
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = echo_skill(tmp_path)
     cases = manifest(tmp_path)
-    document = json.loads(cases.read_text())
+    document = cast(dict[str, list[dict[str, object]]], json.loads(cases.read_text()))
     document["cases"][0]["kind"] = "__proto__"
     _ = cases.write_text(json.dumps(document))
     code, error = run_dataset(tmp_path, target, cases, capsys)
@@ -253,7 +253,7 @@ def test_dataset_with_a_malformed_case_kind_is_rejected(
         tmp_path: Path, capsys: pytest.CaptureFixture[str], kind: object) -> None:
     target = echo_skill(tmp_path)
     cases = manifest(tmp_path)
-    document = json.loads(cases.read_text())
+    document = cast(dict[str, list[dict[str, object]]], json.loads(cases.read_text()))
     document["cases"][0]["kind"] = kind
     _ = cases.write_text(json.dumps(document))
     code, error = run_dataset(tmp_path, target, cases, capsys)
