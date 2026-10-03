@@ -30,6 +30,14 @@ def read(path: Path) -> dict[str, object]:
     return mapping(cast(object, json.loads(path.read_text(encoding="utf-8"))))
 
 
+def _inside(manifest: Path, target: Path) -> tuple[str, ...]:
+    """Return the manifest path relative to `target`, or nothing when the manifest lies outside it."""
+    try:
+        return (manifest.resolve().relative_to(target.resolve()).as_posix(),)
+    except ValueError:
+        return ()
+
+
 def prepare(manifest: Path, target: Path, out: Path, components: list[str] | None = None,
             contract: Contract | None = None) -> dict[str, object]:
     rules = resolve(contract)
@@ -42,7 +50,7 @@ def prepare(manifest: Path, target: Path, out: Path, components: list[str] | Non
             raise ValueError("extra editable components must be Markdown references")
         if name not in editable:
             editable.append(name)
-    seed = Candidate.capture(target, editable, rules)
+    seed = Candidate.capture(target, editable, rules, _inside(manifest, target))
     out.mkdir(mode=0o700)
     document = {"schema_version": 1, "cases": [dict(asdict(case), id=case.identifier) for case in cases]}
     record: dict[str, object] = {

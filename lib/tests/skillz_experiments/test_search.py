@@ -83,6 +83,8 @@ def test_wedge_admission_accepts_one_referenced_new_script() -> None:
     _proposal({}),
     {"SKILL.md": f"Run {NEW_PATH}.", "wedge-files": "not json"},
     {"SKILL.md": f"Run {NEW_PATH}.", "wedge-files": json.dumps({NEW_PATH: 7})},
+    _proposal({NEW_PATH: "x"}, skill="Run scripts/offload.pyz."),
+    _proposal({NEW_PATH: "x"}, skill="Run myscripts/offload.py."),
 ])
 def test_wedge_admission_rejects_other_proposals(proposal: dict[str, str]) -> None:
     with pytest.raises(ValueError):
@@ -103,3 +105,7 @@ def test_wedge_mode_searches_skill_text_and_the_wedge_component() -> None:
 
     winner = optimize(seed, "wedge", ["train"], ["validation"], evaluate, propose)
     assert NEW_PATH in winner["wedge-files"]
+
+
+def test_wedge_admission_accepts_a_reference_that_ends_a_sentence() -> None:
+    assert admit(SEED_WEDGE, _proposal({NEW_PATH: "x"}, skill=f"Run `{NEW_PATH}`. Then stop.")) == {NEW_PATH: "x"}

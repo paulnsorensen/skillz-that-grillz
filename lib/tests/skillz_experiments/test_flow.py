@@ -223,3 +223,58 @@ def test_wedge_search_without_brief_fails_before_any_model_call(tmp_path: Path, 
     assert read(out / "run.json")["calls"] == calls and len(WedgeProvider.prompts) == prompts
     with pytest.raises(ValueError, match="--brief"):
         _ = execute(out, "search", "local-test", live=True, factory=WedgeProvider, mode="wedge")
+
+
+SKILLZ_CONTRACT = Path(__file__).resolve().parents[3] / "skills/skillz/evals/autoimprove.json"
+
+
+def test_inspection_only_skillz_run_with_a_diagnostic_case_opens_a_session(tmp_path: Path,
+                                                                          capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "skill"
+    (target / "evals").mkdir(parents=True)
+    _ = (target / "SKILL.md").write_text("---\nname: skillz\ndescription: test\n---\nInspect.\n")
+    _ = (target / "evals/autoimprove.json").write_text(SKILLZ_CONTRACT.read_text())
+    manifest = tmp_path / "cases.json"
+    _ = manifest.write_text(json.dumps({"schema_version": 1, "cases": [
+        {"id": "one", "family": "one", "split": "train", "request": "Inspect SKILL.md",
+         "files": {"SKILL.md": "---\nname: fixture\n---\nBody\n"}, "expected": {"name": "fixture"},
+         "provenance": "public", "provider_approved": False}]}))
+    out = tmp_path / "run"
+    assert main(["dataset", str(manifest), "--target", str(target), "--out", str(out)]) == 0
+    _ = capsys.readouterr()
+    session = _Session(out, "local-test", 20, 1200, LocalProvider)
+    assert session.cases == []
+
+
+def test_feedback_side_info_carries_the_command_and_judge_scores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out = _search_ready_run(tmp_path)
+    plain_evaluate = LocalProvider.evaluate
+
+    def scored(self: LocalProvider, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        return plain_evaluate(self, candidate, case, holdout=holdout) | {"scores": {"command": 1.0, "judge": 0.5}}
+
+    session = _Session(out, "local-test", 20, 1200, LocalProvider)
+    monkeypatch.setattr(LocalProvider, "evaluate", scored)
+    case = session.cases_for("train")[0]
+    _, feedback = session._evaluate_example("prompt", {"SKILL.md": "improved"}, case.identifier)  # pyright: ignore[reportPrivateUsage]
+    assert feedback["scores"] == {"command": 1.0, "judge": 0.5}
+
+
+def test_search_rejects_a_brief_outside_wedge_mode_before_any_model_call(tmp_path: Path) -> None:
+    out = _search_ready_run(tmp_path)
+    brief = tmp_path / "brief.md"
+    _ = brief.write_text("Reduce tokens.")
+    calls = read(out / "run.json")["calls"]
+    with pytest.raises(ValueError, match="--brief"):
+        _ = execute(out, "search", "local-test", live=True, factory=LocalProvider, mode="cli", brief=brief)
+    assert read(out / "run.json")["calls"] == calls
+
+
+def test_self_test_reports_a_coded_error_like_dataset(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "skill"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("seed")
+    _ = (target / "blob.md").write_bytes(b"\xff\xfe")
+    code = main(["self-test", "--model", "local-test", "--live", "--target", str(target), "--out", str(tmp_path / "run")])
+    error = cast(dict[str, object], json.loads(capsys.readouterr().err))
+    assert code == 1 and error["code"] == "undecodable-file" and error["exit_code"] == 1

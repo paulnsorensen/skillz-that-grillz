@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -22,17 +24,24 @@ class _Reported(BaseException):
     """A coded error that the command already wrote to stderr; `fromargs` lets it pass."""
 
 
+@contextmanager
+def _coded() -> Generator[None]:
+    """Report a `CodedError` as JSON with its `code` on stderr. Then raise `_Reported`."""
+    try:
+        yield
+    except CodedError as error:
+        print(json.dumps({"error": str(error), "exit_code": 1, "code": error.code}), file=sys.stderr)
+        raise _Reported from None
+
+
 app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. No automatic installation.")
 
 
 @app.command
 def dataset(manifest: Path, *, target: Path, out: Path, component: list[str] | None = None) -> dict[str, object]:
     """Validate authored cases or an approved normalized analytics export."""
-    try:
+    with _coded():
         return prepare(manifest, target, out, component, load_contract(target, load_manifest(manifest)))
-    except CodedError as error:
-        print(json.dumps({"error": str(error), "exit_code": 1, "code": error.code}), file=sys.stderr)
-        raise _Reported from None
 
 
 @app.command
@@ -98,7 +107,8 @@ def self_test(*, model: str, out: Path = SELF_TEST_OUT, target: Path | None = No
         if archive.name != "skillz-experiment.pyz" or not archive.is_file():
             raise ValueError("source execution requires an explicit --target")
         target = archive.parent.parent
-    _ = prepare(source, target, out)
+    with _coded():
+        _ = prepare(source, target, out)
     return execute(out, "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds,
                    harness_config=harness_config)
 
@@ -108,8 +118,5 @@ def main(argv: list[str] | None = None) -> int:
     except _Reported:
         return 1
     except (OSError, ValueError, RuntimeError) as error:
-        report: dict[str, object] = {"error": str(error), "exit_code": 1}
-        if isinstance(error, CodedError):
-            report["code"] = error.code
-        print(json.dumps(report), file=sys.stderr)
+        print(json.dumps({"error": str(error), "exit_code": 1}), file=sys.stderr)
         return 1

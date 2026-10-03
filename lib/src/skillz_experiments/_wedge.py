@@ -38,7 +38,7 @@ def admit(seed_files: dict[str, str], components: dict[str, str]) -> dict[str, s
         raise ValueError("the wedge script exceeds the size limit")
     if len(components.get("SKILL.md", "")) > SCRIPT_LIMIT:
         raise ValueError("SKILL.md exceeds the size limit")
-    if path not in components.get("SKILL.md", ""):
+    if not re.search(rf"(?<![\w/.-]){re.escape(path)}(?![\w-]|\.\w)", components.get("SKILL.md", "")):
         raise ValueError("SKILL.md must reference the wedge script")
     return added
 

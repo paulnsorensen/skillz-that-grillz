@@ -4,7 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import cast
+from typing import cast, override
 
 import pytest
 
@@ -19,13 +19,16 @@ GATE_SCRIPT = {
     "pass": 'import json;print(json.dumps({"score": 1}))',
     "fail": 'import json;print(json.dumps({"score": 1}));raise SystemExit(1)',
     "bad-json": 'print("not json")',
-    "reads-expected": 'import json,pathlib;pathlib.Path("expected.json").read_text();print(json.dumps({"score": 1}))',
+    "no-leak": ("import json,pathlib\n"
+                "roots = [pathlib.Path.cwd(), pathlib.Path.cwd().parent]\n"
+                "leaks = [p for r in roots for p in r.rglob('*') if p.is_file() and 'EXPECTED_SENTINEL' in p.read_text()]\n"
+                "print(json.dumps({'score': 0 if leaks else 1}))"),
 }
 TOKENS = {"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}
 
 
-def contract(script: str = GATE_SCRIPT["pass"]) -> Contract:
-    argv = [sys.executable, "-I", "-c", script]
+def contract(script: str = GATE_SCRIPT["pass"], flags: tuple[str, ...] = ("-I",)) -> Contract:
+    argv = [sys.executable, *flags, "-c", script]
     return parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
                   "kinds": {"echo": {"grader": "exact-json"},
                             "gate": {"grader": "command", "argv": argv},
@@ -136,7 +139,7 @@ def test_contract_staging_prompt_uses_the_declared_invocation(tmp_path: Path, mo
     assert result["score"] == 0.0 and result["loaded"] is True and result["helper_executed"] is True
 
 
-@pytest.mark.parametrize(("name", "score"), [("pass", 1.0), ("fail", 0.0), ("bad-json", 0.0), ("reads-expected", 0.0)])
+@pytest.mark.parametrize(("name", "score"), [("pass", 1.0), ("fail", 0.0), ("bad-json", 0.0)])
 def test_command_grader_scores_from_exit_code_and_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                        name: str, score: float) -> None:
     rules = contract(GATE_SCRIPT[name])
@@ -146,10 +149,30 @@ def test_command_grader_scores_from_exit_code_and_json(tmp_path: Path, monkeypat
     assert result["score"] == score and result["scores"] == {"command": score}
     assert "output_files" not in result
     workspace = task.workspaces[0]
-    assert workspace["result.txt"] == "rewritten\n" and workspace["input.txt"] == "hello\n"
+    assert workspace["output/result.txt"] == "rewritten\n" and workspace["input.txt"] == "hello\n"
+    assert "result.txt" not in workspace
     assert "EXPECTED_SENTINEL" not in "".join(workspace.values()) + "".join(workspace) and not any(
         part.startswith("expected") for part in workspace)
 
+
+def test_command_grader_finds_no_expected_value_anywhere_it_can_read(tmp_path: Path,
+                                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = contract(GATE_SCRIPT["no-leak"])
+    case, candidate = case_and_candidate(tmp_path, "gate", rules)
+    clean = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case)
+    leaked = harness(monkeypatch, SandboxedTask({"expected.json": "EXPECTED_SENTINEL"}), FakeJudge()).evaluate(candidate, case)
+    assert clean["score"] == 1.0 and leaked["score"] == 0.0
+
+def test_candidate_output_cannot_shadow_fixtures_or_modules_for_the_grader(tmp_path: Path,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    script = ('import json,pathlib;ok = pathlib.Path("input.txt").read_text() == "hello\\n"\n'
+              'print(json.dumps({"score": 1 if ok else 0}))')
+    rules = contract(script, flags=())
+    case, candidate = case_and_candidate(tmp_path, "gate", rules)
+    task = SandboxedTask({"input.txt": "tampered\n", "json.py": "raise SystemExit(7)\n"})
+    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
+    assert result["score"] == 1.0
+    assert task.workspaces[0]["output/input.txt"] == "tampered\n" and task.workspaces[0]["input.txt"] == "hello\n"
 
 def test_command_grader_needs_a_sandbox_and_output_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract()
@@ -207,3 +230,34 @@ def test_judge_grader_rejects_an_out_of_range_score(tmp_path: Path, monkeypatch:
     case, candidate = case_and_candidate(tmp_path, "style", rules)
     with pytest.raises(ValueError, match="judge"):
         _ = harness(monkeypatch, FakeTask(), FakeJudge(percent)).evaluate(candidate, case)
+
+
+class ScriptTask(FakeTask):
+    """A task transport that reports a chosen script command."""
+
+    def __init__(self, script_command: str) -> None:
+        super().__init__()
+        self.script_command: str = script_command
+
+    @override
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        result = super().invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+        events = cast(list[dict[str, object]], result["events"])
+        events.append({"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0,
+                                                           "command": self.script_command}})
+        return result
+
+
+@pytest.mark.parametrize(("command", "executed"), [
+    ("python3 -I .agents/skills/echo-skill/scripts/x.py input.txt", True),
+    ("python3 .agents/skills/echo-skill/scripts/x.py input.txt", False)])
+def test_wedge_script_prompt_requires_isolated_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                       command: str, executed: bool) -> None:
+    rules = contract()
+    task = ScriptTask(command)
+    case, seed = case_and_candidate(tmp_path, "echo", rules)
+    candidate = Candidate(seed.files | {"scripts/x.py": "print(1)\n"}, seed.editable, rules, script="scripts/x.py")
+    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
+    assert "python3 -I .agents/skills/echo-skill/scripts/x.py" in task.prompts[0]
+    assert result["loaded"] is True and result["helper_executed"] is executed

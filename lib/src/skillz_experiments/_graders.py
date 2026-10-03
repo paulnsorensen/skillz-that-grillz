@@ -46,11 +46,24 @@ def require_sandbox(task: object) -> None:
         raise ValueError("a command grader needs a task transport with a sandbox method")
 
 
+OUTPUT_DIRECTORY = "output"
+
+
+def isolated(argv: tuple[str, ...]) -> list[str]:
+    """Return `argv`. Add `-I` after a Python interpreter, so the working directory never joins `sys.path`."""
+    command_line = list(argv)
+    if Path(command_line[0]).name.startswith("python") and "-I" not in command_line[1:]:
+        command_line.insert(1, "-I")
+    return command_line
+
+
 def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, str] | None) -> float:
     """Run the grader argv in a fresh workspace that holds the fixtures and the task output.
 
-    The workspace never holds `expected` or the rubric. The score is 0 for a non-zero exit code
-    or for stdout that is not a JSON object with a numeric `score` from 0 to 1.
+    The case files stay at the workspace root. The task output goes under `output/`, so it cannot
+    replace a fixture. A Python argv runs with `-I`. The workspace never holds `expected` or the
+    rubric. The score is 0 for a non-zero exit code or for stdout that is not a JSON object with a
+    numeric `score` from 0 to 1.
     """
     require_sandbox(task)
     if files is None:
@@ -59,10 +72,10 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
         workspace = make_workspace(Path(directory) / "workspace")
         stage_task(workspace, None, case)
         for name, text in files.items():
-            path = workspace / relative(name)
+            path = workspace / OUTPUT_DIRECTORY / relative(name)
             path.parent.mkdir(parents=True, exist_ok=True)
             _ = path.write_text(text, encoding="utf-8")
-        code, stdout = cast(Sandbox, task).sandbox(workspace, list(argv))
+        code, stdout = cast(Sandbox, task).sandbox(workspace, isolated(argv))
     return _command_score(code, stdout)
 
 

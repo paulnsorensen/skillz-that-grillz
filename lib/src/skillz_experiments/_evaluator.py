@@ -74,7 +74,8 @@ def _activation(result: dict[str, object], candidate: Candidate, rules: Contract
     answer = mapping(result.pop("answer"))
     events = result.pop("events")
     workspace = string(result.pop("workspace"), "workspace")
-    assert isinstance(events, list)
+    if not isinstance(events, list):
+        raise ValueError("events must be a list")
     events = cast(list[dict[str, object]], events)
     loaded = answer.get("load_marker") == candidate.identity and executed(events, "SKILL.md", workspace, skill=rules.skill)
     script = candidate.script or (rules.helper.path if rules.helper is not None else None)

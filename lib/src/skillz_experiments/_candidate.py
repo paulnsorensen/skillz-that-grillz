@@ -22,8 +22,15 @@ def candidate_files(value: object) -> dict[str, str]:
 
 
 def _ignored(root: Path) -> set[str]:
-    """Return the git-ignored files under `root`. Any git failure gives an empty set."""
+    """Return the git-ignored files under `root`. Any git failure gives an empty set.
+
+    A root that git ignores itself gives an empty set too. Git would list every file below it.
+    """
     try:
+        inside = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(root.resolve())],
+                                capture_output=True, check=False, timeout=30)
+        if inside.returncode == 0:
+            return set()
         run = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
                              capture_output=True, check=False, timeout=30)
     except (OSError, subprocess.SubprocessError):
@@ -41,17 +48,22 @@ class Candidate:
     script: str | None = None
 
     @classmethod
-    def capture(cls, root: Path, editable: list[str], contract: Contract | None = None) -> Candidate:
+    def capture(cls, root: Path, editable: list[str], contract: Contract | None = None,
+                exclude: tuple[str, ...] = ()) -> Candidate:
+        """Read the skill files under `root`. Skip git-ignored files, `.git`, `evals/`, and `exclude`."""
         if root.is_symlink():
             raise ValueError("candidate must not contain symlinks")
         ignored = _ignored(root)
         files: dict[str, str] = {}
         for path in sorted(root.rglob("*")):
+            posix = path.relative_to(root).as_posix()
+            if posix in ignored or ".git" in posix.split("/") or posix.startswith("evals/"):
+                continue
             if path.is_symlink():
                 raise ValueError("candidate must not contain symlinks")
             if path.is_file():
-                name = relative(path.relative_to(root).as_posix())
-                if name in ("scripts/skillz-experiment.pyz", LOCATION) or name in ignored:
+                name = relative(posix)
+                if name in ("scripts/skillz-experiment.pyz", LOCATION, *exclude):
                     continue
                 if path.stat().st_size > 262144:
                     raise ValueError("candidate file exceeds size limit")
@@ -112,6 +124,7 @@ def snapshot_outputs(workspace: Path) -> dict[str, str]:
     """Return the text files that a task leaves in the workspace, bounded in count and size.
 
     Symlinks, runtime-owned paths, binary files, and files over the limits are skipped.
+    A symlink above the workspace is allowed. Only the parts below the workspace count.
     """
     files: dict[str, str] = {}
     total = 0
@@ -119,7 +132,8 @@ def snapshot_outputs(workspace: Path) -> dict[str, str]:
         parts = path.relative_to(workspace).parts
         if parts[0] in _RUNTIME_OWNED or any(part.startswith(".") for part in parts):
             continue
-        if path.is_symlink() or not path.is_file() or any(parent.is_symlink() for parent in path.parents):
+        if path.is_symlink() or not path.is_file() or any(
+                (workspace.joinpath(*parts[:depth])).is_symlink() for depth in range(1, len(parts))):
             continue
         if len(files) >= OUTPUT_FILE_LIMIT or path.stat().st_size > OUTPUT_BYTES_LIMIT:
             continue

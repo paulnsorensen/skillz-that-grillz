@@ -121,7 +121,8 @@ class _Session:
         if dataset_hash != digest(read(self.out / "cases.json")):
             raise ValueError("dataset differs from the frozen record")
         imported = load_cases(self.out / "cases.json", self.contract.grader_types())
-        if any(grader == "audit" for grader in self.contract.grader_types().values()) and (
+        rules = self.contract
+        if any(rules.grader(case.kind).type == "audit" for case in imported) and (
                 any(not case.eligible for case in imported)
                 or not all(any(case.split == split for case in imported) for split in ("train", "validation"))
                 or sum(case.split == "holdout" for case in imported) != 2):
@@ -219,6 +220,8 @@ class _Session:
         if case.split == "validation":
             self._validation.setdefault(candidate.identity, []).append(result)
         feedback: dict[str, object] = {"task_correct": result["score"], "request": case.request}
+        if "scores" in result:
+            feedback["scores"] = result["scores"]
         if mode in ("cli", "wedge"):
             usage = mapping(result.get("usage") or {})
             feedback["usage"] = {key: value if type(value := usage.get(key)) is int and value >= 0 else None
@@ -339,6 +342,8 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
             harness_config: Path | None = None, brief: Path | None = None) -> dict[str, object]:
     if stage == "search" and mode == "wedge" and brief is None:
         raise ValueError("wedge search requires --brief PATH")
+    if brief is not None and mode != "wedge":
+        raise ValueError("--brief applies to wedge mode only")
     brief_text = _read_brief(brief) if brief is not None else None
     if not live:
         raise ValueError("live model calls require --live")
