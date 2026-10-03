@@ -31,7 +31,8 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-run --out /tm
 
 Pass an explicit available model. The example model is not an availability guarantee.
 The Codex and command preflights make zero model invocations.
-A `claude` role makes one live preflight call per role, once per run, charged once (see [the claude adapter](experiment-harness.md)).
+A `claude` role makes one live preflight call per role, once per run (see [the claude adapter](experiment-harness.md#the-claude-adapter)).
+Under `self-test --preflight-only`, each `claude` role makes one live call, even without `--live`.
 Other live invocations require `--live` and a successful isolation preflight.
 A failed isolation check stops the run. Never add an unsafe fallback.
 
@@ -181,11 +182,12 @@ Unknown fields and malformed values stop the run.
 When the run reports `contract-missing`, ask the user to choose one path.
 
 1. Choose judge-only grading. No flag selects it.
-   Write an approved contract that maps each kind to the `judge` grader with a `rubric`.
+   Draft a contract that maps each kind to the `judge` grader with a `rubric`.
    Set the powerful model in the harness `judge` role.
+   Show the user the rubric.
 2. Use a contract. Find an existing contract, or draft one with the user.
 
-Save a drafted contract with `"status": "draft"`.
+Save every drafted contract with `"status": "draft"`, for both choices.
 Keep that status until the user approves the contract.
 Set `"status": "approved"` only after the user approves it.
 The runner reports `contract-unapproved` for a draft.
@@ -202,7 +204,8 @@ Each kind in `kinds` names one grader:
 
 A `command` or `hybrid` grader needs a nonempty `argv`.
 A `judge` or `hybrid` grader needs a `rubric`.
-A kind with the `judge`, `hybrid`, or `audit` grader costs two invocations: one for the task and one for the judge.
+A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: one for the task and one for the judge.
+A `hybrid` kind with a failed gate spends only one.
 
 ## Wedge mode
 

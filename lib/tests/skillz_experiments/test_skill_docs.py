@@ -60,6 +60,7 @@ def test_audit_lens_has_prose_row_citing_long_sentences() -> None:
     row = next(r for r in _table(SKILL.read_text(), "Lens") if r[0].startswith("**Prose (ASD-STE100)"))
     assert "inspect_skill.py" in row[2]
     assert "long_sentences" in row[2]
+    assert "Report passive voice and multi-instruction sentences as findings." in row[2]
     assert "long_sentences" not in row[0] + row[1]
 
 
@@ -77,7 +78,7 @@ def test_add_improve_steps_run_prose_check_on_skill_md(mode: str) -> None:
 
 
 def test_shared_prose_check_names_inspector_limit_and_references() -> None:
-    match = re.search(r"^### \d+\. Prose check.*?(?=^#{2,3} |\Z)", SKILL.read_text(), re.M | re.S)
+    match = re.search(r"^## Prose check.*?(?=^## |\Z)", SKILL.read_text(), re.M | re.S)
     assert match is not None
     items = _steps(match[0])
     assert len(items) == 3
@@ -94,7 +95,10 @@ def test_no_contract_step_offers_judge_only_or_draft_contract() -> None:
     assert "find" in choices[1].lower() and "draft" in choices[1].lower() and "contract" in choices[1].lower()
     ask = section.splitlines().index(next(line for line in section.splitlines() if line.startswith("1. ")))
     assert any("ask the user" in line for line in section.splitlines()[:ask])
-    assert '"status": "draft"' in section and "approves" in section
+    assert "judge-only" in choices[0] and "Draft a contract" in choices[0] and "approved contract" not in choices[0]
+    tail = section.split(choices[1])[1]
+    assert 'Save every drafted contract with `"status": "draft"`, for both choices.' in tail
+    assert "until the user approves" in tail and '`"status": "approved"` only after the user approves' in tail
 
 
 def _long(path: Path) -> list[dict[str, int]]:

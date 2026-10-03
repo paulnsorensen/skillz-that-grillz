@@ -1,5 +1,5 @@
 interface:
   display_name: "skillz"
-  short_description: "Add, improve, audit, wedge, or self-update a skill or agent definition."
+  short_description: "Add, improve, audit, wedge, autoimprove, or self-update a skill or agent definition."
 policy:
   allow_implicit_invocation: false

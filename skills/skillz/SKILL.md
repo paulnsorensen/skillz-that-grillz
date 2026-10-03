@@ -93,11 +93,11 @@ The kernel is `references/calibration.md`; the defaults:
 - **Re-derive** — re-read the target and re-derive each `<speculative>` finding once without the first pass. Drop it when it does not reproduce.
 - Order by severity, then `<certain>` first.
 
-### 4. Prose check
+## Prose check
 
-`add` and `improve` run this check.
+`add` and `improve` run this check once, after the shared protocol.
 
-1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <path to SKILL.md>`.
+1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <target file>` on the `SKILL.md` or agent file.
 2. Rewrite every sentence over 25 words that it reports.
 3. For a changed reference file, apply the same 25-word limit by hand.
 
@@ -117,7 +117,7 @@ The helper rejects a file that has no frontmatter, so it cannot check a referenc
 5. Run the prose check on `SKILL.md` and on each changed reference before you report the mode as done.
 6. Run `improve` on the new file once.
    Then run the repo's deploy step when one exists.
-   Examples: a dotfiles sync, `npx skills add`, or a copy into the harness skills directory.
+   Example deploy steps are a dotfiles sync, `npx skills add`, or a copy into the harness skills directory.
 
 Done means: the file exists and the repo index names it, or every repo-local host path resolves.
 The deploy step exits 0 when one exists. The Invocation lens passes.
