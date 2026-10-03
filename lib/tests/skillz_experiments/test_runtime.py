@@ -110,3 +110,20 @@ def test_network_probe_fails_when_a_namespace_has_its_own_loopback_but_routed_eg
     result = _run_probe(tmp_path, port, _routed(outcome))
     assert result.returncode != 0
     assert "network isolation failed" in result.stderr
+
+
+def test_network_probe_checks_the_route_with_a_udp_connect_and_never_a_tcp_syn(tmp_path: Path) -> None:
+    from skillz_experiments._isolation import listening
+
+    with listening() as port:
+        pass
+    prefix = (
+        "import socket,errno\n"
+        "real=socket.socket.connect\n"
+        "def connect(self,address):\n"
+        " if address[0]!='192.0.2.1': return real(self,address)\n"
+        " if self.type!=socket.SOCK_DGRAM: raise SystemExit('tcp connect to the routed address')\n"
+        " raise OSError(errno.ENETUNREACH,'unreachable')\n"
+        "socket.socket.connect=connect\n")
+    result = _run_probe(tmp_path, port, prefix)
+    assert (result.returncode, result.stdout.strip()) == (0, "isolation-ok")

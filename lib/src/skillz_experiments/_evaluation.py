@@ -35,7 +35,7 @@ def usage(events: list[dict[str, object]]) -> dict[str, int | None]:
 
 
 def executed(events: list[dict[str, object]], filename: str, workspace: str | None = None,
-             *, skill: str = "skillz", isolated: bool = False) -> bool:
+             *, skill: str, isolated: bool = False) -> bool:
     """Check for a completed command that cats SKILL.md or runs a skill script.
 
     A bare script name means `scripts/<name>`. `isolated` requires `python3 -I`.

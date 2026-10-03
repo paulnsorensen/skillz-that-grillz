@@ -211,7 +211,7 @@ def test_hybrid_gate_failure_skips_the_judge(tmp_path: Path, monkeypatch: pytest
     judge = FakeJudge()
     result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
     assert judge.prompts == []
-    assert result["score"] == 0.0 and result["scores"] == {"command": 0.0, "judge": 0.0}
+    assert result["score"] == 0.0 and result["scores"] == {"command": 0.0, "judge": None}
     assert result["judge_usage"] is None
 
 

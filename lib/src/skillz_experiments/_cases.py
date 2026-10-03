@@ -20,6 +20,7 @@ class CodedError(ValueError):
         super().__init__(message)
         self.code: str = code
 
+
 def mapping(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ValueError("expected a JSON object")
@@ -43,7 +44,7 @@ def relative(value: str) -> str:
 
 def text_map(value: object) -> dict[str, str]:
     files = {relative(key): string(item, key) for key, item in mapping(value).items()}
-    forbidden = {"home", "tmp", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
+    forbidden = {"home", "tmp", "output", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
     if any(PurePosixPath(key).parts[0] in forbidden or PurePosixPath(key).name == "AGENTS.md" for key in files):
         raise ValueError("fixture collides with runtime-owned paths")
     return files
@@ -166,6 +167,8 @@ def _case(value: object, kinds: Mapping[str, str]) -> Case:
         raise ValueError("labels_reviewed must be boolean")
     files = text_map(item.get("files", {}))
     expected = audit_labels(item.get("expected"), files) if kinds[kind] == "audit" else item.get("expected")
+    if expected is None and kinds[kind] == "command":
+        raise CodedError("expected-missing", f"case {item.get('id')!r} of kind {kind!r} needs an expected value")
     return Case(
         string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split),
         request, files, expected,

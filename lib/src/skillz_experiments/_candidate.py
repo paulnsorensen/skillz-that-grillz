@@ -44,7 +44,7 @@ def _metadata(posix: str) -> bool:
     """Return True for VCS and host metadata and for bytecode caches. Capture skips them."""
     parts = posix.split("/")
     return (bool({".git", ".github", "__pycache__"} & set(parts))
-            or parts[-1] in (".gitignore", ".gitattributes") or parts[-1].endswith(".pyc"))
+            or parts[-1] in (".gitignore", ".gitattributes", ".gitkeep", ".gitmodules", ".DS_Store") or parts[-1].endswith(".pyc"))
 
 
 @dataclass(frozen=True)

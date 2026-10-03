@@ -355,7 +355,7 @@ def test_hybrid_failed_gate_makes_no_judge_call_and_scores_zero_with_both_scores
     judge = Judge({"score_percent": 100})
     result = harness(monkeypatch, Task(stdout=stdout), judge).evaluate(candidate, case)
     assert judge.prompts == []
-    assert result["score"] == 0.0 and result["scores"] == {"command": 0.0, "judge": 0.0}
+    assert result["score"] == 0.0 and result["scores"] == {"command": 0.0, "judge": None}
     assert result["status"] == "gate-failed" and result["judge_usage"] is None
     assert result["usage"] == TOKENS
 
@@ -452,3 +452,51 @@ def test_audit_kind_with_unreviewed_labels_stops_before_any_invocation(
     with pytest.raises(ValueError, match="human-reviewed"):
         _ = harness(monkeypatch, task, Judge()).evaluate(candidate, unreviewed)
     assert task.prompts == []
+
+
+@pytest.mark.parametrize("value", [None, 5, ["x"], {"echo": "hello"}])
+def test_exact_json_scores_zero_when_result_json_is_not_text_and_does_not_stop_the_run(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: object) -> None:
+    from typing import override
+
+    class Typed(Task):
+        @override
+        def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+                   *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+            result = super().invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+            cast(dict[str, object], result["answer"])["result_json"] = value
+            return result
+    case, candidate = case_for(tmp_path, "echo", contract())
+    result = harness(monkeypatch, Typed(), Judge()).evaluate(candidate, case)
+    assert result["score"] == 0.0 and result["status"] == "invalid-answer"
+
+
+def test_command_case_without_expected_is_rejected_with_a_coded_error(tmp_path: Path) -> None:
+    from skillz_experiments._cases import CodedError
+
+    item: dict[str, object] = {"id": "one", "family": "one", "split": "train", "kind": "gate", "request": "Do it.",
+                               "files": {"input.txt": "hello\n"}, "provenance": "test", "provider_approved": True}
+    path = tmp_path / "cases.json"
+    _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
+    with pytest.raises(CodedError) as caught:
+        _ = load_cases(path, contract().grader_types())
+    assert caught.value.code == "expected-missing"
+
+
+def test_case_fixture_under_the_reserved_output_directory_is_rejected(tmp_path: Path) -> None:
+    item: dict[str, object] = {"id": "one", "family": "one", "split": "train", "kind": "echo", "request": "Do it.",
+                               "files": {"output/result.txt": "hello\n"}, "provenance": "test",
+                               "provider_approved": True, "expected": {}}
+    path = tmp_path / "cases.json"
+    _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
+    with pytest.raises(ValueError, match="runtime-owned"):
+        _ = load_cases(path, contract().grader_types())
+
+
+@pytest.mark.parametrize("name", [".DS_Store", ".gitkeep", ".gitmodules", "references/.gitkeep"])
+def test_capture_skips_host_and_vcs_placeholder_files(tmp_path: Path, name: str) -> None:
+    root = tmp_path / "skill"
+    (root / "references").mkdir(parents=True)
+    _ = (root / "SKILL.md").write_text("seed")
+    _ = (root / name).write_bytes(b"\xff")
+    assert Candidate.capture(root, ["SKILL.md"]).files == {"SKILL.md": "seed"}

@@ -61,7 +61,8 @@ def evaluate(task: Transport, judge_transport: Transport, candidate: Candidate, 
     if grader.type == "exact-json":
         answer_text = answer.get("result_json")
         if not isinstance(answer_text, str):
-            raise ValueError("result_json must be text")
+            result["status"] = "invalid-answer"
+            return result
         result["score"] = grade(answer_text, case.expected, loaded=loaded, helper_executed=helper)
         return result
     result.update({"task_usage": result.get("usage"), "judge_usage": None})
@@ -107,7 +108,7 @@ def _evaluate_scored(task: Transport, judge_transport: Transport, rules: Contrac
                      answer: dict[str, object], files: dict[str, str] | None, *, holdout: bool) -> dict[str, object]:
     """Score a command, judge, or hybrid kind. A failed hybrid gate skips the judge."""
     grader = rules.grader(case.kind)
-    scores: dict[str, float] = {}
+    scores: dict[str, float | None] = {}
     result["scores"] = scores
     if not result["loaded"] or not result["helper_executed"]:
         result["status"] = "activation-rejected"
@@ -115,7 +116,7 @@ def _evaluate_scored(task: Transport, judge_transport: Transport, rules: Contrac
     if grader.type in ("command", "hybrid"):
         scores["command"] = result["score"] = _graders.command(task, grader.argv, case, files)
         if grader.type == "hybrid" and scores["command"] <= 0:
-            scores["judge"] = 0.0
+            scores["judge"] = None
             result["status"] = "gate-failed"
             return result
     if grader.type in ("judge", "hybrid"):

@@ -479,10 +479,23 @@ def test_wedge_reference_inside_a_code_fence_or_comment_counts_as_a_reference_to
         assert _wedge.admit(SEED, proposal({"scripts/x.py": "1"}, skill)) == {"scripts/x.py": "1"}
 
 
-@pytest.mark.xfail(strict=True, reason="review follow-up: the lookbehind lets `other/scripts/x.py` count as a reference")
-def test_wedge_reference_to_a_script_in_another_directory_does_not_count() -> None:
+@pytest.mark.parametrize("text", ["Run other-skill/scripts/x.py now.", "Run scripts/x.py/ now.", "Run xscripts/x.py now.",
+                                  "Run ../scripts/x.py now."])
+def test_wedge_reference_that_is_not_a_path_token_of_the_script_does_not_count(text: str) -> None:
     with pytest.raises(ValueError, match="reference"):
-        _ = _wedge.admit(SEED, proposal({"scripts/x.py": "1"}, "Run other-skill/scripts/x.py now."))
+        _ = _wedge.admit(SEED, proposal({"scripts/x.py": "1"}, text))
+
+
+@pytest.mark.parametrize("text", ["Run scripts/x.py now.", "Run ./scripts/x.py now.", "Run `scripts/x.py`.",
+                                  "Run ${CLAUDE_SKILL_DIR}/scripts/x.py now.", "Run <this-skill-directory>/scripts/x.py now.",
+                                  "Run scripts/x.py."])
+def test_wedge_reference_as_a_path_token_with_an_allowed_prefix_counts(text: str) -> None:
+    assert _wedge.admit(SEED, proposal({"scripts/x.py": "1"}, text)) == {"scripts/x.py": "1"}
+
+
+def test_wedge_reference_check_is_a_mention_check_so_a_negated_mention_still_counts() -> None:
+    """Known limit: telling a negation from a call needs natural-language parsing."""
+    assert _wedge.admit(SEED, proposal({"scripts/x.py": "1"}, "Do not run scripts/x.py.")) == {"scripts/x.py": "1"}
 
 
 def test_wedge_cli_without_brief_exits_before_any_model_invocation(

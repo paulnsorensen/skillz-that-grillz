@@ -2,6 +2,9 @@
 
 A command grader runs in a fresh workspace. The case fixtures sit at the workspace root. The
 candidate outputs sit under `output/`, so an output never replaces a fixture or a module.
+
+A hybrid kind whose command gate fails skips the judge. Its side-info `scores` then holds
+`{"command": 0.0, "judge": null}`. A `null` judge entry means the judge did not run.
 """
 from __future__ import annotations
 
@@ -52,7 +55,6 @@ def require_sandbox(task: object) -> None:
 
 
 OUTPUT_DIRECTORY = "output"
-
 
 
 def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, str] | None) -> float:

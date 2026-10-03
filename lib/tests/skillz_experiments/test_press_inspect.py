@@ -15,10 +15,11 @@ TWENTY = " ".join(f"w{i}" for i in range(20)) + "."
 TWENTY_ONE = " ".join(f"w{i}" for i in range(21)) + "."
 
 
-def inspect(tmp_path: Path, body: str, raw: bytes | None = None) -> tuple[int, dict[str, object]]:
+def inspect(tmp_path: Path, body: str, raw: bytes | None = None, timeout: float | None = None) -> tuple[int, dict[str, object]]:
     path = tmp_path / "SKILL.md"
     _ = path.write_bytes(raw if raw is not None else f"---\nname: x\ndescription: y\n---\n{body}".encode())
-    run = subprocess.run([sys.executable, "-I", str(SCRIPT), str(path)], capture_output=True, text=True, check=False)
+    run = subprocess.run([sys.executable, "-I", str(SCRIPT), str(path)], capture_output=True, text=True, check=False,
+                         timeout=timeout)
     return run.returncode, cast(dict[str, object], json.loads(run.stdout))
 
 
@@ -129,5 +130,14 @@ def test_symlink_input_exits_two(tmp_path: Path) -> None:
 
 def test_pathological_markdown_finishes_quickly(tmp_path: Path) -> None:
     body = ("`" * 50 + " a ") * 1000 + "\n" + '"' * 20000 + "\n" + ("a. " * 20000) + "\n"
-    code, _ = inspect(tmp_path, body)
+    code, _ = inspect(tmp_path, body, timeout=10)
     assert code == 0
+
+
+def test_fence_in_a_nested_list_item_indented_four_spaces_is_a_fence(tmp_path: Path) -> None:
+    body = f"- Step:\n  - Sub step:\n    ```bash\n    a=`\n    {LONG}\n    ```\n"
+    assert found(tmp_path, body) == []
+
+
+def test_indented_text_after_a_list_item_is_not_a_fence_without_the_item_indent(tmp_path: Path) -> None:
+    assert len(found(tmp_path, f"Intro.\n\n    ```bash\n{LONG}\n")) == 1

@@ -38,9 +38,17 @@ def admit(seed_files: dict[str, str], components: dict[str, str]) -> dict[str, s
         raise ValueError("the wedge script exceeds the size limit")
     if len(components.get("SKILL.md", "")) > SCRIPT_LIMIT:
         raise ValueError("SKILL.md exceeds the size limit")
-    if not re.search(rf"(?<![\w.-]){re.escape(path)}(?![\w-]|\.\w)", components.get("SKILL.md", "")):
+    if not _reference(path).search(components.get("SKILL.md", "")):
         raise ValueError("SKILL.md must reference the wedge script")
     return added
+
+
+def _reference(path: str) -> re.Pattern[str]:
+    """Match `path` as one path token, with an optional skill-directory prefix.
+
+    This is a mention check. A negated mention such as "do not run scripts/x.py" still counts.
+    """
+    return re.compile(rf"(?<![\w./-])(?:\./|\$\{{CLAUDE_SKILL_DIR\}}/|<this-skill-directory>/)?{re.escape(path)}(?![\w/-]|\.\w)")
 
 
 def new_script(seed_files: dict[str, str], files: dict[str, str]) -> str | None:

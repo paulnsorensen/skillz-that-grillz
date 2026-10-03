@@ -20,6 +20,7 @@ from skillz_experiments._workflow import execute, export as export_run
 Profile = Literal["inspection", "audit"]
 SELF_TEST_OUT = Path("skillz-self-test")
 
+
 class _Reported(BaseException):
     """A coded error that the command already wrote to stderr; `fromargs` lets it pass."""
 
@@ -108,9 +109,10 @@ def self_test(*, model: str, out: Path = SELF_TEST_OUT, target: Path | None = No
             raise ValueError("source execution requires an explicit --target")
         target = archive.parent.parent
     with _coded():
-        _ = prepare(source, target, out)
+        _ = prepare(source, target, out, None, load_contract(target, load_manifest(source)))
     return execute(out, "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds,
                    harness_config=harness_config)
+
 
 def main(argv: list[str] | None = None) -> int:
     try:

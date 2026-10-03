@@ -83,7 +83,11 @@ _LEGACY_SKILLZ = Contract(
 
 
 def resolve(contract: Contract | None) -> Contract:
-    """Return the contract, or the legacy skillz contract when a caller declares none."""
+    """Return the contract, or the legacy skillz contract when a caller declares none.
+
+    Kept because tests and `load_cases` without kinds still build cases and candidates with no contract.
+    The CLI always loads the shipped contract and never takes this fallback.
+    """
     return _LEGACY_SKILLZ if contract is None else contract
 
 

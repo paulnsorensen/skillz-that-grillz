@@ -278,8 +278,9 @@ class ClaudeCode:
     def environment_key(self) -> str:
         """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment."""
         environment = {name: value for name, value in self._environment(Path("/TASK")).items() if name not in AUTHENTICATION}
+        credentials = sorted(name for name in AUTHENTICATION if name in os.environ)
         return digest({"settings": settings(Path("/TASK")), "environment": environment, "tools": TOOLS,
-                       "skill": PROBE_SKILL, "platform": sys.platform})
+                       "skill": PROBE_SKILL, "platform": sys.platform, "credentials": credentials})
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
         with listening() as port:
@@ -358,7 +359,8 @@ class ClaudeCode:
                     raise RuntimeError(f"Claude Code isolation fails: skills in init event {loaded}, expected {expected}; "
                                        + "the invocation counts against the budget")
                 if candidate is not None and not loaded and not failed:
-                    return {"answer": {"result_json": "", "load_marker": ""}, "events": [], "usage": usage([]),
+                    trace = _trace(events) + _token_events(cast(dict[str, object], final))
+                    return {"answer": {"result_json": "", "load_marker": ""}, "events": [], "usage": usage(trace),
                             "workspace": str(workspace), "latency_seconds": time.monotonic() - started,
                             "output_files": snapshot_outputs(workspace)}
             if failed or final is None:

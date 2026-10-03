@@ -87,10 +87,7 @@ def main() -> int:
     mode_file = script.with_name(script.name + ".mode")
     mode = mode_file.read_text().strip() if mode_file.is_file() else "ok"
     argv = sys.argv[1:]
-    prompt = sys.stdin.read() if "--version" not in argv else ""
-    if "--version" in argv:
-        print("2.1.287 (Claude Code)")
-        return 0
+    prompt = sys.stdin.read()
     settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
     with script.with_name(script.name + ".log").open("a") as log:
         _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,

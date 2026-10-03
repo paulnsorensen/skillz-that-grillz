@@ -568,3 +568,31 @@ def test_reuse_key_for_one_role_does_not_unlock_another_role_with_a_different_ke
             _ = session.preflight(recorded)
     finally:
         session.close()
+
+
+def test_a_candidate_that_does_not_load_still_reports_the_usage_of_the_charged_call(tmp_path: Path) -> None:
+    executable = scripted(tmp_path, [{"type": "system", "subtype": "init", "skills": []}, DONE])
+    session = harness(tmp_path, executable)
+    try:
+        result = session.transports["task"].invoke("hello", candidate())
+    finally:
+        session.close()
+    assert cast(dict[str, object], result["usage"])["output_tokens"] == 1
+
+
+def test_environment_key_names_the_present_credential_variables_but_never_their_values(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _claude.AUTHENTICATION:
+        monkeypatch.delenv(name, raising=False)
+    executable = fake_claude(tmp_path)
+
+    def key() -> str:
+        return ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable).environment_key()
+    none = key()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-one")
+    api = key()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-two")
+    assert key() == api != none
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "secret-one")
+    assert key() not in (none, api)

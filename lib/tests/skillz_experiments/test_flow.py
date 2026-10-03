@@ -15,7 +15,7 @@ from skillz_experiments._cases import Case
 from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
 from skillz_experiments._search import Mode
-from skillz_experiments._workflow import _Session, execute, export  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments._workflow import _Session, execute, export, summary  # pyright: ignore[reportPrivateUsage]
 
 
 @final
@@ -261,6 +261,36 @@ def test_feedback_side_info_carries_the_command_and_judge_scores(tmp_path: Path,
     assert feedback["scores"] == {"command": 1.0, "judge": 0.5}
 
 
+def test_a_judge_graded_run_freezes_the_judge_and_the_summary_names_the_contract(tmp_path: Path) -> None:
+    target = tmp_path / "skill"
+    (target / "evals").mkdir(parents=True)
+    _ = (target / "SKILL.md").write_text("seed")
+    _ = (target / "evals/autoimprove.json").write_text(json.dumps({
+        "schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
+        "kinds": {"style": {"grader": "judge", "rubric": "Be brief."}}}))
+    manifest = tmp_path / "cases.json"
+    _ = manifest.write_text(json.dumps({"schema_version": 1, "cases": [
+        {"id": "one", "family": "one", "split": "train", "request": "Say hi.", "files": {"in.md": "x"},
+         "expected": {"ok": True}, "provenance": "public", "provider_approved": True}]}))
+    out = tmp_path / "run"
+    assert main(["dataset", str(manifest), "--target", str(target), "--out", str(out)]) == 0
+    session = _Session(out, "local-test", 20, 1200, LocalProvider)
+    assert session.record["judge_model"] == "local-test" and "judge" in session.record
+    shown = summary(session.record)
+    assert shown["contract_hash"] == session.record["contract_hash"] and shown["contract_source"] == "skill"
+    assert shown["judge"] == session.record["judge"]
+
+
+def test_wedge_candidate_over_the_package_size_bound_is_rejected_with_zero_score(tmp_path: Path) -> None:
+    out, _ = _wedge_run(tmp_path, {})
+    session = _Session(out, "local-test", 20, 1200, WedgeProvider)
+    session.seed.files["references/big.md"] = "x" * 990_000
+    case = session.cases_for("train")[0]
+    components = {"SKILL.md": f"Run {WEDGE_PATH}. " + "x" * 20_000,
+                  "wedge-files": json.dumps({WEDGE_PATH: "print(1)\n"})}
+    score, feedback = session._evaluate_example("wedge", components, case.identifier)  # pyright: ignore[reportPrivateUsage]
+    assert score == 0.0 and "size limit" in str(feedback["rejected"])
+
 def test_search_rejects_a_brief_outside_wedge_mode_before_any_model_call(tmp_path: Path) -> None:
     out = _search_ready_run(tmp_path)
     brief = tmp_path / "brief.md"
@@ -271,11 +301,23 @@ def test_search_rejects_a_brief_outside_wedge_mode_before_any_model_call(tmp_pat
     assert read(out / "run.json")["calls"] == calls
 
 
-def test_self_test_reports_a_coded_error_like_dataset(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_self_test_loads_the_shipped_contract_so_a_target_without_one_gets_a_coded_error(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = tmp_path / "skill"
     target.mkdir()
     _ = (target / "SKILL.md").write_text("seed")
+    code = main(["self-test", "--model", "local-test", "--live", "--target", str(target), "--out", str(tmp_path / "run")])
+    error = cast(dict[str, object], json.loads(capsys.readouterr().err))
+    assert code == 1 and error["code"] == "contract-missing" and error["exit_code"] == 1
+
+
+def test_self_test_reports_a_coded_error_like_dataset(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "skill"
+    (target / "evals").mkdir(parents=True)
+    _ = (target / "SKILL.md").write_text("seed")
     _ = (target / "blob.md").write_bytes(b"\xff\xfe")
+    shipped = Path(__file__).parents[3] / "skills/skillz/evals/autoimprove.json"
+    _ = (target / "evals/autoimprove.json").write_text(shipped.read_text())
     code = main(["self-test", "--model", "local-test", "--live", "--target", str(target), "--out", str(tmp_path / "run")])
     error = cast(dict[str, object], json.loads(capsys.readouterr().err))
     assert code == 1 and error["code"] == "undecodable-file" and error["exit_code"] == 1

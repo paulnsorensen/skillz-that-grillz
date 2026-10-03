@@ -105,11 +105,10 @@ class _Session:
         self.record = read(out / "run.json")
         resume = _resume_fields(self.record)
         self.contract = resolve(resume.contract)
-        imported = self._import_cases(resume.dataset_hash)
+        imported, judged = self._import_cases(resume.dataset_hash)
         self.cases = [case for case in imported if case.eligible]
         self.seed = resume.seed
-        self._freeze_identities(model, configuration, any(self.contract.grader(case.kind).type == "audit" for case in imported),
-                                 resume.seed_hash)
+        self._freeze_identities(model, configuration, judged, resume.seed_hash)
         self.budget = self._open_budget(model, maximum, seconds, resume.calls)
         self.provider = factory(model, self.budget, self.checkpoint)
         self.arms = resume.arms
@@ -117,19 +116,21 @@ class _Session:
         self._candidates: dict[str, Candidate] = {}
         self._validation: dict[str, list[dict[str, object]]] = {}
 
-    def _import_cases(self, dataset_hash: str) -> list[Case]:
+    def _import_cases(self, dataset_hash: str) -> tuple[list[Case], bool]:
+        """Load the frozen cases. Return them and whether any case needs a judge."""
         if dataset_hash != digest(read(self.out / "cases.json")):
             raise ValueError("dataset differs from the frozen record")
         imported = load_cases(self.out / "cases.json", self.contract.grader_types())
         rules = self.contract
-        if any(rules.grader(case.kind).type == "audit" for case in imported) and (
+        audit = any(rules.grader(case.kind).type == "audit" for case in imported)
+        if audit and (
                 any(not case.eligible for case in imported)
                 or not all(any(case.split == split for case in imported) for split in ("train", "validation"))
                 or sum(case.split == "holdout" for case in imported) != 2):
             raise ValueError("audit comparison requires reviewed, provider-approved cases and complete splits")
-        return imported
+        return imported, any(rules.judged(case.kind) for case in imported)
 
-    def _freeze_identities(self, model: str, configuration: Configuration | None, audit: bool, seed_hash: str) -> None:
+    def _freeze_identities(self, model: str, configuration: Configuration | None, judged: bool, seed_hash: str) -> None:
         if configuration is not None:
             target = self.record.get("target_root")
             if not isinstance(target, str):
@@ -139,7 +140,7 @@ class _Session:
             _ = self.record.setdefault("harness", identity)
             if self.record["harness"] != identity:
                 raise ValueError("harness configuration differs from the frozen record; create a new run")
-        if audit:
+        if judged:
             judge_model = configuration.roles["judge"].model if configuration is not None else model
             _ = self.record.setdefault("judge_model", judge_model)
             _ = self.record.setdefault("judge", judge_identity(judge_model))
@@ -202,6 +203,8 @@ class _Session:
             return self.seed
         added = admit(self.seed.files, components)
         files = self.seed.files | {"SKILL.md": skill} | added
+        if sum(len(text) for text in files.values()) > 1_000_000:
+            raise ValueError("candidate package exceeds size limit")
         return Candidate(files, self.seed.editable, self.seed.contract, new_script(self.seed.files, files))
 
     def _evaluate_example(self, mode: Mode, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
@@ -392,13 +395,13 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
 def summary(record: dict[str, object]) -> dict[str, object]:
     return {key: record.get(key) for key in
             ("schema_version", "phase", "calls", "model", "codex_version", "harness", "judge",
-             "improvement", "token_comparison", "locked_arms")}
+             "improvement", "token_comparison", "locked_arms", "contract_hash", "contract_source")}
 
 
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     allowed = {"arm", "split", "score", "status", "loaded", "helper_executed", "candidate_hash", "case_hash",
                "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
-               "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate"}
+               "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate", "scores"}
     result = {key: value for key, value in item.items() if key in allowed}
     for key in ("usage", "task_usage", "judge_usage"):
         if key in item:

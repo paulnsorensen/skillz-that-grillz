@@ -22,11 +22,13 @@ def test_command_trace_rejects_spoofed_helper_names() -> None:
     def events(command: str) -> list[dict[str, object]]:
         return [{"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0, "command": command}}]
 
-    assert not executed(events("echo inspect_skill.py"), "inspect_skill.py")
-    assert not executed(events("echo SKILL.md"), "SKILL.md")
-    assert executed(events("cat .agents/skills/skillz/SKILL.md"), "SKILL.md")
-    assert executed(events("python3 -I .agents/skills/skillz/scripts/inspect_skill.py fixture.md"), "inspect_skill.py")
-    assert not executed(events("echo yes; python3 .agents/skills/skillz/scripts/inspect_skill.py fixture.md"), "inspect_skill.py")
+    assert not executed(events("echo inspect_skill.py"), "inspect_skill.py", skill="skillz")
+    assert not executed(events("echo SKILL.md"), "SKILL.md", skill="skillz")
+    assert executed(events("cat .agents/skills/skillz/SKILL.md"), "SKILL.md", skill="skillz")
+    assert executed(events("python3 -I .agents/skills/skillz/scripts/inspect_skill.py fixture.md"), "inspect_skill.py",
+                    skill="skillz")
+    assert not executed(events("echo yes; python3 .agents/skills/skillz/scripts/inspect_skill.py fixture.md"),
+                        "inspect_skill.py", skill="skillz")
     assert executed(events("cat .agents/skills/echo/SKILL.md"), "SKILL.md", skill="echo")
     assert not executed(events("cat .agents/skills/skillz/SKILL.md"), "SKILL.md", skill="echo")
     assert executed(events("python3 -I .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo", isolated=True)

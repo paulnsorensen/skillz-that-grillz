@@ -17,6 +17,12 @@ MASK = re.compile(r"`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<=\])\([^)]*\)")
 SENTENCE = re.compile(r"\S.*?(?:[.!?]+(?=\s|$)|$)", re.S)
 OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 CLOSE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
+ITEM = re.compile(r"^ *(?:[-*+]|\d+[.)])[ \t]+(?=\S)")
+
+
+def _unindent(line: str, column: int) -> str:
+    """Remove up to `column` leading spaces: the content indent of the open list item."""
+    return line[min(column, len(line) - len(line.lstrip(" "))):]
 
 
 def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
@@ -33,17 +39,25 @@ def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
         text = ""
         owners = []
 
+    column = 0
+    fence_column = 0
     for number, line in enumerate(lines[start:], start + 1):
         stripped = line.strip()
         if fence:
-            closer = CLOSE.match(line)
+            closer = CLOSE.match(_unindent(line, fence_column))
             if closer and closer[1][0] == fence[0] and len(closer[1]) >= len(fence):
                 fence = ""
             continue
-        opener = OPEN.match(line)
+        item = ITEM.match(line)
+        if item:
+            column = item.end()
+        elif stripped and len(line) - len(line.lstrip(" ")) < column:
+            column = 0
+        opener = OPEN.match(_unindent(line, column))
         if opener and not (opener[1][0] == "`" and "`" in opener[2]):
             flush()
             fence = opener[1]
+            fence_column = column
             continue
         if not stripped or stripped.startswith("|"):
             flush()
