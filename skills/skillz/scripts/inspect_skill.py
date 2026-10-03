@@ -15,6 +15,8 @@ MARKER = re.compile(r"^\s*(?:#+\s+|[-*+]\s+|\d+[.)]\s+|>\s*)")
 BREAK = re.compile(r"^\s*(?:#|[-*+]\s|\d+[.)]\s)")
 MASK = re.compile(r"`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<=\])\([^)]*\)")
 SENTENCE = re.compile(r"\S.*?(?:[.!?]+(?=\s|$)|$)", re.S)
+OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+CLOSE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 
 
 def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
@@ -34,12 +36,14 @@ def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
     for number, line in enumerate(lines[start:], start + 1):
         stripped = line.strip()
         if fence:
-            if stripped.startswith(fence):
+            closer = CLOSE.match(line)
+            if closer and closer[1][0] == fence[0] and len(closer[1]) >= len(fence):
                 fence = ""
             continue
-        if stripped.startswith(("```", "~~~")):
+        opener = OPEN.match(line)
+        if opener and not (opener[1][0] == "`" and "`" in opener[2]):
             flush()
-            fence = stripped[:3]
+            fence = opener[1]
             continue
         if not stripped or stripped.startswith("|"):
             flush()

@@ -82,7 +82,7 @@ def _command_score(code: int, stdout: str) -> float:
         return 0.0
     try:
         score = mapping(cast(object, json.loads(stdout))).get("score")
-    except ValueError:
+    except (ValueError, RecursionError):
         return 0.0
     if type(score) not in (int, float) or not 0 <= cast(float, score) <= 1:
         return 0.0
