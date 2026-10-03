@@ -493,6 +493,38 @@ def test_malformed_lock_does_not_block_later_valid_skill(
 
 
 @pytest.mark.ac("AC-W6")
+def test_direct_bundle_is_skipped_without_gh_calls(
+    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
+) -> None:
+    # ADR-010: a direct bundle commits scripts/NAME.pyz and has no lock;
+    # `wedge bundle --check` owns it, so release publication leaves it alone.
+    skill = copy_locked_fixture(tmp_path / "direct")
+    scripts = skill / "scripts"
+    (scripts / f"{FIXTURE_NAME}.wedge.json").unlink()
+    (scripts / FIXTURE_NAME).unlink()
+    _ = (scripts / f"{FIXTURE_NAME}.pyz").write_bytes(b"bundle")
+
+    result = publish([skill], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "skipped"
+    assert "direct bundle" in result[FIXTURE_NAME]["reason"]
+    assert not (fake_gh["store"] / "calls.log").exists()
+
+
+@pytest.mark.ac("AC-W6")
+def test_missing_lock_without_a_bundle_still_fails(
+    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
+) -> None:
+    skill = copy_locked_fixture(tmp_path / "unlocked")
+    (skill / "scripts" / f"{FIXTURE_NAME}.wedge.json").unlink()
+
+    result = publish([skill], repo=fake_gh["repo"], target="deadbeef")
+
+    assert result[FIXTURE_NAME]["status"] == "failed"
+    assert not (fake_gh["store"] / "calls.log").exists()
+
+
+@pytest.mark.ac("AC-W6")
 def test_all_malformed_locks_make_no_gh_calls(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
 ) -> None:

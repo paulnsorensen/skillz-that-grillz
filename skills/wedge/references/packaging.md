@@ -11,9 +11,10 @@ The non-dev dependencies in that lock form the archive's closure.
 A dependency group named in `groups` joins that closure.
 A local package that is not on an index, such as fromargs, enters through `include`.
 
-Use a locked wedge tool project for the builder and its shiv dependency.
-The builder also invokes `uv`.
+Run the builder from this skill's bundled `scripts/wedge.pyz`; it carries wedge and its shiv dependency.
+The builder also invokes `uv`, so `uv` must be on `PATH`.
 Every dependency must be a pure-Python `py3-none-any` wheel without a platform marker.
+A compressed universal tag such as `py2.py3-none-any` also passes.
 The builder rejects platform wheels and path or URL requirements.
 The runtime requires Python 3.11 or later.
 An installed launcher does not require uv or a project environment.
@@ -68,17 +69,20 @@ That mode commits `scripts/NAME.pyz` and uses no lock or launcher.
 
 ## Local verification
 
-Set `WEDGE_PROJECT` to the target repository's wedge tool project, for example `tools/wedge`.
-The [wedge action README](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/actions/wedge/README.md) explains how to pin it.
-In the skillz-that-grillz repository only, that project is `$REPO_ROOT/lib`.
+Set `WEDGE` to `scripts/wedge.pyz` under the loaded `/wedge` `SKILL.md` directory.
 Set `SKILL_DIR` to the absolute target skill directory.
 Set `OUT_DIR` to a temporary build-output directory.
 
 ```bash
-uv run --locked --project "$WEDGE_PROJECT" wedge lock "$SKILL_DIR"
-uv run --locked --project "$WEDGE_PROJECT" wedge build "$SKILL_DIR" --out "$OUT_DIR"
-uv run --locked --project "$WEDGE_PROJECT" wedge check "$SKILL_DIR"
+python3 "$WEDGE" lock "$SKILL_DIR"
+python3 "$WEDGE" build "$SKILL_DIR" --out "$OUT_DIR"
+python3 "$WEDGE" check "$SKILL_DIR"
 ```
+
+For CI, pin wedge in a locked tool project, for example `tools/wedge`, and run `uv run --locked --project tools/wedge wedge …`.
+The [wedge action README](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/actions/wedge/README.md) explains that pin.
+Run `lock` with the same wedge revision that CI pins.
+A different builder can change the archive bytes, and `publish` then rejects the lock digest.
 
 `lock` builds and writes `scripts/NAME` and `scripts/NAME.wedge.json`.
 Regenerate both after a manifest, source, fromargs, or dependency-lock change.
@@ -118,7 +122,7 @@ Publication changes remote release state.
 Only run it when authorized, using the actual release repository and the merged commit:
 
 ```bash
-uv run --locked --project "$WEDGE_PROJECT" wedge publish --root "$SKILLS_ROOT" --repo "$RELEASE_REPO" --target "$COMMIT" --branch "$DEFAULT_BRANCH"
+python3 "$WEDGE" publish --root "$SKILLS_ROOT" --repo "$RELEASE_REPO" --target "$COMMIT" --branch "$DEFAULT_BRANCH"
 ```
 
 `--target` must be the checked-out, merged `HEAD`, which the default branch contains.

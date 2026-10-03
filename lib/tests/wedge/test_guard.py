@@ -40,6 +40,33 @@ def test_pure_marker_free_closure_passes() -> None:
 
 
 @pytest.mark.ac("AC-W7")
+def test_compressed_universal_pure_wheel_passes() -> None:
+    # PEP 425 compressed tag set: shiv publishes only this universal wheel.
+    guard_closure([ClosureEntry(name="shiv", wheel="shiv-1.0.8-py2.py3-none-any.whl")])
+
+
+@pytest.mark.ac("AC-W7")
+@pytest.mark.parametrize(
+    "wheel",
+    [
+        "legacy-1.0-py2-none-any.whl",
+        "cext-1.0-cp311-none-any.whl",
+        "native-1.0-py3-none-manylinux_2_28_x86_64.whl",
+        "abi-1.0-py3-abi3-any.whl",
+        "build-1.0-1-py3-none-linux_x86_64.whl",
+    ],
+)
+def test_wheel_without_a_pure_py3_tag_is_rejected(wheel: str) -> None:
+    with pytest.raises(GuardError, match="py3-none-any"):
+        guard_closure([ClosureEntry(name="x", wheel=wheel)])
+
+
+@pytest.mark.ac("AC-W7")
+def test_build_tagged_pure_wheel_passes() -> None:
+    guard_closure([ClosureEntry(name="x", wheel="x-1.0-1-py3-none-any.whl")])
+
+
+@pytest.mark.ac("AC-W7")
 @pytest.mark.parametrize(
     "line",
     ["-e ./packages/shared", "shared @ git+https://example.com/shared@abc123", "./vendor/pkg"],

@@ -24,7 +24,7 @@ creation — single or stacked).
 
 | Skill path | Command | Purpose |
 | --- | --- | --- |
-| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, or self-update a skill or sub-agent definition so it runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. Scores the target against a twelve-lens rubric (predictability, invocation, portability, information hierarchy, tool scoping, calibration, …), tags every finding with severity × confidence, and ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `self-update` add a best-effort Usage lens through a bundled analytics engine. `experiment` uses bundled GEPA and isolated harness execution to compare candidates on paired holdouts and export a private patch. |
+| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, wedge, or self-update a skill or sub-agent definition so it runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. Scores the target against a thirteen-lens rubric (predictability, invocation, portability, information hierarchy, deterministic offload, tool scoping, calibration, …), tags every finding with severity × confidence, and ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `self-update` add a best-effort Usage lens through a bundled analytics engine. `wedge` finds fixed computation that every run repeats and writes the behavior-contract brief that `/wedge` packages as a bundled CLI. `experiment` uses bundled GEPA and isolated harness execution to compare candidates on paired holdouts and export a private patch. |
 | `skills/wedge/SKILL.md` | `/wedge` | Extract repeatable deterministic work into a fromargs CLI and package it with wedge. Covers output contracts, builder limits, and installed-launcher verification. |
 
 `skillz` uses a bundled, standard-library Python inspection helper during audits.
@@ -40,10 +40,12 @@ The optional `experiment` mode needs Codex or a configured trusted harness wrapp
 It needs no source checkout.
 See [the experiment workflow](skills/skillz/references/experiments.md).
 
-`wedge` wraps the `wedge` CLI. It needs a uv project with a committed
-`uv.lock`, uv, and a locked wedge/shiv environment. Dependencies must be
-pure-Python wheels. Installed helpers need Python 3.11+. Release publication
-through gh is optional and needs authorization.
+`wedge` ships the `wedge` CLI as a bundled `scripts/wedge.pyz`, so it needs no
+wedge checkout. The target needs a uv project with a committed `uv.lock`, and
+the host needs uv on `PATH`. Dependencies must be pure-Python wheels.
+Installed helpers need Python 3.11+. Release publication through gh is
+optional and needs authorization. `/skillz wedge` writes the brief that
+`/wedge` builds from; install both skills to use that handoff.
 
 ## Install
 
