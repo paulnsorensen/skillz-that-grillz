@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 HELPER = Path(__file__).resolve().parents[3] / "skills/skillz/scripts/inspect_skill.py"
 
@@ -34,7 +35,7 @@ def test_helper_long_sentences_report_prose_over_twenty_words(tmp_path: Path) ->
     _ = target.write_text("\n".join(lines) + "\n")
     run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
-    result = json.loads(run.stdout)
+    result = cast(dict[str, object], json.loads(run.stdout))
     assert result["schema_version"] == 2
     assert result["long_sentences"] == [{"line": 7, "words": 30}, {"line": 10, "words": 23},
                                         {"line": 19, "words": 21}]

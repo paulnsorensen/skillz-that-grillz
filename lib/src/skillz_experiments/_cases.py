@@ -18,7 +18,7 @@ class CodedError(ValueError):
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
-        self.code = code
+        self.code: str = code
 
 def mapping(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):

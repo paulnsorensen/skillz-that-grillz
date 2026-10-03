@@ -21,6 +21,7 @@ ECHO = Path(__file__).parent / "fixtures/echo-skill"
 def echo_skill(tmp_path: Path) -> Path:
     target = tmp_path / "echo-skill"
     _ = shutil.copytree(ECHO, target)
+    _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
     return target
 
 
@@ -128,6 +129,7 @@ def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monke
     reply = {"stdout": '{"ok": true}'}
 
     def discover(self: Codex, workspace: Path, skill: str) -> bool:
+        del self
         seen.append(skill)
         return (workspace / ".agents/skills/echo-skill/SKILL.md").is_file()
 

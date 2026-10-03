@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from typing import Protocol, cast
 
 from skillz_experiments import _audit, _graders
 from skillz_experiments._candidate import Candidate
@@ -75,6 +75,7 @@ def _activation(result: dict[str, object], candidate: Candidate, rules: Contract
     events = result.pop("events")
     workspace = string(result.pop("workspace"), "workspace")
     assert isinstance(events, list)
+    events = cast(list[dict[str, object]], events)
     loaded = answer.get("load_marker") == candidate.identity and executed(events, "SKILL.md", workspace, skill=rules.skill)
     script = candidate.script or (rules.helper.path if rules.helper is not None else None)
     helper = script is None or executed(events, script, workspace, skill=rules.skill, isolated=candidate.script is not None)

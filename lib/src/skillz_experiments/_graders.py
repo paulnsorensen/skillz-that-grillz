@@ -62,7 +62,7 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
             path = workspace / relative(name)
             path.parent.mkdir(parents=True, exist_ok=True)
             _ = path.write_text(text, encoding="utf-8")
-        code, stdout = task.sandbox(workspace, list(argv))
+        code, stdout = cast(Sandbox, task).sandbox(workspace, list(argv))
     return _command_score(code, stdout)
 
 
@@ -86,7 +86,8 @@ def judge(transport: object, rubric: str, case: Case, answer: object, files: dic
                             "output_files": files or {}, "reference": case.expected}))
     result = cast(_Invoker, transport).invoke(prompt, holdout=holdout, schema=JUDGE_SCHEMA)
     answer_fields = result.get("answer")
-    percent = answer_fields.get("score_percent") if isinstance(answer_fields, dict) and len(answer_fields) == 1 else None
+    fields = mapping(cast(object, answer_fields)) if isinstance(answer_fields, dict) else {}
+    percent = fields.get("score_percent") if len(fields) == 1 else None
     if type(percent) is not int or not 0 <= percent <= 100:
         raise ValueError("invalid judge response")
     return percent / 100, result

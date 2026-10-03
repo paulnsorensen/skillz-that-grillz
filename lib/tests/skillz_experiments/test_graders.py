@@ -37,8 +37,8 @@ class FakeTask:
     """A task transport without the optional Sandbox capability."""
 
     def __init__(self, output: dict[str, str] | None = None) -> None:
-        self.budget = Budget(40, 2400, reserve=0)
-        self.output = {"result.txt": "rewritten\n"} if output is None else output
+        self.budget: Budget = Budget(40, 2400, reserve=0)
+        self.output: dict[str, str] = {"result.txt": "rewritten\n"} if output is None else output
         self.prompts: list[str] = []
         self.workspaces: list[dict[str, str]] = []
 
@@ -49,10 +49,12 @@ class FakeTask:
         pass
 
     def check_candidate(self, candidate: Candidate) -> bool:
+        del candidate
         return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        del case, schema
         assert candidate is not None
         self.budget.claim(holdout=holdout)
         self.prompts.append(prompt)
@@ -75,8 +77,8 @@ class SandboxedTask(FakeTask):
 
 class FakeJudge:
     def __init__(self, percent: object = 70) -> None:
-        self.budget = Budget(40, 2400, reserve=0)
-        self.percent = percent
+        self.budget: Budget = Budget(40, 2400, reserve=0)
+        self.percent: object = percent
         self.prompts: list[str] = []
         self.schemas: list[dict[str, object] | None] = []
 
@@ -87,6 +89,7 @@ class FakeJudge:
         pass
 
     def check_candidate(self, candidate: Candidate) -> bool:
+        del candidate
         return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
@@ -102,6 +105,7 @@ def harness(monkeypatch: pytest.MonkeyPatch, task: FakeTask, judge: FakeJudge) -
     transports = {"task": task, "judge": judge, "reflection": judge}
 
     def create(self: Role, budget: Budget, checkpoint: object) -> FakeTask | FakeJudge:
+        del checkpoint
         transport = transports[self.adapter]
         transport.budget = budget
         return transport
@@ -193,7 +197,7 @@ def test_judge_grader_uses_a_separate_invocation_and_hides_the_rubric(tmp_path: 
     result = harness(monkeypatch, task, judge).evaluate(candidate, case)
     assert "RUBRIC_SENTINEL" not in task.prompts[0] and "EXPECTED_SENTINEL" not in task.prompts[0]
     assert "RUBRIC_SENTINEL" in judge.prompts[0] and "rewritten" in judge.prompts[0]
-    assert judge.schemas[0] is not None and "score_percent" in cast(dict[str, object], judge.schemas[0])["properties"]
+    assert judge.schemas[0] is not None and "score_percent" in cast(dict[str, object], judge.schemas[0]["properties"])
     assert result["score"] == 0.85 and result["scores"] == {"judge": 0.85}
 
 
