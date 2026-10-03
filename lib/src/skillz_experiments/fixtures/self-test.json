@@ -11,12 +11,13 @@
       },
       "expected": {
         "facts": {
-          "schema_version": 1,
+          "body_line_count": 1,
           "frontmatter_keys": [
             "name"
           ],
-          "body_line_count": 1,
-          "local_link_targets": []
+          "local_link_targets": [],
+          "long_sentences": [],
+          "schema_version": 2
         },
         "findings": [
           "missing-description"
@@ -36,13 +37,14 @@
       },
       "expected": {
         "facts": {
-          "schema_version": 1,
+          "body_line_count": 1,
           "frontmatter_keys": [
             "description",
             "name"
           ],
-          "body_line_count": 1,
-          "local_link_targets": []
+          "local_link_targets": [],
+          "long_sentences": [],
+          "schema_version": 2
         },
         "findings": [
           "placeholder-description"
@@ -62,12 +64,13 @@
       },
       "expected": {
         "facts": {
-          "schema_version": 1,
+          "body_line_count": 3,
           "frontmatter_keys": [
             "description"
           ],
-          "body_line_count": 3,
-          "local_link_targets": []
+          "local_link_targets": [],
+          "long_sentences": [],
+          "schema_version": 2
         },
         "findings": [
           "missing-name"
@@ -87,15 +90,16 @@
       },
       "expected": {
         "facts": {
-          "schema_version": 1,
+          "body_line_count": 2,
           "frontmatter_keys": [
             "description",
             "name"
           ],
-          "body_line_count": 2,
           "local_link_targets": [
             "references/guide.md"
-          ]
+          ],
+          "long_sentences": [],
+          "schema_version": 2
         },
         "findings": []
       },
