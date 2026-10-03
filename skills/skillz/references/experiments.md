@@ -1,7 +1,10 @@
-# Bounded skill experiments
+# Autoimprove: bounded skill experiments
 
-Use this workflow for `/skillz experiment`.
+Use this workflow for `/skillz autoimprove`.
+`experiment` is an alias for `autoimprove`. Both route to this reference.
+The `skillz-experiment` executable keeps its name.
 The `optimize` and `tighten` aliases still mean `improve`.
+The runner measures a skill against a contract; it never applies a patch.
 
 ## Run the public self-test
 
@@ -34,8 +37,8 @@ A failed isolation check stops the run. Never add an unsafe fallback.
 The original arm includes the unoptimized inspection helper.
 The other arms search prompt text and prompt-plus-helper text (the prompt-plus-helper arm, `prompt-cli`).
 The public fixture corpus and evaluator remain outside the editable candidate.
-Candidate capture excludes only `scripts/skillz-experiment.pyz`, after rejecting symlinks.
-It does not exempt arbitrary binaries.
+Candidate capture rejects symlinks and does not exempt arbitrary binaries.
+It excludes `evals/`, the in-target case manifest, git-ignored files, and VCS metadata.
 Two holdout cases compare all three locked arms.
 The result is a bounded smoke test, not evidence of statistical improvement.
 
@@ -124,10 +127,12 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" evaluate /tmp/skillz-run --model
 ```
 
 For CLI-only optimization, replace `--mode prompt-cli` with `--mode cli`.
+For wedge optimization, read `Wedge mode` below.
 CLI-only search changes only `scripts/inspect_skill.py` and freezes all skill text, including selected references.
 Its reflection receives measured task-plus-judge input and output tokens. The runner records unknown usage as null.
 Correctness remains primary; token use breaks correctness ties.
-Evaluate exactly `original`, `prompt`, and either `cli` or `prompt-cli`, never all four arms.
+Evaluate exactly `original`, `prompt`, and one third arm: `cli`, `prompt-cli`, or `wedge`.
+Never evaluate all four arms.
 Export the CLI-only result with `export /tmp/skillz-run --out /tmp/skillz-export --arm cli`.
 For audit cases, pass the same `--max-invocations 40 --max-seconds 2400` to every live stage.
 The three-arm audit reserves 12 invocations for holdout. The default self-test remains unchanged.
@@ -139,6 +144,65 @@ Correctness determines selection. Measured input-plus-output tokens break correc
 Cached input tokens are a subset of input tokens, not an additional charge.
 The runner records unknown usage as null. Dollar cost remains unknown.
 Unknown holdout usage produces `token_comparison: inconclusive-unknown-usage`.
+
+## The autoimprove contract
+
+The contract tells the runner what to measure and how to grade it.
+It lives at `<skill>/evals/autoimprove.json` or in a `target` block of the case manifest.
+The manifest block wins when both exist.
+The shipped `skills/skillz/evals/autoimprove.json` is the example.
+
+The contract has these fields:
+
+- `schema_version`: integer `1`.
+- `status`: `approved` or `draft`. A draft stops the run.
+- `skill`: the skill directory name.
+- `invocation`: the request that calls the skill. It supports `{skill}` and `{path}`.
+- `kinds`: a map of case kind to `{grader, argv?, rubric?}`.
+- `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
+- `editable` (optional): relative paths that search can change.
+
+The runner stops with `contract-missing` when neither location holds a contract.
+It stops with `contract-unapproved` when `status` is `draft`.
+Unknown fields and malformed values stop the run.
+
+## No contract
+
+When the run reports `contract-missing`, ask the user to choose one path.
+
+1. Choose judge-only grading. Grade each kind with the `judge` grader and a powerful model.
+2. A contract. Find an existing contract, or draft one with the user.
+
+Save a drafted contract with `"status": "draft"`.
+Keep that status until the user approves the contract.
+Set `"status": "approved"` only after the user approves it.
+The runner reports `contract-unapproved` for a draft.
+
+## Graders
+
+Each kind in `kinds` names one grader:
+
+- `exact-json`: compares the task result with the case `expected` JSON.
+- `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100.
+- `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
+- `hybrid`: a `command` gate first, then the `judge`.
+- `audit`: the labelled-findings scorer from the audit contract below.
+
+A `command` or `hybrid` grader needs a nonempty `argv`.
+A `judge` or `hybrid` grader needs a `rubric`.
+A judged kind costs two invocations: one for the task and one for the judge.
+
+## Wedge mode
+
+Use `search --mode wedge --brief PATH` to offload fixed work from the skill to a bundled script.
+The `--brief` option is required in this mode.
+The brief is a `/skillz wedge` handoff.
+A proposal adds exactly one new stdlib `scripts/<name>.py`.
+SKILL.md must reference that script.
+The script runs as `python3 -I`. The proposal changes no other file.
+The arms lock as `original`, `prompt`, and `wedge`.
+Ranking is correctness first, then tokens.
+There is no build step.
 
 ## Audit manifest and report contract
 
@@ -228,6 +292,9 @@ The staged candidate is read-only. The task workspace is writable.
 The runner disables external skills, user configuration, hooks, plugins, apps, and web search.
 An existing administrator skill directory stops the Codex run.
 Custom wrappers must enforce equivalent restrictions through their own tool sandbox.
+The `claude` adapter runs `claude --restricted -p` with `--tools Bash,Read,Skill` and `--strict-mcp-config`.
+It applies the sandbox floor, denies host reads, and disables bundled skills.
+See [the harness protocol](experiment-harness.md) for its preflight.
 The runner rejects failed probes or missing discovery before inference.
 A wrapper remains trusted code; a successful probe does not prove honesty.
 
@@ -255,10 +322,11 @@ It requires opening and closing frontmatter delimiters.
 
 Success returns exit zero and one JSON object:
 
-- `schema_version`: `1`.
+- `schema_version`: `2`.
 - `frontmatter_keys`: sorted unique, unindented lexical keys.
 - `body_line_count`: lines after the closing frontmatter delimiter.
 - `local_link_targets`: sorted local inline Markdown link paths.
+- `long_sentences`: prose sentences over 20 words, each as `{line, words}`.
 
 The helper reports facts. It does not parse full YAML or compute task fitness.
 It ignores external links and fragment-only links.

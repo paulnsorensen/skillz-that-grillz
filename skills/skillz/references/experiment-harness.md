@@ -31,7 +31,10 @@ Create a private configuration file outside the skill:
 
 Task, reflection, and judge roles inherit the top-level adapter, command, and CLI model.
 Each role can override inherited fields.
+The adapter is `codex`, `command`, or `claude`.
 A Codex role accepts only `adapter` and `model`, without inherited command or identity fields.
+A `claude` role accepts `adapter`, `model`, and `command`. The command names only the executable.
+A `command` role sends the contract skill name and path to the wrapper.
 For mixed adapters, omit the top-level adapter fields. Define each role completely:
 
 ```json
@@ -61,6 +64,20 @@ Pass script and configuration paths as separate arguments, not embedded `--confi
 The runner stops when an executable, script, file argument, model, or role changes.
 Transitive imports and wrapper-managed resources remain the trusted wrapper's responsibility.
 Reports contain adapter names, model names, and fingerprints, never command arguments.
+
+## The claude adapter
+
+The `claude` role runs `claude --restricted -p` with `--tools Bash,Read,Skill`.
+It also passes `--strict-mcp-config` and a generated settings file.
+The settings enable the sandbox floor, deny host reads, and disable bundled skills.
+The runner places only the staged candidate under the workspace skill directory.
+
+Before any live task, a live isolation preflight runs.
+The preflight tries to read a sealed host file from inside the sandbox.
+A failed preflight stops the run. There is no fallback to an unsandboxed run.
+The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
+A missing sandbox tool stops the run.
+The macOS path is unverified live. Verify it before you authorize private data.
 
 ## JSON protocol, version one
 
