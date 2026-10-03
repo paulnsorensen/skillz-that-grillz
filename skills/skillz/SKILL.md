@@ -25,8 +25,7 @@ The product is a **predictable** definition: the same process on every run and o
 Every lens asks one question of each line: *does this make the run more predictable, or is it sediment?*
 
 The mode is the first word after the skill name.
-`optimize` and `tighten` are aliases for `improve`.
-`experiment` is an alias for `autoimprove`.
+The Aliases column lists the names that select the same mode.
 Require a target only for `add`, `improve`, `audit`, `wedge`, and `autoimprove`.
 `self-update` has no target.
 Ask for the mode when it is missing.
@@ -34,14 +33,14 @@ Ask for a target when the mode requires one.
 
 ## Modes
 
-| Mode | Target | Analytics | Writes | Product |
-|---|---|---|---|---|
-| `add <name>` | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
-| `improve <path>` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
-| `audit <path>` | a `SKILL.md` or agent file | yes | none | calibrated report |
-| `self-update` | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
-| `wedge <path>` | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
-| `autoimprove <path>` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
+| Mode | Aliases | Target | Analytics | Writes | Product |
+|---|---|---|---|---|---|
+| `add <name>` | none | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
+| `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
+| `audit <path>` | none | a `SKILL.md` or agent file | yes | none | calibrated report |
+| `self-update` | none | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
+| `wedge <path>` | none | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
+| `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
 For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
 Ask which harness command and model the user wants before setup.
@@ -94,6 +93,16 @@ The kernel is `references/calibration.md`; the defaults:
 - **Re-derive** — re-read the target and re-derive each `<speculative>` finding once without the first pass. Drop it when it does not reproduce.
 - Order by severity, then `<certain>` first.
 
+### 4. Prose check
+
+`add` and `improve` run this check.
+
+1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <path to SKILL.md>`.
+2. Rewrite every sentence over 25 words that it reports.
+3. For a changed reference file, apply the same 25-word limit by hand.
+
+The helper rejects a file that has no frontmatter, so it cannot check a reference file.
+
 ## Mode: add
 
 1. Confirm the name: kebab-case, ≤64 chars, directory name equals `name:`, and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`.
@@ -105,9 +114,10 @@ The kernel is `references/calibration.md`; the defaults:
    Set `model` + `effort` only when the skill is model-invoked.
 4. Register the skill in its repo's index (`references/harness-layout.md § Registration`).
    A repo-local skill stays out of every global list; place it per `references/harness-layout.md § Repo-local skills`.
-5. Run `python3 <this-skill-directory>/scripts/inspect_skill.py` on the changed prose.
-   Rewrite every sentence over 25 words that it reports before you report the mode as done.
-6. Run `improve` on the new file once, then the repo's deploy step when one exists (a dotfiles sync, `npx skills add`, or a copy into the harness skills directory).
+5. Run the prose check on `SKILL.md` and on each changed reference before you report the mode as done.
+6. Run `improve` on the new file once.
+   Then run the repo's deploy step when one exists.
+   Examples: a dotfiles sync, `npx skills add`, or a copy into the harness skills directory.
 
 Done means: the file exists and the repo index names it, or every repo-local host path resolves.
 The deploy step exits 0 when one exists. The Invocation lens passes.
@@ -123,8 +133,7 @@ The inspector reports no sentence over 25 words.
    A delegated run returns these findings to its parent, and the parent asks.
    A PR body or a report is not approval.
 4. Keep the target's voice and protocol semantics. Tighten; do not redesign.
-5. Run `python3 <this-skill-directory>/scripts/inspect_skill.py` on the changed prose.
-   Rewrite every sentence over 25 words that it reports before you report the mode as done.
+5. Run the prose check on `SKILL.md` and on each changed reference before you report the mode as done.
 6. Re-measure the body. Report before/after tokens and the residual findings.
 7. Run the repo's deploy step when the target lives under a `skills/` or `agents/` tree that a sync distributes.
    Confirm the deployed copy matches the source; a vendored skill with the same name overwrites a local one (`harness-layout.md § Layout`).

@@ -44,40 +44,57 @@ def _section(text: str, heading: str) -> str:
 
 def test_mode_table_has_autoimprove_with_experiment_alias() -> None:
     text = SKILL.read_text()
-    modes = [row[0] for row in _table(text, "Mode")]
-    assert any(mode.startswith("`autoimprove") for mode in modes)
-    assert not any(mode.startswith("`experiment") for mode in modes)
-    aliases = [line for line in text.splitlines() if "alias" in line]
-    assert any("`experiment`" in line and "`autoimprove`" in line for line in aliases)
-    assert any("`optimize`" in line and "`tighten`" in line and "`improve`" in line for line in aliases)
-    routing = next(line for line in text.splitlines() if line.startswith("For `autoimprove`"))
-    assert "references/experiments.md" in routing
+    rows = {row[0].strip("`").split(" ")[0]: row for row in _table(text, "Mode")}
+    aliases = {mode: re.findall(r"`([^`]+)`", row[1]) for mode, row in rows.items()}
+    assert "experiment" not in rows
+    assert aliases["autoimprove"] == ["experiment"]
+    assert aliases["improve"] == ["optimize", "tighten"]
+    assert "references/experiments.md" in _routing(text)
+
+
+def _routing(text: str) -> str:
+    return next(line for line in text.splitlines() if line.startswith("For `autoimprove`"))
 
 
 def test_audit_lens_has_prose_row_citing_long_sentences() -> None:
     row = next(r for r in _table(SKILL.read_text(), "Lens") if r[0].startswith("**Prose (ASD-STE100)"))
-    assert "inspect_skill.py" in row[1] + row[2]
+    assert "inspect_skill.py" in row[2]
     assert "long_sentences" in row[2]
-    assert "passive" in row[2]
-    assert "multi-instruction" in row[2]
+    assert "long_sentences" not in row[0] + row[1]
+
+
+def _steps(section: str) -> list[str]:
+    return cast(list[str], re.findall(r"^\d+\. .*?(?=^\d+\. |^Done means|\Z)", section, re.M | re.S))
 
 
 @pytest.mark.parametrize("mode", ["add", "improve"])
-def test_add_improve_steps_run_inspector_and_rewrite_long_sentences(mode: str) -> None:
+def test_add_improve_steps_run_prose_check_on_skill_md(mode: str) -> None:
     section = _section(SKILL.read_text(), f"Mode: {mode}")
-    steps = cast(list[str], re.findall(r"^\d+\. .*?(?=^\d+\. |^Done means|\Z)", section, re.M | re.S))
-    step = next(text for text in steps if "inspect_skill.py" in text)
-    assert "changed prose" in step
-    assert f"over {MAX_WORDS} words" in step
+    step = next(text for text in _steps(section) if "prose check" in text)
+    assert "`SKILL.md`" in step
+    assert "each changed reference" in step
     assert "before you report" in step
+
+
+def test_shared_prose_check_names_inspector_limit_and_references() -> None:
+    match = re.search(r"^### \d+\. Prose check.*?(?=^#{2,3} |\Z)", SKILL.read_text(), re.M | re.S)
+    assert match is not None
+    items = _steps(match[0])
+    assert len(items) == 3
+    assert "inspect_skill.py" in items[0] and "SKILL.md" in items[0]
+    assert f"over {MAX_WORDS} words" in items[1]
+    assert f"{MAX_WORDS}-word limit by hand" in items[2]
 
 
 def test_no_contract_step_offers_judge_only_or_draft_contract() -> None:
     section = _section(EXPERIMENTS.read_text(), "No contract")
-    assert "judge-only" in section
-    assert "powerful model" in section
-    assert "draft" in section and '"status": "draft"' in section
-    assert "approves" in section
+    choices = cast(list[str], re.findall(r"^\d+\. .*?(?=^\d+\. |^\S|\Z)", section, re.M | re.S))
+    assert len(choices) == 2
+    assert "judge-only" in choices[0] and "`judge`" in choices[0] and "powerful model" in choices[0]
+    assert "find" in choices[1].lower() and "draft" in choices[1].lower() and "contract" in choices[1].lower()
+    ask = section.splitlines().index(next(line for line in section.splitlines() if line.startswith("1. ")))
+    assert any("ask the user" in line for line in section.splitlines()[:ask])
+    assert '"status": "draft"' in section and "approves" in section
 
 
 def _long(path: Path) -> list[dict[str, int]]:

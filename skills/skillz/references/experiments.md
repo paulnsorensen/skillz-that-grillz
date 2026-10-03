@@ -30,15 +30,25 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-run --out /tm
 ```
 
 Pass an explicit available model. The example model is not an availability guarantee.
-The preflight makes zero model invocations.
-Live invocations require `--live` and a successful isolation preflight.
+The Codex and command preflights make zero model invocations.
+A `claude` role makes one live preflight call per role, once per run, charged once (see [the claude adapter](experiment-harness.md)).
+Other live invocations require `--live` and a successful isolation preflight.
 A failed isolation check stops the run. Never add an unsafe fallback.
 
 The original arm includes the unoptimized inspection helper.
 The other arms search prompt text and prompt-plus-helper text (the prompt-plus-helper arm, `prompt-cli`).
 The public fixture corpus and evaluator remain outside the editable candidate.
 Candidate capture rejects symlinks and does not exempt arbitrary binaries.
-It excludes `evals/`, the in-target case manifest, git-ignored files, and VCS metadata.
+It excludes these paths:
+
+- `scripts/skillz-experiment.pyz`
+- `evals/`
+- the in-target case manifest
+- git-ignored files
+- VCS metadata: `.git`, `.github`, `.gitignore`, and `.gitattributes`
+- bytecode caches: `__pycache__` and `*.pyc`
+
+Any other hidden file stops capture with `hidden-file`.
 Two holdout cases compare all three locked arms.
 The result is a bounded smoke test, not evidence of statistical improvement.
 
@@ -170,8 +180,10 @@ Unknown fields and malformed values stop the run.
 
 When the run reports `contract-missing`, ask the user to choose one path.
 
-1. Choose judge-only grading. Grade each kind with the `judge` grader and a powerful model.
-2. A contract. Find an existing contract, or draft one with the user.
+1. Choose judge-only grading. No flag selects it.
+   Write an approved contract that maps each kind to the `judge` grader with a `rubric`.
+   Set the powerful model in the harness `judge` role.
+2. Use a contract. Find an existing contract, or draft one with the user.
 
 Save a drafted contract with `"status": "draft"`.
 Keep that status until the user approves the contract.
@@ -185,12 +197,12 @@ Each kind in `kinds` names one grader:
 - `exact-json`: compares the task result with the case `expected` JSON.
 - `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100.
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
-- `hybrid`: a `command` gate first, then the `judge`.
-- `audit`: the labelled-findings scorer from the audit contract below.
+- `hybrid`: runs the `command` gate first. A failed gate scores 0 and skips the judge.
+- `audit`: the labelled-findings grader from the audit contract below.
 
 A `command` or `hybrid` grader needs a nonempty `argv`.
 A `judge` or `hybrid` grader needs a `rubric`.
-A judged kind costs two invocations: one for the task and one for the judge.
+A kind with the `judge`, `hybrid`, or `audit` grader costs two invocations: one for the task and one for the judge.
 
 ## Wedge mode
 
