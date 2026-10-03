@@ -107,5 +107,11 @@ def test_wedge_mode_searches_skill_text_and_the_wedge_component() -> None:
     assert NEW_PATH in winner["wedge-files"]
 
 
+@pytest.mark.parametrize("prefix", ["./", "${CLAUDE_SKILL_DIR}/", "<this-skill-directory>/", ""])
+def test_wedge_admission_accepts_a_prefixed_reference(prefix: str) -> None:
+    skill = f"Run python3 {prefix}{NEW_PATH}."
+    assert admit(SEED_WEDGE, _proposal({NEW_PATH: "x"}, skill=skill)) == {NEW_PATH: "x"}
+
+
 def test_wedge_admission_accepts_a_reference_that_ends_a_sentence() -> None:
     assert admit(SEED_WEDGE, _proposal({NEW_PATH: "x"}, skill=f"Run `{NEW_PATH}`. Then stop.")) == {NEW_PATH: "x"}

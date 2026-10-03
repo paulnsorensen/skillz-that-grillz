@@ -183,7 +183,7 @@ def _wedge_run(tmp_path: Path, proposal: dict[str, str]) -> tuple[Path, Path]:
     return out, brief
 
 
-def test_wedge_search_then_evaluate_locks_three_arms_and_runs_the_script_isolated(tmp_path: Path) -> None:
+def test_wedge_search_then_evaluate_locks_three_arms_and_runs_the_script(tmp_path: Path) -> None:
     out, brief = _wedge_run(tmp_path, {"SKILL.md": f"improved: run {WEDGE_PATH}",
                                        "wedge-files": json.dumps({WEDGE_PATH: "print(1)\n"})})
     _ = execute(out, "search", "local-test", live=True, factory=WedgeProvider, mode="wedge", brief=brief)

@@ -4,7 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import cast, override
+from typing import cast
 
 import pytest
 
@@ -118,9 +118,10 @@ def harness(monkeypatch: pytest.MonkeyPatch, task: FakeTask, judge: FakeJudge) -
     return Harness(Configuration(roles), Budget(40, 2400, reserve=0), lambda: None)
 
 
-def case_and_candidate(tmp_path: Path, kind: str, rules: Contract) -> tuple[Case, Candidate]:
+def case_and_candidate(tmp_path: Path, kind: str, rules: Contract,
+                       files: dict[str, str] | None = None) -> tuple[Case, Candidate]:
     item = {"id": "one", "family": "one", "split": "train", "kind": kind, "request": "Rewrite input.txt.",
-            "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello", "secret": "EXPECTED_SENTINEL"},
+            "files": {"input.txt": "hello\n"} | (files or {}), "expected": {"echo": "hello", "secret": "EXPECTED_SENTINEL"},
             "provenance": "test", "provider_approved": True}
     path = tmp_path / "cases.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
@@ -173,6 +174,18 @@ def test_candidate_output_cannot_shadow_fixtures_or_modules_for_the_grader(tmp_p
     result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
     assert result["score"] == 1.0
     assert task.workspaces[0]["output/input.txt"] == "tampered\n" and task.workspaces[0]["input.txt"] == "hello\n"
+
+def test_command_grader_runs_a_python_argv_as_given_so_fixture_modules_import(tmp_path: Path,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    helper = 'import json\nSCORE = 1\nif __name__ == "__main__":\n    print(json.dumps({"score": SCORE}))\n'
+    rules = contract("import helper, json; print(json.dumps({'score': helper.SCORE}))", flags=())
+    case, candidate = case_and_candidate(tmp_path, "gate", rules, files={"helper.py": helper})
+    assert harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case)["score"] == 1.0
+    module = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
+                    "kinds": {"gate": {"grader": "command", "argv": [sys.executable, "-m", "helper"]}}}, "skill")
+    case, candidate = case_and_candidate(tmp_path, "gate", module, files={"helper.py": helper})
+    assert harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case)["score"] == 1.0
+
 
 def test_command_grader_needs_a_sandbox_and_output_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract()
@@ -239,8 +252,7 @@ class ScriptTask(FakeTask):
         super().__init__()
         self.script_command: str = script_command
 
-    @override
-    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,  # pyright: ignore[reportImplicitOverride]
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
         result = super().invoke(prompt, candidate, case, holdout=holdout, schema=schema)
         events = cast(list[dict[str, object]], result["events"])

@@ -40,6 +40,13 @@ def _ignored(root: Path) -> set[str]:
     return {name for name in run.stdout.decode("utf-8", errors="replace").split("\0") if name}
 
 
+def _metadata(posix: str) -> bool:
+    """Return True for VCS and host metadata and for bytecode caches. Capture skips them."""
+    parts = posix.split("/")
+    return (bool({".git", ".github", "__pycache__"} & set(parts))
+            or parts[-1] in (".gitignore", ".gitattributes") or parts[-1].endswith(".pyc"))
+
+
 @dataclass(frozen=True)
 class Candidate:
     files: dict[str, str]
@@ -50,18 +57,20 @@ class Candidate:
     @classmethod
     def capture(cls, root: Path, editable: list[str], contract: Contract | None = None,
                 exclude: tuple[str, ...] = ()) -> Candidate:
-        """Read the skill files under `root`. Skip git-ignored files, `.git`, `evals/`, and `exclude`."""
+        """Read the skill files under `root`. Skip git-ignored files, VCS metadata, bytecode caches, `evals/`, and `exclude`."""
         if root.is_symlink():
             raise ValueError("candidate must not contain symlinks")
         ignored = _ignored(root)
         files: dict[str, str] = {}
         for path in sorted(root.rglob("*")):
             posix = path.relative_to(root).as_posix()
-            if posix in ignored or ".git" in posix.split("/") or posix.startswith("evals/"):
+            if posix in ignored or _metadata(posix) or posix.startswith("evals/"):
                 continue
             if path.is_symlink():
                 raise ValueError("candidate must not contain symlinks")
             if path.is_file():
+                if any(part.startswith(".") for part in posix.split("/")):
+                    raise CodedError("hidden-file", f"{posix} is a hidden file; remove it or git-ignore it")
                 name = relative(posix)
                 if name in ("scripts/skillz-experiment.pyz", LOCATION, *exclude):
                     continue

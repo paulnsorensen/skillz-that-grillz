@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 
 from skillz_experiments._candidate import Candidate, make_workspace, stage_task
-from skillz_experiments._cases import load_cases, mapping
+from skillz_experiments._cases import CodedError, load_cases, mapping
 from skillz_experiments._cli import main
 from skillz_experiments._codex import Codex
 from skillz_experiments._contract import parse
@@ -186,11 +186,40 @@ def test_kind_must_be_declared_in_the_contract(tmp_path: Path, capsys: pytest.Ca
 
 def test_undecodable_file_is_a_structured_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = echo_skill(tmp_path)
-    (target / "__pycache__").mkdir()
-    _ = (target / "__pycache__/x.pyc").write_bytes(b"\xff\xfe\x00")
+    (target / "assets").mkdir()
+    _ = (target / "assets/x.bin").write_bytes(b"\xff\xfe\x00")
     code, _, err = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
     assert code == 1 and err["code"] == "undecodable-file"
-    assert "__pycache__/x.pyc" in str(err["error"])
+    assert "assets/x.bin" in str(err["error"])
+
+
+def test_capture_skips_bytecode_caches_even_when_git_ignores_the_skill_root(tmp_path: Path) -> None:
+    _ = subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    _ = (tmp_path / ".gitignore").write_text("skill/\n")
+    target = echo_skill(tmp_path)
+    (target / "scripts/__pycache__").mkdir(parents=True)
+    _ = (target / "scripts/__pycache__/a.pyc").write_bytes(b"\xff\xfe\x00")
+    _ = (target / "scripts/b.pyc").write_bytes(b"\xff\xfe\x00")
+    assert "scripts/b.pyc" not in Candidate.capture(target, ["SKILL.md"]).files
+
+
+def test_capture_skips_a_self_tracked_gitignore_and_github_directory(tmp_path: Path) -> None:
+    target = echo_skill(tmp_path)
+    _ = subprocess.run(["git", "init", "-q", str(target)], check=True)
+    _ = (target / ".gitignore").write_text("__pycache__/\n")
+    _ = (target / ".gitattributes").write_text("* text=auto\n")
+    (target / ".github/workflows").mkdir(parents=True)
+    _ = (target / ".github/workflows/x.yml").write_text("name: x\n")
+    files = Candidate.capture(target, ["SKILL.md"]).files
+    assert "SKILL.md" in files and not any(name.startswith(".") for name in files)
+
+
+def test_capture_names_any_other_hidden_file(tmp_path: Path) -> None:
+    target = echo_skill(tmp_path)
+    _ = (target / ".secret").write_text("x")
+    with pytest.raises(CodedError, match=r"\.secret") as raised:
+        _ = Candidate.capture(target, ["SKILL.md"])
+    assert raised.value.code == "hidden-file"
 
 
 def test_ignored_file_is_skipped_by_capture(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
