@@ -31,19 +31,24 @@ def sandbox(request: dict[str, object], mode: str, workspace: Path) -> dict[str,
 
 
 def inspection(request: dict[str, object], workspace: Path) -> tuple[dict[str, object], list[dict[str, object]]]:
-    skill = workspace / ".agents/skills/skillz"
-    commands = [["cat", ".agents/skills/skillz/SKILL.md"],
-                ["/usr/bin/python3", "-I", ".agents/skills/skillz/scripts/inspect_skill.py", "fixture.md"]]
+    name = str(request["skill_name"])
+    skill = workspace / ".agents/skills" / name
+    commands = [["cat", f".agents/skills/{name}/SKILL.md"]]
+    if (skill / "scripts/inspect_skill.py").is_file():
+        commands.append(["/usr/bin/python3", "-I", f".agents/skills/{name}/scripts/inspect_skill.py", "fixture.md"])
     results = [execute(argv, workspace) for argv in commands]
     trace: list[dict[str, object]] = [{"argv": argv, "exit_code": result.returncode}
                                       for argv, result in zip(commands, results)]
-    facts = cast(dict[str, object], json.loads(results[-1].stdout))
-    keys = cast(list[str], facts["frontmatter_keys"])
-    findings = [f"missing-{name}" for name in ("name", "description") if name not in keys]
-    if "description: TODO" in (workspace / "fixture.md").read_text():
-        findings.append("placeholder-description")
-    content = (json.dumps({"facts": facts, "findings": sorted(findings)})
-               if "OPTIMIZED" in (skill / "SKILL.md").read_text() else "{}")
+    if len(commands) == 1:
+        content = "{}"
+    else:
+        facts = cast(dict[str, object], json.loads(results[-1].stdout))
+        keys = cast(list[str], facts["frontmatter_keys"])
+        findings = [f"missing-{key}" for key in ("name", "description") if key not in keys]
+        if "description: TODO" in (workspace / "fixture.md").read_text():
+            findings.append("placeholder-description")
+        content = (json.dumps({"facts": facts, "findings": sorted(findings)})
+                   if "OPTIMIZED" in (skill / "SKILL.md").read_text() else "{}")
     if "Audit the supplied files" in str(request["prompt"]):
         content = '{"findings":[]}'
     answer: dict[str, object] = {"result_json": content,
@@ -63,10 +68,10 @@ def infer(request: dict[str, object], mode: str, workspace: Path) -> dict[str, o
     if "result_json" in fields:
         answer, trace = inspection(request, workspace)
     elif "matches" in fields:
-        assert not (workspace / ".agents/skills/skillz").exists()
+        assert not list((workspace / ".agents/skills").iterdir())
         answer = {"matches": []}
     else:
-        payload = cast(dict[str, dict[str, str]], json.loads(str(request["prompt"]).split("\n", 1)[1]))
+        payload = cast(dict[str, dict[str, str]], json.loads(str(request["prompt"]).rstrip("\n").rsplit("\n", 1)[-1]))
         answer = {key: payload["candidate"][key] + "\n# OPTIMIZED\n" for key in fields}
     if mode in {"empty-result", "whitespace-result", "invalid-result"}:
         answer["result_json"] = {"empty-result": "", "whitespace-result": " \n", "invalid-result": "not-json"}[mode]
@@ -87,7 +92,7 @@ def main() -> None:
     if operation == "sandbox":
         response.update(sandbox(request, mode, workspace))
     elif operation == "discover":
-        skills = [{"name": "skillz", "path": str(request["skill_path"])}]
+        skills = [{"name": str(request["skill_name"]), "path": str(request["skill_path"])}]
         response["skills"] = [] if mode == "no-discovery" else skills
     else:
         response.update(infer(request, mode, workspace))

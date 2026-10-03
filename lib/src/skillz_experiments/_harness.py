@@ -9,11 +9,14 @@ from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, digest, mapping, string
+from skillz_experiments._claude import ClaudeCode
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._command import Command
 from skillz_experiments._evaluator import Transport, evaluate
 from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget
+
+CLAUDE_IDENTITY = "claude-code-restricted"
 
 
 def _command(value: object, root: Path) -> tuple[str, ...]:
@@ -48,6 +51,8 @@ class Role:
                        "identity": self.identity, "files": files})
 
     def create(self, budget: Budget, checkpoint: Callable[[], None]) -> Transport:
+        if self.adapter == "claude":
+            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]))
         return (Codex(self.model, budget, checkpoint) if self.adapter == "codex"
                 else Command(self.command, self.model, budget, checkpoint))
 
@@ -61,8 +66,15 @@ def _role(value: dict[str, object], model: str, root: Path) -> Role:
         if set(value) - {"adapter", "model"}:
             raise ValueError("Codex role accepts only adapter and model")
         return Role("codex", selected_model, _command(["codex"], root), VERSION)
+    if adapter == "claude":
+        if set(value) - {"adapter", "model", "command"}:
+            raise ValueError("Claude role accepts only adapter, model, and command")
+        parts = value.get("command", ["claude"])
+        if not isinstance(parts, list) or len(cast(list[object], parts)) != 1:
+            raise ValueError("Claude command must name only the executable")
+        return Role("claude", selected_model, _command(cast(list[object], parts), root), CLAUDE_IDENTITY)
     if adapter != "command":
-        raise ValueError("harness adapter must be codex or command")
+        raise ValueError("harness adapter must be codex, claude, or command")
     return Role("command", selected_model, _command(value.get("command"), root),
                 string(value.get("identity"), "adapter identity"))
 
