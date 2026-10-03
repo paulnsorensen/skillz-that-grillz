@@ -15,7 +15,7 @@ from skillz_experiments._contract import resolve
 from skillz_experiments._discovery import discover
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema, evaluate
-from skillz_experiments._isolation import probe
+from skillz_experiments._isolation import listening, probe
 from skillz_experiments._runtime import Budget, process
 
 VERSION = "codex-cli 0.154.0"
@@ -81,14 +81,15 @@ class Codex:
             sealed = root / "sealed"
             _ = sealed.write_text("sealed sentinel")
             (workspace / "escape").symlink_to(sealed)
-            script = probe(workspace, sealed, Path(__file__).resolve())
             safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
                     "TMPDIR=" + str(workspace / "tmp"), "LANG=C.UTF-8"]
-            command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
-                       "-P", "skillz", "--include-managed-config", "-C", str(workspace), "--",
-                       "/usr/bin/env", "-i", *safe, "/usr/bin/python3", "-c", script]
-            result = process(command, cwd=workspace, timeout=min(30, self.budget.remaining()),
-                             environment=self._environment(workspace))
+            with listening() as port:
+                script = probe(workspace, sealed, Path(__file__).resolve(), port)
+                command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
+                           "-P", "skillz", "--include-managed-config", "-C", str(workspace), "--",
+                           "/usr/bin/env", "-i", *safe, "/usr/bin/python3", "-c", script]
+                result = process(command, cwd=workspace, timeout=min(30, self.budget.remaining()),
+                                 environment=self._environment(workspace))
             if result.returncode or result.stdout.strip() != "isolation-ok":
                 raise RuntimeError("Codex isolation preflight fails; no unsafe fallback")
             skill = workspace / ".agents/skills/skillz"

@@ -69,11 +69,17 @@ Reports contain adapter names, model names, and fingerprints, never command argu
 
 The `claude` role runs `claude --restricted -p` with `--tools Bash,Read,Skill`.
 It also passes `--strict-mcp-config` and a generated settings file.
-The settings enable the sandbox floor, deny host reads, and disable bundled skills.
+The settings enable the sandbox floor and disable bundled skills.
+They deny host reads from `/`. They allow only the workspace and the runtime roots that commands need.
 The runner places only the staged candidate under the workspace skill directory.
 
-Before any live task, a live isolation preflight runs.
-The preflight tries to read a sealed host file from inside the sandbox.
+Before the first live task, a live isolation preflight runs. It runs once per run, not once per stage.
+The preflight asks Claude Code to run `cat` on a sealed host file and on a workspace file.
+It passes only when a Bash command read the sealed path, the host read failed, and the workspace read returned its token.
+The run record keeps the pass and its live calls under `preflight`.
+The single preflight counts against `--max-invocations`. Later stages reuse the recorded pass and make no new call.
+The reuse key joins the role fingerprint and the Claude environment hash.
+A changed key runs the live preflight again, and it counts again.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
 A missing sandbox tool stops the run.

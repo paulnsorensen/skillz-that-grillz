@@ -16,7 +16,7 @@ from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case, Split, digest, load_cases, mapping
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._contract import Contract, parse, resolve
-from skillz_experiments._harness import Configuration
+from skillz_experiments._harness import Configuration, Harness
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
 from skillz_experiments._search import Mode, optimize
@@ -355,7 +355,9 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
         session = _Session(out, model, maximum, seconds,
                            configuration.create if configuration is not None else factory, configuration)
         try:
-            preflight = session.provider.preflight()
+            recorded = session.record.get("preflight")
+            preflight = (session.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
+                         if isinstance(session.provider, Harness) else session.provider.preflight())
             environment_hash = preflight.get("environment_hash")
             _ = session.record.setdefault("environment_hash", environment_hash)
             if session.record["environment_hash"] != environment_hash:

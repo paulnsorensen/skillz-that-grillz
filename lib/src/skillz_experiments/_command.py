@@ -13,7 +13,7 @@ from skillz_experiments._cases import Case, mapping
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
-from skillz_experiments._isolation import probe
+from skillz_experiments._isolation import listening, probe
 from skillz_experiments._runtime import Budget, process
 
 
@@ -128,8 +128,9 @@ class Command:
             sealed = root / "sealed"
             _ = sealed.write_text("sealed sentinel")
             (workspace / "escape").symlink_to(sealed)
-            script = probe(workspace, sealed, Path(__file__).resolve())
-            result = self._sandbox(workspace, ["/usr/bin/python3", "-c", script])
+            with listening() as port:
+                script = probe(workspace, sealed, Path(__file__).resolve(), port)
+                result = self._sandbox(workspace, ["/usr/bin/python3", "-c", script])
             if result["returncode"] != 0 or cast(str, result["stdout"]).strip() != "isolation-ok":
                 raise RuntimeError("harness isolation preflight fails; no unsafe fallback")
             skill = workspace / ".agents/skills/skillz"

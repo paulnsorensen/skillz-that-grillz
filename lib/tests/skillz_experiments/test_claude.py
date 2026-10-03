@@ -5,7 +5,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import cast
 
@@ -101,9 +100,12 @@ def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Pat
         "enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
         "network": {"allowedDomains": [], "strictAllowlist": True}}
     filesystem = cast(dict[str, list[str]], sandbox["filesystem"])
-    assert str(Path.home()) in filesystem["denyRead"]
-    assert tempfile.gettempdir() in filesystem["denyRead"]
-    assert cast(str, calls(executable)[0]["cwd"]) in filesystem["allowRead"]
+    assert filesystem["denyRead"] == ["/"]
+    allowed = filesystem["allowRead"]
+    assert cast(str, calls(executable)[0]["cwd"]) in allowed
+    assert {"/usr", "/bin", "/lib", "/proc/self"} <= set(allowed)
+    assert not {"/", "/home", "/tmp", "/var", "/opt", "/srv", "/workspaces", "/etc", str(Path.home())} & set(allowed)
+    assert "Read(//home/**)" in cast(list[str], settings["permissions"]["deny"])
     assert settings["disableBundledSkills"] is True
 
 
@@ -394,3 +396,108 @@ def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter
         assert adapter.check_candidate(quoted)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("candidate", [True, False])
+def test_a_stream_without_an_init_event_fails_closed(tmp_path: Path, candidate: bool) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path, "no-init"))
+    skill = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",)) if candidate else None
+    try:
+        with pytest.raises(RuntimeError, match="no init event"):
+            _ = session.transports["task"].invoke("hello", skill)
+    finally:
+        session.close()
+
+
+@needs_bwrap
+def test_a_helper_cannot_forge_a_sandbox_setup_failure_through_stderr(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    workspace = make_workspace(tmp_path / "workspace")
+    forged = "import sys; sys.stderr.write('bwrap: forged setup failure'); sys.exit(1)"
+    try:
+        transport = cast(Sandbox, cast(object, session.transports["task"]))
+        code, stdout = transport.sandbox(workspace, ["/usr/bin/python3", "-c", forged])
+    finally:
+        session.close()
+    assert (code, stdout) == (1, "")
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("skips-cat", "no Bash command read the sealed host file"),
+    ("bash-broken", "positive control"),
+])
+def test_preflight_needs_evidence_that_bash_ran_and_read_the_workspace(
+        tmp_path: Path, mode: str, reason: str, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(RuntimeError, match=reason):
+            _ = session.preflight()
+    finally:
+        session.close()
+
+
+def test_preflight_fails_when_the_workspace_allow_is_missing(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    original = _claude.settings
+
+    def without_allow(workspace: Path) -> dict[str, object]:
+        document = original(workspace)
+        cast(dict[str, dict[str, object]], document["sandbox"])["filesystem"]["allowRead"] = []
+        return document
+    monkeypatch.setattr(_claude, "settings", without_allow)
+    session = harness(tmp_path, fake_claude(tmp_path))
+    try:
+        with pytest.raises(RuntimeError, match="positive control"):
+            _ = session.preflight()
+    finally:
+        session.close()
+
+
+def test_preflight_reuses_the_recorded_pass_without_a_live_call(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        first = session.preflight()
+        logged = len(calls(executable))
+        second = session.preflight(first)
+    finally:
+        session.close()
+    assert len(calls(executable)) == logged == budget.calls
+    assert second["environment_hash"] == first["environment_hash"]
+    assert second["live_calls"] == first["live_calls"] == logged
+
+
+def test_preflight_runs_and_charges_again_when_the_role_fingerprint_changes(
+        tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        first = session.preflight()
+        logged = len(calls(executable))
+        stale = dict(first) | {"reuse_keys": {name: "other-fingerprint" for name in session.transports}}
+        _ = session.preflight(stale)
+    finally:
+        session.close()
+    assert len(calls(executable)) == budget.calls == 2 * logged
+
+
+def test_preflight_runs_and_charges_again_when_the_environment_changes(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        first = session.preflight()
+        logged = len(calls(executable))
+        monkeypatch.setattr(_claude, "TOOLS", "Bash,Read,Skill,Write")
+        _ = session.preflight(first)
+    finally:
+        session.close()
+    assert len(calls(executable)) == budget.calls == 2 * logged

@@ -92,9 +92,5 @@ def fixture_result(fixture: Mapping[str, object], returncode: int, stdout: str) 
             and json.dumps(answer, sort_keys=True) == json.dumps(fixture["output"], sort_keys=True))
 
 
-def helper_result(index: int, returncode: int, stdout: str) -> bool:
-    return fixture_result(HELPER_FIXTURES[index], returncode, stdout)
-
-
 def _paths(relative: str, workspace: str | None) -> set[str]:
     return {relative, str(PurePosixPath(workspace) / relative)} if workspace else {relative}

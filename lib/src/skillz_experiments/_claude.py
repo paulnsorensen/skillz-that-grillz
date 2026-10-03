@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, mapping, string
+from skillz_experiments._cases import Case, digest, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
-from skillz_experiments._isolation import probe
+from skillz_experiments._isolation import listening, probe
 from skillz_experiments._runtime import Budget, process
 
 TOOLS = "Bash,Read,Skill"
@@ -24,8 +24,10 @@ PROBE_SKILL = "skillz"
 AUTHENTICATION = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
-HOST_READ_ROOTS = ("/home", "/root", "/Users", "/mnt", "/media")
-TEMPORARY_ROOTS = ("/tmp", "/var/tmp")
+PERMISSION_DENY_ROOTS = ("/home", "/root", "/Users", "/mnt", "/media", "/opt", "/srv", "/workspaces", "/data")
+RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/self", "/etc/ld.so.cache", "/etc/ld.so.conf",
+                "/etc/ld.so.conf.d", "/etc/alternatives", "/etc/localtime", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf")
+MACOS_READ = ("/System", "/Library")
 SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
 
 
@@ -36,17 +38,18 @@ def _unique(values: list[str]) -> list[str]:
 def settings(workspace: Path) -> dict[str, object]:
     """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
 
-    Sandboxed commands read only the workspace. The Read tool follows permission rules, not the sandbox,
-    so a deny rule covers the host home roots for that tool.
+    Sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
+    workspace and the runtime roots. The Read tool follows permission rules, not the sandbox, so a deny
+    rule covers the host roots for that tool.
     """
-    temporary = [tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())]
-    denied = _unique([*HOST_READ_ROOTS, *TEMPORARY_ROOTS, str(Path.home()), str(Path.home().resolve()), *temporary])
+    runtime = [*RUNTIME_READ, *(MACOS_READ if sys.platform == "darwin" else ())]
     return {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
                         "network": {"allowedDomains": [], "strictAllowlist": True},
-                        "filesystem": {"denyRead": denied, "allowRead": _unique([str(workspace), str(workspace.resolve())])}},
+                        "filesystem": {"denyRead": ["/"],
+                                       "allowRead": _unique([str(workspace), str(workspace.resolve()), *runtime])}},
             "disableBundledSkills": True,
             "permissions": {"allow": ["Skill"],
-                            "deny": [f"Read(/{root}/**)" for root in _unique([*HOST_READ_ROOTS, str(Path.home())])]}}
+                            "deny": [f"Read(/{root}/**)" for root in _unique([*PERMISSION_DENY_ROOTS, str(Path.home())])]}}
 
 
 def _events(stdout: str) -> list[dict[str, object]]:
@@ -145,6 +148,19 @@ def _declares(text: str, skill: str) -> bool:
     return fields.get("name") == skill and bool(fields.get("description"))
 
 
+def _read_failure(events: list[dict[str, object]], sealed_token: str, sealed: str, control_token: str) -> str | None:
+    """Judge the read probe. It needs evidence that Bash ran: a command on the sealed path, and the workspace token."""
+    text = json.dumps(events)
+    if sealed_token in text:
+        return "read isolation failed: a host file is readable"
+    commands = [cast(str, mapping(item["item"])["command"]) for item in _trace(events)]
+    if not any(sealed in command for command in commands):
+        return "read probe has no evidence: no Bash command read the sealed host file"
+    if control_token not in text:
+        return "read probe has no positive control: Bash cannot read a workspace file"
+    return None
+
+
 def seatbelt_profile(workspace: Path) -> str:
     """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
 
@@ -162,7 +178,12 @@ def seatbelt_profile(workspace: Path) -> str:
 
 
 def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str]) -> list[str]:
-    """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No network, no host files."""
+    """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No network, no host files.
+
+    Under bubblewrap, a shell discards the command's standard error before the command starts. Only
+    bubblewrap can then write to the process standard error, so a message that starts with `bwrap:` is
+    a setup failure that the command cannot forge.
+    """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
         return [tool, "-p", seatbelt_profile(workspace), "/usr/bin/env", "-i", *assignments, *argv]
@@ -171,7 +192,7 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
             "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",
             "--symlink", "usr/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev",
             "--bind", path, path, "--ro-bind", f"{path}/.agents", f"{path}/.agents", "--chdir", path,
-            "/usr/bin/env", "-i", *assignments, *argv]
+            "/bin/sh", "-c", 'exec "$@" 2>/dev/null', "sh", "/usr/bin/env", "-i", *assignments, *argv]
 
 
 def _answer(final: dict[str, object]) -> dict[str, object]:
@@ -219,6 +240,12 @@ class ClaudeCode:
                          environment=self._environment(workspace), input_text=prompt)
         return result.returncode, result.stderr, _events(result.stdout)
 
+    def environment_key(self) -> str:
+        """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment."""
+        environment = {name: value for name, value in self._environment(Path("/TASK")).items() if name not in AUTHENTICATION}
+        return digest({"settings": settings(Path("/TASK")), "environment": environment, "tools": TOOLS,
+                       "skill": PROBE_SKILL, "platform": sys.platform})
+
     def preflight(self) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             root = Path(directory)
@@ -227,24 +254,31 @@ class ClaudeCode:
             token = secrets.token_hex(16)
             _ = sealed.write_text(token)
             (workspace / "escape").symlink_to(sealed)
-            code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", probe(workspace, sealed, Path(__file__).resolve())])
+            with listening() as port:
+                script = probe(workspace, sealed, Path(__file__).resolve(), port)
+                code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
             if code != 0 or output.strip() != "isolation-ok":
                 raise RuntimeError("Claude Code isolation preflight fails: sandbox probe failed; no unsafe fallback")
             skill = workspace / ".agents/skills" / PROBE_SKILL
             skill.mkdir()
             _ = (skill / "SKILL.md").write_text(
                 f"---\nname: {PROBE_SKILL}\ndescription: Inspect public fixtures\n---\nInspection probe.\n")
+            control = secrets.token_hex(16)
+            control_file = workspace / "control.txt"
+            _ = control_file.write_text(control)
             self.budget.claim()
             self.checkpoint()
             returncode, stderr, events = self._run(
-                workspace, f"Run `cat {sealed}` with the Bash tool. Reply with its output, or the word denied if it fails.",
+                workspace, f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
+                + "Reply with both outputs, or the word denied for each one that fails.",
                 None, min(120, self.budget.remaining()))
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
-        if reason is None and token in json.dumps(events):
-            reason = "read isolation failed: a host file is readable"
+        if reason is None:
+            reason = _read_failure(events, token, str(sealed), control)
         if reason is not None:
             raise RuntimeError(f"Claude Code isolation preflight fails: {reason}; no unsafe fallback")
-        return {"adapter": "claude", "model": self.model, "isolation": "passed", "live_calls": 1}
+        return {"adapter": "claude", "model": self.model, "isolation": "passed", "live_calls": 1,
+                "environment_key": self.environment_key()}
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -259,6 +293,9 @@ class ClaudeCode:
             final = _final(events)
             failed = bool(returncode) or final is None or final.get("is_error") is True
             loaded = _loaded_skills(events)
+            if loaded is None and not failed:
+                raise RuntimeError("Claude Code isolation fails: the stream has no init event, so the skill list is unknown; "
+                                   + "the invocation counts against the budget")
             if candidate is not None and loaded is not None:
                 if set(loaded) - set(expected):
                     raise RuntimeError(f"Claude Code isolation fails: skills in init event {loaded}, expected {expected}; "

@@ -132,11 +132,31 @@ class Harness:
         if self.configuration.identity() != self.identity:
             raise ValueError("harness executable or script differs from the frozen record")
 
-    def preflight(self) -> dict[str, object]:
+    def _reuse_key(self, name: str, adapter: ClaudeCode) -> str:
+        return digest({"fingerprint": mapping(self.identity[name])["fingerprint"], "environment": adapter.environment_key()})
+
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        """Run each role preflight. A Claude role reuses its recorded live pass when its reuse key is unchanged.
+
+        The reuse key joins the role fingerprint and the Claude environment key. A changed key runs the live
+        preflight again, and it is charged again. Codex and Command roles always run.
+        """
         self._unchanged()
-        evidence = {name: adapter.preflight() for name, adapter in self.transports.items()}
-        live = sum(cast(int, item.get("live_calls", 0)) for item in evidence.values())
-        return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live}
+        keys = mapping(recorded.get("reuse_keys", {})) if recorded else {}
+        passes = mapping(recorded.get("roles", {})) if recorded else {}
+        evidence: dict[str, object] = {}
+        reuse_keys: dict[str, str] = {}
+        for name, adapter in self.transports.items():
+            if isinstance(adapter, ClaudeCode):
+                reuse_keys[name] = self._reuse_key(name, adapter)
+                kept = passes.get(name)
+                if (keys.get(name) == reuse_keys[name] and isinstance(kept, dict)
+                        and cast(dict[str, object], kept).get("isolation") == "passed"):
+                    evidence[name] = kept
+                    continue
+            evidence[name] = adapter.preflight()
+        live = sum(cast(int, mapping(item).get("live_calls", 0)) for item in evidence.values())
+        return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live, "reuse_keys": reuse_keys}
 
     def close(self) -> None:
         for adapter in self.transports.values():

@@ -1,10 +1,24 @@
+import socket
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 
 
-def probe(workspace: Path, sealed: Path, engine: Path) -> str:
+@contextmanager
+def listening() -> Generator[int]:
+    """Listen on host loopback. A sandbox with network isolation cannot connect to the port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        yield cast(int, server.getsockname()[1])
+
+
+def probe(workspace: Path, sealed: Path, engine: Path, port: int) -> str:
+    """Build the isolation probe script. It must fail to reach the host loopback listener on `port`."""
     denied = [str(sealed), str(workspace / "escape"), str(engine)]
     return (
-        "import errno,os,pathlib,socket\n"
+        "import os,pathlib,socket\n"
         f"for name in {denied!r}:\n"
         " try: pathlib.Path(name).read_bytes()\n"
         " except OSError: pass\n"
@@ -19,9 +33,8 @@ def probe(workspace: Path, sealed: Path, engine: Path) -> str:
         "except OSError: pass\n"
         "else:\n"
         " sock.settimeout(2)\n"
-        " try: sock.connect(('192.0.2.1',9))\n"
-        " except OSError as error:\n"
-        "  if error.errno not in (errno.ENETUNREACH,errno.EPERM,errno.EACCES): raise SystemExit('network isolation failed')\n"
+        f" try: sock.connect(('127.0.0.1',{port}))\n"
+        " except OSError: pass\n"
         " else: raise SystemExit('network isolation failed')\n"
         "print('isolation-ok')\n"
     )

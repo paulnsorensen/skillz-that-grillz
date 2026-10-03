@@ -278,3 +278,41 @@ def test_self_test_reports_a_coded_error_like_dataset(tmp_path: Path, capsys: py
     code = main(["self-test", "--model", "local-test", "--live", "--target", str(target), "--out", str(tmp_path / "run")])
     error = cast(dict[str, object], json.loads(capsys.readouterr().err))
     assert code == 1 and error["code"] == "undecodable-file" and error["exit_code"] == 1
+
+
+def test_claude_preflight_runs_once_per_run_so_a_spent_search_pool_still_reaches_the_holdout_stage(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil
+    import stat
+
+    from skillz_experiments._claude import ClaudeCode
+
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        del self, workspace, argv
+        return 0, "isolation-ok\n"
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    fake = tmp_path / "bin/claude"
+    fake.parent.mkdir()
+    _ = shutil.copyfile(Path(__file__).parent / "fixtures/fake_claude.py", fake)
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [str(fake)]}))
+    target = tmp_path / "skill"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("seed")
+    out = tmp_path / "run"
+    _ = prepare(Path(__file__).resolve().parents[2] / "src/skillz_experiments/fixtures/self-test.json", target, out)
+
+    def live_calls() -> int:
+        return len((tmp_path / "bin/claude.log").read_text().splitlines())
+    with pytest.raises(ValueError, match="holdout requires"):
+        _ = execute(out, "evaluate", "claude-test", live=True, harness_config=config)
+    record = read(out / "run.json")
+    preflight = cast(dict[str, object], record["preflight"])
+    assert (live_calls(), record["calls"], preflight["live_calls"]) == (3, 3, 3)
+    record["calls"] = 20 - cast(int, record["holdout_reserve"])
+    write(out / "run.json", record)
+    with pytest.raises(ValueError, match="holdout requires"):
+        _ = execute(out, "evaluate", "claude-test", live=True, harness_config=config)
+    assert live_calls() == 3
+    assert cast(dict[str, object], read(out / "run.json")["preflight"])["live_calls"] == 3

@@ -35,19 +35,20 @@ def test_command_trace_rejects_spoofed_helper_names() -> None:
 
 
 def test_frozen_helper_contract_rejects_constant_answers() -> None:
-    from skillz_experiments._evaluation import helper_result
+    from skillz_experiments._evaluation import HELPER_FIXTURES, fixture_result
 
-    assert helper_result(1, 2, '{"schema_version":2,"error":"link escapes package"}')
-    assert not helper_result(1, 2, '{"schema_version":1,"error":"link escapes package"}')
-    assert not helper_result(0, 0, '{"schema_version":2,"error":"link escapes package"}')
-    assert not helper_result(1, 0, '{"schema_version":2,"error":"link escapes package"}')
+    fixture = HELPER_FIXTURES[1]
+    assert fixture_result(fixture, 2, '{"schema_version":2,"error":"link escapes package"}')
+    assert not fixture_result(fixture, 2, '{"schema_version":1,"error":"link escapes package"}')
+    assert not fixture_result(HELPER_FIXTURES[0], 0, '{"schema_version":2,"error":"link escapes package"}')
+    assert not fixture_result(fixture, 0, '{"schema_version":2,"error":"link escapes package"}')
 
 
 def test_exact_json_distinguishes_boolean_from_number() -> None:
-    from skillz_experiments._evaluation import fixture_result, helper_result
+    from skillz_experiments._evaluation import HELPER_FIXTURES, fixture_result
 
     assert grade("true", 1, loaded=True, helper_executed=True) == 0.0
-    assert not helper_result(1, 2, '{"schema_version":true,"error":"link escapes package"}')
+    assert not fixture_result(HELPER_FIXTURES[1], 2, '{"schema_version":true,"error":"link escapes package"}')
     assert fixture_result({"returncode": 0, "output": {"ok": 1}}, 0, '{"ok": 1}')
     assert not fixture_result({"returncode": 0, "output": {"ok": 1}}, 0, '{"ok": true}')
 

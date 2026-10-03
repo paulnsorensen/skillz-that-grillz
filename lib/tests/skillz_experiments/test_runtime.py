@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -55,3 +56,32 @@ def test_startup_failure_evidence_is_actionable_without_private_text() -> None:
     assert evidence["reason"] == "unsupported-cli-argument"
     assert "PRIVATE_PROMPT_SENTINEL" not in str(evidence)
     assert evidence["usage"] == {"input_tokens": None, "cached_input_tokens": None, "output_tokens": None}
+
+
+def _run_probe(tmp_path: Path, port: int, prefix: str = "") -> subprocess.CompletedProcess[str]:
+    from skillz_experiments._isolation import probe
+
+    script = probe(tmp_path, tmp_path / "absent-sealed", tmp_path / "absent-engine", port)
+    return subprocess.run([sys.executable, "-c", prefix + script], cwd=tmp_path, capture_output=True, text=True,
+                          env={"PATH": os.defpath}, timeout=10, check=False)
+
+
+def test_network_probe_fails_when_the_host_loopback_listener_is_reachable(tmp_path: Path) -> None:
+    from skillz_experiments._isolation import listening
+
+    with listening() as port:
+        result = _run_probe(tmp_path, port)
+    assert result.returncode != 0
+    assert "network isolation failed" in result.stderr
+
+
+def test_network_probe_passes_when_the_connection_or_the_socket_is_refused(tmp_path: Path) -> None:
+    from skillz_experiments._isolation import listening
+
+    with listening() as port:
+        pass
+    refused = _run_probe(tmp_path, port)
+    assert (refused.returncode, refused.stdout.strip()) == (0, "isolation-ok")
+    with listening() as open_port:
+        no_socket = _run_probe(tmp_path, open_port, "import socket\ndef deny(*a,**k): raise PermissionError()\nsocket.socket=deny\n")
+    assert (no_socket.returncode, no_socket.stdout.strip()) == (0, "isolation-ok")

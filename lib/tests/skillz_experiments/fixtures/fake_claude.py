@@ -34,6 +34,24 @@ def _readable(path: str, settings: dict[str, object]) -> bool:
     return bool(allowed) and max(map(len, allowed)) > max(map(len, denied))
 
 
+def probe(targets: list[str], mode: str, config: dict[str, object]) -> int:
+    """Answer the preflight read probe. Each target is one `cat` call; modes break the probe in one way."""
+    if mode == "skips-cat":
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": "denied", "usage": USAGE})
+        return 0
+    texts: list[str] = []
+    for index, path in enumerate(targets):
+        reads = (mode == "read-host" and index == 0) or (mode != "bash-broken" and _readable(path, config))
+        text = Path(path).read_text() if reads and Path(path).is_file() else "denied"
+        texts.append(text)
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"p{index}", "name": "Bash",
+              "input": {"command": f"cat {path}"}}]}})
+        emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"p{index}",
+              "is_error": text == "denied", "content": text}]}})
+    emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts), "usage": USAGE})
+    return 0
+
+
 def main() -> int:
     script = Path(__file__).resolve()
     mode_file = script.with_name(script.name + ".mode")
@@ -63,18 +81,15 @@ def main() -> int:
         skills.append("code-review")
     if mode == "missing-skill":
         skills = []
-    emit({"type": "system", "subtype": "init", "skills": skills, "tools": ["Bash", "Read", "Skill"]})
+    if mode != "no-init":
+        emit({"type": "system", "subtype": "init", "skills": skills, "tools": ["Bash", "Read", "Skill"]})
     if mode == "auth-fail":
         emit({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key - Please run /login",
               "usage": {}})
         return 1
-    sealed = re.search(r"Run `cat (\S+)` with the Bash tool", prompt)
-    if sealed is not None:
-        path = sealed.group(1)
-        reads = mode == "read-host" or _readable(path, config)
-        text = Path(path).read_text() if reads and Path(path).is_file() else "denied"
-        emit({"type": "result", "subtype": "success", "is_error": False, "result": text, "usage": USAGE})
-        return 0
+    targets = re.findall(r"`cat (\S+)` with the Bash tool", prompt)
+    if targets:
+        return probe(targets, mode, config)
     schema = cast(dict[str, object], json.loads(argv[argv.index("--json-schema") + 1])) if "--json-schema" in argv else {}
     properties = cast(dict[str, object], schema.get("properties", {}))
     marker = Path.cwd() / ".agents/skills/skillz/EXPERIMENT_MARKER"
