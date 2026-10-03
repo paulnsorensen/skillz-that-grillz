@@ -34,7 +34,29 @@ def _readable(path: str, settings: dict[str, object]) -> bool:
     return bool(allowed) and max(map(len, allowed)) > max(map(len, denied))
 
 
-def probe(targets: list[str], mode: str, config: dict[str, object]) -> int:
+def _writable(path: str, settings: dict[str, object]) -> bool:
+    """Mimic the sandbox write rule: a path under a `denyWrite` root fails."""
+    filesystem = cast(dict[str, list[str]], cast(dict[str, object], settings.get("sandbox", {})).get("filesystem", {}))
+    return not any(_inside(path, [root]) for root in filesystem.get("denyWrite", []))
+
+
+def write_probe(writes: list[tuple[str, str]], mode: str, config: dict[str, object]) -> list[str]:
+    """Answer the preflight write probe. `write-agents` lets the `.agents` write succeed; `write-broken` fails every write."""
+    texts: list[str] = []
+    for index, (token, path) in enumerate(writes):
+        agents = "/.agents/" in path
+        writes_file = mode != "write-broken" and (_writable(path, config) or (mode == "write-agents" and agents))
+        if writes_file:
+            _ = Path(path).write_text(token)
+        texts.append("" if writes_file else "denied")
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"w{index}", "name": "Bash",
+              "input": {"command": f"printf {token} > {path}"}}]}})
+        emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"w{index}",
+              "is_error": not writes_file, "content": texts[-1]}]}})
+    return texts
+
+
+def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object]) -> int:
     """Answer the preflight read probe. Each target is one `cat` call; modes break the probe in one way."""
     if mode == "skips-cat":
         emit({"type": "result", "subtype": "success", "is_error": False, "result": "denied", "usage": USAGE})
@@ -55,6 +77,7 @@ def probe(targets: list[str], mode: str, config: dict[str, object]) -> int:
         emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1",
               "is_error": False, "content": Path(targets[-1]).read_text()}]}})
         texts[-1] = Path(targets[-1]).read_text()
+    texts += write_probe(writes, mode, config)
     emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts), "usage": USAGE})
     return 0
 
@@ -96,7 +119,8 @@ def main() -> int:
         return 1
     targets = re.findall(r"`cat (\S+)` with the Bash tool", prompt)
     if targets:
-        return probe(targets, mode, config)
+        writes = re.findall(r"`printf (\S+) > (\S+)` with the Bash tool", prompt)
+        return probe(targets, writes, mode, config)
     schema = cast(dict[str, object], json.loads(argv[argv.index("--json-schema") + 1])) if "--json-schema" in argv else {}
     properties = cast(dict[str, object], schema.get("properties", {}))
     marker = Path.cwd() / ".agents/skills/skillz/EXPERIMENT_MARKER"

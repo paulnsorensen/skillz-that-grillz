@@ -125,6 +125,17 @@ def test_invalid_report_never_calls_judge(tmp_path: Path, monkeypatch: pytest.Mo
     assert len(calls) == 1
 
 
+def test_deeply_nested_report_json_is_an_invalid_report_and_never_calls_judge(tmp_path: Path,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = task_answer([])
+    cast(dict[str, object], answer["answer"])["result_json"] = "[" * 200_000
+    adapter, calls = controlled_adapter(monkeypatch, [answer])
+    result = evaluate_audit(tmp_path, adapter)
+    assert result["score"] == 0.0
+    assert result["evidence_valid"] is False
+    assert len(calls) == 1
+
+
 def test_duplicate_findings_are_false_positives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     judge: dict[str, object] = {"answer": {"matches": [{"finding": index, "label": "unsafe", "actionable": True} for index in (0, 1)]},
              "usage": {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}}

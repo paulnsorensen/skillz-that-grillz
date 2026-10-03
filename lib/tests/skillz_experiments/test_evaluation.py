@@ -65,3 +65,7 @@ def test_wedge_script_runs_isolated() -> None:
     candidate = Candidate({"SKILL.md": "s", "scripts/offload.py": "print(1)"}, ("SKILL.md",), None, "scripts/offload.py")
     prompt = _prompt(resolve(None), candidate, "", cast(Case, cast(object, SimpleNamespace(request="task"))))
     assert "python3 -I .agents/skills/skillz/scripts/offload.py" in prompt
+
+
+def test_deeply_nested_answer_scores_zero_instead_of_stopping_the_run() -> None:
+    assert grade("[" * 200_000, [], loaded=True, helper_executed=True) == 0.0

@@ -47,6 +47,7 @@ def settings(workspace: Path) -> dict[str, object]:
     return {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
                         "network": {"allowedDomains": [], "strictAllowlist": True},
                         "filesystem": {"denyRead": ["/"],
+                                       "denyWrite": _unique([f"{workspace}/.agents", f"{workspace.resolve()}/.agents"]),
                                        "allowRead": _unique([str(workspace), str(workspace.resolve()), *runtime])}},
             "disableBundledSkills": True,
             "permissions": {"allow": ["Skill"],
@@ -60,7 +61,7 @@ def _events(stdout: str) -> list[dict[str, object]]:
             continue
         try:
             events.append(mapping(cast(object, json.loads(line))))
-        except ValueError:
+        except (ValueError, RecursionError):
             raise RuntimeError("invalid Claude Code JSON event stream") from None
     return events
 
@@ -70,14 +71,17 @@ def _final(events: list[dict[str, object]]) -> dict[str, object] | None:
 
 
 def _loaded_skills(events: list[dict[str, object]]) -> list[str] | None:
-    """Return the skill names in the init event, or None when the stream has no init event."""
-    for event in events:
-        if event.get("type") == "system" and event.get("subtype") == "init":
-            raw = event.get("skills")
-            items = cast(list[object], raw) if isinstance(raw, list) else []
-            names = [cast(dict[str, object], item).get("name") if isinstance(item, dict) else item for item in items]
-            return sorted(name for name in names if isinstance(name, str))
-    return None
+    """Return the skill names in every init event, or None when the stream has no init event."""
+    inits = [event for event in events if event.get("type") == "system" and event.get("subtype") == "init"]
+    if not inits:
+        return None
+    loaded: set[str] = set()
+    for event in inits:
+        raw = event.get("skills")
+        items = cast(list[object], raw) if isinstance(raw, list) else []
+        names = [cast(dict[str, object], item).get("name") if isinstance(item, dict) else item for item in items]
+        loaded.update(name for name in names if isinstance(name, str))
+    return sorted(loaded)
 
 
 def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skills: list[str]) -> str | None:
@@ -180,6 +184,18 @@ def _read_failure(events: list[dict[str, object]], sealed_token: str, sealed: st
     return None
 
 
+def _write_failure(events: list[dict[str, object]], agents_file: str, wrote: bool, controlled: bool) -> str | None:
+    """Judge the write probe. It needs a Bash write to `.agents` that fails, and a workspace write that succeeds."""
+    if wrote:
+        return "write isolation failed: the task model can write to .agents"
+    commands = [cast(str, mapping(item["item"])["command"]) for item in _trace(events)]
+    if not any(agents_file in command for command in commands):
+        return "write probe has no evidence: no Bash command wrote to .agents"
+    if not controlled:
+        return "write probe has no positive control: Bash cannot write a workspace file"
+    return None
+
+
 def seatbelt_profile(workspace: Path) -> str:
     """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
 
@@ -221,7 +237,7 @@ def _answer(final: dict[str, object]) -> dict[str, object]:
     text = final.get("result")
     try:
         return mapping(cast(object, json.loads(text))) if isinstance(text, str) else {}
-    except ValueError:
+    except (ValueError, RecursionError):
         return {}
 
 
@@ -298,15 +314,24 @@ class ClaudeCode:
             control = secrets.token_hex(16)
             control_file = workspace / "control.txt"
             _ = control_file.write_text(control)
+            agents_file = workspace / ".agents/write-probe"
+            write_control = workspace / "write-control.txt"
+            write_token = secrets.token_hex(16)
             self.budget.claim()
             self.checkpoint()
             returncode, stderr, events = self._run(
                 workspace, f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
-                + "Reply with both outputs, or the word denied for each one that fails.",
+                + f"Then run `printf {write_token} > {agents_file}` with the Bash tool. Then run "
+                + f"`printf {write_token} > {write_control}` with the Bash tool. "
+                + "Reply with the read outputs, or the word denied for each command that fails.",
                 None, min(120, self.budget.remaining()))
+            wrote = agents_file.exists()
+            controlled = write_control.is_file() and write_control.read_text() == write_token
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
         if reason is None:
             reason = _read_failure(events, token, str(sealed), control, str(control_file))
+        if reason is None:
+            reason = _write_failure(events, str(agents_file), wrote, controlled)
         if reason is not None:
             raise RuntimeError(f"Claude Code isolation preflight fails: {reason}; no unsafe fallback")
         return {"adapter": "claude", "model": self.model, "isolation": "passed", "live_calls": 1,
@@ -328,11 +353,11 @@ class ClaudeCode:
             if loaded is None and not failed:
                 raise RuntimeError("Claude Code isolation fails: the stream has no init event, so the skill list is unknown; "
                                    + "the invocation counts against the budget")
-            if candidate is not None and loaded is not None:
+            if loaded is not None:
                 if set(loaded) - set(expected):
                     raise RuntimeError(f"Claude Code isolation fails: skills in init event {loaded}, expected {expected}; "
                                        + "the invocation counts against the budget")
-                if not loaded and not failed:
+                if candidate is not None and not loaded and not failed:
                     return {"answer": {"result_json": "", "load_marker": ""}, "events": [], "usage": usage([]),
                             "workspace": str(workspace), "latency_seconds": time.monotonic() - started,
                             "output_files": snapshot_outputs(workspace)}

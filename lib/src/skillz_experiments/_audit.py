@@ -41,7 +41,10 @@ class Finding:
 def report(value: object, files: dict[str, str]) -> tuple[Finding, ...]:
     if not isinstance(value, str):
         raise ValueError("audit result_json must be text")
-    item = mapping(cast(object, json.loads(value)))
+    try:
+        item = mapping(cast(object, json.loads(value)))
+    except RecursionError:
+        raise ValueError("audit result_json is nested too deeply") from None
     if set(item) != {"findings"} or not isinstance(item["findings"], list):
         raise ValueError("audit report requires findings")
     findings: list[Finding] = []

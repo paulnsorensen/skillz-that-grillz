@@ -14,6 +14,7 @@ from skillz_experiments._cli import main
 from skillz_experiments._cases import Case
 from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._search import Mode
 from skillz_experiments._workflow import _Session, execute, export  # pyright: ignore[reportPrivateUsage]
 
 
@@ -322,3 +323,50 @@ def test_claude_preflight_runs_once_per_run_so_a_spent_search_pool_still_reaches
             _ = execute(out, "evaluate", "claude-test", live=True, harness_config=config)
     assert live_calls() == 3
     assert read(out / "run.json")["calls"] == 20 - cast(int, record["holdout_reserve"])
+
+
+def _echo_run(tmp_path: Path, helper: dict[str, object] | None) -> Path:
+    target = tmp_path / "echo-skill"
+    (target / "scripts").mkdir(parents=True)
+    (target / "evals").mkdir()
+    _ = (target / "SKILL.md").write_text("---\nname: echo-skill\ndescription: echo\n---\nEcho.\n")
+    _ = (target / "scripts/echo.py").write_text("print('hello')\n")
+    contract: dict[str, object] = {
+        "schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
+        "kinds": {"echo": {"grader": "exact-json"}}, "editable": ["scripts/echo.py"]}
+    if helper is not None:
+        contract["helper"] = helper
+    _ = (target / "evals/autoimprove.json").write_text(json.dumps(contract))
+    cases = [{"id": split, "family": split, "split": split, "kind": "echo", "request": "Echo hello",
+              "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello"},
+              "provenance": "test", "provider_approved": True} for split in ("train", "validation", "holdout")]
+    manifest = tmp_path / "cases.json"
+    _ = manifest.write_text(json.dumps({"schema_version": 1, "cases": cases}))
+    out = tmp_path / "run"
+    assert main(["dataset", str(manifest), "--target", str(target), "--out", str(out)]) == 0
+    return out
+
+
+def test_cli_search_edits_the_contract_helper_not_the_skillz_script(tmp_path: Path) -> None:
+    out = _echo_run(tmp_path, {"path": "scripts/echo.py", "input": "input.txt"})
+    _ = execute(out, "baseline", "local-test", live=True, factory=LocalProvider)
+    _ = execute(out, "search", "local-test", live=True, factory=LocalProvider, mode="cli")
+    record = read(out / "run.json")
+    assert record["cli_selection"] == {"reason": "validation-selection", "retained_seed": True}
+    assert "scripts/echo.py" in cast(dict[str, object], cast(dict[str, object], record["arms"])["cli"])
+
+
+@pytest.mark.parametrize("mode", ["cli", "prompt-cli"])
+def test_cli_search_without_a_contract_helper_is_rejected_before_any_model_call(tmp_path: Path, mode: str) -> None:
+    out = _echo_run(tmp_path, None)
+    _ = execute(out, "baseline", "local-test", live=True, factory=LocalProvider)
+    calls = read(out / "run.json")["calls"]
+    opened: list[object] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> LocalProvider:
+        opened.append(model)
+        return LocalProvider(model, budget, checkpoint)
+    with pytest.raises(ValueError, match="needs a contract helper") as caught:
+        _ = execute(out, "search", "local-test", live=True, factory=factory, mode=cast(Mode, mode))
+    assert getattr(caught.value, "code") == "helper-missing"
+    assert not opened and read(out / "run.json")["calls"] == calls

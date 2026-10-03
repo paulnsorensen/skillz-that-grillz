@@ -14,9 +14,9 @@ def grade(answer: str, expected: object, *, loaded: bool, helper_executed: bool)
         return 0.0
     try:
         result = cast(object, json.loads(answer))
-    except json.JSONDecodeError:
+        return float(json.dumps(result, sort_keys=True) == json.dumps(expected, sort_keys=True))
+    except (json.JSONDecodeError, RecursionError):
         return 0.0
-    return float(json.dumps(result, sort_keys=True) == json.dumps(expected, sort_keys=True))
 
 
 def usage(events: list[dict[str, object]]) -> dict[str, int | None]:

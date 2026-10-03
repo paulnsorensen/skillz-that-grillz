@@ -185,7 +185,8 @@ def test_claude_role_with_a_blank_model_is_rejected(tmp_path: Path) -> None:
 # ---- preflight stops on every isolation failure, with no fallback (AC-11) -------------------------
 
 @pytest.mark.parametrize("mode", ["auth-fail", "foreign-skill", "sandbox-unavailable", "no-init-auth", "no-init",
-                                  "missing-skill", "read-host", "bash-broken", "read-fallback", "skips-cat"])
+                                  "missing-skill", "read-host", "bash-broken", "read-fallback", "skips-cat",
+                                  "write-agents", "write-broken"])
 def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and_no_retry(
         tmp_path: Path, probes: list[list[str]], mode: str) -> None:
     del probes
@@ -199,6 +200,50 @@ def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and
     logged = calls(executable)
     assert len(logged) == 1 and "--restricted" in cast(list[str], logged[0]["argv"])
     assert not any("--dangerously-skip-permissions" in cast(list[str], call["argv"]) for call in logged)
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("write-agents", "write isolation failed"),
+    ("write-broken", "no positive control")])
+def test_preflight_stops_when_the_agents_write_succeeds_or_the_write_control_fails(
+        tmp_path: Path, probes: list[list[str]], mode: str, reason: str) -> None:
+    del probes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(RuntimeError, match=reason):
+            _ = session.preflight()
+    finally:
+        session.close()
+
+
+def test_settings_deny_writes_into_the_workspace_agents_directory(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    sandbox = cast(dict[str, dict[str, dict[str, list[str]]]], _claude.settings(workspace))["sandbox"]["filesystem"]
+    assert f"{workspace}/.agents" in sandbox["denyWrite"]
+    assert f"{workspace.resolve()}/.agents" in sandbox["denyWrite"]
+
+
+def nested(depth: int = 200_000) -> str:
+    return "[" * depth
+
+
+def test_invoke_event_stream_with_deeply_nested_json_is_an_invalid_stream_not_a_recursion_error(tmp_path: Path) -> None:
+    session = harness(tmp_path, scripted(tmp_path, [INIT_OK, nested(), DONE]))
+    try:
+        with pytest.raises(RuntimeError, match="invalid Claude Code JSON event stream"):
+            _ = session.transports["task"].invoke("hello", candidate())
+    finally:
+        session.close()
+
+
+def test_invoke_answer_is_empty_when_the_result_text_is_deeply_nested_json(tmp_path: Path) -> None:
+    session = harness(tmp_path, scripted(tmp_path, [INIT_OK, DONE | {"structured_output": None, "result": nested()}]))
+    try:
+        result = session.transports["task"].invoke("hello", candidate())
+    finally:
+        session.close()
+    assert result["answer"] == {}
 
 
 @pytest.mark.parametrize("result", [(1, ""), (0, ""), (0, "isolation-ok extra"),
@@ -289,7 +334,6 @@ def test_invoke_fails_closed_on_a_hostile_event_stream_and_counts_the_call(
     assert budget.calls == 1
 
 
-@pytest.mark.xfail(strict=True, reason="review follow-up: only the first init event is read")
 def test_invoke_with_a_later_foreign_init_event_is_stopped_too(tmp_path: Path) -> None:
     lines = [INIT_OK, {"type": "system", "subtype": "init", "skills": ["skillz", "intruder"]}, DONE]
     session = harness(tmp_path, scripted(tmp_path, lines))
@@ -345,7 +389,6 @@ def test_invoke_trace_does_not_count_a_read_tool_call_as_a_bash_execution(tmp_pa
     assert not [e for e in cast(list[dict[str, object]], result["events"]) if e["type"] == "item.completed"]
 
 
-@pytest.mark.xfail(strict=True, reason="review follow-up: invoke checks the init skill list only when a candidate is staged")
 def test_invoke_without_a_candidate_stops_when_a_foreign_skill_loads(tmp_path: Path) -> None:
     executable = fake_claude(tmp_path, "foreign-skill")
     session = harness(tmp_path, executable)

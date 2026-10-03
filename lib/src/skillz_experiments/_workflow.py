@@ -13,7 +13,7 @@ from typing import Protocol, cast, final, get_args
 
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import Candidate, candidate_files
-from skillz_experiments._cases import Case, Split, digest, load_cases, mapping
+from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._contract import Contract, parse, resolve
 from skillz_experiments._harness import Configuration, Harness
@@ -248,9 +248,11 @@ class _Session:
         editable = ({"SKILL.md": self.seed.files["SKILL.md"], COMPONENT: "{}"} if mode == "wedge"
                     else {key: self.seed.files[key] for key in self.seed.editable})
         try:
+            helper = self.contract.helper
             _ = optimize(editable, mode, [case.identifier for case in self.cases_for("train")],
                          [case.identifier for case in self.cases_for("validation")],
-                         partial(self._evaluate_example, mode), partial(self._propose, mode, brief))
+                         partial(self._evaluate_example, mode), partial(self._propose, mode, brief),
+                         **({"code": helper.path} if helper is not None else {}))
             winner = _select(self._candidates, self._validation, len(self.cases_for("validation")), self.seed)
             reason = "validation-selection"
         except BudgetExhausted:
@@ -347,6 +349,9 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
     brief_text = _read_brief(brief) if brief is not None else None
     if not live:
         raise ValueError("live model calls require --live")
+    if stage == "search" and mode in ("cli", "prompt-cli") and \
+            resolve(_resume_fields(read(out / "run.json")).contract).helper is None:
+        raise CodedError("helper-missing", f"{mode} search needs a contract helper; declare `helper` in the contract")
     with (out / "run.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if read(out / "run.json").get("holdout_consumed"):
