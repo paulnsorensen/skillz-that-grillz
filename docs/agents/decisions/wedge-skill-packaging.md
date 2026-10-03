@@ -40,7 +40,7 @@ These records explain the design of `wedge`, a packaging tool at `lib/src/wedge/
 - **Consequences:**
   - No asset garbage collection. The rolling `wedge` release keeps every published asset forever; nothing deletes an old key's `.pyz`.
   - The launcher and the build both require Python 3.11 or newer on the host; there is no fallback for older interpreters.
-  - Only a pure-Python dependency closure is supported. `wedge build` rejects any resolved wheel that is not `py3-none-any` or that carries a platform marker (`sys_platform`, `platform_system`, …), with a clear error naming the offending package. The guard reads PEP 425 tags, so a compressed universal tag such as `py2.py3-none-any` (shiv's only wheel) passes; abi must be `none` and platform `any`.
+  - Only a pure-Python dependency closure is supported. `wedge build` accepts a resolved wheel only when its PEP 425 Python tag set includes `py3`, its ABI tag is `none`, and its platform tag is `any`. It rejects any other wheel, and any resolved dependency that carries a platform marker (`sys_platform`, `platform_system`, …), with a clear error naming the offending package. A compressed universal tag such as `py2.py3-none-any` (shiv's only wheel) therefore passes.
 
 ### ADR-006: Keep Wedge and fromargs as separate distributions  [status: accepted]
 
