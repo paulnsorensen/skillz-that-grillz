@@ -45,10 +45,10 @@ def baseline(run: Path, *, model: str, live: bool = False, harness_config: Path 
 
 @app.command
 def search(run: Path, *, model: str, mode: Mode = "prompt", live: bool = False, harness_config: Path | None = None,
-           max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
-    """Search prompt, prompt-cli, or cli components with pinned GEPA."""
+           max_invocations: int = 20, max_seconds: float = 1200, brief: Path | None = None) -> dict[str, object]:
+    """Search prompt, prompt-cli, cli, or wedge components with pinned GEPA. Wedge mode needs --brief."""
     return execute(run, "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config)
+                   harness_config=harness_config, brief=brief)
 
 
 @app.command

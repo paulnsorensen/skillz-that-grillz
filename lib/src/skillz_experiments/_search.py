@@ -7,7 +7,9 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, Protocol, cast, get_args
 
-Mode = Literal["prompt", "prompt-cli", "cli"]
+from skillz_experiments._wedge import COMPONENT
+
+Mode = Literal["prompt", "prompt-cli", "cli", "wedge"]
 Evaluate = Callable[[dict[str, str], object], tuple[float, dict[str, object]]]
 Propose = Callable[[dict[str, str], Mapping[str, Sequence[Mapping[str, object]]], list[str]], dict[str, str]]
 
@@ -25,9 +27,9 @@ class _API(Protocol):
 
 
 def optimize(seed: dict[str, str], mode: Mode, train: list[object], validation: list[object],
-             evaluate: Evaluate, propose: Propose) -> dict[str, str]:
+             evaluate: Evaluate, propose: Propose, *, code: str = "scripts/inspect_skill.py") -> dict[str, str]:
     if mode not in get_args(Mode):
-        raise ValueError("mode must be prompt, prompt-cli, or cli")
+        raise ValueError("mode must be prompt, prompt-cli, cli, or wedge")
     if not train or not validation:
         raise ValueError("search needs independent train and validation cases")
     try:
@@ -39,7 +41,7 @@ def optimize(seed: dict[str, str], mode: Mode, train: list[object], validation: 
     api = cast(_API, cast(object, importlib.import_module("gepa.optimize_anything")))
     editable = {key: text for key, text in seed.items()
                 if mode == "prompt-cli" or (mode == "prompt" and key.endswith(".md"))
-                or (mode == "cli" and key == "scripts/inspect_skill.py")}
+                or (mode == "cli" and key == code) or (mode == "wedge" and key in ("SKILL.md", COMPONENT))}
     if not editable:
         raise ValueError("search mode has no editable components")
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
+from skillz_experiments._cli import main
 from skillz_experiments._cases import Case
 from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
@@ -134,3 +135,91 @@ def test_resume_rejects_missing_record_field_with_a_clear_error(tmp_path: Path) 
     write(out / "run.json", record)
     with pytest.raises(ValueError, match="dataset_hash must be text"):
         _ = execute(out, "evaluate", "local-test", live=True, factory=LocalProvider)
+
+WEDGE_PATH = "scripts/offload.py"
+BRIEF_TEXT = "Offload the link check to a script."
+
+
+@final
+class WedgeProvider:
+    """Reflect with a configurable wedge proposal; record prompts and evaluated candidates."""
+    proposal: dict[str, str] = {}
+    prompts: list[str] = []
+    candidates: list[Candidate] = []
+
+    def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        self.inner = LocalProvider(model, budget, checkpoint)
+
+    def preflight(self) -> dict[str, object]:
+        return self.inner.preflight()
+
+    def close(self) -> None:
+        pass
+
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        type(self).candidates.append(candidate)
+        return self.inner.evaluate(candidate, case, holdout=holdout)
+
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        type(self).prompts.append(prompt)
+        if "wedge-files" not in cast(dict[str, object], (schema or {}).get("properties", {})):
+            return self.inner.invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+        return {"answer": dict(type(self).proposal)}
+
+
+def _wedge_run(tmp_path: Path, proposal: dict[str, str]) -> tuple[Path, Path]:
+    WedgeProvider.proposal, WedgeProvider.prompts, WedgeProvider.candidates = proposal, [], []
+    target = tmp_path / "skill"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("seed")
+    out = tmp_path / "run"
+    fixtures = Path(__file__).resolve().parents[2] / "src/skillz_experiments/fixtures/self-test.json"
+    _ = prepare(fixtures, target, out)
+    brief = tmp_path / "brief.txt"
+    _ = brief.write_text(BRIEF_TEXT)
+    _ = execute(out, "baseline", "local-test", live=True, factory=WedgeProvider)
+    _ = execute(out, "search", "local-test", live=True, factory=WedgeProvider, mode="prompt")
+    return out, brief
+
+
+def test_wedge_search_then_evaluate_locks_three_arms_and_runs_the_script_isolated(tmp_path: Path) -> None:
+    out, brief = _wedge_run(tmp_path, {"SKILL.md": f"improved: run {WEDGE_PATH}",
+                                       "wedge-files": json.dumps({WEDGE_PATH: "print(1)\n"})})
+    _ = execute(out, "search", "local-test", live=True, factory=WedgeProvider, mode="wedge", brief=brief)
+    wedge_prompts = [item for item in WedgeProvider.prompts if "wedge-files" in item]
+    assert wedge_prompts and all(BRIEF_TEXT in item and "ASD-STE100" in item for item in wedge_prompts)
+    assert any(item.script == WEDGE_PATH for item in WedgeProvider.candidates)
+    _ = execute(out, "evaluate", "local-test", live=True, factory=WedgeProvider)
+    record = read(out / "run.json")
+    assert set(cast(dict[str, object], record["arms"])) == {"original", "prompt", "wedge"}
+    assert record["phase"] == "complete"
+    holdout = [item for item in WedgeProvider.candidates[-6:] if item.script == WEDGE_PATH]
+    assert len(holdout) == 2 and all(WEDGE_PATH in item.files for item in holdout)
+    destination = tmp_path / "export"
+    _ = export(out, destination, "wedge")
+    patch = (destination / "candidate.patch").read_text()
+    assert f"--- /dev/null\n+++ b/{WEDGE_PATH}" in patch
+    check = subprocess.run(["git", "apply", "--check", str(destination / "candidate.patch")],
+                           cwd=tmp_path / "skill", capture_output=True, text=True)
+    assert check.returncode == 0, check.stderr
+
+
+def test_wedge_search_scores_an_inadmissible_proposal_zero_without_evaluating_it(tmp_path: Path) -> None:
+    out, brief = _wedge_run(tmp_path, {"SKILL.md": "improved: no reference",
+                                       "wedge-files": json.dumps({WEDGE_PATH: "print(1)\n"})})
+    before = len(WedgeProvider.candidates)
+    _ = execute(out, "search", "local-test", live=True, factory=WedgeProvider, mode="wedge", brief=brief)
+    assert all(item.script is None and WEDGE_PATH not in item.files for item in WedgeProvider.candidates[before:])
+    assert read(out / "run.json")["wedge_selection"] == {"reason": "validation-selection", "retained_seed": True}
+
+
+def test_wedge_search_without_brief_fails_before_any_model_call(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    out, _ = _wedge_run(tmp_path, {})
+    calls = read(out / "run.json")["calls"]
+    prompts = len(WedgeProvider.prompts)
+    code = main(["search", str(out), "--model", "local-test", "--mode", "wedge", "--live"])
+    assert code != 0 and "--brief" in capsys.readouterr().err
+    assert read(out / "run.json")["calls"] == calls and len(WedgeProvider.prompts) == prompts
+    with pytest.raises(ValueError, match="--brief"):
+        _ = execute(out, "search", "local-test", live=True, factory=WedgeProvider, mode="wedge")

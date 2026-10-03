@@ -50,3 +50,17 @@ def test_exact_json_distinguishes_boolean_from_number() -> None:
     assert not helper_result(1, 2, '{"schema_version":true,"error":"link escapes package"}')
     assert fixture_result({"returncode": 0, "output": {"ok": 1}}, 0, '{"ok": 1}')
     assert not fixture_result({"returncode": 0, "output": {"ok": 1}}, 0, '{"ok": true}')
+
+
+def test_wedge_script_runs_isolated() -> None:
+    from types import SimpleNamespace
+    from typing import cast
+
+    from skillz_experiments._candidate import Candidate
+    from skillz_experiments._cases import Case
+    from skillz_experiments._contract import resolve
+    from skillz_experiments._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
+
+    candidate = Candidate({"SKILL.md": "s", "scripts/offload.py": "print(1)"}, ("SKILL.md",), None, "scripts/offload.py")
+    prompt = _prompt(resolve(None), candidate, "", cast(Case, cast(object, SimpleNamespace(request="task"))))
+    assert "python3 -I .agents/skills/skillz/scripts/offload.py" in prompt
