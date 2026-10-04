@@ -16,7 +16,7 @@ from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._contract import Contract, parse, resolve
-from skillz_experiments._harness import Configuration, Harness
+from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
 from skillz_experiments._search import Mode, optimize
@@ -201,10 +201,9 @@ class _Session:
         skill = components["SKILL.md"]
         if components[COMPONENT] == "{}" and skill == self.seed.files["SKILL.md"]:
             return self.seed
-        added = admit(self.seed.files, components)
+        contract = self.seed.contract
+        added = admit(self.seed.files, components, contract.skill if contract is not None else None)
         files = self.seed.files | {"SKILL.md": skill} | added
-        if sum(len(text) for text in files.values()) > 1_000_000:
-            raise ValueError("candidate package exceeds size limit")
         return Candidate(files, self.seed.editable, self.seed.contract, new_script(self.seed.files, files))
 
     def _evaluate_example(self, mode: Mode, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
@@ -224,7 +223,7 @@ class _Session:
             self._validation.setdefault(candidate.identity, []).append(result)
         feedback: dict[str, object] = {"task_correct": result["score"], "request": case.request}
         if "scores" in result:
-            feedback["scores"] = result["scores"]
+            feedback["grader_scores"] = result["scores"]
         if mode in ("cli", "wedge"):
             usage = mapping(result.get("usage") or {})
             feedback["usage"] = {key: value if type(value := usage.get(key)) is int and value >= 0 else None
@@ -255,7 +254,7 @@ class _Session:
             _ = optimize(editable, mode, [case.identifier for case in self.cases_for("train")],
                          [case.identifier for case in self.cases_for("validation")],
                          partial(self._evaluate_example, mode), partial(self._propose, mode, brief),
-                         **({"code": helper.path} if helper is not None else {}))
+                         code=helper.path if helper is not None else None)
             winner = _select(self._candidates, self._validation, len(self.cases_for("validation")), self.seed)
             reason = "validation-selection"
         except BudgetExhausted:
@@ -308,7 +307,8 @@ def _reflection_request(mode: Mode, candidate: dict[str, str],
     elif mode == "wedge":
         instruction = (f"Improve SKILL.md and add one stdlib-only Python script. Set {COMPONENT} to a JSON object with "
                        + "exactly one key, scripts/<name>.py, whose value is the script source. "
-                       + "Reference that path in SKILL.md. Add no other file. Preserve the helper CLI contract. "
+                       + "Reference that path in SKILL.md, bare or after one prefix: ./, ${CLAUDE_SKILL_DIR}/, "
+                       + "<this-skill-directory>/, or .agents/skills/<skill>/. Add no other file. Preserve the helper CLI contract. "
                        + "Preserve correctness first; reduce measured input-plus-output tokens for correctness ties. "
                        + "Token feedback combines task and judge usage; null means unknown. ")
     else:
@@ -342,6 +342,25 @@ def _read_brief(path: Path) -> str:
     return raw.decode("utf-8")
 
 
+def _require_helper(out: Path, stage: str, mode: Mode) -> None:
+    """Raise a `CodedError` before any model call when the run lacks a helper that it needs.
+
+    A helper arm needs a declared helper. A run with a declared contract needs the helper file in every stage.
+    A run with the legacy fallback contract checks the helper file for `search --mode cli` only.
+    """
+    resume = _resume_fields(read(out / "run.json"))
+    contract = resolve(resume.contract)
+    helper = contract.helper
+    label = "self-test" if stage == "self-test" else f"{mode} search" if stage == "search" else stage
+    if helper is None:
+        if stage == "self-test" or stage == "search" and mode in ("cli", "prompt-cli"):
+            raise CodedError("helper-missing", f"{label} needs a contract helper; declare `helper` in the contract")
+        return
+    if helper.path not in resume.seed.editable and (
+            contract.source != "legacy" or stage == "search" and mode == "cli"):
+        raise CodedError("helper-file-missing", f"{label} needs the helper file {helper.path} in the target")
+
+
 def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: int = 20,
             seconds: float = 1200, factory: Factory = Codex, mode: Mode = "prompt",
             harness_config: Path | None = None, brief: Path | None = None) -> dict[str, object]:
@@ -352,9 +371,7 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
     brief_text = _read_brief(brief) if brief is not None else None
     if not live:
         raise ValueError("live model calls require --live")
-    if stage == "search" and mode in ("cli", "prompt-cli") and \
-            resolve(_resume_fields(read(out / "run.json")).contract).helper is None:
-        raise CodedError("helper-missing", f"{mode} search needs a contract helper; declare `helper` in the contract")
+    _require_helper(out, stage, mode)
     with (out / "run.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if read(out / "run.json").get("holdout_consumed"):
@@ -369,7 +386,7 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
             environment_hash = preflight.get("environment_hash")
             _ = session.record.setdefault("environment_hash", environment_hash)
             if session.record["environment_hash"] != environment_hash:
-                raise ValueError("runtime environment differs from the frozen record")
+                raise EnvironmentDiffers("runtime environment differs from the frozen record")
             session.record["preflight"] = preflight
             if configuration is None or any(role.adapter == "codex" for role in configuration.roles.values()):
                 session.record["codex_version"] = VERSION
@@ -384,6 +401,8 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
             if stage in {"evaluate", "self-test"}:
                 session.holdout()
             return summary(session.record)
+        except EnvironmentDiffers:
+            raise
         except (OSError, ValueError, RuntimeError):
             session.record["phase"] = "infrastructure-failure"
             session.checkpoint()

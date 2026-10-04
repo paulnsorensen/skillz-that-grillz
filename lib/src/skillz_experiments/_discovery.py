@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import IO, cast
 
-from skillz_experiments._cases import mapping
+from skillz_experiments._cases import loads_untrusted, mapping
 
 
 def valid_listing(value: object, workspace: Path, skill: str) -> bool:
@@ -64,7 +64,7 @@ def _verdict(child: subprocess.Popen[bytes], stream: IO[bytes], deadline: float,
             end = buffer.index(b"\n")
             line = bytes(buffer[:end])
             del buffer[:end + 1]
-            verdict = _reply(mapping(cast(object, json.loads(line))), stream, workspace, skill)
+            verdict = _reply(mapping(loads_untrusted(line.decode())), stream, workspace, skill)
             if verdict is not None:
                 return verdict
     return None

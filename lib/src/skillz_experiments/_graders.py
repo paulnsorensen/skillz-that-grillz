@@ -15,7 +15,7 @@ from typing import Protocol, cast, runtime_checkable
 
 from skillz_experiments import _audit
 from skillz_experiments._candidate import make_workspace, stage_task
-from skillz_experiments._cases import Audit, Case, mapping, relative
+from skillz_experiments._cases import Audit, Case, loads_untrusted, mapping, relative
 
 JUDGE_INSTRUCTION = (
     "Score the candidate output against the rubric. Return only score_percent, an integer from 0 to 100. "
@@ -83,8 +83,8 @@ def _command_score(code: int, stdout: str) -> float:
     if code != 0:
         return 0.0
     try:
-        score = mapping(cast(object, json.loads(stdout))).get("score")
-    except (ValueError, RecursionError):
+        score = mapping(loads_untrusted(stdout)).get("score")
+    except ValueError:
         return 0.0
     if type(score) not in (int, float) or not 0 <= cast(float, score) <= 1:
         return 0.0

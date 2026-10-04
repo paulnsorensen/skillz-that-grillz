@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from typing import cast
 
-from skillz_experiments._cases import Audit, Case, Citation, citation, digest, mapping, severity, string
+from skillz_experiments._cases import Audit, Case, Citation, citation, digest, loads_untrusted, mapping, severity, string
 
 RUBRIC = (
     "Match findings to labels only when they describe the same defect in the original fixture. "
@@ -41,10 +41,7 @@ class Finding:
 def report(value: object, files: dict[str, str]) -> tuple[Finding, ...]:
     if not isinstance(value, str):
         raise ValueError("audit result_json must be text")
-    try:
-        item = mapping(cast(object, json.loads(value)))
-    except RecursionError:
-        raise ValueError("audit result_json is nested too deeply") from None
+    item = mapping(loads_untrusted(value))
     if set(item) != {"findings"} or not isinstance(item["findings"], list):
         raise ValueError("audit report requires findings")
     findings: list[Finding] = []

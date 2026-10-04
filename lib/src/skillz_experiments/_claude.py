@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, digest, mapping, string
+from skillz_experiments._cases import Case, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
@@ -49,7 +49,7 @@ def settings(workspace: Path) -> dict[str, object]:
                         "filesystem": {"denyRead": ["/"],
                                        "denyWrite": _unique([f"{workspace}/.agents", f"{workspace.resolve()}/.agents"]),
                                        "allowRead": _unique([str(workspace), str(workspace.resolve()), *runtime])}},
-            "disableBundledSkills": True,
+            "disableBundledSkills": True, "disableAllHooks": True,
             "permissions": {"allow": ["Skill"],
                             "deny": [f"Read(/{root}/**)" for root in _unique([*PERMISSION_DENY_ROOTS, str(Path.home())])]}}
 
@@ -60,8 +60,8 @@ def _events(stdout: str) -> list[dict[str, object]]:
         if not line.strip():
             continue
         try:
-            events.append(mapping(cast(object, json.loads(line))))
-        except (ValueError, RecursionError):
+            events.append(mapping(loads_untrusted(line)))
+        except ValueError:
             raise RuntimeError("invalid Claude Code JSON event stream") from None
     return events
 
@@ -78,9 +78,11 @@ def _loaded_skills(events: list[dict[str, object]]) -> list[str] | None:
     loaded: set[str] = set()
     for event in inits:
         raw = event.get("skills")
-        items = cast(list[object], raw) if isinstance(raw, list) else []
-        names = [cast(dict[str, object], item).get("name") if isinstance(item, dict) else item for item in items]
-        loaded.update(name for name in names if isinstance(name, str))
+        items = cast(list[object], raw) if isinstance(raw, list) else None
+        names = [cast(dict[str, object], item).get("name") if isinstance(item, dict) else item for item in items or []]
+        if items is None or not all(isinstance(name, str) for name in names):
+            raise RuntimeError("Claude Code isolation fails: the init event skills field is not a list of names")
+        loaded.update(cast(list[str], names))
     return sorted(loaded)
 
 
@@ -144,13 +146,19 @@ def _token_events(final: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _declares(text: str, skill: str) -> bool:
-    """Check that the SKILL.md frontmatter names the contract skill and has a description."""
-    parts = text.split("---", 2)
-    if not text.startswith("---") or len(parts) != 3:
+    """Check that the SKILL.md frontmatter names the contract skill, has a description, and declares no hooks."""
+    lines = text.splitlines()
+    if not lines or lines[0] != "---" or "---" not in lines[1:]:
         return False
-    fields = {key.strip(): value.strip().strip("\"'") for key, _, value in
-              (line.partition(":") for line in parts[1].splitlines())}
-    return fields.get("name") == skill and bool(fields.get("description"))
+    fields: dict[str, str] = {}
+    for line in lines[1:lines.index("---", 1)]:
+        if not line or line[0].isspace():
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip().removeprefix("? ").strip().strip("\"'").strip().lower()
+        fields[key] = value.strip().strip("\"'")
+    return (fields.get("name") == skill and bool(fields.get("description"))
+            and "hooks" not in fields and "user-invocable" not in fields)
 
 
 def _bash_control_passed(events: list[dict[str, object]], command_marker: str, control_token: str) -> bool:
@@ -188,9 +196,10 @@ def _write_failure(events: list[dict[str, object]], agents_file: str, wrote: boo
     """Judge the write probe. It needs a Bash write to `.agents` that fails, and a workspace write that succeeds."""
     if wrote:
         return "write isolation failed: the task model can write to .agents"
-    commands = [cast(str, mapping(item["item"])["command"]) for item in _trace(events)]
-    if not any(agents_file in command for command in commands):
-        return "write probe has no evidence: no Bash command wrote to .agents"
+    attempts = [mapping(item["item"]) for item in _trace(events)]
+    if not any(cast(str, item["command"]).startswith("printf") and agents_file in cast(str, item["command"])
+               and item["exit_code"] == 1 for item in attempts):
+        return "write probe has no evidence: no failed Bash printf to .agents"
     if not controlled:
         return "write probe has no positive control: Bash cannot write a workspace file"
     return None
@@ -236,8 +245,8 @@ def _answer(final: dict[str, object]) -> dict[str, object]:
         return mapping(cast(object, structured))
     text = final.get("result")
     try:
-        return mapping(cast(object, json.loads(text))) if isinstance(text, str) else {}
-    except (ValueError, RecursionError):
+        return mapping(loads_untrusted(text)) if isinstance(text, str) else {}
+    except ValueError:
         return {}
 
 
@@ -281,6 +290,11 @@ class ClaudeCode:
         credentials = sorted(name for name in AUTHENTICATION if name in os.environ)
         return digest({"settings": settings(Path("/TASK")), "environment": environment, "tools": TOOLS,
                        "skill": PROBE_SKILL, "platform": sys.platform, "credentials": credentials})
+
+    @staticmethod
+    def credentials_set() -> str:
+        """Name the credential variables that are set in the process environment, or `none`."""
+        return ", ".join(name for name in AUTHENTICATION if name in os.environ) or "none"
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
         with listening() as port:

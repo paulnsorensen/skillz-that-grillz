@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, digest, mapping, string
+from skillz_experiments._cases import Case, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._discovery import discover
 from skillz_experiments._evaluation import fixture_result, usage
@@ -127,7 +127,7 @@ class Codex:
                 with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                     json.dump(evidence, stream, sort_keys=True)
                 raise RuntimeError(f"Codex fails: {evidence['reason']} (exit {result.returncode}); the invocation counts against the budget; private evidence: {filename}")
-            answer = mapping(cast(object, json.loads(output.read_text())))
+            answer = mapping(loads_untrusted(output.read_text()))
             return {"answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
                     "latency_seconds": time.monotonic() - started,
                     "output_files": snapshot_outputs(workspace)}
@@ -178,7 +178,7 @@ def _events(stdout: str) -> list[dict[str, object]]:
     events: list[dict[str, object]] = []
     for line in stdout.splitlines():
         try:
-            events.append(mapping(cast(object, json.loads(line))))
+            events.append(mapping(loads_untrusted(line)))
         except ValueError:
             raise RuntimeError("invalid Codex JSON event stream") from None
     return events

@@ -164,6 +164,7 @@ def test_command_grader_finds_no_expected_value_anywhere_it_can_read(tmp_path: P
     leaked = harness(monkeypatch, SandboxedTask({"expected.json": "EXPECTED_SENTINEL"}), FakeJudge()).evaluate(candidate, case)
     assert clean["score"] == 1.0 and leaked["score"] == 0.0
 
+
 def test_candidate_output_cannot_shadow_fixtures_or_modules_for_the_grader(tmp_path: Path,
                                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     script = ('import json,pathlib;ok = pathlib.Path("input.txt").read_text() == "hello\\n"\n'
@@ -174,6 +175,7 @@ def test_candidate_output_cannot_shadow_fixtures_or_modules_for_the_grader(tmp_p
     result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
     assert result["score"] == 1.0
     assert task.workspaces[0]["output/input.txt"] == "tampered\n" and task.workspaces[0]["input.txt"] == "hello\n"
+
 
 def test_command_grader_runs_a_python_argv_as_given_so_fixture_modules_import(tmp_path: Path,
                                                                               monkeypatch: pytest.MonkeyPatch) -> None:

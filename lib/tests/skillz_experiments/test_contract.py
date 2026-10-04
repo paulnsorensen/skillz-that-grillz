@@ -219,7 +219,7 @@ def test_capture_names_any_other_hidden_file(tmp_path: Path) -> None:
     _ = (target / ".secret").write_text("x")
     with pytest.raises(CodedError, match=r"\.secret") as raised:
         _ = Candidate.capture(target, ["SKILL.md"])
-    assert raised.value.code == "hidden-file"
+    assert raised.value.code == "hidden-file" and "git-ignore" not in str(raised.value)
 
 
 def test_ignored_file_is_skipped_by_capture(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -232,3 +232,13 @@ def test_ignored_file_is_skipped_by_capture(tmp_path: Path, capsys: pytest.Captu
     assert code == 0
     record = mapping(cast(object, json.loads((tmp_path / "run/run.json").read_text())))
     assert list(mapping(record["seed"])) == ["SKILL.md"]
+
+
+def test_candidate_rejects_a_package_over_the_size_bound_on_every_construction_path() -> None:
+    from skillz_experiments._candidate import PACKAGE_LIMIT
+
+    with pytest.raises(ValueError, match="size limit"):
+        _ = Candidate({"SKILL.md": "x" * (PACKAGE_LIMIT + 1)}, ("SKILL.md",))
+    seed = Candidate({"SKILL.md": "seed", "references/a.md": "x" * 850_000}, ("SKILL.md",))
+    with pytest.raises(ValueError, match="size limit"):
+        _ = seed.changed({"SKILL.md": "y" * 200_000})

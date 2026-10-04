@@ -10,7 +10,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _claude
+from skillz_experiments import _claude, _codex
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._claude import ClaudeCode, sandbox_argv, seatbelt_profile
 from skillz_experiments._contract import load_contract
@@ -398,6 +398,48 @@ def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter
         session.close()
 
 
+def test_check_candidate_rejects_a_skill_that_declares_hooks(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    adapter = session.transports["task"]
+    good = echo_candidate(tmp_path)
+    hooked = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nhooks:\n  PreToolUse: []\n---\n"},
+                       ("SKILL.md",), contract=good.contract)
+    try:
+        assert not adapter.check_candidate(hooked)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("extra", [
+    '"hooks":', "'hooks':", "? hooks", "Hooks:", "user-invocable: false",
+])
+def test_check_candidate_rejects_hidden_forms_of_unsupported_frontmatter_keys(tmp_path: Path, extra: str) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    adapter = session.transports["task"]
+    good = echo_candidate(tmp_path)
+    hooked = Candidate({"SKILL.md": f"---\nname: echo-skill\ndescription: x\n{extra}\n  x: y\n---\n"},
+                       ("SKILL.md",), contract=good.contract)
+    try:
+        assert not adapter.check_candidate(hooked)
+    finally:
+        session.close()
+
+
+def test_check_candidate_reads_the_frontmatter_end_as_a_line_and_allows_nested_hooks(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    adapter = session.transports["task"]
+    good = echo_candidate(tmp_path)
+    inline = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: run a---b\nhooks: x\n---\n"},
+                       ("SKILL.md",), contract=good.contract)
+    nested = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nmetadata:\n  hooks: x\n---\n"},
+                       ("SKILL.md",), contract=good.contract)
+    try:
+        assert not adapter.check_candidate(inline)
+        assert adapter.check_candidate(nested)
+    finally:
+        session.close()
+
+
 @pytest.mark.parametrize("candidate", [True, False])
 def test_a_stream_without_an_init_event_fails_closed(tmp_path: Path, candidate: bool) -> None:
     session = harness(tmp_path, fake_claude(tmp_path, "no-init"))
@@ -532,3 +574,8 @@ def test_settings_allow_only_the_minimal_device_nodes(tmp_path: Path) -> None:
     allowed = set(filesystem["allowRead"])
     assert {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"} <= allowed
     assert not {"/dev", "/dev/tty"} & allowed
+
+
+def test_codex_event_stream_with_deeply_nested_json_is_an_invalid_stream_not_a_recursion_error() -> None:
+    with pytest.raises(RuntimeError, match="invalid Codex JSON event stream"):
+        _ = _codex._events("[" * 200_000)  # pyright: ignore[reportPrivateUsage]

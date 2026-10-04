@@ -49,24 +49,27 @@ def dataset(manifest: Path, *, target: Path, out: Path, component: list[str] | N
 def baseline(run: Path, *, model: str, live: bool = False, harness_config: Path | None = None,
              max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Measure the frozen original on train and validation cases."""
-    return execute(run, "baseline", model, live=live, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config)
+    with _coded():
+        return execute(run, "baseline", model, live=live, maximum=max_invocations, seconds=max_seconds,
+                       harness_config=harness_config)
 
 
 @app.command
 def search(run: Path, *, model: str, mode: Mode = "prompt", live: bool = False, harness_config: Path | None = None,
            max_invocations: int = 20, max_seconds: float = 1200, brief: Path | None = None) -> dict[str, object]:
     """Search prompt, prompt-cli, cli, or wedge components with pinned GEPA. Wedge mode needs --brief."""
-    return execute(run, "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config, brief=brief)
+    with _coded():
+        return execute(run, "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds,
+                       harness_config=harness_config, brief=brief)
 
 
 @app.command
 def evaluate(run: Path, *, model: str, live: bool = False, harness_config: Path | None = None,
              max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Consume the paired holdout once, without feedback to search."""
-    return execute(run, "evaluate", model, live=live, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config)
+    with _coded():
+        return execute(run, "evaluate", model, live=live, maximum=max_invocations, seconds=max_seconds,
+                       harness_config=harness_config)
 
 
 @app.command(name="export")
@@ -110,8 +113,9 @@ def self_test(*, model: str, out: Path = SELF_TEST_OUT, target: Path | None = No
         target = archive.parent.parent
     with _coded():
         _ = prepare(source, target, out, None, load_contract(target, load_manifest(source)))
-    return execute(out, "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config)
+    with _coded():
+        return execute(out, "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds,
+                       harness_config=harness_config)
 
 
 def main(argv: list[str] | None = None) -> int:

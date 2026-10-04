@@ -21,6 +21,14 @@ class CodedError(ValueError):
         self.code: str = code
 
 
+def loads_untrusted(text: str) -> object:
+    """Parse JSON text from a model or helper. Raise `ValueError` on bad or too deeply nested input."""
+    try:
+        return cast(object, json.loads(text))
+    except RecursionError:
+        raise ValueError("JSON is nested too deeply") from None
+
+
 def mapping(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ValueError("expected a JSON object")

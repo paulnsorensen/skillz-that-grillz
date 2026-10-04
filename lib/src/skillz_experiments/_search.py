@@ -27,7 +27,7 @@ class _API(Protocol):
 
 
 def optimize(seed: dict[str, str], mode: Mode, train: list[object], validation: list[object],
-             evaluate: Evaluate, propose: Propose, *, code: str = "scripts/inspect_skill.py") -> dict[str, str]:
+             evaluate: Evaluate, propose: Propose, *, code: str | None) -> dict[str, str]:
     if mode not in get_args(Mode):
         raise ValueError("mode must be prompt, prompt-cli, cli, or wedge")
     if not train or not validation:
@@ -38,6 +38,8 @@ def optimize(seed: dict[str, str], mode: Mode, train: list[object], validation: 
         raise ValueError("GEPA 0.1.4 is unavailable; use the bundled runner or install the experiments extra") from None
     if version != "0.1.4":
         raise ValueError("install the experiments extra with GEPA 0.1.4")
+    if mode == "cli" and code is None:
+        raise ValueError("cli search needs a helper path")
     api = cast(_API, cast(object, importlib.import_module("gepa.optimize_anything")))
     editable = {key: text for key, text in seed.items()
                 if mode == "prompt-cli" or (mode == "prompt" and key.endswith(".md"))

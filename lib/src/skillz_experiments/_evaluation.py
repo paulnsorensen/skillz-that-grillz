@@ -4,18 +4,17 @@ import json
 import shlex
 from collections.abc import Mapping
 from pathlib import PurePosixPath
-from typing import cast
 
-from skillz_experiments._cases import mapping
+from skillz_experiments._cases import loads_untrusted, mapping
 
 
 def grade(answer: str, expected: object, *, loaded: bool, helper_executed: bool) -> float:
     if not loaded or not helper_executed:
         return 0.0
     try:
-        result = cast(object, json.loads(answer))
+        result = loads_untrusted(answer)
         return float(json.dumps(result, sort_keys=True) == json.dumps(expected, sort_keys=True))
-    except (json.JSONDecodeError, RecursionError):
+    except ValueError:
         return 0.0
 
 
@@ -85,8 +84,8 @@ HELPER_FIXTURES: tuple[dict[str, object], ...] = (
 def fixture_result(fixture: Mapping[str, object], returncode: int, stdout: str) -> bool:
     """Check helper output against one declared fixture: exit code and exact JSON."""
     try:
-        answer = cast(object, json.loads(stdout))
-    except json.JSONDecodeError:
+        answer = loads_untrusted(stdout)
+    except ValueError:
         return False
     return (returncode == fixture["returncode"] and type(returncode) is int
             and json.dumps(answer, sort_keys=True) == json.dumps(fixture["output"], sort_keys=True))

@@ -41,10 +41,15 @@ def _writable(path: str, settings: dict[str, object]) -> bool:
 
 
 def write_probe(writes: list[tuple[str, str]], mode: str, config: dict[str, object]) -> list[str]:
-    """Answer the preflight write probe. `write-agents` lets the `.agents` write succeed; `write-broken` fails every write."""
+    """Answer the preflight write probe. `write-agents` lets the `.agents` write succeed; `write-broken` fails every write.
+
+    `write-skips-agents` runs the control write and skips the `.agents` write.
+    """
     texts: list[str] = []
     for index, (token, path) in enumerate(writes):
         agents = "/.agents/" in path
+        if mode == "write-skips-agents" and agents:
+            continue
         writes_file = mode != "write-broken" and (_writable(path, config) or (mode == "write-agents" and agents))
         if writes_file:
             _ = Path(path).write_text(token)

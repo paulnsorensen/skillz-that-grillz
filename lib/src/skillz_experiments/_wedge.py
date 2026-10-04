@@ -5,20 +5,24 @@ SKILL.md must reference the script path. No other file may change.
 """
 from __future__ import annotations
 
-import json
 import re
 from typing import cast
+
+from skillz_experiments._cases import loads_untrusted
 
 COMPONENT = "wedge-files"
 SCRIPT_LIMIT = 262144
 _SCRIPT = re.compile(r"scripts/[A-Za-z0-9_][A-Za-z0-9_-]*\.py")
 
 
-def admit(seed_files: dict[str, str], components: dict[str, str]) -> dict[str, str]:
-    """Return the one new script of a proposal. Raise `ValueError` when the proposal is not admissible."""
+def admit(seed_files: dict[str, str], components: dict[str, str], skill: str | None = None) -> dict[str, str]:
+    """Return the one new script of a proposal. Raise `ValueError` when the proposal is not admissible.
+
+    `skill` names the contract skill. Only its `.agents/skills/<skill>/` prefix counts as a reference.
+    """
     try:
-        loaded = cast(object, json.loads(components.get(COMPONENT, "")))
-    except json.JSONDecodeError:
+        loaded = loads_untrusted(components.get(COMPONENT, ""))
+    except ValueError:
         raise ValueError(f"{COMPONENT} must be a JSON object") from None
     if not isinstance(loaded, dict):
         raise ValueError(f"{COMPONENT} must be a JSON object")
@@ -38,17 +42,18 @@ def admit(seed_files: dict[str, str], components: dict[str, str]) -> dict[str, s
         raise ValueError("the wedge script exceeds the size limit")
     if len(components.get("SKILL.md", "")) > SCRIPT_LIMIT:
         raise ValueError("SKILL.md exceeds the size limit")
-    if not _reference(path).search(components.get("SKILL.md", "")):
+    if not _reference(path, skill).search(components.get("SKILL.md", "")):
         raise ValueError("SKILL.md must reference the wedge script")
     return added
 
 
-def _reference(path: str) -> re.Pattern[str]:
+def _reference(path: str, skill: str | None) -> re.Pattern[str]:
     """Match `path` as one path token, with an optional skill-directory prefix.
 
     This is a mention check. A negated mention such as "do not run scripts/x.py" still counts.
     """
-    return re.compile(rf"(?<![\w./-])(?:\./|\$\{{CLAUDE_SKILL_DIR\}}/|<this-skill-directory>/)?{re.escape(path)}(?![\w/-]|\.\w)")
+    installed = rf"|\.agents/skills/{re.escape(skill)}/" if skill else ""
+    return re.compile(rf"(?<![\w./-])(?:\./|\$\{{CLAUDE_SKILL_DIR\}}/|<this-skill-directory>/{installed})?{re.escape(path)}(?![\w/-]|\.\w)")
 
 
 def new_script(seed_files: dict[str, str], files: dict[str, str]) -> str | None:

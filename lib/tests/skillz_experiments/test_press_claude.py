@@ -186,7 +186,7 @@ def test_claude_role_with_a_blank_model_is_rejected(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("mode", ["auth-fail", "foreign-skill", "sandbox-unavailable", "no-init-auth", "no-init",
                                   "missing-skill", "read-host", "bash-broken", "read-fallback", "skips-cat",
-                                  "write-agents", "write-broken"])
+                                  "write-agents", "write-broken", "write-skips-agents"])
 def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and_no_retry(
         tmp_path: Path, probes: list[list[str]], mode: str) -> None:
     del probes
@@ -204,7 +204,8 @@ def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and
 
 @pytest.mark.parametrize(("mode", "reason"), [
     ("write-agents", "write isolation failed"),
-    ("write-broken", "no positive control")])
+    ("write-broken", "no positive control"),
+    ("write-skips-agents", "write probe has no evidence")])
 def test_preflight_stops_when_the_agents_write_succeeds_or_the_write_control_fails(
         tmp_path: Path, probes: list[list[str]], mode: str, reason: str) -> None:
     del probes
@@ -222,6 +223,36 @@ def test_settings_deny_writes_into_the_workspace_agents_directory(tmp_path: Path
     sandbox = cast(dict[str, dict[str, dict[str, list[str]]]], _claude.settings(workspace))["sandbox"]["filesystem"]
     assert f"{workspace}/.agents" in sandbox["denyWrite"]
     assert f"{workspace.resolve()}/.agents" in sandbox["denyWrite"]
+
+
+def test_settings_turn_off_every_hook(tmp_path: Path) -> None:
+    assert _claude.settings(tmp_path)["disableAllHooks"] is True
+
+
+def test_write_probe_needs_a_failed_printf_to_agents_not_any_command_that_names_it() -> None:
+    agents = "/w/.agents/write-probe"
+    events: list[dict[str, object]] = []
+    for index, (command, error) in enumerate([(f"ls {agents}", True), (f"printf t > {agents}", False)]):
+        events.append({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": f"u{index}", "name": "Bash", "input": {"command": command}}]}})
+        events.append({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": f"u{index}", "is_error": error}]}})
+    assert _claude._write_failure(events, agents, False, True) == (  # pyright: ignore[reportPrivateUsage]
+        "write probe has no evidence: no failed Bash printf to .agents")
+
+
+@pytest.mark.parametrize("skills", ["x", None, [1], [{"id": "a"}]])
+def test_a_malformed_init_skills_field_fails_closed_for_judge_and_reflection_calls(
+        tmp_path: Path, skills: object) -> None:
+    init: dict[str, object] = {"type": "system", "subtype": "init"}
+    if skills is not None:
+        init["skills"] = skills
+    session = harness(tmp_path, scripted(tmp_path, [init, DONE]))
+    try:
+        with pytest.raises(RuntimeError, match="not a list of names"):
+            _ = session.transports["judge"].invoke("hello")
+    finally:
+        session.close()
 
 
 def nested(depth: int = 200_000) -> str:

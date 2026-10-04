@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, mapping
+from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
@@ -101,7 +101,7 @@ class Command:
             raise RuntimeError("harness command fails; no unsafe fallback")
         if len(result.stdout) > 1_000_000:
             raise ValueError("harness response exceeds size limit")
-        return _response(cast(object, json.loads(result.stdout)), operation)
+        return _response(loads_untrusted(result.stdout), operation)
 
     def _sandbox(self, workspace: Path, argv: list[str]) -> dict[str, object]:
         return self._request("sandbox", workspace, argv=argv)

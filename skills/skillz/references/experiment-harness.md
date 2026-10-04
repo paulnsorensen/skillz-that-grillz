@@ -82,7 +82,8 @@ Later stages reuse the recorded pass and make no new live call.
 Every stage still runs the free helper sandbox probe, which makes no model call.
 The reuse key joins the role fingerprint and the Claude environment hash.
 The environment hash includes the names, not the values, of the set authentication variables.
-A changed key fails the run with "runtime environment differs from the frozen record".
+A changed key stops the stage with the code `environment-differs` and the text "runtime environment differs from the frozen record".
+The run stays resumable. Resume it after you restore the first-run environment.
 The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
@@ -129,9 +130,11 @@ The runner supplies its own probe before inference.
 The probe requires denied host reads, denied symlink escapes, and denied candidate writes.
 It also requires a clean tool environment.
 It requires denied network access: the host loopback connect fails, and a routed connect fails at once with an unreachable or denied error.
-The routed check connects by UDP to `192.0.2.1`. `ENETUNREACH`, `EPERM`, `EACCES`, or a failed `socket()` call passes.
+The routed check connects by UDP to `192.0.2.1`.
+`ENETUNREACH`, `EPERM`, and `EACCES` pass. Any other error fails the probe.
+A failed TCP `socket()` call skips both network checks.
 The probe covers IPv4 only.
-A connect timeout counts as a failure.
+A loopback connect timeout passes. The routed UDP check cannot time out.
 Only `PATH`, `HOME`, `TMPDIR`, `LANG`, and `LC_CTYPE` may reach tools.
 The task workspace must remain writable.
 The staged `.agents` tree must remain read-only.
@@ -154,6 +157,8 @@ Return exactly the one isolated candidate:
 
 The runner rejects the check when a skill is missing, extra, or in the wrong location.
 Disable other skill roots, hooks, plugins, apps, and external configuration.
+The runner rejects a candidate whose SKILL.md frontmatter declares `hooks` or `user-invocable` as a top-level key.
+The init-event skill check sees only user-invocable skills, because Claude Code omits skills with `user-invocable: false` from the init `skills` list.
 
 ### Inference
 

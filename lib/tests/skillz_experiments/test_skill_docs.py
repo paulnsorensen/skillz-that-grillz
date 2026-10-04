@@ -111,6 +111,7 @@ def _long(path: Path) -> list[dict[str, int]]:
     return [hit for hit in long_sentences(lines, start) if hit["words"] > MAX_WORDS]
 
 
+# Table cells are exempt: the inspector flushes sentences on `|`.
 PROSE_FILES = [SKILL, *sorted((SKILL_DIR / "references").glob("*.md")), *sorted((SKILL_DIR / "engine/references").glob("*.md"))]
 
 

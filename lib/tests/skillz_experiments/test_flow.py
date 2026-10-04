@@ -11,6 +11,7 @@ from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cli import main
+from skillz_experiments._harness import EnvironmentDiffers
 from skillz_experiments._cases import Case
 from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
@@ -137,6 +138,7 @@ def test_resume_rejects_missing_record_field_with_a_clear_error(tmp_path: Path) 
     with pytest.raises(ValueError, match="dataset_hash must be text"):
         _ = execute(out, "evaluate", "local-test", live=True, factory=LocalProvider)
 
+
 WEDGE_PATH = "scripts/offload.py"
 BRIEF_TEXT = "Offload the link check to a script."
 
@@ -201,6 +203,7 @@ def test_wedge_search_then_evaluate_locks_three_arms_and_runs_the_script(tmp_pat
     _ = export(out, destination, "wedge")
     patch = (destination / "candidate.patch").read_text()
     assert f"--- /dev/null\n+++ b/{WEDGE_PATH}" in patch
+    assert all(".agents/skills/<skill>/" in item for item in wedge_prompts)
     check = subprocess.run(["git", "apply", "--check", str(destination / "candidate.patch")],
                            cwd=tmp_path / "skill", capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
@@ -258,7 +261,8 @@ def test_feedback_side_info_carries_the_command_and_judge_scores(tmp_path: Path,
     monkeypatch.setattr(LocalProvider, "evaluate", scored)
     case = session.cases_for("train")[0]
     _, feedback = session._evaluate_example("prompt", {"SKILL.md": "improved"}, case.identifier)  # pyright: ignore[reportPrivateUsage]
-    assert feedback["scores"] == {"command": 1.0, "judge": 0.5}
+    assert feedback["grader_scores"] == {"command": 1.0, "judge": 0.5}
+    assert "scores" not in feedback
 
 
 def test_a_judge_graded_run_freezes_the_judge_and_the_summary_names_the_contract(tmp_path: Path) -> None:
@@ -290,6 +294,7 @@ def test_wedge_candidate_over_the_package_size_bound_is_rejected_with_zero_score
                   "wedge-files": json.dumps({WEDGE_PATH: "print(1)\n"})}
     score, feedback = session._evaluate_example("wedge", components, case.identifier)  # pyright: ignore[reportPrivateUsage]
     assert score == 0.0 and "size limit" in str(feedback["rejected"])
+
 
 def test_search_rejects_a_brief_outside_wedge_mode_before_any_model_call(tmp_path: Path) -> None:
     out = _search_ready_run(tmp_path)
@@ -367,15 +372,55 @@ def test_claude_preflight_runs_once_per_run_so_a_spent_search_pool_still_reaches
     assert read(out / "run.json")["calls"] == 20 - cast(int, record["holdout_reserve"])
 
 
-def _echo_run(tmp_path: Path, helper: dict[str, object] | None) -> Path:
+def test_a_credential_change_between_stages_does_not_end_the_run_and_the_restored_environment_resumes(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil
+    import stat
+
+    from skillz_experiments._claude import AUTHENTICATION, ClaudeCode
+
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        del self, workspace, argv
+        return 0, "isolation-ok\n"
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    for name in AUTHENTICATION:
+        monkeypatch.delenv(name, raising=False)
+    fake = tmp_path / "bin/claude"
+    fake.parent.mkdir()
+    _ = shutil.copyfile(Path(__file__).parent / "fixtures/fake_claude.py", fake)
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [str(fake)]}))
+    target = tmp_path / "skill"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("seed")
+    out = tmp_path / "run"
+    _ = prepare(Path(__file__).resolve().parents[2] / "src/skillz_experiments/fixtures/self-test.json", target, out)
+    with pytest.raises(ValueError, match="holdout requires"):
+        _ = execute(out, "evaluate", "claude-test", live=True, harness_config=config)
+    record = read(out / "run.json")
+    record["phase"] = "resumable-sentinel"
+    write(out / "run.json", record)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    with pytest.raises(ValueError, match="credential variables.*ANTHROPIC_API_KEY"):
+        _ = execute(out, "evaluate", "claude-test", live=True, harness_config=config)
+    assert read(out / "run.json")["phase"] == "resumable-sentinel"
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    with pytest.raises(ValueError, match="holdout requires"):
+        _ = execute(out, "evaluate", "claude-test", live=True, harness_config=config)
+
+
+def _echo_run(tmp_path: Path, helper: dict[str, object] | None, *, with_script: bool = True) -> Path:
     target = tmp_path / "echo-skill"
     (target / "scripts").mkdir(parents=True)
     (target / "evals").mkdir()
     _ = (target / "SKILL.md").write_text("---\nname: echo-skill\ndescription: echo\n---\nEcho.\n")
-    _ = (target / "scripts/echo.py").write_text("print('hello')\n")
     contract: dict[str, object] = {
         "schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
-        "kinds": {"echo": {"grader": "exact-json"}}, "editable": ["scripts/echo.py"]}
+        "kinds": {"echo": {"grader": "exact-json"}}}
+    if with_script:
+        _ = (target / "scripts/echo.py").write_text("print('hello')\n")
+        contract["editable"] = ["scripts/echo.py"]
     if helper is not None:
         contract["helper"] = helper
     _ = (target / "evals/autoimprove.json").write_text(json.dumps(contract))
@@ -412,3 +457,178 @@ def test_cli_search_without_a_contract_helper_is_rejected_before_any_model_call(
         _ = execute(out, "search", "local-test", live=True, factory=factory, mode=cast(Mode, mode))
     assert getattr(caught.value, "code") == "helper-missing"
     assert not opened and read(out / "run.json")["calls"] == calls
+
+
+def test_cli_search_with_a_missing_helper_file_is_rejected_before_any_model_call(tmp_path: Path) -> None:
+    out = _echo_run(tmp_path, {"path": "scripts/echo.py", "input": "input.txt"}, with_script=False)
+    calls = read(out / "run.json")["calls"]
+    opened: list[object] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> LocalProvider:
+        opened.append(model)
+        return LocalProvider(model, budget, checkpoint)
+    with pytest.raises(ValueError, match="scripts/echo.py") as caught:
+        _ = execute(out, "search", "local-test", live=True, factory=factory, mode="cli")
+    assert getattr(caught.value, "code") == "helper-file-missing"
+    assert not opened and read(out / "run.json")["calls"] == calls
+
+
+def test_self_test_without_a_contract_helper_is_rejected_before_any_model_call(tmp_path: Path) -> None:
+    out = _echo_run(tmp_path, None)
+    opened: list[object] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> LocalProvider:
+        opened.append(model)
+        return LocalProvider(model, budget, checkpoint)
+    with pytest.raises(ValueError, match="needs a contract helper") as caught:
+        _ = execute(out, "self-test", "local-test", live=True, factory=factory)
+    assert getattr(caught.value, "code") == "helper-missing"
+    assert not opened and read(out / "run.json")["calls"] == 0
+
+
+def test_cli_reports_a_helper_missing_error_with_its_code(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    out = _echo_run(tmp_path, None)
+    _ = capsys.readouterr()
+    code = main(["search", str(out), "--model", "local-test", "--mode", "cli", "--live"])
+    error = cast(dict[str, object], json.loads(capsys.readouterr().err))
+    assert code == 1 and error["code"] == "helper-missing"
+
+
+@final
+class ScoredProvider:
+    """A provider whose holdout results carry the per-grader scores of a hybrid grade with a failed gate."""
+    def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        self.inner = LocalProvider(model, budget, checkpoint)
+
+    def preflight(self) -> dict[str, object]:
+        return self.inner.preflight()
+
+    def close(self) -> None:
+        pass
+
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        result = self.inner.evaluate(candidate, case, holdout=holdout)
+        return result | {"scores": {"command": 0.0, "judge": None}} if holdout else result
+
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        return self.inner.invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+
+
+def test_export_carries_the_per_grader_scores_of_a_failed_hybrid_gate(tmp_path: Path) -> None:
+    target = tmp_path / "skill"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("seed")
+    out = tmp_path / "run"
+    _ = prepare(Path(__file__).resolve().parents[2] / "src/skillz_experiments/fixtures/self-test.json", target, out)
+    _ = execute(out, "self-test", "local-test", live=True, factory=ScoredProvider)
+    _ = export(out, tmp_path / "export", "prompt")
+    report = cast(dict[str, object], json.loads((tmp_path / "export/report.json").read_text()))
+    outcomes = cast(list[dict[str, object]], report["outcomes"])
+    assert any(item.get("scores") == {"command": 0.0, "judge": None} for item in outcomes)
+
+
+@final
+class GateFailedProvider:
+    """A provider whose every result carries the per-grader scores of a hybrid grade with a failed gate."""
+    def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        self.inner = LocalProvider(model, budget, checkpoint)
+
+    def preflight(self) -> dict[str, object]:
+        return self.inner.preflight()
+
+    def close(self) -> None:
+        pass
+
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        return self.inner.evaluate(candidate, case, holdout=holdout) | {"scores": {"command": 0.0, "judge": None}}
+
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        return self.inner.invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+
+
+def test_real_gepa_search_finishes_when_a_validation_result_has_a_failed_gate_judge(tmp_path: Path) -> None:
+    target = tmp_path / "skill"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("seed")
+    out = tmp_path / "run"
+    _ = prepare(Path(__file__).resolve().parents[2] / "src/skillz_experiments/fixtures/self-test.json", target, out)
+    _ = execute(out, "baseline", "local-test", live=True, factory=GateFailedProvider)
+    _ = execute(out, "search", "local-test", live=True, factory=GateFailedProvider, mode="prompt")
+    assert read(out / "run.json")["phase"] != "infrastructure-failure"
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    assert any(item.get("scores") == {"command": 0.0, "judge": None} for item in outcomes)
+
+
+@final
+class ShiftingProvider:
+    """A provider whose preflight evidence differs on each run."""
+    evidence = "first"
+
+    def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        self.inner = LocalProvider(model, budget, checkpoint)
+
+    def preflight(self) -> dict[str, object]:
+        return {"isolation": "test-provider", "environment_hash": type(self).evidence}
+
+    def close(self) -> None:
+        pass
+
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        return self.inner.evaluate(candidate, case, holdout=holdout)
+
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        return self.inner.invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+
+
+def test_a_changed_preflight_hash_stops_the_stage_with_a_code_and_keeps_the_run_resumable(tmp_path: Path) -> None:
+    out = _echo_run(tmp_path, {"path": "scripts/echo.py", "input": "input.txt"})
+    ShiftingProvider.evidence = "first"
+    _ = execute(out, "baseline", "local-test", live=True, factory=ShiftingProvider)
+    phase = read(out / "run.json")["phase"]
+    ShiftingProvider.evidence = "second"
+    with pytest.raises(EnvironmentDiffers, match="runtime environment differs") as caught:
+        _ = execute(out, "search", "local-test", live=True, factory=ShiftingProvider, mode="cli")
+    assert caught.value.code == "environment-differs"
+    assert read(out / "run.json")["phase"] == phase != "infrastructure-failure"
+    ShiftingProvider.evidence = "first"
+    _ = execute(out, "search", "local-test", live=True, factory=ShiftingProvider, mode="cli")
+
+
+@pytest.mark.parametrize("stage", ["baseline", "search", "evaluate"])
+def test_a_declared_helper_with_no_file_stops_every_stage_before_any_model_call(tmp_path: Path, stage: str) -> None:
+    out = _echo_run(tmp_path, {"path": "scripts/echo.py", "input": "input.txt"}, with_script=False)
+    opened: list[object] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> LocalProvider:
+        opened.append(model)
+        return LocalProvider(model, budget, checkpoint)
+    with pytest.raises(ValueError, match="scripts/echo.py") as caught:
+        _ = execute(out, stage, "local-test", live=True, factory=factory, mode="prompt")
+    assert getattr(caught.value, "code") == "helper-file-missing"
+    assert not opened and read(out / "run.json")["calls"] == 0
+
+
+@pytest.mark.parametrize("command", [["baseline"], ["evaluate"]])
+def test_cli_reports_a_helper_file_missing_error_with_its_code_for_baseline_and_evaluate(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str], command: list[str]) -> None:
+    out = _echo_run(tmp_path, {"path": "scripts/echo.py", "input": "input.txt"}, with_script=False)
+    _ = capsys.readouterr()
+    code = main([*command, str(out), "--model", "local-test", "--live"])
+    error = cast(dict[str, object], json.loads(capsys.readouterr().err))
+    assert code == 1 and error["code"] == "helper-file-missing"
+
+
+def test_cli_reports_a_helper_missing_error_with_its_code_for_self_test(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = tmp_path / "skill"
+    (target / "evals").mkdir(parents=True)
+    _ = (target / "SKILL.md").write_text("seed")
+    shipped = cast(dict[str, object], json.loads((Path(__file__).parents[3] / "skills/skillz/evals/autoimprove.json").read_text()))
+    del shipped["helper"]
+    _ = (target / "evals/autoimprove.json").write_text(json.dumps(shipped))
+    code = main(["self-test", "--model", "local-test", "--live", "--target", str(target), "--out", str(tmp_path / "run")])
+    error = cast(dict[str, object], json.loads(capsys.readouterr().err))
+    assert code == 1 and error["code"] == "helper-missing"

@@ -9,6 +9,7 @@ from skillz_experiments._contract import LOCATION, Contract, resolve
 
 OUTPUT_FILE_LIMIT = 64
 OUTPUT_BYTES_LIMIT = 262144
+PACKAGE_LIMIT = 1_000_000
 _RUNTIME_OWNED = {"home", "tmp", ".agents", "answer.json", "response-schema.json"}
 
 
@@ -54,6 +55,10 @@ class Candidate:
     contract: Contract | None = None
     script: str | None = None
 
+    def __post_init__(self) -> None:
+        if sum(len(text) for text in self.files.values()) > PACKAGE_LIMIT:
+            raise ValueError("candidate package exceeds size limit")
+
     @classmethod
     def capture(cls, root: Path, editable: list[str], contract: Contract | None = None,
                 exclude: tuple[str, ...] = ()) -> Candidate:
@@ -70,7 +75,7 @@ class Candidate:
                 raise ValueError("candidate must not contain symlinks")
             if path.is_file():
                 if any(part.startswith(".") for part in posix.split("/")):
-                    raise CodedError("hidden-file", f"{posix} is a hidden file; remove it or git-ignore it")
+                    raise CodedError("hidden-file", f"{posix} is a hidden file; remove it")
                 name = relative(posix)
                 if name in ("scripts/skillz-experiment.pyz", LOCATION, *exclude):
                     continue
@@ -80,8 +85,6 @@ class Candidate:
                     files[name] = path.read_text(encoding="utf-8")
                 except UnicodeDecodeError:
                     raise CodedError("undecodable-file", f"{name} is not UTF-8") from None
-        if sum(len(text) for text in files.values()) > 1_000_000:
-            raise ValueError("candidate package exceeds size limit")
         if "SKILL.md" not in files or not set(editable) <= files.keys():
             raise ValueError("candidate needs SKILL.md and existing editable components")
         return cls(files, tuple(editable), contract)
@@ -99,10 +102,7 @@ class Candidate:
             raise ValueError("proposal components differ from the frozen set")
         if any(len(text) > 262144 for text in components.values()):
             raise ValueError("proposal exceeds component size limit")
-        files = self.files | components
-        if sum(len(text) for text in files.values()) > 1_000_000:
-            raise ValueError("candidate package exceeds size limit")
-        return Candidate(files, self.editable, self.contract, self.script)
+        return Candidate(self.files | components, self.editable, self.contract, self.script)
 
     def materialize(self, root: Path) -> None:
         for name, content in self.files.items():

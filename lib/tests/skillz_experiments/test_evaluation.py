@@ -46,6 +46,12 @@ def test_frozen_helper_contract_rejects_constant_answers() -> None:
     assert not fixture_result(fixture, 0, '{"schema_version":2,"error":"link escapes package"}')
 
 
+def test_deeply_nested_helper_output_fails_the_fixture_instead_of_raising() -> None:
+    from skillz_experiments._evaluation import HELPER_FIXTURES, fixture_result
+
+    assert not fixture_result(HELPER_FIXTURES[1], 2, "[" * 100_000)
+
+
 def test_exact_json_distinguishes_boolean_from_number() -> None:
     from skillz_experiments._evaluation import HELPER_FIXTURES, fixture_result
 

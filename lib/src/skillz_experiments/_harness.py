@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, digest, mapping, string
+from skillz_experiments._cases import Case, CodedError, digest, mapping, string
 from skillz_experiments._claude import ClaudeCode
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._command import Command
@@ -17,6 +17,13 @@ from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget
 
 CLAUDE_IDENTITY = "claude-code-restricted"
+
+
+class EnvironmentDiffers(CodedError):
+    """The runtime environment differs from the frozen record. The run stays resumable after the user restores the environment."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("environment-differs", message)
 
 
 def _command(value: object, root: Path) -> tuple[str, ...]:
@@ -148,7 +155,9 @@ class Harness:
         reuse_keys = {name: self._reuse_key(name, adapter) for name, adapter in self.transports.items()
                       if isinstance(adapter, ClaudeCode)}
         if any(name in keys and keys[name] != key for name, key in reuse_keys.items()):
-            raise ValueError("runtime environment differs from the frozen record")
+            raise EnvironmentDiffers(
+                "runtime environment differs from the frozen record; a change in the set of credential variables "
+                + f"also causes this (set now: {ClaudeCode.credentials_set()}); restore the first-run environment and resume")
         evidence: dict[str, object] = {}
         for name, adapter in self.transports.items():
             kept = passes.get(name)

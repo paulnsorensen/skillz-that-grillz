@@ -36,6 +36,7 @@ Under `self-test --preflight-only`, each `claude` role makes one live call, even
 Other live invocations require `--live` and a successful isolation preflight.
 A failed isolation check stops the run. Never add an unsafe fallback.
 `self-test --live` loads the target contract first. It stops with `contract-missing` when there is none.
+It stops with `helper-missing` when the contract declares no `helper`.
 
 The original arm includes the unoptimized inspection helper.
 The other arms search prompt text and prompt-plus-helper text (the prompt-plus-helper arm, `prompt-cli`).
@@ -142,6 +143,9 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" evaluate /tmp/skillz-run --model
 
 For CLI-only optimization, replace `--mode prompt-cli` with `--mode cli`.
 Both modes edit `contract.helper.path`. A contract without a `helper` fails with `helper-missing`.
+A run with a declared contract stops every stage with `helper-file-missing` when the helper file is not in the frozen editable set.
+The stages are `baseline`, `search` in every mode, `self-test`, and `evaluate`. The check runs before any model call.
+A run with the legacy fallback contract makes this check for `--mode cli` search only.
 For wedge optimization, read `Wedge mode` below.
 CLI-only search changes only the helper script and freezes all skill text, including selected references.
 Its reflection receives measured task-plus-judge input and output tokens. The runner records unknown usage as null.
@@ -222,7 +226,7 @@ The brief is a `/skillz wedge` handoff.
 A proposal adds exactly one new stdlib `scripts/<name>.py`.
 SKILL.md must reference that script as a path token.
 This is a mention check. A negated mention still counts.
-The candidate package obeys a 1 MB limit.
+The candidate package obeys a limit of 1,000,000 characters.
 The script runs as `python3 -I`. The proposal changes no other file.
 The arms lock as `original`, `prompt`, and `wedge`.
 Ranking is correctness first, then tokens.
