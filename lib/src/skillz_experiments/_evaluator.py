@@ -80,7 +80,9 @@ def _activation(result: dict[str, object], candidate: Candidate, rules: Contract
     events = cast(list[dict[str, object]], events)
     loaded = answer.get("load_marker") == candidate.identity and executed(events, "SKILL.md", workspace, skill=rules.skill)
     script = candidate.script or (rules.helper.path if rules.helper is not None else None)
-    helper = script is None or executed(events, script, workspace, skill=rules.skill, isolated=candidate.script is not None)
+    helper = script is None or executed(events, script, workspace, skill=rules.skill,
+                                        isolated=candidate.script is not None,
+                                        input_path=rules.helper.input if rules.helper is not None else None)
     return answer, loaded, helper
 
 

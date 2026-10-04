@@ -42,6 +42,7 @@ def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
     column = 0
     fence_column = 0
     for number, line in enumerate(lines[start:], start + 1):
+        line = re.sub(r"^(?: {0,3}> ?)+", "", line)
         stripped = line.strip()
         if fence:
             closer = CLOSE.match(_unindent(line, fence_column))
@@ -52,6 +53,7 @@ def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
         if item:
             column = item.end()
         elif stripped and len(line) - len(line.lstrip(" ")) < column:
+            flush()
             column = 0
         opener = OPEN.match(_unindent(line, column))
         if opener and not (opener[1][0] == "`" and "`" in opener[2]):

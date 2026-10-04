@@ -60,6 +60,13 @@ def test_prose_after_a_closed_fence_is_checked_again(tmp_path: Path) -> None:
     assert [item["words"] for item in found(tmp_path, f"```\nx\n```\n{LONG}\n")] == [30]
 
 
+@pytest.mark.parametrize("quote", ["> ", "> > "])
+def test_quoted_tilde_fence_and_list_items_preserve_prose_boundaries(tmp_path: Path, quote: str) -> None:
+    body = (f"{quote}~~~python\n{quote}{LONG}\n{quote}~~~\n"
+            f"> - Short item\n> > - Another short item\n> {LONG}\n")
+    assert found(tmp_path, body) == [{"line": 10, "words": 30}]
+
+
 def test_inline_code_is_excluded_from_the_word_count(tmp_path: Path) -> None:
     code = " ".join(f"`c{i}`" for i in range(30))
     assert found(tmp_path, f"Use {code} now.\n") == []

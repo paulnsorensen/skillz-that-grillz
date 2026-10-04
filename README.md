@@ -36,7 +36,7 @@ writable cache. The bundled engine keeps the existing
 only with user consent, may omit metrics, and does not replace the database
 results. The user can skip Usage.
 
-The optional `autoimprove` mode (alias `experiment`) needs Codex or a configured trusted harness wrapper.
+The optional `autoimprove` mode (alias `experiment`) needs Codex, Claude Code, or a configured trusted harness wrapper.
 It needs no source checkout.
 See [the autoimprove workflow](skills/skillz/references/experiments.md).
 

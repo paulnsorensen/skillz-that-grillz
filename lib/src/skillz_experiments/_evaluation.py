@@ -34,23 +34,21 @@ def usage(events: list[dict[str, object]]) -> dict[str, int | None]:
 
 
 def executed(events: list[dict[str, object]], filename: str, workspace: str | None = None,
-             *, skill: str, isolated: bool = False) -> bool:
-    """Check for a completed command that cats SKILL.md or runs a skill script.
-
-    A bare script name means `scripts/<name>`. `isolated` requires `python3 -I`.
-    """
+             *, skill: str, isolated: bool = False, input_path: str | None = None) -> bool:
+    """Check a completed skill command with its declared input, if any."""
     for event in events:
         if event.get("type") != "item.completed" or not isinstance(event.get("item"), dict):
             continue
         item = mapping(event["item"])
         command = item.get("command")
         if item.get("type") == "command_execution" and item.get("exit_code") == 0:
-            if isinstance(command, str) and _command_matches(command, filename, workspace, skill, isolated):
+            if isinstance(command, str) and _command_matches(command, filename, workspace, skill, isolated, input_path):
                 return True
     return False
 
 
-def _command_matches(command: str, filename: str, workspace: str | None, skill: str, isolated: bool) -> bool:
+def _command_matches(command: str, filename: str, workspace: str | None, skill: str,
+                     isolated: bool, input_path: str | None) -> bool:
     try:
         parts = shlex.split(command)
         if len(parts) == 3 and PurePosixPath(parts[0]).name in {"sh", "bash", "zsh"} and parts[1] in {"-c", "-lc"}:
@@ -66,9 +64,10 @@ def _command_matches(command: str, filename: str, workspace: str | None, skill: 
     flagged = bool(arguments) and arguments[0] == "-I"
     if flagged:
         arguments = arguments[1:]
-    script = filename if "/" in filename else f"scripts/{filename}"
+    expected = 1 if input_path is None else 2
     return (PurePosixPath(parts[0]).name in {"python3", "python"} and (flagged or not isolated)
-            and bool(arguments) and arguments[0] in _paths(f"{root}/{script}", workspace))
+            and len(arguments) == expected and arguments[0] in _paths(f"{root}/{filename}", workspace)
+            and (input_path is None or arguments[1] in _paths(input_path, workspace)))
 
 
 HELPER_FIXTURES: tuple[dict[str, object], ...] = (

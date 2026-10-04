@@ -119,7 +119,7 @@ def test_contract_staging_uses_the_declared_skill_name(tmp_path: Path, capsys: p
 def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     contract = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
                       "kinds": {"echo": {"grader": "exact-json"}},
-                      "helper": {"path": "scripts/echo.py", "input": "fixture.md", "fixtures": [
+                      "helper": {"path": "scripts/echo.py", "input": "fixtures/nested/input.md", "fixtures": [
                           {"input": "hi", "returncode": 0, "output": {"ok": True}}]}}, "skill")
     candidate = Candidate({"SKILL.md": "seed", "scripts/echo.py": "print(1)"}, ("SKILL.md",), contract=contract)
     adapter = object.__new__(Codex)
@@ -141,7 +141,7 @@ def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monke
     monkeypatch.setattr("skillz_experiments._codex.process", process)
     assert adapter.check_candidate(candidate)
     assert seen == ["echo-skill"]
-    assert commands[0][-2:] == [".agents/skills/echo-skill/scripts/echo.py", "fixture.md"]
+    assert commands[0][-2:] == [".agents/skills/echo-skill/scripts/echo.py", "fixtures/nested/input.md"]
     reply["stdout"] = '{"ok": false}'
     assert not adapter.check_candidate(candidate)
 

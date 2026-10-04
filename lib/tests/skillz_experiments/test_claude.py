@@ -13,7 +13,7 @@ import pytest
 from skillz_experiments import _claude, _codex
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._claude import ClaudeCode, sandbox_argv, seatbelt_profile
-from skillz_experiments._contract import load_contract
+from skillz_experiments._contract import load_contract, parse
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._harness import Configuration, Harness
 from skillz_experiments._runtime import Budget
@@ -70,6 +70,21 @@ def echo_candidate(tmp_path: Path) -> Candidate:
 def calls(executable: Path) -> list[dict[str, object]]:
     log = executable.with_name("claude.log")
     return [cast(dict[str, object], json.loads(line)) for line in log.read_text().splitlines()]
+
+
+def test_partial_claude_usage_stays_unknown() -> None:
+    from skillz_experiments._claude import _token_events  # pyright: ignore[reportPrivateUsage]
+    from skillz_experiments._evaluation import usage
+
+    assert usage(_token_events({"usage": {"input_tokens": 2}})) == {
+        "input_tokens": 2, "cached_input_tokens": 0, "output_tokens": None}
+    assert usage(_token_events({"usage": {"input_tokens": 2, "output_tokens": 3,
+                                          "cache_read_input_tokens": "bad"}})) == {
+        "input_tokens": None, "cached_input_tokens": None, "output_tokens": 3}
+    assert usage(_token_events({"usage": {"input_tokens": 2, "output_tokens": 3,
+                                          "cache_read_input_tokens": 5,
+                                          "cache_creation_input_tokens": 7}})) == {
+        "input_tokens": 14, "cached_input_tokens": 5, "output_tokens": 3}
 
 
 def test_argv_or_settings_or_usage_argv_is_restricted_and_tool_limited(tmp_path: Path) -> None:
@@ -396,6 +411,28 @@ def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter
         assert adapter.check_candidate(quoted)
     finally:
         session.close()
+
+
+def test_nested_helper_fixture_runs_through_claude_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    contract = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill",
+                      "invocation": "$echo-skill run", "kinds": {"echo": {"grader": "exact-json"}},
+                      "helper": {"path": "scripts/echo.py", "input": "fixtures/nested/input.md",
+                                 "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]}}, "skill")
+    candidate = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: echo\n---\n",
+                           "scripts/echo.py": "print(1)\n"}, ("SKILL.md", "scripts/echo.py"), contract)
+
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        del self
+        assert argv[-1] == "fixtures/nested/input.md"
+        assert (workspace / argv[-1]).read_text() == "hi"
+        return 0, '{"ok": true}'
+
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    adapter = harness(tmp_path, fake_claude(tmp_path))
+    try:
+        assert adapter.transports["task"].check_candidate(candidate)
+    finally:
+        adapter.close()
 
 
 def test_check_candidate_rejects_a_skill_that_declares_hooks(tmp_path: Path) -> None:

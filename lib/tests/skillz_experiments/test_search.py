@@ -73,6 +73,19 @@ def test_wedge_admission_accepts_one_referenced_new_script() -> None:
     assert new_script(SEED_WEDGE, SEED_WEDGE) is None
 
 
+@pytest.mark.parametrize("source", ["import requests\n", "from requests import get\n",
+                                    "from . import helper\n", "from .helper import run\n", "def broken(\n"])
+def test_wedge_admission_rejects_nonstdlib_or_invalid_source(source: str) -> None:
+    with pytest.raises(ValueError):
+        _ = admit(SEED_WEDGE, _proposal({NEW_PATH: source}))
+
+
+def test_wedge_admission_keeps_empty_and_stdlib_source() -> None:
+    assert admit(SEED_WEDGE, _proposal({NEW_PATH: ""})) == {NEW_PATH: ""}
+    source = "import os.path\nfrom pathlib import Path\n"
+    assert admit(SEED_WEDGE, _proposal({NEW_PATH: source})) == {NEW_PATH: source}
+
+
 @pytest.mark.parametrize("proposal", [
     _proposal({NEW_PATH: "x"}, skill="Run nothing."),
     _proposal({NEW_PATH: "x", "scripts/second.py": "y"}),

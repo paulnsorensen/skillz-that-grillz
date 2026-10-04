@@ -11,7 +11,7 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cli import main
-from skillz_experiments._contract import load_contract
+from skillz_experiments._contract import load_contract, parse
 from skillz_experiments._harness import Configuration
 from skillz_experiments._records import prepare, read
 from skillz_experiments._runtime import Budget, BudgetExhausted
@@ -234,6 +234,22 @@ def test_contract_skill_name_reaches_discover_and_infer(tmp_path: Path) -> None:
     assert sent["infer"]["skill_name"] == "echo-skill"
     assert str(sent["infer"]["skill_path"]).endswith(".agents/skills/echo-skill")
     assert cast(dict[str, object], result["answer"])["load_marker"] == candidate.identity
+
+
+def test_nested_helper_fixture_runs_through_command_adapter(tmp_path: Path) -> None:
+    config, _, _ = configured(tmp_path)
+    contract = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill",
+                      "invocation": "$echo-skill run", "kinds": {"echo": {"grader": "exact-json"}},
+                      "helper": {"path": "scripts/echo.py", "input": "fixtures/nested/input.md",
+                                 "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]}}, "skill")
+    files = {"SKILL.md": "---\nname: echo-skill\ndescription: echo\n---\n",
+             "scripts/echo.py": "import json\nprint(json.dumps({'ok': True}))\n"}
+    candidate = Candidate(files, ("SKILL.md", "scripts/echo.py"), contract)
+    adapter = Configuration.load(config, "offline").create("offline", Budget(10, 60, 0), lambda: None)
+    try:
+        assert adapter.transports["task"].check_candidate(candidate)
+    finally:
+        adapter.close()
 
 
 def test_multi_line_wedge_brief_still_reaches_the_reflection_payload(tmp_path: Path) -> None:

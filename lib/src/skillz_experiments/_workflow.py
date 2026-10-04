@@ -232,7 +232,7 @@ class _Session:
 
     def _propose(self, mode: Mode, brief: str | None, candidate: dict[str, str],
                  feedback: Mapping[str, Sequence[Mapping[str, object]]], components: list[str]) -> dict[str, str]:
-        prompt, schema = _reflection_request(mode, candidate, feedback, components, brief)
+        prompt, schema = _reflection_request(mode, candidate, feedback, components, self.contract.skill, brief)
         result = self.provider.invoke(prompt, schema=schema)
         self.outcomes.append({"arm": mode, "split": "reflection", "usage": result.get("usage"),
                               "latency_seconds": result.get("latency_seconds")})
@@ -296,7 +296,7 @@ _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified T
 
 def _reflection_request(mode: Mode, candidate: dict[str, str],
                         feedback: Mapping[str, Sequence[Mapping[str, object]]],
-                        components: list[str], brief: str | None = None) -> tuple[str, dict[str, object]]:
+                        components: list[str], skill: str, brief: str | None = None) -> tuple[str, dict[str, object]]:
     schema: dict[str, object] = {"type": "object",
         "properties": {key: {"type": "string"} for key in components},
         "required": components, "additionalProperties": False}
@@ -308,7 +308,7 @@ def _reflection_request(mode: Mode, candidate: dict[str, str],
         instruction = (f"Improve SKILL.md and add one stdlib-only Python script. Set {COMPONENT} to a JSON object with "
                        + "exactly one key, scripts/<name>.py, whose value is the script source. "
                        + "Reference that path in SKILL.md, bare or after one prefix: ./, ${CLAUDE_SKILL_DIR}/, "
-                       + "<this-skill-directory>/, or .agents/skills/<skill>/. Add no other file. Preserve the helper CLI contract. "
+                       + f"<this-skill-directory>/, or .agents/skills/{skill}/. Add no other file. Preserve the helper CLI contract. "
                        + "Preserve correctness first; reduce measured input-plus-output tokens for correctness ties. "
                        + "Token feedback combines task and judge usage; null means unknown. ")
     else:
@@ -372,6 +372,10 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
     if not live:
         raise ValueError("live model calls require --live")
     _require_helper(out, stage, mode)
+    resume = _resume_fields(read(out / "run.json"))
+    if (stage == "search" and mode in ("prompt", "prompt-cli") or stage == "self-test") and not any(
+            name.endswith(".md") for name in resume.seed.editable):
+        raise CodedError("prompt-components-missing", "prompt search needs editable Markdown")
     with (out / "run.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if read(out / "run.json").get("holdout_consumed"):
@@ -446,10 +450,16 @@ def export(out: Path, destination: Path, arm: str) -> dict[str, object]:
     outcomes = _outcomes(record)
     seed, candidate = candidate_files(_field(record, "seed")), candidate_files(arms[arm])
     names = (*seed, *(name for name in candidate if name not in seed))
-    lines = (line for name in names if seed.get(name) != candidate[name]
-             for line in difflib.unified_diff(seed.get(name, "").splitlines(keepends=True),
-                   candidate[name].splitlines(keepends=True),
-                   fromfile="a/" + name if name in seed else "/dev/null", tofile="b/" + name))
+    lines: list[str] = []
+    for name in names:
+        if name in seed and seed[name] == candidate[name]:
+            continue
+        if name not in seed and not candidate[name]:
+            lines.extend((f"diff --git a/{name} b/{name}\n", "new file mode 100644\n"))
+            continue
+        lines.extend(difflib.unified_diff(seed.get(name, "").splitlines(keepends=True),
+                                          candidate[name].splitlines(keepends=True),
+                                          fromfile="a/" + name if name in seed else "/dev/null", tofile="b/" + name))
     patch = "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
     destination.mkdir(mode=0o700)
     descriptor = os.open(destination / "candidate.patch", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

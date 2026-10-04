@@ -203,10 +203,27 @@ def test_wedge_search_then_evaluate_locks_three_arms_and_runs_the_script(tmp_pat
     _ = export(out, destination, "wedge")
     patch = (destination / "candidate.patch").read_text()
     assert f"--- /dev/null\n+++ b/{WEDGE_PATH}" in patch
-    assert all(".agents/skills/<skill>/" in item for item in wedge_prompts)
+    assert all(".agents/skills/skillz/" in item and ".agents/skills/<skill>/" not in item
+               for item in wedge_prompts)
     check = subprocess.run(["git", "apply", "--check", str(destination / "candidate.patch")],
                            cwd=tmp_path / "skill", capture_output=True, text=True)
     assert check.returncode == 0, check.stderr
+
+
+def test_export_creates_an_empty_wedge_script(tmp_path: Path) -> None:
+    out, brief = _wedge_run(tmp_path, {"SKILL.md": f"improved: run {WEDGE_PATH}",
+                                       "wedge-files": json.dumps({WEDGE_PATH: ""})})
+    _ = execute(out, "search", "local-test", live=True, factory=WedgeProvider, mode="wedge", brief=brief)
+    _ = execute(out, "evaluate", "local-test", live=True, factory=WedgeProvider)
+    destination = tmp_path / "export"
+    _ = export(out, destination, "wedge")
+    patch = destination / "candidate.patch"
+    assert "new file mode 100644" in patch.read_text()
+    target = tmp_path / "skill"
+    applied = subprocess.run(["git", "apply", str(patch)], cwd=target, capture_output=True, text=True)
+    assert applied.returncode == 0, applied.stderr
+    assert sorted(str(path.relative_to(target)) for path in target.rglob("*") if path.is_file()) == ["SKILL.md", WEDGE_PATH]
+    assert (target / WEDGE_PATH).read_text() == ""
 
 
 def test_wedge_search_scores_an_inadmissible_proposal_zero_without_evaluating_it(tmp_path: Path) -> None:
@@ -441,6 +458,29 @@ def test_cli_search_edits_the_contract_helper_not_the_skillz_script(tmp_path: Pa
     record = read(out / "run.json")
     assert record["cli_selection"] == {"reason": "validation-selection", "retained_seed": True}
     assert "scripts/echo.py" in cast(dict[str, object], cast(dict[str, object], record["arms"])["cli"])
+
+
+@pytest.mark.parametrize(("stage", "mode"), [("search", "prompt"), ("search", "prompt-cli"),
+                                           ("self-test", "prompt")])
+def test_prompt_modes_need_editable_markdown_before_provider_creation(
+        tmp_path: Path, stage: str, mode: Mode) -> None:
+    out = _echo_run(tmp_path, {"path": "scripts/echo.py", "input": "input.txt"})
+    if stage == "search":
+        _ = execute(out, "baseline", "local-test", live=True, factory=LocalProvider)
+    before = read(out / "run.json")
+    opened: list[str] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> LocalProvider:
+        opened.append(model)
+        return LocalProvider(model, budget, checkpoint)
+
+    with pytest.raises(ValueError, match="editable Markdown") as caught:
+        _ = execute(out, stage, "local-test", live=True, factory=factory, mode=mode)
+    after = read(out / "run.json")
+    assert getattr(caught.value, "code") == "prompt-components-missing"
+    assert opened == []
+    assert after["phase"] == before["phase"] and after["calls"] == before["calls"]
+    assert after.get("preflight") == before.get("preflight")
 
 
 @pytest.mark.parametrize("mode", ["cli", "prompt-cli"])

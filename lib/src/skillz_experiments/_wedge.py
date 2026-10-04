@@ -5,7 +5,9 @@ SKILL.md must reference the script path. No other file may change.
 """
 from __future__ import annotations
 
+import ast
 import re
+import sys
 from typing import cast
 
 from skillz_experiments._cases import loads_untrusted
@@ -40,6 +42,21 @@ def admit(seed_files: dict[str, str], components: dict[str, str], skill: str | N
         raise ValueError("the wedge file must be new")
     if len(source) > SCRIPT_LIMIT:
         raise ValueError("the wedge script exceeds the size limit")
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        raise ValueError("the wedge script has invalid Python syntax") from None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules = (alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                raise ValueError("the wedge script must use standard-library imports")
+            modules = (node.module or "",)
+        else:
+            continue
+        if any(module.split(".", 1)[0] not in sys.stdlib_module_names for module in modules):
+            raise ValueError("the wedge script must use standard-library imports")
     if len(components.get("SKILL.md", "")) > SCRIPT_LIMIT:
         raise ValueError("SKILL.md exceeds the size limit")
     if not _reference(path, skill).search(components.get("SKILL.md", "")):

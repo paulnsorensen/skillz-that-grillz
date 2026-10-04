@@ -22,18 +22,52 @@ def test_command_trace_rejects_spoofed_helper_names() -> None:
     def events(command: str) -> list[dict[str, object]]:
         return [{"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0, "command": command}}]
 
-    assert not executed(events("echo inspect_skill.py"), "inspect_skill.py", skill="skillz")
+    script = "scripts/inspect_skill.py"
+    assert not executed(events("echo inspect_skill.py"), script, skill="skillz")
     assert not executed(events("echo SKILL.md"), "SKILL.md", skill="skillz")
     assert executed(events("cat .agents/skills/skillz/SKILL.md"), "SKILL.md", skill="skillz")
-    assert executed(events("python3 -I .agents/skills/skillz/scripts/inspect_skill.py fixture.md"), "inspect_skill.py",
-                    skill="skillz")
+    assert executed(events("python3 -I .agents/skills/skillz/scripts/inspect_skill.py fixture.md"), script,
+                    skill="skillz", input_path="fixture.md")
     assert not executed(events("echo yes; python3 .agents/skills/skillz/scripts/inspect_skill.py fixture.md"),
-                        "inspect_skill.py", skill="skillz")
+                        script, skill="skillz")
     assert executed(events("cat .agents/skills/echo/SKILL.md"), "SKILL.md", skill="echo")
     assert not executed(events("cat .agents/skills/skillz/SKILL.md"), "SKILL.md", skill="echo")
-    assert executed(events("python3 -I .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo", isolated=True)
-    assert not executed(events("python3 .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo", isolated=True)
-    assert executed(events("python3 .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo")
+    assert executed(events("python3 -I .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo",
+                    isolated=True, input_path="in.md")
+    assert not executed(events("python3 .agents/skills/echo/scripts/run.py in.md"), "scripts/run.py", skill="echo",
+                        isolated=True, input_path="in.md")
+    assert executed(events("python3 .agents/skills/echo/run.py input.md"), "run.py", skill="echo", input_path="input.md")
+    assert not executed(events("python3 .agents/skills/echo/run.py wrong.md"), "run.py", skill="echo", input_path="input.md")
+    assert not executed(events("python3 .agents/skills/echo/run.py"), "run.py", skill="echo", input_path="input.md")
+    assert not executed(events("python3 .agents/skills/echo/run.py input.md extra"), "run.py", skill="echo",
+                        input_path="input.md")
+    assert executed(events("python3 /work/.agents/skills/echo/run.py /work/input.md"), "run.py", "/work",
+                    skill="echo", input_path="input.md")
+    assert executed(events("python3 -I .agents/skills/echo/scripts/offload.py"), "scripts/offload.py",
+                    skill="echo", isolated=True)
+
+
+def test_activation_requires_the_declared_root_helper_and_input() -> None:
+    from skillz_experiments._candidate import Candidate
+    from skillz_experiments._contract import Contract, Grader, Helper
+    from skillz_experiments._evaluator import _activation  # pyright: ignore[reportPrivateUsage]
+
+    rules = Contract("echo", "$echo run", {"echo": Grader("exact-json")}, Helper("run.py", "input.md"))
+    candidate = Candidate({"SKILL.md": "skill", "run.py": "pass"}, ("SKILL.md",), rules)
+
+    def activated(command: str) -> tuple[bool, bool]:
+        events = [{"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0,
+                                                     "command": text}} for text in
+                  ("cat .agents/skills/echo/SKILL.md", command)]
+        result: dict[str, object] = {"answer": {"load_marker": candidate.identity},
+                                     "events": events, "workspace": "/work"}
+        _, loaded, helper = _activation(result, candidate, rules)
+        return loaded, helper
+
+    assert activated("python3 .agents/skills/echo/run.py input.md") == (True, True)
+    assert activated("python3 /work/.agents/skills/echo/run.py /work/input.md") == (True, True)
+    assert activated("python3 .agents/skills/echo/run.py wrong.md") == (True, False)
+    assert activated("python3 .agents/skills/echo/run.py") == (True, False)
 
 
 def test_frozen_helper_contract_rejects_constant_answers() -> None:

@@ -264,8 +264,9 @@ class ScriptTask(FakeTask):
 
 
 @pytest.mark.parametrize(("command", "executed"), [
-    ("python3 -I .agents/skills/echo-skill/scripts/x.py input.txt", True),
-    ("python3 .agents/skills/echo-skill/scripts/x.py input.txt", False)])
+    ("python3 -I .agents/skills/echo-skill/scripts/x.py", True),
+    ("python3 .agents/skills/echo-skill/scripts/x.py", False),
+    ("python3 -I .agents/skills/echo-skill/scripts/x.py input.txt", False)])
 def test_wedge_script_prompt_requires_isolated_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                        command: str, executed: bool) -> None:
     rules = contract()

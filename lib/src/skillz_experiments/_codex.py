@@ -163,6 +163,7 @@ class Codex:
             if helper is None:
                 return True
             for fixture in helper.fixtures:
+                (workspace / helper.input).parent.mkdir(parents=True, exist_ok=True)
                 _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
                 returncode, stdout = self.sandbox(workspace, [
                     "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])

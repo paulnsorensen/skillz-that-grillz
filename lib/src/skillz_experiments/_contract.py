@@ -5,12 +5,13 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from skillz_experiments._cases import CodedError, digest, mapping, relative, string
 from skillz_experiments._evaluation import HELPER_FIXTURES
 
 LOCATION = "evals/autoimprove.json"
+GraderType = Literal["exact-json", "judge", "command", "hybrid", "audit"]
 GRADERS = ("exact-json", "judge", "command", "hybrid", "audit")
 JUDGED = ("audit", "judge", "hybrid")
 _SKILL = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
@@ -18,7 +19,7 @@ _SKILL = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
 @dataclass(frozen=True)
 class Grader:
-    type: str
+    type: GraderType
     argv: tuple[str, ...] = ()
     rubric: str = ""
 
@@ -115,7 +116,7 @@ def _grader(value: object, kind: str) -> Grader:
         rubric = string(item.get("rubric"), f"kind {kind} rubric")
     elif "rubric" in item:
         raise ValueError(f"kind {kind} grader does not take a rubric")
-    return Grader(cast(str, kind_type), argv, rubric)
+    return Grader(cast(GraderType, item["grader"]), argv, rubric)
 
 
 def _helper(value: object) -> Helper:
