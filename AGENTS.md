@@ -39,4 +39,5 @@ of truth for repo-local skills (tooling for work on this repository only).
 - Repo-local skills (for work on this repo only) live in `.agents/skills/<name>/`,
   with a relative symlink in `.claude/skills/`. Set `metadata.internal: true`
   so `npx skills add` does not publish them. Keep them out of the README table.
+- Use `/skillz-self-update` to refresh cross-harness research and maintain the published `/skillz` skill. Do not use `/skillz self-update`.
 - Conventional Commits format for all commits

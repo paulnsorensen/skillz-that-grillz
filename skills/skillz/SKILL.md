@@ -1,9 +1,9 @@
 ---
 name: skillz
 description: >
-  Add, improve, audit, self-update, wedge, or autoimprove a skill or sub-agent definition so it
+  Add, improve, audit, wedge, or autoimprove a skill or sub-agent definition so it
   runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts.
-  Use for /skillz <add|improve|audit|self-update|wedge|autoimprove>, "improve this skill",
+  Use for /skillz <add|improve|audit|wedge|autoimprove>, "improve this skill",
   "autoimprove this skill",
   "optimize this skill", "tighten this skill",
   "audit this agent", "new skill for X", "skill not triggering", "fix
@@ -11,23 +11,22 @@ description: >
   CLAUDE.md or system-prompt edits, or for code changes that a cheese
   pipeline skill owns.
 disable-model-invocation: true
-argument-hint: "<add|improve|audit|self-update|wedge|autoimprove> [<path>|<name>]"
+argument-hint: "<add|improve|audit|wedge|autoimprove> [<path>|<name>]"
 license: MIT
 metadata:
   author: paulnsorensen
-  dispatches-agents: audit and self-update only, when the host offers sub-agents
+  dispatches-agents: audit only, when the host offers sub-agents
 ---
 
 # skillz
 
-Add, improve, audit, wedge, autoimprove, and self-update skill and agent definitions.
+Add, improve, audit, wedge, and autoimprove skill and agent definitions.
 The product is a **predictable** definition: the same process on every run and on every harness.
 Every lens asks one question of each line: *does this make the run more predictable, or is it sediment?*
 
 The mode is the first word after the skill name.
 The Aliases column lists the names that select the same mode.
-Require a target only for `add`, `improve`, `audit`, `wedge`, and `autoimprove`.
-`self-update` has no target.
+Require a target for each mode.
 Ask for the mode when it is missing.
 Ask for a target when the mode requires one.
 
@@ -38,7 +37,6 @@ Ask for a target when the mode requires one.
 | `add <name>` | none | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
 | `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
 | `audit <path>` | none | a `SKILL.md` or agent file | yes | none | calibrated report |
-| `self-update` | none | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
 | `wedge <path>` | none | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
 | `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
@@ -81,7 +79,7 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | **Prompt quality** | Positive framing, why-over-what, one strong example, "What this never does" → «negation-heavy», «rules without reasons» | Judgment tasks use a scaffold, not always/never. `references/decision-frameworks.md`. |
 | **Calibration** | Judgment agents tag confidence × severity → «judgment without calibration» | `<certain>` / `<speculative>` / `<don't know>`; don't-know never surfaces. |
 | **Output format** | Summary first, tables for findings, clean-vs-issues signal → «no output format» | Format defined; summary and detail split. |
-| **Usage** *(audit, self-update)* | Declared matches actual → «declared-vs-actual», «decay» | Declared tools are the used tools; error rate near baseline; usage not declining. |
+| **Usage** *(audit)* | Declared matches actual → «declared-vs-actual», «decay» | Declared tools are the used tools; error rate near baseline; usage not declining. |
 
 ### 3. Calibrate
 
@@ -180,19 +178,6 @@ Done means: every candidate cites a line and has all seven contract fields.
 **Inputs** · **Output** · **Ordering** · **Empty** · **Errors** · **Side effects** · **Caller line**
 ```
 
-## Mode: self-update
-
-1. Check every source in `## Sources` of `references/harness-layout.md` for changes since its `Checked:` date; delegate to a fresh-context research agent when the host offers one.
-   Cover frontmatter fields, discovery paths, invocation policy, argument handling, and body budgets.
-   Cover Claude Code, the Agent Skills spec, Codex, OMP, Pi, Zed, and the `skills` CLI.
-2. Diff the digest against the reference.
-   Update the matrix, the rules, the template, and the `Checked:` date.
-   Record each rejected claim with its reason under `## Rejected`.
-3. Run `audit` on this `SKILL.md`, then `improve` on it.
-4. Run the repo's deploy step when one exists, then its quality gate.
-
-Done means: `Checked:` is today, every source in the list was queried, and this skill passes its own rubric.
-
 ## Report
 
 ```markdown
@@ -232,8 +217,8 @@ N findings were `<don't know>` or trivial (not shown).
 
 Read on demand:
 
-- `references/harness-layout.md` — Portability lens fires, `add` (global or repo-local), or `self-update`; the frontmatter matrix, rules, template, sidecar, and sources.
-- `references/analytics-ceremony.md` — `audit` and `self-update`; use the bundled engine for best-effort per-pack analytics.
+- `references/harness-layout.md` — Portability lens fires or `add` (global or repo-local); the frontmatter matrix, rules, template, sidecar, and sources.
+- `references/analytics-ceremony.md` — `audit`; use the bundled engine for best-effort per-pack analytics.
 - `references/raw-log-fallback.md` — DuckDB is absent and the user opts into a sampled, read-only Usage scan.
 - `references/anti-patterns.md` — a finding needs the expanded failure mode.
 - `references/progressive-disclosure.md` — Information hierarchy fires.

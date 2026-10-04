@@ -1,4 +1,4 @@
-# Analytics ceremony (`audit`, `self-update`)
+# Analytics ceremony (`audit`)
 
 Empirical usage data is best-effort. This skill bundles its analytics engine under
 `engine/`; it does not need an installed `session-analytics` skill. The engine
