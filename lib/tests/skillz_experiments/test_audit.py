@@ -38,9 +38,12 @@ def test_cli_rejects_invalid_label_evidence(tmp_path: Path, capsys: pytest.Captu
     target = tmp_path / "skill"
     target.mkdir()
     _ = (target / "SKILL.md").write_text("seed")
+    (target / "evals").mkdir()
+    _ = (target / "evals/autoimprove.json").write_text(
+        (Path(__file__).resolve().parents[3] / "skills/skillz/evals/autoimprove.json").read_text())
     assert main(["dataset", str(manifest(tmp_path, case)), "--target", str(target),
                  "--out", str(tmp_path / "run")]) == 1
-    assert "error" in capsys.readouterr().err
+    assert "unsafe relative path" in capsys.readouterr().err
     assert not (tmp_path / "run").exists()
 
 
@@ -116,6 +119,17 @@ def test_valid_audit_uses_isolated_judge_and_combined_usage(tmp_path: Path, monk
 def test_invalid_report_never_calls_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                          citation: dict[str, object]) -> None:
     adapter, calls = controlled_adapter(monkeypatch, [task_answer([finding(citation=citation)])])
+    result = evaluate_audit(tmp_path, adapter)
+    assert result["score"] == 0.0
+    assert result["evidence_valid"] is False
+    assert len(calls) == 1
+
+
+def test_deeply_nested_report_json_is_an_invalid_report_and_never_calls_judge(tmp_path: Path,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = task_answer([])
+    cast(dict[str, object], answer["answer"])["result_json"] = "[" * 200_000
+    adapter, calls = controlled_adapter(monkeypatch, [answer])
     result = evaluate_audit(tmp_path, adapter)
     assert result["score"] == 0.0
     assert result["evidence_valid"] is False

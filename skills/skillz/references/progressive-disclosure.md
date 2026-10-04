@@ -7,8 +7,9 @@ line-counting cannot see.
 ## Why tokens, not lines
 
 Anthropic's agent-skills *overview* documents the progressive-disclosure budget
-in **tokens**: Level 1 metadata ~100 tok (always loaded), Level 2 body **under
-5k tokens** (loaded on trigger), Level 3+ resources none-until-accessed. The
+in **tokens**. The budget has three levels. Level 1 metadata costs ~100 tok
+(always loaded). The Level 2 body stays **under 5k tokens** (loaded on trigger).
+Level 3+ resources cost none until accessed. The
 500-line rule in *best-practices* is a backstop, not the budget — Anthropic's
 own skills run a median of ~129 lines. Prose-dense skills (~95–112 bytes/line
 here vs Anthropic's shorter lines) pass the line rule while blowing the token

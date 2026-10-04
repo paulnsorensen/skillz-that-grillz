@@ -31,11 +31,10 @@ Native format is already the canonical envelope (`type`, `timestamp`,
 up by the recursive walk, but those turns have no direct user interaction (no
 stop events, no denials).
 
-Claude omits `is_error` on most successful tool results; the flattener
-backfills those to `'false'` and marks them `is_error_explicit = false`
-(measured: ~99.5% of absent-flag results carry non-error content, so claude
-error rates are floors — a handful of harness-side truncation notices lack the
-flag).
+Claude omits `is_error` on most successful tool results. The flattener
+backfills those to `'false'` and marks them `is_error_explicit = false`.
+Measured: ~99.5% of absent-flag results carry non-error content.
+Claude error rates are therefore floors, because a handful of harness-side truncation notices lack the flag.
 
 **`bash_cmd` is the model-typed command, pre-hook.** A PreToolUse
 `updatedInput` rewrite can execute a different command while the transcript
@@ -53,10 +52,10 @@ Rollout JSONL. Each line is `{timestamp, type, payload}`:
   `tool_use` block. The tool name (`shell`, `exec_command`, `exec`,
   `apply_patch`, custom tools) is kept verbatim; `arguments` is JSON-parsed
   into `input`. For shell-ish tools, `input.command` is **normalized to the
-  executed command string** so `bash_cmd` populates: `exec_command` copies
-  `cmd`, legacy `shell` argv arrays collapse to the `-lc`/`-c` payload (or a
-  space-join), and the `exec` custom tool's raw code-string argument becomes
-  the command.
+  executed command string**, so `bash_cmd` populates.
+  `exec_command` copies `cmd`. Legacy `shell` argv arrays collapse to the
+  `-lc`/`-c` payload (or a space-join).
+  The `exec` custom tool's raw code-string argument becomes the command.
 - `response_item / function_call_output` **and `custom_tool_call_output`** → a
   user `tool_result` block. (Dropping the custom outputs was the ~50%
   result-join gap — issue #704.) `tool_search_output` items have no matching
@@ -84,26 +83,26 @@ timestamp, title}`) supplies sessionId + cwd for every row. `message` entries:
   `stopReason`, and `errorMessage` map to Claude key names and feed
   `model_turns`. `stopReason` `error` and `aborted` also land in `stop_events`.
 
-Error flag: every `toolResult` message carries a **msg-level `isError` boolean**
-— one convention for builtin and MCP tools. For MCP tools a duplicate flag lives
-at `details.xdev.inner.isError`; verified perfectly consistent with the
-msg-level flag across all sessions, so the adapter reads only the msg-level one.
+Error flag: every `toolResult` message carries a **msg-level `isError` boolean**.
+It is one convention for builtin and MCP tools.
+For MCP tools a duplicate flag lives
+at `details.xdev.inner.isError`. It matches the msg-level flag across all sessions, so the adapter reads only the msg-level one.
 
 OMP-specific caveats:
 
 - **MCP naming** is a third scheme: `mcp__tilth_search` = `mcp__` + server +
-  *single* underscore + tool. These rows land in `mcp_calls` (the `mcp__%`
-  prefix filter matches), but any query that splits server/method on a
-  double-underscore separator will misparse omp names — split on the prefix +
-  first `_` instead when filtering `harness='omp'`.
+  *single* underscore + tool.
+  These rows land in `mcp_calls`, because the `mcp__%` prefix filter matches.
+  A query that splits server and method on a double-underscore separator misparses omp names.
+  Split on the prefix + first `_` instead when filtering `harness='omp'`.
 - **Shaken content**: context-compacted tool results are stored as a stub like
   `[shaken ~275 tokens — recover: artifact://46 (region 2)]`. Kept verbatim —
   content-based metrics (result length, error-text matching) undercount for
   shaken rows.
 - **Tool-call id reuse**: `toolCall` ids (`write_0|fc_...`) are not globally
-  unique — a small fraction (~0.3%) repeat across sessions, so session-agnostic
-  `tool_use_id` joins can slightly overcount; join on `sessionId` too when
-  exactness matters.
+  unique. A small fraction (~0.3%) repeat across sessions, so session-agnostic
+  `tool_use_id` joins can slightly overcount.
+  Join on `sessionId` too when exactness matters.
 
 ### cursor
 
@@ -114,20 +113,22 @@ content blocks are only `text` and `tool_use` (`{"type":"tool_use","name":...,
 "input":{...}}`).
 
 `cwd` is decoded from the project-slug directory name (dashes stand in for
-slashes). A directory whose own name contains a dash is ambiguous if every dash
-is treated as a separator, so the adapter walks left-to-right and at each step
-takes the longest prefix of remaining segments that exists on disk
+slashes).
+A directory whose own name contains a dash is ambiguous if every dash
+is a separator.
+So the adapter walks left-to-right. At each step it takes the longest prefix of remaining segments that exists on disk
 (`Users-paul-Dev-easy-cheese` → `/Users/paul/Dev/easy-cheese` when that path is
 real). Unresolved tails fall back to a naive split. `gitBranch` is always null
 (not recorded).
 
-Cursor tool_use blocks carry no id, and there are no `tool_result` blocks at
-all — no result content, no `is_error`, no per-call timestamps. The adapter
-synthesizes a deterministic `tool_use_id` (`session:line:block_idx`) since
-nothing needs to join against it, and stamps every row with the most recent
+Cursor tool_use blocks carry no id. There are no `tool_result` blocks at
+all: no result content, no `is_error`, no per-call timestamps.
+The adapter synthesizes a deterministic `tool_use_id` (`session:line:block_idx`), since
+nothing needs to join against it.
+It stamps every row with the most recent
 `<timestamp>Weekday, Mon D, YYYY, H:MM AM (UTC±N)</timestamp>` tag seen in a
-prior user turn (embedded alongside `<user_query>`), converted to UTC and
-carried forward — so cursor timestamps are turn-granularity, not per-call.
+prior user turn (embedded alongside `<user_query>`).
+The adapter converts the tag to UTC and carries it forward, so cursor timestamps are turn-granularity, not per-call.
 Because of this, cursor has 0% `results_joined_pct` by construction (not a
 measurement gap) and is excluded from any error-rate query.
 
@@ -170,10 +171,8 @@ e.g. token/cost data is absent from most logs (`token-economics` degrades to
 entries, so `stop_hooks` / `permission_denials` are effectively claude-only.
 Packs must degrade gracefully rather than fabricate.
 
-`ingest.py` prints a per-harness **coverage stanza** after every run:
-`results_joined_pct` (tool calls with a joined result — low means per-tool
-error rates for that harness are floors, not estimates) and
-`explicit_error_flag_pct` (results whose error flag came from the source
-rather than the `'false'` backfill). Read it before quoting cross-harness
-error-rate comparisons.
+`ingest.py` prints a per-harness **coverage stanza** after every run. It has two fields.
+`results_joined_pct` counts tool calls with a joined result. A low value means per-tool error rates for that harness are floors, not estimates.
+`explicit_error_flag_pct` counts results whose error flag came from the source rather than the `'false'` backfill.
+Read it before quoting cross-harness error-rate comparisons.
 An empty latency report or zero errors is not evidence of speed or no failures. Unsupported native events and missing result joins can produce both outcomes. Inspect native Codex JSONL read-only before making either claim.

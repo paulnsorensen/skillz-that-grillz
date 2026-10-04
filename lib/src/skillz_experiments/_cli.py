@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
 import fromargs
 
-from skillz_experiments._cases import load_cases
+from skillz_experiments._cases import CodedError, load_cases, load_manifest
+from skillz_experiments._contract import load_contract
 from skillz_experiments._harness import Configuration
 from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget
@@ -17,37 +20,56 @@ from skillz_experiments._workflow import execute, export as export_run
 Profile = Literal["inspection", "audit"]
 SELF_TEST_OUT = Path("skillz-self-test")
 
+
+class _Reported(BaseException):
+    """A coded error that the command already wrote to stderr; `fromargs` lets it pass."""
+
+
+@contextmanager
+def _coded() -> Generator[None]:
+    """Report a `CodedError` as JSON with its `code` on stderr. Then raise `_Reported`."""
+    try:
+        yield
+    except CodedError as error:
+        print(json.dumps({"error": str(error), "exit_code": 1, "code": error.code}), file=sys.stderr)
+        raise _Reported from None
+
+
 app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. No automatic installation.")
 
 
 @app.command
 def dataset(manifest: Path, *, target: Path, out: Path, component: list[str] | None = None) -> dict[str, object]:
     """Validate authored cases or an approved normalized analytics export."""
-    return prepare(manifest, target, out, component)
+    with _coded():
+        return prepare(manifest, target, out, component, load_contract(target, load_manifest(manifest)))
 
 
 @app.command
 def baseline(run: Path, *, model: str, live: bool = False, harness_config: Path | None = None,
              max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Measure the frozen original on train and validation cases."""
-    return execute(run, "baseline", model, live=live, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config)
+    with _coded():
+        return execute(run, "baseline", model, live=live, maximum=max_invocations, seconds=max_seconds,
+                       harness_config=harness_config)
 
 
 @app.command
 def search(run: Path, *, model: str, mode: Mode = "prompt", live: bool = False, harness_config: Path | None = None,
-           max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
-    """Search prompt, prompt-cli, or cli components with pinned GEPA."""
-    return execute(run, "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config)
+           max_invocations: int = 20, max_seconds: float = 1200, brief: Path | None = None) -> dict[str, object]:
+    """Search prompt, prompt-cli, cli, or wedge components with pinned GEPA. Wedge mode needs --brief."""
+    with _coded():
+        return execute(run, "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds,
+                       harness_config=harness_config, brief=brief)
 
 
 @app.command
 def evaluate(run: Path, *, model: str, live: bool = False, harness_config: Path | None = None,
              max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
     """Consume the paired holdout once, without feedback to search."""
-    return execute(run, "evaluate", model, live=live, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config)
+    with _coded():
+        return execute(run, "evaluate", model, live=live, maximum=max_invocations, seconds=max_seconds,
+                       harness_config=harness_config)
 
 
 @app.command(name="export")
@@ -89,13 +111,18 @@ def self_test(*, model: str, out: Path = SELF_TEST_OUT, target: Path | None = No
         if archive.name != "skillz-experiment.pyz" or not archive.is_file():
             raise ValueError("source execution requires an explicit --target")
         target = archive.parent.parent
-    _ = prepare(source, target, out)
-    return execute(out, "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds,
-                   harness_config=harness_config)
+    with _coded():
+        _ = prepare(source, target, out, None, load_contract(target, load_manifest(source)))
+    with _coded():
+        return execute(out, "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds,
+                       harness_config=harness_config)
+
 
 def main(argv: list[str] | None = None) -> int:
     try:
         return app.run(argv)
+    except _Reported:
+        return 1
     except (OSError, ValueError, RuntimeError) as error:
         print(json.dumps({"error": str(error), "exit_code": 1}), file=sys.stderr)
         return 1

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "status": "approved",
+  "skill": "skillz",
+  "invocation": "$skillz audit",
+  "kinds": {
+    "inspection": {
+      "grader": "exact-json"
+    },
+    "audit": {
+      "grader": "audit"
+    }
+  },
+  "helper": {
+    "path": "scripts/inspect_skill.py",
+    "input": "fixture.md",
+    "fixtures": [
+      {
+        "input": "---\nname: contract\ndescription: Inspect\n---\n# Body\n[Guide](references/guide.md)\n",
+        "returncode": 0,
+        "output": {
+          "schema_version": 2,
+          "frontmatter_keys": [
+            "description",
+            "name"
+          ],
+          "body_line_count": 2,
+          "local_link_targets": [
+            "references/guide.md"
+          ],
+          "long_sentences": []
+        }
+      },
+      {
+        "input": "---\nname: contract\n---\n[Escape](../secret)\n",
+        "returncode": 2,
+        "output": {
+          "schema_version": 2,
+          "error": "link escapes package"
+        }
+      }
+    ]
+  },
+  "editable": []
+}

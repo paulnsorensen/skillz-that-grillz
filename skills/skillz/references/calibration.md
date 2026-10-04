@@ -55,8 +55,9 @@ A `<certain>` style nit is `low`; a `<speculative>` correctness risk can be
 ## Re-assess borderline (self-consistency)
 
 For any `<speculative>` finding you are about to surface, re-derive the reasoning
-once more without looking at the first pass — re-read the full file, not just an
-excerpt. Multi-sample self-consistency is the most effective single calibration
+once more without looking at the first pass. Re-read the full file, not just an
+excerpt.
+Multi-sample self-consistency is the most effective single calibration
 technique (Xiong et al. 2024). If the second pass does not reproduce it, drop to
 `<don't know>`. Never split the difference into a vague "maybe": divergence is
 information — it means you don't actually know.

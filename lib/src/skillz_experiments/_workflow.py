@@ -13,12 +13,16 @@ from typing import Protocol, cast, final, get_args
 
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import Candidate, candidate_files
-from skillz_experiments._cases import Case, Split, digest, load_cases, mapping
+from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._codex import Codex, VERSION
-from skillz_experiments._harness import Configuration
+from skillz_experiments._contract import Contract, parse, resolve
+from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import Budget, BudgetExhausted
 from skillz_experiments._search import Mode, optimize
+from skillz_experiments._wedge import COMPONENT, admit, new_script
+
+BRIEF_LIMIT = 65536
 
 
 class _Provider(Protocol):
@@ -68,6 +72,7 @@ class _Resume:
     dataset_hash: str
     seed_hash: str
     seed: Candidate
+    contract: Contract | None
     calls: int
     arms: dict[str, object]
     outcomes: list[dict[str, object]]
@@ -82,9 +87,14 @@ def _resume_fields(record: dict[str, object]) -> _Resume:
     if type(calls) is not int or calls < 0:
         raise ValueError("run record field calls must be a nonnegative integer")
     _ = _text_field(record, "phase")
+    contract: Contract | None = None
+    if "contract" in record:
+        contract = parse(record["contract"], _text_field(record, "contract_source"))
+        if contract.identity != _text_field(record, "contract_hash"):
+            raise ValueError("contract differs from the frozen record; create a new run")
     return _Resume(_text_field(record, "dataset_hash"), _text_field(record, "seed_hash"),
-                   Candidate(candidate_files(_field(record, "seed")), tuple(cast(list[str], editable))),
-                   calls, mapping(_field(record, "arms")), _outcomes(record))
+                   Candidate(candidate_files(_field(record, "seed")), tuple(cast(list[str], editable)), contract),
+                   contract, calls, mapping(_field(record, "arms")), _outcomes(record))
 
 
 @final
@@ -94,10 +104,11 @@ class _Session:
         self.out = out
         self.record = read(out / "run.json")
         resume = _resume_fields(self.record)
-        imported = self._import_cases(resume.dataset_hash)
+        self.contract = resolve(resume.contract)
+        imported, judged = self._import_cases(resume.dataset_hash)
         self.cases = [case for case in imported if case.eligible]
         self.seed = resume.seed
-        self._freeze_identities(model, configuration, any(case.kind == "audit" for case in imported), resume.seed_hash)
+        self._freeze_identities(model, configuration, judged, resume.seed_hash)
         self.budget = self._open_budget(model, maximum, seconds, resume.calls)
         self.provider = factory(model, self.budget, self.checkpoint)
         self.arms = resume.arms
@@ -105,18 +116,21 @@ class _Session:
         self._candidates: dict[str, Candidate] = {}
         self._validation: dict[str, list[dict[str, object]]] = {}
 
-    def _import_cases(self, dataset_hash: str) -> list[Case]:
+    def _import_cases(self, dataset_hash: str) -> tuple[list[Case], bool]:
+        """Load the frozen cases. Return them and whether any case needs a judge."""
         if dataset_hash != digest(read(self.out / "cases.json")):
             raise ValueError("dataset differs from the frozen record")
-        imported = load_cases(self.out / "cases.json")
-        if any(case.kind == "audit" for case in imported) and (
+        imported = load_cases(self.out / "cases.json", self.contract.grader_types())
+        rules = self.contract
+        audit = any(rules.grader(case.kind).type == "audit" for case in imported)
+        if audit and (
                 any(not case.eligible for case in imported)
                 or not all(any(case.split == split for case in imported) for split in ("train", "validation"))
                 or sum(case.split == "holdout" for case in imported) != 2):
             raise ValueError("audit comparison requires reviewed, provider-approved cases and complete splits")
-        return imported
+        return imported, any(rules.judged(case.kind) for case in imported)
 
-    def _freeze_identities(self, model: str, configuration: Configuration | None, audit: bool, seed_hash: str) -> None:
+    def _freeze_identities(self, model: str, configuration: Configuration | None, judged: bool, seed_hash: str) -> None:
         if configuration is not None:
             target = self.record.get("target_root")
             if not isinstance(target, str):
@@ -126,7 +140,7 @@ class _Session:
             _ = self.record.setdefault("harness", identity)
             if self.record["harness"] != identity:
                 raise ValueError("harness configuration differs from the frozen record; create a new run")
-        if audit:
+        if judged:
             judge_model = configuration.roles["judge"].model if configuration is not None else model
             _ = self.record.setdefault("judge_model", judge_model)
             _ = self.record.setdefault("judge", judge_identity(judge_model))
@@ -151,7 +165,7 @@ class _Session:
             raise ValueError("run cannot resume after a monotonic clock reset")
         if seconds - elapsed <= 0:
             raise BudgetExhausted("global deadline exhausted")
-        reserve = 3 * sum(2 if case.kind == "audit" else 1 for case in self.cases_for("holdout"))
+        reserve = 3 * sum(self.contract.calls(case.kind) for case in self.cases_for("holdout"))
         self.record["holdout_reserve"] = reserve
         return Budget(maximum, seconds - elapsed, reserve=reserve, calls=calls)
 
@@ -183,25 +197,42 @@ class _Session:
         self.record["phase"] = "baseline"
         self.checkpoint()
 
+    def _wedge_candidate(self, components: dict[str, str]) -> Candidate:
+        skill = components["SKILL.md"]
+        if components[COMPONENT] == "{}" and skill == self.seed.files["SKILL.md"]:
+            return self.seed
+        contract = self.seed.contract
+        added = admit(self.seed.files, components, contract.skill if contract is not None else None)
+        files = self.seed.files | {"SKILL.md": skill} | added
+        return Candidate(files, self.seed.editable, self.seed.contract, new_script(self.seed.files, files))
+
     def _evaluate_example(self, mode: Mode, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
         case = next((item for item in self.cases if item.identifier == example and item.split != "holdout"), None)
         if case is None:
             raise ValueError("holdout must not enter optimization")
-        candidate = self.seed.changed(components)
+        if mode == "wedge":
+            try:
+                candidate = self._wedge_candidate(components)
+            except ValueError as error:
+                return 0.0, {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
+        else:
+            candidate = self.seed.changed(components)
         self._candidates[candidate.identity] = candidate
         result = self.evaluate_case(candidate, case, mode)
         if case.split == "validation":
             self._validation.setdefault(candidate.identity, []).append(result)
         feedback: dict[str, object] = {"task_correct": result["score"], "request": case.request}
-        if mode == "cli":
+        if "scores" in result:
+            feedback["grader_scores"] = result["scores"]
+        if mode in ("cli", "wedge"):
             usage = mapping(result.get("usage") or {})
             feedback["usage"] = {key: value if type(value := usage.get(key)) is int and value >= 0 else None
                                  for key in ("input_tokens", "output_tokens")}
         return cast(float, result["score"]), feedback
 
-    def _propose(self, mode: Mode, candidate: dict[str, str],
+    def _propose(self, mode: Mode, brief: str | None, candidate: dict[str, str],
                  feedback: Mapping[str, Sequence[Mapping[str, object]]], components: list[str]) -> dict[str, str]:
-        prompt, schema = _reflection_request(mode, candidate, feedback, components)
+        prompt, schema = _reflection_request(mode, candidate, feedback, components, self.contract.skill, brief)
         result = self.provider.invoke(prompt, schema=schema)
         self.outcomes.append({"arm": mode, "split": "reflection", "usage": result.get("usage"),
                               "latency_seconds": result.get("latency_seconds")})
@@ -211,16 +242,19 @@ class _Session:
             raise ValueError("reflection keys differ from the frozen components")
         return cast(dict[str, str], answer)
 
-    def search(self, mode: Mode) -> None:
+    def search(self, mode: Mode, brief: str | None = None) -> None:
         if self.record["phase"] not in {"baseline", "search"} or mode in self.arms:
             raise ValueError("search requires baseline and an unsearched arm")
         self._candidates = {self.seed.identity: self.seed}
         self._validation = {}
-        editable = {key: self.seed.files[key] for key in self.seed.editable}
+        editable = ({"SKILL.md": self.seed.files["SKILL.md"], COMPONENT: "{}"} if mode == "wedge"
+                    else {key: self.seed.files[key] for key in self.seed.editable})
         try:
+            helper = self.contract.helper
             _ = optimize(editable, mode, [case.identifier for case in self.cases_for("train")],
                          [case.identifier for case in self.cases_for("validation")],
-                         partial(self._evaluate_example, mode), partial(self._propose, mode))
+                         partial(self._evaluate_example, mode), partial(self._propose, mode, brief),
+                         code=helper.path if helper is not None else None)
             winner = _select(self._candidates, self._validation, len(self.cases_for("validation")), self.seed)
             reason = "validation-selection"
         except BudgetExhausted:
@@ -231,7 +265,8 @@ class _Session:
         self.checkpoint()
 
     def holdout(self) -> None:
-        if set(self.arms) not in ({"original", "prompt", "prompt-cli"}, {"original", "prompt", "cli"}) or self.record.get("holdout_consumed"):
+        locked = ({"original", "prompt", "prompt-cli"}, {"original", "prompt", "cli"}, {"original", "prompt", "wedge"})
+        if set(self.arms) not in locked or self.record.get("holdout_consumed"):
             raise ValueError("holdout requires three locked arms and an unused holdout")
         cases = self.cases_for("holdout")
         if len(cases) != 2:
@@ -241,7 +276,9 @@ class _Session:
         self.record["holdout_consumed"] = True
         self.checkpoint()
         for name, files in self.arms.items():
-            candidate = Candidate(candidate_files(files), self.seed.editable)
+            files = candidate_files(files)
+            candidate = Candidate(files, self.seed.editable, self.seed.contract,
+                                  new_script(self.seed.files, files) or self.seed.script)
             for case in cases:
                 _ = self.evaluate_case(candidate, case, name, holdout=True)
         self.record["phase"] = "complete"
@@ -253,21 +290,33 @@ class _Session:
         self.checkpoint()
 
 
+_STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
+             "active voice, present tense, one instruction per sentence, and at most 20 words per sentence. ")
+
+
 def _reflection_request(mode: Mode, candidate: dict[str, str],
                         feedback: Mapping[str, Sequence[Mapping[str, object]]],
-                        components: list[str]) -> tuple[str, dict[str, object]]:
+                        components: list[str], skill: str, brief: str | None = None) -> tuple[str, dict[str, object]]:
     schema: dict[str, object] = {"type": "object",
         "properties": {key: {"type": "string"} for key in components},
         "required": components, "additionalProperties": False}
-    instruction = ("Improve only scripts/inspect_skill.py. Preserve all skill text and the helper CLI contract. "
-                   + "Preserve correctness first; reduce measured input-plus-output tokens for correctness ties. "
-                   + "Token feedback combines task and judge usage; null means unknown. "
-                   if mode == "cli" else
-                   "Improve only the supplied skill text components. Preserve the helper CLI contract. ")
-    prompt = (instruction
-              + "Return complete component contents. Do not alter independent checks or permissions.\n"
-              + json.dumps({"candidate": candidate, "feedback": feedback}, default=str))
-    return prompt, schema
+    if mode == "cli":
+        instruction = (f"Improve only {components[0]}. Preserve all skill text and the helper CLI contract. "
+                       + "Preserve correctness first; reduce measured input-plus-output tokens for correctness ties. "
+                       + "Token feedback combines task and judge usage; null means unknown. ")
+    elif mode == "wedge":
+        instruction = (f"Improve SKILL.md and add one stdlib-only Python script. Set {COMPONENT} to a JSON object with "
+                       + "exactly one key, scripts/<name>.py, whose value is the script source. "
+                       + "Reference that path in SKILL.md, bare or after one prefix: ./, ${CLAUDE_SKILL_DIR}/, "
+                       + f"<this-skill-directory>/, or .agents/skills/{skill}/. Add no other file. Preserve the helper CLI contract. "
+                       + "Preserve correctness first; reduce measured input-plus-output tokens for correctness ties. "
+                       + "Token feedback combines task and judge usage; null means unknown. ")
+    else:
+        instruction = "Improve only the supplied skill text components. Preserve the helper CLI contract. "
+    head = (instruction + _STE_RULE
+            + "Return complete component contents. Do not alter independent checks or permissions.")
+    block = f" Wedge brief:\n{brief.rstrip()}\n" if brief else "\n"
+    return head + block + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
 
 def _select(candidates: dict[str, Candidate], validation: dict[str, list[dict[str, object]]],
@@ -285,11 +334,48 @@ def _select(candidates: dict[str, Candidate], validation: dict[str, list[dict[st
     return candidates[min(ranked)[3]] if ranked else seed
 
 
+def _read_brief(path: Path) -> str:
+    with path.open("rb") as stream:
+        raw = stream.read(BRIEF_LIMIT + 1)
+    if len(raw) > BRIEF_LIMIT:
+        raise ValueError(f"brief exceeds {BRIEF_LIMIT} bytes")
+    return raw.decode("utf-8")
+
+
+def _require_helper(out: Path, stage: str, mode: Mode) -> None:
+    """Raise a `CodedError` before any model call when the run lacks a helper that it needs.
+
+    A helper arm needs a declared helper. A run with a declared contract needs the helper file in every stage.
+    A run with the legacy fallback contract checks the helper file for `search --mode cli` only.
+    """
+    resume = _resume_fields(read(out / "run.json"))
+    contract = resolve(resume.contract)
+    helper = contract.helper
+    label = "self-test" if stage == "self-test" else f"{mode} search" if stage == "search" else stage
+    if helper is None:
+        if stage == "self-test" or stage == "search" and mode in ("cli", "prompt-cli"):
+            raise CodedError("helper-missing", f"{label} needs a contract helper; declare `helper` in the contract")
+        return
+    if helper.path not in resume.seed.editable and (
+            contract.source != "legacy" or stage == "search" and mode == "cli"):
+        raise CodedError("helper-file-missing", f"{label} needs the helper file {helper.path} in the target")
+
+
 def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: int = 20,
             seconds: float = 1200, factory: Factory = Codex, mode: Mode = "prompt",
-            harness_config: Path | None = None) -> dict[str, object]:
+            harness_config: Path | None = None, brief: Path | None = None) -> dict[str, object]:
+    if stage == "search" and mode == "wedge" and brief is None:
+        raise ValueError("wedge search requires --brief PATH")
+    if brief is not None and mode != "wedge":
+        raise ValueError("--brief applies to wedge mode only")
+    brief_text = _read_brief(brief) if brief is not None else None
     if not live:
         raise ValueError("live model calls require --live")
+    _require_helper(out, stage, mode)
+    resume = _resume_fields(read(out / "run.json"))
+    if (stage == "search" and mode in ("prompt", "prompt-cli") or stage == "self-test") and not any(
+            name.endswith(".md") for name in resume.seed.editable):
+        raise CodedError("prompt-components-missing", "prompt search needs editable Markdown")
     with (out / "run.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if read(out / "run.json").get("holdout_consumed"):
@@ -298,11 +384,13 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
         session = _Session(out, model, maximum, seconds,
                            configuration.create if configuration is not None else factory, configuration)
         try:
-            preflight = session.provider.preflight()
+            recorded = session.record.get("preflight")
+            preflight = (session.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
+                         if isinstance(session.provider, Harness) else session.provider.preflight())
             environment_hash = preflight.get("environment_hash")
             _ = session.record.setdefault("environment_hash", environment_hash)
             if session.record["environment_hash"] != environment_hash:
-                raise ValueError("runtime environment differs from the frozen record")
+                raise EnvironmentDiffers("runtime environment differs from the frozen record")
             session.record["preflight"] = preflight
             if configuration is None or any(role.adapter == "codex" for role in configuration.roles.values()):
                 session.record["codex_version"] = VERSION
@@ -310,13 +398,15 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
             if stage in {"baseline", "self-test"}:
                 session.baseline()
             if stage == "search":
-                session.search(mode)
+                session.search(mode, brief_text)
             if stage == "self-test":
                 session.search("prompt")
                 session.search("prompt-cli")
             if stage in {"evaluate", "self-test"}:
                 session.holdout()
             return summary(session.record)
+        except EnvironmentDiffers:
+            raise
         except (OSError, ValueError, RuntimeError):
             session.record["phase"] = "infrastructure-failure"
             session.checkpoint()
@@ -328,13 +418,13 @@ def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: i
 def summary(record: dict[str, object]) -> dict[str, object]:
     return {key: record.get(key) for key in
             ("schema_version", "phase", "calls", "model", "codex_version", "harness", "judge",
-             "improvement", "token_comparison", "locked_arms")}
+             "improvement", "token_comparison", "locked_arms", "contract_hash", "contract_source")}
 
 
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     allowed = {"arm", "split", "score", "status", "loaded", "helper_executed", "candidate_hash", "case_hash",
                "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
-               "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate"}
+               "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate", "scores"}
     result = {key: value for key, value in item.items() if key in allowed}
     for key in ("usage", "task_usage", "judge_usage"):
         if key in item:
@@ -356,12 +446,20 @@ def export(out: Path, destination: Path, arm: str) -> dict[str, object]:
             raise ValueError("judge differs from the frozen record; create a new run")
     arms = mapping(_field(record, "arms"))
     if arm not in get_args(Mode) or arm not in arms:
-        raise ValueError("export arm must be an evaluated prompt, prompt-cli, or cli arm")
+        raise ValueError("export arm must be an evaluated prompt, prompt-cli, cli, or wedge arm")
     outcomes = _outcomes(record)
     seed, candidate = candidate_files(_field(record, "seed")), candidate_files(arms[arm])
-    lines = (line for name in seed if seed[name] != candidate[name]
-             for line in difflib.unified_diff(seed[name].splitlines(keepends=True),
-                   candidate[name].splitlines(keepends=True), fromfile="a/" + name, tofile="b/" + name))
+    names = (*seed, *(name for name in candidate if name not in seed))
+    lines: list[str] = []
+    for name in names:
+        if name in seed and seed[name] == candidate[name]:
+            continue
+        if name not in seed and not candidate[name]:
+            lines.extend((f"diff --git a/{name} b/{name}\n", "new file mode 100644\n"))
+            continue
+        lines.extend(difflib.unified_diff(seed.get(name, "").splitlines(keepends=True),
+                                          candidate[name].splitlines(keepends=True),
+                                          fromfile="a/" + name if name in seed else "/dev/null", tofile="b/" + name))
     patch = "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
     destination.mkdir(mode=0o700)
     descriptor = os.open(destination / "candidate.patch", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

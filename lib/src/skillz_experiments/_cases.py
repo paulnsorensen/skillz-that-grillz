@@ -4,11 +4,30 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from collections.abc import Mapping
 from typing import Literal, cast, get_args
 
 Split = Literal["train", "validation", "holdout"]
-Kind = Literal["inspection", "audit"]
+Kind = str
 Visibility = Literal["public", "private"]
+LEGACY_KINDS = {"inspection": "exact-json", "audit": "audit"}
+
+
+class CodedError(ValueError):
+    """A validation failure that carries a stable machine-readable code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code: str = code
+
+
+def loads_untrusted(text: str) -> object:
+    """Parse JSON text from a model or helper. Raise `ValueError` on bad or too deeply nested input."""
+    try:
+        return cast(object, json.loads(text))
+    except RecursionError:
+        raise ValueError("JSON is nested too deeply") from None
+
 
 def mapping(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
@@ -33,7 +52,7 @@ def relative(value: str) -> str:
 
 def text_map(value: object) -> dict[str, str]:
     files = {relative(key): string(item, key) for key, item in mapping(value).items()}
-    forbidden = {"home", "tmp", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
+    forbidden = {"home", "tmp", "output", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
     if any(PurePosixPath(key).parts[0] in forbidden or PurePosixPath(key).name == "AGENTS.md" for key in files):
         raise ValueError("fixture collides with runtime-owned paths")
     return files
@@ -122,10 +141,24 @@ class Case:
     @property
     def eligible(self) -> bool:
         return bool(self.request and self.files and self.expected is not None and self.provider_approved
-                    and (self.kind != "audit" or self.labels_reviewed))
+                    and (not isinstance(self.expected, Audit) or self.labels_reviewed))
 
 
-def _case(value: object) -> Case:
+def _kind(item: dict[str, object], kinds: Mapping[str, str]) -> str:
+    if "kind" in item:
+        kind = item["kind"]
+    elif "inspection" in kinds:
+        kind = "inspection"
+    elif len(kinds) == 1:
+        kind = next(iter(kinds))
+    else:
+        raise ValueError("case needs a kind declared in the contract")
+    if not isinstance(kind, str) or kind not in kinds:
+        raise ValueError(f"kind {kind!r} is not declared in the contract; declared kinds: {', '.join(sorted(kinds))}")
+    return kind
+
+
+def _case(value: object, kinds: Mapping[str, str]) -> Case:
     item = mapping(value)
     split = string(item.get("split"), "split")
     if split not in get_args(Split):
@@ -136,29 +169,36 @@ def _case(value: object) -> Case:
     visibility = item.get("visibility", "private")
     if visibility not in get_args(Visibility):
         raise ValueError("visibility must be public or private")
-    kind = item.get("kind", "inspection")
-    if kind not in get_args(Kind):
-        raise ValueError("kind must be inspection or audit")
+    kind = _kind(item, kinds)
     reviewed = item.get("labels_reviewed", False)
     if type(reviewed) is not bool:
         raise ValueError("labels_reviewed must be boolean")
     files = text_map(item.get("files", {}))
-    expected = audit_labels(item.get("expected"), files) if kind == "audit" else item.get("expected")
+    expected = audit_labels(item.get("expected"), files) if kinds[kind] == "audit" else item.get("expected")
+    if expected is None and kinds[kind] == "command":
+        raise CodedError("expected-missing", f"case {item.get('id')!r} of kind {kind!r} needs an expected value")
     return Case(
         string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split),
         request, files, expected,
         string(item.get("provenance"), "provenance"), item.get("provider_approved") is True,
-        cast(Visibility, visibility), cast(Kind, kind), reviewed,
+        cast(Visibility, visibility), kind, reviewed,
     )
 
 
-def load_cases(path: Path) -> list[Case]:
+def load_manifest(path: Path) -> dict[str, object]:
     if not path.is_file() or path.is_symlink() or path.stat().st_size > 2_000_000:
         raise ValueError("manifest must be a bounded regular file, not a symlink")
     document = mapping(cast(object, json.loads(path.read_text(encoding="utf-8"))))
     if type(document.get("schema_version")) is not int or document["schema_version"] != 1 or not isinstance(document.get("cases"), list):
         raise ValueError("expected schema_version 1 and cases list")
-    cases = [_case(item) for item in cast(list[object], document["cases"])]
+    return document
+
+
+def load_cases(path: Path, kinds: Mapping[str, str] | None = None) -> list[Case]:
+    """Load cases. `kinds` maps each declared kind to its grader type."""
+    document = load_manifest(path)
+    declared = LEGACY_KINDS if kinds is None else kinds
+    cases = [_case(item, declared) for item in cast(list[object], document["cases"])]
     identifiers: set[str] = set()
     families: dict[str, str] = {}
     for case in cases:

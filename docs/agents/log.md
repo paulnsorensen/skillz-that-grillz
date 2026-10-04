@@ -85,3 +85,6 @@
 - 2026-10-01 · pr106-cure · updated · decisions/wedge-skill-packaging.md · Rebased the /wedge teaching section on ADR-004, ADR-005, ADR-007, ADR-009, and ADR-010 after the merge with main; dropped the superseded lib/fromargs layout and fixed-closure claims; cited files without line ranges.
 - 2026-10-01 · skillz-wedge · updated · decisions/wedge-skill-packaging.md · Recorded the /skillz wedge handoff: skillz writes the behavior contract, /wedge packages it, and skillz never invokes /wedge.
 - 2026-10-01 · skillz-wedge-bundle · updated · decisions/wedge-skill-packaging.md · /wedge ships its builder as a direct bundle; guard accepts compressed py2.py3 pure wheels; publish skips direct bundles.
+
+
+- 2026-10-04 · 5f96f7f0ac775c0b · merged · decisions/skillz-autoimprove.md · Record the deferred Claude live-network verification gap from PR #118. All three frozen retrieval probes return the page at rank 1.

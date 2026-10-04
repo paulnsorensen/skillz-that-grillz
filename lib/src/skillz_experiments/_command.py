@@ -8,11 +8,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._candidate import Candidate, make_workspace, stage_task
-from skillz_experiments._cases import Case, mapping
-from skillz_experiments._evaluation import HELPER_INPUTS, helper_result, usage
+from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
+from skillz_experiments._cases import Case, loads_untrusted, mapping
+from skillz_experiments._contract import resolve
+from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
-from skillz_experiments._isolation import probe
+from skillz_experiments._isolation import listening, probe
 from skillz_experiments._runtime import Budget, process
 
 
@@ -100,21 +101,25 @@ class Command:
             raise RuntimeError("harness command fails; no unsafe fallback")
         if len(result.stdout) > 1_000_000:
             raise ValueError("harness response exceeds size limit")
-        return _response(cast(object, json.loads(result.stdout)), operation)
+        return _response(loads_untrusted(result.stdout), operation)
 
     def _sandbox(self, workspace: Path, argv: list[str]) -> dict[str, object]:
         return self._request("sandbox", workspace, argv=argv)
 
-    def _discover(self, workspace: Path) -> bool:
-        skill = workspace / ".agents/skills/skillz"
-        response = self._request("discover", workspace, skill_path=str(skill), skill_name="skillz")
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        result = self._sandbox(workspace, argv)
+        return cast(int, result["returncode"]), cast(str, result["stdout"])
+
+    def _discover(self, workspace: Path, name: str) -> bool:
+        skill = workspace / ".agents/skills" / name
+        response = self._request("discover", workspace, skill_path=str(skill), skill_name=name)
         raw = response["skills"]
         if not isinstance(raw, list):
             raise ValueError("invalid harness discovery response")
         entries = [mapping(item) for item in cast(list[object], raw)]
         if any(set(item) != {"name", "path"} or not all(isinstance(v, str) for v in item.values()) for item in entries):
             raise ValueError("invalid discovered skill")
-        return entries == [{"name": "skillz", "path": str(skill)}]
+        return entries == [{"name": name, "path": str(skill)}]
 
     def preflight(self) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
@@ -123,28 +128,34 @@ class Command:
             sealed = root / "sealed"
             _ = sealed.write_text("sealed sentinel")
             (workspace / "escape").symlink_to(sealed)
-            script = probe(workspace, sealed, Path(__file__).resolve())
-            result = self._sandbox(workspace, ["/usr/bin/python3", "-c", script])
+            with listening() as port:
+                script = probe(workspace, sealed, Path(__file__).resolve(), port)
+                result = self._sandbox(workspace, ["/usr/bin/python3", "-c", script])
             if result["returncode"] != 0 or cast(str, result["stdout"]).strip() != "isolation-ok":
                 raise RuntimeError("harness isolation preflight fails; no unsafe fallback")
             skill = workspace / ".agents/skills/skillz"
             skill.mkdir()
             _ = (skill / "SKILL.md").write_text("---\nname: skillz\ndescription: Inspect public fixtures\n---\nProbe.\n")
-            if not self._discover(workspace):
+            if not self._discover(workspace, "skillz"):
                 raise RuntimeError("harness skill discovery preflight fails")
         return {"adapter": "command", "model": self.model, "isolation": "passed", "live_calls": 0}
 
     def check_candidate(self, candidate: Candidate) -> bool:
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
-            candidate.materialize(workspace / ".agents/skills/skillz")
-            if not self._discover(workspace):
+            rules = resolve(candidate.contract)
+            candidate.materialize(workspace / ".agents/skills" / rules.skill)
+            if not self._discover(workspace, rules.skill):
                 return False
-            for index, content in enumerate(HELPER_INPUTS):
-                _ = (workspace / "fixture.md").write_text(content)
-                result = self._sandbox(workspace, ["/usr/bin/python3", "-I",
-                    ".agents/skills/skillz/scripts/inspect_skill.py", "fixture.md"])
-                if not helper_result(index, cast(int, result["returncode"]), cast(str, result["stdout"])):
+            helper = rules.helper
+            if helper is None:
+                return True
+            for fixture in helper.fixtures:
+                (workspace / helper.input).parent.mkdir(parents=True, exist_ok=True)
+                _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
+                code, stdout = self.sandbox(workspace, [
+                    "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
+                if not fixture_result(fixture, code, stdout):
                     return False
         return True
 
@@ -153,12 +164,15 @@ class Command:
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)
+            skill: dict[str, object] = {}
+            if candidate is not None:
+                skill = {"skill_name": candidate.skill, "skill_path": str(workspace / ".agents/skills" / candidate.skill)}
             self.budget.claim(holdout=holdout)
             self.checkpoint()
             started = time.monotonic()
-            result = self._request("infer", workspace, prompt=prompt, response_schema=schema or answer_schema())
+            result = self._request("infer", workspace, prompt=prompt, response_schema=schema or answer_schema(), **skill)
             answer = mapping(result["answer"])
             _validate_answer(answer, schema or answer_schema())
             events = _events(result)
             return {"answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
-                    "latency_seconds": time.monotonic() - started}
+                    "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}

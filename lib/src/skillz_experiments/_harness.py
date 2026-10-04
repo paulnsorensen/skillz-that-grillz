@@ -8,12 +8,22 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, digest, mapping, string
+from skillz_experiments._cases import Case, CodedError, digest, mapping, string
+from skillz_experiments._claude import ClaudeCode
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._command import Command
 from skillz_experiments._evaluator import Transport, evaluate
 from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget
+
+CLAUDE_IDENTITY = "claude-code-restricted"
+
+
+class EnvironmentDiffers(CodedError):
+    """The runtime environment differs from the frozen record. The run stays resumable after the user restores the environment."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__("environment-differs", message)
 
 
 def _command(value: object, root: Path) -> tuple[str, ...]:
@@ -48,6 +58,8 @@ class Role:
                        "identity": self.identity, "files": files})
 
     def create(self, budget: Budget, checkpoint: Callable[[], None]) -> Transport:
+        if self.adapter == "claude":
+            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]))
         return (Codex(self.model, budget, checkpoint) if self.adapter == "codex"
                 else Command(self.command, self.model, budget, checkpoint))
 
@@ -61,8 +73,15 @@ def _role(value: dict[str, object], model: str, root: Path) -> Role:
         if set(value) - {"adapter", "model"}:
             raise ValueError("Codex role accepts only adapter and model")
         return Role("codex", selected_model, _command(["codex"], root), VERSION)
+    if adapter == "claude":
+        if set(value) - {"adapter", "model", "command"}:
+            raise ValueError("Claude role accepts only adapter, model, and command")
+        parts = value.get("command", ["claude"])
+        if not isinstance(parts, list) or len(cast(list[object], parts)) != 1:
+            raise ValueError("Claude command must name only the executable")
+        return Role("claude", selected_model, _command(cast(list[object], parts), root), CLAUDE_IDENTITY)
     if adapter != "command":
-        raise ValueError("harness adapter must be codex or command")
+        raise ValueError("harness adapter must be codex, claude, or command")
     return Role("command", selected_model, _command(value.get("command"), root),
                 string(value.get("identity"), "adapter identity"))
 
@@ -120,10 +139,36 @@ class Harness:
         if self.configuration.identity() != self.identity:
             raise ValueError("harness executable or script differs from the frozen record")
 
-    def preflight(self) -> dict[str, object]:
+    def _reuse_key(self, name: str, adapter: ClaudeCode) -> str:
+        return digest({"fingerprint": mapping(self.identity[name])["fingerprint"], "environment": adapter.environment_key()})
+
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        """Run each role preflight. A Claude role reuses its recorded live pass when its reuse key is unchanged.
+
+        The reuse key joins the role fingerprint and the Claude environment key. A changed key means that the
+        runtime environment differs from the frozen record. It fails before any live call, so it costs nothing.
+        A reused role still runs the free sandbox probe. Codex and Command roles always run.
+        """
         self._unchanged()
-        evidence = {name: adapter.preflight() for name, adapter in self.transports.items()}
-        return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": 0}
+        keys = mapping(recorded.get("reuse_keys", {})) if recorded else {}
+        passes = mapping(recorded.get("roles", {})) if recorded else {}
+        reuse_keys = {name: self._reuse_key(name, adapter) for name, adapter in self.transports.items()
+                      if isinstance(adapter, ClaudeCode)}
+        if any(name in keys and keys[name] != key for name, key in reuse_keys.items()):
+            raise EnvironmentDiffers(
+                "runtime environment differs from the frozen record; a change in the set of credential variables "
+                + f"also causes this (set now: {ClaudeCode.credentials_set()}); restore the first-run environment and resume")
+        evidence: dict[str, object] = {}
+        for name, adapter in self.transports.items():
+            kept = passes.get(name)
+            if (isinstance(adapter, ClaudeCode) and keys.get(name) == reuse_keys[name] and isinstance(kept, dict)
+                    and cast(dict[str, object], kept).get("isolation") == "passed"):
+                adapter.check_sandbox()
+                evidence[name] = kept
+                continue
+            evidence[name] = adapter.preflight()
+        live = sum(cast(int, mapping(item).get("live_calls", 0)) for item in evidence.values())
+        return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live, "reuse_keys": reuse_keys}
 
     def close(self) -> None:
         for adapter in self.transports.values():

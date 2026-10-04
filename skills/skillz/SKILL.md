@@ -1,16 +1,17 @@
 ---
 name: skillz
 description: >
-  Add, improve, audit, self-update, wedge, or experiment on a skill or sub-agent definition so it
+  Add, improve, audit, self-update, wedge, or autoimprove a skill or sub-agent definition so it
   runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts.
-  Use for /skillz <add|improve|audit|self-update|wedge|experiment>, "improve this skill",
+  Use for /skillz <add|improve|audit|self-update|wedge|autoimprove>, "improve this skill",
+  "autoimprove this skill",
   "optimize this skill", "tighten this skill",
   "audit this agent", "new skill for X", "skill not triggering", "fix
   trigger rate", or "what in this skill should be a CLI". Do NOT use for
   CLAUDE.md or system-prompt edits, or for code changes that a cheese
   pipeline skill owns.
 disable-model-invocation: true
-argument-hint: "<add|improve|audit|self-update|wedge|experiment> [<path>|<name>]"
+argument-hint: "<add|improve|audit|self-update|wedge|autoimprove> [<path>|<name>]"
 license: MIT
 metadata:
   author: paulnsorensen
@@ -19,30 +20,31 @@ metadata:
 
 # skillz
 
-Add, improve, audit, wedge, and self-update skill and agent definitions.
+Add, improve, audit, wedge, autoimprove, and self-update skill and agent definitions.
 The product is a **predictable** definition: the same process on every run and on every harness.
 Every lens asks one question of each line: *does this make the run more predictable, or is it sediment?*
 
 The mode is the first word after the skill name.
-`optimize` and `tighten` are aliases for `improve`.
-Require a target only for `add`, `improve`, `audit`, and `wedge`.
+The Aliases column lists the names that select the same mode.
+Require a target only for `add`, `improve`, `audit`, `wedge`, and `autoimprove`.
 `self-update` has no target.
 Ask for the mode when it is missing.
 Ask for a target when the mode requires one.
 
 ## Modes
 
-| Mode | Target | Analytics | Writes | Product |
-|---|---|---|---|---|
-| `add <name>` | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
-| `improve <path>` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
-| `audit <path>` | a `SKILL.md` or agent file | yes | none | calibrated report |
-| `self-update` | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
-| `wedge <path>` | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
-| `experiment` | an inspection or audit manifest, or public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
+| Mode | Aliases | Target | Analytics | Writes | Product |
+|---|---|---|---|---|---|
+| `add <name>` | none | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
+| `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
+| `audit <path>` | none | a `SKILL.md` or agent file | yes | none | calibrated report |
+| `self-update` | none | this skill | yes | `references/harness-layout.md` + this skill | research delta + applied fixes |
+| `wedge <path>` | none | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
+| `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
-For `experiment`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
+For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
 Ask which harness command and model the user wants before setup.
+When the target has no contract, follow `No contract` in that reference.
 Use the installed `scripts/skillz-experiment.pyz`. Do not require a source checkout.
 
 ## Shared protocol
@@ -70,6 +72,7 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | **Invocation** | `description` = trigger conditions, front-loaded, third person → «workflow summary», «summary description» | Trigger phrases + "Do NOT use for"; no internal workflow; ≤1024 chars; first sentence carries the trigger. `references/description-optimization.md`. |
 | **Portability** | Spec-core frontmatter plus additive Claude fields; user-only policy on every host → «Claude-only assumption», «sidecar missing», «`$ARGUMENTS` dependence» | `disable-model-invocation: true` pairs with `agents/openai.yaml`; args are parsed from the text after the skill name; no `${CLAUDE_SKILL_DIR}`; skills cross-referenced by `/name`; dispatch and GitHub ops name the contract before host syntax. Full matrix: `references/harness-layout.md`. |
 | **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
+| **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect_skill.py` `long_sentences` facts (sentences over 20 words). Report passive voice and multi-instruction sentences as findings. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
 | **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; each bundled script has an invocation line and an output contract. Fix through `wedge`. |
@@ -85,10 +88,20 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 Tag each finding with severity × confidence.
 The kernel is `references/calibration.md`; the defaults:
 
-- **Severity by lens** — Predictability, Invocation, Portability, Tool scoping, Calibration → `high`; Information hierarchy, Context & fork, Pruning → `high`/`medium`; Leading words, Deterministic offload, Output format, Usage → `medium`.
+- **Severity by lens** — Predictability, Invocation, Portability, Tool scoping, Calibration → `high`; Information hierarchy, Context & fork, Pruning → `high`/`medium`; Leading words, Prose, Deterministic offload, Output format, Usage → `medium`.
 - **Confidence** — a cited line plus a concrete failure, a reference that does it right, or analytics data → `<certain>`; a checkable but unverified observation → `<speculative>`; a misread → `<don't know>`, dropped.
 - **Re-derive** — re-read the target and re-derive each `<speculative>` finding once without the first pass. Drop it when it does not reproduce.
 - Order by severity, then `<certain>` first.
+
+## Prose check
+
+`add` step 5 and `improve` step 5 run this check.
+
+1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <target file>` on the `SKILL.md` or agent file.
+2. Rewrite every sentence over 25 words that it reports.
+3. For a changed reference file, apply the same 25-word limit by hand.
+
+The helper rejects a file that has no frontmatter, so it cannot check a reference file.
 
 ## Mode: add
 
@@ -101,9 +114,14 @@ The kernel is `references/calibration.md`; the defaults:
    Set `model` + `effort` only when the skill is model-invoked.
 4. Register the skill in its repo's index (`references/harness-layout.md § Registration`).
    A repo-local skill stays out of every global list; place it per `references/harness-layout.md § Repo-local skills`.
-5. Run `improve` on the new file once, then the repo's deploy step when one exists (a dotfiles sync, `npx skills add`, or a copy into the harness skills directory).
+5. Run the prose check on `SKILL.md` and on each changed reference before you report the mode as done.
+6. Run `improve` on the new file once.
+   Then run the repo's deploy step when one exists.
+   Example deploy steps are a dotfiles sync, `npx skills add`, or a copy into the harness skills directory.
 
-Done means: the file exists, the repo index names it (or every repo-local host path resolves), the deploy step exits 0 when one exists, and the Invocation lens passes.
+Done means: the file exists and the repo index names it, or every repo-local host path resolves.
+The deploy step exits 0 when one exists. The Invocation lens passes.
+The inspector reports no sentence over 25 words.
 
 ## Mode: improve
 
@@ -115,11 +133,14 @@ Done means: the file exists, the repo index names it (or every repo-local host p
    A delegated run returns these findings to its parent, and the parent asks.
    A PR body or a report is not approval.
 4. Keep the target's voice and protocol semantics. Tighten; do not redesign.
-5. Re-measure the body. Report before/after tokens and the residual findings.
-6. Run the repo's deploy step when the target lives under a `skills/` or `agents/` tree that a sync distributes.
+5. Run the prose check on the target file and on each changed reference before you report the mode as done.
+6. Re-measure the body. Report before/after tokens and the residual findings.
+7. Run the repo's deploy step when the target lives under a `skills/` or `agents/` tree that a sync distributes.
    Confirm the deployed copy matches the source; a vendored skill with the same name overwrites a local one (`harness-layout.md § Layout`).
 
-Done means: every `<certain>` finding above `low` is fixed or recorded as an explicitly accepted residual, the user has approved or declined every item submitted for approval, the body is ≤5k tok, and the repo's quality gate exits 0.
+Done means: every `<certain>` finding above `low` is fixed or recorded as an explicitly accepted residual.
+The user approves or declines every item submitted for approval.
+The body is ≤5k tok. The inspector reports no sentence over 25 words. The repo's quality gate exits 0.
 
 ## Mode: audit
 
@@ -162,7 +183,8 @@ Done means: every candidate cites a line and has all seven contract fields.
 ## Mode: self-update
 
 1. Check every source in `## Sources` of `references/harness-layout.md` for changes since its `Checked:` date; delegate to a fresh-context research agent when the host offers one.
-   Cover frontmatter fields, discovery paths, invocation policy, argument handling, and body budgets for Claude Code, the Agent Skills spec, Codex, OMP, Pi, Zed, and the `skills` CLI.
+   Cover frontmatter fields, discovery paths, invocation policy, argument handling, and body budgets.
+   Cover Claude Code, the Agent Skills spec, Codex, OMP, Pi, Zed, and the `skills` CLI.
 2. Diff the digest against the reference.
    Update the matrix, the rules, the template, and the `Checked:` date.
    Record each rejected claim with its reason under `## Rejected`.
@@ -221,4 +243,5 @@ Read on demand:
 - `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs.
 - `engine/scripts/` and `engine/references/` — internal analytics ingestion, query, schema, conventions, and coverage; not a separate skill.
 - `references/calibration.md` — the confidence × severity kernel.
-- `references/experiments.md` — `experiment`; bounded GEPA search, case schema, isolation, and the frozen inspection contract.
+- `references/experiments.md` — `autoimprove`; the contract, graders, wedge mode, case schema, isolation, and the frozen inspection contract.
+- `references/experiment-harness.md` — the user selects a command or `claude` adapter, or separate roles.

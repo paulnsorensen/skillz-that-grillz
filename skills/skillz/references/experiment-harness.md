@@ -31,7 +31,10 @@ Create a private configuration file outside the skill:
 
 Task, reflection, and judge roles inherit the top-level adapter, command, and CLI model.
 Each role can override inherited fields.
+The adapter is `codex`, `command`, or `claude`.
 A Codex role accepts only `adapter` and `model`, without inherited command or identity fields.
+A `claude` role accepts `adapter`, `model`, and `command`. The command names only the executable.
+A `command` role sends the contract skill name and path to the wrapper.
 For mixed adapters, omit the top-level adapter fields. Define each role completely:
 
 ```json
@@ -61,6 +64,31 @@ Pass script and configuration paths as separate arguments, not embedded `--confi
 The runner stops when an executable, script, file argument, model, or role changes.
 Transitive imports and wrapper-managed resources remain the trusted wrapper's responsibility.
 Reports contain adapter names, model names, and fingerprints, never command arguments.
+
+## The claude adapter
+
+The `claude` role runs `claude --restricted -p` with `--tools Bash,Read,Skill`.
+It also passes `--strict-mcp-config` and a generated settings file.
+The settings enable the sandbox floor and disable bundled skills.
+They deny host reads from `/`. They allow only the workspace and the runtime roots that commands need.
+The runner places only the staged candidate under the workspace skill directory.
+
+Before the first live task, a live isolation preflight runs. It runs once per run, not once per stage.
+The preflight asks Claude Code to run `cat` on a sealed host file and on a workspace file.
+It passes only when a Bash command read the sealed path, the host read failed, and the workspace read returned its token.
+The run record keeps the pass and its live calls under `preflight`.
+Each Claude role makes one live preflight per run. Each one counts against `--max-invocations`.
+Later stages reuse the recorded pass and make no new live call.
+Every stage still runs the free helper sandbox probe, which makes no model call.
+The reuse key joins the role fingerprint and the Claude environment hash.
+The environment hash includes the names, not the values, of the set authentication variables.
+A changed key stops the stage with the code `environment-differs` and the text "runtime environment differs from the frozen record".
+The run stays resumable. Resume it after you restore the first-run environment.
+The check runs before any live call, so a changed key costs nothing.
+A failed preflight stops the run. There is no fallback to an unsandboxed run.
+The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
+A missing sandbox tool stops the run.
+The macOS path is unverified live. Verify it before you authorize private data.
 
 ## JSON protocol, version one
 
@@ -99,7 +127,14 @@ Return the actual process result:
 ```
 
 The runner supplies its own probe before inference.
-The probe requires denied host reads, denied symlink escapes, denied candidate writes, denied network access, and a clean tool environment.
+The probe requires denied host reads, denied symlink escapes, and denied candidate writes.
+It also requires a clean tool environment.
+It requires denied network access: the host loopback connect fails, and a routed connect fails at once with an unreachable or denied error.
+The routed check connects by UDP to `192.0.2.1`.
+`ENETUNREACH`, `EPERM`, and `EACCES` pass. Any other error fails the probe.
+A failed TCP `socket()` call skips both network checks.
+The probe covers IPv4 only.
+A loopback connect timeout passes. The routed UDP check cannot time out.
 Only `PATH`, `HOME`, `TMPDIR`, `LANG`, and `LC_CTYPE` may reach tools.
 The task workspace must remain writable.
 The staged `.agents` tree must remain read-only.
@@ -122,6 +157,8 @@ Return exactly the one isolated candidate:
 
 The runner rejects the check when a skill is missing, extra, or in the wrong location.
 Disable other skill roots, hooks, plugins, apps, and external configuration.
+The runner rejects a candidate whose SKILL.md frontmatter declares `hooks` or `user-invocable` as a top-level key.
+The init-event skill check sees only user-invocable skills, because Claude Code omits skills with `user-invocable: false` from the init `skills` list.
 
 ### Inference
 
@@ -166,7 +203,8 @@ The probe detects accidental configuration failures; it does not attest sandbox 
 Protocol fixtures test runner behavior, not real operating-system isolation.
 Verify the actual harness sandbox before authorizing private data or paid invocations.
 
-Preflight makes no inference invocations.
+Codex and command preflights make no inference invocation.
+Each `claude` role makes one live preflight call per run.
 Every attempted inference, including a failed response, consumes the shared invocation budget.
 All roles share the same deadline and holdout reservation.
 The runner terminates the process group at the deadline and does not retry.
