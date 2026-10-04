@@ -1,7 +1,7 @@
 # Cross-harness skill layout
 
 Checked: 2026-09-12. Focused recheck on 2026-09-28 covered Claude, Pi, Zed, and `npx skills` discovery only.
-Read when the Portability lens fires, in `add`, and in `self-update`.
+Read when the Portability lens fires or in `add`. Repository maintenance also uses this reference.
 
 ## Layout
 
@@ -117,7 +117,7 @@ metadata:
 
 ## Sources
 
-`self-update` queries each of these for changes since `Checked:`.
+The repository-local `skillz-self-update` skill queries each source for changes since `Checked:`.
 
 | Host | Source | Re-check |
 |---|---|---|
