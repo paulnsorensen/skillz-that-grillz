@@ -11,6 +11,7 @@ import fromargs
 
 from skillz_experiments._cases import CodedError, load_cases, load_manifest
 from skillz_experiments._contract import load_contract
+from skillz_experiments._facts import audit_facts
 from skillz_experiments._harness import Configuration
 from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget
@@ -70,6 +71,12 @@ def evaluate(run: Path, *, model: str, live: bool = False, harness_config: Path 
     with _coded():
         return execute(run, "evaluate", model, live=live, maximum=max_invocations, seconds=max_seconds,
                        harness_config=harness_config)
+
+
+@app.command(name="audit-facts")
+def audit_facts_command(directory: Path) -> dict[str, object]:
+    """Report fixed rubric checks for a skill directory as facts, without grading it."""
+    return audit_facts(directory)
 
 
 @app.command(name="export")

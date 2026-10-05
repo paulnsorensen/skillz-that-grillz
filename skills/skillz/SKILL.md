@@ -56,11 +56,14 @@ Use the installed `scripts/skillz-experiment.pyz`. Do not require a source check
 
 Read the target. Read a linked reference only when its stated trigger matches the run.
 A full-package audit may explicitly read every file in the target package.
-For `audit`, run `python3 <this-skill-directory>/scripts/inspect_skill.py <target>` before applying the rubric.
-Use its JSON as objective package facts, not a fitness score.
+For `audit` of a skill directory, run `python3 <this-skill-directory>/scripts/skillz-experiment.pyz audit-facts <skill-directory>` before applying the rubric.
+Also run `python3 <this-skill-directory>/scripts/inspect_skill.py <target>` for the prose facts.
+Use both JSON outputs as objective package facts, not a fitness score. An agent file has no package, so skip `audit-facts`.
+Read `references/experiments.md § Audit facts contract` for the check ids and statuses.
 Report a helper error without treating it as a successful audit.
 Classify it as **agent** (`tools:` / `disallowedTools:` or an `agents/registry.yaml` entry) or **skill** (`name:` + `description:`).
-Measure the body: bytes/4 after the frontmatter block; report `~N tok` against the 5k budget.
+Report the body size as `~N tok` against the 5k budget.
+For a skill, copy it from the `body.token-estimate` check. For an agent file, count bytes/4 after the frontmatter block.
 List the deploy targets the definition reaches (`references/harness-layout.md § Layout`).
 
 ### 2. Rubric
@@ -72,15 +75,15 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | Lens | Principle → catches | Check |
 |---|---|---|
 | **Predictability** | Fixed protocol with checkable completion → «premature completion» | Every step ends on a done-condition an agent can verify. |
-| **Invocation** | `description` = trigger conditions, front-loaded, third person → «workflow summary», «summary description» | Trigger phrases + "Do NOT use for"; no internal workflow; ≤1024 chars; first sentence carries the trigger. `references/description-optimization.md`. |
-| **Portability** | Spec-core frontmatter plus additive Claude fields; user-only policy on every host → «Claude-only assumption», «sidecar missing», «`$ARGUMENTS` dependence» | `disable-model-invocation: true` pairs with `agents/openai.yaml`; args are parsed from the text after the skill name; no `${CLAUDE_SKILL_DIR}`; skills cross-referenced by `/name`; dispatch and GitHub ops name the contract before host syntax. Full matrix: `references/harness-layout.md`. |
-| **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
+| **Invocation** | `description` = trigger conditions, front-loaded, third person → «workflow summary», «summary description» | Trigger phrases + "Do NOT use for"; no internal workflow; length comes from `description.length`; first sentence carries the trigger. `references/description-optimization.md`. |
+| **Portability** | Spec-core frontmatter plus additive Claude fields; user-only policy on every host → «Claude-only assumption», «sidecar missing», «argument-variable dependence» | Cite failed `audit-facts` checks for keys, sidecar pairing, and argument, skill-directory, or file-mention syntax. Judge by hand: args are parsed from the text after the skill name; skills are cross-referenced by `/name`; dispatch and GitHub ops name the contract before host syntax. Full matrix: `references/harness-layout.md`. |
+| **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «file-mention force-load» | Cite failed `audit-facts` checks for the token budget, nested references, orphans, and missing read triggers. Judge by hand: relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
 | **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect_skill.py` `long_sentences` facts (sentences over 25 words). Cite `advisory_sentences` (21 to 25 words) only for procedural steps. Report passive voice and multi-instruction sentences as findings. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
-| **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; each bundled script has an invocation line and an output contract. Fix through `wedge`. |
+| **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; `scripts.invocation-line` covers the invocation line; judge whether each bundled script has an output contract. Fix through `wedge`. |
 | **Tool scoping** | Read-only / write-scoped / focused; use host enforcement when available → «prose-only constraint» | Claude skills use `disallowed-tools` to remove tools for the current turn. Their `allowed-tools` grants permission without prompts; it is not a deny list. Claude agents use `disallowedTools`. Report actual enforcement per mode and mark prose-only limits as degraded. Do not disable writes for `improve`. |
-| **Context & fork** | Fork when output > ~500 lines or only a digest is needed → «monolithic output» | Fork matches size; a wrap-up signal exists; `model:` + `effort:` set on model-invoked skills, absent on user-only skills. |
+| **Context & fork** | Fork when output > ~500 lines or only a digest is needed → «monolithic output» | Fork matches size; a wrap-up signal exists; the `model-policy.*` checks cover `model:` + `effort:`. |
 | **Prompt quality** | Positive framing, why-over-what, one strong example, "What this never does" → «negation-heavy», «rules without reasons» | Judgment tasks use a scaffold, not always/never. `references/decision-frameworks.md`. |
 | **Calibration** | Judgment agents tag confidence × severity → «judgment without calibration» | `<certain>` / `<speculative>` / `<don't know>`; don't-know never surfaces. |
 | **Output format** | Summary first, tables for findings, clean-vs-issues signal → «no output format» | Format defined; summary and detail split. |
@@ -236,5 +239,5 @@ Read on demand:
 - `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs. For `audit`, pass each pack path and the target kind to its pack context. Read a pack only when the host has no sub-agents.
 - `engine/scripts/` and `engine/references/` — internal analytics ingestion, query, schema, conventions, and coverage; not a separate skill.
 - `references/calibration.md` — the confidence × severity kernel.
-- `references/experiments.md` — `autoimprove`; the contract, graders, wedge mode, case schema, isolation, and the frozen inspection contract.
+- `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the contract, graders, wedge mode, case schema, isolation, the frozen inspection contract, and the audit facts contract.
 - `references/experiment-harness.md` — the user selects a command or `claude` adapter, or separate roles.

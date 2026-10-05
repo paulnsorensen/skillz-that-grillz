@@ -373,3 +373,56 @@ Candidate helper code never executes on the host outside that boundary.
 Inspection grading requires exact JSON task results, candidate-load evidence, and an actual helper command.
 Audit grading preserves the load and helper requirements, then checks evidence and uses the separate judge.
 The output schema describes response shape only. It never includes the expected answer.
+## Audit facts contract
+
+Run `python3 scripts/skillz-experiment.pyz audit-facts DIRECTORY`.
+The command reports the fixed rubric checks for one skill directory. It reports facts and never grades.
+The `inspect_skill.py` output above does not change, and the command does not repeat its sentence checks.
+
+Success returns exit zero and one JSON object:
+
+- `schema_version`: `1`.
+- `input`: the directory argument, as given.
+- `checks`: a list sorted by `path`, `id`, then `line`. Each item is `{id, rule, path, line, status, detail}`.
+
+The same input gives byte-identical output.
+`path` is relative to the directory. `line` is a 1-based file line, or `null` when no line applies.
+`status` is `pass`, `fail`, or `not-applicable`.
+`rule` names the rubric lens, then the number of the matching layout rule when one applies.
+`detail` is a short fact for the finding.
+
+| `id` | `rule` | Fails when |
+|---|---|---|
+| `package.skill-file` | `layout.skill-file` | `SKILL.md` is missing; no other check runs |
+| `package.frontmatter` | `layout.skill-file` | `SKILL.md` has no frontmatter delimiters; no other check runs |
+| `name.matches-directory` | `layout.name` | `name:` differs from the directory name |
+| `name.format` | `layout.name` | `name:` is not kebab-case or exceeds 64 characters |
+| `description.length` | `invocation` | `description:` is missing or exceeds 1024 characters |
+| `frontmatter.known-keys` | `portability.1` | a key is outside the spec and Claude set |
+| `sidecar.exists` | `portability.3` | a user-only skill has no `agents/openai.yaml` |
+| `sidecar.implicit-invocation-off` | `portability.3` | the sidecar lacks `allow_implicit_invocation: false` |
+| `model-policy.user-only` | `portability.10` | a user-only skill sets `model` or `effort` |
+| `model-policy.model-invoked` | `portability.10` | a model-invoked skill lacks `model` or `effort` |
+| `body.token-estimate` | `information-hierarchy.9` | body bytes divided by 4 exceed 5000 |
+| `body.arguments-variable` | `portability.4` | the body contains `$ARGUMENTS` |
+| `body.skill-dir-variable` | `portability.5` | the body contains the `CLAUDE_SKILL_DIR` variable |
+| `body.file-mention` | `portability.6` | the body contains an `@file` mention |
+| `references.nested` | `information-hierarchy.9` | a reference links to another reference |
+| `references.orphan` | `information-hierarchy` | `SKILL.md` does not name the reference path |
+| `references.read-trigger` | `information-hierarchy.9` | the `## References` entry has no text after a dash or colon |
+| `scripts.invocation-line` | `deterministic-offload` | no body line names `scripts/<file>` |
+| `registration.readme-row` | `registration` | the repository README `## Skills` table has no row for the skill |
+| `repo-local.internal-metadata` | `repo-local` | a repo-local skill lacks `metadata.internal: true` |
+| `repo-local.claude-symlink` | `repo-local` | `.claude/skills/<name>` is not a symlink that resolves to the skill |
+
+A check that does not apply reports `not-applicable`. Examples are a model-invoked skill for the sidecar checks and a skill without references.
+Registration and repo-local checks also report `not-applicable` outside a repository.
+The command finds the repository root by walking up for `.git`.
+A repo-local skill lives under `.agents/skills/` and needs no README row.
+A reference listed nowhere in `## References` reports `not-applicable` for `references.read-trigger`.
+
+The command parses only the frontmatter lines that the checks need. It does not parse full YAML.
+The allowed key set matches the cross-harness frontmatter matrix; a test pins the two together.
+Failure returns exit one with a JSON `error` on stderr.
+The command rejects a missing path, a file, a symlink input, and any symlink inside the package.
+Quality stays in prose. The command cannot judge a trigger phrase, an output contract, or a description.
