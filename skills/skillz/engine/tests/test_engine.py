@@ -185,6 +185,7 @@ def _pack_sql(pack, kind, target):
     ]
 
 
+@unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
 class PackTargetKindTest(unittest.TestCase):
     """Each pack starts from the table that matches the target kind."""
 
@@ -194,15 +195,16 @@ class PackTargetKindTest(unittest.TestCase):
         root = Path(cls.directory.name)
         logs = root / "claude" / "projects" / "sample"
         logs.mkdir(parents=True)
-        when = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now = datetime.now(timezone.utc)
         entries = []
-        for call_id, name, tool_input in (
-            ("skill-call", "Skill", {"skill": "skillz"}),
-            ("agent-call", "Agent", {"subagent_type": "reviewer", "description": "review"}),
+        for call_id, name, tool_input, age in (
+            ("skill-call", "Skill", {"skill": "skillz"}, timedelta(days=3)),
+            ("agent-call", "Agent", {"subagent_type": "reviewer", "description": "review"},
+             timedelta(days=3) - timedelta(minutes=1)),
         ):
             entries.append({
-                "type": "assistant", "timestamp": when, "sessionId": "fixture-session",
-                "cwd": str(root / "project"),
+                "type": "assistant", "timestamp": (now - age).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "sessionId": "fixture-session", "cwd": str(root / "project"),
                 "message": {"content": [{
                     "type": "tool_use", "name": name, "id": call_id, "input": tool_input,
                 }]},
@@ -233,7 +235,15 @@ class PackTargetKindTest(unittest.TestCase):
     def _pack(self, pack, kind, target):
         return [self._run(sql) for sql in _pack_sql(pack, kind, target)]
 
-    @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
+    def test_every_pack_query_starts_from_the_start_table(self):
+        for pack in ("skill-usage.md", "agent-orchestration.md", "drift-regression.md"):
+            blocks = re.findall(r"```sql\n(.*?)```", (PACKS / pack).read_text(), re.S)
+            self.assertTrue(blocks, pack)
+            for block in blocks:
+                with self.subTest(pack=pack, sql=block[:60]):
+                    self.assertIn("{START_TABLE}", block)
+                    self.assertNotIn("skill_invocations", block)
+
     def test_agent_target_reports_usage_trend_and_decay(self):
         coverage, total, weekly, projects, peers = self._pack("skill-usage.md", "agent", "reviewer")
         self.assertEqual([row["harness"] for row in coverage], ["claude"])
@@ -244,9 +254,14 @@ class PackTargetKindTest(unittest.TestCase):
         drift = self._pack("drift-regression.md", "agent", "reviewer")
         self.assertEqual(int(drift[0][0]["recent_4w"]), 1)
         orchestration = self._pack("agent-orchestration.md", "agent", "reviewer")
-        self.assertEqual(len(orchestration[1]), 1)
+        self.assertEqual(orchestration[0], [])
+        self.assertEqual(orchestration[1], [])
 
-    @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
+    def test_skill_target_counts_events_after_the_anchor(self):
+        tools, spawns, _, windows = self._pack("agent-orchestration.md", "skill", "skillz")
+        self.assertEqual([row["tool_name"] for row in tools], ["Agent"])
+        self.assertEqual([row["agent_type"] for row in spawns], ["reviewer"])
+        self.assertEqual(windows[0]["correlated_spawns"], 1)
     def test_skill_target_still_starts_from_skill_invocations(self):
         _, total, _, _, peers = self._pack("skill-usage.md", "skill", "skillz")
         self.assertEqual(total[0]["total_invocations"], 1)
@@ -254,7 +269,6 @@ class PackTargetKindTest(unittest.TestCase):
         self.assertEqual(self._pack("skill-usage.md", "agent", "skillz")[1][0]["total_invocations"], 0)
         self.assertEqual(self._pack("skill-usage.md", "skill", "reviewer")[1][0]["total_invocations"], 0)
 
-    @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
     def test_harness_without_events_is_absent_from_coverage(self):
         for kind in START:
             with self.subTest(kind=kind):

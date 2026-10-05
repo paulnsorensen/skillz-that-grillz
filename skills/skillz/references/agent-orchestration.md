@@ -16,6 +16,7 @@ in this `skillz` skill. Replace each placeholder before you run a query.
 For an `agent` target, a window starts at each spawn of that agent in the parent session.
 The spawned agent's own tool calls carry no join key. The tool, MCP, and spawn tables
 count parent-session events in the window, so state that limit in the findings.
+Each window excludes its own anchor event, so the anchor is never a correlated event.
 
 First run `SELECT harness, count(*) AS n FROM {START_TABLE} GROUP BY harness;`.
 Report a harness absent from the result as `unavailable`, never as 0.
@@ -33,7 +34,7 @@ FROM tool_uses tu
 WHERE EXISTS (
     SELECT 1 FROM windows w
     WHERE w.harness = tu.harness AND w.sessionId = tu.sessionId
-      AND tu.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+      AND tu.timestamp::TIMESTAMP > w.t0 AND tu.timestamp::TIMESTAMP <= w.t1
 )
 GROUP BY tu.tool_name ORDER BY uses DESC;
 ```
@@ -54,7 +55,7 @@ FROM agent_spawns asp
 WHERE EXISTS (
     SELECT 1 FROM windows w
     WHERE w.harness = asp.harness AND w.sessionId = asp.sessionId
-      AND asp.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+      AND asp.timestamp::TIMESTAMP > w.t0 AND asp.timestamp::TIMESTAMP <= w.t1
 )
 GROUP BY asp.agent_type, asp.description, asp.mode
 ORDER BY spawns DESC;
@@ -73,7 +74,7 @@ FROM mcp_calls mc
 WHERE EXISTS (
     SELECT 1 FROM windows w
     WHERE w.harness = mc.harness AND w.sessionId = mc.sessionId
-      AND mc.timestamp::TIMESTAMP BETWEEN w.t0 AND w.t1
+      AND mc.timestamp::TIMESTAMP > w.t0 AND mc.timestamp::TIMESTAMP <= w.t1
 )
 GROUP BY mc.harness, mc.tool_name ORDER BY calls DESC;
 ```
@@ -93,7 +94,8 @@ SELECT w.harness, w.sessionId, w.window_start,
 FROM windows w
 LEFT JOIN agent_spawns asp
     ON asp.harness = w.harness AND asp.sessionId = w.sessionId
-   AND asp.timestamp::TIMESTAMP BETWEEN w.window_start AND w.window_end
+   AND asp.timestamp::TIMESTAMP > w.window_start
+   AND asp.timestamp::TIMESTAMP <= w.window_end
 GROUP BY w.harness, w.sessionId, w.window_start
 ORDER BY correlated_spawns DESC, w.window_start DESC LIMIT 10;
 ```

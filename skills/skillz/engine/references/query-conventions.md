@@ -9,7 +9,7 @@ the pack and the *schema* from `canonical-schema.md` (in this data layer).
 
 ```
 # Pack: <domain>
-# target_param: {SKILL|TOOL|AGENT|...}   — the placeholder queries substitute
+# target_param: {TARGET}   — the placeholder queries substitute
 # harness: <how the pack uses the harness filter>
 # queries: ordered list of {name, sql}   — sql references the canonical schema
 # output_format: a markdown template the digest fills

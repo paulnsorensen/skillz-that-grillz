@@ -21,6 +21,7 @@ SELECT harness, count(*) AS n FROM {START_TABLE} GROUP BY harness;
 A harness absent from this result has no `{START_TABLE}` events.
 Report that harness as `unavailable`, never as 0.
 If the query returns no rows, report all usage as `unavailable`.
+
 ## 1. Total invocations and date range
 
 ```sql

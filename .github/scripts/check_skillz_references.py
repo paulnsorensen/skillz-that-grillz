@@ -28,8 +28,11 @@ def find_nested(references: Path = REFERENCES) -> list[str]:
     return findings
 
 
-def main() -> int:
-    findings = find_nested()
+def main(references: Path = REFERENCES) -> int:
+    if not references.is_dir():
+        print(f"error: references directory not found: {references}", file=sys.stderr)
+        return 2
+    findings = find_nested(references)
     for finding in findings:
         print(finding)
     return 1 if findings else 0
