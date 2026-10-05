@@ -20,7 +20,7 @@ classifiers = [
 # Exact shiv pin: shiv writes its version into every .pyz, so a different shiv
 # changes the asset bytes. `uvx --from git+...` ignores uv.lock, so the pin
 # must live here for a local `wedge lock` to match the action's build.
-dependencies = ["fromargs>=0.1.0,<0.2", "shiv==1.0.8"]
+dependencies = ["fromargs>=0.2.0,<0.3", "shiv==1.0.8"]
 
 [project.optional-dependencies]
 experiments = ["gepa==0.1.4"]

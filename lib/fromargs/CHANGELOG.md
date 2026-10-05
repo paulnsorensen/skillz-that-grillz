@@ -8,8 +8,9 @@ A `0.x` minor release can contain breaking changes.
 The `publish fromargs` workflow reads the section for the tagged version.
 It uses that section as the GitHub release notes.
 To release, move the `Unreleased` entries into a new version section with the date.
-When the minor version changes, bump the `fromargs` version range in `pyproject.toml` and `lib/pyproject.toml`, and relock.
-Then set the same version in `pyproject.toml` and push a `fromargs-v<version>` tag.
+Then set the same version in `lib/fromargs/pyproject.toml`.
+When the minor version changes, also bump the `fromargs` range in `pyproject.toml` and `lib/pyproject.toml`.
+Then relock, and push a `fromargs-v<version>` tag after the release commit merges.
 
 ## [Unreleased]
 
@@ -41,12 +42,11 @@ Then set the same version in `pyproject.toml` and push a `fromargs-v<version>` t
 
 ### Fixed
 
-- A converter or validator exception now reports an error line with a `traceback` path.
-  Before, it escaped `App.run()`.
-  A `ValueError`, `TypeError`, or `AssertionError` is a usage error at exit code 2.
-  Any other exception exits 1.
+- A converter or validator exception other than `ValueError`, `TypeError`, or
+  `AssertionError` now reports the exit code 1 error line with a `traceback` path.
+  Before, it escaped `App.run()`. Cyclopts still reports those three types as usage errors at exit code 2.
   A quote-split repair candidate that raises such an exception counts as rejected.
-- **Breaking:** a `default_parameter` that a command inherits from its app or group now gets
+- **Breaking:** A `default_parameter` that a command inherits from its app or group now gets
   the reserved `--json`/`--full` check. A reserved flag now raises `ValueError` at registration.
 - `--version` resolves the caller's distribution when Python lists it twice
   (for example under `uv run --with`), and under `python -m pkg.cli`.

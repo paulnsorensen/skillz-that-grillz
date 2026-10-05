@@ -203,6 +203,7 @@ def test_set_of_frozensets_is_deterministic_across_hash_seeds(seed: str) -> None
 
     assert json.loads(result.stdout) == [["a", "b"], ["a"], ["c"]]
 
+
 def test_generator_is_rejected_with_a_fix_hint() -> None:
     with pytest.raises(TypeError, match="generator is not JSON serializable; return a list"):
         _ = _run(x for x in range(3))

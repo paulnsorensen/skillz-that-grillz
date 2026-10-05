@@ -184,9 +184,10 @@ def _safe_message(exc: CycloptsError) -> str:
 
 
 def _report_system_exit(exc: SystemExit) -> int:
-    """Map a ``sys.exit`` argument to a status, as the interpreter would.
+    """Map a ``sys.exit`` argument to a status and report a non-zero one.
 
-    An ``int`` outside 1..255 reports its original value at exit 1.
+    An ``int`` outside 1..255 reports its original value at exit 1, because
+    the process would truncate it (``256`` would exit 0).
     """
     code = exc.code
     if code is None:
@@ -195,9 +196,7 @@ def _report_system_exit(exc: SystemExit) -> int:
         if code == 0:
             return 0
         status = int(code)  # sys.exit(True) is status 1, not JSON true
-        if 1 <= status <= 255:
-            return _report(f"exited with status {status}", status)
-        return _report(f"exited with status {status}", 1)
+        return _report(f"exited with status {status}", status if 1 <= status <= 255 else 1)
     return _report(str(code), 1)
 
 

@@ -8,9 +8,8 @@ class InvalidExitCodeError(Exception):
 
     It derives from ``Exception`` alone. Cyclopts reports ``ValueError``,
     ``TypeError``, and ``AssertionError`` from a converter or validator as
-    bad user input at exit 2. This bug must
-    not take that path. It must reach ``run`` as an unexpected exception:
-    exit 1 with a traceback.
+    bad user input at exit 2. This bug must not take that path. It must
+    reach ``run`` as an unexpected exception: exit 1 with a traceback.
     """
 
 

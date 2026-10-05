@@ -10,7 +10,9 @@ import sys
 from collections.abc import Iterator, Mapping, Sequence, Set
 from typing import TextIO, cast
 
-_BYTES_LIKE = (str, bytes, bytearray, memoryview)
+_BYTES_LIKE = (bytes, bytearray, memoryview)
+# Sequences that serialize as one JSON value, never as a list of items.
+_SCALAR_SEQUENCES = (str, *_BYTES_LIKE)
 
 
 def write_result(
@@ -28,7 +30,7 @@ def write_result(
     stream = stdout if stdout is not None else sys.stdout
     payload = _sorted_items(value) if isinstance(value, Set) else value
     note: str | None = None
-    if limit is not None and isinstance(payload, Sequence) and not isinstance(payload, _BYTES_LIKE):
+    if limit is not None and isinstance(payload, Sequence) and not isinstance(payload, _SCALAR_SEQUENCES):
         items = cast("Sequence[object]", payload)
         total = len(items)
         if not full and total > limit:
@@ -72,13 +74,11 @@ def _default(value: object) -> object:
         return dict(cast("Mapping[object, object]", value))
     if isinstance(value, Set):
         return _sorted_items(value)
-    if isinstance(value, Sequence) and not isinstance(value, _BYTES_LIKE):
+    if isinstance(value, Sequence) and not isinstance(value, _SCALAR_SEQUENCES):
         return list(value)
     name = type(value).__name__
     if isinstance(value, _BYTES_LIKE):
-        raise TypeError(
-            f"{name} is not JSON serializable; return a str (decode it) or a list of ints"
-        )
+        raise TypeError(f"{name} is not JSON serializable; return a str (decode it) or a list of ints")
     if isinstance(value, Iterator):
         raise TypeError(f"{name} is not JSON serializable; return a list instead of an iterator")
     raise TypeError(f"Object of type {name} is not JSON serializable")

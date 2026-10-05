@@ -776,6 +776,7 @@ def test_converter_system_exit_sets_the_status(capsys: pytest.CaptureFixture[str
     assert app.run(["cmd", "1"]) == 3
     assert json.loads(capsys.readouterr().err) == {"error": "exited with status 3", "exit_code": 3}
 
+
 @pytest.mark.parametrize("is_async", [False, True])
 def test_keyboard_interrupt_is_an_exit_130_envelope(
     capsys: pytest.CaptureFixture[str], is_async: bool
