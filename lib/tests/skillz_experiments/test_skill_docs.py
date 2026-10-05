@@ -107,8 +107,8 @@ def _long(path: Path) -> list[dict[str, int]]:
     start = 0
     if lines and lines[0] == "---":
         start = next(i for i, line in enumerate(lines[1:], 1) if line == "---") + 1
-    long_sentences = cast(Callable[[list[str], int], list[dict[str, int]]], getattr(_inspector(), "long_sentences"))
-    return [hit for hit in long_sentences(lines, start) if hit["words"] > MAX_WORDS]
+    sentences = cast(Callable[[list[str], int], list[dict[str, int]]], getattr(_inspector(), "prose_sentences"))
+    return [hit for hit in sentences(lines, start) if hit["words"] > MAX_WORDS]
 
 
 # Table cells are exempt: the inspector flushes sentences on `|`.

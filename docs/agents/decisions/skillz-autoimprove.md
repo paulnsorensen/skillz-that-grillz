@@ -21,6 +21,7 @@ The user settled each decision in a Mold session on 2026-10-03.
 ### ADR-003: Write and audit skillz prose in ASD-STE100  [status: accepted]
 - **Context:** The user requires ASD-STE100 for the skillz skill. `inspect_skill.py` reports facts only and is a frozen experiment component.
 - **Decision:** Skillz docs and add, improve, and reflection prose use STE. `inspect_skill.py` schema v2 adds `long_sentences` facts. A `Prose (ASD-STE100)` audit lens judges passive voice and multi-instruction sentences.
+  Schema v3 moves `long_sentences` to sentences over 25 words and adds `advisory_sentences` for 21 to 25 words.
 - **Alternatives:** A judge-only lens. A separate STE script.
 - **Consequences:** The helper schema bump regenerates `HELPER_INPUTS` fixtures and the self-test seed hash.
 

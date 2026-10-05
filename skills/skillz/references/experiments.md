@@ -360,7 +360,8 @@ Success returns exit zero and one JSON object:
 - `local_link_targets`: sorted local inline Markdown link paths.
 - `long_sentences`: prose sentences over 25 words, each as `{line, words}`.
 - `advisory_sentences`: prose sentences of 21 to 25 words, each as `{line, words}`.
-  The helper measures fence indent from list-item content, as CommonMark does.
+
+The helper measures fence indent from list-item content, as CommonMark does.
 
 The helper reports facts. It does not parse full YAML or compute task fitness.
 It ignores external links and fragment-only links.

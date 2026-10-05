@@ -33,16 +33,13 @@ Ask for a target when the mode requires one.
 
 ## Modes
 
-| Mode | Aliases | Target | Skill | Agent | Analytics | Writes | Product |
-|---|---|---|---|---|---|---|---|
-| `add <name>` | none | a new skill name | yes | no | no | creates `skills/<name>/` | a registered skill that passes the rubric |
-| `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | yes | yes | no | edits the target | applied fixes + residual findings |
-| `audit <path>` | none | a `SKILL.md` or agent file | yes | yes | yes | the analytics cache only; never the target | calibrated report |
-| `wedge <path>` | none | a `SKILL.md` | yes | no | no | none | a `/wedge` handoff brief per offload candidate |
-| `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | yes | no | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
-
-Only `improve` and `audit` accept an agent file.
-`add`, `wedge`, and `autoimprove` accept skills only.
+| Mode | Aliases | Target | Agent | Analytics | Writes | Product |
+|---|---|---|---|---|---|---|
+| `add <name>` | none | a new skill name | no | no | creates `skills/<name>/` | a registered skill that passes the rubric |
+| `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | yes | no | edits the target | applied fixes + residual findings |
+| `audit <path>` | none | a `SKILL.md` or agent file | yes | yes | the analytics cache only; never the target | calibrated report |
+| `wedge <path>` | none | a `SKILL.md` | no | no | none | a `/wedge` handoff brief per offload candidate |
+| `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | no | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
 `audit` never modifies the target. Its Usage ceremony runs `ingest.py`, which creates or refreshes the analytics cache.
 The cache path is `SESSIONS_DB`, else `<abs XDG_CACHE_HOME>/dotfiles/session-analytics/sessions.duckdb`, else `~/.cache/dotfiles/session-analytics/sessions.duckdb`.

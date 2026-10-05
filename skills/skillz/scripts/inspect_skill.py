@@ -83,16 +83,6 @@ def prose_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
     return found
 
 
-def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
-    """Hard tier: sentences with more than MAX_WORDS words."""
-    return [hit for hit in prose_sentences(lines, start) if hit["words"] > MAX_WORDS]
-
-
-def advisory_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
-    """Advisory tier: sentences with more than ADVISORY_WORDS and at most MAX_WORDS words."""
-    return [hit for hit in prose_sentences(lines, start) if hit["words"] <= MAX_WORDS]
-
-
 def inspect(path: Path) -> dict[str, object]:
     if path.is_symlink():
         raise ValueError("input must not be a symlink")
@@ -118,10 +108,11 @@ def inspect(path: Path) -> dict[str, object]:
                if parent.is_relative_to(path.parent)):
             raise ValueError("package must not contain symlinks")
         links.add(target)
+    hits = prose_sentences(lines, end + 1)
     return {"schema_version": SCHEMA_VERSION, "frontmatter_keys": keys,
-            "advisory_sentences": advisory_sentences(lines, end + 1),
+            "advisory_sentences": [hit for hit in hits if hit["words"] <= MAX_WORDS],
             "body_line_count": len(lines[end + 1:]), "local_link_targets": sorted(links),
-            "long_sentences": long_sentences(lines, end + 1)}
+            "long_sentences": [hit for hit in hits if hit["words"] > MAX_WORDS]}
 
 
 def main(argv: list[str] | None = None) -> int:
