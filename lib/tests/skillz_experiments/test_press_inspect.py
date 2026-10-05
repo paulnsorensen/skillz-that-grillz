@@ -1,4 +1,4 @@
-"""Press attacks on `inspect_skill.py` long_sentences (AC-16) through the subprocess seam."""
+"""Press attacks on `inspect_skill.py` long_sentences and advisory_sentences (AC-16) through the subprocess seam."""
 from __future__ import annotations
 
 import json

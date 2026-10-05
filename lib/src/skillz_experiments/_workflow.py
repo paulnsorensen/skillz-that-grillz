@@ -291,7 +291,8 @@ class _Session:
 
 
 _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
-             "active voice, present tense, one instruction per sentence, and at most 20 words per sentence. ")
+             "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
+             "and at most 25 words per descriptive sentence. ")
 
 
 def _reflection_request(mode: Mode, candidate: dict[str, str],

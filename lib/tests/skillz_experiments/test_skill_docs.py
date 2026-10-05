@@ -13,7 +13,6 @@ import pytest
 SKILL_DIR = Path(__file__).resolve().parents[3] / "skills/skillz"
 SKILL = SKILL_DIR / "SKILL.md"
 EXPERIMENTS = SKILL_DIR / "references/experiments.md"
-MAX_WORDS = 25
 
 
 def _inspector() -> ModuleType:
@@ -22,6 +21,10 @@ def _inspector() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+MAX_WORDS = cast(int, getattr(_inspector(), "MAX_WORDS"))
+ADVISORY_WORDS = cast(int, getattr(_inspector(), "ADVISORY_WORDS"))
 
 
 def _table(text: str, header: str) -> list[list[str]]:
@@ -84,7 +87,9 @@ def test_shared_prose_check_names_inspector_limit_and_references() -> None:
     assert len(items) == 3
     assert "inspect_skill.py" in items[0] and "SKILL.md" in items[0]
     assert f"over {MAX_WORDS} words" in items[1]
-    assert f"{MAX_WORDS}-word limit by hand" in items[2]
+    assert "`advisory_sentences`" in items[1] and "procedural step" in items[1]
+    assert f"{MAX_WORDS} words" in items[2] and f"{ADVISORY_WORDS} words for a procedural step" in items[2]
+    assert "by hand" in items[2]
 
 
 def test_no_contract_step_offers_judge_only_or_draft_contract() -> None:

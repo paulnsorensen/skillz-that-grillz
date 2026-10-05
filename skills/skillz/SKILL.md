@@ -33,13 +33,13 @@ Ask for a target when the mode requires one.
 
 ## Modes
 
-| Mode | Aliases | Target | Agent | Analytics | Writes | Product |
-|---|---|---|---|---|---|---|
-| `add <name>` | none | a new skill name | no | no | creates `skills/<name>/` | a registered skill that passes the rubric |
-| `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | yes | no | edits the target | applied fixes + residual findings |
-| `audit <path>` | none | a `SKILL.md` or agent file | yes | yes | the analytics cache only; never the target | calibrated report |
-| `wedge <path>` | none | a `SKILL.md` | no | no | none | a `/wedge` handoff brief per offload candidate |
-| `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | no | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
+| Mode | Aliases | Target | Analytics | Writes | Product |
+|---|---|---|---|---|---|
+| `add <name>` | none | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
+| `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
+| `audit <path>` | none | a `SKILL.md` or agent file | yes | the analytics cache only; never the target | calibrated report |
+| `wedge <path>` | none | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
+| `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
 `audit` never modifies the target. Its Usage ceremony runs `ingest.py`, which creates or refreshes the analytics cache.
 `references/analytics-ceremony.md` has the details. Skip Usage and the raw-log fallback write no cache.
@@ -101,9 +101,9 @@ The kernel is `references/calibration.md`; the defaults:
 `add` step 5 and `improve` step 5 run this check.
 
 1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <target file>` on the `SKILL.md` or agent file.
-2. Rewrite every sentence in `long_sentences` (over 25 words). This tier gates.
-   Review each `advisory_sentences` entry (21 to 25 words) when the sentence is a procedural step.
-3. For a changed reference file, apply the same 25-word limit by hand.
+2. Rewrite every sentence in `long_sentences` (over 25 words).
+   Rewrite each `advisory_sentences` entry (21 to 25 words) that is a procedural step.
+3. For a changed reference file, apply both limits by hand: 25 words, or 20 words for a procedural step.
 
 The helper rejects a file that has no frontmatter, so it cannot check a reference file.
 

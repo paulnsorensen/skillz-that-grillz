@@ -23,7 +23,7 @@ The user settled each decision in a Mold session on 2026-10-03.
 - **Decision:** Skillz docs and add, improve, and reflection prose use STE. `inspect_skill.py` schema v2 adds `long_sentences` facts. A `Prose (ASD-STE100)` audit lens judges passive voice and multi-instruction sentences.
   Schema v3 moves `long_sentences` to sentences over 25 words and adds `advisory_sentences` for 21 to 25 words.
 - **Alternatives:** A judge-only lens. A separate STE script.
-- **Consequences:** The helper schema bump regenerates `HELPER_INPUTS` fixtures and the self-test seed hash.
+- **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `_evaluation.py`, `evals/autoimprove.json`, `fixtures/self-test.json`, and the `references/experiments.md` example.
 
 ### ADR-004: Run the Claude Code adapter in --restricted mode  [status: accepted]
 - **Context:** The Codex adapter isolates discovery, filesystem, and network. Claude Code documents `--restricted` for eval harnesses; `--bare` needs an API key.

@@ -138,9 +138,9 @@ Do not describe the public self-test as a real-session benchmark.
 [^search]: `lib/src/skillz_experiments/_search.py:29-65`.
 [^cases]: `lib/src/skillz_experiments/_cases.py:44-58,128-211`; `_records.py:41-69`.
 [^candidate]: `lib/src/skillz_experiments/_candidate.py:52-113`; `_records.py:41-69`.
-[^evaluator]: `lib/src/skillz_experiments/_evaluation.py:11-82`; `_evaluator.py:38-71`; `skills/skillz/scripts/inspect_skill.py:85-114`.
+[^evaluator]: `lib/src/skillz_experiments/_evaluation.py:11-83`; `_evaluator.py:38-71`; `skills/skillz/scripts/inspect_skill.py:86-115`.
 [^runtime]: `lib/src/skillz_experiments/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
-[^workflow]: `lib/src/skillz_experiments/_workflow.py:101-292,364-416`; `_runtime.py:16-45`.
+[^workflow]: `lib/src/skillz_experiments/_workflow.py:101-292,365-417`; `_runtime.py:16-45`.
 [^export]: `lib/src/skillz_experiments/_workflow.py:437-471`.
 [^contract]: `lib/src/skillz_experiments/_contract.py:34-92,139-175`; `skills/skillz/references/experiments.md:167-200`; `skills/skillz/evals/autoimprove.json`.
 [^graders]: `lib/src/skillz_experiments/_graders.py:60-115`; `_evaluator.py:38-130`.
