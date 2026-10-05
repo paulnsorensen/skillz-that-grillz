@@ -1,9 +1,9 @@
 # Session-driven skill prompt and CLI optimization
 
 Session-driven skill prompt and CLI optimization uses a bounded GEPA experiment in skillz.
-The editable package contains its prompt, selected references, and inspection helper.
+The editable package contains its prompt, selected references, and an optional helper script.
 Approved cases drive evaluation; session frequency is not a success label.
-The first adapter targets skillz audit tasks on Codex, not arbitrary skill-owned programs.
+Any skill with an approved contract can be a target; the first target is skillz itself, tested on Codex and Claude Code.
 The goal remains “best measured for this use case,” not a globally optimal skill.[^implementation]
 
 ## Evidence and scope
@@ -57,11 +57,11 @@ Synthetic cases test the mechanism; they do not demonstrate personalization from
 ## Frozen candidate and evaluator
 
 GEPA optimizes only declared text components.
-The seed includes `SKILL.md`, the skill-owned inspection helper, and explicitly selected Markdown references.
+The seed includes `SKILL.md`, the helper that the contract declares, and explicitly selected Markdown references.
 Other package files remain frozen.
 The engine, permission policy, dataset, splits, output contract, and evaluator stay outside the candidate.[^candidate]
 
-The inspection helper reports lexical frontmatter keys, body line count, and local Markdown link targets.
+The skillz inspection helper, declared in its contract, reports lexical frontmatter keys, body line count, and local Markdown link targets.
 It does not grade prose or assign fitness.
 Independent checks validate helper behavior inside the Codex sandbox.
 Task fitness requires the expected JSON result and candidate execution evidence.[^evaluator]
@@ -111,18 +111,39 @@ Candidates can memorize approved training content.
 Therefore, all exports remain private and local until the user completes a separate review.
 The runner never applies, installs, merges, or pushes a candidate.[^export]
 
-The current adapter evaluates the frozen inspection-helper contract.
-Generic CLI contracts, additional harnesses, automatic analytics sampling, repeated-run statistics, and monetary pricing remain future work.
+The adapter is contract-driven.
+A skill declares an approved contract at `evals/autoimprove.json`, or in a `target` block of the case manifest.
+The shipped example is `skills/skillz/evals/autoimprove.json`.
+Without a contract, the runner stops with `contract-missing`.[^contract]
+A contract maps each case kind to one of five graders: `exact-json`, `judge`, `command`, `audit`, or `hybrid`.
+The skillz inspection helper is now one `exact-json` kind, not the whole evaluator.[^graders]
+
+Codex and Claude Code have built-in transports.
+The Claude Code transport runs `claude --restricted`.[^claude]
+Another harness needs a trusted command wrapper that implements the command protocol.[^harness]
+
+These items remain future work:
+
+- Built-in transports for harnesses other than Codex and Claude Code.
+- Live proof of Claude network isolation. The preflight checks read and write limits, not network denial on live Bash commands.[^isolation]
+- Automatic analytics sampling. Approved exports stay manual.
+- Repeated-run statistics. No code or reference supports repeated runs.
+- Monetary pricing. The runner records tokens only; dollar cost stays unknown.
 Session-based personalization needs real approved cases and a task-specific evaluator.
 Do not describe the public self-test as a real-session benchmark.
 
-[^implementation]: `lib/src/skillz_experiments/_cli.py:14-73`; `skills/skillz/SKILL.md:33-52`; `skills/skillz/references/experiments.md:1-135`.
-[^search]: `lib/src/skillz_experiments/_search.py:26-52`.
-[^cases]: `lib/src/skillz_experiments/_cases.py:42-94`; `_records.py:28-50`.
-[^candidate]: `lib/src/skillz_experiments/_candidate.py:14-51`; `_records.py:28-38`.
-[^evaluator]: `lib/src/skillz_experiments/_evaluation.py:11-84`; `skills/skillz/scripts/inspect_skill.py:12-49`.
+[^implementation]: `lib/src/skillz_experiments/_cli.py:38-127`; `skills/skillz/SKILL.md:33-46`; `skills/skillz/references/experiments.md:1-371`.
+[^search]: `lib/src/skillz_experiments/_search.py:29-65`.
+[^cases]: `lib/src/skillz_experiments/_cases.py:44-58,128-211`; `_records.py:41-69`.
+[^candidate]: `lib/src/skillz_experiments/_candidate.py:52-113`; `_records.py:41-69`.
+[^evaluator]: `lib/src/skillz_experiments/_evaluation.py:11-82`; `_evaluator.py:38-71`; `skills/skillz/scripts/inspect_skill.py:85-114`.
 [^runtime]: `lib/src/skillz_experiments/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
-[^workflow]: `lib/src/skillz_experiments/_workflow.py:35-202`; `_runtime.py:15-56`.
-[^export]: `lib/src/skillz_experiments/_workflow.py:210-231`.
+[^workflow]: `lib/src/skillz_experiments/_workflow.py:101-292,364-416`; `_runtime.py:16-45`.
+[^export]: `lib/src/skillz_experiments/_workflow.py:437-471`.
+[^contract]: `lib/src/skillz_experiments/_contract.py:34-92,139-175`; `skills/skillz/references/experiments.md:167-200`; `skills/skillz/evals/autoimprove.json`.
+[^graders]: `lib/src/skillz_experiments/_graders.py:60-115`; `_evaluator.py:38-130`.
+[^claude]: `lib/src/skillz_experiments/_claude.py:259-282`; `_harness.py:19,76-82`.
+[^harness]: `lib/src/skillz_experiments/_harness.py:83-86`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
+[^isolation]: `docs/agents/decisions/skillz-autoimprove.md:33-39`; `skills/skillz/references/experiment-harness.md:68-92`.
 
-_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-09-28 · Supersedes: proposal-only status and unresolved first-harness choice_
+_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-05 · Supersedes: proposal-only status and unresolved first-harness choice_
