@@ -2,10 +2,12 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ENGINE = Path(__file__).resolve().parents[1]
@@ -164,6 +166,100 @@ class EngineSmokeTest(unittest.TestCase):
                     self.assertIn("no session database is available", query.stderr)
                     self.assertNotIn("stale data", query.stderr)
 
+
+PACKS = ENGINE.parent / "references"
+START = {
+    "skill": ("skill_invocations", "skill_name"),
+    "agent": ("agent_spawns", "agent_type"),
+}
+
+
+def _pack_sql(pack, kind, target):
+    table, column = START[kind]
+    blocks = re.findall(r"```sql\n(.*?)```", (PACKS / pack).read_text(), re.S)
+    return [
+        block.replace("{START_TABLE}", table)
+        .replace("{NAME_COLUMN}", column)
+        .replace("{TARGET}", target)
+        for block in blocks
+    ]
+
+
+class PackTargetKindTest(unittest.TestCase):
+    """Each pack starts from the table that matches the target kind."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        root = Path(cls.directory.name)
+        logs = root / "claude" / "projects" / "sample"
+        logs.mkdir(parents=True)
+        when = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        entries = []
+        for call_id, name, tool_input in (
+            ("skill-call", "Skill", {"skill": "skillz"}),
+            ("agent-call", "Agent", {"subagent_type": "reviewer", "description": "review"}),
+        ):
+            entries.append({
+                "type": "assistant", "timestamp": when, "sessionId": "fixture-session",
+                "cwd": str(root / "project"),
+                "message": {"content": [{
+                    "type": "tool_use", "name": name, "id": call_id, "input": tool_input,
+                }]},
+            })
+        (logs / "session.jsonl").write_text("".join(json.dumps(e) + "\n" for e in entries))
+        env = os.environ | {
+            "HOME": str(root),
+            "CLAUDE_CONFIG_DIR": str(root / "claude"),
+            "CODEX_HOME": str(root / "codex"),
+            "CURSOR_HOME": str(root / "cursor"),
+            "SESSIONS_DB": str(root / "sessions.duckdb"),
+        }
+        subprocess.run(["python3", "-B", str(ENGINE / "scripts" / "ingest.py")],
+                       env=env, capture_output=True, text=True, check=True)
+        cls.database = root / "sessions.duckdb"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def _run(self, sql):
+        result = subprocess.run(
+            ["duckdb", "-readonly", str(self.database), "-json", "-c", sql],
+            capture_output=True, text=True, check=True,
+        )
+        return json.loads(result.stdout) if result.stdout.strip() else []
+
+    def _pack(self, pack, kind, target):
+        return [self._run(sql) for sql in _pack_sql(pack, kind, target)]
+
+    @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
+    def test_agent_target_reports_usage_trend_and_decay(self):
+        coverage, total, weekly, projects, peers = self._pack("skill-usage.md", "agent", "reviewer")
+        self.assertEqual([row["harness"] for row in coverage], ["claude"])
+        self.assertEqual(total[0]["total_invocations"], 1)
+        self.assertEqual(sum(row["invocations"] for row in weekly), 1)
+        self.assertEqual(len(projects), 1)
+        self.assertEqual((peers[0]["target_rank"], peers[0]["population"]), (1, 1))
+        drift = self._pack("drift-regression.md", "agent", "reviewer")
+        self.assertEqual(int(drift[0][0]["recent_4w"]), 1)
+        orchestration = self._pack("agent-orchestration.md", "agent", "reviewer")
+        self.assertEqual(len(orchestration[1]), 1)
+
+    @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
+    def test_skill_target_still_starts_from_skill_invocations(self):
+        _, total, _, _, peers = self._pack("skill-usage.md", "skill", "skillz")
+        self.assertEqual(total[0]["total_invocations"], 1)
+        self.assertEqual(peers[0]["target_rank"], 1)
+        self.assertEqual(self._pack("skill-usage.md", "agent", "skillz")[1][0]["total_invocations"], 0)
+        self.assertEqual(self._pack("skill-usage.md", "skill", "reviewer")[1][0]["total_invocations"], 0)
+
+    @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
+    def test_harness_without_events_is_absent_from_coverage(self):
+        for kind in START:
+            with self.subTest(kind=kind):
+                coverage = self._run(_pack_sql("skill-usage.md", kind, "x")[0])
+                self.assertNotIn("codex", [row["harness"] for row in coverage])
 
 if __name__ == "__main__":
     unittest.main()

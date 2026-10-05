@@ -16,7 +16,7 @@ Ask the user which harness command and model to use before setup.
 The built-in adapter uses Codex CLI 0.154.0 and the existing ChatGPT login.
 Put the actual Codex binary directory first on `PATH`, not a multicall version-manager shim.
 Do not create provider credentials.
-For another harness, read [the custom command protocol](experiment-harness.md).
+For another harness, follow the custom command protocol that `SKILL.md` loads when you select a command.
 A plain CLI command requires a trusted wrapper unless it implements that protocol.
 Pass its private `--harness-config` file to every preflight and live stage.
 
@@ -31,7 +31,7 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-run --out /tm
 
 Pass an explicit available model. The example model is not an availability guarantee.
 The Codex and command preflights make zero model invocations.
-Each `claude` role makes one live preflight call per run (see [the claude adapter](experiment-harness.md#the-claude-adapter)).
+Each `claude` role makes one live preflight call per run (see the `claude` adapter section of the harness protocol).
 Under `self-test --preflight-only`, each `claude` role makes one live call, even without `--live`.
 Other live invocations require `--live` and a successful isolation preflight.
 A failed isolation check stops the run. Never add an unsafe fallback.
@@ -322,7 +322,7 @@ An existing administrator skill directory stops the Codex run.
 Custom wrappers must enforce equivalent restrictions through their own tool sandbox.
 The `claude` adapter runs `claude --restricted -p` with `--tools Bash,Read,Skill` and `--strict-mcp-config`.
 It applies the sandbox floor, denies host reads, and disables bundled skills.
-See [the harness protocol](experiment-harness.md) for its preflight.
+The harness protocol defines its preflight.
 The runner rejects failed probes or missing discovery before inference.
 A wrapper remains trusted code; a successful probe does not prove honesty.
 

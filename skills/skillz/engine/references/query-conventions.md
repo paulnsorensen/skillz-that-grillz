@@ -47,9 +47,10 @@ than report zero as if it were meaningful. `agent_spawns` includes Claude
 
 ## Substitution
 
-Queries use a single placeholder named in `target_param` (e.g. `{SKILL}`,
-`{TOOL}`, `{AGENT}`). The caller substitutes the literal target before running.
-Quote it as a string literal in SQL (`WHERE skill_name = '{SKILL}'`).
+Queries use the placeholders that `target_param` and the pack header name
+(e.g. `{TARGET}`, `{START_TABLE}`, `{NAME_COLUMN}`). The caller substitutes the
+literal values before running. Quote the target as a string literal in SQL
+(`WHERE skill_name = '{TARGET}'`).
 
 ## Empty results
 

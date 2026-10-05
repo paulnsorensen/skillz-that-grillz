@@ -35,12 +35,18 @@ Run against the target's `references/` and repo-wide. Splitting into
 `references/` saves tokens only when SKILL.md documents *when* to read each file
 (SkillReducer F3) — these checks catch splits that saved nothing.
 
-1. **Nested references (one-level-deep rule).** A reference that links to
-   another reference violates *best-practices* ("keep references one level
-   deep"; the stated failure is a partial `head -100` read missing the tail).
+1. **Nested references (one-level-deep rule).** A reference that links to or
+   names another reference violates *best-practices* ("keep references one
+   level deep"; the stated failure is a partial `head -100` read missing the
+   tail). Hoist the read trigger into SKILL.md. Links into `engine/references/`
+   are allowed: the engine is an internal data tree, not a reading chain.
    Scan each reference for links whose target is itself a reference file:
 
        grep -nE '\]\([^)]*references/|\]\([^)]*\.md\)' references/*.md
+
+   That scan misses bare and backtick mentions of a file name. The `skillz`
+   repository also runs `.github/scripts/check_skillz_references.py`, which
+   catches those.
 
 2. **Orphaned references (repo-wide).** A reference linked from *no* SKILL.md
    anywhere carries no read-trigger and is dead weight. Cross-skill linking is

@@ -36,11 +36,16 @@ Ask for a target when the mode requires one.
 |---|---|---|---|---|---|
 | `add <name>` | none | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
 | `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | no | edits the target | applied fixes + residual findings |
-| `audit <path>` | none | a `SKILL.md` or agent file | yes | none | calibrated report |
+| `audit <path>` | none | a `SKILL.md` or agent file | yes | the analytics cache only; never the target | calibrated report |
 | `wedge <path>` | none | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
 | `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
+`audit` never modifies the target. Its Usage ceremony runs `ingest.py`, which creates or refreshes the analytics cache.
+The cache path is `SESSIONS_DB`, else `<abs XDG_CACHE_HOME>/dotfiles/session-analytics/sessions.duckdb`, else `~/.cache/dotfiles/session-analytics/sessions.duckdb`.
+`references/analytics-ceremony.md` has the details. Skip Usage and the raw-log fallback write no cache.
+
 For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
+When the user selects a harness command or the `claude` adapter, also read `references/experiment-harness.md`.
 Ask which harness command and model the user wants before setup.
 When the target has no contract, follow `No contract` in that reference.
 Use the installed `scripts/skillz-experiment.pyz`. Do not require a source checkout.
@@ -142,9 +147,9 @@ The body is ≤5k tok. The inspector reports no sentence over 25 words. The repo
 
 ## Mode: audit
 
-1. Run `references/analytics-ceremony.md`. If DuckDB is absent, offer its opt-in raw-log fallback; never run it automatically.
+1. Run `references/analytics-ceremony.md`. If DuckDB is absent, read `references/raw-log-fallback.md` instead. Its step 1 asks Skip Usage or scan; never run the scan without consent.
 2. Run the shared protocol with the Usage lens.
-3. Emit the report below. Write nothing else.
+3. Emit the report below. Do not modify the target. Write nothing else except the analytics cache.
 4. Close with `Run /skillz improve <path> to apply.`
 
 Done means: the report lists every surfaced finding with a cited line, and the below-bar count is stated.
@@ -201,7 +206,7 @@ N findings were `<don't know>` or trivial (not shown).
 
 ## What this skill never does
 
-- `audit` and `wedge` never write; `improve` never redesigns; `add` never registers a skill whose description fails the Invocation lens.
+- `audit` never modifies the target and writes only the analytics cache; `wedge` never writes; `improve` never redesigns; `add` never registers a skill whose description fails the Invocation lens.
 - It never surfaces `<don't know>`.
 - It never exempts itself; a finding against `skillz` is filed like any other.
 
@@ -225,7 +230,7 @@ Read on demand:
 - `references/description-optimization.md` — Invocation fires.
 - `references/decision-frameworks.md` — Prompt quality flags rigid rules on a judgment task.
 - `references/hooks-catalog.md` — a finding needs 100%-of-the-time enforcement.
-- `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs.
+- `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs; read all three for `audit`, and pass each pack the target kind.
 - `engine/scripts/` and `engine/references/` — internal analytics ingestion, query, schema, conventions, and coverage; not a separate skill.
 - `references/calibration.md` — the confidence × severity kernel.
 - `references/experiments.md` — `autoimprove`; the contract, graders, wedge mode, case schema, isolation, and the frozen inspection contract.
