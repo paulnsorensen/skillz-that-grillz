@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import inspect
 import sys
-from collections.abc import Callable, Coroutine, Iterable, Sequence
+from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from importlib import metadata
 from typing import TYPE_CHECKING, Literal, TextIO, TypedDict, TypeVar, Unpack, overload
 
@@ -32,8 +32,9 @@ _HelpFormat = Literal["markdown", "md", "plaintext", "restructuredtext", "rst", 
 class _AppKwargs(TypedDict, total=False):
     """Keyword-only ``cyclopts.App`` constructor arguments this wrapper forwards untouched.
 
-    This mirrors the ``cyclopts.App`` constructor by hand; a future cyclopts
-    4.x release can add a keyword here before fromargs re-releases with it.
+    This mirrors the ``cyclopts.App`` constructor by hand; a new cyclopts 5.x
+    keyword needs an entry here before fromargs accepts it. Options that
+    ``run`` never honors are omitted; see ``_INERT_KWARGS``.
     """
 
     usage: str | None
@@ -50,10 +51,8 @@ class _AppKwargs(TypedDict, total=False):
     version_flags: str | Iterable[str] | None
     show: bool
     console: Console | None
-    error_console: Console | None
     help_flags: str | Iterable[str] | None
     help_format: _HelpFormat | None
-    help_on_error: bool | None
     help_prologue: str | None
     help_epilogue: str | None
     version_format: _HelpFormat | None
@@ -65,14 +64,31 @@ class _AppKwargs(TypedDict, total=False):
     name_transform: Callable[[str], str] | None
     sort_key: object
     end_of_options_delimiter: str | None
-    print_error: bool | None
-    exit_on_error: bool | None
     verbose: bool | None
-    suppress_keyboard_interrupt: bool
     backend: Literal["asyncio", "trio"] | None
     help_formatter: Literal["default", "plain"] | HelpFormatter | None
-    error_formatter: Callable[[cyclopts.CycloptsError], object] | None
-    result_action: cyclopts.ResultAction | None
+
+
+# ``run`` parses with printing, exiting, and help-on-error forced off and owns
+# all error output, the exit status, and the result, so these do nothing.
+_INERT_KWARGS = frozenset(
+    {
+        "error_formatter",
+        "result_action",
+        "suppress_keyboard_interrupt",
+        "print_error",
+        "exit_on_error",
+        "help_on_error",
+        "error_console",
+    }
+)
+
+
+def _reject_inert(kwargs: Mapping[str, object]) -> None:
+    """Raise ``ValueError`` when ``kwargs`` names a Cyclopts option that ``run`` ignores."""
+    inert = sorted(_INERT_KWARGS.intersection(kwargs))
+    if inert:
+        raise ValueError(f"cyclopts option {inert[0]!r} has no effect under fromargs; remove it")
 
 
 class App:
@@ -85,21 +101,24 @@ class App:
         help: str | None = None,
         **cyclopts_kwargs: Unpack[_AppKwargs],
     ) -> None:
+        _reject_inert(cyclopts_kwargs)
         if "version" not in cyclopts_kwargs:
             frame = inspect.currentframe()
             caller = frame.f_back if frame is not None else None
             cyclopts_kwargs["version"] = _caller_version(caller.f_globals if caller is not None else {})
         self._cyclopts: cyclopts.App = cyclopts.App(name=name, help=help, **cyclopts_kwargs)
         self._limits: dict[int, int] = {}
+        self._ancestors: tuple[cyclopts.App, ...] = ()
         if cyclopts_kwargs.get("default_command") is not None:
-            _reject_reserved(self._cyclopts)
+            _reject_reserved(self._cyclopts, self._ancestors)
 
     @classmethod
-    def _wrap(cls, cyclopts_app: cyclopts.App, limits: dict[int, int]) -> App:
-        """Wrap an existing ``cyclopts.App`` without building a new one."""
+    def _wrap(cls, cyclopts_app: cyclopts.App, limits: dict[int, int], ancestors: tuple[cyclopts.App, ...]) -> App:
+        """Wrap an existing ``cyclopts.App`` under ``ancestors`` without building a new one."""
         wrapper = cls.__new__(cls)
         wrapper._cyclopts = cyclopts_app
         wrapper._limits = limits
+        wrapper._ancestors = ancestors
         return wrapper
 
     @overload
@@ -145,13 +164,14 @@ class App:
                 return self.command(handler, name=name, limit=limit, help=help, **kwargs)
 
             return register
+        _reject_inert(kwargs)
         _check_limit(limit)
         before = set(self._cyclopts)
         _ = self._cyclopts.command(obj, name=name, help=help, **kwargs)
         registered = sorted(set(self._cyclopts) - before)
         sub_app = self._cyclopts[registered[0]]
         try:
-            _reject_reserved(sub_app)
+            _reject_reserved(sub_app, (*self._ancestors, self._cyclopts))
         except ValueError:
             for key in registered:
                 del self._cyclopts[key]
@@ -206,7 +226,7 @@ class App:
         except cyclopts.CommandCollisionError as exc:
             raise ValueError(str(exc)) from exc
         try:
-            _reject_reserved(self._cyclopts)
+            _reject_reserved(self._cyclopts, self._ancestors)
         except ValueError:
             self._cyclopts.default_command = previous
             self._cyclopts.validator = previous_validator
@@ -217,11 +237,12 @@ class App:
 
     def group(self, name: str, *, help: str | None = None, **cyclopts_kwargs: Unpack[_AppKwargs]) -> App:
         """Return a nested command group registered under this app."""
+        _reject_inert(cyclopts_kwargs)
         sub = cyclopts.App(name=name, help=help, **cyclopts_kwargs)
         if cyclopts_kwargs.get("default_command") is not None:
-            _reject_reserved(sub)
+            _reject_reserved(sub, (*self._ancestors, self._cyclopts))
         _ = self._cyclopts.command(sub)
-        return App._wrap(sub, self._limits)
+        return App._wrap(sub, self._limits, (*self._ancestors, self._cyclopts))
 
     def run(self, argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> int:
         """Parse argv once, invoke one handler, and return its exit status."""
@@ -232,10 +253,16 @@ class App:
         sys.exit(self.run())
 
 
-def _reserved_option(app: cyclopts.App) -> str | None:
-    """The first reserved global flag name ``app``'s assembled arguments claim, or ``None``."""
+def _reserved_option(app: cyclopts.App, ancestors: tuple[cyclopts.App, ...]) -> str | None:
+    """The first reserved global flag name ``app``'s assembled arguments claim, or ``None``.
+
+    Cyclopts resolves an inherited ``default_parameter`` from the app stack,
+    which it fills only while parsing. Push ``ancestors`` so ``app`` sees the
+    parent chain.
+    """
     try:
-        arguments = app.assemble_argument_collection()
+        with app.app_stack([*ancestors, app]):
+            arguments = app.assemble_argument_collection()
     except ValueError:
         return None
     names: set[str] = set()
@@ -245,9 +272,9 @@ def _reserved_option(app: cyclopts.App) -> str | None:
     return reserved[0] if reserved else None
 
 
-def _reject_reserved(app: cyclopts.App) -> None:
+def _reject_reserved(app: cyclopts.App, ancestors: tuple[cyclopts.App, ...]) -> None:
     """Raise ``ValueError`` when ``app``'s assembled arguments claim a reserved global flag."""
-    reserved = _reserved_option(app)
+    reserved = _reserved_option(app, ancestors)
     if reserved is not None:
         raise ValueError(f"command option {reserved!r} is reserved by fromargs")
 
@@ -272,16 +299,14 @@ def _caller_version(module_globals: dict[str, object]) -> Callable[[], str]:
         spec_name = getattr(module_globals.get("__spec__"), "name", None)
         module_name = (
             spec_name
-            if caller_name == "__main__"
-            and isinstance(spec_name, str)
-            and spec_name.endswith(".__main__")
+            if caller_name == "__main__" and isinstance(spec_name, str) and spec_name
             else caller_name
         )
         root = module_name.split(".")[0]
         candidates = [root]
-        providers = metadata.packages_distributions().get(root, [])
+        providers = set(metadata.packages_distributions().get(root, []))
         if len(providers) == 1:
-            candidates.append(providers[0])
+            candidates.append(next(iter(providers)))
         for candidate in candidates:
             try:
                 return metadata.version(candidate)

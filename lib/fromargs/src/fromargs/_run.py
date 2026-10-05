@@ -50,11 +50,19 @@ def run(
 
     Every ADR-001 error (a ``CliError`` or a rejected parse) is one JSON
     line on stderr: ``{"error": <message>, "exit_code": <n>}``. An
-    unexpected exception from the handler or from result serialization
-    (including a ``CycloptsError`` raised by the handler) instead gets a
+    unexpected exception from a converter, a validator, the handler, or
+    result serialization (including a ``CycloptsError`` raised by the
+    handler) instead gets a
     three-key envelope with a ``traceback`` path to a file holding the full
     traceback, and returns 1. Repair ``note:`` lines stay plain text on
     stderr.
+
+    ``SystemExit`` from a handler sets the exit status: ``0`` or ``None``
+    returns 0 with no output, an ``int`` returns that status, and any other
+    value returns 1 with its text as the message. A non-zero status is
+    reported as an ADR-001 envelope. ``KeyboardInterrupt`` reports
+    ``{"error": "interrupted", "exit_code": 130}`` and returns 130. Other
+    ``BaseException`` types propagate.
     """
     if isinstance(argv, str):
         raise TypeError("argv must be a sequence of strings, not str")
@@ -68,6 +76,8 @@ def run(
             return _report(str(exc), exc.exit_code)
         except CycloptsError as exc:
             return _report(_safe_message(exc), 2)
+        except Exception as exc:
+            return _report_unexpected(exc)
         if _is_bare_help(handler) and not _requested_help(apps, tokens):
             return _report("command required", 2)
         try:
@@ -78,6 +88,10 @@ def run(
             return _report(str(exc), exc.exit_code)
         except _AsyncContractError:
             raise
+        except SystemExit as exc:
+            return _report_system_exit(exc)
+        except KeyboardInterrupt:
+            return _report("interrupted", 130)
         except Exception as exc:
             return _report_unexpected(exc)
     if status is None:
@@ -153,6 +167,17 @@ def _safe_message(exc: CycloptsError) -> str:
         return str(exc)
     except Exception:
         return getattr(exc, "exception_message", "") or type(exc).__name__
+
+
+def _report_system_exit(exc: SystemExit) -> int:
+    """Map a handler's ``sys.exit`` argument to a status, as the interpreter would."""
+    code = exc.code
+    if code is None or code == 0:
+        return 0
+    if isinstance(code, int):
+        status = int(code)  # sys.exit(True) is status 1, not JSON true
+        return _report(f"exited with status {status}", status)
+    return _report(str(code), 1)
 
 
 def _report_unexpected(exc: Exception) -> int:

@@ -357,3 +357,45 @@ def test_split_refused_when_pieces_contain_nested_help_flag(
 
     assert repair_rejected(app, argv) is None
     assert capsys.readouterr().err == ""
+
+
+def test_strip_uses_a_configured_delimiter_when_a_global_flag_leads() -> None:
+    app = App()
+    group = App(name="g", end_of_options_delimiter="@@")
+    _ = app.command(group)
+
+    @group.command
+    def p(*_words: str) -> None:
+        pass
+
+    tokens, full = strip_global_flags(app, ["--full", "g", "p", "@@", "--json"])
+
+    assert tokens == ["g", "p", "@@", "--json"]
+    assert full is True
+
+
+def test_strip_drops_a_global_flag_in_a_hyphen_value_position() -> None:
+    # Pinned design choice (ADR-003): the global flags are always global
+    # before the end-of-options marker, even where a parameter would take
+    # a hyphen-leading value. `--` passes them through literally.
+    app = App()
+
+    @app.command
+    def wrap(*_cmd: Annotated[str, Parameter(allow_leading_hyphen=True)]) -> None:
+        pass
+
+    tokens, _ = strip_global_flags(app, ["wrap", "jq", "--json", "x"])
+    literal, _ = strip_global_flags(app, ["wrap", "jq", "--", "--json", "x"])
+
+    assert tokens == ["wrap", "jq", "x"]
+    assert literal == ["wrap", "jq", "--", "--json", "x"]
+
+
+@pytest.mark.parametrize("token", ["--full=1", "--json=true"])
+def test_strip_leaves_equals_forms_for_cyclopts_to_reject(token: str) -> None:
+    app = _app([])
+
+    tokens, full = strip_global_flags(app, ["show", "x", token])
+
+    assert tokens == ["show", "x", token]
+    assert full is False

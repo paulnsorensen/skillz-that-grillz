@@ -59,11 +59,26 @@ a truncated list result.
 - A handler returns data, not text. A non-`None` return value prints as one
   JSON document on stdout, then the process exits `0`.
 - A `None` return value means exit `0` with no stdout.
+- A `set` or `frozenset` prints as a sorted JSON list. Items that cannot
+  sort together order by `repr`, so the output stays stable. `bytes` and
+  iterators (such as generators) raise `TypeError`: return a `str` or a
+  `list` instead.
 - Every error is one JSON line on stderr: `{"error": <message>, "exit_code": <n>}`.
-  Raise `fromargs.CliError(message)` for exit code `2`, or
-  `fromargs.contract_error(exc, context=...)` to wrap a caught exception at
-  exit code `3`. An unhandled Cyclopts parse error also reports at exit
-  code `2`.
+- Raise `fromargs.CliError(message)` for exit code `2`. Pass
+  `exit_code=n` for a code from `2` to `255`. `CliError` rejects any other
+  code with `ValueError`, and a non-`int` code with `TypeError`, because exit
+  `0` means success and exit `1` means an unexpected exception.
+- Use `fromargs.contract_error(exc, context=...)` to wrap a caught exception
+  at exit code `3`. A Cyclopts parse error reports at exit code `2`.
+- Any other exception from a converter, a validator, the handler, or the
+  result serialization reports at exit code `1`. Its envelope adds a
+  `traceback` key with the path of a temporary file. `fromargs` keeps the
+  file, so the caller can read it after the process exits.
+- A handler that calls `sys.exit(n)` sets the exit status. `0` or `None`
+  exits `0` with no output. A non-zero `int` reports an error envelope at
+  that exit code. Any other `sys.exit` value reports its text at exit code
+  `1`. `KeyboardInterrupt` reports `{"error": "interrupted"}` at exit code
+  `130`.
 - A quote-split repair (below) prints one plain-text `note:` line on stderr;
   it never changes stdout or the exit code.
 
@@ -78,12 +93,19 @@ anywhere before the end-of-options marker:
 
 Neither flag reaches a handler, and neither is a real Cyclopts option.
 
+The rule is literal. Every bare `--json` or `--full` token before the marker
+is global, even where a parameter would take a hyphen-leading value (for
+example `Parameter(allow_leading_hyphen=True)`). To pass one of these tokens
+as data, put it after the marker (`--` by default): `wrap jq -- --json x`.
+The `--full=1` and `--json=true` forms are not global flags. Cyclopts
+rejects them as unknown options.
+
 ## `limit`
 
-`@app.command(limit=n)` truncates a sequence result to its first `n` items,
-unless the caller passes `--full`. Truncation prints a `note:` line on
-stderr and never applies to a mapping or a string. `App.default` accepts the
-same `limit` keyword.
+`@app.command(limit=n)` truncates a sequence or set result to its first `n`
+items, unless the caller passes `--full`. A set truncates after sorting.
+Truncation prints a `note:` line on stderr and never applies to a mapping or
+a string. `App.default` accepts the same `limit` keyword.
 
 ## `App.default`
 
@@ -124,3 +146,11 @@ version of `fromargs` itself. It resolves, in order:
 `App.group(name, version=..., **cyclopts_kwargs)` forwards every extra
 keyword, including `version`, to the nested `cyclopts.App`, so a group can
 report its own version independently of the root app.
+
+## Cyclopts options
+
+`App`, `App.group`, and `App.command` forward keyword arguments to Cyclopts.
+`run()` owns error output, the exit status, and the result. So these three
+raise `ValueError` for a Cyclopts option that `run()` never honors:
+`error_formatter`, `result_action`, `suppress_keyboard_interrupt`,
+`print_error`, `exit_on_error`, `help_on_error`, and `error_console`.
