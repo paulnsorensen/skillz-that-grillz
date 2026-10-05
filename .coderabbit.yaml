@@ -10,9 +10,6 @@ reviews:
   poem: false
   in_progress_fortune: false
   path_instructions:
-    - path: "{skills,.agents/skills}/**/SKILL.md"
-      instructions: >-
-        Apply the checklist in .github/instructions/skills.instructions.md.
     - path: "lib/src/skillz_experiments/**"
       instructions: >-
         Read the contract model and the reference docs before you claim the
@@ -26,7 +23,11 @@ reviews:
       enabled: false
 knowledge_base:
   code_guidelines:
+    # A string entry applies only to files under the guideline's own
+    # directory. Map the .github/ guidelines to the files they govern.
+    # The root AGENTS.md is a default pattern and applies to all files.
     filePatterns:
-      - .github/copilot-instructions.md
-      - AGENTS.md
-      - .github/instructions/*.instructions.md
+      - files: .github/copilot-instructions.md
+        applyTo: "**"
+      - files: .github/instructions/skills.instructions.md
+        applyTo: "skills/**/SKILL.md,.agents/skills/**/SKILL.md"
