@@ -18,8 +18,6 @@ from typing import cast, get_args, get_origin
 from cyclopts import App, CycloptsError
 from cyclopts.annotations import is_union
 
-from fromargs._errors import CliError
-
 GLOBAL_FLAGS = frozenset({"--json", "--full"})
 
 
@@ -90,10 +88,10 @@ def parse_once(app: App, argv: Sequence[str]) -> tuple[Callable[..., object], Bo
 
 
 def _parses(app: App, argv: Sequence[str]) -> bool:
-    """Probe-parse ``argv``; a converter's ``CliError`` counts as a rejection."""
+    """Probe-parse ``argv``; any converter or validator exception counts as a rejection."""
     try:
         _ = parse_once(app, argv)
-    except (CycloptsError, CliError):
+    except Exception:
         return False
     return True
 
@@ -112,9 +110,11 @@ def _options(app: App, argv: Sequence[str]) -> list[str]:
     """The tokens before the command's end-of-options marker (``--`` by default).
 
     The innermost command app with a configured marker decides, as in Cyclopts.
+    The chain resolves without the global flags, so a leading ``--full`` does
+    not hide a nested app's marker.
     """
     tokens = list(argv)
-    apps = command_chain(app, tokens) or (app,)
+    apps = command_chain(app, [t for t in tokens if t not in GLOBAL_FLAGS]) or (app,)
     configured = [
         command_app.end_of_options_delimiter
         for command_app in apps

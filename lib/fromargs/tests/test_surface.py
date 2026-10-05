@@ -213,6 +213,67 @@ def test_reserved_option_via_inherited_default_parameter_is_rejected() -> None:
             pass
 
 
+def test_reserved_option_via_root_default_parameter_is_rejected() -> None:
+    app = fromargs.App("t", default_parameter=cyclopts.Parameter(name="--json"))
+    before = set(app._cyclopts)  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+
+    with pytest.raises(ValueError, match="'--json'"):
+
+        @app.command
+        def bad(x: int = 0) -> None:
+            _ = x
+
+    assert set(app._cyclopts) == before  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+
+
+def test_reserved_negative_via_group_default_parameter_is_rejected() -> None:
+    app = fromargs.App("t")
+    group = app.group("g", default_parameter=cyclopts.Parameter(negative="--full"))
+
+    with pytest.raises(ValueError, match="'--full'"):
+
+        @group.command
+        def bad(flag: bool = False) -> None:
+            _ = flag
+
+    assert "bad" not in group._cyclopts  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+
+
+def test_reserved_option_via_nested_group_ancestor_is_rejected() -> None:
+    app = fromargs.App("t")
+    outer = app.group("outer", default_parameter=cyclopts.Parameter(name="--json"))
+    inner = outer.group("inner")
+
+    with pytest.raises(ValueError, match="'--json'"):
+
+        @inner.command
+        def bad(x: int = 0) -> None:
+            _ = x
+
+
+def test_reserved_option_via_group_default_parameter_rejects_default_handler() -> None:
+    app = fromargs.App("t")
+    group = app.group("g", default_parameter=cyclopts.Parameter(name="--json"))
+
+    with pytest.raises(ValueError, match="'--json'"):
+
+        @group.default
+        def bad(x: int = 0) -> None:
+            _ = x
+
+    assert group._cyclopts.default_command is None  # pyright: ignore[reportPrivateUsage] -- App exposes no public default_command getter
+
+
+def test_group_created_with_reserved_default_command_and_parent_default_parameter_is_rejected() -> None:
+    app = fromargs.App("t", default_parameter=cyclopts.Parameter(name="--json"))
+
+    def handler(x: int = 0) -> None:
+        _ = x
+
+    with pytest.raises(ValueError, match="'--json'"):
+        _ = app.group("g", default_command=handler)
+
+
 def test_option_renamed_away_from_reserved_by_default_parameter_is_allowed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -383,6 +444,32 @@ def test_version_ignores_module_spec_for_non_main_callers(
     assert capsys.readouterr().out.strip() == version("attrs")
 
 
+def test_version_uses_spec_package_root_when_main_module_runs_with_dash_m(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from importlib.metadata import version
+    from types import SimpleNamespace
+
+    app = _app_built_in({"__name__": "__main__", "__spec__": SimpleNamespace(name="attr.cli")})
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == version("attrs")
+
+
+def test_version_tolerates_a_distribution_listed_twice_for_one_import_name(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from importlib import metadata
+
+    monkeypatch.setattr(
+        metadata, "packages_distributions", lambda: {"attr": ["attrs", "attrs"]}
+    )
+    app = _app_built_in({"__name__": "attr.consumer"})
+
+    assert app.run(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == metadata.version("attrs")
+
+
 def test_version_falls_back_to_the_calling_module_dunder_version(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -406,3 +493,33 @@ def test_version_falls_back_to_0_0_0_with_no_distribution_and_no_dunder_version(
 
     assert app.run(["--version"]) == 0
     assert capsys.readouterr().out.strip() == "0.0.0"
+
+
+_INERT_KWARGS: dict[str, object] = {
+    "error_formatter": lambda error: "CUSTOM",  # pyright: ignore[reportUnknownLambdaType]
+    "result_action": "return_value",
+    "suppress_keyboard_interrupt": False,
+    "print_error": True,
+    "exit_on_error": True,
+    "help_on_error": True,
+    "error_console": None,
+}
+
+
+@pytest.mark.parametrize("key", sorted(_INERT_KWARGS))
+def test_inert_cyclopts_kwarg_is_rejected_everywhere(key: str, capsys: pytest.CaptureFixture[str]) -> None:
+    kwargs = {key: _INERT_KWARGS[key]}
+    app = fromargs.App("t")
+    before_commands = set(app._cyclopts)  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+    before_default_command = app._cyclopts.default_command  # pyright: ignore[reportPrivateUsage] -- App exposes no public default_command getter
+
+    with pytest.raises(ValueError, match=key):
+        _ = fromargs.App("t", **kwargs)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ValueError, match=key):
+        _ = app.group("g", **kwargs)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ValueError, match=key):
+        _ = app.command(lambda: None, **kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType]
+
+    assert set(app._cyclopts) == before_commands  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+    assert app._cyclopts.default_command == before_default_command  # pyright: ignore[reportPrivateUsage] -- App exposes no public default_command getter
+    _ = capsys.readouterr()

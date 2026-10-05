@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import io
 import json
+import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -16,6 +17,7 @@ import pytest
 from cyclopts import CycloptsError, Parameter, Token
 
 import fromargs
+from fromargs._errors import InvalidExitCodeError
 
 JsonLine = Callable[[str], dict[str, object]]
 
@@ -354,14 +356,14 @@ def test_handler_returning_nan_is_an_unexpected_envelope(
     assert envelope["exit_code"] == 1
 
 
-def test_handler_returning_a_set_is_an_unexpected_envelope(
+def test_handler_returning_bytes_is_an_unexpected_envelope(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     app = fromargs.App("t")
 
     @app.command
-    def inner() -> set[int]:
-        return {1, 2}
+    def inner() -> bytes:
+        return b"x"
 
     assert app.run(["inner"]) == 1
     envelope = _unexpected_envelope(capsys.readouterr().err)
@@ -557,6 +559,59 @@ def test_async_handler_cli_error_json_envelope(
     }
 
 
+@pytest.mark.parametrize("exit_code", [0, 1, -1, 256, 1000])
+def test_cli_error_rejects_out_of_range_exit_code(exit_code: int) -> None:
+    with pytest.raises(InvalidExitCodeError, match="exit_code"):
+        _ = fromargs.CliError("x", exit_code=exit_code)
+
+
+def test_invalid_exit_code_in_converter_is_unexpected_exception(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    def conv(_type: object, _tokens: object) -> str:
+        raise fromargs.CliError("bad", exit_code=1)
+
+    @app.command
+    def go(x: Annotated[str, fromargs.Parameter(converter=conv)]) -> str:
+        return x
+
+    assert app.run(["go", "a"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["exit_code"] == 1
+    assert "exit_code" in str(envelope["error"])
+
+
+def test_invalid_exit_code_in_validator_is_unexpected_exception(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    def check(_type: object, _value: object) -> None:
+        raise fromargs.CliError("bad", exit_code=1)
+
+    @app.command
+    def go(x: Annotated[str, fromargs.Parameter(validator=check)]) -> str:
+        return x
+
+    assert app.run(["go", "a"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["exit_code"] == 1
+    assert "exit_code" in str(envelope["error"])
+
+
+@pytest.mark.parametrize("exit_code", [True, False, 2.0, "3", None])
+def test_cli_error_rejects_non_int_exit_code(exit_code: object) -> None:
+    with pytest.raises(InvalidExitCodeError, match="exit_code"):
+        _ = fromargs.CliError("x", exit_code=cast("int", exit_code))
+
+
+@pytest.mark.parametrize("exit_code", [2, 3, 255])
+def test_cli_error_accepts_exit_code_bounds(exit_code: int) -> None:
+    assert fromargs.CliError("x", exit_code=exit_code).exit_code == exit_code
+
+
 def test_reserved_option_from_trailing_underscore_name_is_rejected() -> None:
     app = fromargs.App("t")
 
@@ -626,3 +681,176 @@ def test_one_function_under_two_names_keeps_independent_limits() -> None:
     long_buffer = io.StringIO()
     assert app.run(["long"], stdout=long_buffer) == 0
     assert json.loads(long_buffer.getvalue()) == [1, 2]
+
+
+def _raising_app(exc: BaseException, *, is_async: bool = False) -> fromargs.App:
+    app = fromargs.App("t")
+
+    if is_async:
+
+        @app.command(name="leave")
+        async def leave_async() -> None:
+            raise exc
+
+    else:
+
+        @app.command(name="leave")
+        def leave_sync() -> None:
+            raise exc
+
+    return app
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize(
+    ("code", "status"), [(4, 4), (True, 1), ("bad input", 1), (object, 1), (0.0, 1)]
+)
+def test_system_exit_failure_is_an_envelope_with_that_status(
+    capsys: pytest.CaptureFixture[str], is_async: bool, code: object, status: int
+) -> None:
+    app = _raising_app(SystemExit(code), is_async=is_async)
+
+    assert app.run(["leave"]) == status
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    lines = captured.err.splitlines()
+    assert len(lines) == 1
+    envelope = cast("dict[str, object]", json.loads(lines[0]))
+    assert envelope == {"error": envelope["error"], "exit_code": status}
+    assert type(envelope["exit_code"]) is int
+    if isinstance(code, str):
+        assert envelope["error"] == code
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("code", [0, None])
+def test_system_exit_success_returns_zero_silently(
+    capsys: pytest.CaptureFixture[str], is_async: bool, code: int | None
+) -> None:
+    app = _raising_app(SystemExit(code), is_async=is_async)
+
+    assert app.run(["leave"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize("code", [256, -1])
+def test_system_exit_out_of_range_int_reports_original_code_at_exit_1(
+    capsys: pytest.CaptureFixture[str], code: int
+) -> None:
+    app = _raising_app(SystemExit(code))
+
+    assert app.run(["leave"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {"error": f"exited with status {code}", "exit_code": 1}
+
+
+def test_converter_keyboard_interrupt_is_reported_at_130(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def convert(_type: object, _tokens: object) -> int:
+        raise KeyboardInterrupt
+
+    app = fromargs.App("t")
+
+    @app.command
+    def cmd(value: Annotated[int, Parameter(converter=convert)]) -> int:
+        return value
+
+    assert app.run(["cmd", "1"]) == 130
+    assert json.loads(capsys.readouterr().err) == {"error": "interrupted", "exit_code": 130}
+
+
+def test_converter_system_exit_sets_the_status(capsys: pytest.CaptureFixture[str]) -> None:
+    def convert(_type: object, _tokens: object) -> int:
+        sys.exit(3)
+
+    app = fromargs.App("t")
+
+    @app.command
+    def cmd(value: Annotated[int, Parameter(converter=convert)]) -> int:
+        return value
+
+    assert app.run(["cmd", "1"]) == 3
+    assert json.loads(capsys.readouterr().err) == {"error": "exited with status 3", "exit_code": 3}
+
+
+@pytest.mark.parametrize("is_async", [False, True])
+def test_keyboard_interrupt_is_an_exit_130_envelope(
+    capsys: pytest.CaptureFixture[str], is_async: bool
+) -> None:
+    app = _raising_app(KeyboardInterrupt(), is_async=is_async)
+
+    assert app.run(["leave"]) == 130
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {"error": "interrupted", "exit_code": 130}
+
+
+def test_generator_exit_still_propagates() -> None:
+    app = _raising_app(GeneratorExit())
+
+    with pytest.raises(GeneratorExit):
+        _ = app.run(["leave"])
+
+
+def test_validator_unexpected_exception_is_an_unexpected_envelope(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    def boom(_type_: object, _value: object) -> None:
+        raise RuntimeError("validator boom")
+
+    app = fromargs.App("t")
+
+    @app.command
+    def v(x: Annotated[int, Parameter(validator=boom)]) -> int:
+        return x
+
+    assert app.run(["v", "1"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["error"] == "RuntimeError: validator boom"
+    assert envelope["exit_code"] == 1
+    assert "validator boom" in Path(str(envelope["traceback"])).read_text()
+
+
+def test_converter_clierror_keeps_its_exit_code(capsys: pytest.CaptureFixture[str]) -> None:
+    def reject(_type_: object, _tokens: Sequence[Token]) -> str:
+        raise fromargs.CliError("nope", exit_code=4)
+
+    app = fromargs.App("t")
+
+    @app.command
+    def go(x: Annotated[str, Parameter(converter=reject)]) -> str:
+        return x
+
+    assert app.run(["go", "a"]) == 4
+    assert json.loads(capsys.readouterr().err) == {"error": "nope", "exit_code": 4}
+
+
+def test_repair_probe_crash_rejects_the_candidate(capsys: pytest.CaptureFixture[str]) -> None:
+    # ``list[int]`` is splittable, so the repair probes ``--ids 1 --limit 3``.
+    def no_spaces(_type_: object, tokens: Sequence[Token]) -> list[int]:
+        values = [token.value for token in tokens]
+        if any(" " in value for value in values):
+            raise fromargs.CliError("has space", exit_code=4)
+        return [int(value) for value in values]
+
+    def crash(_type_: object, _value: object) -> None:
+        raise RuntimeError("probe boom")
+
+    app = fromargs.App("t")
+
+    @app.command
+    def go(
+        *,
+        ids: Annotated[list[int], Parameter(converter=no_spaces, validator=crash)],
+        limit: int = 0,
+    ) -> list[int]:
+        return [*ids, limit]
+
+    assert app.run(["go", "--ids", "1 --limit 3"]) == 4
+    assert json.loads(capsys.readouterr().err) == {"error": "has space", "exit_code": 4}
