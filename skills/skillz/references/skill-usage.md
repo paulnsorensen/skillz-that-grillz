@@ -2,9 +2,8 @@
 
 - target_param: `{TARGET}` (a skill name or agent type)
 - target_kind: `skill` or `agent`, from the dispatch prompt
-- start table: set `{START_TABLE}` and `{NAME_COLUMN}` from `target_kind`
-  - `skill`: `skill_invocations`, `skill_name`
-  - `agent`: `agent_spawns`, `agent_type`
+- start table: set `{START_TABLE}` and `{NAME_COLUMN}` from `target_kind`, as the
+  Substitution section of `engine/references/query-conventions.md` defines
 - harness: `harness='all'` by default (`skill_invocations` and `agent_spawns` are claude-dominant — note that)
 - owner: skillz
 
