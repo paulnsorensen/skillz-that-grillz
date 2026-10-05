@@ -435,7 +435,9 @@ The allowed key set matches the cross-harness frontmatter matrix; a test pins th
 Failure returns exit one with a JSON `error` on stderr.
 The command reads each file as UTF-8 and rejects a file over 262144 bytes. The error names the file and the limit.
 The command rejects a missing path, a file, a symlink input, and any symlink inside the package.
-Quality stays in prose. The command cannot judge a trigger phrase, an output contract, or a description.## Mode fixtures
+Quality stays in prose. The command cannot judge a trigger phrase, an output contract, or a description.
+
+## Mode fixtures
 
 The mode fixtures test the steps of `add`, `improve`, `wedge`, and contract drafting.
 They also test the repository-local `skillz-self-update` skill.
