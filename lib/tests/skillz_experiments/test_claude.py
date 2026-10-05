@@ -315,13 +315,30 @@ def test_preflight_fails_with_a_code_when_the_listener_receives_the_token(
     assert caught.value.code == "network-isolation-failed"
 
 
-@pytest.mark.parametrize("mode", ["net-skipped", "net-garbled", "net-lie", "net-no-curl"])
+@pytest.mark.parametrize("mode", ["net-skipped", "net-garbled", "net-lie", "net-no-curl", "net-exit-134", "net-exit-2"])
 def test_preflight_fails_closed_when_the_network_output_is_missing_malformed_or_not_from_the_command(
         tmp_path: Path, mode: str, sandbox_passes: None) -> None:
     del sandbox_passes
     session = harness(tmp_path, fake_claude(tmp_path, mode))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network probe has no evidence.*no unsafe fallback") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+def test_a_network_leak_keeps_its_code_when_an_earlier_check_also_fails(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+
+    def write_fails(events: list[dict[str, object]], agents_file: str, wrote: bool, controlled: bool) -> str:
+        del events, agents_file, wrote, controlled
+        return "write isolation failed: test"
+    monkeypatch.setattr(_claude, "_write_failure", write_fails)
+    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
             _ = session.preflight()
     finally:
         session.close()

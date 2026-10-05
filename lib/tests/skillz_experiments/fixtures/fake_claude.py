@@ -76,6 +76,7 @@ def network_probe(prompt: str, mode: str) -> list[str]:
     `net-open` and `net-http-open` reach the listener over TCP and over HTTP. `net-lie` prints the denial
     under a command that is not the generated one. `net-lie-connect` connects and still prints the denial.
     `net-skipped` runs no command, `net-garbled` prints no token, and `net-no-curl` reports exit 127.
+    `net-exit-<code>` reports that exit code for each curl command.
     """
     texts: list[str] = []
     for index, command in enumerate(cast(list[str], re.findall(r"`(/usr/bin/(?:python3 -c|curl) [^`]*)`", prompt))):
@@ -92,7 +93,9 @@ def network_probe(prompt: str, mode: str) -> list[str]:
         elif direct:
             text = ("open-" if reached and mode == "net-open" else "denied-") + token
         else:
-            text = f"exit-{127 if mode == 'net-no-curl' else 0 if reached else 7}-{token}"
+            forced = re.fullmatch(r"net-exit-(\d+)", mode)
+            code = int(forced.group(1)) if forced else 127 if mode == "net-no-curl" else 0 if reached else 7
+            text = f"exit-{code}-{token}"
         shown = f"echo {text} # {'connect_ex' if direct else 'curl'}" if mode == "net-lie" else command
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"n{index}", "name": "Bash",
               "input": {"command": shown}}]}})

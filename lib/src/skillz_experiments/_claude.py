@@ -23,6 +23,7 @@ from skillz_experiments._runtime import Budget, process
 TOOLS = "Bash,Read,Skill"
 PROBE_SKILL = "skillz"
 NETWORK_PROBE = "loopback-tcp-http-v2"
+CURL_ATTEMPTED = frozenset({0, 5, 6, 7, 22, 28, 52, 56, 97})
 AUTHENTICATION = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
@@ -260,8 +261,8 @@ def _network_failure(events: list[dict[str, object]], connected: bool, port: int
     for command in proxied:
         codes = [int(code) for text in _results(events, command)
                  for code in cast(list[str], re.findall(rf"exit-(\d+)-{token}", text))]
-        if not codes or any(code in (126, 127) for code in codes):
-            return "network probe has no evidence: the HTTP command output is missing, or curl did not run"
+        if not codes or any(code not in CURL_ATTEMPTED for code in codes):
+            return "network probe has no evidence: the HTTP command output is missing, or curl did not attempt a request"
     return None
 
 
@@ -408,14 +409,15 @@ class ClaudeCode:
             wrote = agents_file.exists()
             controlled = write_control.is_file() and write_control.read_text() == write_token
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
+        network = _network_failure(events, reached, port, network_token)
+        if reached and network is not None:
+            raise NetworkIsolationFailed(network)
         if reason is None:
             reason = _read_failure(events, token, str(sealed), control, str(control_file))
         if reason is None:
             reason = _write_failure(events, str(agents_file), wrote, controlled)
-        if reason is None:
-            reason = _network_failure(events, reached, port, network_token)
-            if reason is not None:
-                raise NetworkIsolationFailed(reason)
+        if reason is None and network is not None:
+            raise NetworkIsolationFailed(network)
         if reason is not None:
             raise RuntimeError(f"Claude Code isolation preflight fails: {reason}; no unsafe fallback")
         return {"adapter": "claude", "model": self.model, "isolation": "passed", "network": "denied", "live_calls": 1,
