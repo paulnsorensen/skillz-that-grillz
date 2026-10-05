@@ -1,16 +1,16 @@
 # Cross-harness skill layout
 
-Checked: 2026-09-12. Focused recheck on 2026-09-28 covered Claude, Pi, Zed, and `npx skills` discovery only.
+Checked: 2026-10-05. Every source in `## Sources` was queried on that date; per-source dates are in that table.
 Read when the Portability lens fires or in `add`. Repository maintenance also uses this reference.
 
 ## Layout
 
 - One level deep: `skills/<name>/SKILL.md`. The directory name is the command name on every host; keep `name:` equal to it.
 - Sidecars: `references/` (read on a trigger), `scripts/` (dependency-free), `assets/`, and `agents/openai.yaml` (Codex policy).
-- Deploy targets: Claude `~/.claude/skills`, OMP `~/.omp/agent/skills`, and `~/.agents/skills` for Codex, Cursor, and Copilot. `npx skills add --copy` reaches all of them; a dotfiles sync may drive them from one selection list, which is then the single source of truth.
-- OMP scans providers non-recursively and resolves a duplicate name by priority: native `.omp` > Claude > Codex/`.agents`.
-- Zed's own agent reads `~/.agents/skills`; ACP external agents inside Zed (Claude, Codex, OMP) use their native trees. Nothing extra is needed for Zed.
-- Pi reads `~/.pi/agent/skills` and `~/.agents/skills`; commands render as `/skill:<name>`.
+- Deploy targets: Claude `~/.claude/skills`, OMP `~/.omp/agent/skills`, and `~/.agents/skills` for Codex, Pi, and Zed. OMP also reads `.agents` through its `agents` provider. `npx skills add -g` installs to `~/.codex/skills`, `~/.cursor/skills`, and `~/.copilot/skills` for Codex, Cursor, and Copilot. The Codex docs list `~/.agents/skills`, not `~/.codex/skills`; whether Codex reads the latter is unverified. A dotfiles sync may drive all trees from one selection list, which is then the single source of truth.
+- OMP scans providers non-recursively. The higher-precedence skill keeps the bare name (native `.omp` > Claude > Codex/`.agents`). A differing lower-precedence skill stays reachable as `<namespace>/<name>`. An identical copy collapses.
+- Zed's own agent reads `~/.agents/skills` and `<worktree>/.agents/skills` (flat layout, trusted worktrees only). External agents inside Zed use their native skill trees; Zed Skills do not apply to them. Nothing extra is needed for Zed.
+- Pi reads `~/.agents/skills` and `.agents/skills`, and discovers `SKILL.md` recursively; commands render as `/skill:<name>`. The Pi path `~/.pi/agent/skills` is unverified: the current Pi page does not name it.
 - A dotfiles sync that vendors skills from source repos copies them after its local selection, so a vendored skill with a local name overwrites it. Remove the name from one side, or give that source an explicit skill list.
 
 ## Registration
@@ -35,13 +35,13 @@ Keep a skill for one repository only out of every global selection list.
 | Field | Spec | Claude | Codex | OMP | Pi | Zed |
 |---|---|---|---|---|---|---|
 | `name` (≤64, kebab) | required | yes | yes | yes | yes | yes |
-| `description` (≤1024) | required | yes; listing truncates `description`+`when_to_use` at 1536 | yes (implicit match) | yes | yes | yes |
-| `license`, `compatibility` (≤500), `metadata` (string map) | optional | kept | kept | kept | kept | kept |
-| `allowed-tools` | optional | permission grant without prompts; not a deny list | accepted; verify enforcement | accepted; verify enforcement | accepted; verify enforcement | accepted; verify enforcement |
-| `disallowed-tools` | — | removes listed tools for the current turn | host-specific; verify | host-specific; verify | host-specific; verify | host-specific; verify |
+| `description` (≤1024) | required | yes; listing truncates `description`+`when_to_use` at 1536 and drops descriptions past a budget of 1% of context | yes (implicit match); the skill list uses at most 2% of context or 8,000 characters | yes | yes | yes; longer text loads with a warning; catalog capped at 50KB |
+| `license`, `compatibility` (≤500), `metadata` (string map) | optional | accepted; Claude Code does not act on them | unverified | kept as unknown metadata | kept | unverified; Zed lists only `name`, `description`, and `disable-model-invocation` |
+| `allowed-tools` | optional | permission grant without prompts; not a deny list | unverified | accepted; verify enforcement | accepted; verify enforcement | unverified |
+| `disallowed-tools` | — | removes listed tools for the current turn | unverified | host-specific; verify | host-specific; verify | unverified |
 | `disable-model-invocation` | — | yes | **no** → `agents/openai.yaml` `policy.allow_implicit_invocation: false` | yes (`disableModelInvocation`) | yes | yes |
-| `user-invocable`, `argument-hint`, `arguments`, `model`, `effort`, `context: fork`, `agent`, `background`, `hooks`, `paths`, `shell`, `when_to_use` | — | yes | ignored | ignored | ignored | ignored |
-| `$ARGUMENTS`, `$0`, `$N` substitution | — | yes | no; free text follows the mention | no | no | no |
+| `user-invocable`, `argument-hint`, `arguments`, `model`, `effort`, `context: fork`, `agent`, `background`, `hooks`, `paths`, `shell`, `when_to_use` | — | yes | unverified | kept as unknown metadata | unverified | unverified |
+| `$ARGUMENTS`, `$0`, `$N` substitution | — | yes | unverified; free text follows the mention | no; the prose around `/skill:<name>` is passed as arguments | no; text after `/skill:<name>` is appended as a user request | unverified |
 
 Unknown keys never break a load on any surveyed host.
 Claude's cloud Skills API rejects non-spec keys; that surface is out of scope for repo skills.
@@ -117,18 +117,21 @@ metadata:
 
 ## Sources
 
-The repository-local `skillz-self-update` skill queries each source for changes since `Checked:`.
+The repository-local `skillz-self-update` skill queries each source for changes since its `Checked` date.
+The top-level `Checked:` date equals the oldest date in this table.
 
-| Host | Source | Re-check |
-|---|---|---|
-| Claude Code | <https://code.claude.com/docs/en/skills> | frontmatter fields, listing truncation, line guidance |
-| Agent Skills spec | <https://agentskills.io/specification> | field set and limits |
-| Anthropic skills repo | <https://github.com/anthropics/skills> | reference layouts, skill-creator |
-| Codex | <https://learn.chatgpt.com/docs/build-skills> | scan paths, `$skill` invocation, `agents/openai.yaml` |
-| OMP | <https://github.com/can1357/oh-my-pi/blob/main/docs/skills.md> | provider priority, honored fields, `/skill:` |
-| Pi | <https://pi.dev/docs/latest/skills> | paths, validation, `/skill:` |
-| Zed | <https://zed.dev/docs/ai/skills> and <https://zed.dev/docs/ai/external-agents> | native vs ACP scope |
-| skills CLI | <https://github.com/vercel-labs/skills> | per-agent path table, compatibility matrix |
+| Host | Source | Re-check | Checked |
+|---|---|---|---|
+| Claude Code | <https://code.claude.com/docs/en/skills> | frontmatter fields, listing truncation, line guidance | 2026-10-05 |
+| Agent Skills spec | <https://agentskills.io/specification> | field set and limits | 2026-10-05 |
+| Anthropic skills repo | <https://github.com/anthropics/skills> | reference layouts, skill-creator | 2026-10-05 |
+| Codex | <https://learn.chatgpt.com/docs/build-skills> | scan paths, `$skill` invocation, `agents/openai.yaml` | 2026-10-05 |
+| OMP | <https://github.com/can1357/oh-my-pi/blob/main/docs/skills.md> | provider priority, honored fields, `/skill:` | 2026-10-05 |
+| Pi | <https://pi.dev/docs/latest/skills> | paths, validation, `/skill:` | 2026-10-05 |
+| Zed | <https://zed.dev/docs/ai/skills> and <https://zed.dev/docs/ai/external-agents> | native vs ACP scope | 2026-10-05 |
+| skills CLI | <https://github.com/vercel-labs/skills> | per-agent path table, compatibility matrix | 2026-10-05 |
+
+A cell marked "unverified" in the matrix means the current primary source does not state the fact.
 
 ## Rejected
 
