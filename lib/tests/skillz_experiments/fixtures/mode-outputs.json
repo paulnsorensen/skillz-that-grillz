@@ -19,6 +19,16 @@
         "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n| `skills/release-notes/SKILL.md` | `/release-notes` | Draft release notes from merged changes. |\n",
         "skills/release-notes/SKILL.md": "---\nname: release\ndescription: >-\n  Draft release notes from merged changes. Use when a maintainer says \"write release notes\", \"draft the changelog\", \"summarize this release\", \"prepare release notes\", or \"list what shipped\". Do NOT use for commit messages.\ndisable-model-invocation: true\n---\n\n# release-notes\n\n1. Read the merged change list that the user names.\n2. Group the changes by user-visible effect.\n3. Write the notes as short bullets.\n\nDone means: the notes list every merged change once.\n",
         "skills/release-notes/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n"
+      },
+      "row-outside-skills-section": {
+        "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n\n## Notes\n\n| `skills/release-notes/SKILL.md` | `/release-notes` | Draft release notes from merged changes. |\n",
+        "skills/release-notes/SKILL.md": "---\nname: release-notes\ndescription: >-\n  Draft release notes from merged changes. Use when a maintainer says \"write release notes\", \"draft the changelog\", \"summarize this release\", \"prepare release notes\", or \"list what shipped\". Do NOT use for commit messages.\ndisable-model-invocation: true\n---\n\n# release-notes\n\n1. Read the merged change list that the user names.\n2. Group the changes by user-visible effect.\n3. Write the notes as short bullets.\n\nDone means: the notes list every merged change once.\n",
+        "skills/release-notes/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n"
+      },
+      "long-sentence": {
+        "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n| `skills/release-notes/SKILL.md` | `/release-notes` | Draft release notes from merged changes. |\n",
+        "skills/release-notes/SKILL.md": "---\nname: release-notes\ndescription: >-\n  Draft release notes from merged changes. Use when a maintainer says \"write release notes\", \"draft the changelog\", \"summarize this release\", \"prepare release notes\", or \"list what shipped\". Do NOT use for commit messages.\ndisable-model-invocation: true\n---\n\n# release-notes\n\n1. Read the merged change list that the user names.\n2. Group the changes by user-visible effect.\n3. Write the notes as short bullets and make sure that every bullet names the change and the author and the pull request and the effect on users.\n\nDone means: the notes list every merged change once.\n",
+        "skills/release-notes/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n"
       }
     }
   },
@@ -92,14 +102,14 @@
   },
   "mode-contract": {
     "golden": {
-      "evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"draft\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\",\n      \"rubric\": \"Score 100 when the rewrite keeps every fact and uses plain words. Score 0 when a fact is lost.\"\n    }\n  },\n  \"editable\": []\n}\n"
+      "skills/demo/evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"draft\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\",\n      \"rubric\": \"Score 100 when the rewrite keeps every fact and uses plain words. Score 0 when a fact is lost.\"\n    }\n  },\n  \"editable\": []\n}\n"
     },
     "bad": {
       "approved-status": {
-        "evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"approved\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\",\n      \"rubric\": \"Score 100 when the rewrite keeps every fact and uses plain words. Score 0 when a fact is lost.\"\n    }\n  },\n  \"editable\": []\n}\n"
+        "skills/demo/evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"approved\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\",\n      \"rubric\": \"Score 100 when the rewrite keeps every fact and uses plain words. Score 0 when a fact is lost.\"\n    }\n  },\n  \"editable\": []\n}\n"
       },
       "no-rubric": {
-        "evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"draft\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\"\n    }\n  },\n  \"editable\": []\n}\n"
+        "skills/demo/evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"draft\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\"\n    }\n  },\n  \"editable\": []\n}\n"
       }
     }
   }

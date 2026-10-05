@@ -3,21 +3,28 @@
 Each fixture case pairs a request and a starting tree with a deterministic command grader. The tests
 run that grader on a recorded golden output (accepted) and on seeded-bad outputs (rejected). They
 also pin the mode steps in the skill text that each fixture depends on. No test calls a model.
+
+Every output reaches the grader through `stage_task` and `snapshot_outputs`, the path that a live run
+uses. A recorded output holds only the files that a task writes or changes.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
+import os
 import re
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from skillz_experiments import _graders
+from skillz_experiments._candidate import make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, load_cases, mapping
 from skillz_experiments._cli import main
 from skillz_experiments._codex import Codex
@@ -54,17 +61,50 @@ def _variants(entry: dict[str, object], key: str) -> dict[str, Tree]:
     return {name: cast(Tree, tree) for name, tree in mapping(entry[key]).items()}
 
 
+UNROUTABLE = "http://127.0.0.1:9"
+
+
 class Sandbox:
-    """Run the grader argv the way a task sandbox would: fixtures at the root, outputs under `output/`."""
+    """Run the grader argv the way a task sandbox would: fixtures at the root, outputs under `output/`.
+
+    The socket patch below covers only this process. The grader subprocess gets proxy variables that
+    point to an unroutable address. A test also pins that every grader script imports only `json`,
+    `pathlib`, and `re`, so a grader has no network client to route.
+    """
+
+    def __init__(self) -> None:
+        self.cwds: list[Path] = []
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        self.cwds.append(workspace)
         command = [sys.executable, *argv[1:]] if argv[0] == "python3" else argv
-        run = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=30, check=False)
+        env = {**os.environ, **{name: UNROUTABLE for name in ("http_proxy", "https_proxy", "all_proxy",
+                                                              "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")}}
+        env["no_proxy"] = env["NO_PROXY"] = ""
+        run = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=30, check=False, env=env)
         return run.returncode, run.stdout
 
 
-def grade(path: Path, case: Case, output: Tree) -> float:
-    return _graders.command(Sandbox(), _rules(path).kinds[case.kind].argv, case, dict(output))
+def live(case: Case, written: Tree) -> Tree:
+    """Stage the case, apply the files that a task writes, and snapshot the workspace as a live run does."""
+    with tempfile.TemporaryDirectory(prefix="mode-fixture-") as directory:
+        workspace = make_workspace(Path(directory) / "workspace")
+        stage_task(workspace, None, case)
+        for name, text in written.items():
+            target = workspace / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _ = target.write_text(text, encoding="utf-8")
+        return snapshot_outputs(workspace)
+
+
+def grade(path: Path, case: Case, written: Tree) -> float:
+    return _graders.command(Sandbox(), _rules(path).kinds[case.kind].argv, case, live(case, written))
+
+
+def _script(path: Path, kind: str) -> str:
+    argv = _rules(path).kinds[kind].argv
+    assert argv[:3] == ("python3", "-I", "-c") and len(argv) == 4
+    return argv[3]
 
 
 PUBLISHED_CASES = _cases(PUBLISHED)
@@ -102,14 +142,30 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_published_manifest_declares_one_kind_per_mode_with_complete_splits() -> None:
     rules = _rules(PUBLISHED)
-    assert set(rules.kinds) == {"add", "improve", "wedge", "contract"}
+    assert set(rules.kinds) == {"add", "improve", "wedge-candidates", "wedge-clean", "wedge-agent", "contract"}
     assert all(grader.type == "command" and grader.argv for grader in rules.kinds.values())
     assert {case.kind for case in PUBLISHED_CASES.values()} == set(rules.kinds)
     splits = [case.split for case in PUBLISHED_CASES.values()]
     assert splits.count("holdout") == 2 and "train" in splits and "validation" in splits
     assert all(case.eligible and case.visibility == "public" for case in PUBLISHED_CASES.values())
-    assert all("check.py" in case.files and isinstance(case.expected, dict) for case in PUBLISHED_CASES.values())
+    assert all(isinstance(case.expected, dict) for case in PUBLISHED_CASES.values())
     assert set(PUBLISHED_OUTPUTS) == set(PUBLISHED_CASES)
+
+
+@pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
+def test_the_grader_lives_in_the_argv_and_never_in_a_staged_file(path: Path, name: str) -> None:
+    case = _cases(path)[name]
+    script = _script(path, case.kind)
+    assert not any(file.startswith("check") or "'score'" in text for file, text in case.files.items())
+    imported = {alias.name for node in ast.walk(ast.parse(script)) if isinstance(node, ast.Import) for alias in node.names}
+    assert imported == {"json", "pathlib", "re"}
+
+
+@pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
+def test_the_live_snapshot_holds_the_staged_files_and_an_untouched_workspace_scores_zero(path: Path, name: str) -> None:
+    case = _cases(path)[name]
+    assert set(live(case, {})) == set(case.files)
+    assert grade(path, case, {}) == 0.0
 
 
 def test_self_update_case_stays_out_of_the_published_tree() -> None:
@@ -154,7 +210,7 @@ def test_two_runs_give_identical_results() -> None:
 def _defects(tmp_path: Path, case: Case, output: Tree, skill: str) -> list[str]:
     root = tmp_path / "repo"
     (root / ".git").mkdir(parents=True)
-    for name, text in {**{k: v for k, v in case.files.items() if k != "check.py"}, **output}.items():
+    for name, text in {**case.files, **output}.items():
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
         _ = target.write_text(text, encoding="utf-8")
@@ -172,6 +228,7 @@ SEEDED_DEFECTS = {
     ("mode-add", "no-sidecar"): ["sidecar.exists"],
     ("mode-add", "no-readme-row"): ["registration.readme-row"],
     ("mode-add", "name-differs-from-directory"): ["name.matches-directory"],
+    ("mode-add", "long-sentence"): ["long-sentence"],
     ("mode-improve", "defect-left-unfixed"): ["long-sentence"],
 }
 
@@ -221,10 +278,10 @@ def test_wedge_golden_writes_only_the_brief_and_every_candidate_has_seven_fields
 
 
 def test_wedge_grader_checks_the_seven_fields_of_the_skill_template() -> None:
-    script = PUBLISHED_CASES["mode-wedge-candidates"].files["check.py"]
+    script = _script(PUBLISHED, "wedge-candidates")
     assert all(f"'{field}'" in script for field in _template_fields())
-    scripts = {PUBLISHED_CASES[name].files["check.py"] for name in PUBLISHED_CASES if name.startswith("mode-wedge")}
-    assert len(scripts) == 1
+    stops = [_script(PUBLISHED, kind) for kind in ("wedge-clean", "wedge-agent")]
+    assert all("list(changed) == ['brief.md']" in text for text in [script, *stops])
 
 
 # contract drafting: a draft stops the real runtime path
@@ -235,7 +292,7 @@ def _target_with_contract(tmp_path: Path, status: str) -> tuple[Path, dict[str, 
     target = tmp_path / "demo"
     (target / "evals").mkdir(parents=True)
     _ = (target / "SKILL.md").write_text(case.files["skills/demo/SKILL.md"], encoding="utf-8")
-    draft = mapping(cast(object, json.loads(_golden(PUBLISHED, "mode-contract")["evals/autoimprove.json"])))
+    draft = mapping(cast(object, json.loads(_golden(PUBLISHED, "mode-contract")["skills/demo/evals/autoimprove.json"])))
     document = draft | {"status": status}
     _ = (target / "evals/autoimprove.json").write_text(json.dumps(document), encoding="utf-8")
     return target, document
@@ -310,17 +367,27 @@ def _part(path: Path, heading: str | None) -> str:
 
 SKILL = SKILL_DIR / "SKILL.md"
 EXPERIMENTS = SKILL_DIR / "references/experiments.md"
+ADD_NAME = ("1. Confirm the name: kebab-case, ≤64 chars, directory name equals `name:`, "
+            "and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`.")
+IMPROVE_SPECULATIVE = (
+    "3. Put every `<speculative>` finding and every protocol-semantic change to the user as one approval question, "
+    "with your recommendation for each. Apply the approved ones and record the declined ones. "
+    "A delegated run returns these findings to its parent, and the parent asks. A PR body or a report is not approval.")
+WEDGE_CANDIDATES = (
+    "2. List each candidate with its line. A candidate is a fixed parse, validation, count, filter, sort, or projection "
+    "that every run repeats. A bundled script without an output contract is also a candidate. "
+    "Classification, recommendations, and user decisions stay in prose; they are never candidates.")
 STEPS: list[tuple[str, Path, str | None, str]] = [
-    ("add", SKILL, "Mode: add", "directory name equals `name:`"),
+    ("add", SKILL, "Mode: add", ADD_NAME),
     ("add", SKILL, "Mode: add", "Add `agents/openai.yaml` when the skill is user-only."),
     ("add", SKILL, "Mode: add", "Register the skill in its repo's index"),
     ("add", SKILL, "Mode: add", "The inspector reports an empty `long_sentences` list."),
     ("improve", SKILL, "Mode: improve", "Apply every `<certain>` finding of severity medium or higher"),
-    ("improve", SKILL, "Mode: improve", "as one approval question"),
-    ("improve", SKILL, "Mode: improve", "A PR body or a report is not approval."),
+    ("improve", SKILL, "Mode: improve", IMPROVE_SPECULATIVE),
     ("improve", SKILL, "Mode: improve", "Tighten; do not redesign."),
     ("improve", SKILL, "Mode: improve", "Report before/after tokens and the residual findings."),
     ("wedge", SKILL, "Mode: wedge", "writes no code and starts no build"),
+    ("wedge", SKILL, "Mode: wedge", WEDGE_CANDIDATES),
     ("wedge", SKILL, "Mode: wedge", "`/wedge` packages only skills, then stop."),
     ("wedge", SKILL, "Mode: wedge",
      "command name, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects"),
@@ -346,6 +413,27 @@ def test_mode_steps_keep_the_invariant_that_the_fixture_depends_on(mode: str, pa
     assert phrase in _part(path, heading), f"{mode} step changed: {phrase}"
 
 
+MUTATIONS = [
+    ("add", "Mode: add", ADD_NAME, ", and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`", ""),
+    ("improve", "Mode: improve", IMPROVE_SPECULATIVE,
+     "Put every `<speculative>` finding and every protocol-semantic change to the user as one approval question,"
+     + " with your recommendation for each.", "Apply every `<speculative>` finding directly."),
+    ("wedge", "Mode: wedge", WEDGE_CANDIDATES, "stay in prose; they are never candidates.", "stay in prose."),
+]
+
+
+@pytest.mark.parametrize(("mode", "heading", "step", "old", "new"), MUTATIONS, ids=[m[0] for m in MUTATIONS])
+def test_a_seeded_regression_in_a_skill_copy_fails_the_pinned_step(tmp_path: Path, mode: str, heading: str, step: str,
+                                                                 old: str, new: str) -> None:
+    text = SKILL.read_text(encoding="utf-8")
+    scratch = tmp_path / "SKILL.md"
+    _ = scratch.write_text(text, encoding="utf-8")
+    assert step in _part(scratch, heading), f"{mode}: the control copy must hold the step"
+    assert text.count(old) == 1, f"{mode}: the mutation must hit one place"
+    _ = scratch.write_text(text.replace(old, new), encoding="utf-8")
+    assert step not in _part(scratch, heading), f"{mode}: the regression went unnoticed"
+
+
 def test_every_fixture_kind_has_pinned_steps() -> None:
     assert {mode for mode, _, _, _ in STEPS} == {"add", "improve", "wedge", "contract", "self-update"}
 
@@ -364,9 +452,17 @@ def test_self_update_fixture_mirrors_the_real_reference_shape_and_starts_stale()
     assert f"Checked: {digest['checked']}." in _golden(SELF_UPDATE, "self-update-stale-date")["harness-layout.md"]
 
 
-def test_self_update_grading_never_touches_the_real_repository_files() -> None:
-    watched = [LAYOUT, SKILL, SELF_SKILL]
+def test_grading_runs_in_a_scratch_workspace_and_a_writing_grader_cannot_touch_the_repository() -> None:
+    watched = [LAYOUT, SKILL, SELF_SKILL, ROOT / "README.md"]
     before = [hashlib.sha256(path.read_bytes()).hexdigest() for path in watched]
     case = SELF_UPDATE_CASES["self-update-stale-date"]
-    assert grade(SELF_UPDATE, case, _golden(SELF_UPDATE, "self-update-stale-date")) == 1.0
+    sentinel = "grader-probe-file.txt"
+    writer = ("python3", "-I", "-c", f"import pathlib; pathlib.Path('{sentinel}').write_text('x')")
+    sandbox = Sandbox()
+    try:
+        _ = _graders.command(sandbox, writer, case, {})
+        assert not (ROOT / sentinel).exists() and not Path(sentinel).exists()
+    finally:
+        (ROOT / sentinel).unlink(missing_ok=True)
+    assert sandbox.cwds and not any(cwd.is_relative_to(ROOT) for cwd in sandbox.cwds)
     assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in watched] == before

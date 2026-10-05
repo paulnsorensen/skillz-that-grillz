@@ -11,7 +11,8 @@
         "argv": [
           "python3",
           "-I",
-          "check.py"
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nMARKER = re.compile(r'^\\s*(?:#+\\s+|[-*+]\\s+|\\d+[.)]\\s+|>\\s*)')\nBREAK = re.compile(r'^\\s*(?:#|[-*+]\\s|\\d+[.)]\\s)')\nMASK = re.compile(r'`[^`]*`|\"[^\"]*\"|\\u201c[^\\u201d]*\\u201d|(?<=\\])\\([^)]*\\)')\nSENTENCE = re.compile(r'\\S.*?(?:[.!?]+(?=\\s|$)|$)', re.S)\ndef longest(text):\n    lines = text.splitlines()\n    paragraphs = ['']\n    fence = False\n    for line in lines[lines.index('---', 1) + 1:]:\n        if line.lstrip().startswith('```'):\n            fence = not fence\n            paragraphs.append('')\n        elif fence:\n            continue\n        elif not line.strip() or line.lstrip().startswith('|'):\n            paragraphs.append('')\n        else:\n            if BREAK.match(line):\n                paragraphs.append('')\n            piece = MARKER.sub('', line).strip()\n            paragraphs[-1] += (' ' if paragraphs[-1] else '') + piece\n    best = 0\n    for paragraph in paragraphs:\n        for hit in SENTENCE.finditer(MASK.sub(lambda m: ' ' * len(m[0]), paragraph)):\n            best = max(best, sum(1 for t in hit[0].split() if any(c.isalnum() for c in t)))\n    return best\nok = False\ntry:\n    s = changed['skills/release-notes/SKILL.md']\n    side = changed['skills/release-notes/agents/openai.yaml']\n    section = re.search('^## Skills$(.*?)(?=^## |\\\\Z)', changed['README.md'], re.M | re.S)\n    rows = [row for row in section[1].splitlines() if row.startswith('|') and 'skills/release-notes/SKILL.md' in row and '/release-notes' in row]\n    ok = (re.search('^name: release-notes$', s, re.M) is not None\n          and re.search('^disable-model-invocation: true$', s, re.M) is not None\n          and 'allow_implicit_invocation: false' in side\n          and len(rows) == 1 and longest(s) <= 25)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
         ]
       },
       "improve": {
@@ -19,15 +20,35 @@
         "argv": [
           "python3",
           "-I",
-          "check.py"
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nMARKER = re.compile(r'^\\s*(?:#+\\s+|[-*+]\\s+|\\d+[.)]\\s+|>\\s*)')\nBREAK = re.compile(r'^\\s*(?:#|[-*+]\\s|\\d+[.)]\\s)')\nMASK = re.compile(r'`[^`]*`|\"[^\"]*\"|\\u201c[^\\u201d]*\\u201d|(?<=\\])\\([^)]*\\)')\nSENTENCE = re.compile(r'\\S.*?(?:[.!?]+(?=\\s|$)|$)', re.S)\ndef longest(text):\n    lines = text.splitlines()\n    paragraphs = ['']\n    fence = False\n    for line in lines[lines.index('---', 1) + 1:]:\n        if line.lstrip().startswith('```'):\n            fence = not fence\n            paragraphs.append('')\n        elif fence:\n            continue\n        elif not line.strip() or line.lstrip().startswith('|'):\n            paragraphs.append('')\n        else:\n            if BREAK.match(line):\n                paragraphs.append('')\n            piece = MARKER.sub('', line).strip()\n            paragraphs[-1] += (' ' if paragraphs[-1] else '') + piece\n    best = 0\n    for paragraph in paragraphs:\n        for hit in SENTENCE.finditer(MASK.sub(lambda m: ' ' * len(m[0]), paragraph)):\n            best = max(best, sum(1 for t in hit[0].split() if any(c.isalnum() for c in t)))\n    return best\nok = False\ntry:\n    s = changed['skills/demo/SKILL.md']\n    side = changed['skills/demo/agents/openai.yaml']\n    r = changed['report.md']\n    ok = (longest(s) <= 25\n          and 'allow_implicit_invocation: false' in side\n          and 'scripts/count.py' in s\n          and re.search('before: ~?[0-9]+ tok', r, re.I) is not None\n          and re.search('after: ~?[0-9]+ tok', r, re.I) is not None\n          and len(re.findall('^Approval question:', r, re.M)) == 1)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
         ]
       },
-      "wedge": {
+      "wedge-candidates": {
         "grader": "command",
         "argv": [
           "python3",
           "-I",
-          "check.py"
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nfields = ['Inputs', 'Output', 'Ordering', 'Empty', 'Errors', 'Side effects', 'Caller line']\nok = False\ntry:\n    brief = changed['brief.md']\n    parts = re.split('^### Candidate ', brief, flags=re.M)[1:]\n    rows = re.findall('^[|] [0-9]+ [|].*$', brief, re.M)\n    ok = (list(changed) == ['brief.md'] and len(parts) >= 1 and len(rows) == len(parts)\n          and all('**' + f + '**' in p for p in parts for f in fields)\n          and all(re.search('line [0-9]+|[(][0-9]+[)]|L[0-9]+', row) for row in rows)\n          and re.search('^## skillz wedge: ', brief, re.M) is not None\n          and 'Run /wedge with candidate' in brief)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        ]
+      },
+      "wedge-clean": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nok = False\ntry:\n    brief = changed['brief.md']\n    ok = list(changed) == ['brief.md'] and '### Candidate ' not in brief and 'No offload candidates' in brief\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        ]
+      },
+      "wedge-agent": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nok = False\ntry:\n    brief = changed['brief.md']\n    ok = list(changed) == ['brief.md'] and '### Candidate ' not in brief and 'packages only skills' in brief\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
         ]
       },
       "contract": {
@@ -35,7 +56,8 @@
         "argv": [
           "python3",
           "-I",
-          "check.py"
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nok = False\ntry:\n    d = json.loads(changed['skills/demo/evals/autoimprove.json'])\n    kinds = d['kinds']\n    ok = (d['status'] == 'draft' and d['schema_version'] == 1 and d['skill'] == 'demo' and bool(kinds)\n          and all(set(v) == {'grader', 'rubric'} and v['grader'] == 'judge' and v['rubric'] for v in kinds.values()))\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
         ]
       }
     },
@@ -47,11 +69,10 @@
       "family": "mode-add",
       "split": "train",
       "kind": "add",
-      "request": "Run $skillz add release-notes: a user-only skill that drafts release notes from merged changes. Write every created or changed file under output/, with the repository paths. Ask no question.",
+      "request": "Run $skillz add release-notes: a user-only skill that drafts release notes from merged changes. Create or edit each file at its repository path. Ask no question.",
       "files": {
         "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n",
-        "skills/existing/SKILL.md": "---\nname: existing\ndescription: >-\n  Placeholder skill that makes the name collision check meaningful. Use when the fixture needs one skill.\n---\n\n# existing\n\n1. Do nothing.\n",
-        "check.py": "import json, pathlib, re\no = pathlib.Path('output/skills/release-notes')\nok = False\ntry:\n    s = (o / 'SKILL.md').read_text()\n    side = (o / 'agents/openai.yaml').read_text()\n    readme = pathlib.Path('output/README.md').read_text()\n    ok = (re.search('^name: release-notes$', s, re.M) is not None\n          and re.search('^disable-model-invocation: true$', s, re.M) is not None\n          and 'allow_implicit_invocation: false' in side\n          and 'skills/release-notes/SKILL.md' in readme)\nexcept OSError:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        "skills/existing/SKILL.md": "---\nname: existing\ndescription: >-\n  Placeholder skill that makes the name collision check meaningful. Use when the fixture needs one skill.\n---\n\n# existing\n\n1. Do nothing.\n"
       },
       "expected": {
         "kind": "tree-check",
@@ -72,15 +93,14 @@
       "family": "mode-contract",
       "split": "train",
       "kind": "contract",
-      "request": "The autoimprove runner reported contract-missing for skills/demo. Follow the no-contract path: choose judge-only grading and draft the contract. Write it to output/evals/autoimprove.json.",
+      "request": "The autoimprove runner reported contract-missing for skills/demo. Follow the no-contract path: choose judge-only grading and draft the contract. Write it to skills/demo/evals/autoimprove.json.",
       "files": {
-        "skills/demo/SKILL.md": "---\nname: demo\ndescription: Rewrite a note in plain words. Use when asked to \"rewrite\".\n---\n\n# demo\n\n1. Rewrite the note in plain words.\n",
-        "check.py": "import json, pathlib\nok = False\ntry:\n    d = json.loads(pathlib.Path('output/evals/autoimprove.json').read_text())\n    kinds = d['kinds']\n    ok = (d['status'] == 'draft' and d['schema_version'] == 1 and d['skill'] == 'demo' and bool(kinds)\n          and all(set(v) == {'grader', 'rubric'} and v['grader'] == 'judge' and v['rubric'] for v in kinds.values()))\nexcept (OSError, ValueError, KeyError, TypeError):\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: Rewrite a note in plain words. Use when asked to \"rewrite\".\n---\n\n# demo\n\n1. Rewrite the note in plain words.\n"
       },
       "expected": {
         "kind": "tree-check",
         "files": [
-          "evals/autoimprove.json"
+          "skills/demo/evals/autoimprove.json"
         ],
         "status": "draft",
         "runner_code": "contract-unapproved"
@@ -94,11 +114,10 @@
       "family": "mode-improve",
       "split": "validation",
       "kind": "improve",
-      "request": "Run $skillz improve skills/demo/SKILL.md. Write each changed file under output/ with its repository path. Write the report to output/report.md. Put every speculative item in one line that starts with 'Approval question:'.",
+      "request": "Run $skillz improve skills/demo/SKILL.md. Edit each changed file in place at its repository path. Write the report to report.md. Put every speculative item in one line that starts with 'Approval question:'.",
       "files": {
         "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count.\n\nMake sure that you always remember to carefully report the count of open items to the user in a single short sentence that names the file and then stop without doing any other work on the file or the list.\n",
-        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n",
-        "check.py": "import json, pathlib, re\no = pathlib.Path('output')\nok = False\ntry:\n    s = (o / 'skills/demo/SKILL.md').read_text()\n    side = (o / 'skills/demo/agents/openai.yaml').read_text()\n    r = (o / 'report.md').read_text()\n    body = s.split('---', 2)[2].replace(chr(10), ' ')\n    longest = max(len(x.split()) for x in re.split('(?<=[.!?]) +', body))\n    ok = (longest <= 25\n          and 'allow_implicit_invocation: false' in side\n          and 'scripts/count.py' in s\n          and re.search('before: ~?[0-9]+ tok', r, re.I) is not None\n          and re.search('after: ~?[0-9]+ tok', r, re.I) is not None\n          and len(re.findall('^Approval question:', r, re.M)) == 1)\nexcept (OSError, IndexError):\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n"
       },
       "expected": {
         "kind": "tree-check",
@@ -122,12 +141,10 @@
       "id": "mode-wedge-candidates",
       "family": "mode-wedge-candidates",
       "split": "validation",
-      "kind": "wedge",
-      "request": "Run $skillz wedge skills/demo. Write the brief to output/brief.md. Write no other file.",
+      "kind": "wedge-candidates",
+      "request": "Run $skillz wedge skills/demo. Write the brief to brief.md. Write no other file.",
       "files": {
-        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Summarize a task list. Use when the user asks to \"summarize tasks\", \"review the task list\", \"who owns what\", \"task summary\", or \"open items by owner\".\n---\n\n# demo\n\n1. Count the open items: read the file and tally every line that starts with `- [ ]`.\n2. Sort the tally by owner, then by item name.\n3. Decide with the user which owner needs follow-up.\n",
-        "check.py": "import json, pathlib, re\nmode = json.loads(pathlib.Path('check.json').read_text())['mode']\nwritten = sorted(str(p.relative_to('output')) for p in pathlib.Path('output').rglob('*') if p.is_file())\nfields = ['Inputs', 'Output', 'Ordering', 'Empty', 'Errors', 'Side effects', 'Caller line']\nok = False\ntry:\n    brief = pathlib.Path('output/brief.md').read_text()\n    parts = re.split('^### Candidate ', brief, flags=re.M)[1:]\n    rows = re.findall('^[|] [0-9]+ [|].*$', brief, re.M)\n    full = all('**' + f + '**' in p for p in parts for f in fields)\n    if mode == 'candidates':\n        ok = (len(parts) >= 1 and full and len(rows) == len(parts)\n              and all(re.search('line [0-9]+|[(][0-9]+[)]|L[0-9]+', row) for row in rows)\n              and re.search('^## skillz wedge: ', brief, re.M) is not None\n              and 'Run /wedge with candidate' in brief)\n    elif mode == 'clean':\n        ok = not parts and 'No offload candidates' in brief\n    else:\n        ok = not parts and 'packages only skills' in brief\nexcept OSError:\n    pass\nok = ok and written == ['brief.md']\nprint(json.dumps({'score': 1 if ok else 0}))\n",
-        "check.json": "{\"mode\": \"candidates\"}\n"
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Summarize a task list. Use when the user asks to \"summarize tasks\", \"review the task list\", \"who owns what\", \"task summary\", or \"open items by owner\".\n---\n\n# demo\n\n1. Count the open items: read the file and tally every line that starts with `- [ ]`.\n2. Sort the tally by owner, then by item name.\n3. Decide with the user which owner needs follow-up.\n"
       },
       "expected": {
         "kind": "json-report",
@@ -144,12 +161,10 @@
       "id": "mode-wedge-clean",
       "family": "mode-wedge-clean",
       "split": "holdout",
-      "kind": "wedge",
-      "request": "Run $skillz wedge skills/advisor. Write the brief to output/brief.md. Write no other file.",
+      "kind": "wedge-clean",
+      "request": "Run $skillz wedge skills/advisor. Write the brief to brief.md. Write no other file.",
       "files": {
-        "skills/advisor/SKILL.md": "---\nname: advisor\ndescription: >-\n  Recommend a rollout plan. Use when the user asks to \"plan the rollout\", \"advise on release order\", \"pick a strategy\", \"weigh the options\", or \"recommend a plan\".\n---\n\n# advisor\n\n1. Ask the user which risks matter most.\n2. Recommend one rollout plan and explain the trade-off.\n3. Let the user decide.\n",
-        "check.py": "import json, pathlib, re\nmode = json.loads(pathlib.Path('check.json').read_text())['mode']\nwritten = sorted(str(p.relative_to('output')) for p in pathlib.Path('output').rglob('*') if p.is_file())\nfields = ['Inputs', 'Output', 'Ordering', 'Empty', 'Errors', 'Side effects', 'Caller line']\nok = False\ntry:\n    brief = pathlib.Path('output/brief.md').read_text()\n    parts = re.split('^### Candidate ', brief, flags=re.M)[1:]\n    rows = re.findall('^[|] [0-9]+ [|].*$', brief, re.M)\n    full = all('**' + f + '**' in p for p in parts for f in fields)\n    if mode == 'candidates':\n        ok = (len(parts) >= 1 and full and len(rows) == len(parts)\n              and all(re.search('line [0-9]+|[(][0-9]+[)]|L[0-9]+', row) for row in rows)\n              and re.search('^## skillz wedge: ', brief, re.M) is not None\n              and 'Run /wedge with candidate' in brief)\n    elif mode == 'clean':\n        ok = not parts and 'No offload candidates' in brief\n    else:\n        ok = not parts and 'packages only skills' in brief\nexcept OSError:\n    pass\nok = ok and written == ['brief.md']\nprint(json.dumps({'score': 1 if ok else 0}))\n",
-        "check.json": "{\"mode\": \"clean\"}\n"
+        "skills/advisor/SKILL.md": "---\nname: advisor\ndescription: >-\n  Recommend a rollout plan. Use when the user asks to \"plan the rollout\", \"advise on release order\", \"pick a strategy\", \"weigh the options\", or \"recommend a plan\".\n---\n\n# advisor\n\n1. Ask the user which risks matter most.\n2. Recommend one rollout plan and explain the trade-off.\n3. Let the user decide.\n"
       },
       "expected": {
         "kind": "json-report",
@@ -167,12 +182,10 @@
       "id": "mode-wedge-agent",
       "family": "mode-wedge-agent",
       "split": "holdout",
-      "kind": "wedge",
-      "request": "Run $skillz wedge agents/reviewer.md. Write the result to output/brief.md. Write no other file.",
+      "kind": "wedge-agent",
+      "request": "Run $skillz wedge agents/reviewer.md. Write the result to brief.md. Write no other file.",
       "files": {
-        "agents/reviewer.md": "---\nname: reviewer\ndescription: Review a diff and report findings.\ntools: Read, Grep\n---\n\nReview the diff and report each finding with a cited line.\n",
-        "check.py": "import json, pathlib, re\nmode = json.loads(pathlib.Path('check.json').read_text())['mode']\nwritten = sorted(str(p.relative_to('output')) for p in pathlib.Path('output').rglob('*') if p.is_file())\nfields = ['Inputs', 'Output', 'Ordering', 'Empty', 'Errors', 'Side effects', 'Caller line']\nok = False\ntry:\n    brief = pathlib.Path('output/brief.md').read_text()\n    parts = re.split('^### Candidate ', brief, flags=re.M)[1:]\n    rows = re.findall('^[|] [0-9]+ [|].*$', brief, re.M)\n    full = all('**' + f + '**' in p for p in parts for f in fields)\n    if mode == 'candidates':\n        ok = (len(parts) >= 1 and full and len(rows) == len(parts)\n              and all(re.search('line [0-9]+|[(][0-9]+[)]|L[0-9]+', row) for row in rows)\n              and re.search('^## skillz wedge: ', brief, re.M) is not None\n              and 'Run /wedge with candidate' in brief)\n    elif mode == 'clean':\n        ok = not parts and 'No offload candidates' in brief\n    else:\n        ok = not parts and 'packages only skills' in brief\nexcept OSError:\n    pass\nok = ok and written == ['brief.md']\nprint(json.dumps({'score': 1 if ok else 0}))\n",
-        "check.json": "{\"mode\": \"agent\"}\n"
+        "agents/reviewer.md": "---\nname: reviewer\ndescription: Review a diff and report findings.\ntools: Read, Grep\n---\n\nReview the diff and report each finding with a cited line.\n"
       },
       "expected": {
         "kind": "json-report",

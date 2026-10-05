@@ -440,31 +440,38 @@ Quality stays in prose. The command cannot judge a trigger phrase, an output con
 The mode fixtures test the steps of `add`, `improve`, `wedge`, and contract drafting.
 They also test the repository-local `skillz-self-update` skill.
 The public cases live in `skills/skillz/evals/mode-fixtures.json`.
-The self-update case stays in `lib/tests/skillz_experiments/fixtures/self-update.json`, so it never publishes.
+The self-update case lives in the repository's test fixtures, so it never publishes.
 
 A fixture uses the version-one case manifest and adds a `target` block with one `command` kind per mode.
+The `wedge` mode has one kind per outcome: `wedge-candidates`, `wedge-clean`, and `wedge-agent`.
 Each case has these fields:
 
-- `kind`: `add`, `improve`, `wedge`, `contract`, or `self-update`.
-- `request`: the text that calls the mode.
-- `files`: the starting tree, plus a stdlib `check.py` grader.
+- `kind`: `add`, `improve`, `wedge-candidates`, `wedge-clean`, `wedge-agent`, `contract`, or `self-update`.
+- `request`: the text that calls the mode. It names repository paths and never `output/`.
+- `files`: the starting tree. It holds no grader.
 - `expected`: a tree check or a JSON report. The grader never sees it. The offline tests read it.
 
-The grader reads the task output under `output/` and prints `{"score": 0 or 1}`.
-A task writes every created or changed file under `output/` with its repository path.
-The `wedge` grader also requires that `brief.md` is the only output file.
+The grader is a stdlib script in the kind's `argv`, so the task never reads it.
+The runtime stages the case files at the workspace root and runs the task there.
+A task creates or edits files at their repository paths.
+The runtime then snapshots the whole workspace, including the files that the task did not change.
+The grader reads that snapshot under `output/` and prints `{"score": 0 or 1}`.
+The grader compares each snapshot file with the staged file at the same path.
+Only a new or changed file counts as written.
+The `wedge` graders require that `brief.md` is the only written file.
 
 The offline tests run without a model.
-They grade a recorded golden output and each seeded-bad output.
+They stage each case and apply a recorded golden output or a seeded-bad output.
+They snapshot the workspace and grade it, so the tested path is the live path.
 The `add` and `improve` tests also run `audit-facts` and `inspect_skill.py` on the same trees.
 The tests pin the mode steps that each fixture depends on, so an edited step fails the matching test.
 
 To add a case, follow these steps:
 
 1. Add the case to the manifest with a unique `id` and `family`.
-2. Write a `check.py` that scores the golden output as 1 and the seeded defect as 0.
-3. Record the golden output and one or more seeded-bad outputs in `lib/tests/skillz_experiments/fixtures/mode-outputs.json`.
-4. Pin each step the case depends on in the `STEPS` list of `test_mode_fixtures.py`.
+2. Put a grader script in the `argv` of its kind. The script scores the golden output as 1 and the seeded defect as 0.
+3. Record the golden output and one or more seeded-bad outputs in the repository's mode-output fixture file. Record only the files that the task writes or changes.
+4. Pin each step the case depends on in the step list of the mode-fixture test.
 5. Run `just build`.
 
 Keep exactly two `holdout` cases. Use `train` and `validation` for the rest.
