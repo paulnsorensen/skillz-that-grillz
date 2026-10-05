@@ -12,15 +12,16 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, digest, loads_untrusted, mapping, string
+from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
-from skillz_experiments._isolation import listening, probe
+from skillz_experiments._isolation import listening, probe, watched
 from skillz_experiments._runtime import Budget, process
 
 TOOLS = "Bash,Read,Skill"
 PROBE_SKILL = "skillz"
+NETWORK_PROBE = "loopback-tcp-v1"
 AUTHENTICATION = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
@@ -30,6 +31,13 @@ RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/se
                 "/dev/null", "/dev/zero", "/dev/random", "/dev/urandom")
 MACOS_READ = ("/System", "/Library")
 SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
+
+
+class NetworkIsolationFailed(CodedError):
+    """The live Bash path reaches the network, or the network probe gives no usable result."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("network-isolation-failed", f"Claude Code isolation preflight fails: {reason}; no unsafe fallback")
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -210,6 +218,22 @@ def _write_failure(events: list[dict[str, object]], agents_file: str, wrote: boo
     return None
 
 
+def network_command(port: int, token: str) -> str:
+    """Build the live Bash network attempt. It sends the token if it connects, and prints `denied-<token>` if not."""
+    return ("/usr/bin/python3 -c \"import socket;c=socket.socket();c.settimeout(5);"
+            + f"r=c.connect_ex(('127.0.0.1',{port}));r or c.send(b'{token}');"
+            + f"print(('open-' if r==0 else 'denied-')+'{token}')\"")
+
+
+def _network_failure(events: list[dict[str, object]], connected: bool, token: str) -> str | None:
+    """Judge the network probe by the listener first. Then it needs the denial output of the Bash command."""
+    if connected:
+        return "network isolation failed: the runner-owned listener accepted a connection from Bash"
+    if not _bash_control_passed(events, "connect_ex", f"denied-{token}"):
+        return "network probe has no evidence: the Bash command output is missing or malformed"
+    return None
+
+
 def seatbelt_profile(workspace: Path) -> str:
     """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
 
@@ -293,8 +317,10 @@ class ClaudeCode:
         """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment."""
         environment = {name: value for name, value in self._environment(Path("/TASK")).items() if name not in AUTHENTICATION}
         credentials = sorted(name for name in AUTHENTICATION if name in os.environ)
+        network = cast(dict[str, object], settings(Path("/TASK"))["sandbox"])["network"]
         return digest({"settings": settings(Path("/TASK")), "environment": environment, "tools": TOOLS,
-                       "skill": PROBE_SKILL, "platform": sys.platform, "credentials": credentials})
+                       "skill": PROBE_SKILL, "platform": sys.platform, "credentials": credentials,
+                       "network": digest(network), "network_probe": NETWORK_PROBE})
 
     @staticmethod
     def credentials_set() -> str:
@@ -337,14 +363,18 @@ class ClaudeCode:
             agents_file = workspace / ".agents/write-probe"
             write_control = workspace / "write-control.txt"
             write_token = secrets.token_hex(16)
+            network_token = secrets.token_hex(16)
             self.budget.claim()
             self.checkpoint()
-            returncode, stderr, events = self._run(
-                workspace, f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
-                + f"Then run `printf {write_token} > {agents_file}` with the Bash tool. Then run "
-                + f"`printf {write_token} > {write_control}` with the Bash tool. "
-                + "Reply with the read outputs, or the word denied for each command that fails.",
-                None, min(120, self.budget.remaining()))
+            with watched() as (port, connected):
+                returncode, stderr, events = self._run(
+                    workspace, f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
+                    + f"Then run `printf {write_token} > {agents_file}` with the Bash tool. Then run "
+                    + f"`printf {write_token} > {write_control}` with the Bash tool. "
+                    + f"Then run `{network_command(port, network_token)}` with the Bash tool. "
+                    + "Reply with the read outputs, or the word denied for each command that fails.",
+                    None, min(120, self.budget.remaining()))
+                reached = connected(network_token)
             wrote = agents_file.exists()
             controlled = write_control.is_file() and write_control.read_text() == write_token
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
@@ -352,9 +382,13 @@ class ClaudeCode:
             reason = _read_failure(events, token, str(sealed), control, str(control_file))
         if reason is None:
             reason = _write_failure(events, str(agents_file), wrote, controlled)
+        if reason is None:
+            reason = _network_failure(events, reached, network_token)
+            if reason is not None:
+                raise NetworkIsolationFailed(reason)
         if reason is not None:
             raise RuntimeError(f"Claude Code isolation preflight fails: {reason}; no unsafe fallback")
-        return {"adapter": "claude", "model": self.model, "isolation": "passed", "live_calls": 1,
+        return {"adapter": "claude", "model": self.model, "isolation": "passed", "network": "denied", "live_calls": 1,
                 "environment_key": self.environment_key()}
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,

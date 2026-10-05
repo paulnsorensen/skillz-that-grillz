@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import sys
 from pathlib import Path
 from typing import cast
@@ -61,7 +62,31 @@ def write_probe(writes: list[tuple[str, str]], mode: str, config: dict[str, obje
     return texts
 
 
-def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object]) -> int:
+def network_probe(prompt: str, mode: str) -> list[str]:
+    """Answer the preflight network probe. `net-open` connects to the listener; `net-skipped` runs no command.
+
+    `net-garbled` runs the command and returns output without the token.
+    """
+    found = re.search(r"`(/usr/bin/python3 -c [^`]*connect_ex[^`]*)`", prompt)
+    if found is None or mode == "net-skipped":
+        return []
+    port = int(re.search(r"connect_ex\(\('127\.0\.0\.1',(\d+)\)\)", found.group(1)).group(1))  # pyright: ignore[reportOptionalMemberAccess]
+    token = re.search(r"'([0-9a-f]{32})'", found.group(1)).group(1)  # pyright: ignore[reportOptionalMemberAccess]
+    connected = False
+    if mode == "net-open":
+        with socket.socket() as client:
+            connected = client.connect_ex(("127.0.0.1", port)) == 0
+            if connected:
+                client.sendall(token.encode())
+    text = "garbled" if mode == "net-garbled" else ("open-" if connected else "denied-") + token
+    emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "n0", "name": "Bash",
+          "input": {"command": found.group(1)}}]}})
+    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "n0",
+          "is_error": False, "content": text}]}})
+    return [text]
+
+
+def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object], prompt: str) -> int:
     """Answer the preflight read probe. Each target is one `cat` call; modes break the probe in one way."""
     if mode == "skips-cat":
         emit({"type": "result", "subtype": "success", "is_error": False, "result": "denied", "usage": USAGE})
@@ -83,6 +108,7 @@ def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: 
               "is_error": False, "content": Path(targets[-1]).read_text()}]}})
         texts[-1] = Path(targets[-1]).read_text()
     texts += write_probe(writes, mode, config)
+    texts += network_probe(prompt, mode)
     emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts), "usage": USAGE})
     return 0
 
@@ -122,7 +148,7 @@ def main() -> int:
     targets = re.findall(r"`cat (\S+)` with the Bash tool", prompt)
     if targets:
         writes = re.findall(r"`printf (\S+) > (\S+)` with the Bash tool", prompt)
-        return probe(targets, writes, mode, config)
+        return probe(targets, writes, mode, config, prompt)
     schema = cast(dict[str, object], json.loads(argv[argv.index("--json-schema") + 1])) if "--json-schema" in argv else {}
     properties = cast(dict[str, object], schema.get("properties", {}))
     marker = Path.cwd() / ".agents/skills/skillz/EXPERIMENT_MARKER"

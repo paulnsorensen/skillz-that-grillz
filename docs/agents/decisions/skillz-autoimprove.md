@@ -31,22 +31,22 @@ The user settled each decision in a Mold session on 2026-10-03.
 - **Alternatives:** `--bare` with an API key. A temporary config dir with copied OAuth credentials. The generic command protocol only.
 - **Consequences:** It is unverified whether `--restricted` hides `~/.claude/skills`. If it does not, every Claude run stops by design.
 
-#### Claude live network verification — deferred
+#### Claude live network verification
 
-The Claude autoimprove live preflight verifies read and write restrictions, but it does not verify network denial on live Bash commands.[^network-probe]
-Network probes use a separate native sandbox. Its result does not establish the effective policy of the live Claude process.[^network-path]
-The user defers the larger effective-network-policy repair during PR #118 review on 2026-10-04.
-The repair must verify the live execution path and bind preflight reuse to the effective policy.
-Until that repair, a successful preflight does not prove complete Claude network isolation.
-No live provider test validates this boundary during the review.
+The Claude autoimprove live preflight verifies network denial on the live Linux Bash path.
+The single preflight call asks Claude to run a Bash command that connects to a loopback listener that the runner owns.
+The runner judges the listener. An accepted connection, a missing output, or a malformed output fails the preflight with the code `network-isolation-failed`.
+The recorded pass keeps the network result. The reuse key includes a hash of the network settings and the probe version.
+A changed network policy therefore forces a new live preflight.
+The native sandbox probe remains a separate, free check.
+The macOS path stays unverified live. A passed preflight does not prove macOS isolation.
+The manual macOS checklist is in `skills/skillz/references/experiment-harness.md`.
+No live provider test validates this boundary in the build.
 
 ### ADR-005: Make the wedge arm a hand-written stdlib script  [status: accepted]
 - **Context:** The user states that a wedge is a deterministic offload made by hand, and that Python is assumed installed. A real `/wedge` build needs `uv` and network access.
 - **Decision:** The `wedge` search mode adds one new `scripts/<name>.py` file plus its SKILL.md call site, seeded from `--brief PATH`. It runs as `python3 -I`. Selection ranks correctness first and tokens second.
 - **Alternatives:** A per-evaluation `.pyz` build. Optimizing the brief text only.
 - **Consequences:** No build in the loop. Packaging as a `.pyz` stays a separate, optional step.
-
-[^network-probe]: lib/src/skillz_experiments/_claude.py, ClaudeCode.preflight; reviewed at bcad2b91, lines 337-349.
-[^network-path]: lib/src/skillz_experiments/_claude.py, ClaudeCode._probe_sandbox, sandbox, and _run; reviewed at bcad2b91, lines 279-304 and 386-400.
 
 _Source: Mold session 2026-10-03 and PR #118 Affinage review · Updated: 2026-10-04_

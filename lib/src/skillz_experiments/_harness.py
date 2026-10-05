@@ -162,7 +162,8 @@ class Harness:
         for name, adapter in self.transports.items():
             kept = passes.get(name)
             if (isinstance(adapter, ClaudeCode) and keys.get(name) == reuse_keys[name] and isinstance(kept, dict)
-                    and cast(dict[str, object], kept).get("isolation") == "passed"):
+                    and cast(dict[str, object], kept).get("isolation") == "passed"
+                    and cast(dict[str, object], kept).get("network") == "denied"):
                 adapter.check_sandbox()
                 evidence[name] = kept
                 continue

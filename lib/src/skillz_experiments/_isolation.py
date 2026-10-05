@@ -1,17 +1,48 @@
 import socket
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
 
 @contextmanager
-def listening() -> Generator[int]:
-    """Listen on host loopback. A sandbox with network isolation cannot connect to the port."""
+def _server() -> Generator[socket.socket]:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.bind(("127.0.0.1", 0))
         server.listen(1)
+        yield server
+
+
+@contextmanager
+def listening() -> Generator[int]:
+    """Listen on host loopback. A sandbox with network isolation cannot connect to the port."""
+    with _server() as server:
         yield cast(int, server.getsockname()[1])
+
+
+@contextmanager
+def watched() -> Generator[tuple[int, Callable[[str], bool]]]:
+    """Listen on host loopback and yield the port with a check.
+
+    The check is true when a client connected and sent the token. A stray client that sends nothing does not count.
+    """
+    with _server() as server:
+        server.setblocking(False)
+
+        def connected(token: str) -> bool:
+            while True:
+                try:
+                    client = server.accept()[0]
+                except BlockingIOError:
+                    return False
+                with client:
+                    client.settimeout(1)
+                    try:
+                        if token.encode() in client.recv(256):
+                            return True
+                    except OSError:
+                        continue
+        yield cast(int, server.getsockname()[1]), connected
 
 
 def probe(workspace: Path, sealed: Path, engine: Path, port: int) -> str:
