@@ -388,7 +388,7 @@ Success returns exit zero and one JSON object:
 The same input gives byte-identical output.
 `path` is relative to the directory. `line` is a 1-based file line, or `null` when no line applies.
 `status` is `pass`, `fail`, or `not-applicable`.
-`rule` names the rubric lens, then the number of the matching layout rule when one applies.
+`rule` names the rubric lens or layout section, then the number of the matching layout rule when one applies.
 `detail` is a short fact for the finding.
 
 | `id` | `rule` | Fails when |
@@ -407,9 +407,9 @@ The same input gives byte-identical output.
 | `body.arguments-variable` | `portability.4` | the body contains `$ARGUMENTS` |
 | `body.skill-dir-variable` | `portability.5` | the body contains the `CLAUDE_SKILL_DIR` variable |
 | `body.file-mention` | `portability.6` | the body contains an `@file` mention |
-| `references.nested` | `information-hierarchy.9` | a reference links to another reference |
-| `references.orphan` | `information-hierarchy` | `SKILL.md` does not name the reference path |
-| `references.read-trigger` | `information-hierarchy.9` | the `## References` entry has no text after a dash or colon |
+| `references.nested` | `information-hierarchy.9` | a reference links to another reference, or names its `references/` path |
+| `references.orphan` | `information-hierarchy` | `SKILL.md` does not name the reference path as a whole token |
+| `references.read-trigger` | `information-hierarchy.9` | the `## References` entry has no trigger word after its dash or colon |
 | `scripts.invocation-line` | `deterministic-offload` | no body line names `scripts/<file>` |
 | `registration.readme-row` | `registration` | the repository README `## Skills` table has no row for the skill |
 | `repo-local.internal-metadata` | `repo-local` | a repo-local skill lacks `metadata.internal: true` |
@@ -420,6 +420,9 @@ Registration and repo-local checks also report `not-applicable` outside a reposi
 The command finds the repository root by walking up for `.git`.
 A repo-local skill lives under `.agents/skills/` and needs no README row.
 A reference listed nowhere in `## References` reports `not-applicable` for `references.read-trigger`.
+A trigger word is one of: when, whenever, if, fire, need, read, use, run, before, after, only, absent, select, flag, opt.
+The code-syntax checks skip fenced blocks and backtick spans. An `@` mention counts only when a path or a file extension follows.
+The script check covers visible files directly in `scripts/`; it skips subdirectories and dot files.
 
 The command parses only the frontmatter lines that the checks need. It does not parse full YAML.
 The allowed key set matches the cross-harness frontmatter matrix; a test pins the two together.

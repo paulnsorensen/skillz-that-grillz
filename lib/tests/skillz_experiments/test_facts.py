@@ -223,3 +223,97 @@ def test_allowed_keys_match_the_harness_layout_matrix() -> None:
         spans = cast(list[str], re.findall(r"`([^`]+)`", cell))
         keys |= {span.split(":")[0].split(" ")[0] for span in spans if not span.startswith("$")}
     assert keys == ALLOWED_KEYS
+
+
+LONG = "d" * 1200
+DESCRIPTION_VALUES = [
+    ("plain continuation", f"Short first line\n  {LONG}", "fail"),
+    ("quoted continuation", f"\"Short first line\n  {LONG}\"", "fail"),
+    ("folded block", f">\n  Short first line\n  {LONG}", "fail"),
+    ("literal block", f"|\n  Short first line\n  {LONG}", "fail"),
+    ("short quoted continuation", "\"Does a demo thing.\n  Use when asked.\"", "pass"),
+    ("short block", ">\n  Does a demo thing.\n  Use when asked.", "pass"),
+    ("commented plain", f"Does a demo thing. # {LONG}", "pass"),
+]
+
+
+@pytest.mark.parametrize(("value", "status"), [case[1:] for case in DESCRIPTION_VALUES],
+                         ids=[case[0] for case in DESCRIPTION_VALUES])
+def test_description_length_counts_every_scalar_style(value: str, status: str, tmp_path: Path,
+                                                      capsys: pytest.CaptureFixture[str]) -> None:
+    checks = run(make(tmp_path, skill(description=value)), capsys)
+    hit = find(checks, "description.length")
+    assert (hit["status"], hit["line"]) == (status, 3)
+
+
+def test_inline_comment_does_not_hide_the_user_only_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    text = skill("disable-model-invocation: true # user only\n")
+    checks = run(make(tmp_path, text, {"agents/openai.yaml": SIDECAR}), capsys)
+    assert find(checks, "model-policy.model-invoked")["status"] == "not-applicable"
+    assert find(checks, "sidecar.exists")["status"] == "pass"
+
+
+def test_backtick_mention_of_another_reference_is_nested(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    files: dict[str, str | None] = {"references/guide.md": "# Guide\n\nSee `references/other.md`.\n",
+                                    "references/other.md": "# Other\n"}
+    text = skill(body=BODY + "- `references/other.md` — read when needed.\n")
+    hit = find(run(make(tmp_path, text, files), capsys), "references.nested", "references/guide.md")
+    assert (hit["status"], hit["line"]) == ("fail", 3)
+
+
+@pytest.mark.parametrize("addition", [
+    "```python\n@app.command\nvalue = '$ARGUMENTS ${CLAUDE_SKILL_DIR} @notes.md'\n```\n",
+    "Never use `@notes.md`, `$ARGUMENTS`, or `${CLAUDE_SKILL_DIR}`.\n",
+    "Decorate with @app.command and mail me@example.md.\n",
+], ids=["fence", "span", "decorator"])
+def test_body_variable_checks_skip_code_and_non_paths(addition: str, tmp_path: Path,
+                                                      capsys: pytest.CaptureFixture[str]) -> None:
+    checks = run(make(tmp_path, skill(body=BODY + addition)), capsys)
+    assert [c["id"] for c in checks if c["status"] == "fail"] == []
+
+
+def test_file_mention_after_a_closed_fence_still_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    text = skill(body=BODY + "```\ncode\n```\nLoad @docs/notes.md now.\n")
+    assert find(run(make(tmp_path, text), capsys), "body.file-mention")["line"] == 18
+
+
+def test_only_top_level_visible_files_are_scripts(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    files: dict[str, str | None] = {"scripts/.gitkeep": "", "scripts/lib/util.py": "x = 1\n"}
+    checks = run(make(tmp_path, files=files), capsys)
+    assert [c["id"] for c in checks if c["status"] == "fail"] == []
+    assert [c["path"] for c in checks if c["id"] == "scripts.invocation-line"] == ["scripts/tool.py"]
+
+
+def test_orphan_check_matches_the_path_as_a_token(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    body = "# demo\n\nRun `python3 scripts/tool.py`.\nSee ../other/references/guide.md.\n"
+    assert find(run(make(tmp_path, skill(body=body)), capsys), "references.orphan")["status"] == "fail"
+    body = "# demo\n\nRun `python3 scripts/tool.py`.\nSee ./references/guide.md.\n"
+    assert find(run(make(tmp_path / "again", skill(body=body)), capsys), "references.orphan")["status"] == "pass"
+
+
+@pytest.mark.parametrize(("entry", "status"), [
+    ("- `references/guide.md` — the guide.", "fail"),
+    ("- `references/guide.md` — read when a run needs it.", "pass"),
+    ("- `references/guide.md`: Portability lens fires.", "pass"),
+    ("- `references/guide.md`", "fail"),
+])
+def test_read_trigger_needs_a_trigger_word(entry: str, status: str, tmp_path: Path,
+                                           capsys: pytest.CaptureFixture[str]) -> None:
+    body = BODY.split("- `references")[0] + entry + "\n"
+    hit = find(run(make(tmp_path, skill(body=body)), capsys), "references.read-trigger")
+    assert hit["status"] == status
+
+
+def test_dot_dot_input_uses_the_resolved_directory_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    package = make(tmp_path)
+    (package / "agents").mkdir()
+    assert main(["audit-facts", str(package / "agents" / "..")]) == 0
+    checks = cast(Checks, json.loads(capsys.readouterr().out)["checks"])
+    assert find(checks, "name.matches-directory")["status"] == "pass"
+
+
+def test_flow_style_metadata_sets_internal(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _repository(tmp_path, "")
+    package = make(tmp_path / ".agents/skills", skill("metadata: {author: me, internal: true}\n"))
+    hit = find(run(package, capsys), "repo-local.internal-metadata")
+    assert (hit["status"], hit["line"]) == ("pass", 4)

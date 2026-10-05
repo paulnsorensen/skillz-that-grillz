@@ -23,10 +23,19 @@ TOP = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*)$")
 KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LINK = re.compile(r"\[[^\]]*\]\(([^\s)]+)\)")
 MENTION = re.compile(r"references/[\w./-]+\.md")
-TRIGGER = re.compile(r"^[`)\]\s,]*(?:—|–|--|-|:)\s*[\w`]")
+SEPARATOR = re.compile(r"^[`)\]\s,]*(?:—|–|--|-|:)\s*(.*)$", re.S)
+TRIGGER_WORD = re.compile(
+    r"\b(?:when|whenever|if|fires?|needs?|read|uses?|run|before|after|only|absent|selects?|flags?|opts?)\b", re.I)
+COMMENT = re.compile(r"\s+#.*$")
+QUOTED = re.compile(r"^([\"'])(.*)\1\s*(?:#.*)?$", re.S)
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+SPAN = re.compile(r"(`+).+?\1")
+FLOW_INTERNAL = re.compile(r"[{,]\s*internal:\s*[\"']?true[\"']?\s*[,}]")
 ARGUMENTS = re.compile(r"\$ARGUMENTS\b")
 SKILL_DIR = re.compile(r"\$\{CLAUDE_SKILL_DIR\}")
-FILE_MENTION = re.compile(r"(?<![\w@])@(?:file\b|[\w~.-]*[./][\w./-]*)")
+FILE_MENTION = re.compile(
+    r"(?<![\w@])@(?:file\b|(?:~|\.{0,2})/[\w./-]+|[\w-]+(?:/[\w.-]+)+|[\w-]+\.(?:md|txt|json|ya?ml|toml|py|sh|js|ts|csv)\b)"
+)
 IMPLICIT_OFF = re.compile(r"^\s*allow_implicit_invocation:\s*false\s*$")
 INTERNAL = re.compile(r"^internal:\s*[\"']?true[\"']?\s*$")
 
@@ -40,12 +49,14 @@ class _Field:
     block: list[tuple[int, str]] = field(default_factory=lambda: [])
 
     def text(self) -> str:
-        if self.value and self.value[0] not in ">|":
-            if len(self.value) > 1 and self.value[0] == self.value[-1] and self.value[0] in "\"'":
-                return self.value[1:-1]
-            return self.value
-        joiner = "\n" if self.value.startswith("|") else " "
-        return joiner.join(text for _, text in self.block)
+        if self.value[:1] in (">", "|"):
+            return ("\n" if self.value[0] == "|" else " ").join(text for _, text in self.block)
+        parts = [self.value, *(text for _, text in self.block)]
+        if self.value[:1] in ("'", '"'):
+            joined = " ".join(parts)
+            quoted = QUOTED.match(joined)
+            return quoted[2] if quoted else joined
+        return " ".join(part for part in (COMMENT.sub("", part) for part in parts) if part)
 
 
 @dataclass
@@ -129,6 +140,28 @@ def _policy(context: _Context, fields: dict[str, _Field], package: Path, user_on
                 else "model-invoked skill lacks " + ", ".join(missing) if missing else "model and effort are set")
 
 
+def _code_free(lines: list[str]) -> list[str]:
+    """Blank fenced blocks and backtick spans, so a mention inside code is not a use."""
+    masked: list[str] = []
+    fence = ""
+    for line in lines:
+        opener = FENCE.match(line)
+        if fence:
+            masked.append("")
+            if opener and opener[1][0] == fence[0] and len(opener[1]) >= len(fence) and not opener[2].strip():
+                fence = ""
+        elif opener:
+            fence = opener[1]
+            masked.append("")
+        else:
+            masked.append(SPAN.sub(lambda hit: " " * len(hit[0]), line))
+    return masked
+
+
+def _names(text: str, relative: str) -> re.Match[str] | None:
+    return re.search(rf"(?<![\w./-])(?:\./)?{re.escape(relative)}(?![\w-]|\.\w)", text)
+
+
 def _body(context: _Context, body: list[str], offset: int) -> None:
     size = len("\n".join(body).encode("utf-8")) // 4
     context.add("body.token-estimate", "information-hierarchy.9", "SKILL.md", None,
@@ -136,7 +169,7 @@ def _body(context: _Context, body: list[str], offset: int) -> None:
     for check, rule, pattern in (("body.arguments-variable", "portability.4", ARGUMENTS),
                                  ("body.skill-dir-variable", "portability.5", SKILL_DIR),
                                  ("body.file-mention", "portability.6", FILE_MENTION)):
-        hit = _first(body, offset, pattern)
+        hit = _first(_code_free(body), offset, pattern)
         context.add(check, rule, "SKILL.md", hit[0] if hit else None, FAIL if hit else PASS,
                     f"found `{hit[1]}`" if hit else "none found")
 
@@ -160,14 +193,18 @@ def _references(context: _Context, package: Path, body: list[str], offset: int) 
                 target = os.path.normpath(os.path.join(os.path.dirname(relative), unquote(parsed.path)))
                 if target in files and target != relative and nested is None:
                     nested = (number, target)
+            for mention in MENTION.finditer(line):
+                if mention[0] in files and mention[0] != relative and nested is None:
+                    nested = (number, mention[0])
         context.add("references.nested", "information-hierarchy.9", relative, nested[0] if nested else None,
-                    FAIL if nested else PASS, f"links to `{nested[1]}`" if nested else "links to no other reference")
-        linked = relative in text
+                    FAIL if nested else PASS, f"names `{nested[1]}`" if nested else "names no other reference")
+        linked = _names(text, relative) is not None
         context.add("references.orphan", "information-hierarchy", relative, None, PASS if linked else FAIL,
                     "SKILL.md names it" if linked else "SKILL.md does not name it")
-        item = next(((number, item) for number, item in items if relative in item), None)
+        item = next(((number, item) for number, item in items if _names(item, relative)), None)
         last = max((hit.end() for hit in MENTION.finditer(item[1])), default=0) if item else 0
-        triggered = item is not None and bool(TRIGGER.match(item[1][last:]))
+        separated = SEPARATOR.match(item[1][last:]) if item else None
+        triggered = bool(separated and TRIGGER_WORD.search(separated[1]))
         context.add("references.read-trigger", "information-hierarchy.9", relative, item[0] if item else None,
                     NOT_APPLICABLE if item is None else PASS if triggered else FAIL,
                     "not listed in ## References" if item is None
@@ -188,8 +225,9 @@ def _reference_items(body: list[str], offset: int) -> list[tuple[int, str]]:
 
 
 def _scripts(context: _Context, package: Path, body: list[str], offset: int) -> None:
-    files = sorted(path.relative_to(package / "scripts").as_posix() for path in (package / "scripts").rglob("*")
-                   if path.is_file() and "__pycache__" not in path.parts)
+    directory = package / "scripts"
+    files = sorted(path.name for path in directory.iterdir() if path.is_file() and not path.name.startswith(".")) \
+        if directory.is_dir() else []
     if not files:
         context.add("scripts.invocation-line", "deterministic-offload", "scripts", None, NOT_APPLICABLE, "no scripts")
     for relative in files:
@@ -220,8 +258,7 @@ def _repository(context: _Context, package: Path, fields: dict[str, _Field], roo
                 NOT_APPLICABLE if reason else PASS if row else FAIL,
                 reason or ("README row present" if row else f"no row names `{relative}/SKILL.md`"))
     reason = "not inside a repository" if root is None else "" if local else "not a repo-local skill"
-    internal = next(((number, text) for number, text in fields["metadata"].block if INTERNAL.match(text)), None) \
-        if "metadata" in fields else None
+    internal = _internal(fields)
     context.add("repo-local.internal-metadata", "repo-local", "SKILL.md",
                 internal[0] if internal else fields["metadata"].line if "metadata" in fields else None,
                 NOT_APPLICABLE if reason else PASS if internal else FAIL,
@@ -239,6 +276,15 @@ def _repository(context: _Context, package: Path, fields: dict[str, _Field], roo
                 os.path.relpath(link, package).replace(os.sep, "/") if link else ".claude/skills", None, status, detail)
 
 
+def _internal(fields: dict[str, _Field]) -> tuple[int, str] | None:
+    metadata = fields.get("metadata")
+    if metadata is None:
+        return None
+    if FLOW_INTERNAL.search(metadata.value):
+        return metadata.line, metadata.value
+    return next(((number, text) for number, text in metadata.block if INTERNAL.match(text)), None)
+
+
 def _root(package: Path) -> Path | None:
     return next((path for path in (package, *package.parents) if (path / ".git").exists()), None)
 
@@ -247,7 +293,7 @@ def audit_facts(directory: Path) -> dict[str, object]:
     """Check one skill directory against the fixed rubric rows. Report facts only."""
     if directory.is_symlink():
         raise ValueError("input must not be a symlink")
-    package = directory.parent.resolve() / directory.name
+    package = directory.resolve()
     if not package.is_dir():
         raise ValueError("input must be a directory")
     if any(path.is_symlink() for path in package.rglob("*")):
