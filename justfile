@@ -50,6 +50,20 @@ test-fromargs python="":
 mutate-fromargs:
     uv run --locked --project lib/fromargs python lib/fromargs/tests/e2e/mutate.py
 
+# Print the CHANGELOG section for one fromargs version; fail when it is missing or empty.
+[script("bash")]
+fromargs-release-notes $version:
+    set -euo pipefail
+    notes=$(awk -v v="$version" '
+        index($0, "## [" v "]") == 1 { on = 1; next }
+        on && /^(## |\[[^]]+\]: )/ { exit }
+        on { print }
+    ' lib/fromargs/CHANGELOG.md | sed '/./,$!d')
+    if [ -z "${notes//[[:space:]]/}" ]; then
+        echo "error: lib/fromargs/CHANGELOG.md has no section for $version" >&2
+        exit 1
+    fi
+    printf '%s\n' "$notes"
 # Fix markdown formatting issues
 lint-md-fix:
     markdownlint-cli2 --fix "*.md"
