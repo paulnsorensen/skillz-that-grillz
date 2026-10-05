@@ -29,17 +29,33 @@ class CheckSkillzReferencesTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("references directory not found", err)
 
-    def test_link_and_backtick_mentions_fail(self):
+    def test_link_bare_and_backtick_mentions_fail(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "a.md").write_text("See [b](b.md) and `references/c.md`.\n")
+            (root / "a.md").write_text(
+                "See [b](b.md) and `references/c.md`.\nRead d.md next.\n"
+            )
             (root / "b.md").write_text("No mention.\n")
-            (root / "c.md").write_text("Reads `engine/references/other.md` only.\n")
+            (root / "c.md").write_text("No mention.\n")
+            (root / "d.md").write_text("No mention.\n")
             code, out, _ = _run(root)
         self.assertEqual(code, 1)
         self.assertIn("a.md:1: names b.md", out)
         self.assertIn("a.md:1: names c.md", out)
-        self.assertNotIn("c.md:1", out)
+        self.assertIn("a.md:2: names d.md", out)
+
+    def test_engine_references_are_allowed_but_mixed_line_still_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.md").write_text(
+                "Reads `engine/references/b.md` and [x](../engine/references/b.md).\n"
+                "Reads `engine/references/b.md` then b.md.\n"
+            )
+            (root / "b.md").write_text("No mention.\n")
+            code, out, _ = _run(root)
+        self.assertEqual(code, 1)
+        self.assertNotIn("a.md:1", out)
+        self.assertIn("a.md:2: names b.md", out)
 
     def test_independent_references_pass(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -49,7 +65,8 @@ class CheckSkillzReferencesTest(unittest.TestCase):
             self.assertEqual(_run(root)[0], 0)
 
     def test_shipped_references_pass(self):
-        code, out, _ = _run(check.REFERENCES)
+        self.assertTrue(check.reference_dirs())
+        code, out, _ = _run(None)
         self.assertEqual(code, 0, out)
 
 

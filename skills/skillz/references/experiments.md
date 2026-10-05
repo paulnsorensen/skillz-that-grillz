@@ -31,7 +31,7 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-run --out /tm
 
 Pass an explicit available model. The example model is not an availability guarantee.
 The Codex and command preflights make zero model invocations.
-Each `claude` role makes one live preflight call per run (see the `claude` adapter section of the harness protocol).
+Each `claude` role makes one live preflight call per run.
 Under `self-test --preflight-only`, each `claude` role makes one live call, even without `--live`.
 Other live invocations require `--live` and a successful isolation preflight.
 A failed isolation check stops the run. Never add an unsafe fallback.

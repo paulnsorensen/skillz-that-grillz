@@ -75,13 +75,15 @@ into several raw entries; this table groups them by `message.id`.
 ## `agent_spawns`
 
 Subset of `tool_uses` for `Agent` (claude) and `Task` (cursor) calls. Columns: `harness`,
-`agent_type` (defaults to `general-purpose`), `description`, `mode`, `timestamp`,
-`sessionId`, `cwd`.
+`agent_type` (defaults to `general-purpose`), `description`, `mode`, `anchor_id`,
+`timestamp`, `sessionId`, `cwd`. `anchor_id` is the spawn's `tool_use_id`.
 
 ## `skill_invocations`
 
 Subset of `tool_uses` for `Skill` calls (claude). Columns: `harness`,
-`skill_name`, `args`, `timestamp`, `sessionId`, `cwd`.
+`skill_name`, `args`, `anchor_id`, `timestamp`, `sessionId`, `cwd`.
+`anchor_id` is the invocation's `tool_use_id`. Window queries use it to exclude the anchor event.
+`anchor_id` is NULL when the log names no tool call id.
 
 ## `mcp_calls`
 

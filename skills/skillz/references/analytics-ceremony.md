@@ -17,7 +17,9 @@ run read-only.
    `sessions_db_path` function. `SESSIONS_DB` overrides it. Otherwise, an
    absolute `XDG_CACHE_HOME` selects
    `<cache>/dotfiles/session-analytics/sessions.duckdb`; a relative or unset
-   value uses `~/.cache/dotfiles/session-analytics/sessions.duckdb`.
+   value uses `~/.cache/dotfiles/session-analytics/sessions.duckdb`. A relative
+   `SESSIONS_DB` resolves against the current directory. Ingest also writes the
+   transient `<db>.tmp` and `<db>.stage`, and a persistent `<db>.lock`.
 3. Check `command -v duckdb`. If absent, stop this ceremony and do not run ingest.
 4. Run `python3 <abs-skillz>/engine/scripts/ingest.py` before querying. The
    one-hour cache makes a fresh database a no-op. If no logs are accessible or
@@ -45,8 +47,8 @@ run read-only.
    | Pack | Reveals |
    |---|---|
    | Usage | invocations, trend, project spread, peer rank |
-   | Orchestration | tools, spawns, and MCP calls near the target; error rate |
-   | Drift | declining usage, single-project concentration, error trend |
+   | Orchestration | tools, spawns, and MCP calls near the target |
+   | Drift | declining usage, error-rate trend, new error signatures |
 
 6. Carry the digests into the Usage lens.
 

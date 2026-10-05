@@ -1,0 +1,5 @@
+interface:
+  display_name: "fromargs release"
+  short_description: "Release the fromargs distribution to PyPI and GitHub"
+policy:
+  allow_implicit_invocation: false

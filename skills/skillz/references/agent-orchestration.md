@@ -2,9 +2,8 @@
 
 - target_param: `{TARGET}` (the skill or agent type whose orchestration we audit)
 - target_kind: `skill` or `agent`, from the dispatch prompt
-- start table: set `{START_TABLE}` and `{NAME_COLUMN}` from `target_kind`
-  - `skill`: `skill_invocations`, `skill_name`
-  - `agent`: `agent_spawns`, `agent_type`
+- start table: set `{START_TABLE}` and `{NAME_COLUMN}` from `target_kind`, as the
+  Substitution section of `engine/references/query-conventions.md` defines
 - harness: `harness='all'` (`agent_spawns` / `mcp_calls` are claude-dominant — note that)
 - owner: skillz
 
@@ -13,19 +12,28 @@ These events are temporally correlated. The window does not prove causation or c
 Run in one fresh read-only context. Schema: `engine/references/canonical-schema.md`
 in this `skillz` skill. Replace each placeholder before you run a query.
 
-For an `agent` target, a window starts at each spawn of that agent in the parent session.
-The spawned agent's own tool calls carry no join key. The tool, MCP, and spawn tables
-count parent-session events in the window, so state that limit in the findings.
-Each window excludes its own anchor event, so the anchor is never a correlated event.
+For an `agent` target, a window starts at each spawn of that agent in the session.
+The spawned agent's own tool calls carry no join key. Claude sidechain events share the
+parent `sessionId`, so a window includes them, mixed across concurrent spawns.
+The tables cannot attribute those events to one spawn. State that limit in the findings.
+Each window includes events at its start time but excludes its own anchor event
+(`tool_use_id IS DISTINCT FROM anchor_id`), so the anchor is never a correlated event.
+Cursor timestamps have minute resolution, so many events share the anchor timestamp.
+The `>=` bound keeps those events. State that limit when Cursor rows appear.
 
-First run `SELECT harness, count(*) AS n FROM {START_TABLE} GROUP BY harness;`.
+First run this coverage query.
+
+```sql
+SELECT harness, count(*) AS n FROM {START_TABLE} GROUP BY harness;
+```
+
 Report a harness absent from the result as `unavailable`, never as 0.
 
 ## 1. Tools correlated with invocation windows
 
 ```sql
 WITH windows AS (
-    SELECT harness, sessionId, timestamp::TIMESTAMP AS t0,
+    SELECT harness, sessionId, anchor_id, timestamp::TIMESTAMP AS t0,
            timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
     FROM {START_TABLE} WHERE {NAME_COLUMN} = '{TARGET}'
 )
@@ -34,7 +42,8 @@ FROM tool_uses tu
 WHERE EXISTS (
     SELECT 1 FROM windows w
     WHERE w.harness = tu.harness AND w.sessionId = tu.sessionId
-      AND tu.timestamp::TIMESTAMP > w.t0 AND tu.timestamp::TIMESTAMP <= w.t1
+      AND tu.timestamp::TIMESTAMP >= w.t0 AND tu.timestamp::TIMESTAMP <= w.t1
+      AND tu.tool_use_id IS DISTINCT FROM w.anchor_id
 )
 GROUP BY tu.tool_name ORDER BY uses DESC;
 ```
@@ -45,7 +54,7 @@ GROUP BY tu.tool_name ORDER BY uses DESC;
 
 ```sql
 WITH windows AS (
-    SELECT harness, sessionId, timestamp::TIMESTAMP AS t0,
+    SELECT harness, sessionId, anchor_id, timestamp::TIMESTAMP AS t0,
            timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
     FROM {START_TABLE} WHERE {NAME_COLUMN} = '{TARGET}'
 )
@@ -55,7 +64,8 @@ FROM agent_spawns asp
 WHERE EXISTS (
     SELECT 1 FROM windows w
     WHERE w.harness = asp.harness AND w.sessionId = asp.sessionId
-      AND asp.timestamp::TIMESTAMP > w.t0 AND asp.timestamp::TIMESTAMP <= w.t1
+      AND asp.timestamp::TIMESTAMP >= w.t0 AND asp.timestamp::TIMESTAMP <= w.t1
+      AND asp.anchor_id IS DISTINCT FROM w.anchor_id
 )
 GROUP BY asp.agent_type, asp.description, asp.mode
 ORDER BY spawns DESC;
@@ -65,7 +75,7 @@ ORDER BY spawns DESC;
 
 ```sql
 WITH windows AS (
-    SELECT harness, sessionId, timestamp::TIMESTAMP AS t0,
+    SELECT harness, sessionId, anchor_id, timestamp::TIMESTAMP AS t0,
            timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS t1
     FROM {START_TABLE} WHERE {NAME_COLUMN} = '{TARGET}'
 )
@@ -74,7 +84,8 @@ FROM mcp_calls mc
 WHERE EXISTS (
     SELECT 1 FROM windows w
     WHERE w.harness = mc.harness AND w.sessionId = mc.sessionId
-      AND mc.timestamp::TIMESTAMP > w.t0 AND mc.timestamp::TIMESTAMP <= w.t1
+      AND mc.timestamp::TIMESTAMP >= w.t0 AND mc.timestamp::TIMESTAMP <= w.t1
+      AND mc.tool_use_id IS DISTINCT FROM w.anchor_id
 )
 GROUP BY mc.harness, mc.tool_name ORDER BY calls DESC;
 ```
@@ -85,7 +96,7 @@ Keep the full MCP tool name because Pi-family and Claude-family names use differ
 
 ```sql
 WITH windows AS (
-    SELECT harness, sessionId, timestamp::TIMESTAMP AS window_start,
+    SELECT harness, sessionId, anchor_id, timestamp::TIMESTAMP AS window_start,
            timestamp::TIMESTAMP + INTERVAL '10' MINUTE AS window_end
     FROM {START_TABLE} WHERE {NAME_COLUMN} = '{TARGET}'
 )
@@ -94,9 +105,10 @@ SELECT w.harness, w.sessionId, w.window_start,
 FROM windows w
 LEFT JOIN agent_spawns asp
     ON asp.harness = w.harness AND asp.sessionId = w.sessionId
-   AND asp.timestamp::TIMESTAMP > w.window_start
+   AND asp.timestamp::TIMESTAMP >= w.window_start
    AND asp.timestamp::TIMESTAMP <= w.window_end
-GROUP BY w.harness, w.sessionId, w.window_start
+   AND asp.anchor_id IS DISTINCT FROM w.anchor_id
+GROUP BY w.harness, w.sessionId, w.anchor_id, w.window_start
 ORDER BY correlated_spawns DESC, w.window_start DESC LIMIT 10;
 ```
 

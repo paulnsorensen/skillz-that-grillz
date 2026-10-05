@@ -2,7 +2,7 @@
 name = "skillz-experiment-bundle"
 version = "0.0.0"
 requires-python = ">=3.11"
-dependencies = ["fromargs>=0.1.0,<0.2"]
+dependencies = ["fromargs>=0.2.0,<0.3"]
 
 [dependency-groups]
 experiments = ["gepa==0.1.4"]
