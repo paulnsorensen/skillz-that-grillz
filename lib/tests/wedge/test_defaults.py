@@ -62,6 +62,27 @@ def test_shared_defaults_may_not_name_a_skill(
 
 
 @pytest.mark.ac("AC-W10")
+def test_a_cli_nested_in_a_skill_ignores_the_skills_own_manifest(
+    tmp_path: Path, copy_consumer: Callable[[Path], Path]
+) -> None:
+    """``skills/hello/tool/`` sits in a skill, so ``skills/hello/wedge.toml`` is not its defaults."""
+    consumer = copy_consumer(tmp_path / "consumer")
+    hello = consumer / SKILLS / "hello"
+    _ = (hello / "SKILL.md").write_text("---\nname: hello\n---\n")
+    nested = hello / "tool"
+    nested.mkdir()
+    own = (hello / "wedge.toml").read_text()
+    _ = (nested / "wedge.toml").write_text(
+        own.replace('name = "hello"', 'name = "tool"').replace('"../.."', '"../../.."')
+        .replace('source = "', 'source = "../')
+    )
+
+    config = load_config(nested)
+
+    assert (config.name, config.entry) == ("tool", load_config(hello).entry)
+    assert compute_key(nested, config) != compute_key(hello, load_config(hello))
+
+@pytest.mark.ac("AC-W10")
 def test_shared_defaults_are_part_of_the_key(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:

@@ -38,9 +38,11 @@ ALLOWED_KEYS = {
     "argument-hint",
     "disable-model-invocation",
     "user-invocable",
-    # model and context are Claude-Code-only frontmatter keys; tolerated here
+    # model, effort, and context are Claude-Code-only frontmatter keys; tolerated here
     # because frontmatter is harness-scoped metadata, not portable body logic.
+    # The /skillz rubric requires model + effort on model-invoked skills.
     "model",
+    "effort",
     "context",
     "agent",
     "hooks",

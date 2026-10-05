@@ -10,7 +10,8 @@ The archive digest covers normalized uncompressed contents.
 
 Every command takes skill directories as arguments or finds `*/wedge.toml`
 under `--root` (default `skills`). A `wedge.toml` in the root itself holds
-defaults for every skill beside it. `build`, `lock`, and `publish` run the
+defaults for every skill beside it. A parent directory with a `SKILL.md` is a
+skill, so a CLI directory nested in a skill reads no defaults. `build`, `lock`, and `publish` run the
 skills in parallel (`--jobs`). Skills that share a project, source, includes,
 and groups share one installed site directory. A repository of many skills
 over one package downloads its closure once per run.

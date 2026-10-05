@@ -1,6 +1,6 @@
 # Build and install with wedge
 
-Read this before preparing the target skill.
+Read this before you wedge a CLI in the target skill.
 These instructions describe the current builder, not a general Python packager.
 
 ## Prerequisites and limits
@@ -11,7 +11,7 @@ The non-dev dependencies in that lock form the archive's closure.
 A dependency group named in `groups` joins that closure.
 A local package that is not on an index, such as fromargs, enters through `include`.
 
-Run the builder from this skill's bundled `scripts/wedge.pyz`; it carries wedge and its shiv dependency.
+Run the builder from `wedge/scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory; it carries wedge and its shiv dependency.
 The builder also invokes `uv`, so `uv` must be on `PATH`.
 Every dependency must be a pure-Python `py3-none-any` wheel without a platform marker.
 A compressed universal tag such as `py2.py3-none-any` also passes.
@@ -21,7 +21,7 @@ An installed launcher does not require uv or a project environment.
 
 Do not add unrelated dependencies to a shared project to make packaging pass.
 Do not change the `lib/fromargs` closure of the skillz-that-grillz repository.
-Stop and explain an unsupported layout or dependency requirement.
+When the layout or a dependency is not supported, ship the CLI unpackaged and state the reason.
 Installing the wedge command alone does not create the required project.
 
 ## Manifest and source
@@ -69,7 +69,7 @@ That mode commits `scripts/NAME.pyz` and uses no lock or launcher.
 
 ## Local verification
 
-Set `WEDGE` to `scripts/wedge.pyz` under the loaded `/wedge` `SKILL.md` directory.
+Set `WEDGE` to `wedge/scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory.
 Set `SKILL_DIR` to the absolute target skill directory.
 Set `OUT_DIR` to a temporary build-output directory.
 

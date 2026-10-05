@@ -44,7 +44,7 @@ def _run(script: Path, cwd: Path, *args: str, pyz: Path | None = None) -> subpro
 def test_template_source_contract(
     repo_root: Path, tmp_path: Path, content: bytes, options: list[str], expected: object, status: int,
 ) -> None:
-    source = repo_root / "skills/wedge/assets/records.py"
+    source = repo_root / "skills/skillz/assets/records.py"
     data = tmp_path / "records.txt"
     _ = data.write_bytes(content)
     result = _run(source, tmp_path, "counts", str(data), *options)
@@ -83,7 +83,7 @@ def _template_project(repo_root: Path, dest: Path) -> Path:
     )
     skill = dest / "skills/records"
     skill.mkdir(parents=True)
-    template = repo_root / "skills/wedge/assets"
+    template = repo_root / "skills/skillz/assets"
     _ = shutil.copy2(template / "records.py", skill / "records.py")
     _ = shutil.copy2(template / "wedge.toml", skill / "wedge.toml")
     return skill

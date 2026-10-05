@@ -9,7 +9,7 @@
 
 > _Skill-authoring and skill-packaging toolbelt: skillz, wedge, fromargs, and the wedge GitHub Action._
 
-This repository publishes two Agent Skills, `skillz` and `wedge`. It also hosts two Python
+This repository publishes one Agent Skill, `skillz`. It also hosts two Python
 libraries under `lib/` — `wedge` (packages a skill CLI as a content-addressed
 `.pyz`) and `fromargs` (the CLI library wedge builds on) — plus the public
 [`actions/wedge`](actions/wedge/README.md) GitHub Action that runs `wedge` in
@@ -24,8 +24,7 @@ creation — single or stacked).
 
 | Skill path | Command | Purpose |
 | --- | --- | --- |
-| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, wedge, or autoimprove a skill. `improve` and `audit` also accept a sub-agent definition. The result runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. It scores the target against a rubric of 13 core lenses plus an optional Usage lens. The core lenses include predictability, invocation, portability, information hierarchy, deterministic offload, tool scoping, and calibration. It tags every finding with severity × confidence. It ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `improve` add a best-effort Usage lens through a bundled analytics engine. `improve` reuses a current audit from the same conversation or runs one. It then shows every finding and asks which ones to apply before its first edit. `wedge` finds fixed computation that every run repeats and writes the behavior-contract brief that `/wedge` packages as a bundled CLI. `autoimprove` (alias `experiment`) uses bundled GEPA and isolated harness execution to compare candidates on paired holdouts and export a private patch. |
-| `skills/wedge/SKILL.md` | `/wedge` | Extract repeatable deterministic work into a fromargs CLI and package it with wedge. Covers output contracts, builder limits, and installed-launcher verification. |
+| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, wedge, or autoimprove a skill. `improve` and `audit` also accept a sub-agent definition. The result runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. It scores the target against a rubric of 13 core lenses plus an optional Usage lens. The core lenses include predictability, invocation, portability, information hierarchy, deterministic offload, tool scoping, and calibration. It tags every finding with severity × confidence. It ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `improve` add a best-effort Usage lens through a bundled analytics engine. `improve` reuses a current audit from the same conversation or runs one. It then shows every finding, including proposed offloads, and asks which ones to apply before its first edit. `wedge` finds fixed computation that every run repeats, writes a behavior contract for each candidate, and implements the selected ones as fromargs CLIs. It wedges a CLI when the target supports it, and otherwise ships the CLI unpackaged with a stated reason. `autoimprove` (alias `experiment`) uses bundled GEPA and isolated harness execution to compare candidates on paired holdouts and export a private patch. |
 
 `skillz` uses a bundled, standard-library Python inspection helper and the bundled `skillz-experiment audit-facts` command during audits.
 It needs no MCP server or separate `session-analytics` skill. Its Usage
@@ -40,24 +39,24 @@ The optional `autoimprove` mode (alias `experiment`) needs Codex, Claude Code, o
 It needs no source checkout.
 See [the autoimprove workflow](skills/skillz/references/experiments.md).
 
-`wedge` ships the `wedge` CLI as a bundled `scripts/wedge.pyz`, so it needs no
-wedge checkout. The target needs a uv project with a committed `uv.lock`, and
-the host needs uv on `PATH`. Dependencies must be pure-Python wheels.
-Installed helpers need Python 3.11+. Release publication through gh is
-optional and needs authorization. `/skillz wedge` writes the brief that
-`/wedge` builds from; install both skills to use that handoff.
+`skillz wedge` ships the `wedge` CLI as a bundled `wedge/scripts/wedge.pyz`, so
+it needs no wedge checkout. To wedge a CLI, the target needs a uv project with a
+committed `uv.lock`, the host needs uv on `PATH`, and dependencies must be
+pure-Python wheels. Otherwise the CLI runs unpackaged through
+`uv run --script` with PEP 723 metadata. Installed helpers need Python 3.11+.
+Release publication through gh is optional and needs authorization.
 
 ## Install
 
-Install both skills with the [skills.sh](https://skills.sh) installer:
+Install the skill with the [skills.sh](https://skills.sh) installer:
 
 ```sh
-npx skills@latest add paulnsorensen/skillz-that-grillz --skill skillz --skill wedge
+npx skills@latest add paulnsorensen/skillz-that-grillz --skill skillz
 ```
 
-Add `--global` to install user-wide, so the skills are available in every repo.
-Without it, the skills install into the current repo under `.agents/skills/`.
-To install one skill, pass only its `--skill` flag.
+Add `--global` to install user-wide, so the skill is available in every repo.
+Without it, the skill installs into the current repo under `.agents/skills/`.
+The former `/wedge` skill is now `/skillz wedge`.
 
 ## Where the other skills went
 

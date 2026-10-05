@@ -196,6 +196,15 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("validated 1", out)
 
+    def test_model_and_effort_pass(self) -> None:
+        self._write(
+            "skills/foo/SKILL.md",
+            "---\nname: foo\ndescription: x\nmodel: sonnet\neffort: medium\n---\n",
+        )
+        rc, out, err = self._run()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("validated 1", out)
+
 
 BODY_SKILL = """---
 name: {name}

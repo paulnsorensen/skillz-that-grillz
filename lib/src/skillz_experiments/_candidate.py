@@ -77,7 +77,7 @@ class Candidate:
                 if any(part.startswith(".") for part in posix.split("/")):
                     raise CodedError("hidden-file", f"{posix} is a hidden file; remove it")
                 name = relative(posix)
-                if name in ("scripts/skillz-experiment.pyz", LOCATION, *exclude):
+                if name in ("scripts/skillz-experiment.pyz", "wedge/scripts/wedge.pyz", LOCATION, *exclude):
                     continue
                 if path.stat().st_size > 262144:
                     raise ValueError("candidate file exceeds size limit")

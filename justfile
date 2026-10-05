@@ -42,7 +42,7 @@ test:
     just test-fromargs
     uv run --locked --extra experiments --project lib pytest lib/tests/wedge lib/tests/skillz_experiments -q
     uv run --locked --project lib wedge check --root lib/examples/skills --root lib/examples/consumer/skills
-    uv run --locked --project lib wedge bundle skills/skillz skills/wedge --check
+    uv run --locked --project lib wedge bundle skills/skillz skills/skillz/wedge --check
 
 # Run fromargs' pytest suite, optionally pinned to one Python version.
 test-fromargs python="":
