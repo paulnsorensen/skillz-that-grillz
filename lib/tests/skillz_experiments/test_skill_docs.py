@@ -1,7 +1,6 @@
 """Guard tests over the skillz documentation: mode table, audit lens, mode steps, and sentence length."""
 from __future__ import annotations
 
-import importlib.util
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -13,15 +12,6 @@ import pytest
 SKILL_DIR = Path(__file__).resolve().parents[3] / "skills/skillz"
 SKILL = SKILL_DIR / "SKILL.md"
 EXPERIMENTS = SKILL_DIR / "references/experiments.md"
-MAX_WORDS = 25
-
-
-def _inspector() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("inspect_skill", SKILL_DIR / "scripts/inspect_skill.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _table(text: str, header: str) -> list[list[str]]:
@@ -56,10 +46,12 @@ def _routing(text: str) -> str:
     return next(line for line in text.splitlines() if line.startswith("For `autoimprove`"))
 
 
-def test_audit_lens_has_prose_row_citing_long_sentences() -> None:
+def test_audit_lens_has_prose_row_citing_long_sentences(limits: tuple[int, int]) -> None:
+    advisory, maximum = limits
     row = next(r for r in _table(SKILL.read_text(), "Lens") if r[0].startswith("**Prose (ASD-STE100)"))
     assert "inspect_skill.py" in row[2]
     assert "long_sentences" in row[2]
+    assert f"over {maximum} words" in row[2] and f"({advisory + 1} to {maximum} words)" in row[2]
     assert "Report passive voice and multi-instruction sentences as findings." in row[2]
     assert "long_sentences" not in row[0] + row[1]
 
@@ -77,14 +69,18 @@ def test_add_improve_steps_run_prose_check_on_their_subject(mode: str, subject: 
     assert "before you report" in step
 
 
-def test_shared_prose_check_names_inspector_limit_and_references() -> None:
+def test_shared_prose_check_names_inspector_limit_and_references(limits: tuple[int, int]) -> None:
+    advisory, maximum = limits
     match = re.search(r"^## Prose check.*?(?=^## |\Z)", SKILL.read_text(), re.M | re.S)
     assert match is not None
     items = _steps(match[0])
     assert len(items) == 3
     assert "inspect_skill.py" in items[0] and "SKILL.md" in items[0]
-    assert f"over {MAX_WORDS} words" in items[1]
-    assert f"{MAX_WORDS}-word limit by hand" in items[2]
+    assert f"over {maximum} words" in items[1]
+    assert f"`advisory_sentences` entry ({advisory + 1} to {maximum} words)" in items[1]
+    assert "procedural step" in items[1]
+    assert f"{maximum} words" in items[2] and f"{advisory} words for a procedural step" in items[2]
+    assert "by hand" in items[2]
 
 
 def test_no_contract_step_offers_judge_only_or_draft_contract() -> None:
@@ -102,13 +98,13 @@ def test_no_contract_step_offers_judge_only_or_draft_contract() -> None:
     assert "until the user approves" in tail and '`"status": "approved"` only after the user approves' in tail
 
 
-def _long(path: Path) -> list[dict[str, int]]:
+def _long(path: Path, inspector: ModuleType, maximum: int) -> list[dict[str, int]]:
     lines = path.read_text().splitlines()
     start = 0
     if lines and lines[0] == "---":
         start = next(i for i, line in enumerate(lines[1:], 1) if line == "---") + 1
-    long_sentences = cast(Callable[[list[str], int], list[dict[str, int]]], getattr(_inspector(), "long_sentences"))
-    return [hit for hit in long_sentences(lines, start) if hit["words"] > MAX_WORDS]
+    sentences = cast(Callable[[list[str], int], list[dict[str, int]]], getattr(inspector, "prose_sentences"))
+    return [hit for hit in sentences(lines, start) if hit["words"] > maximum]
 
 
 # Table cells are exempt: the inspector flushes sentences on `|`.
@@ -116,5 +112,5 @@ PROSE_FILES = [SKILL, *sorted((SKILL_DIR / "references").glob("*.md")), *sorted(
 
 
 @pytest.mark.parametrize("path", PROSE_FILES, ids=[str(path.relative_to(SKILL_DIR)) for path in PROSE_FILES])
-def test_skill_prose_has_no_sentence_over_limit(path: Path) -> None:
-    assert _long(path) == []
+def test_skill_prose_has_no_sentence_over_limit(path: Path, inspector: ModuleType, limits: tuple[int, int]) -> None:
+    assert _long(path, inspector, limits[1]) == []

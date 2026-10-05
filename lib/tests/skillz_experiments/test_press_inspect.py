@@ -1,4 +1,4 @@
-"""Press attacks on `inspect_skill.py` long_sentences (AC-16) through the subprocess seam."""
+"""Press attacks on `inspect_skill.py` long_sentences and advisory_sentences (AC-16) through the subprocess seam."""
 from __future__ import annotations
 
 import json
@@ -23,19 +23,28 @@ def inspect(tmp_path: Path, body: str, raw: bytes | None = None, timeout: float 
     return run.returncode, cast(dict[str, object], json.loads(run.stdout))
 
 
-def found(tmp_path: Path, body: str) -> list[dict[str, int]]:
+def report_of(tmp_path: Path, body: str) -> dict[str, object]:
     code, report = inspect(tmp_path, body)
-    assert code == 0 and report["schema_version"] == 2
-    return cast(list[dict[str, int]], report["long_sentences"])
+    assert code == 0 and report["schema_version"] == 3
+    return report
+
+
+def found(tmp_path: Path, body: str) -> list[dict[str, int]]:
+    return cast(list[dict[str, int]], report_of(tmp_path, body)["long_sentences"])
+
+
+def advised(tmp_path: Path, body: str) -> list[dict[str, int]]:
+    return cast(list[dict[str, int]], report_of(tmp_path, body)["advisory_sentences"])
 
 
 def test_prose_sentence_reports_its_line_and_word_count(tmp_path: Path) -> None:
     assert found(tmp_path, f"Short.\n\n{LONG}\n") == [{"line": 7, "words": 30}]
 
 
-def test_the_limit_is_twenty_words_exclusive(tmp_path: Path) -> None:
-    assert found(tmp_path, TWENTY + "\n") == []
-    assert [item["words"] for item in found(tmp_path, TWENTY_ONE + "\n")] == [21]
+def test_the_advisory_tier_starts_above_twenty_words_and_the_hard_tier_above_twenty_five(tmp_path: Path) -> None:
+    assert advised(tmp_path, TWENTY + "\n") == []
+    assert [item["words"] for item in advised(tmp_path, TWENTY_ONE + "\n")] == [21]
+    assert found(tmp_path, TWENTY_ONE + "\n") == []
 
 
 @pytest.mark.parametrize("fence", ["```", "~~~"])
@@ -74,7 +83,7 @@ def test_inline_code_is_excluded_from_the_word_count(tmp_path: Path) -> None:
 
 def test_a_sentence_end_inside_inline_code_does_not_split_the_sentence(tmp_path: Path) -> None:
     words = " ".join(f"w{i}" for i in range(12))
-    assert [item["words"] for item in found(tmp_path, f"{words} `a. b` {words}.\n")] == [24]
+    assert [item["words"] for item in advised(tmp_path, f"{words} `a. b` {words}.\n")] == [24]
 
 
 def test_quoted_text_that_spans_lines_is_excluded(tmp_path: Path) -> None:

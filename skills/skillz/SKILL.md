@@ -1,8 +1,8 @@
 ---
 name: skillz
 description: >
-  Add, improve, audit, wedge, or autoimprove a skill or sub-agent definition so it
-  runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts.
+  Add, improve, audit, wedge, or autoimprove a skill. Improve and audit also accept a
+  sub-agent definition. The result runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts.
   Use for /skillz <add|improve|audit|wedge|autoimprove>, "improve this skill",
   "autoimprove this skill",
   "optimize this skill", "tighten this skill",
@@ -20,7 +20,8 @@ metadata:
 
 # skillz
 
-Add, improve, audit, wedge, and autoimprove skill and agent definitions.
+Add, improve, audit, wedge, and autoimprove skills.
+Improve and audit also accept agent definitions.
 The product is a **predictable** definition: the same process on every run and on every harness.
 Every lens asks one question of each line: *does this make the run more predictable, or is it sediment?*
 
@@ -74,7 +75,7 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | **Invocation** | `description` = trigger conditions, front-loaded, third person → «workflow summary», «summary description» | Trigger phrases + "Do NOT use for"; no internal workflow; ≤1024 chars; first sentence carries the trigger. `references/description-optimization.md`. |
 | **Portability** | Spec-core frontmatter plus additive Claude fields; user-only policy on every host → «Claude-only assumption», «sidecar missing», «`$ARGUMENTS` dependence» | `disable-model-invocation: true` pairs with `agents/openai.yaml`; args are parsed from the text after the skill name; no `${CLAUDE_SKILL_DIR}`; skills cross-referenced by `/name`; dispatch and GitHub ops name the contract before host syntax. Full matrix: `references/harness-layout.md`. |
 | **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
-| **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect_skill.py` `long_sentences` facts (sentences over 20 words). Report passive voice and multi-instruction sentences as findings. |
+| **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect_skill.py` `long_sentences` facts (sentences over 25 words). Cite `advisory_sentences` (21 to 25 words) only for procedural steps. Report passive voice and multi-instruction sentences as findings. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
 | **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; each bundled script has an invocation line and an output contract. Fix through `wedge`. |
@@ -100,15 +101,17 @@ The kernel is `references/calibration.md`; the defaults:
 `add` step 5 and `improve` step 5 run this check.
 
 1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <target file>` on the `SKILL.md` or agent file.
-2. Rewrite every sentence over 25 words that it reports.
-3. For a changed reference file, apply the same 25-word limit by hand.
+2. Rewrite every sentence in `long_sentences` (over 25 words).
+   Rewrite each `advisory_sentences` entry (21 to 25 words) that is a procedural step.
+3. For a changed reference file, apply both limits by hand: 25 words, or 20 words for a procedural step.
 
 The helper rejects a file that has no frontmatter, so it cannot check a reference file.
 
 ## Mode: add
 
 1. Confirm the name: kebab-case, ≤64 chars, directory name equals `name:`, and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`.
-2. Collect from the argument or ask: purpose in one sentence, ≥5 trigger phrases, anti-triggers, invocation policy (model-invoked or user-only), and the harness set.
+2. Collect from the argument, or ask for: a one-sentence purpose, ≥5 trigger phrases, anti-triggers, invocation policy, and the harness set.
+   The invocation policy is model-invoked or user-only.
 3. Write the skill from `references/harness-layout.md § Template`.
    Keep the body ≤2k tok at birth.
    Create a reference only for a block that some runs skip.
@@ -123,7 +126,7 @@ The helper rejects a file that has no frontmatter, so it cannot check a referenc
 
 Done means: the file exists and the repo index names it, or every repo-local host path resolves.
 The deploy step exits 0 when one exists. The Invocation lens passes.
-The inspector reports no sentence over 25 words.
+The inspector reports an empty `long_sentences` list.
 
 ## Mode: improve
 
@@ -142,7 +145,7 @@ The inspector reports no sentence over 25 words.
 
 Done means: every `<certain>` finding above `low` is fixed or recorded as an explicitly accepted residual.
 The user approves or declines every item submitted for approval.
-The body is ≤5k tok. The inspector reports no sentence over 25 words. The repo's quality gate exits 0.
+The body is ≤5k tok. The inspector reports an empty `long_sentences` list. The repo's quality gate exits 0.
 
 ## Mode: audit
 

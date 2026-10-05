@@ -106,7 +106,8 @@ It does not read native transcripts or assume a session database schema.
       "request": "Inspect fixture.md and return its helper facts.",
       "files": {"fixture.md": "---\nname: example\n---\n# Example\n"},
       "expected": {
-        "schema_version": 2,
+        "schema_version": 3,
+        "advisory_sentences": [],
         "frontmatter_keys": ["name"],
         "body_line_count": 1,
         "local_link_targets": [],
@@ -353,12 +354,14 @@ It requires opening and closing frontmatter delimiters.
 
 Success returns exit zero and one JSON object:
 
-- `schema_version`: `2`.
+- `schema_version`: `3`.
 - `frontmatter_keys`: sorted unique, unindented lexical keys.
 - `body_line_count`: lines after the closing frontmatter delimiter.
 - `local_link_targets`: sorted local inline Markdown link paths.
-- `long_sentences`: prose sentences over 20 words, each as `{line, words}`.
-  The helper measures fence indent from list-item content, as CommonMark does.
+- `long_sentences`: prose sentences over 25 words, each as `{line, words}`.
+- `advisory_sentences`: prose sentences of 21 to 25 words, each as `{line, words}`.
+
+The helper measures fence indent from list-item content, as CommonMark does.
 
 The helper reports facts. It does not parse full YAML or compute task fitness.
 It ignores external links and fragment-only links.

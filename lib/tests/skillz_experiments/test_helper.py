@@ -15,7 +15,7 @@ def test_helper_reports_facts_and_rejects_escape(tmp_path: Path) -> None:
     run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == {
-        "schema_version": 2, "frontmatter_keys": ["description", "name"],
+        "schema_version": 3, "frontmatter_keys": ["description", "name"], "advisory_sentences": [],
         "body_line_count": 2, "local_link_targets": ["references/guide.md"], "long_sentences": [],
     }
     _ = target.write_text("---\nname: example\n---\n[Private](../secret)\n")
@@ -24,7 +24,7 @@ def test_helper_reports_facts_and_rejects_escape(tmp_path: Path) -> None:
     assert json.loads(run.stdout)["error"] == "link escapes package"
 
 
-def test_helper_long_sentences_report_prose_over_twenty_words(tmp_path: Path) -> None:
+def test_helper_reports_two_sentence_tiers(tmp_path: Path) -> None:
     long = " ".join(["word"] * 30) + "."
     barely = " ".join(["word"] * 20) + "."
     lines = ["---", "name: example", "description: Example", "---", "# Heading", "", "Short one. " + long, barely,
@@ -36,12 +36,24 @@ def test_helper_long_sentences_report_prose_over_twenty_words(tmp_path: Path) ->
     run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     result = cast(dict[str, object], json.loads(run.stdout))
-    assert result["schema_version"] == 2
-    assert result["long_sentences"] == [{"line": 7, "words": 30}, {"line": 10, "words": 23},
-                                        {"line": 19, "words": 21}]
+    assert result["schema_version"] == 3
+    assert result["long_sentences"] == [{"line": 7, "words": 30}]
+    assert result["advisory_sentences"] == [{"line": 10, "words": 23}, {"line": 19, "words": 21}]
     _ = target.write_text("---\nname: x\n---\n[Private](../secret)\n")
     run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
-    assert json.loads(run.stdout) == {"schema_version": 2, "error": "link escapes package"}
+    assert json.loads(run.stdout) == {"schema_version": 3, "error": "link escapes package"}
+
+
+def test_helper_tiers_split_at_twenty_and_twenty_five_words(tmp_path: Path) -> None:
+    lines = ["---", "name: example", "---"]
+    for count in (20, 23, 25, 26):
+        lines += [" ".join(["word"] * count) + ".", ""]
+    target = tmp_path / "SKILL.md"
+    _ = target.write_text("\n".join(lines) + "\n")
+    run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
+    result = cast(dict[str, object], json.loads(run.stdout))
+    assert result["advisory_sentences"] == [{"line": 6, "words": 23}, {"line": 8, "words": 25}]
+    assert result["long_sentences"] == [{"line": 10, "words": 26}]
 
 
 def test_helper_accepts_host_alias_but_rejects_package_symlinks(tmp_path: Path) -> None:

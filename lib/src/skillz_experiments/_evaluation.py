@@ -73,10 +73,11 @@ def _command_matches(command: str, filename: str, workspace: str | None, skill: 
 HELPER_FIXTURES: tuple[dict[str, object], ...] = (
     {"input": "---\nname: contract\ndescription: Inspect\n---\n# Body\n[Guide](references/guide.md)\n",
      "returncode": 0,
-     "output": {"schema_version": 2, "frontmatter_keys": ["description", "name"], "body_line_count": 2,
+     "output": {"schema_version": 3, "advisory_sentences": [], "frontmatter_keys": ["description", "name"],
+                "body_line_count": 2,
                 "local_link_targets": ["references/guide.md"], "long_sentences": []}},
     {"input": "---\nname: contract\n---\n[Escape](../secret)\n", "returncode": 2,
-     "output": {"schema_version": 2, "error": "link escapes package"}},
+     "output": {"schema_version": 3, "error": "link escapes package"}},
 )
 
 
