@@ -40,10 +40,11 @@ Keep a skill for one repository only out of every global selection list.
 | `allowed-tools` | optional | permission grant without prompts; not a deny list | unverified | accepted; verify enforcement | accepted; verify enforcement | unverified |
 | `disallowed-tools` | — | removes listed tools for the current turn | unverified | host-specific; verify | host-specific; verify | unverified |
 | `disable-model-invocation` | — | yes | **no** → `agents/openai.yaml` `policy.allow_implicit_invocation: false` | yes (`disableModelInvocation`) | yes | yes |
-| `user-invocable`, `argument-hint`, `arguments`, `model`, `effort`, `context: fork`, `agent`, `background`, `hooks`, `paths`, `shell`, `when_to_use` | — | yes | unverified | kept as unknown metadata | unverified | unverified |
+| `user-invocable`, `argument-hint`, `arguments`, `model`, `effort`, `context: fork`, `agent`, `background`, `hooks`, `paths`, `shell`, `when_to_use` | — | yes | unverified | kept as unknown metadata by conventional scanners; not accepted in Agent Plugins packages (closed Agent Skills field set) | unverified | unverified |
 | `$ARGUMENTS`, `$0`, `$N` substitution | — | yes | unverified; free text follows the mention | no; the prose around `/skill:<name>` is passed as arguments | no; text after `/skill:<name>` is appended as a user request | unverified |
 
-Unknown keys never break a load on the verified hosts (Claude, OMP, Pi). Codex and Zed are unverified.
+Unknown keys never break a load on the verified hosts (Claude, OMP conventional scanners, Pi). Codex and Zed are unverified.
+OMP Agent Plugins packages (`agent-plugins` provider) are an exception: they validate against a closed Agent Skills field set and do not accept other keys.
 Claude's cloud Skills API rejects non-spec keys; that surface is out of scope for repo skills.
 
 ## Rules (the Portability lens)

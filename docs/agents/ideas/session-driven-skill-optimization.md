@@ -98,7 +98,7 @@ Pauses between separate commands consume the same deadline.
 The runner reserves invocations for the holdout: three arms times the worst-case calls per holdout case.[^workflow]
 
 Selection finishes before holdout evaluation.
-The runner locks the candidate hashes of the original, prompt, and prompt-plus-helper (`prompt-cli`) arms.
+The runner locks the candidate hashes of the three arms: `original`, `prompt`, and the searched `prompt-cli`, `cli`, or `wedge` arm.
 Holdout feedback never returns to GEPA.
 A consumed holdout cannot resume selection or rewrite completed evidence.
 
