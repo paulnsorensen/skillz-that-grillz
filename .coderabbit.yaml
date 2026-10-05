@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Shared review rules live in .github/copilot-instructions.md.
+# This file holds only the CodeRabbit-specific settings.
+language: en-US
+tone_instructions: >-
+  Be terse and factual. No praise, thanks, emoji, or promotional text.
+  State the impact and a concrete failure scenario first.
+reviews:
+  profile: chill
+  poem: false
+  in_progress_fortune: false
+  path_instructions:
+    - path: "{skills,.agents/skills}/**/SKILL.md"
+      instructions: >-
+        Apply the checklist in .github/instructions/skills.instructions.md.
+    - path: "lib/src/skillz_experiments/**"
+      instructions: >-
+        Read the contract model and the reference docs before you claim the
+        meaning of a contract field. Check which fixture a test uses before
+        you generalize its behavior to other contracts.
+  tools:
+    # just build runs these linters in CI.
+    markdownlint:
+      enabled: false
+    yamllint:
+      enabled: false
+knowledge_base:
+  code_guidelines:
+    filePatterns:
+      - .github/copilot-instructions.md
+      - AGENTS.md
+      - .github/instructions/*.instructions.md
