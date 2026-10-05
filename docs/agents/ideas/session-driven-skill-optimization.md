@@ -3,7 +3,7 @@
 Session-driven skill prompt and CLI optimization uses a bounded GEPA experiment in skillz.
 The editable package contains its prompt, selected references, and an optional helper script.
 Approved cases drive evaluation; session frequency is not a success label.
-Any skill with an approved contract can be a target; the first target is skillz itself, tested on Codex and Claude Code.
+Any skill with an approved contract can be a target; the first target is skillz itself. The runner has built-in Codex and Claude Code transports.
 The goal remains “best measured for this use case,” not a globally optimal skill.[^implementation]
 
 ## Evidence and scope
@@ -28,8 +28,10 @@ Existing `optimize` and `tighten` aliases still mean `improve`.[^implementation]
 | `dataset` | Validated case manifest, frozen seed, and private run directory. |
 | `baseline` | Original candidate measurements on train and validation cases. |
 | `search --mode prompt` | One GEPA proposal restricted to declared Markdown components. |
-| `search --mode prompt-cli` | One GEPA proposal that can also change the inspection helper. |
-| `evaluate` | Paired holdout outcomes for three locked arms. |
+| `search --mode prompt-cli` | One GEPA proposal that can also change the helper. |
+| `search --mode cli` | One GEPA proposal that changes only the helper. |
+| `search --mode wedge` | One GEPA proposal that offloads fixed work to a bundled script. It needs `--brief`. |
+| `evaluate` | Paired holdout outcomes for three locked arms: `original`, `prompt`, and one of `prompt-cli`, `cli`, or `wedge`. |
 | `export` | Private local patch and evidence report, without installation. |
 | `self-test` | The bounded workflow over public repository-authored cases. |
 
@@ -61,7 +63,7 @@ The seed includes `SKILL.md`, the helper that the contract declares, and explici
 Other package files remain frozen.
 The engine, permission policy, dataset, splits, output contract, and evaluator stay outside the candidate.[^candidate]
 
-The skillz inspection helper, declared in its contract, reports lexical frontmatter keys, body line count, and local Markdown link targets.
+The skillz inspection helper, declared in its contract, reports lexical frontmatter keys, body line count, local Markdown link targets, and long sentences.
 It does not grade prose or assign fitness.
 Independent checks validate helper behavior inside the Codex sandbox.
 Task fitness requires the expected JSON result and candidate execution evidence.[^evaluator]
@@ -90,10 +92,10 @@ A failed isolation check stops execution without an unsafe fallback.
 
 ## Budget and sealed holdout
 
-The live run permits at most 20 Codex invocations within 1,200 seconds.
+The live run defaults to at most 20 invocations within 1,200 seconds. The `--max-invocations` and `--max-seconds` options change both limits.
 Baseline, search, reflection, failures, and holdout share the same counter and deadline.
 Pauses between separate commands consume the same deadline.
-The runner reserves six invocations for two holdout cases across three arms.[^workflow]
+The runner reserves invocations for the holdout: three arms times the worst-case calls per holdout case.[^workflow]
 
 Selection finishes before holdout evaluation.
 The runner locks the candidate hashes of the original, prompt, and prompt-plus-helper (`prompt-cli`) arms.

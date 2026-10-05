@@ -1,6 +1,6 @@
 # Cross-harness skill layout
 
-Checked: 2026-10-05. Every source in `## Sources` was queried on that date; per-source dates are in that table.
+Checked: 2026-10-05. The self-update queried every source in `## Sources` on that date; per-source dates are in that table.
 Read when the Portability lens fires or in `add`. Repository maintenance also uses this reference.
 
 ## Layout
@@ -43,7 +43,7 @@ Keep a skill for one repository only out of every global selection list.
 | `user-invocable`, `argument-hint`, `arguments`, `model`, `effort`, `context: fork`, `agent`, `background`, `hooks`, `paths`, `shell`, `when_to_use` | — | yes | unverified | kept as unknown metadata | unverified | unverified |
 | `$ARGUMENTS`, `$0`, `$N` substitution | — | yes | unverified; free text follows the mention | no; the prose around `/skill:<name>` is passed as arguments | no; text after `/skill:<name>` is appended as a user request | unverified |
 
-Unknown keys never break a load on any surveyed host.
+Unknown keys never break a load on the verified hosts (Claude, OMP, Pi). Codex and Zed are unverified.
 Claude's cloud Skills API rejects non-spec keys; that surface is out of scope for repo skills.
 
 ## Rules (the Portability lens)
