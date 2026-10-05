@@ -1,6 +1,6 @@
 [project]
 name = "fromargs"
-version = "0.1.0"
+version = "0.2.0"
 description = "Self-healing Cyclopts CLI helpers for agent-friendly command lines."
 readme = "README.md"
 requires-python = ">=3.11"

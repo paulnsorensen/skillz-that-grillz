@@ -7,10 +7,12 @@ A `0.x` minor release can contain breaking changes.
 
 The `publish fromargs` workflow reads the section for the tagged version.
 It uses that section as the GitHub release notes.
-To release, rename `Unreleased` to the new version and date.
+To release, move the `Unreleased` entries into a new version section with the date.
 Then set the same version in `pyproject.toml` and push a `fromargs-v<version>` tag.
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-10-04
 
 ### Changed
 
@@ -19,8 +21,9 @@ Then set the same version in `pyproject.toml` and push a `fromargs-v<version>` t
   A command name that differs only in dashes, underscores, or case no longer resolves.
   It reports an `Unknown command ... Did you mean` error with exit code 2.
 - **Breaking:** `CliError` accepts only an `int` `exit_code` from 2 to 255.
-  It raises `ValueError` for 0, 1, or an out-of-range code.
-  It raises `TypeError` for a `bool` or a non-`int` code.
+  It raises a dedicated `Exception` subclass for 0, 1, an out-of-range code, a `bool`, or a non-`int` code.
+  It is neither a `ValueError` nor a `TypeError`, which Cyclopts reports as bad input at exit 2,
+  so a bad code in a converter or validator exits 1 with a traceback.
 - **Breaking:** `App`, `App.group`, and `App.command` raise `ValueError` for the
   Cyclopts options that `run()` never honors: `error_formatter`, `result_action`,
   `suppress_keyboard_interrupt`, `print_error`, `exit_on_error`, `help_on_error`,
@@ -65,5 +68,6 @@ Then set the same version in `pyproject.toml` and push a `fromargs-v<version>` t
 - `--version` resolution for the calling distribution, not for `fromargs`.
 - Async handlers through `asyncio.run` when the effective backend is asyncio.
 
-[Unreleased]: https://github.com/paulnsorensen/skillz-that-grillz/compare/fromargs-v0.1.0...HEAD
+[Unreleased]: https://github.com/paulnsorensen/skillz-that-grillz/compare/fromargs-v0.2.0...HEAD
+[0.2.0]: https://github.com/paulnsorensen/skillz-that-grillz/compare/fromargs-v0.1.0...fromargs-v0.2.0
 [0.1.0]: https://github.com/paulnsorensen/skillz-that-grillz/releases/tag/fromargs-v0.1.0
