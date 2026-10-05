@@ -302,9 +302,11 @@ def test_preflight_runs_a_network_attempt_through_bash_and_records_the_denial(tm
     assert cast(dict[str, dict[str, object]], evidence["roles"])["task"]["network"] == "denied"
 
 
-def test_preflight_fails_with_a_code_when_the_listener_accepts_a_connection(tmp_path: Path, sandbox_passes: None) -> None:
+@pytest.mark.parametrize("mode", ["net-open", "net-http-open", "net-lie-connect"])
+def test_preflight_fails_with_a_code_when_the_listener_receives_the_token(
+        tmp_path: Path, mode: str, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network isolation failed.*no unsafe fallback") as caught:
             _ = session.preflight()
@@ -313,8 +315,8 @@ def test_preflight_fails_with_a_code_when_the_listener_accepts_a_connection(tmp_
     assert caught.value.code == "network-isolation-failed"
 
 
-@pytest.mark.parametrize("mode", ["net-skipped", "net-garbled"])
-def test_preflight_fails_closed_when_the_network_output_is_missing_or_malformed(
+@pytest.mark.parametrize("mode", ["net-skipped", "net-garbled", "net-lie", "net-no-curl"])
+def test_preflight_fails_closed_when_the_network_output_is_missing_malformed_or_not_from_the_command(
         tmp_path: Path, mode: str, sandbox_passes: None) -> None:
     del sandbox_passes
     session = harness(tmp_path, fake_claude(tmp_path, mode))
@@ -324,6 +326,26 @@ def test_preflight_fails_closed_when_the_network_output_is_missing_or_malformed(
     finally:
         session.close()
     assert caught.value.code == "network-isolation-failed"
+
+
+def test_preflight_sends_the_http_probe_through_the_proxy_for_loopback_names(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert prompt.count("/usr/bin/curl --noproxy '' ") == 2
+    assert "http://localhost:" in prompt and "http://127.0.0.1:" in prompt
+
+
+def test_environment_key_changes_when_the_network_probe_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    before = session.environment_key()
+    monkeypatch.setattr(_claude, "NETWORK_PROBE", "other")
+    assert session.environment_key() != before
 
 
 def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

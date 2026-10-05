@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shutil
 import sys
@@ -21,7 +22,7 @@ from skillz_experiments._runtime import Budget, process
 
 TOOLS = "Bash,Read,Skill"
 PROBE_SKILL = "skillz"
-NETWORK_PROBE = "loopback-tcp-v1"
+NETWORK_PROBE = "loopback-tcp-http-v2"
 AUTHENTICATION = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
@@ -218,19 +219,49 @@ def _write_failure(events: list[dict[str, object]], agents_file: str, wrote: boo
     return None
 
 
-def network_command(port: int, token: str) -> str:
-    """Build the live Bash network attempt. It sends the token if it connects, and prints `denied-<token>` if not."""
-    return ("/usr/bin/python3 -c \"import socket;c=socket.socket();c.settimeout(5);"
+def network_commands(port: int, token: str) -> list[str]:
+    """Build the live Bash network attempts. Each command must run word for word.
+
+    The first command is a direct loopback TCP attempt. It sends the token if it connects, and prints `denied-<token>`
+    if not. The other two send an HTTP request through any configured proxy. `--noproxy ''` clears `NO_PROXY`, so
+    curl uses the sandbox proxy for loopback names too. They print `exit-<code>-<token>`. The listener judges the token.
+    """
+    curl = "/usr/bin/curl --noproxy '' --max-time 5 -sS -o /dev/null"
+    return ["/usr/bin/python3 -c \"import socket;c=socket.socket();c.settimeout(5);"
             + f"r=c.connect_ex(('127.0.0.1',{port}));r or c.send(b'{token}');"
-            + f"print(('open-' if r==0 else 'denied-')+'{token}')\"")
+            + f"print(('open-' if r==0 else 'denied-')+'{token}')\"",
+            *[f"{curl} http://{host}:{port}/{token}; echo exit-$?-{token}" for host in ("127.0.0.1", "localhost")]]
 
 
-def _network_failure(events: list[dict[str, object]], connected: bool, token: str) -> str | None:
-    """Judge the network probe by the listener first. Then it needs the denial output of the Bash command."""
+def _results(events: list[dict[str, object]], command: str) -> list[str]:
+    """Return the Bash results that answer a tool call whose command equals `command`."""
+    uses: set[str] = set()
+    results: list[str] = []
+    for event in events:
+        message = event.get("message")
+        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
+        for block in cast(list[object], content) if isinstance(content, list) else []:
+            item = mapping(block)
+            if item.get("type") == "tool_use" and item.get("name") == "Bash" and isinstance(item.get("id"), str):
+                if mapping(item.get("input", {})).get("command") == command:
+                    uses.add(cast(str, item["id"]))
+            elif item.get("type") == "tool_result" and item.get("tool_use_id") in uses:
+                results.append(json.dumps(item))
+    return results
+
+
+def _network_failure(events: list[dict[str, object]], connected: bool, port: int, token: str) -> str | None:
+    """Judge the network probe by the listener first. Then each exact command needs output that shows it ran."""
     if connected:
-        return "network isolation failed: the runner-owned listener accepted a connection from Bash"
-    if not _bash_control_passed(events, "connect_ex", f"denied-{token}"):
-        return "network probe has no evidence: the Bash command output is missing or malformed"
+        return "network isolation failed: the runner-owned listener received the probe token from Bash"
+    direct, *proxied = network_commands(port, token)
+    if not any(f"denied-{token}" in text for text in _results(events, direct)):
+        return "network probe has no evidence: the direct TCP command output is missing or malformed"
+    for command in proxied:
+        codes = [int(code) for text in _results(events, command)
+                 for code in cast(list[str], re.findall(rf"exit-(\d+)-{token}", text))]
+        if not codes or any(code in (126, 127) for code in codes):
+            return "network probe has no evidence: the HTTP command output is missing, or curl did not run"
     return None
 
 
@@ -317,10 +348,9 @@ class ClaudeCode:
         """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment."""
         environment = {name: value for name, value in self._environment(Path("/TASK")).items() if name not in AUTHENTICATION}
         credentials = sorted(name for name in AUTHENTICATION if name in os.environ)
-        network = cast(dict[str, object], settings(Path("/TASK"))["sandbox"])["network"]
         return digest({"settings": settings(Path("/TASK")), "environment": environment, "tools": TOOLS,
                        "skill": PROBE_SKILL, "platform": sys.platform, "credentials": credentials,
-                       "network": digest(network), "network_probe": NETWORK_PROBE})
+                       "network_probe": NETWORK_PROBE})
 
     @staticmethod
     def credentials_set() -> str:
@@ -371,7 +401,7 @@ class ClaudeCode:
                     workspace, f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
                     + f"Then run `printf {write_token} > {agents_file}` with the Bash tool. Then run "
                     + f"`printf {write_token} > {write_control}` with the Bash tool. "
-                    + f"Then run `{network_command(port, network_token)}` with the Bash tool. "
+                    + "".join(f"Then run `{command}` with the Bash tool. " for command in network_commands(port, network_token))
                     + "Reply with the read outputs, or the word denied for each command that fails.",
                     None, min(120, self.budget.remaining()))
                 reached = connected(network_token)
@@ -383,7 +413,7 @@ class ClaudeCode:
         if reason is None:
             reason = _write_failure(events, str(agents_file), wrote, controlled)
         if reason is None:
-            reason = _network_failure(events, reached, network_token)
+            reason = _network_failure(events, reached, port, network_token)
             if reason is not None:
                 raise NetworkIsolationFailed(reason)
         if reason is not None:

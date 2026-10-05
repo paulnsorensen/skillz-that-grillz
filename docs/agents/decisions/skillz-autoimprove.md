@@ -33,15 +33,18 @@ The user settled each decision in a Mold session on 2026-10-03.
 
 #### Claude live network verification
 
-The Claude autoimprove live preflight verifies network denial on the live Linux Bash path.
-The single preflight call asks Claude to run a Bash command that connects to a loopback listener that the runner owns.
-The runner judges the listener. An accepted connection, a missing output, or a malformed output fails the preflight with the code `network-isolation-failed`.
-The recorded pass keeps the network result. The reuse key includes a hash of the network settings and the probe version.
-A changed network policy therefore forces a new live preflight.
+The live preflight checks direct loopback TCP and the proxy HTTP path against a runner-owned listener.
+No live model run has exercised these checks yet. The build uses a stub transport only.
+The single preflight call asks Claude to run three exact Bash commands.
+One command opens a TCP connection to the listener. Two `curl` commands send an HTTP request to `127.0.0.1` and to `localhost`, with `--noproxy ''` so that the sandbox proxy carries them.
+The runner judges the listener. A client that sends the probe token fails the preflight with the code `network-isolation-failed`.
+A command that differs from the generated command, a missing output, or a malformed output fails it with the same code.
+The recorded pass keeps the network result. The reuse key includes the network probe version.
+A changed probe version or network setting changes the key. The stage then stops with `environment-differs`, and the user starts a new run.
 The native sandbox probe remains a separate, free check.
+Domain and proxy policy beyond these probes stays unverified. The preflight does not probe name lookup or a non-loopback address.
 The macOS path stays unverified live. A passed preflight does not prove macOS isolation.
 The manual macOS checklist is in `skills/skillz/references/experiment-harness.md`.
-No live provider test validates this boundary in the build.
 
 ### ADR-005: Make the wedge arm a hand-written stdlib script  [status: accepted]
 - **Context:** The user states that a wedge is a deterministic offload made by hand, and that Python is assumed installed. A real `/wedge` build needs `uv` and network access.

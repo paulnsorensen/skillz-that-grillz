@@ -94,12 +94,13 @@ def self_test(*, model: str, out: Path = SELF_TEST_OUT, target: Path | None = No
         write(out / "manifest.json", read(source))
         return {"review_manifest": str(out / "manifest.json"), "cases": len(cases), "live_calls": 0}
     if preflight_only:
-        configuration = Configuration.load(harness_config, model)
-        adapter = configuration.create(model, Budget(max_invocations, max_seconds, reserve=0), lambda: None)
-        try:
-            return adapter.preflight()
-        finally:
-            adapter.close()
+        with _coded():
+            configuration = Configuration.load(harness_config, model)
+            adapter = configuration.create(model, Budget(max_invocations, max_seconds, reserve=0), lambda: None)
+            try:
+                return adapter.preflight()
+            finally:
+                adapter.close()
     if not live:
         raise ValueError("self-test requires --preflight-only or explicit --live")
     if profile == "audit":

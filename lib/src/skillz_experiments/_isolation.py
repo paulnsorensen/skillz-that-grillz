@@ -9,7 +9,7 @@ from typing import cast
 def _server() -> Generator[socket.socket]:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.bind(("127.0.0.1", 0))
-        server.listen(1)
+        server.listen(16)
         yield server
 
 

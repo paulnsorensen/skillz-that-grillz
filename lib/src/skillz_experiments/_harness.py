@@ -157,7 +157,9 @@ class Harness:
         if any(name in keys and keys[name] != key for name, key in reuse_keys.items()):
             raise EnvironmentDiffers(
                 "runtime environment differs from the frozen record; a change in the set of credential variables "
-                + f"also causes this (set now: {ClaudeCode.credentials_set()}); restore the first-run environment and resume")
+                + f"also causes this (set now: {ClaudeCode.credentials_set()}); restore the first-run environment and resume. "
+                + "A runner upgrade that changes the sandbox settings or the network probe also causes this; "
+                + "restoring the environment cannot fix that case, so start a new run")
         evidence: dict[str, object] = {}
         for name, adapter in self.transports.items():
             kept = passes.get(name)

@@ -62,28 +62,44 @@ def write_probe(writes: list[tuple[str, str]], mode: str, config: dict[str, obje
     return texts
 
 
-def network_probe(prompt: str, mode: str) -> list[str]:
-    """Answer the preflight network probe. `net-open` connects to the listener; `net-skipped` runs no command.
+def _reach(port: int, payload: str) -> bool:
+    with socket.socket() as client:
+        reached = client.connect_ex(("127.0.0.1", port)) == 0
+        if reached:
+            client.sendall(payload.encode())
+    return reached
 
-    `net-garbled` runs the command and returns output without the token.
+
+def network_probe(prompt: str, mode: str) -> list[str]:
+    """Answer the preflight network probes: one direct TCP command and two curl commands.
+
+    `net-open` and `net-http-open` reach the listener over TCP and over HTTP. `net-lie` prints the denial
+    under a command that is not the generated one. `net-lie-connect` connects and still prints the denial.
+    `net-skipped` runs no command, `net-garbled` prints no token, and `net-no-curl` reports exit 127.
     """
-    found = re.search(r"`(/usr/bin/python3 -c [^`]*connect_ex[^`]*)`", prompt)
-    if found is None or mode == "net-skipped":
-        return []
-    port = int(re.search(r"connect_ex\(\('127\.0\.0\.1',(\d+)\)\)", found.group(1)).group(1))  # pyright: ignore[reportOptionalMemberAccess]
-    token = re.search(r"'([0-9a-f]{32})'", found.group(1)).group(1)  # pyright: ignore[reportOptionalMemberAccess]
-    connected = False
-    if mode == "net-open":
-        with socket.socket() as client:
-            connected = client.connect_ex(("127.0.0.1", port)) == 0
-            if connected:
-                client.sendall(token.encode())
-    text = "garbled" if mode == "net-garbled" else ("open-" if connected else "denied-") + token
-    emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "n0", "name": "Bash",
-          "input": {"command": found.group(1)}}]}})
-    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "n0",
-          "is_error": False, "content": text}]}})
-    return [text]
+    texts: list[str] = []
+    for index, command in enumerate(cast(list[str], re.findall(r"`(/usr/bin/(?:python3 -c|curl) [^`]*)`", prompt))):
+        if mode == "net-skipped":
+            break
+        direct = "connect_ex" in command
+        port = int(cast(re.Match[str], re.search(r"(?:connect_ex\(\('127\.0\.0\.1',|:)(\d+)[)/]", command)).group(1))
+        token = cast(re.Match[str], re.search(r"([0-9a-f]{32})", command)).group(1)
+        reached = (direct and mode in {"net-open", "net-lie-connect"}
+                   and _reach(port, token)) or (not direct and mode == "net-http-open"
+                                                and _reach(port, f"GET /{token} HTTP/1.1\r\n\r\n"))
+        if mode == "net-garbled":
+            text = "garbled"
+        elif direct:
+            text = ("open-" if reached and mode == "net-open" else "denied-") + token
+        else:
+            text = f"exit-{127 if mode == 'net-no-curl' else 0 if reached else 7}-{token}"
+        shown = f"echo {text} # {'connect_ex' if direct else 'curl'}" if mode == "net-lie" else command
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"n{index}", "name": "Bash",
+              "input": {"command": shown}}]}})
+        emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"n{index}",
+              "is_error": False, "content": text}]}})
+        texts.append(text)
+    return texts
 
 
 def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object], prompt: str) -> int:
