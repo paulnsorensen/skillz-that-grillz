@@ -110,7 +110,8 @@ The helper rejects a file that has no frontmatter, so it cannot check a referenc
 ## Mode: add
 
 1. Confirm the name: kebab-case, ≤64 chars, directory name equals `name:`, and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`.
-2. Collect from the argument or ask: purpose in one sentence, ≥5 trigger phrases, anti-triggers, invocation policy (model-invoked or user-only), and the harness set.
+2. Collect from the argument, or ask for: a one-sentence purpose, ≥5 trigger phrases, anti-triggers, invocation policy, and the harness set.
+   The invocation policy is model-invoked or user-only.
 3. Write the skill from `references/harness-layout.md § Template`.
    Keep the body ≤2k tok at birth.
    Create a reference only for a block that some runs skip.

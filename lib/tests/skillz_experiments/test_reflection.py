@@ -14,9 +14,12 @@ BRIEF = "Offload the link check.\nUse only the standard library."
 @pytest.mark.parametrize("mode, components", [
     ("prompt", ["SKILL.md"]), ("prompt-cli", ["SKILL.md", "scripts/inspect_skill.py"]),
     ("cli", ["scripts/inspect_skill.py"]), ("wedge", ["SKILL.md", "wedge-files"])])
-def test_every_reflection_request_requires_ste_prose(mode: Mode, components: list[str]) -> None:
+def test_every_reflection_request_requires_ste_prose(mode: Mode, components: list[str], limits: tuple[int, int]) -> None:
+    advisory, maximum = limits
     prompt, _ = _reflection_request(mode, {name: "text" for name in components}, {}, components, "echo-skill")
     assert "ASD-STE100" in prompt
+    assert f"at most {advisory} words per procedural sentence" in prompt
+    assert f"at most {maximum} words per descriptive sentence" in prompt
     payload = cast(dict[str, object], json.loads(prompt.split("\n", 1)[1]))
     assert payload["candidate"] == {name: "text" for name in components}
 
