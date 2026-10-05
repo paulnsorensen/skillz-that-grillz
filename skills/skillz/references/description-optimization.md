@@ -85,7 +85,7 @@ specific rates vary widely by model, description quality, and environment):
 | Description + forced eval hook | highest, most reliable |
 
 For critical skills, pair description optimization with a forced-evaluation
-hook. See `hooks-catalog.md` for the implementation.
+hook.
 
 ## Automated Optimization
 

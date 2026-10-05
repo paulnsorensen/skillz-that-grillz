@@ -35,12 +35,17 @@ Run against the target's `references/` and repo-wide. Splitting into
 `references/` saves tokens only when SKILL.md documents *when* to read each file
 (SkillReducer F3) — these checks catch splits that saved nothing.
 
-1. **Nested references (one-level-deep rule).** A reference that links to
-   another reference violates *best-practices* ("keep references one level
-   deep"; the stated failure is a partial `head -100` read missing the tail).
-   Scan each reference for links whose target is itself a reference file:
+1. **Nested references (one-level-deep rule).** A reference that links to or
+   names another reference violates *best-practices* ("keep references one
+   level deep"; the stated failure is a partial `head -100` read missing the
+   tail). Hoist the read trigger into SKILL.md. Links into `engine/references/`
+   are allowed: the engine is an internal data tree, not a reading chain.
+   Scan each reference for its sibling references' basenames, as links, bare
+   names, or backticks:
 
-       grep -nE '\]\([^)]*references/|\]\([^)]*\.md\)' references/*.md
+       for f in references/*.md; do b=$(basename "$f"); grep -nF "$b" references/*.md | grep -v "^references/$b:"; done
+
+   Any hit is a nested reference. Hoist its trigger into SKILL.md.
 
 2. **Orphaned references (repo-wide).** A reference linked from *no* SKILL.md
    anywhere carries no read-trigger and is dead weight. Cross-skill linking is

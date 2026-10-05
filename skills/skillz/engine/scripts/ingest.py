@@ -948,6 +948,7 @@ def _do_ingest_and_swap():
             coalesce(agent_type, 'general-purpose') AS agent_type,
             agent_desc AS description,
             agent_mode AS mode,
+            tool_use_id AS anchor_id,
             timestamp, sessionId, cwd
         FROM tool_uses
         WHERE tool_name IN ('Agent', 'Task');
@@ -958,7 +959,8 @@ def _do_ingest_and_swap():
     run_sql("""
         CREATE TABLE skill_invocations AS
         SELECT
-            harness, skill_name, skill_args AS args, timestamp, sessionId, cwd
+            harness, skill_name, skill_args AS args, tool_use_id AS anchor_id,
+            timestamp, sessionId, cwd
         FROM tool_uses
         WHERE tool_name = 'Skill';
     """)

@@ -34,6 +34,8 @@ test:
     python3 .github/scripts/test_validate_skills.py
     python3 .github/scripts/test_validate_evals.py
     python3 .github/scripts/validate_skills.py
+    python3 .github/scripts/test_check_skillz_references.py
+    python3 .github/scripts/check_skillz_references.py
     python3 -B -m unittest discover -s skills/skillz/engine/tests -p 'test_*.py'
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
     uv run --locked --extra experiments --project lib basedpyright lib/src/wedge lib/tests/wedge lib/src/skillz_experiments lib/tests/skillz_experiments skills/skillz/scripts/inspect_skill.py

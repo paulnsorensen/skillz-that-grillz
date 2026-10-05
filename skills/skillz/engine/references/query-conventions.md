@@ -9,7 +9,9 @@ the pack and the *schema* from `canonical-schema.md` (in this data layer).
 
 ```
 # Pack: <domain>
-# target_param: {SKILL|TOOL|AGENT|...}   — the placeholder queries substitute
+# target_param: {TARGET}   — the placeholder queries substitute
+# target_kind: skill or agent, from the dispatch prompt
+# start table: {START_TABLE} and {NAME_COLUMN}, set from target_kind (see Substitution)
 # harness: <how the pack uses the harness filter>
 # queries: ordered list of {name, sql}   — sql references the canonical schema
 # output_format: a markdown template the digest fills
@@ -47,9 +49,16 @@ than report zero as if it were meaningful. `agent_spawns` includes Claude
 
 ## Substitution
 
-Queries use a single placeholder named in `target_param` (e.g. `{SKILL}`,
-`{TOOL}`, `{AGENT}`). The caller substitutes the literal target before running.
-Quote it as a string literal in SQL (`WHERE skill_name = '{SKILL}'`).
+Queries use the placeholders that `target_param` and the pack header name
+(e.g. `{TARGET}`, `{START_TABLE}`, `{NAME_COLUMN}`). The caller substitutes the
+literal values before running. Quote the target as a string literal in SQL
+(`WHERE {NAME_COLUMN} = '{TARGET}'`).
+
+A pack that serves both skills and agents takes `target_kind` from the dispatch
+prompt. It sets `{START_TABLE}` and `{NAME_COLUMN}` from this mapping:
+
+- `skill`: `skill_invocations`, `skill_name`
+- `agent`: `agent_spawns`, `agent_type`
 
 ## Empty results
 

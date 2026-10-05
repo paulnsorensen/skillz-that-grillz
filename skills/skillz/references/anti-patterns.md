@@ -33,7 +33,7 @@ skill-authoring-consensus failure modes (Anthropic progressive disclosure, Pococ
     edge cases. Add why: enables tree-shaking, safer refactoring.
 3. **"Always/never" for judgment tasks** — Works for mechanical tasks (always
     run tests). Fails for judgment tasks where context determines the answer.
-    Use structured reasoning scaffold instead. See `decision-frameworks.md`.
+    Use structured reasoning scaffold instead.
 4. **No examples** — Abstract rules without concrete input → output examples.
     Two examples communicate more than a page of rules.
 5. **Missing Gotchas section** — No record of known failure modes. Add one and
