@@ -22,10 +22,10 @@ ALLOWED_KEYS = frozenset({
 TOP = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*)$")
 KEBAB = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 LINK = re.compile(r"\[[^\]]*\]\(([^\s)]+)\)")
-MENTION = re.compile(r"references/[\w./-]+\.md")
-SEPARATOR = re.compile(r"^[`)\]\s,]*(?:—|–|--|-|:)\s*(.*)$", re.S)
-TRIGGER_WORD = re.compile(
-    r"\b(?:when|whenever|if|fires?|needs?|read|uses?|run|before|after|only|absent|selects?|flags?|opts?)\b", re.I)
+SEPARATOR = re.compile(r"—|–|--|\s-\s|:(?=\s)")
+CONDITION = re.compile(
+    r"\b(?:when|whenever|if|once|until|while|before|after|only|fires?|needs?|absent|selects?|flags?|opts?)\b", re.I)
+START_VERB = re.compile(r"(?:^|[;.])[\s`]*(?:read|load|use|run|open|consult)\b", re.I)
 COMMENT = re.compile(r"\s+#.*$")
 QUOTED = re.compile(r"^([\"'])(.*)\1\s*(?:#.*)?$", re.S)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -34,10 +34,11 @@ FLOW_INTERNAL = re.compile(r"[{,]\s*internal:\s*[\"']?true[\"']?\s*[,}]")
 ARGUMENTS = re.compile(r"\$ARGUMENTS\b")
 SKILL_DIR = re.compile(r"\$\{CLAUDE_SKILL_DIR\}")
 FILE_MENTION = re.compile(
-    r"(?<![\w@])@(?:file\b|(?:~|\.{0,2})/[\w./-]+|[\w-]+(?:/[\w.-]+)+|[\w-]+\.(?:md|txt|json|ya?ml|toml|py|sh|js|ts|csv)\b)"
+    r"(?<![\w@])@(?:file\b|(?:\.{1,2}|~)/[\w./-]+|[\w-]+(?:/[\w.-]+)*\.(?:md|txt|json|ya?ml|toml|py|sh|js|ts|csv)\b)"
 )
-IMPLICIT_OFF = re.compile(r"^\s*allow_implicit_invocation:\s*false\s*$")
-INTERNAL = re.compile(r"^internal:\s*[\"']?true[\"']?\s*$")
+IMPLICIT_OFF = re.compile(r"^\s*allow_implicit_invocation:\s*false\s*(?:#.*)?$")
+INTERNAL = re.compile(r"^internal:\s*[\"']?true[\"']?\s*(?:#.*)?$")
+BARE_VARIABLE = re.compile(r"`\s*(?:\$ARGUMENTS|\$\{CLAUDE_SKILL_DIR\})\s*`")
 
 PASS, FAIL, NOT_APPLICABLE = "pass", "fail", "not-applicable"
 
@@ -51,7 +52,7 @@ class _Field:
     def text(self) -> str:
         if self.value[:1] in (">", "|"):
             return ("\n" if self.value[0] == "|" else " ").join(text for _, text in self.block)
-        parts = [self.value, *(text for _, text in self.block)]
+        parts = [self.value, *(text for _, text in self.block if self.value[:1] in ("'", '"') or not text.startswith("#"))]
         if self.value[:1] in ("'", '"'):
             joined = " ".join(parts)
             quoted = QUOTED.match(joined)
@@ -158,23 +159,26 @@ def _code_free(lines: list[str]) -> list[str]:
     return masked
 
 
-def _names(text: str, relative: str) -> re.Match[str] | None:
-    return re.search(rf"(?<![\w./-])(?:\./)?{re.escape(relative)}(?![\w-]|\.\w)", text)
+def _names(text: str, relative: str, prefix: str = "") -> re.Match[str] | None:
+    prefixes = "|".join([r"\./", r"\$\{CLAUDE_SKILL_DIR\}/", *([re.escape(prefix)] if prefix else [])])
+    return re.search(rf"(?<![\w./-])(?:{prefixes})?{re.escape(relative)}(?![\w-]|\.\w)", text)
 
 
 def _body(context: _Context, body: list[str], offset: int) -> None:
     size = len("\n".join(body).encode("utf-8")) // 4
     context.add("body.token-estimate", "information-hierarchy.9", "SKILL.md", None,
                 PASS if size <= TOKEN_BUDGET else FAIL, f"~{size} tok of {TOKEN_BUDGET}")
-    for check, rule, pattern in (("body.arguments-variable", "portability.4", ARGUMENTS),
-                                 ("body.skill-dir-variable", "portability.5", SKILL_DIR),
-                                 ("body.file-mention", "portability.6", FILE_MENTION)):
-        hit = _first(_code_free(body), offset, pattern)
+    plain = [BARE_VARIABLE.sub(lambda hit: " " * len(hit[0]), line) for line in body]
+    masked = _code_free(body)
+    for check, rule, pattern, lines in (("body.arguments-variable", "portability.4", ARGUMENTS, plain),
+                                        ("body.skill-dir-variable", "portability.5", SKILL_DIR, plain),
+                                        ("body.file-mention", "portability.6", FILE_MENTION, masked)):
+        hit = _first(lines, offset, pattern)
         context.add(check, rule, "SKILL.md", hit[0] if hit else None, FAIL if hit else PASS,
                     f"found `{hit[1]}`" if hit else "none found")
 
 
-def _references(context: _Context, package: Path, body: list[str], offset: int) -> None:
+def _references(context: _Context, package: Path, body: list[str], offset: int, prefix: str) -> None:
     files = sorted(path.relative_to(package).as_posix() for path in (package / "references").rglob("*.md")
                    if path.is_file())
     if not files:
@@ -193,18 +197,19 @@ def _references(context: _Context, package: Path, body: list[str], offset: int) 
                 target = os.path.normpath(os.path.join(os.path.dirname(relative), unquote(parsed.path)))
                 if target in files and target != relative and nested is None:
                     nested = (number, target)
-            for mention in MENTION.finditer(line):
-                if mention[0] in files and mention[0] != relative and nested is None:
-                    nested = (number, mention[0])
+            for other in files:
+                if other != relative and nested is None and _names(line, other, prefix):
+                    nested = (number, other)
         context.add("references.nested", "information-hierarchy.9", relative, nested[0] if nested else None,
                     FAIL if nested else PASS, f"names `{nested[1]}`" if nested else "names no other reference")
-        linked = _names(text, relative) is not None
+        linked = _names(text, relative, prefix) is not None
         context.add("references.orphan", "information-hierarchy", relative, None, PASS if linked else FAIL,
                     "SKILL.md names it" if linked else "SKILL.md does not name it")
-        item = next(((number, item) for number, item in items if _names(item, relative)), None)
-        last = max((hit.end() for hit in MENTION.finditer(item[1])), default=0) if item else 0
-        separated = SEPARATOR.match(item[1][last:]) if item else None
-        triggered = bool(separated and TRIGGER_WORD.search(separated[1]))
+        item = next(((number, item) for number, item in items if _names(item, relative, prefix)), None)
+        head = _names(item[1], relative, prefix) if item else None
+        separated = SEPARATOR.search(item[1], head.end()) if item and head else None
+        clause = item[1][separated.end():] if item and separated else ""
+        triggered = bool(CONDITION.search(clause) or START_VERB.search(clause))
         context.add("references.read-trigger", "information-hierarchy.9", relative, item[0] if item else None,
                     NOT_APPLICABLE if item is None else PASS if triggered else FAIL,
                     "not listed in ## References" if item is None
@@ -314,9 +319,11 @@ def audit_facts(directory: Path) -> dict[str, object]:
             _identity(context, fields, package.name)
             _policy(context, fields, package, user_only)
             _body(context, body, end + 1)
-            _references(context, package, body, end + 1)
+            root = _root(package)
+            prefix = package.relative_to(root).as_posix() + "/" if root else ""
+            _references(context, package, body, end + 1, prefix)
             _scripts(context, package, body, end + 1)
-            _repository(context, package, fields, _root(package))
+            _repository(context, package, fields, root)
     else:
         context.add("package.skill-file", "layout.skill-file", "SKILL.md", None, FAIL, "SKILL.md is missing")
     context.checks.sort(key=lambda c: (str(c["path"]), str(c["id"]), _line_key(c["line"])))

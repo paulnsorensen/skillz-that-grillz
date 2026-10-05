@@ -420,8 +420,12 @@ Registration and repo-local checks also report `not-applicable` outside a reposi
 The command finds the repository root by walking up for `.git`.
 A repo-local skill lives under `.agents/skills/` and needs no README row.
 A reference listed nowhere in `## References` reports `not-applicable` for `references.read-trigger`.
-A trigger word is one of: when, whenever, if, fire, need, read, use, run, before, after, only, absent, select, flag, opt.
-The code-syntax checks skip fenced blocks and backtick spans. An `@` mention counts only when a path or a file extension follows.
+A trigger clause is the text after the first dash or colon in the entry.
+The clause passes when it contains one of: when, whenever, if, once, until, while, before, after, only, fire, need, absent, select, flag, opt.
+It also passes when it starts a sentence or a `;` clause with read, load, use, run, open, or consult.
+Variable checks scan the whole body. They skip only bare-token spans.
+The `@` mention check skips fenced blocks and backtick spans. It counts a mention only when it starts with `./`, `../`, or `~/`, or ends in a file extension.
+Orphan matching accepts the skill's own repo-relative prefix and `${CLAUDE_SKILL_DIR}/`.
 The script check covers visible files directly in `scripts/`; it skips subdirectories and dot files.
 
 The command parses only the frontmatter lines that the checks need. It does not parse full YAML.

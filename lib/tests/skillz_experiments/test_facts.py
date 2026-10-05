@@ -261,15 +261,24 @@ def test_backtick_mention_of_another_reference_is_nested(tmp_path: Path, capsys:
     assert (hit["status"], hit["line"]) == ("fail", 3)
 
 
-@pytest.mark.parametrize("addition", [
-    "```python\n@app.command\nvalue = '$ARGUMENTS ${CLAUDE_SKILL_DIR} @notes.md'\n```\n",
-    "Never use `@notes.md`, `$ARGUMENTS`, or `${CLAUDE_SKILL_DIR}`.\n",
-    "Decorate with @app.command and mail me@example.md.\n",
-], ids=["fence", "span", "decorator"])
-def test_body_variable_checks_skip_code_and_non_paths(addition: str, tmp_path: Path,
-                                                      capsys: pytest.CaptureFixture[str]) -> None:
+VARIABLES = "body.arguments-variable", "body.skill-dir-variable", "body.file-mention"
+CODE_CASES = [
+    ("fenced decorator", "```python\n@app.command\n```\n", "pass pass pass"),
+    ("fenced command", "```bash\npython3 ${CLAUDE_SKILL_DIR}/scripts/x.py $ARGUMENTS\n```\n", "fail fail pass"),
+    ("fenced file mention", "```\nLoad @notes.md\n```\n", "pass pass pass"),
+    ("span with other text", "Run `${CLAUDE_SKILL_DIR}/scripts/x.py` and `$ARGUMENTS now`.\n", "fail fail pass"),
+    ("bare token spans", "Never use `$ARGUMENTS`, `${CLAUDE_SKILL_DIR}`, or `@notes.md`.\n", "pass pass pass"),
+    ("decorator and email", "Decorate with @app.command, @org/team, @anthropic-ai/sdk, me@example.md.\n", "pass pass pass"),
+    ("relative file mention", "Load @./notes and @~/x/y and @docs/a.md.\n", "pass pass fail"),
+    ("unclosed fence", "```\n@notes.md\n$ARGUMENTS\n", "fail pass pass"),
+]
+
+
+@pytest.mark.parametrize(("addition", "statuses"), [case[1:] for case in CODE_CASES], ids=[c[0] for c in CODE_CASES])
+def test_body_variable_checks_by_code_context(addition: str, statuses: str, tmp_path: Path,
+                                              capsys: pytest.CaptureFixture[str]) -> None:
     checks = run(make(tmp_path, skill(body=BODY + addition)), capsys)
-    assert [c["id"] for c in checks if c["status"] == "fail"] == []
+    assert [find(checks, check)["status"] for check in VARIABLES] == statuses.split()
 
 
 def test_file_mention_after_a_closed_fence_still_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -317,3 +326,47 @@ def test_flow_style_metadata_sets_internal(tmp_path: Path, capsys: pytest.Captur
     package = make(tmp_path / ".agents/skills", skill("metadata: {author: me, internal: true}\n"))
     hit = find(run(package, capsys), "repo-local.internal-metadata")
     assert (hit["status"], hit["line"]) == ("pass", 4)
+
+
+def test_commented_flags_still_count(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _repository(tmp_path, "")
+    text = skill("disable-model-invocation: true\nmetadata:\n  internal: true  # repo only\n")
+    sidecar = "policy:\n  allow_implicit_invocation: false # user only\n"
+    checks = run(make(tmp_path / ".agents/skills", text, {"agents/openai.yaml": sidecar}), capsys)
+    assert find(checks, "sidecar.implicit-invocation-off")["status"] == "pass"
+    assert find(checks, "repo-local.internal-metadata")["status"] == "pass"
+
+
+@pytest.mark.parametrize("mention", ["skills/demo/references/guide.md", "${CLAUDE_SKILL_DIR}/references/guide.md"])
+def test_orphan_check_accepts_the_skill_prefixes(mention: str, tmp_path: Path,
+                                                 capsys: pytest.CaptureFixture[str]) -> None:
+    _repository(tmp_path, "")
+    body = f"# demo\n\nRun `python3 scripts/tool.py`.\nSee {mention}.\n"
+    package = make(tmp_path / "skills", skill(body=body))
+    assert find(run(package, capsys), "references.orphan")["status"] == "pass"
+
+
+def test_nested_check_ignores_another_skills_reference(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    files: dict[str, str | None] = {"references/guide.md": "See `skills/age/references/other.md`.\n",
+                                    "references/other.md": "# Other\n"}
+    text = skill(body=BODY + "- `references/other.md` — read when needed.\n")
+    assert find(run(make(tmp_path, text, files), capsys), "references.nested", "references/guide.md")["status"] == "pass"
+
+
+def test_comment_line_in_a_plain_description_is_not_counted(tmp_path: Path,
+                                                            capsys: pytest.CaptureFixture[str]) -> None:
+    text = skill(description=f"Does a demo thing.\n  # {LONG}\n  Use when asked.")
+    assert find(run(make(tmp_path, text), capsys), "description.length")["status"] == "pass"
+
+
+@pytest.mark.parametrize(("entry", "status"), [
+    ("- `references/guide.md` — When a run needs depth, read `references/guide.md`.", "pass"),
+    ("- `references/guide.md` — the run book.", "fail"),
+    ("- `references/guide.md` — `audit`; use the guide.", "pass"),
+    ("- `references/guide.md` — the confidence kernel.", "fail"),
+])
+def test_read_trigger_needs_a_condition_or_clause_start_verb(entry: str, status: str, tmp_path: Path,
+                                                             capsys: pytest.CaptureFixture[str]) -> None:
+    body = BODY.split("- `references")[0] + entry + "\n"
+    hit = find(run(make(tmp_path, skill(body=body)), capsys), "references.read-trigger")
+    assert hit["status"] == status

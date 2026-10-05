@@ -238,6 +238,6 @@ Read on demand:
 - `references/hooks-catalog.md` — a finding needs 100%-of-the-time enforcement, or Invocation recommends a forced-evaluation hook (§1).
 - `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs. For `audit`, pass each pack path and the target kind to its pack context. Read a pack only when the host has no sub-agents.
 - `engine/scripts/` and `engine/references/` — internal analytics ingestion, query, schema, conventions, and coverage; not a separate skill.
-- `references/calibration.md` — read to calibrate findings; the confidence × severity kernel.
+- `references/calibration.md` — when you tag a finding's severity and confidence; the confidence × severity kernel.
 - `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the contract, graders, wedge mode, case schema, isolation, the frozen inspection contract, and the audit facts contract.
 - `references/experiment-harness.md` — the user selects a command or `claude` adapter, or separate roles.
