@@ -5,6 +5,10 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
+import subprocess
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from types import MappingProxyType
@@ -162,6 +166,42 @@ def test_bytes_inside_a_dict_is_rejected() -> None:
     with pytest.raises(TypeError, match="return a str"):
         _ = _run({"k": b"abc"})
 
+
+@pytest.mark.parametrize("factory", [bytearray, memoryview])
+def test_bytes_like_is_rejected_with_a_fix_hint(factory: Callable[[bytes], object]) -> None:
+    with pytest.raises(TypeError, match="is not JSON serializable; return a str"):
+        _ = _run(factory(b"abc"))
+
+
+def test_bytearray_inside_a_dict_is_rejected() -> None:
+    with pytest.raises(TypeError, match="bytearray is not JSON serializable; return a str"):
+        _ = _run({"k": bytearray(b"abc")})
+
+
+def test_bytearray_is_not_truncated_into_an_int_list() -> None:
+    with pytest.raises(TypeError, match="bytearray is not JSON serializable"):
+        _ = _run(bytearray(b"abcde"), limit=2)
+
+
+@pytest.mark.parametrize("seed", ["0", "1", "2", "3"])
+def test_set_of_frozensets_is_deterministic_across_hash_seeds(seed: str) -> None:
+    code = (
+        "import io, json\n"
+        "from fromargs._output import write_result\n"
+        "out = io.StringIO()\n"
+        "write_result({frozenset({'a','b'}), frozenset({'c'}), frozenset({'a'})},"
+        " limit=None, full=False, stdout=out)\n"
+        "print(json.dumps(json.loads(out.getvalue())))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env={**os.environ, "PYTHONHASHSEED": seed},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert json.loads(result.stdout) == [["a", "b"], ["a"], ["c"]]
 
 def test_generator_is_rejected_with_a_fix_hint() -> None:
     with pytest.raises(TypeError, match="generator is not JSON serializable; return a list"):

@@ -52,15 +52,17 @@ def run(
     line on stderr: ``{"error": <message>, "exit_code": <n>}``. An
     unexpected exception from a converter, a validator, the handler, or
     result serialization (including a ``CycloptsError`` raised by the
-    handler) instead gets a
-    three-key envelope with a ``traceback`` path to a file holding the full
-    traceback, and returns 1. Repair ``note:`` lines stay plain text on
-    stderr.
+    handler) gets a three-key envelope instead. Its ``traceback`` key is a
+    path to a file with the full traceback, and the command returns 1.
+    Repair ``note:`` lines stay plain text on stderr.
 
-    ``SystemExit`` from a handler sets the exit status: ``0`` or ``None``
-    returns 0 with no output, an ``int`` returns that status, and any other
-    value returns 1 with its text as the message. A non-zero status is
-    reported as an ADR-001 envelope. ``KeyboardInterrupt`` reports
+    ``SystemExit`` and ``KeyboardInterrupt`` are caught while parsing,
+    while the handler runs, and while the result prints. ``SystemExit``
+    sets the exit status: ``0`` or ``None`` returns 0 with no output, and an
+    ``int`` from 1 to 255 returns that status. An ``int`` outside that range
+    reports ``exited with status <code>`` and returns 1. Any other value
+    returns 1 with its text as the message. The command reports a non-zero
+    status as an ADR-001 envelope. ``KeyboardInterrupt`` reports
     ``{"error": "interrupted", "exit_code": 130}`` and returns 130. Other
     ``BaseException`` types propagate.
     """
@@ -71,29 +73,41 @@ def run(
     context = redirect_stdout(stdout) if stdout is not None else nullcontext()
     with context:
         try:
-            handler, bound, tokens, full, apps = _parse(app, tokens, full)
-        except CliError as exc:
-            return _report(str(exc), exc.exit_code)
-        except CycloptsError as exc:
-            return _report(_safe_message(exc), 2)
-        except Exception as exc:
-            return _report_unexpected(exc)
-        if _is_bare_help(handler) and not _requested_help(apps, tokens):
-            return _report("command required", 2)
-        try:
-            status = handler(*bound.args, **bound.kwargs)
-            if inspect.iscoroutine(status):
-                status = _await(apps, status)
-        except CliError as exc:
-            return _report(str(exc), exc.exit_code)
-        except _AsyncContractError:
-            raise
+            return _execute(app, tokens, full, limits, stdout)
         except SystemExit as exc:
             return _report_system_exit(exc)
         except KeyboardInterrupt:
             return _report("interrupted", 130)
-        except Exception as exc:
-            return _report_unexpected(exc)
+
+
+def _execute(
+    app: App,
+    tokens: list[str],
+    full: bool,
+    limits: dict[int, int] | None,
+    stdout: TextIO | None,
+) -> int:
+    """Parse, invoke the handler once, and print its result."""
+    try:
+        handler, bound, tokens, full, apps = _parse(app, tokens, full)
+    except CliError as exc:
+        return _report(str(exc), exc.exit_code)
+    except CycloptsError as exc:
+        return _report(_safe_message(exc), 2)
+    except Exception as exc:
+        return _report_unexpected(exc)
+    if _is_bare_help(handler) and not _requested_help(apps, tokens):
+        return _report("command required", 2)
+    try:
+        status = handler(*bound.args, **bound.kwargs)
+        if inspect.iscoroutine(status):
+            status = _await(apps, status)
+    except CliError as exc:
+        return _report(str(exc), exc.exit_code)
+    except _AsyncContractError:
+        raise
+    except Exception as exc:
+        return _report_unexpected(exc)
     if status is None:
         return 0
     limit = None if limits is None else limits.get(id(apps[-1]))
@@ -170,13 +184,20 @@ def _safe_message(exc: CycloptsError) -> str:
 
 
 def _report_system_exit(exc: SystemExit) -> int:
-    """Map a handler's ``sys.exit`` argument to a status, as the interpreter would."""
+    """Map a ``sys.exit`` argument to a status, as the interpreter would.
+
+    An ``int`` outside 1..255 reports its original value at exit 1.
+    """
     code = exc.code
-    if code is None or code == 0:
+    if code is None:
         return 0
     if isinstance(code, int):
+        if code == 0:
+            return 0
         status = int(code)  # sys.exit(True) is status 1, not JSON true
-        return _report(f"exited with status {status}", status)
+        if 1 <= status <= 255:
+            return _report(f"exited with status {status}", status)
+        return _report(f"exited with status {status}", 1)
     return _report(str(code), 1)
 
 

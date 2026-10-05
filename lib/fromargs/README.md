@@ -60,26 +60,30 @@ a truncated list result.
   JSON document on stdout, then the process exits `0`.
 - A `None` return value means exit `0` with no stdout.
 - A `set` or `frozenset` prints as a sorted JSON list. Items that cannot
-  sort together order by `repr`, so the output stays stable. `bytes` and
-  iterators (such as generators) raise `TypeError`: return a `str` or a
-  `list` instead.
+  sort together order by their canonical JSON text, so the output stays
+  stable. `bytes`, `bytearray`, `memoryview`, and iterators (such as
+  generators) raise `TypeError`: return a `str` or a `list` instead.
 - Every error is one JSON line on stderr: `{"error": <message>, "exit_code": <n>}`.
 - Raise `fromargs.CliError(message)` for exit code `2`. Pass
   `exit_code=n` for a code from `2` to `255`. `CliError` rejects any other
-  code with an error that is neither `ValueError` nor `TypeError` (Cyclopts
-  reports those as bad input), because exit `0` means success and exit `1`
+  code with an error that is neither `ValueError` nor `TypeError`.
+  Cyclopts reports those as bad input. Exit `0` means success, and exit `1`
   means an unexpected exception.
 - Use `fromargs.contract_error(exc, context=...)` to wrap a caught exception
   at exit code `3`. A Cyclopts parse error reports at exit code `2`.
-- Any other exception from a converter, a validator, the handler, or the
-  result serialization reports at exit code `1`. Its envelope adds a
-  `traceback` key with the path of a temporary file. `fromargs` keeps the
-  file, so the caller can read it after the process exits.
-- A handler that calls `sys.exit(n)` sets the exit status. `0` or `None`
-  exits `0` with no output. A non-zero `int` reports an error envelope at
-  that exit code. Any other `sys.exit` value reports its text at exit code
-  `1`. `KeyboardInterrupt` reports `{"error": "interrupted"}` at exit code
-  `130`.
+- A converter or validator that raises `ValueError`, `TypeError`, or
+  `AssertionError` is a usage error at exit code `2`. Any other exception
+  from a converter, a validator, the handler, or the result serialization
+  reports at exit code `1`. Its envelope adds a `traceback` key with the
+  path of a temporary file. `fromargs` keeps the file, so the caller can
+  read it after the process exits.
+- `sys.exit(n)` sets the exit status, and `run()` catches it while it
+  parses, runs the handler, and prints the result. `0` or `None` exits `0`
+  with no output. An `int` from `1` to `255` reports an error envelope at
+  that exit code. An `int` outside that range reports
+  `exited with status <code>` at exit code `1`. Any other `sys.exit` value
+  reports its text at exit code `1`. `KeyboardInterrupt` reports
+  `{"error": "interrupted"}` at exit code `130`.
 - A quote-split repair (below) prints one plain-text `note:` line on stderr;
   it never changes stdout or the exit code.
 

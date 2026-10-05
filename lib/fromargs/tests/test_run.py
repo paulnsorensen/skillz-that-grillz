@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import io
 import json
+import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -701,7 +702,9 @@ def _raising_app(exc: BaseException, *, is_async: bool = False) -> fromargs.App:
 
 
 @pytest.mark.parametrize("is_async", [False, True])
-@pytest.mark.parametrize(("code", "status"), [(4, 4), (True, 1), ("bad input", 1), (object, 1)])
+@pytest.mark.parametrize(
+    ("code", "status"), [(4, 4), (True, 1), ("bad input", 1), (object, 1), (0.0, 1)]
+)
 def test_system_exit_failure_is_an_envelope_with_that_status(
     capsys: pytest.CaptureFixture[str], is_async: bool, code: object, status: int
 ) -> None:
@@ -731,6 +734,47 @@ def test_system_exit_success_returns_zero_silently(
     assert captured.out == ""
     assert captured.err == ""
 
+
+@pytest.mark.parametrize("code", [256, -1])
+def test_system_exit_out_of_range_int_reports_original_code_at_exit_1(
+    capsys: pytest.CaptureFixture[str], code: int
+) -> None:
+    app = _raising_app(SystemExit(code))
+
+    assert app.run(["leave"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err) == {"error": f"exited with status {code}", "exit_code": 1}
+
+
+def test_converter_keyboard_interrupt_is_reported_at_130(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def convert(_type: object, _tokens: object) -> int:
+        raise KeyboardInterrupt
+
+    app = fromargs.App("t")
+
+    @app.command
+    def cmd(value: Annotated[int, Parameter(converter=convert)]) -> int:
+        return value
+
+    assert app.run(["cmd", "1"]) == 130
+    assert json.loads(capsys.readouterr().err) == {"error": "interrupted", "exit_code": 130}
+
+
+def test_converter_system_exit_sets_the_status(capsys: pytest.CaptureFixture[str]) -> None:
+    def convert(_type: object, _tokens: object) -> int:
+        sys.exit(3)
+
+    app = fromargs.App("t")
+
+    @app.command
+    def cmd(value: Annotated[int, Parameter(converter=convert)]) -> int:
+        return value
+
+    assert app.run(["cmd", "1"]) == 3
+    assert json.loads(capsys.readouterr().err) == {"error": "exited with status 3", "exit_code": 3}
 
 @pytest.mark.parametrize("is_async", [False, True])
 def test_keyboard_interrupt_is_an_exit_130_envelope(

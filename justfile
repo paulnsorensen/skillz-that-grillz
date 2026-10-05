@@ -64,6 +64,7 @@ fromargs-release-notes $version:
         exit 1
     fi
     printf '%s\n' "$notes"
+
 # Fix markdown formatting issues
 lint-md-fix:
     markdownlint-cli2 --fix "*.md"

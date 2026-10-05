@@ -510,6 +510,8 @@ _INERT_KWARGS: dict[str, object] = {
 def test_inert_cyclopts_kwarg_is_rejected_everywhere(key: str, capsys: pytest.CaptureFixture[str]) -> None:
     kwargs = {key: _INERT_KWARGS[key]}
     app = fromargs.App("t")
+    before_commands = set(app._cyclopts)  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+    before_default_command = app._cyclopts.default_command  # pyright: ignore[reportPrivateUsage] -- App exposes no public default_command getter
 
     with pytest.raises(ValueError, match=key):
         _ = fromargs.App("t", **kwargs)  # pyright: ignore[reportArgumentType]
@@ -518,6 +520,6 @@ def test_inert_cyclopts_kwarg_is_rejected_everywhere(key: str, capsys: pytest.Ca
     with pytest.raises(ValueError, match=key):
         _ = app.command(lambda: None, **kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType]
 
-    assert app.run(["cmd"]) == 2
-    assert app.run(["g"]) == 2
+    assert set(app._cyclopts) == before_commands  # pyright: ignore[reportPrivateUsage] -- App exposes no public command listing
+    assert app._cyclopts.default_command == before_default_command  # pyright: ignore[reportPrivateUsage] -- App exposes no public default_command getter
     _ = capsys.readouterr()

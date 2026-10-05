@@ -132,6 +132,11 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |-
           set -euo pipefail
+          tag_sha=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "error: tag $TAG resolves to $tag_sha, not the workflow commit $GITHUB_SHA." >&2
+            exit 1
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; skipping."
             exit 0

@@ -10,6 +10,8 @@ import sys
 from collections.abc import Iterator, Mapping, Sequence, Set
 from typing import TextIO, cast
 
+_BYTES_LIKE = (str, bytes, bytearray, memoryview)
+
 
 def write_result(
     value: object, *, limit: int | None, full: bool, stdout: TextIO | None = None
@@ -26,7 +28,7 @@ def write_result(
     stream = stdout if stdout is not None else sys.stdout
     payload = _sorted_items(value) if isinstance(value, Set) else value
     note: str | None = None
-    if limit is not None and isinstance(payload, Sequence) and not isinstance(payload, (str, bytes)):
+    if limit is not None and isinstance(payload, Sequence) and not isinstance(payload, _BYTES_LIKE):
         items = cast("Sequence[object]", payload)
         total = len(items)
         if not full and total > limit:
@@ -39,12 +41,20 @@ def write_result(
 
 
 def _sorted_items(items: object) -> list[object]:
-    """Order set items deterministically: natural order, else by ``repr``."""
+    """Order set items deterministically.
+
+    Use natural order when no member is a ``Set``. A ``Set`` member (``<`` means
+    subset, so natural order is not total) or a ``TypeError`` from natural order
+    sorts by canonical JSON text instead. ``repr`` is not usable here, because
+    the ``repr`` of a multi-element frozenset depends on hash order.
+    """
     members = list(cast("Set[object]", items))
-    try:
-        return cast("list[object]", sorted(members))  # pyright: ignore[reportArgumentType]
-    except TypeError:
-        return sorted(members, key=repr)
+    if not any(isinstance(member, Set) for member in members):
+        try:
+            return cast("list[object]", sorted(members))  # pyright: ignore[reportArgumentType]
+        except TypeError:
+            pass
+    return sorted(members, key=lambda item: json.dumps(item, sort_keys=True, default=_default))
 
 
 def _default(value: object) -> object:
@@ -62,11 +72,13 @@ def _default(value: object) -> object:
         return dict(cast("Mapping[object, object]", value))
     if isinstance(value, Set):
         return _sorted_items(value)
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+    if isinstance(value, Sequence) and not isinstance(value, _BYTES_LIKE):
         return list(value)
     name = type(value).__name__
-    if isinstance(value, (bytes, bytearray)):
-        raise TypeError(f"{name} is not JSON serializable; return a str (decode it) or a list of ints")
+    if isinstance(value, _BYTES_LIKE):
+        raise TypeError(
+            f"{name} is not JSON serializable; return a str (decode it) or a list of ints"
+        )
     if isinstance(value, Iterator):
         raise TypeError(f"{name} is not JSON serializable; return a list instead of an iterator")
     raise TypeError(f"Object of type {name} is not JSON serializable")

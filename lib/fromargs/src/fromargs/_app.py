@@ -33,8 +33,8 @@ class _AppKwargs(TypedDict, total=False):
     """Keyword-only ``cyclopts.App`` constructor arguments this wrapper forwards untouched.
 
     This mirrors the ``cyclopts.App`` constructor by hand; a new cyclopts 5.x
-    keyword needs an entry here before fromargs accepts it. Options that
-    ``run`` never honors are omitted; see ``_INERT_KWARGS``.
+    keyword needs an entry here before fromargs accepts it. This type omits
+    the options that ``run`` never honors; see ``_INERT_KWARGS``.
     """
 
     usage: str | None
@@ -257,12 +257,18 @@ def _reserved_option(app: cyclopts.App, ancestors: tuple[cyclopts.App, ...]) -> 
     """The first reserved global flag name ``app``'s assembled arguments claim, or ``None``.
 
     Cyclopts resolves an inherited ``default_parameter`` from the app stack,
-    which it fills only while parsing. Push ``ancestors`` so ``app`` sees the
-    parent chain.
+    which it fills only while parsing. Combine the ``default_parameter`` of
+    each ancestor so ``app`` sees the parent chain.
     """
+    inherited = [
+        parameter
+        for parameter in (*(a.default_parameter for a in ancestors), app.default_parameter)
+        if parameter is not None
+    ]
     try:
-        with app.app_stack([*ancestors, app]):
-            arguments = app.assemble_argument_collection()
+        arguments = app.assemble_argument_collection(
+            default_parameter=cyclopts.Parameter.combine(*inherited)
+        )
     except ValueError:
         return None
     names: set[str] = set()
