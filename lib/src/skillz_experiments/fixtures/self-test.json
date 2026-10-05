@@ -16,8 +16,9 @@
             "name"
           ],
           "local_link_targets": [],
+          "advisory_sentences": [],
           "long_sentences": [],
-          "schema_version": 2
+          "schema_version": 3
         },
         "findings": [
           "missing-description"
@@ -43,8 +44,9 @@
             "name"
           ],
           "local_link_targets": [],
+          "advisory_sentences": [],
           "long_sentences": [],
-          "schema_version": 2
+          "schema_version": 3
         },
         "findings": [
           "placeholder-description"
@@ -69,8 +71,9 @@
             "description"
           ],
           "local_link_targets": [],
+          "advisory_sentences": [],
           "long_sentences": [],
-          "schema_version": 2
+          "schema_version": 3
         },
         "findings": [
           "missing-name"
@@ -98,8 +101,9 @@
           "local_link_targets": [
             "references/guide.md"
           ],
+          "advisory_sentences": [],
           "long_sentences": [],
-          "schema_version": 2
+          "schema_version": 3
         },
         "findings": []
       },

@@ -74,10 +74,10 @@ def test_frozen_helper_contract_rejects_constant_answers() -> None:
     from skillz_experiments._evaluation import HELPER_FIXTURES, fixture_result
 
     fixture = HELPER_FIXTURES[1]
-    assert fixture_result(fixture, 2, '{"schema_version":2,"error":"link escapes package"}')
+    assert fixture_result(fixture, 2, '{"schema_version":3,"error":"link escapes package"}')
     assert not fixture_result(fixture, 2, '{"schema_version":1,"error":"link escapes package"}')
-    assert not fixture_result(HELPER_FIXTURES[0], 0, '{"schema_version":2,"error":"link escapes package"}')
-    assert not fixture_result(fixture, 0, '{"schema_version":2,"error":"link escapes package"}')
+    assert not fixture_result(HELPER_FIXTURES[0], 0, '{"schema_version":3,"error":"link escapes package"}')
+    assert not fixture_result(fixture, 0, '{"schema_version":3,"error":"link escapes package"}')
 
 
 def test_deeply_nested_helper_output_fails_the_fixture_instead_of_raising() -> None:

@@ -9,8 +9,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 
-SCHEMA_VERSION = 2
-MAX_WORDS = 20
+SCHEMA_VERSION = 3
+ADVISORY_WORDS = 20
+MAX_WORDS = 25
 MARKER = re.compile(r"^\s*(?:#+\s+|[-*+]\s+|\d+[.)]\s+|>\s*)")
 BREAK = re.compile(r"^\s*(?:#|[-*+]\s|\d+[.)]\s)")
 MASK = re.compile(r"`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<=\])\([^)]*\)")
@@ -25,8 +26,8 @@ def _unindent(line: str, column: int) -> str:
     return line[min(column, len(line) - len(line.lstrip(" "))):]
 
 
-def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
-    """Report prose sentences with more than MAX_WORDS words, by 1-based file line."""
+def prose_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
+    """Report prose sentences with more than ADVISORY_WORDS words, by 1-based file line."""
     paragraphs: list[tuple[str, list[int]]] = []
     text = ""
     owners: list[int] = []
@@ -77,9 +78,19 @@ def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
         masked = MASK.sub(lambda hit: " " * len(hit[0]), text)
         for sentence in SENTENCE.finditer(masked):
             words = sum(1 for token in sentence[0].split() if any(c.isalnum() for c in token))
-            if words > MAX_WORDS:
+            if words > ADVISORY_WORDS:
                 found.append({"line": owners[sentence.start()], "words": words})
     return found
+
+
+def long_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
+    """Hard tier: sentences with more than MAX_WORDS words."""
+    return [hit for hit in prose_sentences(lines, start) if hit["words"] > MAX_WORDS]
+
+
+def advisory_sentences(lines: list[str], start: int) -> list[dict[str, int]]:
+    """Advisory tier: sentences with more than ADVISORY_WORDS and at most MAX_WORDS words."""
+    return [hit for hit in prose_sentences(lines, start) if hit["words"] <= MAX_WORDS]
 
 
 def inspect(path: Path) -> dict[str, object]:
@@ -108,6 +119,7 @@ def inspect(path: Path) -> dict[str, object]:
             raise ValueError("package must not contain symlinks")
         links.add(target)
     return {"schema_version": SCHEMA_VERSION, "frontmatter_keys": keys,
+            "advisory_sentences": advisory_sentences(lines, end + 1),
             "body_line_count": len(lines[end + 1:]), "local_link_targets": sorted(links),
             "long_sentences": long_sentences(lines, end + 1)}
 
