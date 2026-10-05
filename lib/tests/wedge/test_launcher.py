@@ -11,7 +11,7 @@ import sys
 import threading
 from pathlib import Path
 from collections.abc import Iterator
-from typing import Callable, ParamSpec, TypeVar, cast
+from typing import Callable, ClassVar, ParamSpec, TypeVar, cast
 from zipfile import ZIP_BZIP2, ZipFile
 
 P = ParamSpec("P")
@@ -39,12 +39,12 @@ def built_pyz(tmp_path_factory: pytest.TempPathFactory, fixture_skill_dir: Path)
     return result.path
 
 
-class _CountingHandler(http.server.SimpleHTTPRequestHandler):
-    request_count: int = 0
+class _RecordingHandler(http.server.SimpleHTTPRequestHandler):
+    requested: ClassVar[list[str]] = []
 
     @override
     def do_GET(self) -> None:
-        type(self).request_count += 1
+        type(self).requested.append(self.path)
         super().do_GET()
 
     @override
@@ -53,10 +53,10 @@ class _CountingHandler(http.server.SimpleHTTPRequestHandler):
 
 
 @pytest.fixture
-def http_server(tmp_path: Path) -> Iterator[tuple[str, Path, type[_CountingHandler]]]:
+def http_server(tmp_path: Path) -> Iterator[tuple[str, Path, type[_RecordingHandler]]]:
     serve_root = tmp_path / "http-root"
     serve_root.mkdir()
-    handler_cls = type("_Handler", (_CountingHandler,), {"request_count": 0})
+    handler_cls = type("_Handler", (_RecordingHandler,), {"requested": []})
     handler = functools.partial(handler_cls, directory=str(serve_root))
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -71,6 +71,16 @@ def http_server(tmp_path: Path) -> Iterator[tuple[str, Path, type[_CountingHandl
 def _lock_data(skill_dir: Path) -> dict[str, str]:
     data = cast(dict[str, object], json.loads((skill_dir / "scripts" / f"{FIXTURE_NAME}.wedge.json").read_text()))
     return {key: cast(str, data[key]) for key in ("repo", "release", "asset")}
+
+
+def _asset_requests(handler_cls: type[_RecordingHandler], lock: dict[str, str]) -> int:
+    """Count the GET requests for the lock's asset.
+
+    Other processes on the host can probe a new localhost port with
+    ``GET /``, so a count of all requests is not the launcher's count (#152).
+    """
+    path = f"/{lock['repo']}/releases/download/{lock['release']}/{lock['asset']}"
+    return handler_cls.requested.count(path)
 
 
 def _launcher_path(skill_dir: Path) -> Path:
@@ -185,7 +195,7 @@ def test_download_via_localhost_is_cached_after_the_first_request(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
     built_pyz: Path,
-    http_server: tuple[str, Path, type[_CountingHandler]],
+    http_server: tuple[str, Path, type[_RecordingHandler]],
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
     base_url, serve_root, handler_cls = http_server
@@ -202,12 +212,12 @@ def test_download_via_localhost_is_cached_after_the_first_request(
 
     first = _run_launcher(skill, env, "--json", "wheels", "list")
     assert first.returncode == 0, first.stderr
-    assert handler_cls.request_count == 1
+    assert _asset_requests(handler_cls, lock) == 1
     _ = cast(object, json.loads(first.stdout))
 
     second = _run_launcher(skill, env, "--json", "wheels", "list")
     assert second.returncode == 0, second.stderr
-    assert handler_cls.request_count == 1
+    assert _asset_requests(handler_cls, lock) == 1
 
 
 @pytest.mark.ac("AC-W4")
@@ -233,7 +243,7 @@ def test_corrupt_cache_is_replaced_by_verified_download(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
     built_pyz: Path,
-    http_server: tuple[str, Path, type[_CountingHandler]],
+    http_server: tuple[str, Path, type[_RecordingHandler]],
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
     base_url, serve_root, handler_cls = http_server
@@ -254,7 +264,7 @@ def test_corrupt_cache_is_replaced_by_verified_download(
     result = _run_launcher(skill, env, "--json", "wheels", "list")
 
     assert result.returncode == 0, result.stderr
-    assert handler_cls.request_count == 1
+    assert _asset_requests(handler_cls, lock) == 1
     assert cached.read_bytes() == built_pyz.read_bytes()
 
 
@@ -262,7 +272,7 @@ def test_corrupt_cache_is_replaced_by_verified_download(
 def test_corrupt_download_is_rejected_and_not_cached(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
-    http_server: tuple[str, Path, type[_CountingHandler]],
+    http_server: tuple[str, Path, type[_RecordingHandler]],
 ) -> None:
     skill = copy_locked_fixture(tmp_path / "checkout")
     base_url, serve_root, _handler_cls = http_server
