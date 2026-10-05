@@ -1,0 +1,20 @@
+{
+  "golden": {
+    "harness-layout.md": "# Cross-harness skill layout\n\nChecked: 2026-10-05.\n\n## Sources\n\nThe repository-local `skillz-self-update` skill queries each source for changes since `Checked:`.\n\n| Host | Source | Re-check |\n|---|---|---|\n| Claude Code | <https://code.claude.com/docs/en/skills> | frontmatter fields |\n\n## Rejected\n\n- `${CLAUDE_SKILL_DIR}` as a portable helper path — Codex passes the literal string.\n- Pi loads skills from .pi/legacy — the Pi docs list no such path.\n"
+  },
+  "bad": {
+    "stale-date": {
+      "harness-layout.md": "# Cross-harness skill layout\n\nChecked: 2026-09-12. Focused recheck on 2026-09-28 covered Claude only.\n\n## Sources\n\nThe repository-local `skillz-self-update` skill queries each source for changes since `Checked:`.\n\n| Host | Source | Re-check |\n|---|---|---|\n| Claude Code | <https://code.claude.com/docs/en/skills> | frontmatter fields |\n\n## Rejected\n\n- `${CLAUDE_SKILL_DIR}` as a portable helper path — Codex passes the literal string.\n- Pi loads skills from .pi/legacy — the Pi docs list no such path.\n"
+    },
+    "rejected-entry-missing": {
+      "harness-layout.md": "# Cross-harness skill layout\n\nChecked: 2026-10-05.\n\n## Sources\n\nThe repository-local `skillz-self-update` skill queries each source for changes since `Checked:`.\n\n| Host | Source | Re-check |\n|---|---|---|\n| Claude Code | <https://code.claude.com/docs/en/skills> | frontmatter fields |\n\n## Rejected\n\n- `${CLAUDE_SKILL_DIR}` as a portable helper path — Codex passes the literal string.\n"
+    },
+    "published-mode-changed": {
+      "harness-layout.md": "# Cross-harness skill layout\n\nChecked: 2026-10-05.\n\n## Sources\n\nThe repository-local `skillz-self-update` skill queries each source for changes since `Checked:`.\n\n| Host | Source | Re-check |\n|---|---|---|\n| Claude Code | <https://code.claude.com/docs/en/skills> | frontmatter fields |\n\n## Rejected\n\n- `${CLAUDE_SKILL_DIR}` as a portable helper path — Codex passes the literal string.\n- Pi loads skills from .pi/legacy — the Pi docs list no such path.\n",
+      "skills/skillz/SKILL.md": "---\nname: skillz\ndescription: Stub of the published skill for the self-update fixture.\n---\n\n## Mode: add\n\n1. Redesigned.\n"
+    },
+    "old-rejection-dropped": {
+      "harness-layout.md": "# Cross-harness skill layout\n\nChecked: 2026-10-05.\n\n## Sources\n\nThe repository-local `skillz-self-update` skill queries each source for changes since `Checked:`.\n\n| Host | Source | Re-check |\n|---|---|---|\n| Claude Code | <https://code.claude.com/docs/en/skills> | frontmatter fields |\n\n## Rejected\n\n- Pi loads skills from .pi/legacy — the Pi docs list no such path.\n"
+    }
+  }
+}

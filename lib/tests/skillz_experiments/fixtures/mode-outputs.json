@@ -1,0 +1,106 @@
+{
+  "mode-add": {
+    "golden": {
+      "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n| `skills/release-notes/SKILL.md` | `/release-notes` | Draft release notes from merged changes. |\n",
+      "skills/release-notes/SKILL.md": "---\nname: release-notes\ndescription: >-\n  Draft release notes from merged changes. Use when a maintainer says \"write release notes\", \"draft the changelog\", \"summarize this release\", \"prepare release notes\", or \"list what shipped\". Do NOT use for commit messages.\ndisable-model-invocation: true\n---\n\n# release-notes\n\n1. Read the merged change list that the user names.\n2. Group the changes by user-visible effect.\n3. Write the notes as short bullets.\n\nDone means: the notes list every merged change once.\n",
+      "skills/release-notes/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n"
+    },
+    "bad": {
+      "no-sidecar": {
+        "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n| `skills/release-notes/SKILL.md` | `/release-notes` | Draft release notes from merged changes. |\n",
+        "skills/release-notes/SKILL.md": "---\nname: release-notes\ndescription: >-\n  Draft release notes from merged changes. Use when a maintainer says \"write release notes\", \"draft the changelog\", \"summarize this release\", \"prepare release notes\", or \"list what shipped\". Do NOT use for commit messages.\ndisable-model-invocation: true\n---\n\n# release-notes\n\n1. Read the merged change list that the user names.\n2. Group the changes by user-visible effect.\n3. Write the notes as short bullets.\n\nDone means: the notes list every merged change once.\n"
+      },
+      "no-readme-row": {
+        "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n",
+        "skills/release-notes/SKILL.md": "---\nname: release-notes\ndescription: >-\n  Draft release notes from merged changes. Use when a maintainer says \"write release notes\", \"draft the changelog\", \"summarize this release\", \"prepare release notes\", or \"list what shipped\". Do NOT use for commit messages.\ndisable-model-invocation: true\n---\n\n# release-notes\n\n1. Read the merged change list that the user names.\n2. Group the changes by user-visible effect.\n3. Write the notes as short bullets.\n\nDone means: the notes list every merged change once.\n",
+        "skills/release-notes/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n"
+      },
+      "name-differs-from-directory": {
+        "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n| `skills/release-notes/SKILL.md` | `/release-notes` | Draft release notes from merged changes. |\n",
+        "skills/release-notes/SKILL.md": "---\nname: release\ndescription: >-\n  Draft release notes from merged changes. Use when a maintainer says \"write release notes\", \"draft the changelog\", \"summarize this release\", \"prepare release notes\", or \"list what shipped\". Do NOT use for commit messages.\ndisable-model-invocation: true\n---\n\n# release-notes\n\n1. Read the merged change list that the user names.\n2. Group the changes by user-visible effect.\n3. Write the notes as short bullets.\n\nDone means: the notes list every merged change once.\n",
+        "skills/release-notes/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n"
+      }
+    }
+  },
+  "mode-improve": {
+    "golden": {
+      "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count.\n\nReport the count in one short sentence that names the file. Then stop.\n",
+      "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+      "report.md": "## skillz improve: demo\n\n- Before: ~140 tok. After: ~118 tok.\n- Applied: added the sidecar; split one long sentence.\n- Residual: none.\n\nApproval question: Do you want a model-invoked variant of this skill? I recommend no.\n"
+    },
+    "bad": {
+      "defect-left-unfixed": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count.\n\nMake sure that you always remember to carefully report the count of open items to the user in a single short sentence that names the file and then stop without doing any other work on the file or the list.\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "report.md": "## skillz improve: demo\n\n- Before: ~140 tok. After: ~118 tok.\n- Applied: added the sidecar; split one long sentence.\n- Residual: none.\n\nApproval question: Do you want a model-invoked variant of this skill? I recommend no.\n"
+      },
+      "no-approval-question": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count.\n\nReport the count in one short sentence that names the file. Then stop.\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "report.md": "## skillz improve: demo\n\n- Before: ~140 tok. After: ~118 tok.\n- Applied: added the sidecar; split one long sentence.\n- Residual: none.\n\nNote: Do you want a model-invoked variant of this skill? I recommend no.\n"
+      },
+      "protocol-changed": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\n---\n\n# demo\n\n1. Run `python3 scripts/tally.py <file>` to count the open items in the task list file.\n2. Report the count.\n\nReport the count in one short sentence that names the file. Then stop.\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "report.md": "## skillz improve: demo\n\n- Before: ~140 tok. After: ~118 tok.\n- Applied: added the sidecar; split one long sentence.\n- Residual: none.\n\nApproval question: Do you want a model-invoked variant of this skill? I recommend no.\n"
+      }
+    }
+  },
+  "mode-wedge-candidates": {
+    "golden": {
+      "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+    },
+    "bad": {
+      "missing-field": {
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+      },
+      "writes-a-script": {
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n",
+        "scripts/tally.py": "print(1)\n"
+      },
+      "no-candidate-line": {
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items  | count and sort | `demo-tally` | Follow-up choice  |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+      }
+    }
+  },
+  "mode-wedge-clean": {
+    "golden": {
+      "brief.md": "## skillz wedge: advisor\n\nNo offload candidates\n"
+    },
+    "bad": {
+      "invented-candidate": {
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+      },
+      "missing-phrase": {
+        "brief.md": "## skillz wedge: advisor\n\nNothing to offload.\n"
+      }
+    }
+  },
+  "mode-wedge-agent": {
+    "golden": {
+      "brief.md": "## skillz wedge: reviewer\n\nThe /wedge skill packages only skills, so this agent file has no wedge brief.\n"
+    },
+    "bad": {
+      "no-stop-message": {
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+      },
+      "writes-a-file": {
+        "brief.md": "## skillz wedge: reviewer\n\nThe /wedge skill packages only skills, so this agent file has no wedge brief.\n",
+        "agents/reviewer.md": "---\nname: reviewer\ndescription: Review a diff and report findings.\ntools: Read\n---\n\nReview the diff and report each finding with a cited line.\n"
+      }
+    }
+  },
+  "mode-contract": {
+    "golden": {
+      "evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"draft\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\",\n      \"rubric\": \"Score 100 when the rewrite keeps every fact and uses plain words. Score 0 when a fact is lost.\"\n    }\n  },\n  \"editable\": []\n}\n"
+    },
+    "bad": {
+      "approved-status": {
+        "evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"approved\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\",\n      \"rubric\": \"Score 100 when the rewrite keeps every fact and uses plain words. Score 0 when a fact is lost.\"\n    }\n  },\n  \"editable\": []\n}\n"
+      },
+      "no-rubric": {
+        "evals/autoimprove.json": "{\n  \"schema_version\": 1,\n  \"status\": \"draft\",\n  \"skill\": \"demo\",\n  \"invocation\": \"$demo rewrite\",\n  \"kinds\": {\n    \"rewrite\": {\n      \"grader\": \"judge\"\n    }\n  },\n  \"editable\": []\n}\n"
+      }
+    }
+  }
+}

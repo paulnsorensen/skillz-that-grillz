@@ -435,4 +435,50 @@ The allowed key set matches the cross-harness frontmatter matrix; a test pins th
 Failure returns exit one with a JSON `error` on stderr.
 The command reads each file as UTF-8 and rejects a file over 262144 bytes. The error names the file and the limit.
 The command rejects a missing path, a file, a symlink input, and any symlink inside the package.
-Quality stays in prose. The command cannot judge a trigger phrase, an output contract, or a description.
+Quality stays in prose. The command cannot judge a trigger phrase, an output contract, or a description.## Mode fixtures
+
+The mode fixtures test the steps of `add`, `improve`, `wedge`, and contract drafting.
+They also test the repository-local `skillz-self-update` skill.
+The public cases live in `skills/skillz/evals/mode-fixtures.json`.
+The self-update case stays in `lib/tests/skillz_experiments/fixtures/self-update.json`, so it never publishes.
+
+A fixture uses the version-one case manifest and adds a `target` block with one `command` kind per mode.
+Each case has these fields:
+
+- `kind`: `add`, `improve`, `wedge`, `contract`, or `self-update`.
+- `request`: the text that calls the mode.
+- `files`: the starting tree, plus a stdlib `check.py` grader.
+- `expected`: a tree check or a JSON report. The grader never sees it. The offline tests read it.
+
+The grader reads the task output under `output/` and prints `{"score": 0 or 1}`.
+A task writes every created or changed file under `output/` with its repository path.
+The `wedge` grader also requires that `brief.md` is the only output file.
+
+The offline tests run without a model.
+They grade a recorded golden output and each seeded-bad output.
+The `add` and `improve` tests also run `audit-facts` and `inspect_skill.py` on the same trees.
+The tests pin the mode steps that each fixture depends on, so an edited step fails the matching test.
+
+To add a case, follow these steps:
+
+1. Add the case to the manifest with a unique `id` and `family`.
+2. Write a `check.py` that scores the golden output as 1 and the seeded defect as 0.
+3. Record the golden output and one or more seeded-bad outputs in `lib/tests/skillz_experiments/fixtures/mode-outputs.json`.
+4. Pin each step the case depends on in the `STEPS` list of `test_mode_fixtures.py`.
+5. Run `just build`.
+
+Keep exactly two `holdout` cases. Use `train` and `validation` for the rest.
+
+The fixture JSON files are the source of truth. Edit them directly; no generator script exists.
+
+The live run is opt-in and never part of `just build` or `just ci`.
+The `self-test` command cannot run it, because this contract declares no `helper`.
+Use the staged commands with an explicit model and budget:
+
+```sh
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" dataset "$SKILLZ/evals/mode-fixtures.json" --target "$SKILLZ" --out /tmp/skillz-modes
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" baseline /tmp/skillz-modes --model gpt-6-astra --live --max-invocations 20 --max-seconds 1200
+```
+
+The baseline runs the real modes on the train and validation cases.
+It sends the public fixtures to the selected provider, so ask the user first.

@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "target": {
+    "schema_version": 1,
+    "status": "approved",
+    "skill": "skillz-self-update",
+    "invocation": "$skillz-self-update",
+    "kinds": {
+      "self-update": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "check.py"
+        ]
+      }
+    },
+    "editable": []
+  },
+  "cases": [
+    {
+      "id": "self-update-stale-date",
+      "family": "self-update",
+      "split": "train",
+      "kind": "self-update",
+      "request": "Run the skillz-self-update steps on harness-layout.md. The research digest is digest.json; do not query the network. Write the changed files under output/.",
+      "files": {
+        "harness-layout.md": "# Cross-harness skill layout\n\nChecked: 2026-09-12. Focused recheck on 2026-09-28 covered Claude only.\n\n## Sources\n\nThe repository-local `skillz-self-update` skill queries each source for changes since `Checked:`.\n\n| Host | Source | Re-check |\n|---|---|---|\n| Claude Code | <https://code.claude.com/docs/en/skills> | frontmatter fields |\n\n## Rejected\n\n- `${CLAUDE_SKILL_DIR}` as a portable helper path — Codex passes the literal string.\n",
+        "digest.json": "{\n  \"checked\": \"2026-10-05\",\n  \"delta\": [\n    \"Claude Code lists a new frontmatter field.\"\n  ],\n  \"rejected\": [\n    {\n      \"claim\": \"Pi loads skills from .pi/legacy\",\n      \"reason\": \"the Pi docs list no such path\"\n    }\n  ]\n}\n",
+        "skills/skillz/SKILL.md": "---\nname: skillz\ndescription: Stub of the published skill for the self-update fixture.\n---\n\n## Mode: add\n\n1. Stub.\n",
+        "check.py": "import json, pathlib, re\ndigest = json.loads(pathlib.Path('digest.json').read_text())\nbefore = pathlib.Path('harness-layout.md').read_text()\nok = False\ntry:\n    after = pathlib.Path('output/harness-layout.md').read_text()\n    rejected = after.split('## Rejected', 1)[1]\n    kept = before.split('## Rejected', 1)[1].strip().splitlines()\n    written = sorted(str(p.relative_to('output')) for p in pathlib.Path('output').rglob('*') if p.is_file())\n    published = pathlib.Path('output/skills/skillz/SKILL.md')\n    ok = (re.search('^Checked: ' + digest['checked'] + '[.]', after, re.M) is not None\n          and all(line in rejected for line in kept)\n          and all(r['claim'] in rejected and r['reason'] in rejected for r in digest['rejected'])\n          and set(written) <= {'harness-layout.md', 'skills/skillz/SKILL.md'}\n          and (not published.exists() or published.read_text() == pathlib.Path('skills/skillz/SKILL.md').read_text()))\nexcept (OSError, IndexError):\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "harness-layout.md"
+        ],
+        "checked": "2026-10-05",
+        "rejected_entries": 1,
+        "published_modes": "unchanged"
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    }
+  ]
+}

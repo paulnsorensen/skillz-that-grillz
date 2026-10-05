@@ -1,0 +1,372 @@
+"""Offline behavioral fixtures for every /skillz mode and the repo-local skillz-self-update skill.
+
+Each fixture case pairs a request and a starting tree with a deterministic command grader. The tests
+run that grader on a recorded golden output (accepted) and on seeded-bad outputs (rejected). They
+also pin the mode steps in the skill text that each fixture depends on. No test calls a model.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import socket
+import subprocess
+import sys
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from skillz_experiments import _graders
+from skillz_experiments._cases import Case, load_cases, mapping
+from skillz_experiments._cli import main
+from skillz_experiments._codex import Codex
+from skillz_experiments._contract import Contract, parse
+from skillz_experiments._facts import audit_facts
+
+ROOT = Path(__file__).resolve().parents[3]
+SKILL_DIR = ROOT / "skills/skillz"
+PUBLISHED = SKILL_DIR / "evals/mode-fixtures.json"
+FIXTURES = Path(__file__).parent / "fixtures"
+SELF_UPDATE = FIXTURES / "self-update.json"
+SELF_SKILL = ROOT / ".agents/skills/skillz-self-update/SKILL.md"
+LAYOUT = SKILL_DIR / "references/harness-layout.md"
+Tree = dict[str, str]
+
+
+def _document(path: Path) -> dict[str, object]:
+    return mapping(cast(object, json.loads(path.read_text(encoding="utf-8"))))
+
+
+def _outputs(path: Path) -> dict[str, dict[str, object]]:
+    return {key: mapping(value) for key, value in _document(path).items()}
+
+
+def _rules(path: Path) -> Contract:
+    return parse(_document(path)["target"], "manifest")
+
+
+def _cases(path: Path) -> dict[str, Case]:
+    return {case.identifier: case for case in load_cases(path, _rules(path).grader_types())}
+
+
+def _variants(entry: dict[str, object], key: str) -> dict[str, Tree]:
+    return {name: cast(Tree, tree) for name, tree in mapping(entry[key]).items()}
+
+
+class Sandbox:
+    """Run the grader argv the way a task sandbox would: fixtures at the root, outputs under `output/`."""
+
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        command = [sys.executable, *argv[1:]] if argv[0] == "python3" else argv
+        run = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=30, check=False)
+        return run.returncode, run.stdout
+
+
+def grade(path: Path, case: Case, output: Tree) -> float:
+    return _graders.command(Sandbox(), _rules(path).kinds[case.kind].argv, case, dict(output))
+
+
+PUBLISHED_CASES = _cases(PUBLISHED)
+PUBLISHED_OUTPUTS = _outputs(FIXTURES / "mode-outputs.json")
+SELF_UPDATE_CASES = _cases(SELF_UPDATE)
+SELF_UPDATE_OUTPUTS = _document(FIXTURES / "self-update-outputs.json")
+
+
+def _matrix() -> list[tuple[Path, str]]:
+    return ([(PUBLISHED, name) for name in PUBLISHED_CASES] + [(SELF_UPDATE, name) for name in SELF_UPDATE_CASES])
+
+
+def _recorded(path: Path, name: str) -> dict[str, object]:
+    return SELF_UPDATE_OUTPUTS if path == SELF_UPDATE else PUBLISHED_OUTPUTS[name]
+
+
+def _golden(path: Path, name: str) -> Tree:
+    return cast(Tree, mapping(_recorded(path, name)["golden"]))
+
+
+BAD_CASES = [(path, name, variant) for path, name in _matrix() for variant in _variants(_recorded(path, name), "bad")]
+
+
+@pytest.fixture(autouse=True)
+def offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("a fixture test must not open a network connection")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+
+
+# Fixture shape
+
+
+def test_published_manifest_declares_one_kind_per_mode_with_complete_splits() -> None:
+    rules = _rules(PUBLISHED)
+    assert set(rules.kinds) == {"add", "improve", "wedge", "contract"}
+    assert all(grader.type == "command" and grader.argv for grader in rules.kinds.values())
+    assert {case.kind for case in PUBLISHED_CASES.values()} == set(rules.kinds)
+    splits = [case.split for case in PUBLISHED_CASES.values()]
+    assert splits.count("holdout") == 2 and "train" in splits and "validation" in splits
+    assert all(case.eligible and case.visibility == "public" for case in PUBLISHED_CASES.values())
+    assert all("check.py" in case.files and isinstance(case.expected, dict) for case in PUBLISHED_CASES.values())
+    assert set(PUBLISHED_OUTPUTS) == set(PUBLISHED_CASES)
+
+
+def test_self_update_case_stays_out_of_the_published_tree() -> None:
+    assert SELF_UPDATE.is_relative_to(ROOT / "lib/tests") and not SELF_UPDATE.is_relative_to(SKILL_DIR)
+    assert {case.kind for case in SELF_UPDATE_CASES.values()} == {"self-update"}
+    assert "self-update" not in _rules(PUBLISHED).kinds
+
+
+# Golden accepted, seeded-bad rejected, deterministic
+
+
+@pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
+def test_golden_output_is_accepted_by_the_mode_grader(path: Path, name: str) -> None:
+    cases = _cases(path)
+    assert grade(path, cases[name], _golden(path, name)) == 1.0
+
+
+@pytest.mark.parametrize(("path", "name", "variant"), BAD_CASES, ids=[f"{n}:{v}" for _, n, v in BAD_CASES])
+def test_seeded_bad_output_is_rejected_by_the_mode_grader(path: Path, name: str, variant: str) -> None:
+    bad = _variants(_recorded(path, name), "bad")[variant]
+    assert grade(path, _cases(path)[name], bad) == 0.0
+
+
+def test_every_case_has_a_golden_and_a_seeded_bad_output() -> None:
+    for path, name in _matrix():
+        assert _golden(path, name) and _variants(_recorded(path, name), "bad")
+
+
+def test_two_runs_give_identical_results() -> None:
+    def run() -> list[float]:
+        scores = [grade(path, _cases(path)[name], _golden(path, name)) for path, name in _matrix()]
+        return scores + [grade(path, _cases(path)[name], _variants(_recorded(path, name), "bad")[variant])
+                         for path, name, variant in BAD_CASES]
+
+    first = run()
+    assert first == run() and first.count(1.0) == len(_matrix())
+
+
+# add and improve: audit-facts and the inspector are the deterministic checker
+
+
+def _defects(tmp_path: Path, case: Case, output: Tree, skill: str) -> list[str]:
+    root = tmp_path / "repo"
+    (root / ".git").mkdir(parents=True)
+    for name, text in {**{k: v for k, v in case.files.items() if k != "check.py"}, **output}.items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _ = target.write_text(text, encoding="utf-8")
+    facts = cast(list[dict[str, object]], audit_facts(root / "skills" / skill)["checks"])
+    found = {str(check["id"]) for check in facts if check["status"] == "fail"}
+    run = subprocess.run([sys.executable, str(SKILL_DIR / "scripts/inspect_skill.py"), str(root / "skills" / skill / "SKILL.md")],
+                         capture_output=True, text=True, check=True)
+    if mapping(cast(object, json.loads(run.stdout)))["long_sentences"]:
+        found.add("long-sentence")
+    return sorted(found)
+
+
+ADD_IMPROVE = [("mode-add", "release-notes"), ("mode-improve", "demo")]
+SEEDED_DEFECTS = {
+    ("mode-add", "no-sidecar"): ["sidecar.exists"],
+    ("mode-add", "no-readme-row"): ["registration.readme-row"],
+    ("mode-add", "name-differs-from-directory"): ["name.matches-directory"],
+    ("mode-improve", "defect-left-unfixed"): ["long-sentence"],
+}
+
+
+@pytest.mark.parametrize(("name", "skill"), ADD_IMPROVE)
+def test_audit_facts_accept_the_golden_tree(tmp_path: Path, name: str, skill: str) -> None:
+    assert _defects(tmp_path, PUBLISHED_CASES[name], _golden(PUBLISHED, name), skill) == []
+    expected = mapping(PUBLISHED_CASES[name].expected)
+    assert expected["audit_facts_failures"] == [] and expected["long_sentences"] == []
+
+
+@pytest.mark.parametrize(("name", "variant"), list(SEEDED_DEFECTS))
+def test_audit_facts_name_the_seeded_defect(tmp_path: Path, name: str, variant: str) -> None:
+    skill = dict(ADD_IMPROVE)[name]
+    bad = _variants(PUBLISHED_OUTPUTS[name], "bad")[variant]
+    assert _defects(tmp_path, PUBLISHED_CASES[name], bad, skill) == SEEDED_DEFECTS[(name, variant)]
+
+
+def test_improve_starting_tree_holds_the_seeded_defects(tmp_path: Path) -> None:
+    case = PUBLISHED_CASES["mode-improve"]
+    expected = mapping(case.expected)
+    assert _defects(tmp_path, case, {}, "demo") == ["long-sentence", "sidecar.exists"]
+    assert expected["seeded_defects"] == ["sidecar.exists", "long-sentence"]
+
+
+# wedge: no file is written and every candidate has all seven fields
+
+
+def _template_fields() -> list[str]:
+    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    line = next(row for row in text.splitlines() if row.startswith("**Inputs**"))
+    return re.findall(r"\*\*([^*]+)\*\*", line)
+
+
+@pytest.mark.parametrize("name", ["mode-wedge-candidates", "mode-wedge-clean", "mode-wedge-agent"])
+def test_wedge_golden_writes_only_the_brief_and_every_candidate_has_seven_fields(name: str) -> None:
+    golden = _golden(PUBLISHED, name)
+    case = PUBLISHED_CASES[name]
+    assert list(golden) == ["brief.md"] and not set(golden) & set(case.files)
+    parts = re.split(r"^### Candidate ", golden["brief.md"], flags=re.M)[1:]
+    expected = mapping(case.expected)
+    assert len(parts) == expected["candidates"]
+    fields = _template_fields()
+    assert len(fields) == 7 and all(f"**{field}**" in part for part in parts for field in fields)
+    if "phrase" in expected:
+        assert str(expected["phrase"]) in golden["brief.md"]
+
+
+def test_wedge_grader_checks_the_seven_fields_of_the_skill_template() -> None:
+    script = PUBLISHED_CASES["mode-wedge-candidates"].files["check.py"]
+    assert all(f"'{field}'" in script for field in _template_fields())
+    scripts = {PUBLISHED_CASES[name].files["check.py"] for name in PUBLISHED_CASES if name.startswith("mode-wedge")}
+    assert len(scripts) == 1
+
+
+# contract drafting: a draft stops the real runtime path
+
+
+def _target_with_contract(tmp_path: Path, status: str) -> tuple[Path, dict[str, object]]:
+    case = PUBLISHED_CASES["mode-contract"]
+    target = tmp_path / "demo"
+    (target / "evals").mkdir(parents=True)
+    _ = (target / "SKILL.md").write_text(case.files["skills/demo/SKILL.md"], encoding="utf-8")
+    draft = mapping(cast(object, json.loads(_golden(PUBLISHED, "mode-contract")["evals/autoimprove.json"])))
+    document = draft | {"status": status}
+    _ = (target / "evals/autoimprove.json").write_text(json.dumps(document), encoding="utf-8")
+    return target, document
+
+
+def _cases_file(tmp_path: Path) -> Path:
+    cases = [{"id": split, "family": split, "split": split, "kind": "rewrite", "request": "Rewrite the note.",
+              "files": {"note.txt": "hello\n"}, "expected": {"text": "hello"},
+              "provenance": "test", "provider_approved": True}
+             for split in ("train", "validation", "holdout", "holdout")]
+    cases[3] = cases[3] | {"id": "holdout-2", "family": "holdout-2"}
+    path = tmp_path / "cases.json"
+    _ = path.write_text(json.dumps({"schema_version": 1, "cases": cases}), encoding="utf-8")
+    return path
+
+
+def test_drafted_contract_is_rejected_with_contract_unapproved_before_any_model_call(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    calls: list[str] = []
+
+    def invoke(self: Codex, *args: object, **kwargs: object) -> dict[str, object]:
+        del self, args, kwargs
+        calls.append("model")
+        raise AssertionError("a draft contract must stop the run before any model call")
+
+    monkeypatch.setattr(Codex, "invoke", invoke)
+    target, _ = _target_with_contract(tmp_path, "draft")
+    code = main(["self-test", "--model", "controlled", "--live", "--target", str(target),
+                 "--manifest", str(_cases_file(tmp_path)), "--out", str(tmp_path / "live")])
+    error = cast(dict[str, object], json.loads(capsys.readouterr().err))
+    assert code == 1 and error["code"] == "contract-unapproved" and calls == []
+    assert not (tmp_path / "live").exists()
+    with pytest.raises(Exception, match="draft") as raised:
+        _ = parse(_target_with_contract(tmp_path / "again", "draft")[1], "skill")
+    assert getattr(raised.value, "code") == "contract-unapproved"
+
+
+def test_the_same_contract_runs_once_the_user_approves_it(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target, _ = _target_with_contract(tmp_path, "approved")
+    code = main(["dataset", str(_cases_file(tmp_path)), "--target", str(target), "--out", str(tmp_path / "run")])
+    assert code == 0 and (tmp_path / "run/run.json").is_file()
+    assert capsys.readouterr().err == ""
+
+
+# live profile: the existing dataset and baseline commands, never part of the gate
+
+
+def test_published_manifest_prepares_a_run_against_the_skill_and_baseline_needs_live(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run = tmp_path / "run"
+    assert main(["dataset", str(PUBLISHED), "--target", str(SKILL_DIR), "--out", str(run)]) == 0
+    assert json.loads(capsys.readouterr().out)
+    assert main(["baseline", str(run), "--model", "controlled"]) == 1
+    assert "live" in capsys.readouterr().err.lower()
+
+
+# Mode steps that the fixtures depend on
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _part(path: Path, heading: str | None) -> str:
+    text = path.read_text(encoding="utf-8")
+    if heading is None:
+        return _flat(text)
+    match = re.search(rf"^## {re.escape(heading)}\n.*?(?=^## |\Z)", text, re.M | re.S)
+    assert match is not None, heading
+    return _flat(match[0])
+
+
+SKILL = SKILL_DIR / "SKILL.md"
+EXPERIMENTS = SKILL_DIR / "references/experiments.md"
+STEPS: list[tuple[str, Path, str | None, str]] = [
+    ("add", SKILL, "Mode: add", "directory name equals `name:`"),
+    ("add", SKILL, "Mode: add", "Add `agents/openai.yaml` when the skill is user-only."),
+    ("add", SKILL, "Mode: add", "Register the skill in its repo's index"),
+    ("add", SKILL, "Mode: add", "The inspector reports an empty `long_sentences` list."),
+    ("improve", SKILL, "Mode: improve", "Apply every `<certain>` finding of severity medium or higher"),
+    ("improve", SKILL, "Mode: improve", "as one approval question"),
+    ("improve", SKILL, "Mode: improve", "A PR body or a report is not approval."),
+    ("improve", SKILL, "Mode: improve", "Tighten; do not redesign."),
+    ("improve", SKILL, "Mode: improve", "Report before/after tokens and the residual findings."),
+    ("wedge", SKILL, "Mode: wedge", "writes no code and starts no build"),
+    ("wedge", SKILL, "Mode: wedge", "`/wedge` packages only skills, then stop."),
+    ("wedge", SKILL, "Mode: wedge",
+     "command name, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects"),
+    ("wedge", SKILL, "Mode: wedge", "report `No offload candidates` and stop"),
+    ("wedge", SKILL, "Mode: wedge", "Run /wedge with candidate <n> of this brief."),
+    ("wedge", SKILL, "Mode: wedge", "every candidate cites a line and has all seven contract fields"),
+    ("contract", EXPERIMENTS, "The autoimprove contract", "It stops with `contract-unapproved` when `status` is `draft`."),
+    ("contract", EXPERIMENTS, "No contract", "Save every drafted contract with `\"status\": \"draft\"`, for both choices."),
+    ("contract", EXPERIMENTS, "No contract", "Choose judge-only grading."),
+    ("contract", EXPERIMENTS, "No contract", "The runner reports `contract-unapproved` for a draft."),
+    ("self-update", SELF_SKILL, None, "Read `skills/skillz/references/harness-layout.md`, including `## Sources` and `## Rejected`."),
+    ("self-update", SELF_SKILL, None, "Check every source in `## Sources` for changes since `Checked:`."),
+    ("self-update", SELF_SKILL, None, "Update its matrix, rules, template, and `Checked:` date."),
+    ("self-update", SELF_SKILL, None, "Record each rejected claim and its reason under `## Rejected`."),
+    ("self-update", SELF_SKILL, None, "Keep the published modes and the `/skillz wedge` and `autoimprove` boundaries unchanged."),
+    ("self-update", SELF_SKILL, None, "Done means: `Checked:` is today"),
+]
+
+
+@pytest.mark.parametrize(("mode", "path", "heading", "phrase"), STEPS, ids=[f"{m}:{p[:48]}" for m, _, _, p in STEPS])
+def test_mode_steps_keep_the_invariant_that_the_fixture_depends_on(mode: str, path: Path, heading: str | None,
+                                                                 phrase: str) -> None:
+    assert phrase in _part(path, heading), f"{mode} step changed: {phrase}"
+
+
+def test_every_fixture_kind_has_pinned_steps() -> None:
+    assert {mode for mode, _, _, _ in STEPS} == {"add", "improve", "wedge", "contract", "self-update"}
+
+
+# self-update: a stale Checked date, offline, on a fixture copy
+
+
+def test_self_update_fixture_mirrors_the_real_reference_shape_and_starts_stale() -> None:
+    case = SELF_UPDATE_CASES["self-update-stale-date"]
+    real, stale = LAYOUT.read_text(encoding="utf-8"), case.files["harness-layout.md"]
+    digest = mapping(cast(object, json.loads(case.files["digest.json"])))
+    for text in (real, stale):
+        assert re.search(r"^Checked: \d{4}-\d{2}-\d{2}\.", text, re.M) and "\n## Sources\n" in text
+        assert "\n## Rejected\n" in text
+    assert f"Checked: {digest['checked']}." not in stale
+    assert f"Checked: {digest['checked']}." in _golden(SELF_UPDATE, "self-update-stale-date")["harness-layout.md"]
+
+
+def test_self_update_grading_never_touches_the_real_repository_files() -> None:
+    watched = [LAYOUT, SKILL, SELF_SKILL]
+    before = [hashlib.sha256(path.read_bytes()).hexdigest() for path in watched]
+    case = SELF_UPDATE_CASES["self-update-stale-date"]
+    assert grade(SELF_UPDATE, case, _golden(SELF_UPDATE, "self-update-stale-date")) == 1.0
+    assert [hashlib.sha256(path.read_bytes()).hexdigest() for path in watched] == before
