@@ -16,6 +16,7 @@ import pytest
 from cyclopts import CycloptsError, Parameter, Token
 
 import fromargs
+from fromargs._errors import InvalidExitCodeError
 
 JsonLine = Callable[[str], dict[str, object]]
 
@@ -559,13 +560,49 @@ def test_async_handler_cli_error_json_envelope(
 
 @pytest.mark.parametrize("exit_code", [0, 1, -1, 256, 1000])
 def test_cli_error_rejects_out_of_range_exit_code(exit_code: int) -> None:
-    with pytest.raises(ValueError, match="exit_code"):
+    with pytest.raises(InvalidExitCodeError, match="exit_code"):
         _ = fromargs.CliError("x", exit_code=exit_code)
+
+
+def test_invalid_exit_code_in_converter_is_unexpected_exception(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    def conv(_type: object, _tokens: object) -> str:
+        raise fromargs.CliError("bad", exit_code=1)
+
+    @app.command
+    def go(x: Annotated[str, fromargs.Parameter(converter=conv)]) -> str:
+        return x
+
+    assert app.run(["go", "a"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["exit_code"] == 1
+    assert "exit_code" in str(envelope["error"])
+
+
+def test_invalid_exit_code_in_validator_is_unexpected_exception(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = fromargs.App("t")
+
+    def check(_type: object, _value: object) -> None:
+        raise fromargs.CliError("bad", exit_code=1)
+
+    @app.command
+    def go(x: Annotated[str, fromargs.Parameter(validator=check)]) -> str:
+        return x
+
+    assert app.run(["go", "a"]) == 1
+    envelope = _unexpected_envelope(capsys.readouterr().err)
+    assert envelope["exit_code"] == 1
+    assert "exit_code" in str(envelope["error"])
 
 
 @pytest.mark.parametrize("exit_code", [True, False, 2.0, "3", None])
 def test_cli_error_rejects_non_int_exit_code(exit_code: object) -> None:
-    with pytest.raises(TypeError, match="exit_code"):
+    with pytest.raises(InvalidExitCodeError, match="exit_code"):
         _ = fromargs.CliError("x", exit_code=cast("int", exit_code))
 
 

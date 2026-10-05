@@ -66,8 +66,9 @@ a truncated list result.
 - Every error is one JSON line on stderr: `{"error": <message>, "exit_code": <n>}`.
 - Raise `fromargs.CliError(message)` for exit code `2`. Pass
   `exit_code=n` for a code from `2` to `255`. `CliError` rejects any other
-  code with `ValueError`, and a non-`int` code with `TypeError`, because exit
-  `0` means success and exit `1` means an unexpected exception.
+  code with an error that is neither `ValueError` nor `TypeError` (Cyclopts
+  reports those as bad input), because exit `0` means success and exit `1`
+  means an unexpected exception.
 - Use `fromargs.contract_error(exc, context=...)` to wrap a caught exception
   at exit code `3`. A Cyclopts parse error reports at exit code `2`.
 - Any other exception from a converter, a validator, the handler, or the
