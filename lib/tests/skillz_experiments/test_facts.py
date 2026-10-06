@@ -218,7 +218,8 @@ def test_allowed_keys_match_the_harness_layout_matrix() -> None:
     matrix = re.search(r"^## Frontmatter matrix.*?(?=^## )", text, re.M | re.S)
     assert matrix is not None
     keys: set[str] = set()
-    for row in matrix[0].splitlines()[4:]:
+    rows = [line for line in matrix[0].splitlines() if line.startswith("|")]
+    for row in rows[2:]:
         cell = row.strip("|").split("|")[0]
         spans = cast(list[str], re.findall(r"`([^`]+)`", cell))
         keys |= {span.split(":")[0].split(" ")[0] for span in spans if not span.startswith("$")}
