@@ -31,22 +31,26 @@ The user settled each decision in a Mold session on 2026-10-03.
 - **Alternatives:** `--bare` with an API key. A temporary config dir with copied OAuth credentials. The generic command protocol only.
 - **Consequences:** It is unverified whether `--restricted` hides `~/.claude/skills`. If it does not, every Claude run stops by design.
 
-#### Claude live network verification — deferred
+#### Claude live network verification
 
-The Claude autoimprove live preflight verifies read and write restrictions, but it does not verify network denial on live Bash commands.[^network-probe]
-Network probes use a separate native sandbox. Its result does not establish the effective policy of the live Claude process.[^network-path]
-The user defers the larger effective-network-policy repair during PR #118 review on 2026-10-04.
-The repair must verify the live execution path and bind preflight reuse to the effective policy.
-Until that repair, a successful preflight does not prove complete Claude network isolation.
-No live provider test validates this boundary during the review.
+The live preflight checks direct loopback TCP and the proxy HTTP path against a runner-owned listener.
+No live model run has exercised these checks yet. The build uses a stub transport only.
+The single preflight call asks Claude to run three exact Bash commands.
+One command opens a TCP connection to the listener. Two `curl` commands send an HTTP request to `127.0.0.1` and to `localhost`, with `--noproxy ''` so that the sandbox proxy carries them.
+The runner judges the listener. A client that sends the probe token, or resets its connection, fails the preflight with the code `network-isolation-failed`.
+A stray client that sends nothing, or sends other bytes, does not count.
+A command that differs from the generated command, a missing output, or a malformed output fails it with the same code.
+The recorded pass keeps the network result. The reuse key includes the network probe version.
+A changed probe version or network setting changes the key. The stage then stops with `environment-differs`, and the user starts a new run.
+The native sandbox probe remains a separate, free check.
+Domain and proxy policy beyond these probes stays unverified. The preflight does not probe name lookup or a non-loopback address.
+The macOS path stays unverified live. A passed preflight does not prove macOS isolation.
+The manual macOS checklist is in `skills/skillz/references/experiment-harness.md`.
 
 ### ADR-005: Make the wedge arm a hand-written stdlib script  [status: accepted]
 - **Context:** The user states that a wedge is a deterministic offload made by hand, and that Python is assumed installed. A real `/wedge` build needs `uv` and network access.
 - **Decision:** The `wedge` search mode adds one new `scripts/<name>.py` file plus its SKILL.md call site, seeded from `--brief PATH`. It runs as `python3 -I`. Selection ranks correctness first and tokens second.
 - **Alternatives:** A per-evaluation `.pyz` build. Optimizing the brief text only.
 - **Consequences:** No build in the loop. Packaging as a `.pyz` stays a separate, optional step.
-
-[^network-probe]: lib/src/skillz_experiments/_claude.py, ClaudeCode.preflight; reviewed at bcad2b91, lines 337-349.
-[^network-path]: lib/src/skillz_experiments/_claude.py, ClaudeCode._probe_sandbox, sandbox, and _run; reviewed at bcad2b91, lines 279-304 and 386-400.
 
 _Source: Mold session 2026-10-03 and PR #118 Affinage review · Updated: 2026-10-04_

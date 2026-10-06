@@ -75,6 +75,50 @@ def test_network_probe_fails_when_the_host_loopback_listener_is_reachable(tmp_pa
     assert "network isolation failed" in result.stderr
 
 
+def _client(port: int, payload: bytes | None, *, reset: bool = False) -> None:
+    import socket
+    import struct
+
+    with socket.create_connection(("127.0.0.1", port)) as client:
+        if reset:
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        if payload is not None:
+            client.sendall(payload)
+
+
+def test_watched_listener_is_true_when_a_client_sends_the_token() -> None:
+    from skillz_experiments._isolation import watched
+
+    with watched() as (port, connected):
+        _client(port, b"GET /tok HTTP/1.1\r\n\r\n")
+        assert connected("tok") is True
+
+
+def test_watched_listener_ignores_a_foreign_request() -> None:
+    from skillz_experiments._isolation import watched
+
+    with watched() as (port, connected):
+        _client(port, b"GET / HTTP/1.1\r\nUser-Agent: Go-http-client/1.1\r\n\r\n")
+        assert connected("tok") is False
+
+
+def test_watched_listener_ignores_a_silent_client() -> None:
+    import socket
+
+    from skillz_experiments._isolation import watched
+
+    with watched() as (port, connected), socket.create_connection(("127.0.0.1", port)):
+        assert connected("tok") is False
+
+
+def test_watched_listener_is_true_when_a_client_resets_the_connection() -> None:
+    from skillz_experiments._isolation import watched
+
+    with watched() as (port, connected):
+        _client(port, None, reset=True)
+        assert connected("tok") is True
+
+
 def _routed(outcome: str) -> str:
     """Prefix that fakes the routed connect. The loopback connect stays real."""
     return (
