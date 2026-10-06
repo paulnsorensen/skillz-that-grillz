@@ -24,7 +24,8 @@ def listening() -> Generator[int]:
 def watched() -> Generator[tuple[int, Callable[[str], bool]]]:
     """Listen on host loopback and yield the port with a check.
 
-    The check is true when a client connected and sent the token. A stray client that sends nothing does not count.
+    The check is true when a client sent the token. It is also true when a client resets the connection,
+    because that client reached the port. A stray client that sends nothing, or sends other bytes, does not count.
     """
     with _server() as server:
         server.setblocking(False)
@@ -40,8 +41,10 @@ def watched() -> Generator[tuple[int, Callable[[str], bool]]]:
                     try:
                         if token.encode() in client.recv(256):
                             return True
-                    except OSError:
+                    except TimeoutError:
                         continue
+                    except OSError:
+                        return True
         yield cast(int, server.getsockname()[1]), connected
 
 

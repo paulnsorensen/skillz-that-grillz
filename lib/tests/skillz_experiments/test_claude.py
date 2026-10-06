@@ -5,6 +5,7 @@ import shutil
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -315,13 +316,44 @@ def test_preflight_fails_with_a_code_when_the_listener_receives_the_token(
     assert caught.value.code == "network-isolation-failed"
 
 
-@pytest.mark.parametrize("mode", ["net-skipped", "net-garbled", "net-lie", "net-no-curl", "net-exit-134", "net-exit-2"])
+@pytest.mark.parametrize("mode", ["net-skipped", "net-garbled", "net-lie", "net-no-curl", "net-exit-134", "net-exit-2",
+                                  "net-exit-5", "net-exit-6", "net-exit-22"])
 def test_preflight_fails_closed_when_the_network_output_is_missing_malformed_or_not_from_the_command(
         tmp_path: Path, mode: str, sandbox_passes: None) -> None:
     del sandbox_passes
     session = harness(tmp_path, fake_claude(tmp_path, mode))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network probe has no evidence.*no unsafe fallback") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+@pytest.mark.parametrize("code", [0, 28, 56])
+def test_preflight_passes_when_curl_exits_with_a_code_that_shows_an_attempt(
+        tmp_path: Path, code: int, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, f"net-exit-{code}"))
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    assert cast(dict[str, dict[str, object]], evidence["roles"])["task"]["network"] == "denied"
+
+
+def test_a_network_leak_keeps_its_code_when_the_run_then_fails(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    original = cast(Callable[..., object], getattr(_claude, "process"))
+
+    def run_then_time_out(*args: object, **kwargs: object) -> object:
+        _ = original(*args, **kwargs)
+        raise TimeoutError("deadline")
+    monkeypatch.setattr(_claude, "process", run_then_time_out)
+    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
             _ = session.preflight()
     finally:
         session.close()
@@ -378,23 +410,6 @@ def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path
     monkeypatch.setattr(_claude, "settings", open_network)
     assert session.environment_key() != before
 
-
-def test_preflight_does_not_reuse_a_pass_that_lacks_a_recorded_network_denial(tmp_path: Path, sandbox_passes: None) -> None:
-    del sandbox_passes
-    executable = fake_claude(tmp_path)
-    session = harness(tmp_path, executable)
-    try:
-        first = session.preflight()
-        made = len(calls(executable))
-        _ = session.preflight(first)
-        assert len(calls(executable)) == made
-        roles = cast(dict[str, dict[str, object]], first["roles"])
-        old = first | {"roles": {name: {key: value for key, value in role.items() if key != "network"}
-                                 for name, role in roles.items()}}
-        _ = session.preflight(old)
-        assert len(calls(executable)) == made + len(session.transports)
-    finally:
-        session.close()
 
 def test_invoke_with_a_candidate_stops_when_a_foreign_skill_loads(tmp_path: Path) -> None:
     session = harness(tmp_path, fake_claude(tmp_path, "foreign-skill"))

@@ -37,7 +37,8 @@ The live preflight checks direct loopback TCP and the proxy HTTP path against a 
 No live model run has exercised these checks yet. The build uses a stub transport only.
 The single preflight call asks Claude to run three exact Bash commands.
 One command opens a TCP connection to the listener. Two `curl` commands send an HTTP request to `127.0.0.1` and to `localhost`, with `--noproxy ''` so that the sandbox proxy carries them.
-The runner judges the listener. A client that sends the probe token fails the preflight with the code `network-isolation-failed`.
+The runner judges the listener. A client that sends the probe token, or resets its connection, fails the preflight with the code `network-isolation-failed`.
+A stray client that sends nothing, or sends other bytes, does not count.
 A command that differs from the generated command, a missing output, or a malformed output fails it with the same code.
 The recorded pass keeps the network result. The reuse key includes the network probe version.
 A changed probe version or network setting changes the key. The stage then stops with `environment-differs`, and the user starts a new run.

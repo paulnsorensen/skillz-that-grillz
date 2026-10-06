@@ -23,7 +23,9 @@ from skillz_experiments._runtime import Budget, process
 TOOLS = "Bash,Read,Skill"
 PROBE_SKILL = "skillz"
 NETWORK_PROBE = "loopback-tcp-http-v2"
-CURL_ATTEMPTED = frozenset({0, 5, 6, 7, 22, 28, 52, 56, 97})
+# Curl exit codes that show a request attempt. Codes 5 and 6 are name-resolution failures, and 22 needs `-f`.
+CURL_ATTEMPTED = frozenset({0, 7, 28, 52, 56, 97})
+LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted a connection from the Bash probe"
 AUTHENTICATION = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
@@ -251,18 +253,17 @@ def _results(events: list[dict[str, object]], command: str) -> list[str]:
     return results
 
 
-def _network_failure(events: list[dict[str, object]], connected: bool, port: int, token: str) -> str | None:
-    """Judge the network probe by the listener first. Then each exact command needs output that shows it ran."""
-    if connected:
-        return "network isolation failed: the runner-owned listener received the probe token from Bash"
+def _network_failure(events: list[dict[str, object]], port: int, token: str) -> str | None:
+    """Judge the network probe. Each exact command needs output that shows it ran."""
     direct, *proxied = network_commands(port, token)
-    if not any(f"denied-{token}" in text for text in _results(events, direct)):
-        return "network probe has no evidence: the direct TCP command output is missing or malformed"
+    outputs = _results(events, direct)
+    if not any(f"denied-{token}" in text for text in outputs):
+        return f"network probe has no evidence: the direct TCP command output is missing or malformed (output: {outputs!r:.200})"
     for command in proxied:
         codes = [int(code) for text in _results(events, command)
                  for code in cast(list[str], re.findall(rf"exit-(\d+)-{token}", text))]
         if not codes or any(code not in CURL_ATTEMPTED for code in codes):
-            return "network probe has no evidence: the HTTP command output is missing, or curl did not attempt a request"
+            return f"network probe has no evidence: the HTTP command output is missing, or curl did not attempt a request (exit codes: {codes})"
     return None
 
 
@@ -398,20 +399,25 @@ class ClaudeCode:
             self.budget.claim()
             self.checkpoint()
             with watched() as (port, connected):
-                returncode, stderr, events = self._run(
-                    workspace, f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
-                    + f"Then run `printf {write_token} > {agents_file}` with the Bash tool. Then run "
-                    + f"`printf {write_token} > {write_control}` with the Bash tool. "
-                    + "".join(f"Then run `{command}` with the Bash tool. " for command in network_commands(port, network_token))
-                    + "Reply with the read outputs, or the word denied for each command that fails.",
-                    None, min(120, self.budget.remaining()))
+                try:
+                    returncode, stderr, events = self._run(
+                        workspace, f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
+                        + f"Then run `printf {write_token} > {agents_file}` with the Bash tool. Then run "
+                        + f"`printf {write_token} > {write_control}` with the Bash tool. "
+                        + "".join(f"Then run `{command}` with the Bash tool. " for command in network_commands(port, network_token))
+                        + "Reply with the read outputs, or the word denied for each command that fails.",
+                        None, min(120, self.budget.remaining()))
+                except Exception:
+                    if connected(network_token):
+                        raise NetworkIsolationFailed(LISTENER_REACHED) from None
+                    raise
                 reached = connected(network_token)
             wrote = agents_file.exists()
             controlled = write_control.is_file() and write_control.read_text() == write_token
+        if reached:
+            raise NetworkIsolationFailed(LISTENER_REACHED)
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
-        network = _network_failure(events, reached, port, network_token)
-        if reached and network is not None:
-            raise NetworkIsolationFailed(network)
+        network = _network_failure(events, port, network_token)
         if reason is None:
             reason = _read_failure(events, token, str(sealed), control, str(control_file))
         if reason is None:

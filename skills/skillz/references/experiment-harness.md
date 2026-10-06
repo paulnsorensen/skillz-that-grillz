@@ -79,7 +79,9 @@ It passes only when a Bash command read the sealed path, the host read failed, a
 The same call also asks Claude to run three exact Bash commands against a loopback listener that the runner owns.
 One command opens a TCP connection. Two `curl` commands send an HTTP request to `127.0.0.1` and to `localhost`.
 The `curl` commands use `--noproxy ''`, so a configured sandbox proxy carries them.
+The host must provide `/usr/bin/curl` and `/usr/bin/python3`. Without them, the preflight fails with no evidence.
 The runner judges the listener, not the model reply. A client that sends the probe token fails the preflight.
+A client that resets its connection also fails it. A stray client that sends nothing, or sends other bytes, does not count.
 A command that differs from the generated command, a missing output, or a malformed output also fails it.
 Both failures use the code `network-isolation-failed`.
 The probe does not cover name lookup or a non-loopback address. Treat these as a residual gap.
@@ -89,7 +91,6 @@ Later stages reuse the recorded pass and make no new live call.
 Every stage still runs the free helper sandbox probe, which makes no model call.
 The reuse key joins the role fingerprint and the Claude environment hash.
 The environment hash includes the network probe version.
-A recorded pass without a network denial is not reused.
 The environment hash includes the names, not the values, of the set authentication variables.
 A changed key stops the stage with the code `environment-differs` and the text "runtime environment differs from the frozen record".
 The run stays resumable. Resume it after you restore the first-run environment.
