@@ -373,6 +373,7 @@ Candidate helper code never executes on the host outside that boundary.
 Inspection grading requires exact JSON task results, candidate-load evidence, and an actual helper command.
 Audit grading preserves the load and helper requirements, then checks evidence and uses the separate judge.
 The output schema describes response shape only. It never includes the expected answer.
+
 ## Audit facts contract
 
 Run `python3 scripts/skillz-experiment.pyz audit-facts DIRECTORY`.
@@ -386,7 +387,8 @@ Success returns exit zero and one JSON object:
 - `checks`: a list sorted by `path`, `id`, then `line`. Each item is `{id, rule, path, line, status, detail}`.
 
 The same input gives byte-identical output.
-`path` is relative to the directory. `line` is a 1-based file line, or `null` when no line applies.
+`path` is relative to the directory. `line` is a 1-based line in the file named by `path`, or `null` when no line applies.
+`references.read-trigger` and `scripts.invocation-line` report `SKILL.md` as `path` and name the target file in `detail`.
 `status` is `pass`, `fail`, or `not-applicable`.
 `rule` names the rubric lens or layout section, then the number of the matching layout rule when one applies.
 `detail` is a short fact for the finding.
@@ -410,7 +412,7 @@ The same input gives byte-identical output.
 | `references.nested` | `information-hierarchy.9` | a reference links to another reference, or names its `references/` path |
 | `references.orphan` | `information-hierarchy` | `SKILL.md` does not name the reference path as a whole token |
 | `references.read-trigger` | `information-hierarchy.9` | the `## References` entry has no trigger word after its dash or colon |
-| `scripts.invocation-line` | `deterministic-offload` | no body line names `scripts/<file>` |
+| `scripts.invocation-line` | `deterministic-offload` | no body line names `scripts/<file>` as a whole token |
 | `registration.readme-row` | `registration` | the repository README `## Skills` table has no row for the skill |
 | `repo-local.internal-metadata` | `repo-local` | a repo-local skill lacks `metadata.internal: true` |
 | `repo-local.claude-symlink` | `repo-local` | `.claude/skills/<name>` is not a symlink that resolves to the skill |
@@ -431,5 +433,6 @@ The script check covers visible files directly in `scripts/`; it skips subdirect
 The command parses only the frontmatter lines that the checks need. It does not parse full YAML.
 The allowed key set matches the cross-harness frontmatter matrix; a test pins the two together.
 Failure returns exit one with a JSON `error` on stderr.
+The command reads each file as UTF-8 and rejects a file over 262144 bytes. The error names the file and the limit.
 The command rejects a missing path, a file, a symlink input, and any symlink inside the package.
 Quality stays in prose. The command cannot judge a trigger phrase, an output contract, or a description.

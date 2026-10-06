@@ -29,7 +29,7 @@ START_VERB = re.compile(r"(?:^|[;.])[\s`]*(?:read|load|use|run|open|consult)\b",
 COMMENT = re.compile(r"\s+#.*$")
 QUOTED = re.compile(r"^([\"'])(.*)\1\s*(?:#.*)?$", re.S)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-SPAN = re.compile(r"(`+).+?\1")
+SPAN = re.compile(r"(`{1,16}).+?\1")
 FLOW_INTERNAL = re.compile(r"[{,]\s*internal:\s*[\"']?true[\"']?\s*[,}]")
 ARGUMENTS = re.compile(r"\$ARGUMENTS\b")
 SKILL_DIR = re.compile(r"\$\{CLAUDE_SKILL_DIR\}")
@@ -38,7 +38,7 @@ FILE_MENTION = re.compile(
 )
 IMPLICIT_OFF = re.compile(r"^\s*allow_implicit_invocation:\s*false\s*(?:#.*)?$")
 INTERNAL = re.compile(r"^internal:\s*[\"']?true[\"']?\s*(?:#.*)?$")
-BARE_VARIABLE = re.compile(r"`\s*(?:\$ARGUMENTS|\$\{CLAUDE_SKILL_DIR\})\s*`")
+BARE_VARIABLE = re.compile(r"\s*(?:\$ARGUMENTS|\$\{CLAUDE_SKILL_DIR\})\s*")
 
 PASS, FAIL, NOT_APPLICABLE = "pass", "fail", "not-applicable"
 
@@ -71,8 +71,11 @@ class _Context:
 
 def _read(path: Path) -> list[str]:
     if not path.is_file() or path.stat().st_size > MAX_BYTES:
-        raise ValueError(f"{path.name} must be a regular file of at most {MAX_BYTES} bytes")
-    return path.read_text(encoding="utf-8").splitlines()
+        raise ValueError(f"{path} must be a regular file of at most {MAX_BYTES} bytes")
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        raise ValueError(f"{path} must be UTF-8 text") from None
 
 
 def _frontmatter(lines: list[str], end: int) -> dict[str, _Field]:
@@ -164,11 +167,16 @@ def _names(text: str, relative: str, prefix: str = "") -> re.Match[str] | None:
     return re.search(rf"(?<![\w./-])(?:{prefixes})?{re.escape(relative)}(?![\w-]|\.\w)", text)
 
 
+def _blank_bare_variable(hit: re.Match[str]) -> str:
+    ticks = len(hit[1])
+    return " " * len(hit[0]) if BARE_VARIABLE.fullmatch(hit[0][ticks:-ticks]) else hit[0]
+
+
 def _body(context: _Context, body: list[str], offset: int) -> None:
     size = len("\n".join(body).encode("utf-8")) // 4
     context.add("body.token-estimate", "information-hierarchy.9", "SKILL.md", None,
                 PASS if size <= TOKEN_BUDGET else FAIL, f"~{size} tok of {TOKEN_BUDGET}")
-    plain = [BARE_VARIABLE.sub(lambda hit: " " * len(hit[0]), line) for line in body]
+    plain = [SPAN.sub(_blank_bare_variable, line) for line in body]
     masked = _code_free(body)
     for check, rule, pattern, lines in (("body.arguments-variable", "portability.4", ARGUMENTS, plain),
                                         ("body.skill-dir-variable", "portability.5", SKILL_DIR, plain),
@@ -210,10 +218,11 @@ def _references(context: _Context, package: Path, body: list[str], offset: int, 
         separated = SEPARATOR.search(item[1], head.end()) if item and head else None
         clause = item[1][separated.end():] if item and separated else ""
         triggered = bool(CONDITION.search(clause) or START_VERB.search(clause))
-        context.add("references.read-trigger", "information-hierarchy.9", relative, item[0] if item else None,
+        context.add("references.read-trigger", "information-hierarchy.9", "SKILL.md", item[0] if item else None,
                     NOT_APPLICABLE if item is None else PASS if triggered else FAIL,
-                    "not listed in ## References" if item is None
-                    else "entry names a read trigger" if triggered else "entry has no read trigger")
+                    f"`{relative}` is not listed in ## References" if item is None
+                    else f"`{relative}` entry names a read trigger" if triggered
+                    else f"`{relative}` entry has no read trigger")
 
 
 def _reference_items(body: list[str], offset: int) -> list[tuple[int, str]]:
@@ -229,17 +238,18 @@ def _reference_items(body: list[str], offset: int) -> list[tuple[int, str]]:
     return items
 
 
-def _scripts(context: _Context, package: Path, body: list[str], offset: int) -> None:
+def _scripts(context: _Context, package: Path, body: list[str], offset: int, prefix: str) -> None:
     directory = package / "scripts"
     files = sorted(path.name for path in directory.iterdir() if path.is_file() and not path.name.startswith(".")) \
         if directory.is_dir() else []
     if not files:
         context.add("scripts.invocation-line", "deterministic-offload", "scripts", None, NOT_APPLICABLE, "no scripts")
     for relative in files:
-        hit = _first(body, offset, re.compile(re.escape(f"scripts/{relative}")))
-        context.add("scripts.invocation-line", "deterministic-offload", f"scripts/{relative}",
-                    hit[0] if hit else None, PASS if hit else FAIL,
-                    "SKILL.md invokes it" if hit else "no SKILL.md line names it")
+        hit = next((number for number, line in enumerate(body, offset + 1)
+                    if _names(line, f"scripts/{relative}", prefix)), None)
+        context.add("scripts.invocation-line", "deterministic-offload", "SKILL.md", hit,
+                    PASS if hit else FAIL,
+                    f"SKILL.md invokes `scripts/{relative}`" if hit else f"no SKILL.md line names `scripts/{relative}`")
 
 
 def _repository(context: _Context, package: Path, fields: dict[str, _Field], root: Path | None) -> None:
@@ -322,7 +332,7 @@ def audit_facts(directory: Path) -> dict[str, object]:
             root = _root(package)
             prefix = package.relative_to(root).as_posix() + "/" if root else ""
             _references(context, package, body, end + 1, prefix)
-            _scripts(context, package, body, end + 1)
+            _scripts(context, package, body, end + 1, prefix)
             _repository(context, package, fields, root)
     else:
         context.add("package.skill-file", "layout.skill-file", "SKILL.md", None, FAIL, "SKILL.md is missing")

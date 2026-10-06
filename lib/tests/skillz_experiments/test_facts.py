@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import cast
 
@@ -53,8 +54,9 @@ def run(package: Path, capsys: pytest.CaptureFixture[str]) -> Checks:
     return cast(Checks, result["checks"])
 
 
-def find(checks: Checks, check: str, path: str | None = None) -> dict[str, object]:
-    hits = [c for c in checks if c["id"] == check and (path is None or c["path"] == path)]
+def find(checks: Checks, check: str, path: str | None = None, named: str | None = None) -> dict[str, object]:
+    hits = [c for c in checks if c["id"] == check and (path is None or c["path"] == path)
+            and (named is None or f"`{named}`" in str(c["detail"]))]
     assert len(hits) == 1, (check, hits)
     return hits[0]
 
@@ -69,8 +71,8 @@ def test_passing_package_has_no_failed_check(tmp_path: Path, capsys: pytest.Capt
     assert {c["id"] for c in checks} >= {"name.matches-directory", "body.token-estimate", "references.nested"}
     assert find(checks, "model-policy.user-only")["status"] == "not-applicable"
     assert find(checks, "registration.readme-row")["status"] == "not-applicable"
-    assert find(checks, "references.read-trigger", "references/guide.md")["line"] == 14
-    assert find(checks, "scripts.invocation-line", "scripts/tool.py")["line"] == 9
+    assert find(checks, "references.read-trigger", "SKILL.md", "references/guide.md")["line"] == 14
+    assert find(checks, "scripts.invocation-line", "SKILL.md", "scripts/tool.py")["line"] == 9
 
 
 USER_ONLY_SKILL = skill(USER_ONLY)
@@ -98,13 +100,23 @@ CASES: list[tuple[str, str, str, int | None, dict[str, object]]] = [
      {"files": {"references/guide.md": NESTED, "references/other.md": "# Other\n"},
       "text": skill(body=BODY + "- `references/other.md` — read when needed.\n")}),
     ("orphan", "references.orphan", "references/extra.md", None, {"files": {"references/extra.md": "# Extra\n"}}),
-    ("no trigger", "references.read-trigger", "references/guide.md", 14,
+    ("no trigger", "references.read-trigger", "SKILL.md", 14,
      {"text": skill(body=BODY.replace(" — read when a run needs the guide.", ""))}),
     ("arguments", "body.arguments-variable", "SKILL.md", 15, {"text": skill(body=BODY + "Use $ARGUMENTS here.\n")}),
     ("skill dir", "body.skill-dir-variable", "SKILL.md", 15,
      {"text": skill(body=BODY + "Run ${CLAUDE_SKILL_DIR}/scripts/tool.py.\n")}),
     ("file mention", "body.file-mention", "SKILL.md", 15, {"text": skill(body=BODY + "Load @notes.md now.\n")}),
-    ("uninvoked script", "scripts.invocation-line", "scripts/extra.sh", None, {"files": {"scripts/extra.sh": "true\n"}}),
+    ("uninvoked script", "scripts.invocation-line", "SKILL.md", None,
+     {"files": {"scripts/extra.sh": "true\n"}, "named": "scripts/extra.sh"}),
+    ("script as substring of another file", "scripts.invocation-line", "SKILL.md", None,
+     {"files": {"scripts/tool.pyz": "x\n"}, "named": "scripts/tool.pyz"}),
+    ("script under another directory", "scripts.invocation-line", "SKILL.md", None,
+     {"files": {"scripts/x.sh": "true\n"}, "named": "scripts/x.sh",
+      "text": skill(body=BODY + "Run engine/scripts/x.sh now.\n")}),
+    ("arguments between spans", "body.arguments-variable", "SKILL.md", 15,
+     {"text": skill(body=BODY + "Run `x` $ARGUMENTS `y` now.\n")}),
+    ("skill dir between spans", "body.skill-dir-variable", "SKILL.md", 15,
+     {"text": skill(body=BODY + "Run `x` ${CLAUDE_SKILL_DIR} `y` now.\n")}),
 ]
 
 
@@ -114,7 +126,7 @@ def test_each_check_fails_on_its_fixture(check: str, path: str, line: int | None
     package = make(tmp_path, cast(str | None, setup.get("text")), cast(dict[str, str | None] | None, setup.get("files")),
                    cast(str, setup.get("directory", "demo")))
     checks = run(package, capsys)
-    hit = find(checks, check, path)
+    hit = find(checks, check, path, cast(str | None, setup.get("named")))
     assert (hit["status"], hit["line"]) == ("fail", line)
     assert [c["id"] for c in checks if c["status"] == "fail" and c["id"] != check] == []
 
@@ -291,7 +303,7 @@ def test_only_top_level_visible_files_are_scripts(tmp_path: Path, capsys: pytest
     files: dict[str, str | None] = {"scripts/.gitkeep": "", "scripts/lib/util.py": "x = 1\n"}
     checks = run(make(tmp_path, files=files), capsys)
     assert [c["id"] for c in checks if c["status"] == "fail"] == []
-    assert [c["path"] for c in checks if c["id"] == "scripts.invocation-line"] == ["scripts/tool.py"]
+    assert [c["detail"] for c in checks if c["id"] == "scripts.invocation-line"] == ["SKILL.md invokes `scripts/tool.py`"]
 
 
 def test_orphan_check_matches_the_path_as_a_token(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -371,3 +383,23 @@ def test_read_trigger_needs_a_condition_or_clause_start_verb(entry: str, status:
     body = BODY.split("- `references")[0] + entry + "\n"
     hit = find(run(make(tmp_path, skill(body=body)), capsys), "references.read-trigger")
     assert hit["status"] == status
+
+
+def test_span_scan_is_fast_on_long_backtick_lines(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    body = BODY + "`" * 6000 + "\n" + "`a" * 3000 + "\n"
+    start = time.monotonic()
+    checks = run(make(tmp_path, skill(body=body)), capsys)
+    assert time.monotonic() - start < 5
+    assert find(checks, "body.arguments-variable")["status"] == "pass"
+
+
+@pytest.mark.parametrize(("name", "content", "expected"), [
+    ("binary.md", b"\xff\xfe\x00", "must be UTF-8 text"),
+    ("big.md", b"x" * 262145, "at most 262144 bytes"),
+])
+def test_unreadable_reference_names_the_file_and_the_limit(name: str, content: bytes, expected: str, tmp_path: Path,
+                                                           capsys: pytest.CaptureFixture[str]) -> None:
+    package = make(tmp_path)
+    _ = (package / "references" / name).write_bytes(content)
+    message = _fails(["audit-facts", str(package)], capsys)
+    assert name in message and expected in message
