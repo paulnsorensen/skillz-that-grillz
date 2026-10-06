@@ -1,6 +1,6 @@
 # Raw-log Usage fallback
 
-Use only when the DuckDB CLI is unavailable during `audit`.
+Use only when the DuckDB CLI is unavailable during `audit`, or during `improve` when it runs the `audit` steps.
 This path is slower and sampled. It does not reproduce the analytics packs.
 
 1. Use the shared protocol's **Read and classify** result to set target kind

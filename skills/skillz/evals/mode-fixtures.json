@@ -21,9 +21,18 @@
           "python3",
           "-I",
           "-c",
-          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nMARKER = re.compile(r'^\\s*(?:#+\\s+|[-*+]\\s+|\\d+[.)]\\s+|>\\s*)')\nBREAK = re.compile(r'^\\s*(?:#|[-*+]\\s|\\d+[.)]\\s)')\nMASK = re.compile(r'`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<=\\])\\([^)]*\\)')\nSENTENCE = re.compile(r'\\S.*?(?:[.!?]+(?=\\s|$)|$)', re.S)\nOPEN = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')\nCLOSE = re.compile(r'^ {0,3}(`{3,}|~{3,})[ \\t]*$')\nITEM = re.compile(r'^ *(?:[-*+]|\\d+[.)])[ \\t]+(?=\\S)')\ndef unindent(line, column):\n    return line[min(column, len(line) - len(line.lstrip(' '))):]\ndef longest(text):\n    lines = text.splitlines()\n    paragraphs = []\n    current = ''\n    fence = ''\n    column = fence_column = 0\n    for line in lines[lines.index('---', 1) + 1:]:\n        line = re.sub(r'^(?: {0,3}> ?)+', '', line)\n        blank = not line.strip()\n        if fence:\n            closer = CLOSE.match(unindent(line, fence_column))\n            if closer and closer[1][0] == fence[0] and len(closer[1]) >= len(fence):\n                fence = ''\n            continue\n        item = ITEM.match(line)\n        if item:\n            column = item.end()\n        elif not blank and len(line) - len(line.lstrip(' ')) < column:\n            paragraphs.append(current)\n            current = ''\n            column = 0\n        opener = OPEN.match(unindent(line, column))\n        if opener and not (opener[1][0] == '`' and '`' in opener[2]):\n            paragraphs.append(current)\n            current = ''\n            fence = opener[1]\n            fence_column = column\n            continue\n        if blank or line.strip().startswith('|'):\n            paragraphs.append(current)\n            current = ''\n            continue\n        if BREAK.match(line):\n            paragraphs.append(current)\n            current = ''\n        current += (' ' if current else '') + MARKER.sub('', line).strip()\n    paragraphs.append(current)\n    best = 0\n    for paragraph in paragraphs:\n        for hit in SENTENCE.finditer(MASK.sub(lambda m: ' ' * len(m[0]), paragraph)):\n            best = max(best, sum(1 for t in hit[0].split() if any(c.isalnum() for c in t)))\n    return best\nok = False\ntry:\n    s = changed['skills/demo/SKILL.md']\n    side = changed['skills/demo/agents/openai.yaml']\n    r = changed['report.md']\n    ok = (longest(s) <= 25\n          and 'allow_implicit_invocation: false' in side\n          and 'scripts/count.py' in s\n          and re.search('before: ~?[0-9]+ tok', r, re.I) is not None\n          and re.search('after: ~?[0-9]+ tok', r, re.I) is not None\n          and len(re.findall('^Approval question:', r, re.M)) == 1)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nMARKER = re.compile(r'^\\s*(?:#+\\s+|[-*+]\\s+|\\d+[.)]\\s+|>\\s*)')\nBREAK = re.compile(r'^\\s*(?:#|[-*+]\\s|\\d+[.)]\\s)')\nMASK = re.compile(r'`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<=\\])\\([^)]*\\)')\nSENTENCE = re.compile(r'\\S.*?(?:[.!?]+(?=\\s|$)|$)', re.S)\nOPEN = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')\nCLOSE = re.compile(r'^ {0,3}(`{3,}|~{3,})[ \\t]*$')\nITEM = re.compile(r'^ *(?:[-*+]|\\d+[.)])[ \\t]+(?=\\S)')\ndef unindent(line, column):\n    return line[min(column, len(line) - len(line.lstrip(' '))):]\ndef longest(text):\n    lines = text.splitlines()\n    paragraphs = []\n    current = ''\n    fence = ''\n    column = fence_column = 0\n    for line in lines[lines.index('---', 1) + 1:]:\n        line = re.sub(r'^(?: {0,3}> ?)+', '', line)\n        blank = not line.strip()\n        if fence:\n            closer = CLOSE.match(unindent(line, fence_column))\n            if closer and closer[1][0] == fence[0] and len(closer[1]) >= len(fence):\n                fence = ''\n            continue\n        item = ITEM.match(line)\n        if item:\n            column = item.end()\n        elif not blank and len(line) - len(line.lstrip(' ')) < column:\n            paragraphs.append(current)\n            current = ''\n            column = 0\n        opener = OPEN.match(unindent(line, column))\n        if opener and not (opener[1][0] == '`' and '`' in opener[2]):\n            paragraphs.append(current)\n            current = ''\n            fence = opener[1]\n            fence_column = column\n            continue\n        if blank or line.strip().startswith('|'):\n            paragraphs.append(current)\n            current = ''\n            continue\n        if BREAK.match(line):\n            paragraphs.append(current)\n            current = ''\n        current += (' ' if current else '') + MARKER.sub('', line).strip()\n    paragraphs.append(current)\n    best = 0\n    for paragraph in paragraphs:\n        for hit in SENTENCE.finditer(MASK.sub(lambda m: ' ' * len(m[0]), paragraph)):\n            best = max(best, sum(1 for t in hit[0].split() if any(c.isalnum() for c in t)))\n    return best\nok = False\ntry:\n    s = changed['skills/demo/SKILL.md']\n    side = changed['skills/demo/agents/openai.yaml']\n    r = changed['report.md']\n    ok = (longest(s) <= 25\n          and 'allow_implicit_invocation: false' in side\n          and 'scripts/count.py' in s\n          and re.search('before: ~?[0-9]+ tok', r, re.I) is not None\n          and re.search('after: ~?[0-9]+ tok', r, re.I) is not None\n          and re.search('Usage: omitted [(].+[)]', r) is not None and 'Audit: fresh' in r\n          and len(re.findall('^Approval question:', r, re.M)) == 1)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
         ]
       },
+      "improve-propose": {
+      "grader": "command",
+      "argv": [
+        "python3",
+        "-I",
+        "-c",
+        "import hashlib, json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\ndef blob(data):\n    return hashlib.sha1(b'blob %d\\0' % len(data) + data).hexdigest()\ndef package(root):\n    names = sorted(n for n in staged if n.startswith(root))\n    return blob(''.join(blob(pathlib.Path(n).read_bytes()) + '\\n' for n in names).encode())\nok = False\ntry:\n    r = changed['report.md']\n    current = package('skills/demo/')\n    audit = read('audit.md')\n    earlier = re.search('Content id: ([0-9a-f]{40})', audit)[1] if audit else None\n    reused = earlier == current\n    rows = [row for row in r.splitlines() if row.startswith('|') and 'WebFetch' in row]\n    ok = (list(changed) == ['report.md']\n          and 'Content id: ' + current in r\n          and len(re.findall('Audit: (?:fresh|reused)', r)) == 1\n          and ('Audit: reused ' + current if reused else 'Audit: fresh') in r\n          and 'Usage: included' in r\n          and any('Usage' in row and re.search('remove', row, re.I)\n                  and re.search('[|] *`?apply`? *[|] *pending *[|]', row, re.I) for row in rows)\n          and len(re.findall('^Approval question:', r, re.M)) == 1)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+      ]
+    },
       "wedge-candidates": {
         "grader": "command",
         "argv": [
@@ -114,7 +123,7 @@
       "family": "mode-improve",
       "split": "validation",
       "kind": "improve",
-      "request": "Run $skillz improve skills/demo/SKILL.md. Edit each changed file in place at its repository path. Write the report to report.md. Put every speculative item in one line that starts with 'Approval question:'.",
+      "request": "Run $skillz improve skills/demo/SKILL.md. Skip Usage. Edit each changed file in place at its repository path. Write the report to report.md. Put the approval question in one line that starts with 'Approval question:'. The user answers that question: apply every finding that you recommend applying.",
       "files": {
         "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count.\n\nMake sure that you always remember to carefully report the count of open items to the user in a single short sentence that names the file and then stop without doing any other work on the file or the list.\n",
         "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n"
@@ -132,6 +141,83 @@
           "sidecar.exists",
           "long-sentence"
         ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-improve-usage",
+      "family": "mode-improve-usage",
+      "split": "train",
+      "kind": "improve-propose",
+      "request": "Run $skillz improve skills/demo/SKILL.md. The analytics ceremony already ran in this conversation, and usage-digest.md holds its pack digests. Write the findings table and the approval question to report.md. Put the approval question in one line that starts with 'Approval question:'. Then stop, because the user has not answered yet.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\nallowed-tools: Read, Bash, WebFetch\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count in one short sentence that names the file. Then stop.\n",
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "usage-digest.md": "# Usage pack digests: demo\n\nThe analytics ceremony ran earlier in this conversation. Window: the last 30 days.\n\n## Usage\n\n- demo: 42 invocations in 9 projects. The trend is flat.\n\n## Orchestration\n\n- Tool calls inside demo runs: Bash 42, Read 40, WebFetch 0.\n\n## Drift\n\n- Error rate: 2%, near the baseline. No new error signatures.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "report.md"
+        ],
+        "content_id": "58920f9500012e200f212ff52ee9e9264ed91540",
+        "audit": "fresh",
+        "usage_finding": "WebFetch"
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-improve-reuse",
+      "family": "mode-improve-reuse",
+      "split": "validation",
+      "kind": "improve-propose",
+      "request": "Earlier in this conversation, $skillz audit skills/demo/SKILL.md produced the report in audit.md. Run $skillz improve skills/demo/SKILL.md. Write the findings table and the approval question to report.md. Put the approval question in one line that starts with 'Approval question:'. Then stop, because the user has not answered yet.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\nallowed-tools: Read, Bash, WebFetch\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count in one short sentence that names the file. Then stop.\n",
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "audit.md": "## skillz audit: demo\n\n- Type: skill · Invocation: user-only · Tools: 3 allowed, 0 disallowed · Body: ~70 tok\n- Harnesses reached: Claude Code, Codex · Findings: 1 surfaced, 0 below the bar\n- Target: skills/demo/SKILL.md · Content id: 58920f9500012e200f212ff52ee9e9264ed91540 · Usage: included\n\n| # | Severity | Confidence | Lens | Issue (line) | Fix | Recommendation | Decision |\n|---|---|---|---|---|---|---|---|\n| 1 | medium | <certain> | Usage | `allowed-tools` grants WebFetch, but 42 runs made 0 WebFetch calls (line 6) | remove WebFetch from `allowed-tools` | apply | |\n\nRun /skillz improve skills/demo/SKILL.md to apply. In this conversation, `improve` reuses this report while the content id matches.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "report.md"
+        ],
+        "content_id": "58920f9500012e200f212ff52ee9e9264ed91540",
+        "audit": "reused",
+        "usage_finding": "WebFetch"
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-improve-stale",
+      "family": "mode-improve-stale",
+      "split": "train",
+      "kind": "improve-propose",
+      "request": "Earlier in this conversation, $skillz audit skills/demo/SKILL.md produced the report in audit.md. The analytics ceremony also ran, and usage-digest.md holds its pack digests. Run $skillz improve skills/demo/SKILL.md. Write the findings table and the approval question to report.md. Put the approval question in one line that starts with 'Approval question:'. Then stop, because the user has not answered yet.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\nallowed-tools: Read, Bash, WebFetch\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count in one short sentence that names the file. Then stop.\n",
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "audit.md": "## skillz audit: demo\n\n- Type: skill · Invocation: user-only · Tools: 3 allowed, 0 disallowed · Body: ~70 tok\n- Harnesses reached: Claude Code, Codex · Findings: 1 surfaced, 0 below the bar\n- Target: skills/demo/SKILL.md · Content id: 1a6df32cb5a78b28ca76a630c26505d33bdd8bd9 · Usage: included\n\n| # | Severity | Confidence | Lens | Issue (line) | Fix | Recommendation | Decision |\n|---|---|---|---|---|---|---|---|\n| 1 | medium | <certain> | Usage | `allowed-tools` grants WebFetch, but 42 runs made 0 WebFetch calls (line 6) | remove WebFetch from `allowed-tools` | apply | |\n\nRun /skillz improve skills/demo/SKILL.md to apply. In this conversation, `improve` reuses this report while the content id matches.\n",
+        "usage-digest.md": "# Usage pack digests: demo\n\nThe analytics ceremony ran earlier in this conversation. Window: the last 30 days.\n\n## Usage\n\n- demo: 42 invocations in 9 projects. The trend is flat.\n\n## Orchestration\n\n- Tool calls inside demo runs: Bash 42, Read 40, WebFetch 0.\n\n## Drift\n\n- Error rate: 2%, near the baseline. No new error signatures.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "report.md"
+        ],
+        "content_id": "58920f9500012e200f212ff52ee9e9264ed91540",
+        "stale_content_id": "1a6df32cb5a78b28ca76a630c26505d33bdd8bd9",
+        "audit": "fresh",
+        "usage_finding": "WebFetch"
       },
       "provenance": "repository-authored-fixture",
       "visibility": "public",

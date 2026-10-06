@@ -72,7 +72,7 @@ class Sandbox:
 
     The socket patch below covers only this process. The grader subprocess gets proxy variables that
     point to an unroutable address. A test also pins that every grader script imports only `json`,
-    `pathlib`, and `re`, so a grader has no network client to route.
+    `pathlib`, `re`, and `hashlib`, so a grader has no network client to route.
     """
 
     def __init__(self) -> None:
@@ -151,7 +151,8 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_published_manifest_declares_one_kind_per_mode_with_complete_splits() -> None:
     rules = _rules(PUBLISHED)
-    assert set(rules.kinds) == {"add", "improve", "wedge-candidates", "wedge-clean", "wedge-agent", "contract"}
+    assert set(rules.kinds) == {"add", "improve", "improve-propose", "wedge-candidates", "wedge-clean", "wedge-agent",
+                                "contract"}
     assert all(grader.type == "command" and grader.argv for grader in rules.kinds.values())
     assert {case.kind for case in PUBLISHED_CASES.values()} == set(rules.kinds)
     splits = [case.split for case in PUBLISHED_CASES.values()]
@@ -167,7 +168,7 @@ def test_the_grader_lives_in_the_argv_and_never_in_a_staged_file(path: Path, nam
     script = _script(path, case.kind)
     assert not any(file.startswith("check") or "'score'" in text for file, text in case.files.items())
     imported = {alias.name for node in ast.walk(ast.parse(script)) if isinstance(node, ast.Import) for alias in node.names}
-    assert imported == {"json", "pathlib", "re"}
+    assert {"json", "pathlib", "re"} <= imported <= {"hashlib", "json", "pathlib", "re"}
 
 
 @pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
@@ -323,6 +324,65 @@ def test_improve_starting_tree_holds_the_seeded_defects(tmp_path: Path) -> None:
     assert expected["seeded_defects"] == ["sidecar.exists", "long-sentence"]
 
 
+# improve-propose: the audit comes first, and nothing is edited before the approval question
+
+
+PROPOSE = ["mode-improve-usage", "mode-improve-reuse", "mode-improve-stale"]
+
+
+PACKAGE_ID = "git ls-files -z -co --exclude-standard skills/demo | LC_ALL=C sort -z | xargs -0 git hash-object | git hash-object --stdin"
+
+
+def _content_id(tmp_path: Path, files: dict[str, str]) -> str:
+    _ = subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    for name, text in files.items():
+        if name.startswith("skills/demo/"):
+            (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+            _ = (tmp_path / name).write_text(text, encoding="utf-8")
+    return subprocess.run(PACKAGE_ID, shell=True, cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
+
+
+@pytest.mark.parametrize("name", PROPOSE)
+def test_propose_cases_pin_the_package_content_id_and_the_audit_state(tmp_path: Path, name: str) -> None:
+    case = PUBLISHED_CASES[name]
+    expected = mapping(case.expected)
+    current = _content_id(tmp_path, case.files)
+    assert case.kind == "improve-propose" and expected["content_id"] == current
+    golden = _golden(PUBLISHED, name)
+    assert list(golden) == ["report.md"] and f"Content id: {current}" in golden["report.md"]
+    found = re.search(r"Content id: ([0-9a-f]{40})", case.files.get("audit.md", ""))
+    earlier = found[1] if found else None
+    assert (earlier == current) == (expected["audit"] == "reused")
+    if "stale_content_id" in expected:
+        assert earlier == expected["stale_content_id"] != current
+
+
+def test_a_sidecar_edit_changes_the_content_id_and_makes_the_audit_stale(tmp_path: Path) -> None:
+    case = PUBLISHED_CASES["mode-improve-stale"]
+    sidecar = "skills/demo/agents/openai.yaml"
+    edited = {**case.files, sidecar: case.files[sidecar].replace("false", "true")}
+    assert _content_id(tmp_path, edited) == mapping(case.expected)["stale_content_id"]
+
+
+def test_a_deleted_package_file_fails_the_propose_grader() -> None:
+    name = "mode-improve-usage"
+    bad = _variants(PUBLISHED_OUTPUTS[name], "bad")["deleted-before-approval"]
+    assert bad["skills/demo/scripts/count.py"] is None and bad["report.md"] == _golden(PUBLISHED, name)["report.md"]
+    assert grade(PUBLISHED, PUBLISHED_CASES[name], bad) == 0.0
+    assert grade(PUBLISHED, PUBLISHED_CASES[name], _golden(PUBLISHED, name)) == 1.0
+
+
+@pytest.mark.parametrize("name", PROPOSE)
+def test_propose_cases_declare_a_tool_that_only_usage_data_shows_unused(tmp_path: Path, name: str) -> None:
+    case = PUBLISHED_CASES[name]
+    tool = str(mapping(case.expected)["usage_finding"])
+    declared = re.search(r"^allowed-tools: (.+)$", case.files["skills/demo/SKILL.md"], re.M)
+    assert declared is not None and tool in declared[1].split(", ")
+    evidence = case.files.get("usage-digest.md") or case.files["audit.md"]
+    assert re.search(rf"{tool} 0\b|0 {tool} calls", evidence)
+    assert _defects(tmp_path, case, {}, "demo") == []
+
+
 # wedge: no file is written and every candidate has all seven fields
 
 
@@ -438,10 +498,19 @@ SKILL = SKILL_DIR / "SKILL.md"
 EXPERIMENTS = SKILL_DIR / "references/experiments.md"
 ADD_NAME = ("1. Confirm the name: kebab-case, ≤64 chars, directory name equals `name:`, "
             "and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`.")
-IMPROVE_SPECULATIVE = (
-    "3. Put every `<speculative>` finding and every protocol-semantic change to the user as one approval question, "
-    "with your recommendation for each. Apply the approved ones and record the declined ones. "
-    "A delegated run returns these findings to its parent, and the parent asks. A PR body or a report is not approval.")
+IMPROVE_AUDIT = (
+    "1. Get a current audit of the target. "
+    "Reuse an audit report from this conversation when its target and content id match. Name the reused report. "
+    "An `unavailable` content id never matches. "
+    "Otherwise run `audit` steps 1-3. When Usage is absent, state why.")
+IMPROVE_SHOW = "2. Show the findings table before the first edit, with one recommendation per finding."
+IMPROVE_WEDGE = ("Recommend `/skillz wedge` for a Deterministic offload finding. "
+                 "Always record it as a residual, because a new CLI is a redesign.")
+IMPROVE_ASK = (
+    "3. Ask the user one approval question that covers every surfaced finding except the `/skillz wedge` residuals. "
+    "Apply the approved findings. Record the declined findings as residuals. "
+    "A delegated run returns the findings to its parent, and the parent asks. A PR body or a report is not approval.")
+IMPROVE_NEVER = "`improve` never redesigns, and it never edits before the user answers its approval question."
 WEDGE_CANDIDATES = (
     "2. List each candidate with its line. A candidate is a fixed parse, validation, count, filter, sort, or projection "
     "that every run repeats. A bundled script without an output contract is also a candidate. "
@@ -451,8 +520,18 @@ STEPS: list[tuple[str, Path, str | None, str]] = [
     ("add", SKILL, "Mode: add", "Add `agents/openai.yaml` when the skill is user-only."),
     ("add", SKILL, "Mode: add", "Register the skill in its repo's index"),
     ("add", SKILL, "Mode: add", "The inspector reports an empty `long_sentences` list."),
-    ("improve", SKILL, "Mode: improve", "Apply every `<certain>` finding of severity medium or higher"),
-    ("improve", SKILL, "Mode: improve", IMPROVE_SPECULATIVE),
+    ("improve", SKILL, "Mode: improve", IMPROVE_AUDIT),
+    ("improve", SKILL, "Mode: improve", IMPROVE_SHOW),
+    ("improve", SKILL, "Mode: improve", "Recommend `apply` for a `<certain>` finding of severity medium or higher"),
+    ("improve", SKILL, "Mode: improve", IMPROVE_ASK),
+    ("improve", SKILL, "Mode: improve", IMPROVE_WEDGE),
+    ("improve", SKILL, "What this skill never does", IMPROVE_NEVER),
+    ("improve", SKILL, "Shared protocol", "For a skill, run `" + PACKAGE_ID.replace("skills/demo", "<skill-dir>") + "`."),
+    ("improve", SKILL, "Shared protocol", "It covers every package file, so a sidecar or reference edit changes it."),
+    ("improve", SKILL, "Shared protocol", "For an agent file, run `git hash-object <target>`. Its output is the content id."),
+    ("improve", SKILL, "Shared protocol", "When a command fails, the content id is `unavailable`."),
+    ("improve", SKILL, "Mode: audit", "`improve` reuses this report while the content id matches."),
+    ("improve", SKILL, None, "Usage: included | omitted (<reason>) · Audit: fresh | reused <content id>"),
     ("improve", SKILL, "Mode: improve", "Tighten; do not redesign."),
     ("improve", SKILL, "Mode: improve", "Report before/after tokens and the residual findings."),
     ("wedge", SKILL, "Mode: wedge", "writes no code and starts no build"),
@@ -484,9 +563,9 @@ def test_mode_steps_keep_the_invariant_that_the_fixture_depends_on(mode: str, pa
 
 MUTATIONS = [
     ("add", "Mode: add", ADD_NAME, ", and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`", ""),
-    ("improve", "Mode: improve", IMPROVE_SPECULATIVE,
-     "Put every `<speculative>` finding and every protocol-semantic change to the user as one approval question,"
-     + " with your recommendation for each.", "Apply every `<speculative>` finding directly."),
+    ("improve", "Mode: improve", IMPROVE_SHOW, "before the first edit, ", "after the edits, "),
+    ("improve", "Mode: improve", IMPROVE_AUDIT, "Otherwise run `audit` steps 1-3.", "Otherwise run the shared protocol."),
+    ("improve", "What this skill never does", IMPROVE_NEVER, ", and it never edits before the user answers its approval question", ""),
     ("wedge", "Mode: wedge", WEDGE_CANDIDATES, "stay in prose; they are never candidates.", "stay in prose."),
 ]
 
