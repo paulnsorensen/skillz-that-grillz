@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "target": {
+    "schema_version": 1,
+    "status": "approved",
+    "skill": "skillz",
+    "invocation": "$skillz",
+    "kinds": {
+      "add": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nMARKER = re.compile(r'^\\s*(?:#+\\s+|[-*+]\\s+|\\d+[.)]\\s+|>\\s*)')\nBREAK = re.compile(r'^\\s*(?:#|[-*+]\\s|\\d+[.)]\\s)')\nMASK = re.compile(r'`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<=\\])\\([^)]*\\)')\nSENTENCE = re.compile(r'\\S.*?(?:[.!?]+(?=\\s|$)|$)', re.S)\nOPEN = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')\nCLOSE = re.compile(r'^ {0,3}(`{3,}|~{3,})[ \\t]*$')\nITEM = re.compile(r'^ *(?:[-*+]|\\d+[.)])[ \\t]+(?=\\S)')\ndef unindent(line, column):\n    return line[min(column, len(line) - len(line.lstrip(' '))):]\ndef longest(text):\n    lines = text.splitlines()\n    paragraphs = []\n    current = ''\n    fence = ''\n    column = fence_column = 0\n    for line in lines[lines.index('---', 1) + 1:]:\n        line = re.sub(r'^(?: {0,3}> ?)+', '', line)\n        blank = not line.strip()\n        if fence:\n            closer = CLOSE.match(unindent(line, fence_column))\n            if closer and closer[1][0] == fence[0] and len(closer[1]) >= len(fence):\n                fence = ''\n            continue\n        item = ITEM.match(line)\n        if item:\n            column = item.end()\n        elif not blank and len(line) - len(line.lstrip(' ')) < column:\n            paragraphs.append(current)\n            current = ''\n            column = 0\n        opener = OPEN.match(unindent(line, column))\n        if opener and not (opener[1][0] == '`' and '`' in opener[2]):\n            paragraphs.append(current)\n            current = ''\n            fence = opener[1]\n            fence_column = column\n            continue\n        if blank or line.strip().startswith('|'):\n            paragraphs.append(current)\n            current = ''\n            continue\n        if BREAK.match(line):\n            paragraphs.append(current)\n            current = ''\n        current += (' ' if current else '') + MARKER.sub('', line).strip()\n    paragraphs.append(current)\n    best = 0\n    for paragraph in paragraphs:\n        for hit in SENTENCE.finditer(MASK.sub(lambda m: ' ' * len(m[0]), paragraph)):\n            best = max(best, sum(1 for t in hit[0].split() if any(c.isalnum() for c in t)))\n    return best\nok = False\ntry:\n    s = changed['skills/release-notes/SKILL.md']\n    side = changed['skills/release-notes/agents/openai.yaml']\n    section = re.search('^## Skills$(.*?)(?=^## |\\\\Z)', changed['README.md'], re.M | re.S)\n    rows = [row for row in section[1].splitlines() if row.startswith('|') and 'skills/release-notes/SKILL.md' in row and '/release-notes' in row]\n    ok = (re.search('^name: release-notes$', s, re.M) is not None\n          and re.search('^disable-model-invocation: true$', s, re.M) is not None\n          and 'allow_implicit_invocation: false' in side\n          and len(rows) == 1 and longest(s) <= 25)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        ]
+      },
+      "improve": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nMARKER = re.compile(r'^\\s*(?:#+\\s+|[-*+]\\s+|\\d+[.)]\\s+|>\\s*)')\nBREAK = re.compile(r'^\\s*(?:#|[-*+]\\s|\\d+[.)]\\s)')\nMASK = re.compile(r'`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<=\\])\\([^)]*\\)')\nSENTENCE = re.compile(r'\\S.*?(?:[.!?]+(?=\\s|$)|$)', re.S)\nOPEN = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')\nCLOSE = re.compile(r'^ {0,3}(`{3,}|~{3,})[ \\t]*$')\nITEM = re.compile(r'^ *(?:[-*+]|\\d+[.)])[ \\t]+(?=\\S)')\ndef unindent(line, column):\n    return line[min(column, len(line) - len(line.lstrip(' '))):]\ndef longest(text):\n    lines = text.splitlines()\n    paragraphs = []\n    current = ''\n    fence = ''\n    column = fence_column = 0\n    for line in lines[lines.index('---', 1) + 1:]:\n        line = re.sub(r'^(?: {0,3}> ?)+', '', line)\n        blank = not line.strip()\n        if fence:\n            closer = CLOSE.match(unindent(line, fence_column))\n            if closer and closer[1][0] == fence[0] and len(closer[1]) >= len(fence):\n                fence = ''\n            continue\n        item = ITEM.match(line)\n        if item:\n            column = item.end()\n        elif not blank and len(line) - len(line.lstrip(' ')) < column:\n            paragraphs.append(current)\n            current = ''\n            column = 0\n        opener = OPEN.match(unindent(line, column))\n        if opener and not (opener[1][0] == '`' and '`' in opener[2]):\n            paragraphs.append(current)\n            current = ''\n            fence = opener[1]\n            fence_column = column\n            continue\n        if blank or line.strip().startswith('|'):\n            paragraphs.append(current)\n            current = ''\n            continue\n        if BREAK.match(line):\n            paragraphs.append(current)\n            current = ''\n        current += (' ' if current else '') + MARKER.sub('', line).strip()\n    paragraphs.append(current)\n    best = 0\n    for paragraph in paragraphs:\n        for hit in SENTENCE.finditer(MASK.sub(lambda m: ' ' * len(m[0]), paragraph)):\n            best = max(best, sum(1 for t in hit[0].split() if any(c.isalnum() for c in t)))\n    return best\nok = False\ntry:\n    s = changed['skills/demo/SKILL.md']\n    side = changed['skills/demo/agents/openai.yaml']\n    r = changed['report.md']\n    ok = (longest(s) <= 25\n          and 'allow_implicit_invocation: false' in side\n          and 'scripts/count.py' in s\n          and re.search('before: ~?[0-9]+ tok', r, re.I) is not None\n          and re.search('after: ~?[0-9]+ tok', r, re.I) is not None\n          and len(re.findall('^Approval question:', r, re.M)) == 1)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        ]
+      },
+      "wedge-candidates": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nfields = ['Inputs', 'Output', 'Ordering', 'Empty', 'Errors', 'Side effects', 'Caller line']\nok = False\ntry:\n    brief = changed['brief.md']\n    parts = re.split('^### Candidate ', brief, flags=re.M)[1:]\n    rows = re.findall('^[|] [0-9]+ [|].*$', brief, re.M)\n    ok = (list(changed) == ['brief.md'] and len(parts) >= 1 and len(rows) == len(parts)\n          and all('**' + f + '**' in p for p in parts for f in fields)\n          and all(re.search('line [0-9]+|[(][0-9]+[)]|L[0-9]+', row) for row in rows)\n          and re.search('^## skillz wedge: ', brief, re.M) is not None\n          and 'Run /wedge with candidate' in brief)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        ]
+      },
+      "wedge-clean": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nok = False\ntry:\n    brief = changed['brief.md']\n    ok = list(changed) == ['brief.md'] and '### Candidate ' not in brief and 'No offload candidates' in brief\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        ]
+      },
+      "wedge-agent": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nok = False\ntry:\n    brief = changed['brief.md']\n    ok = list(changed) == ['brief.md'] and '### Candidate ' not in brief and 'packages only skills' in brief\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        ]
+      },
+      "contract": {
+        "grader": "command",
+        "argv": [
+          "python3",
+          "-I",
+          "-c",
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nok = False\ntry:\n    d = json.loads(changed['skills/demo/evals/autoimprove.json'])\n    kinds = d['kinds']\n    ok = (d['status'] == 'draft' and d['schema_version'] == 1 and d['skill'] == 'demo' and bool(kinds)\n          and all(set(v) == {'grader', 'rubric'} and v['grader'] == 'judge' and v['rubric'] for v in kinds.values()))\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+        ]
+      }
+    },
+    "editable": []
+  },
+  "cases": [
+    {
+      "id": "mode-add",
+      "family": "mode-add",
+      "split": "train",
+      "kind": "add",
+      "request": "Run $skillz add release-notes: a user-only skill that drafts release notes from merged changes. Create or edit each file at its repository path. Ask no question.",
+      "files": {
+        "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n",
+        "skills/existing/SKILL.md": "---\nname: existing\ndescription: >-\n  Placeholder skill that makes the name collision check meaningful. Use when the fixture needs one skill.\n---\n\n# existing\n\n1. Do nothing.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "README.md",
+          "skills/release-notes/SKILL.md",
+          "skills/release-notes/agents/openai.yaml"
+        ],
+        "audit_facts_failures": [],
+        "long_sentences": []
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-contract",
+      "family": "mode-contract",
+      "split": "train",
+      "kind": "contract",
+      "request": "The autoimprove runner reported contract-missing for skills/demo. Follow the no-contract path: choose judge-only grading and draft the contract. Write it to skills/demo/evals/autoimprove.json.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: Rewrite a note in plain words. Use when asked to \"rewrite\".\n---\n\n# demo\n\n1. Rewrite the note in plain words.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "skills/demo/evals/autoimprove.json"
+        ],
+        "status": "draft",
+        "runner_code": "contract-unapproved"
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-improve",
+      "family": "mode-improve",
+      "split": "validation",
+      "kind": "improve",
+      "request": "Run $skillz improve skills/demo/SKILL.md. Edit each changed file in place at its repository path. Write the report to report.md. Put every speculative item in one line that starts with 'Approval question:'.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count.\n\nMake sure that you always remember to carefully report the count of open items to the user in a single short sentence that names the file and then stop without doing any other work on the file or the list.\n",
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "report.md",
+          "skills/demo/SKILL.md",
+          "skills/demo/agents/openai.yaml"
+        ],
+        "audit_facts_failures": [],
+        "long_sentences": [],
+        "seeded_defects": [
+          "sidecar.exists",
+          "long-sentence"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-wedge-candidates",
+      "family": "mode-wedge-candidates",
+      "split": "validation",
+      "kind": "wedge-candidates",
+      "request": "Run $skillz wedge skills/demo. Write the brief to brief.md. Write no other file.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Summarize a task list. Use when the user asks to \"summarize tasks\", \"review the task list\", \"who owns what\", \"task summary\", or \"open items by owner\".\n---\n\n# demo\n\n1. Count the open items: read the file and tally every line that starts with `- [ ]`.\n2. Sort the tally by owner, then by item name.\n3. Decide with the user which owner needs follow-up.\n"
+      },
+      "expected": {
+        "kind": "json-report",
+        "candidates": 1,
+        "files": [
+          "brief.md"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-wedge-clean",
+      "family": "mode-wedge-clean",
+      "split": "holdout",
+      "kind": "wedge-clean",
+      "request": "Run $skillz wedge skills/advisor. Write the brief to brief.md. Write no other file.",
+      "files": {
+        "skills/advisor/SKILL.md": "---\nname: advisor\ndescription: >-\n  Recommend a rollout plan. Use when the user asks to \"plan the rollout\", \"advise on release order\", \"pick a strategy\", \"weigh the options\", or \"recommend a plan\".\n---\n\n# advisor\n\n1. Ask the user which risks matter most.\n2. Recommend one rollout plan and explain the trade-off.\n3. Let the user decide.\n"
+      },
+      "expected": {
+        "kind": "json-report",
+        "candidates": 0,
+        "phrase": "No offload candidates",
+        "files": [
+          "brief.md"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-wedge-agent",
+      "family": "mode-wedge-agent",
+      "split": "holdout",
+      "kind": "wedge-agent",
+      "request": "Run $skillz wedge agents/reviewer.md. Write the result to brief.md. Write no other file.",
+      "files": {
+        "agents/reviewer.md": "---\nname: reviewer\ndescription: Review a diff and report findings.\ntools: Read, Grep\n---\n\nReview the diff and report each finding with a cited line.\n"
+      },
+      "expected": {
+        "kind": "json-report",
+        "candidates": 0,
+        "phrase": "packages only skills",
+        "files": [
+          "brief.md"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    }
+  ]
+}
