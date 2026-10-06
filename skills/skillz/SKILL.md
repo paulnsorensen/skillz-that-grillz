@@ -39,7 +39,7 @@ Ask for a target when the mode requires one.
 | `add <name>` | none | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
 | `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | yes, unless it reuses a current audit | the analytics cache; the target after approval | approved fixes + residual findings |
 | `audit <path>` | none | a `SKILL.md` or agent file | yes | the analytics cache only; never the target | calibrated report |
-| `wedge <path>` | none | a `SKILL.md` | no | the target skill: each selected CLI, its delivery files, and its call site | an offload brief, then one CLI per selected candidate, wedged or with a stated reason |
+| `wedge <path>` | none | a `SKILL.md` | no | the target skill: each selected CLI, its delivery files, its call site, and any dependency write | an offload brief, then one CLI per selected candidate, each in its own directory when wedged, or with a stated reason |
 | `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
 `audit` never modifies the target. The Usage ceremony of `audit` and `improve` runs `ingest.py`, which creates or refreshes the analytics cache.
@@ -185,10 +185,13 @@ Follow `references/offload.md`; its steps are Find, Contract, Implement, Deliver
 3. Emit the brief below.
    Ask the user which candidates to implement, with your recommendation.
    Ask in the same question whether the user declines fromargs or wedging.
+   Name each dependency write in that question.
 4. Run Implement, Deliver, and Wire for each selected candidate.
    Read `references/fromargs.md` before Implement, unless the user declined fromargs.
    Read `references/wedge-packaging.md` before you wedge a CLI.
 5. Run the prose check on the target `SKILL.md`. Then run the repo's quality gate.
+6. Run the repo's deploy step when a sync distributes the target, as improve step 7 does.
+   Confirm that the deployed copy matches the source.
 
 Done means: every candidate cites a line and has all seven contract fields.
 Each selected CLI passes its contract tests through its invocation line.

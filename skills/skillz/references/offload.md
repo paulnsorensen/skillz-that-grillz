@@ -54,15 +54,24 @@ Use exit status 2 for a usage error and 3 for a failed input contract.
 Wedge the CLI when all of these conditions are true:
 
 - The target repository has a uv project with `pyproject.toml` and a committed `uv.lock`.
+- `uv` is on `PATH`.
 - Every dependency is a pure-Python wheel without a platform marker.
 - No dependency is a path or URL requirement.
+- fromargs resolves: it is in the project's `pyproject.toml` and `uv.lock`, or the manifest vendors it through `include`.
 - The user does not decline wedging.
+
+A dependency write is a change to the target's `pyproject.toml` or `uv.lock`.
+Name each dependency write in the approval question.
+Wedge each CLI from its own directory, as `<skill>/<cli>/wedge.toml`; the wedge packaging reference shows the layout.
 
 A CLI that runs an external binary through a subprocess can still be wedged.
 Read the wedge packaging reference before you create a manifest or run the builder.
 Then generate the launcher and lock, and verify the installed path.
 
-Otherwise, ship the CLI unpackaged:
+Otherwise, ship the CLI unpackaged.
+When `uv` is missing, ship the stdlib `argparse` CLI or a shell pipeline, not fromargs.
+Resolve each script path against the loaded skill directory, as `<this-skill-directory>` does in `SKILL.md`.
+The call site in the target `SKILL.md` stays relative.
 
 | CLI | Invocation line | Host needs |
 | --- | --- | --- |
@@ -72,7 +81,7 @@ Otherwise, ship the CLI unpackaged:
 
 The PEP 723 block pins `fromargs>=0.2,<0.3` and every other dependency.
 State why the run did not wedge.
-The reasons are: no uv project, no committed `uv.lock`, a platform wheel, a path or URL requirement, or the user declined.
+The reasons are: no uv project, no committed `uv.lock`, no `uv` on `PATH`, fromargs not resolvable, a platform wheel, a path or URL requirement, or the user declined.
 
 Do not silently copy shared libraries or change shared dependencies.
 Do not claim that installing wedge creates the required project.
@@ -83,7 +92,7 @@ In this repository, do not change the `lib/fromargs` closure to make packaging p
 1. Test valid, empty, and invalid input through the invocation line.
 2. Compare repeated outputs for the same input.
 3. Test default truncation and `--full` separately.
-4. Run the invocation line from a directory outside the source checkout.
+4. Run the invocation line from a directory outside the source checkout, with the script path resolved against the loaded skill directory.
 5. For a wedged CLI, build a local archive and run it through the launcher with `WEDGE_PYZ`.
 6. For a wedged CLI, change one archive member and confirm that the launcher exits with status 3.
 7. Run the project's canonical gate and inspect the final diff.

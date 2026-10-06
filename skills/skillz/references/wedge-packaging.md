@@ -52,13 +52,22 @@ Build inputs and source paths cannot contain symlinks.
 
 The template sets `project = "../.."`, which suits a skill at `skills/NAME` in a repository root project.
 Change it when the project sits elsewhere.
-Supply fromargs in one of two ways:
+Wedge only when fromargs resolves. Supply it in one of two ways:
 
-- Add `fromargs` to that project's dependencies and commit the updated `uv.lock`.
+- Add `fromargs` to that project's dependencies and commit the updated `uv.lock`. This is a dependency write; name it in the approval question.
 - Vendor a local fromargs source tree with `include`, for example `include = ["../../src/fromargs"]`.
 
 Use `groups` when the CLI dependencies sit in a uv dependency group other than `dev`.
 Shared defaults for many skills may sit in a `wedge.toml` in their parent directory.
+A parent directory that holds a `SKILL.md` is a skill, so it gives no shared defaults.
+
+### Several CLIs in one skill
+
+Wedge reads one `wedge.toml` per directory, so each extra CLI gets its own directory below the skill.
+Place each manifest at `<skill>/<cli>/wedge.toml`, with its source beside it.
+Add one `../` to `project` and to each `source` and `include` path.
+The `wedge/` directory of the `skillz` skill in this repository shows this layout.
+A nested CLI reads no shared defaults.
 
 Keep reusable source inside the target skill when possible.
 Ship source and manifest with the generated launcher and lock.

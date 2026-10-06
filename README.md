@@ -41,9 +41,11 @@ See [the autoimprove workflow](skills/skillz/references/experiments.md).
 
 `skillz wedge` ships the `wedge` CLI as a bundled `wedge/scripts/wedge.pyz`, so
 it needs no wedge checkout. To wedge a CLI, the target needs a uv project with a
-committed `uv.lock`, the host needs uv on `PATH`, and dependencies must be
-pure-Python wheels. Otherwise the CLI runs unpackaged through
-`uv run --script` with PEP 723 metadata. Installed helpers need Python 3.11+.
+committed `uv.lock` that resolves fromargs, and the host needs uv on `PATH`.
+Dependencies must be pure-Python wheels without platform markers or path or URL
+requirements. Otherwise the CLI runs unpackaged through `uv run --script` with
+PEP 723 metadata. A host without uv gets a stdlib `argparse` CLI (`python3 -I`)
+or a shell pipeline instead. Installed helpers need Python 3.11+.
 Release publication through gh is optional and needs authorization.
 
 ## Install
@@ -57,6 +59,7 @@ npx skills@latest add paulnsorensen/skillz-that-grillz --skill skillz
 Add `--global` to install user-wide, so the skill is available in every repo.
 Without it, the skill installs into the current repo under `.agents/skills/`.
 The former `/wedge` skill is now `/skillz wedge`.
+`/skillz` is user-only, so "wedge this" no longer invokes it on its own. Type `/skillz wedge <path>`.
 
 ## Where the other skills went
 

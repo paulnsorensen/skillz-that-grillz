@@ -116,6 +116,8 @@ CI consumers still pin wedge in a tool project (ADR-009).
 On 2026-10-05 (#151), the separate `/wedge` skill moved into `/skillz wedge`.
 This reverses the earlier split, in which `/skillz wedge` wrote only a brief and `/wedge` implemented it.
 The goal is maximum CLI offload, so the offload decision and the packaging decision are one procedure.
+`/skillz` is user-only (`disable-model-invocation: true`), unlike the old `/wedge` skill.
+A prompt such as "wedge this" no longer invokes it on its own; the user types `/skillz wedge`. The invocation policy is unchanged.
 `improve` now proposes each offload in its approval question instead of recording it as a residual.
 The autoimprove wedge arm (`skillz-autoimprove.md`, ADR-005) is unchanged; its alignment is deferred.
 
