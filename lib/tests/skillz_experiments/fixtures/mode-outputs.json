@@ -70,6 +70,10 @@
       },
       "no-candidate-line": {
         "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items  | count and sort | `demo-tally` | Follow-up choice  |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+      },
+      "deletes-the-skill": {
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n",
+        "skills/demo/SKILL.md": null
       }
     }
   },

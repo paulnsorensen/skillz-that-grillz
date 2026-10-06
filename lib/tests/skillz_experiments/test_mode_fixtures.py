@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -19,6 +20,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from collections.abc import Callable, Mapping
+from types import ModuleType
 from typing import cast
 
 import pytest
@@ -85,13 +88,19 @@ class Sandbox:
         return run.returncode, run.stdout
 
 
-def live(case: Case, written: Tree) -> Tree:
-    """Stage the case, apply the files that a task writes, and snapshot the workspace as a live run does."""
+def live(case: Case, written: Mapping[str, str | None]) -> Tree:
+    """Stage the case, apply the files that a task writes, and snapshot the workspace as a live run does.
+
+    A `None` value deletes a staged file.
+    """
     with tempfile.TemporaryDirectory(prefix="mode-fixture-") as directory:
         workspace = make_workspace(Path(directory) / "workspace")
         stage_task(workspace, None, case)
         for name, text in written.items():
             target = workspace / name
+            if text is None:
+                target.unlink()
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             _ = target.write_text(text, encoding="utf-8")
         return snapshot_outputs(workspace)
@@ -189,6 +198,15 @@ def test_seeded_bad_output_is_rejected_by_the_mode_grader(path: Path, name: str,
     assert grade(path, _cases(path)[name], bad) == 0.0
 
 
+def test_a_deleted_staged_file_counts_as_written_and_fails_a_wedge_grader() -> None:
+    name = "mode-wedge-candidates"
+    bad = _variants(PUBLISHED_OUTPUTS[name], "bad")["deletes-the-skill"]
+    assert bad["skills/demo/SKILL.md"] is None and bad["brief.md"] == _golden(PUBLISHED, name)["brief.md"]
+    assert "skills/demo/SKILL.md" not in live(PUBLISHED_CASES[name], bad)
+    assert grade(PUBLISHED, PUBLISHED_CASES[name], bad) == 0.0
+    assert grade(PUBLISHED, PUBLISHED_CASES[name], _golden(PUBLISHED, name)) == 1.0
+
+
 def test_every_case_has_a_golden_and_a_seeded_bad_output() -> None:
     for path, name in _matrix():
         assert _golden(path, name) and _variants(_recorded(path, name), "bad")
@@ -245,6 +263,57 @@ def test_audit_facts_name_the_seeded_defect(tmp_path: Path, name: str, variant: 
     skill = dict(ADD_IMPROVE)[name]
     bad = _variants(PUBLISHED_OUTPUTS[name], "bad")[variant]
     assert _defects(tmp_path, PUBLISHED_CASES[name], bad, skill) == SEEDED_DEFECTS[(name, variant)]
+
+
+LONG = " ".join(["word"] * 22) + "."
+PARITY_INPUTS = {
+    "prose": LONG,
+    "tilde-fence": f"~~~\n{LONG}\n~~~",
+    "backtick-fence": f"```\n{LONG}\n```",
+    "indented-fence": f"   ```\n   {LONG}\n   ```",
+    "long-fence-short-closer": f"````\n```\n{LONG}\n````",
+    "mixed-fence-closer": f"```\n~~~\n{LONG}\n```",
+    "blockquote": f"> {LONG}",
+    "nested-blockquote": f"> > {LONG}",
+    "blockquote-fence": f"> ```\n> {LONG}\n> ```",
+    "list-item-fence": f"1. item\n   ```\n   {LONG}\n   ```",
+    "list-item-tilde-fence": f"- item\n  ~~~\n  {LONG}\n  ~~~\n",
+    "list-dedent": f"- item\n  more\ntext\n{LONG}",
+    "list-continuation": f"- {LONG}",
+    "table-row": f"| {LONG} |",
+    "inline-code-fence": f"```not a fence``` {LONG}",
+}
+
+
+def _grader_longest(source: str) -> object:
+    match = re.search(r"^MARKER = .*?^    return best$", source, re.M | re.S)
+    assert match is not None
+    scope: dict[str, object] = {"re": re}
+    exec(match[0], scope)  # noqa: S102 - the grader source from the repository manifest
+    return scope["longest"]
+
+
+def _inspector() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("inspect_skill", SKILL_DIR / "scripts/inspect_skill.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("kind", ["add", "improve"])
+@pytest.mark.parametrize("name", list(PARITY_INPUTS))
+def test_grader_longest_sentence_matches_the_inspector(kind: str, name: str) -> None:
+    longest = cast(Callable[[str], int], _grader_longest(_script(PUBLISHED, kind)))
+    inspector = _inspector()
+    prose = cast(Callable[[list[str], int], list[dict[str, int]]], inspector.prose_sentences)
+    advisory = cast(int, inspector.ADVISORY_WORDS)
+    text = f"---\nname: x\n---\n\n{PARITY_INPUTS[name]}\n"
+    lines = text.splitlines()
+    reported = prose(lines, lines.index("---", 1) + 1)
+    expected = max((hit["words"] for hit in reported), default=0)
+    got = longest(text)
+    assert (got if got > advisory else 0) == expected
 
 
 def test_improve_starting_tree_holds_the_seeded_defects(tmp_path: Path) -> None:

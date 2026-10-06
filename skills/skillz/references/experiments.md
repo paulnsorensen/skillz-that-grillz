@@ -459,7 +459,8 @@ A task creates or edits files at their repository paths.
 The runtime then snapshots the whole workspace, including the files that the task did not change.
 The grader reads that snapshot under `output/` and prints `{"score": 0 or 1}`.
 The grader compares each snapshot file with the staged file at the same path.
-Only a new or changed file counts as written.
+A new or changed file counts as written.
+A staged file that is missing from the snapshot also counts as written, because the task deleted it.
 The `wedge` graders require that `brief.md` is the only written file.
 
 The offline tests run without a model.
