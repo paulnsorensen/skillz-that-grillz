@@ -330,17 +330,23 @@ def test_improve_starting_tree_holds_the_seeded_defects(tmp_path: Path) -> None:
 PROPOSE = ["mode-improve-usage", "mode-improve-reuse", "mode-improve-stale"]
 
 
-def _content_id(tmp_path: Path, text: str) -> str:
-    path = tmp_path / "SKILL.md"
-    _ = path.write_text(text, encoding="utf-8")
-    return subprocess.run(["git", "hash-object", str(path)], capture_output=True, text=True, check=True).stdout.strip()
+PACKAGE_ID = "git ls-files -z -co --exclude-standard skills/demo | LC_ALL=C sort -z | xargs -0 git hash-object | git hash-object --stdin"
+
+
+def _content_id(tmp_path: Path, files: dict[str, str]) -> str:
+    _ = subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    for name, text in files.items():
+        if name.startswith("skills/demo/"):
+            (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+            _ = (tmp_path / name).write_text(text, encoding="utf-8")
+    return subprocess.run(PACKAGE_ID, shell=True, cwd=tmp_path, capture_output=True, text=True, check=True).stdout.strip()
 
 
 @pytest.mark.parametrize("name", PROPOSE)
-def test_propose_cases_pin_the_git_content_id_and_the_audit_state(tmp_path: Path, name: str) -> None:
+def test_propose_cases_pin_the_package_content_id_and_the_audit_state(tmp_path: Path, name: str) -> None:
     case = PUBLISHED_CASES[name]
     expected = mapping(case.expected)
-    current = _content_id(tmp_path, case.files["skills/demo/SKILL.md"])
+    current = _content_id(tmp_path, case.files)
     assert case.kind == "improve-propose" and expected["content_id"] == current
     golden = _golden(PUBLISHED, name)
     assert list(golden) == ["report.md"] and f"Content id: {current}" in golden["report.md"]
@@ -349,6 +355,21 @@ def test_propose_cases_pin_the_git_content_id_and_the_audit_state(tmp_path: Path
     assert (earlier == current) == (expected["audit"] == "reused")
     if "stale_content_id" in expected:
         assert earlier == expected["stale_content_id"] != current
+
+
+def test_a_sidecar_edit_changes_the_content_id_and_makes_the_audit_stale(tmp_path: Path) -> None:
+    case = PUBLISHED_CASES["mode-improve-stale"]
+    sidecar = "skills/demo/agents/openai.yaml"
+    edited = {**case.files, sidecar: case.files[sidecar].replace("false", "true")}
+    assert _content_id(tmp_path, edited) == mapping(case.expected)["stale_content_id"]
+
+
+def test_a_deleted_package_file_fails_the_propose_grader() -> None:
+    name = "mode-improve-usage"
+    bad = _variants(PUBLISHED_OUTPUTS[name], "bad")["deleted-before-approval"]
+    assert bad["skills/demo/scripts/count.py"] is None and bad["report.md"] == _golden(PUBLISHED, name)["report.md"]
+    assert grade(PUBLISHED, PUBLISHED_CASES[name], bad) == 0.0
+    assert grade(PUBLISHED, PUBLISHED_CASES[name], _golden(PUBLISHED, name)) == 1.0
 
 
 @pytest.mark.parametrize("name", PROPOSE)
@@ -505,8 +526,10 @@ STEPS: list[tuple[str, Path, str | None, str]] = [
     ("improve", SKILL, "Mode: improve", IMPROVE_ASK),
     ("improve", SKILL, "Mode: improve", IMPROVE_WEDGE),
     ("improve", SKILL, "What this skill never does", IMPROVE_NEVER),
-    ("improve", SKILL, "Shared protocol", "Run `git hash-object <target>`. Its output is the content id."),
-    ("improve", SKILL, "Shared protocol", "When the command fails, the content id is `unavailable`."),
+    ("improve", SKILL, "Shared protocol", "For a skill, run `" + PACKAGE_ID.replace("skills/demo", "<skill-dir>") + "`."),
+    ("improve", SKILL, "Shared protocol", "It covers every package file, so a sidecar or reference edit changes it."),
+    ("improve", SKILL, "Shared protocol", "For an agent file, run `git hash-object <target>`. Its output is the content id."),
+    ("improve", SKILL, "Shared protocol", "When a command fails, the content id is `unavailable`."),
     ("improve", SKILL, "Mode: audit", "`improve` reuses this report while the content id matches."),
     ("improve", SKILL, None, "Usage: included | omitted (<reason>) · Audit: fresh | reused <content id>"),
     ("improve", SKILL, "Mode: improve", "Tighten; do not redesign."),

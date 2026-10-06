@@ -62,8 +62,10 @@ Use both JSON outputs as objective package facts, not a fitness score. An agent 
 Read `references/experiments.md § Audit facts contract` for the check ids and statuses.
 Report a helper error without treating it as a successful audit.
 Classify it as **agent** (`tools:` / `disallowedTools:` or an `agents/registry.yaml` entry) or **skill** (`name:` + `description:`).
-Run `git hash-object <target>`. Its output is the content id.
-When the command fails, the content id is `unavailable`.
+For a skill, run `git ls-files -z -co --exclude-standard <skill-dir> | LC_ALL=C sort -z | xargs -0 git hash-object | git hash-object --stdin`.
+Its output is the content id. It covers every package file, so a sidecar or reference edit changes it.
+For an agent file, run `git hash-object <target>`. Its output is the content id.
+When a command fails, the content id is `unavailable`.
 Report the body size as `~N tok` against the 5k budget.
 For a skill, copy it from the `body.token-estimate` check. For an agent file, count bytes/4 after the frontmatter block.
 List the deploy targets the definition reaches (`references/harness-layout.md § Layout`).
