@@ -7,7 +7,8 @@ description: >
   "autoimprove this skill",
   "optimize this skill", "tighten this skill",
   "audit this agent", "new skill for X", "skill not triggering", "fix
-  trigger rate", or "what in this skill should be a CLI". Do NOT use for
+  trigger rate", "wedge this", "turn this repeated work into a CLI", or
+  "what in this skill should be a CLI". Do NOT use for
   CLAUDE.md or system-prompt edits, or for code changes that a cheese
   pipeline skill owns.
 disable-model-invocation: true
@@ -38,7 +39,7 @@ Ask for a target when the mode requires one.
 | `add <name>` | none | a new skill name | no | creates `skills/<name>/` | a registered skill that passes the rubric |
 | `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | yes, unless it reuses a current audit | the analytics cache; the target after approval | approved fixes + residual findings |
 | `audit <path>` | none | a `SKILL.md` or agent file | yes | the analytics cache only; never the target | calibrated report |
-| `wedge <path>` | none | a `SKILL.md` | no | none | a `/wedge` handoff brief per offload candidate |
+| `wedge <path>` | none | a `SKILL.md` | no | the target skill: each selected CLI, its delivery files, its call site, and any dependency write | an offload brief, then one CLI per selected candidate, each in its own directory when wedged, or with a stated reason |
 | `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
 
 `audit` never modifies the target. The Usage ceremony of `audit` and `improve` runs `ingest.py`, which creates or refreshes the analytics cache.
@@ -85,7 +86,7 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect_skill.py` `long_sentences` facts (sentences over 25 words). Cite `advisory_sentences` (21 to 25 words) only for procedural steps. Report passive voice and multi-instruction sentences as findings. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
-| **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; `scripts.invocation-line` covers the invocation line; judge whether each bundled script has an output contract. Fix through `wedge`. |
+| **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; `scripts.invocation-line` covers the invocation line; judge whether each bundled script has an output contract. Fix with `references/offload.md`. |
 | **Tool scoping** | Read-only / write-scoped / focused; use host enforcement when available → «prose-only constraint» | Claude skills use `disallowed-tools` to remove tools for the current turn. Their `allowed-tools` grants permission without prompts; it is not a deny list. Claude agents use `disallowedTools`. Report actual enforcement per mode and mark prose-only limits as degraded. Do not disable writes for `improve`. |
 | **Context & fork** | Fork when output > ~500 lines or only a digest is needed → «monolithic output» | Fork matches size; a wrap-up signal exists; the `model-policy.*` checks cover `model:` + `effort:`. |
 | **Prompt quality** | Positive framing, why-over-what, one strong example, "What this never does" → «negation-heavy», «rules without reasons» | Judgment tasks use a scaffold, not always/never. `references/decision-frameworks.md`. |
@@ -143,13 +144,14 @@ The inspector reports an empty `long_sentences` list.
    Otherwise run `audit` steps 1-3. When Usage is absent, state why.
 2. Show the findings table before the first edit, with one recommendation per finding.
    Recommend `apply` for a `<certain>` finding of severity medium or higher that does not change protocol semantics.
-   Recommend `/skillz wedge` for a Deterministic offload finding. Always record it as a residual, because a new CLI is a redesign.
+   Recommend `offload` or `decline` for a Deterministic offload finding. An offload changes protocol semantics, so it needs explicit approval.
    Recommend `apply` or `decline` for every other finding. Give the reason.
-3. Ask the user one approval question that covers every surfaced finding except the `/skillz wedge` residuals.
-   Apply the approved findings. Record the declined findings as residuals.
+3. Ask the user one approval question that covers every surfaced finding.
+   Apply the approved findings. Implement each approved offload with `references/offload.md`.
+   Record the declined findings as residuals.
    A delegated run returns the findings to its parent, and the parent asks.
    A PR body or a report is not approval.
-4. Keep the target's voice and protocol semantics. Tighten; do not redesign.
+4. Keep the target's voice and protocol semantics. Change them only for an approved item.
 5. Run the prose check on the target file and on each changed reference before you report the mode as done.
 6. Re-measure the body. Report before/after tokens and the residual findings.
 7. Run the repo's deploy step when the target lives under a `skills/` or `agents/` tree that a sync distributes.
@@ -172,28 +174,34 @@ Done means: the report lists every surfaced finding with a cited line, and the b
 
 ## Mode: wedge
 
-Find the work in the target that belongs in a bundled CLI, then write the brief that `/wedge` builds from.
-The user runs `/wedge`; this mode writes no code and starts no build, because packaging is `/wedge`'s contract.
+Find the fixed work in the target skill and move it into CLIs.
+Follow `references/offload.md`; its steps are Find, Contract, Implement, Deliver, and Wire.
 
 1. Read the target and its `scripts/`. Score the Deterministic offload lens only.
-   For an agent file, report that `/wedge` packages only skills, then stop.
-2. List each candidate with its line.
-   A candidate is a fixed parse, validation, count, filter, sort, or projection that every run repeats.
-   A bundled script without an output contract is also a candidate.
-   Classification, recommendations, and user decisions stay in prose; they are never candidates.
-3. Write each candidate's behavior contract: command name, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects.
-   Name the prose that stays and the target line that will call the command.
-4. Rank candidates by how often a run repeats the work, then by target line, ascending. With zero candidates, report `No offload candidates` and stop.
-5. Emit the brief below. Close with `Run /wedge with candidate <n> of this brief.`
-   When `/wedge` is not installed, add its install command: `npx skills add paulnsorensen/skillz-that-grillz --skill wedge`.
+   For an agent file, report that `wedge` changes only skills, then stop.
+2. Run Find and Contract for each candidate. Cite each candidate's line.
+   Rank candidates by how often a run repeats the work, then by target line, ascending.
+   With zero candidates, report `No offload candidates` and stop.
+3. Emit the brief below.
+   Ask the user which candidates to implement, with your recommendation.
+   Ask in the same question whether the user declines fromargs or wedging.
+   Name each dependency write in that question.
+4. Run Implement, Deliver, and Wire for each selected candidate.
+   Read `references/fromargs.md` before Implement, unless the user declined fromargs.
+   Read `references/wedge-packaging.md` before you wedge a CLI.
+5. Run the prose check on the target `SKILL.md`. Then run the repo's quality gate.
+6. Run the repo's deploy step when a sync distributes the target, as improve step 7 does.
+   Confirm that the deployed copy matches the source.
 
 Done means: every candidate cites a line and has all seven contract fields.
+Each selected CLI passes its contract tests through its invocation line.
+Each CLI that is not wedged states the reason.
 
 ```markdown
 ## skillz wedge: <name>
 
-| # | Step (line) | Transformation | Command | Stays in prose |
-|---|---|---|---|---|
+| # | Step (line) | Transformation | Command | Delivery | Stays in prose |
+|---|---|---|---|---|---|
 
 ### Candidate <n>: <command>
 **Inputs** · **Output** · **Ordering** · **Empty** · **Errors** · **Side effects** · **Caller line**
@@ -223,8 +231,9 @@ N findings were `<don't know>` or trivial (not shown).
 
 ## What this skill never does
 
-- `audit` never modifies the target and writes only the analytics cache; `wedge` never writes.
-- `improve` never redesigns, and it never edits before the user answers its approval question.
+- `audit` never modifies the target and writes only the analytics cache.
+- `wedge` writes only the candidates the user selects.
+- `improve` never edits before the user answers its approval question, and it never changes protocol semantics without approval.
 - `add` never registers a skill whose description fails the Invocation lens.
 - It never surfaces `<don't know>`.
 - It never exempts itself; a finding against `skillz` is filed like any other.
@@ -245,6 +254,11 @@ Read on demand:
 - `references/analytics-ceremony.md` — `audit`, or `improve` without a reusable audit; use the bundled engine for best-effort per-pack analytics.
 - `references/raw-log-fallback.md` — DuckDB is absent and the user opts into a sampled, read-only Usage scan.
 - `references/anti-patterns.md` — a finding needs the expanded failure mode.
+- `references/offload.md` — when `wedge` runs, or when `improve` implements an approved offload; the shared procedure.
+- `references/fromargs.md` — when an offload writes a fromargs CLI.
+- `references/wedge-packaging.md` — before an offload wedges a CLI; the builder is `wedge/scripts/wedge.pyz`.
+- `assets/records.py`, `assets/wedge.toml` — the CLI and manifest templates that an offload copies.
+- `evals/evals.json` — pressure scenarios; use them when you change the offload procedure.
 - `references/progressive-disclosure.md` — Information hierarchy fires.
 - `references/description-optimization.md` — Invocation fires.
 - `references/decision-frameworks.md` — Prompt quality flags rigid rules on a judgment task.

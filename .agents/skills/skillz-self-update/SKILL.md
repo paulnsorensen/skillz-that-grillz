@@ -40,5 +40,5 @@ Report the research delta, applied fixes, rejected claims, and verification resu
 ## What this skill never does
 
 - It never runs `npx` or `skills add` against the working copy.
-- It does not upgrade GEPA, `skillz-experiment.pyz`, the analytics engine snapshot, Python dependencies, `/wedge`, or releases.
+- It does not upgrade GEPA, `skillz-experiment.pyz`, the analytics engine snapshot, Python dependencies, `skills/skillz/wedge/scripts/wedge.pyz`, or releases.
 - It does not sync the result to other harnesses. That is out of scope for this skill.

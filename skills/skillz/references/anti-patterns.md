@@ -23,7 +23,7 @@ skill-authoring-consensus failure modes (Anthropic progressive disclosure, Pococ
 5. **Inline scripts** — Step-by-step instructions that are really a script, or a
    step that makes the model regenerate the same parser or counter on every run.
    Extract to `scripts/` — executes without loading into context. `/skillz wedge`
-   writes the behavior contract; `/wedge` packages it as a bundled CLI.
+   writes the behavior contract and the CLI, and wedges the CLI when it can.
 
 ## Instructions
 

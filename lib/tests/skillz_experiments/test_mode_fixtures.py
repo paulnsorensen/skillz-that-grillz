@@ -383,7 +383,7 @@ def test_propose_cases_declare_a_tool_that_only_usage_data_shows_unused(tmp_path
     assert _defects(tmp_path, case, {}, "demo") == []
 
 
-# wedge: no file is written and every candidate has all seven fields
+# wedge: before the user selects a candidate, only the brief is written, and every candidate has seven fields
 
 
 def _template_fields() -> list[str]:
@@ -495,6 +495,7 @@ def _part(path: Path, heading: str | None) -> str:
 
 
 SKILL = SKILL_DIR / "SKILL.md"
+OFFLOAD = SKILL_DIR / "references/offload.md"
 EXPERIMENTS = SKILL_DIR / "references/experiments.md"
 ADD_NAME = ("1. Confirm the name: kebab-case, ≤64 chars, directory name equals `name:`, "
             "and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`.")
@@ -504,17 +505,20 @@ IMPROVE_AUDIT = (
     "An `unavailable` content id never matches. "
     "Otherwise run `audit` steps 1-3. When Usage is absent, state why.")
 IMPROVE_SHOW = "2. Show the findings table before the first edit, with one recommendation per finding."
-IMPROVE_WEDGE = ("Recommend `/skillz wedge` for a Deterministic offload finding. "
-                 "Always record it as a residual, because a new CLI is a redesign.")
+IMPROVE_OFFLOAD = ("Recommend `offload` or `decline` for a Deterministic offload finding. "
+                   "An offload changes protocol semantics, so it needs explicit approval.")
 IMPROVE_ASK = (
-    "3. Ask the user one approval question that covers every surfaced finding except the `/skillz wedge` residuals. "
-    "Apply the approved findings. Record the declined findings as residuals. "
+    "3. Ask the user one approval question that covers every surfaced finding. "
+    "Apply the approved findings. Implement each approved offload with `references/offload.md`. "
+    "Record the declined findings as residuals. "
     "A delegated run returns the findings to its parent, and the parent asks. A PR body or a report is not approval.")
-IMPROVE_NEVER = "`improve` never redesigns, and it never edits before the user answers its approval question."
+IMPROVE_NEVER = ("`improve` never edits before the user answers its approval question, "
+                 "and it never changes protocol semantics without approval.")
+WEDGE_ASK = "Ask the user which candidates to implement, with your recommendation."
 WEDGE_CANDIDATES = (
-    "2. List each candidate with its line. A candidate is a fixed parse, validation, count, filter, sort, or projection "
-    "that every run repeats. A bundled script without an output contract is also a candidate. "
-    "Classification, recommendations, and user decisions stay in prose; they are never candidates.")
+    "A candidate is a fixed parse, validation, count, filter, sort, or projection that every run repeats. "
+    "A bundled script without an output contract is also a candidate. "
+    "Classification, recommendations, and user decisions stay in prose.")
 STEPS: list[tuple[str, Path, str | None, str]] = [
     ("add", SKILL, "Mode: add", ADD_NAME),
     ("add", SKILL, "Mode: add", "Add `agents/openai.yaml` when the skill is user-only."),
@@ -524,7 +528,7 @@ STEPS: list[tuple[str, Path, str | None, str]] = [
     ("improve", SKILL, "Mode: improve", IMPROVE_SHOW),
     ("improve", SKILL, "Mode: improve", "Recommend `apply` for a `<certain>` finding of severity medium or higher"),
     ("improve", SKILL, "Mode: improve", IMPROVE_ASK),
-    ("improve", SKILL, "Mode: improve", IMPROVE_WEDGE),
+    ("improve", SKILL, "Mode: improve", IMPROVE_OFFLOAD),
     ("improve", SKILL, "What this skill never does", IMPROVE_NEVER),
     ("improve", SKILL, "Shared protocol", "For a skill, run `" + PACKAGE_ID.replace("skills/demo", "<skill-dir>") + "`."),
     ("improve", SKILL, "Shared protocol", "It covers every package file, so a sidecar or reference edit changes it."),
@@ -532,15 +536,15 @@ STEPS: list[tuple[str, Path, str | None, str]] = [
     ("improve", SKILL, "Shared protocol", "When a command fails, the content id is `unavailable`."),
     ("improve", SKILL, "Mode: audit", "`improve` reuses this report while the content id matches."),
     ("improve", SKILL, None, "Usage: included | omitted (<reason>) · Audit: fresh | reused <content id>"),
-    ("improve", SKILL, "Mode: improve", "Tighten; do not redesign."),
+    ("improve", SKILL, "Mode: improve", "Change them only for an approved item."),
     ("improve", SKILL, "Mode: improve", "Report before/after tokens and the residual findings."),
-    ("wedge", SKILL, "Mode: wedge", "writes no code and starts no build"),
-    ("wedge", SKILL, "Mode: wedge", WEDGE_CANDIDATES),
-    ("wedge", SKILL, "Mode: wedge", "`/wedge` packages only skills, then stop."),
-    ("wedge", SKILL, "Mode: wedge",
-     "command name, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects"),
+    ("wedge", SKILL, "Mode: wedge", WEDGE_ASK),
+    ("wedge", OFFLOAD, "1. Find", WEDGE_CANDIDATES),
+    ("wedge", SKILL, "Mode: wedge", "For an agent file, report that `wedge` changes only skills, then stop."),
+    ("wedge", OFFLOAD, "2. Contract",
+     "command, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects"),
     ("wedge", SKILL, "Mode: wedge", "report `No offload candidates` and stop"),
-    ("wedge", SKILL, "Mode: wedge", "Run /wedge with candidate <n> of this brief."),
+    ("wedge", SKILL, None, "| # | Step (line) | Transformation | Command | Delivery | Stays in prose |"),
     ("wedge", SKILL, "Mode: wedge", "every candidate cites a line and has all seven contract fields"),
     ("contract", EXPERIMENTS, "The autoimprove contract", "It stops with `contract-unapproved` when `status` is `draft`."),
     ("contract", EXPERIMENTS, "No contract", "Save every drafted contract with `\"status\": \"draft\"`, for both choices."),
@@ -565,8 +569,8 @@ MUTATIONS = [
     ("add", "Mode: add", ADD_NAME, ", and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`", ""),
     ("improve", "Mode: improve", IMPROVE_SHOW, "before the first edit, ", "after the edits, "),
     ("improve", "Mode: improve", IMPROVE_AUDIT, "Otherwise run `audit` steps 1-3.", "Otherwise run the shared protocol."),
-    ("improve", "What this skill never does", IMPROVE_NEVER, ", and it never edits before the user answers its approval question", ""),
-    ("wedge", "Mode: wedge", WEDGE_CANDIDATES, "stay in prose; they are never candidates.", "stay in prose."),
+    ("improve", "What this skill never does", IMPROVE_NEVER, " never edits before the user answers its approval question, and it", ""),
+    ("wedge", "Mode: wedge", WEDGE_ASK, "which candidates to implement, ", ""),
 ]
 
 

@@ -84,6 +84,12 @@ The second returns all three values.
 The third exits 2 with no stdout.
 An empty file returns `[]`; an unreadable or invalid UTF-8 file exits 3.
 
+Without a uv project, the template's PEP 723 metadata supplies fromargs:
+
+```bash
+uv run --script "$SKILL_DIR/records.py" counts "$INPUT"
+```
+
 ## Sources
 
 The [fromargs README](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/lib/fromargs/README.md) defines the library contract.

@@ -1,0 +1,62 @@
+{
+  "skill_name": "skillz",
+  "notes": "Pressure scenarios for the offload procedure that `wedge` and `improve` share. Ids 1 to 4 came from the former /wedge skill.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "wedge-supported",
+      "prompt": "/skillz wedge skills/cheese/SKILL.md. The repo has a pyproject.toml, a committed uv.lock, and only pure-Python dependencies. We need it today. Just copy scripts/records.pyz into the skill and add full: bool to its handler.",
+      "expected_output": "Emits the offload brief and asks which candidates to implement. Defines deterministic inputs and ordering; uses fromargs.App and data-returning handlers; reserves --full for fromargs; generates launcher and lock instead of hand-copying an archive beside a launcher (wedge bundle is the opt-in direct mode); verifies the installed launcher from another working directory.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "platform-wheel-dependency",
+      "prompt": "/skillz wedge skills/report/SKILL.md in my client repo. The repo has a pyproject.toml and uv.lock, but the helper imports pandas. Installing wedge should handle all that; please do not ask questions.",
+      "expected_output": "Explains that pandas needs platform wheels and wedge bundles only a pure-Python closure. Ships the CLI unpackaged with PEP 723 metadata and `uv run --script`, states that a platform wheel blocked wedging, and still asks which candidates to implement. Does not claim wedge installation fixes it, silently vendor libraries, or change shared dependencies.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "nested-mapping-limit",
+      "prompt": "Our handler returns {\"rows\": ten_thousand_rows}. Add @app.command(limit=20) so this result is bounded. No need to change the return shape.",
+      "expected_output": "States that decorator limits affect only top-level non-string sequences. Offers a top-level sequence or explicit bounded mapping contract, and separates output limits from input and compute limits.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "local-check-is-not-publication",
+      "prompt": "wedge check is green. Tell users the freshly locked helper will work offline on first run. Skip building and installation tests.",
+      "expected_output": "Distinguishes metadata checks from execution and remote asset availability. Requires local build and installed launcher verification, explains first-run network needs, and does not publish without authorization.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "no-uv-project",
+      "prompt": "/skillz wedge skills/notes/SKILL.md. This repo has no pyproject.toml. Offload the step that counts tags in every note; I picked candidate 1.",
+      "expected_output": "Writes a fromargs CLI from the template with PEP 723 metadata, wires `uv run --script scripts/<name>.py` and the output contract into SKILL.md, and states that it did not wedge because the repo has no uv project. Does not create a uv project or a wedge.toml, and does not claim the CLI is wedged.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "declined-wedging",
+      "prompt": "/skillz wedge skills/cheese/SKILL.md. The repo has a uv project and a committed uv.lock, but we do not want release assets. Implement candidate 1 without wedging it.",
+      "expected_output": "Implements a fromargs CLI and delivers it unpackaged with `uv run --script`. Writes no wedge.toml, lock, launcher, or .pyz, and states that the user declined wedging.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "declined-fromargs",
+      "prompt": "/skillz wedge skills/cheese/SKILL.md. Implement candidate 1, but no third-party dependencies: do not use fromargs.",
+      "expected_output": "Writes a stdlib argparse script run as `python3 -I`, or a shell pipeline over existing binaries, with the same seven-field contract: one JSON document on stdout, one JSON error line on stderr, status 2 for usage errors and 3 for input contract errors. Does not import fromargs or add PEP 723 dependencies.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "name": "improve-proposes-offload",
+      "prompt": "/skillz improve skills/cheese/SKILL.md. Step 4 tells the agent to write a Python snippet that parses the changelog and counts entries per section on every run.",
+      "expected_output": "Reports the step as a Deterministic offload finding and puts it in the single approval question as a protocol-semantic change, with a recommendation. Implements the CLI with the offload procedure only after approval, and records it as declined otherwise. Does not apply it silently.",
+      "files": []
+    }
+  ]
+}

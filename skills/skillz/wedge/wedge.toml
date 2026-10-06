@@ -1,0 +1,7 @@
+name = "wedge"
+entry = "wedge:main"
+source = "../../../lib/src/wedge"
+project = "../../.."
+include = ["../../../lib/fromargs/src/fromargs"]
+groups = ["wedge"]
+repo = "paulnsorensen/skillz-that-grillz"

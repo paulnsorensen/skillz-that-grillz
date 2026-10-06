@@ -1,4 +1,4 @@
-"""The /wedge skill's bundled wedge.pyz builds a skill without a wedge project."""
+"""The /skillz skill's bundled wedge.pyz builds a skill without a wedge project."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import pytest
 
 from wedge._build import build
 
-_WEDGE_SKILL_DIR = Path(__file__).resolve().parents[3] / "skills" / "wedge"
+_WEDGE_SKILL_DIR = Path(__file__).resolve().parents[3] / "skills" / "skillz" / "wedge"
 
 
 def test_bundled_shiv_pin_matches_the_wedge_library_pin(repo_root: Path) -> None:

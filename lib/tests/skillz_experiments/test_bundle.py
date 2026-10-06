@@ -24,6 +24,9 @@ def test_runtime_exclusion_is_exact_and_rejects_symlinks(tmp_path: Path) -> None
     scripts.mkdir()
     runtime = scripts / "skillz-experiment.pyz"
     _ = runtime.write_bytes(b"\xff" * 300000)
+    builder = tmp_path / "wedge" / "scripts" / "wedge.pyz"
+    builder.parent.mkdir(parents=True)
+    _ = builder.write_bytes(b"\xff" * 300000)
     assert Candidate.capture(tmp_path, ["SKILL.md"]).files == {"SKILL.md": "seed"}
     other = scripts / "other.pyz"
     _ = other.write_bytes(b"\xff")
@@ -82,6 +85,7 @@ def test_bundle_runs_actual_gepa_and_evaluator_from_installed_target(tmp_path: P
     assert set(arms) == {"original", "prompt", "prompt-cli"}
     assert "OPTIMIZED" in str(mapping(arms["prompt"])["SKILL.md"])
     assert "scripts/skillz-experiment.pyz" not in mapping(record["seed"])
+    assert "wedge/scripts/wedge.pyz" not in mapping(record["seed"])
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     assert any(item["split"] == "reflection" for item in outcomes)
     assert all(mapping(item["usage"])["input_tokens"] is None for item in outcomes)

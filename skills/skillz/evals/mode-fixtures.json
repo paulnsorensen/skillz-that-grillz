@@ -39,7 +39,7 @@
           "python3",
           "-I",
           "-c",
-          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nfields = ['Inputs', 'Output', 'Ordering', 'Empty', 'Errors', 'Side effects', 'Caller line']\nok = False\ntry:\n    brief = changed['brief.md']\n    parts = re.split('^### Candidate ', brief, flags=re.M)[1:]\n    rows = re.findall('^[|] [0-9]+ [|].*$', brief, re.M)\n    ok = (list(changed) == ['brief.md'] and len(parts) >= 1 and len(rows) == len(parts)\n          and all('**' + f + '**' in p for p in parts for f in fields)\n          and all(re.search('line [0-9]+|[(][0-9]+[)]|L[0-9]+', row) for row in rows)\n          and re.search('^## skillz wedge: ', brief, re.M) is not None\n          and 'Run /wedge with candidate' in brief)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nfields = ['Inputs', 'Output', 'Ordering', 'Empty', 'Errors', 'Side effects', 'Caller line']\nok = False\ntry:\n    brief = changed['brief.md']\n    parts = re.split('^### Candidate ', brief, flags=re.M)[1:]\n    rows = re.findall('^[|] [0-9]+ [|].*$', brief, re.M)\n    ok = (list(changed) == ['brief.md'] and len(parts) >= 1 and len(rows) == len(parts)\n          and all('**' + f + '**' in p for p in parts for f in fields)\n          and all(re.search('line [0-9]+|[(][0-9]+[)]|L[0-9]+', row) for row in rows)\n          and re.search('^## skillz wedge: ', brief, re.M) is not None\n          and '| Delivery |' in brief)\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
         ]
       },
       "wedge-clean": {
@@ -57,7 +57,7 @@
           "python3",
           "-I",
           "-c",
-          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nok = False\ntry:\n    brief = changed['brief.md']\n    ok = list(changed) == ['brief.md'] and '### Candidate ' not in brief and 'packages only skills' in brief\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
+          "import json, pathlib, re\ndef read(name):\n    try:\n        return pathlib.Path(name).read_text()\n    except OSError:\n        return None\nout = {p.relative_to('output').as_posix(): p.read_text() for p in pathlib.Path('output').rglob('*') if p.is_file()}\nstaged = {p.as_posix() for p in pathlib.Path('.').rglob('*') if p.is_file() and p.parts[0] not in ('output', 'home', 'tmp') and not any(s.startswith('.') for s in p.parts)}\nchanged = {name: text for name, text in out.items() if read(name) != text}\nchanged.update({name: None for name in staged - set(out)})\nok = False\ntry:\n    brief = changed['brief.md']\n    ok = list(changed) == ['brief.md'] and '### Candidate ' not in brief and 'changes only skills' in brief\nexcept Exception:\n    pass\nprint(json.dumps({'score': 1 if ok else 0}))\n"
         ]
       },
       "contract": {
@@ -276,7 +276,7 @@
       "expected": {
         "kind": "json-report",
         "candidates": 0,
-        "phrase": "packages only skills",
+        "phrase": "changes only skills",
         "files": [
           "brief.md"
         ]

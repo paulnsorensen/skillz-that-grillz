@@ -42,9 +42,16 @@ class ConfigError(Exception):
 
 
 def defaults_path(skill_dir: Path) -> Path | None:
-    """``<skill_dir>/../wedge.toml``: defaults shared by every skill under that root."""
-    candidate = Path(skill_dir).resolve().parent / "wedge.toml"
-    return candidate if candidate.is_file() else None
+    """``<skill_dir>/../wedge.toml``: defaults shared by every skill under that root.
+
+    A parent that holds a ``SKILL.md`` is a skill, so its ``wedge.toml`` is
+    that skill's own CLI. A CLI directory nested inside a skill reads no defaults.
+    """
+    parent = Path(skill_dir).resolve().parent
+    candidate = parent / "wedge.toml"
+    if not candidate.is_file() or (parent / "SKILL.md").is_file():
+        return None
+    return candidate
 
 
 def _read_table(path: Path) -> dict[str, object]:

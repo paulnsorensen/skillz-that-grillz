@@ -128,21 +128,21 @@
   },
   "mode-wedge-candidates": {
     "golden": {
-      "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+      "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Delivery | Stays in prose |\n|---|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | wedged | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nImplement candidate 1? I recommend it, wedged.\n"
     },
     "bad": {
       "missing-field": {
-        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Delivery | Stays in prose |\n|---|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | wedged | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Caller line** 9.\n\nImplement candidate 1? I recommend it, wedged.\n"
       },
       "writes-a-script": {
-        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n",
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Delivery | Stays in prose |\n|---|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | wedged | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nImplement candidate 1? I recommend it, wedged.\n",
         "scripts/tally.py": "print(1)\n"
       },
       "no-candidate-line": {
-        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items  | count and sort | `demo-tally` | Follow-up choice  |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Delivery | Stays in prose |\n|---|---|---|---|---|---|\n| 1 | Count the open items  | count and sort | `demo-tally` | wedged | Follow-up choice  |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nImplement candidate 1? I recommend it, wedged.\n"
       },
       "deletes-the-skill": {
-        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n",
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Delivery | Stays in prose |\n|---|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | wedged | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nImplement candidate 1? I recommend it, wedged.\n",
         "skills/demo/SKILL.md": null
       }
     }
@@ -153,7 +153,7 @@
     },
     "bad": {
       "invented-candidate": {
-        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Delivery | Stays in prose |\n|---|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | wedged | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nImplement candidate 1? I recommend it, wedged.\n"
       },
       "missing-phrase": {
         "brief.md": "## skillz wedge: advisor\n\nNothing to offload.\n"
@@ -162,14 +162,14 @@
   },
   "mode-wedge-agent": {
     "golden": {
-      "brief.md": "## skillz wedge: reviewer\n\nThe /wedge skill packages only skills, so this agent file has no wedge brief.\n"
+      "brief.md": "## skillz wedge: reviewer\n\nThe wedge mode changes only skills, so this agent file has no offload brief.\n"
     },
     "bad": {
       "no-stop-message": {
-        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Stays in prose |\n|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nRun /wedge with candidate 1 of this brief.\n"
+        "brief.md": "## skillz wedge: demo\n\n| # | Step (line) | Transformation | Command | Delivery | Stays in prose |\n|---|---|---|---|---|---|\n| 1 | Count the open items (line 9) | count and sort | `demo-tally` | wedged | Follow-up choice (line 11) |\n\n### Candidate 1: demo-tally\n**Inputs** a task list path. **Output** JSON with owner and count. **Ordering** owner, then item name. **Empty** an empty array. **Errors** exit 2 with a JSON error. **Side effects** none. **Caller line** 9.\n\nImplement candidate 1? I recommend it, wedged.\n"
       },
       "writes-a-file": {
-        "brief.md": "## skillz wedge: reviewer\n\nThe /wedge skill packages only skills, so this agent file has no wedge brief.\n",
+        "brief.md": "## skillz wedge: reviewer\n\nThe wedge mode changes only skills, so this agent file has no offload brief.\n",
         "agents/reviewer.md": "---\nname: reviewer\ndescription: Review a diff and report findings.\ntools: Read\n---\n\nReview the diff and report each finding with a cited line.\n"
       }
     }

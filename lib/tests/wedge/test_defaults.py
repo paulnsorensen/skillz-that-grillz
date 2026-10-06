@@ -7,7 +7,7 @@ from typing import Callable
 
 import pytest
 
-from wedge._config import ConfigError, load_config
+from wedge._config import ConfigError, defaults_path, load_config
 from wedge._key import compute_key
 from wedge._lock import check, lock_many
 
@@ -59,6 +59,30 @@ def test_shared_defaults_may_not_name_a_skill(
 
     with pytest.raises(ConfigError, match="must not set entry, name"):
         _ = load_config(consumer / SKILLS / "hello")
+
+
+@pytest.mark.ac("AC-W10")
+def test_a_cli_nested_in_a_skill_ignores_the_skills_own_manifest(
+    tmp_path: Path, copy_consumer: Callable[[Path], Path]
+) -> None:
+    """``skills/hello/tool/`` sits in a skill, so ``skills/hello/wedge.toml`` is not its defaults."""
+    consumer = copy_consumer(tmp_path / "consumer")
+    hello = consumer / SKILLS / "hello"
+    _ = (hello / "SKILL.md").write_text("---\nname: hello\n---\n")
+    nested = hello / "tool"
+    nested.mkdir()
+    manifest = [
+        'name = "tool"',
+        'entry = "hello:main"',
+        'source = "../hello.py"',
+        'project = "../../.."',
+        'repo = "example-owner/wedge-consumer"',
+    ]
+    _ = (nested / "wedge.toml").write_text("\n".join(manifest) + "\n")
+
+    assert defaults_path(nested) is None
+    config = load_config(nested)
+    assert (config.name, config.entry) == ("tool", "hello:main")
 
 
 @pytest.mark.ac("AC-W10")

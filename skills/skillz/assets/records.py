@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["fromargs>=0.2,<0.3"]
+# ///
 """Count normalized text records with stable ordering."""
 
 from __future__ import annotations
