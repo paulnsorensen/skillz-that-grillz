@@ -22,7 +22,10 @@ class Verdict:
 
 @dataclass(frozen=True)
 class Simulation:
-    """False-promotion rates under no true effect, at equal call budget."""
+    """False-promotion rates under no true effect.
+
+    With at least 2 cases, the split gate spends no more calls than the one-holdout rule.
+    """
 
     trials: int
     cases: int
@@ -48,10 +51,6 @@ def case_deltas(
 def verdict(deltas: Mapping[str, float] | Sequence[float]) -> Verdict:
     """Promote when the mean case delta exceeds twice its standard error."""
     values = list(deltas.values()) if isinstance(deltas, Mapping) else list(deltas)
-    return _verdict(values)
-
-
-def _verdict(values: list[float]) -> Verdict:
     count = len(values)
     if not all(math.isfinite(value) for value in values):
         return Verdict("inconclusive", math.nan, math.nan, count)
@@ -87,7 +86,6 @@ def _chances(rng: random.Random, base: Sequence[float], spread: float) -> list[f
 def _trial(rng: random.Random, cases: int, repeats: int, candidates: int) -> tuple[bool, bool]:
     """Run one null trial; return whether each gate falsely promotes."""
     arms = candidates + 1
-    holdout = cases
     validation = max(1, (arms - 2) * cases // arms)
 
     def world(size: int) -> tuple[list[float], list[list[float]]]:
@@ -97,10 +95,10 @@ def _trial(rng: random.Random, cases: int, repeats: int, candidates: int) -> tup
     _, tries = world(validation)
     means = [statistics.fmean(_scores(rng, chances, repeats)) for chances in tries]
     best = max(range(candidates), key=means.__getitem__)
-    base, tries = world(holdout)
+    base, tries = world(cases)
     base_scores = _scores(rng, base, repeats)
     win_scores = _scores(rng, tries[best], repeats)
-    split = _verdict([w - b for w, b in zip(win_scores, base_scores)]).verdict == "promote"
+    split = verdict([w - b for w, b in zip(win_scores, base_scores)]).verdict == "promote"
 
     base, tries = world(cases)
     base_scores = _scores(rng, base, repeats)
@@ -123,11 +121,21 @@ def simulate(
     cases. The one-holdout arm models skill-creator's select-and-gate rule: it
     promotes when the best candidate mean beats the baseline, with no 2*SE test.
     The split gate scores only the candidates on validation, so it spends
-    (candidates * validation + 2 * cases) * repeats calls. For `cases >= 2` that is
-    at most the one-holdout spend of (candidates + 1) * cases * repeats, so the
-    comparison favors the one-holdout rule. At `cases == 1` the validation floor
-    of one case breaks this bound.
+    (candidates * validation + 2 * cases) * repeats calls. For `candidates >= 2` and
+    `cases >= 2` that is at most the one-holdout spend of
+    (candidates + 1) * cases * repeats, so the comparison favors the one-holdout
+    rule. The gate cannot promote with fewer than 2 cases, so a smaller holdout
+    reports a false rate of zero without a test.
+    Raise `ValueError` when `trials < 1`, `cases < 2`, `repeats < 1`, or `candidates < 2`.
     """
+    if trials < 1:
+        raise ValueError("simulate needs at least 1 trial")
+    if cases < 2:
+        raise ValueError("simulate needs at least 2 cases")
+    if repeats < 1:
+        raise ValueError("simulate needs at least 1 repeat")
+    if candidates < 2:
+        raise ValueError("simulate needs at least 2 candidates")
     rng = random.Random(seed)
     split = single = 0
     for _ in range(trials):

@@ -22,7 +22,7 @@ _CHILDREN = threading.BoundedSemaphore(MAX_CONCURRENT_CALLS)
 
 
 class BudgetExhausted(CodedError):
-    """The call budget or the deadline ran out. The agent starts a new run directory.
+    """The call budget or the deadline is exhausted. The agent starts a new run directory.
 
     A `ValueError` subclass through `CodedError`; it is a runtime stop, not a validation failure.
     """
@@ -51,7 +51,11 @@ def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, h
     calls = preflight_calls + (train + validation + holdout) * calls_per_evaluation * repeats
     + search_calls + reflection_calls + retry_calls.
     seconds = ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS).
+    Raise `ValueError` when a count is negative or `calls_per_evaluation` or `repeats` is below 1.
     """
+    counts = (preflight_calls, train, validation, holdout, search_calls, reflection_calls, retry_calls)
+    if min(counts) < 0 or calls_per_evaluation < 1 or repeats < 1:
+        raise ValueError("estimate needs nonnegative counts and at least 1 call per evaluation and 1 repeat")
     cases = train + validation + holdout
     calls = preflight_calls + cases * calls_per_evaluation * repeats + search_calls + reflection_calls + retry_calls
     return Estimate(calls, math.ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS))
@@ -99,13 +103,16 @@ def approve(sized: Estimate, approved_calls: int | None, *, reserve: int) -> Bud
 
     The ceiling is `sized.calls` calls and `APPROVED_SECONDS` seconds, because the
     estimate assumes ideal concurrency and the wall clock needs headroom.
+    Raise `ValueError` when the estimate has no calls.
     """
+    if sized.calls < 1:
+        raise ValueError("an approved run needs at least 1 call")
     if sized.calls > APPROVED_CALLS or sized.seconds > APPROVED_SECONDS:
         cap = f"{APPROVED_CALLS} calls and {APPROVED_SECONDS} seconds"
         raise BudgetUnapproved(f"estimate of {sized.calls} calls and {sized.seconds} seconds exceeds the cap of {cap}")
     if approved_calls is None or approved_calls < sized.calls:
         raise BudgetUnapproved(f"approve {sized.calls} calls (about {sized.seconds} seconds) before any model call")
-    return Budget(max(sized.calls, 1), APPROVED_SECONDS, min(reserve, max(sized.calls, 1)), approved=True)
+    return Budget(sized.calls, APPROVED_SECONDS, min(reserve, sized.calls), approved=True)
 
 
 def process(command: list[str], *, cwd: Path, timeout: float,
