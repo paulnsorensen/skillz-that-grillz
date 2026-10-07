@@ -9,17 +9,16 @@ from typing import Literal
 
 import fromargs
 
-from skillz_experiments._cases import CodedError, load_cases, load_manifest
-from skillz_experiments._contract import load_contract
+from skillz_experiments._cases import CodedError
 from skillz_experiments._facts import audit_facts
+from skillz_experiments._gate import simulate as simulate_gate
 from skillz_experiments._harness import Configuration
-from skillz_experiments._records import prepare, read, write
 from skillz_experiments._runtime import Budget
-from skillz_experiments._search import Mode
-from skillz_experiments._workflow import execute, export as export_run
+from skillz_experiments._search import Edit
+from skillz_experiments._workflow import Stop, export as export_run, run as run_workflow
 
-Profile = Literal["inspection", "audit"]
-SELF_TEST_OUT = Path("skillz-self-test")
+Harness = Literal["claude", "codex"]
+REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
 class _Reported(BaseException):
@@ -28,10 +27,15 @@ class _Reported(BaseException):
 
 @contextmanager
 def _coded() -> Generator[None]:
-    """Report a `CodedError` as JSON with its `code` on stderr. Then raise `_Reported`."""
+    """Report a `CodedError` as JSON with its `code` on stderr. Then raise `_Reported`.
+
+    A `Stop` also prints its question data on stdout, so the outer agent can read it.
+    """
     try:
         yield
     except CodedError as error:
+        if isinstance(error, Stop):
+            print(json.dumps(error.data))
         print(json.dumps({"error": str(error), "exit_code": 1, "code": error.code}), file=sys.stderr)
         raise _Reported from None
 
@@ -39,38 +43,21 @@ def _coded() -> Generator[None]:
 app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. No automatic installation.")
 
 
-@app.command
-def dataset(manifest: Path, *, target: Path, out: Path, component: list[str] | None = None) -> dict[str, object]:
-    """Validate authored cases or an approved normalized analytics export."""
+@app.command(name="run")
+def run_command(*, target: Path, out: Path, model: str, harness: Harness = "claude", live: bool = False,
+                edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
+                approve_cases: str | None = None, approve_budget: int | None = None) -> dict[str, object]:
+    """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question."""
     with _coded():
-        return prepare(manifest, target, out, component, load_contract(target, load_manifest(manifest)))
+        return run_workflow(target, out, model, adapter=harness, live=live, edit=edit, repeats=repeats, seed=seed,
+                            approve_cases=approve_cases, approve_budget=approve_budget)
 
 
-@app.command
-def baseline(run: Path, *, model: str, live: bool = False, harness_config: Path | None = None,
-             max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
-    """Measure the frozen original on train and validation cases."""
+@app.command(name="export")
+def export_command(run: Path, *, out: Path) -> dict[str, object]:
+    """Write the winner as a private local patch and a redacted report, without installation."""
     with _coded():
-        return execute(run, "baseline", model, live=live, maximum=max_invocations, seconds=max_seconds,
-                       harness_config=harness_config)
-
-
-@app.command
-def search(run: Path, *, model: str, mode: Mode = "prompt", live: bool = False, harness_config: Path | None = None,
-           max_invocations: int = 20, max_seconds: float = 1200, brief: Path | None = None) -> dict[str, object]:
-    """Search prompt, prompt-cli, cli, or wedge components with pinned GEPA. Wedge mode needs --brief."""
-    with _coded():
-        return execute(run, "search", model, live=live, mode=mode, maximum=max_invocations, seconds=max_seconds,
-                       harness_config=harness_config, brief=brief)
-
-
-@app.command
-def evaluate(run: Path, *, model: str, live: bool = False, harness_config: Path | None = None,
-             max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
-    """Consume the paired holdout once, without feedback to search."""
-    with _coded():
-        return execute(run, "evaluate", model, live=live, maximum=max_invocations, seconds=max_seconds,
-                       harness_config=harness_config)
+        return export_run(run, out)
 
 
 @app.command(name="audit-facts")
@@ -79,55 +66,35 @@ def audit_facts_command(directory: Path) -> dict[str, object]:
     return audit_facts(directory)
 
 
-@app.command(name="export")
-def export_command(run: Path, *, out: Path, arm: Mode = "prompt") -> dict[str, object]:
-    """Export a private local patch and redacted evidence, without installation."""
-    return export_run(run, out, arm)
-
-
 @app.command(name="self-test")
-def self_test(*, model: str, out: Path = SELF_TEST_OUT, target: Path | None = None,
-              preflight_only: bool = False, live: bool = False, profile: Profile = "inspection",
-              prepare_only: bool = False, manifest: Path | None = None, harness_config: Path | None = None,
-              max_invocations: int = 20, max_seconds: float = 1200) -> dict[str, object]:
-    """Compare the original, prompt-only, and prompt-plus-helper arms."""
-    if sum((preflight_only, prepare_only, live)) != 1:
-        raise ValueError("choose exactly one of --preflight-only, --prepare-only, or --live")
-    source = manifest or Path(__file__).parent / (
-        "fixtures/audit-self-test.json" if profile == "audit" else "fixtures/self-test.json")
-    if prepare_only:
-        cases = load_cases(source)
-        out.mkdir(mode=0o700)
-        write(out / "manifest.json", read(source))
-        return {"review_manifest": str(out / "manifest.json"), "cases": len(cases), "live_calls": 0}
-    if preflight_only:
-        with _coded():
-            configuration = Configuration.load(harness_config, model)
-            adapter = configuration.create(model, Budget(max_invocations, max_seconds, reserve=0), lambda: None)
-            try:
-                return adapter.preflight()
-            finally:
-                adapter.close()
-    if not live:
-        raise ValueError("self-test requires --preflight-only or explicit --live")
-    if profile == "audit":
-        cases = load_cases(source)
-        if not cases or any(case.kind != "audit" or not case.eligible for case in cases):
-            raise ValueError("audit self-test requires human label review and separate provider approval in --manifest")
-    if target is None:
-        archive = Path(sys.argv[0]).resolve()
-        if archive.name != "skillz-experiment.pyz" or not archive.is_file():
-            raise ValueError("source execution requires an explicit --target")
-        target = archive.parent.parent
+def self_test(*, model: str | None = None, preflight_only: bool = False, simulate: bool = False,
+              harness_config: Path | None = None, max_invocations: int = 20,
+              max_seconds: float = 1200) -> dict[str, object]:
+    """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates (--simulate)."""
+    if preflight_only == simulate:
+        raise ValueError("choose exactly one of --preflight-only or --simulate")
+    if simulate:
+        result = simulate_gate()
+        return {"trials": result.trials, "cases": result.cases, "rate_2se": result.rate_2se,
+                "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
+    if model is None:
+        raise ValueError("--preflight-only requires --model")
     with _coded():
-        _ = prepare(source, target, out, None, load_contract(target, load_manifest(source)))
-    with _coded():
-        return execute(out, "self-test", model, live=True, maximum=max_invocations, seconds=max_seconds,
-                       harness_config=harness_config)
+        configuration = Configuration.load(harness_config, model)
+        adapter = configuration.create(model, Budget(max_invocations, max_seconds, reserve=0), lambda: None)
+        try:
+            return adapter.preflight()
+        finally:
+            adapter.close()
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
     try:
+        if arguments and arguments[0] in REMOVED_COMMANDS:
+            with _coded():
+                raise CodedError("command-removed", f"`{arguments[0]}` is removed; use `run` for the whole flow, "
+                                 + "then `export` to write the patch")
         return app.run(argv)
     except _Reported:
         return 1

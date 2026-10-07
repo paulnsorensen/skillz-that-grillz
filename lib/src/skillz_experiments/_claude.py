@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast, final
 
@@ -26,7 +27,17 @@ NETWORK_PROBE = "loopback-tcp-http-v2"
 # Curl exit codes that show a request attempt. Codes 5 and 6 are name-resolution failures, and 22 needs `-f`.
 CURL_ATTEMPTED = frozenset({0, 7, 28, 52, 56, 97})
 LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted a connection from the Bash probe"
-AUTHENTICATION = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+CONFIG_PREFIX = "skillz-claude-config-"
+CREDENTIALS = ".credentials.json"
+SANDBOX_HELPERS = ("socat",)
+# Agents that Claude Code lists without any user file. The `--tools` list leaves no way to run them.
+BUILTIN_AGENTS = frozenset({"general-purpose", "Explore", "Plan", "statusline-setup", "output-style-setup",
+                            "claude-code-guide"})
+LOGIN_HINT = "run `claude` once and log in"
+INSTALL_BUBBLEWRAP = "install bubblewrap (for example `sudo apt install bubblewrap`)"
+INSTALL_SOCAT = "install socat (for example `sudo apt install socat`)"
+USERNS_FIX = ("allow unprivileged user namespaces with `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, "
+              "or add an AppArmor profile for bwrap")
 
 
 PERMISSION_DENY_ROOTS = ("/home", "/root", "/Users", "/mnt", "/media", "/opt", "/srv", "/workspaces", "/data")
@@ -44,18 +55,72 @@ class NetworkIsolationFailed(CodedError):
         super().__init__("network-isolation-failed", f"Claude Code isolation preflight fails: {reason}; no unsafe fallback")
 
 
+class SandboxUnavailable(CodedError):
+    """The Bash sandbox cannot start. The message names the cause and the fix. The run never falls back."""
+
+    def __init__(self, cause: str, fix: str) -> None:
+        super().__init__("sandbox-unavailable", f"Claude Code sandbox unavailable: {cause}; no unsafe fallback; fix: {fix}")
+
+
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
-def settings(workspace: Path) -> dict[str, object]:
+def _sandbox_fix(detail: str) -> str:
+    """Pick the fix that matches the sandbox failure text."""
+    text = detail.lower()
+    if "socat" in text:
+        return INSTALL_SOCAT
+    if any(word in text for word in ("uid map", "operation not permitted", "permission denied", "namespace", "apparmor")):
+        return USERNS_FIX
+    if "bubblewrap" in text or "bwrap" in text:
+        return INSTALL_BUBBLEWRAP
+    return f"{INSTALL_BUBBLEWRAP}; {INSTALL_SOCAT}; {USERNS_FIX}"
+
+
+def _host_config_dir() -> Path:
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    return Path(configured).expanduser().absolute() if configured else Path.home() / ".claude"
+
+
+@dataclass(frozen=True)
+class _Credential:
+    """The identity of the linked login file: its resolved path and its device and inode numbers."""
+    path: Path
+    device: int
+    inode: int
+
+    @classmethod
+    def find(cls) -> _Credential:
+        source = _host_config_dir() / CREDENTIALS
+        try:
+            target = source.resolve(strict=True)
+            info = target.stat()
+        except OSError:
+            raise CodedError("login-missing", f"no Claude login at {source}; {LOGIN_HINT}") from None
+        if not target.is_file():
+            raise CodedError("login-missing", f"no Claude login at {source}; {LOGIN_HINT}")
+        return cls(target, info.st_dev, info.st_ino)
+
+    def holds(self, link: Path) -> bool:
+        """Check that `link` is still a symlink to this file, with the same device and inode."""
+        try:
+            return link.is_symlink() and Path(os.readlink(link)) == self.path and (
+                (info := link.stat()).st_dev, info.st_ino) == (self.device, self.inode)
+        except OSError:
+            return False
+
+
+def settings(workspace: Path, out: Path | None = None) -> dict[str, object]:
     """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
 
     Sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
     workspace and the runtime roots. The Read tool follows permission rules, not the sandbox, so a deny
-    rule covers the host roots for that tool.
+    rule covers the host roots, `/proc`, and the run directory `out` for that tool.
     """
     runtime = [*RUNTIME_READ, *(MACOS_READ if sys.platform == "darwin" else ())]
+    temporary = _unique([tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())])
+    hidden = ["/proc", *([] if out is None else [str(out), str(out.resolve())])]
     return {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
                         "network": {"allowedDomains": [], "strictAllowlist": True},
                         "filesystem": {"denyRead": ["/"],
@@ -63,7 +128,8 @@ def settings(workspace: Path) -> dict[str, object]:
                                        "allowRead": _unique([str(workspace), str(workspace.resolve()), *runtime])}},
             "disableBundledSkills": True, "disableAllHooks": True,
             "permissions": {"allow": ["Skill"],
-                            "deny": [f"Read(/{root}/**)" for root in _unique([*PERMISSION_DENY_ROOTS, str(Path.home())])]}}
+                            "deny": [*[f"Read(/{root}/**)" for root in _unique([*PERMISSION_DENY_ROOTS, str(Path.home()), *hidden])],
+                                     *[f"Read(/{root}/{CONFIG_PREFIX}*/**)" for root in temporary]]}}
 
 
 def _events(stdout: str) -> list[dict[str, object]]:
@@ -93,18 +159,45 @@ def _loaded_skills(events: list[dict[str, object]]) -> list[str] | None:
         items = cast(list[object], raw) if isinstance(raw, list) else None
         names = [cast(dict[str, object], item).get("name") if isinstance(item, dict) else item for item in items or []]
         if items is None or not all(isinstance(name, str) for name in names):
-            raise RuntimeError("Claude Code isolation fails: the init event skills field is not a list of names")
+            raise CodedError("isolation-failed", "Claude Code isolation fails: the init event skills field is not a list of names")
         loaded.update(cast(list[str], names))
     return sorted(loaded)
 
 
+def _entries(event: dict[str, object], field: str) -> list[str]:
+    raw = event.get(field)
+    names: list[str] = []
+    for item in cast(list[object], raw) if isinstance(raw, list) else []:
+        names.append(str(mapping(cast(object, item)).get("name", "")) if isinstance(item, dict) else str(item))
+    return names
+
+
+def _leak(events: list[dict[str, object]], skills: list[str]) -> str | None:
+    """Name the entry in an init event that the transport does not configure, or return None.
+
+    The transport configures only the candidate skill. It loads no plugin and no MCP server.
+    """
+    for event in (event for event in events if event.get("type") == "system" and event.get("subtype") == "init"):
+        found = {"skill": [name for name in _entries(event, "skills") if name not in skills],
+                 "plugin": _entries(event, "plugins"),
+                 "agent": [name for name in _entries(event, "agents") if name not in BUILTIN_AGENTS],
+                 "MCP server": _entries(event, "mcp_servers")}
+        for kind, names in found.items():
+            if names:
+                return f"foreign {kind} in init event: {sorted(names)}"
+    return None
+
+
 def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skills: list[str]) -> str | None:
-    """Name the isolation failure that a probe run shows, or return None when the run is isolated."""
+    """Name the isolation failure that a probe run shows, or return None when the run is isolated.
+
+    Raise SandboxUnavailable when the Bash sandbox cannot start.
+    """
     final = _final(events)
     errored = returncode != 0 or (final is not None and final.get("is_error") is True)
     detail = (stderr[:8192] + " " + (str(final.get("result", ""))[:2048] if final else "")).lower()
     if returncode != 0 and "sandbox" in detail:
-        return "sandbox unavailable"
+        raise SandboxUnavailable(f"the Bash sandbox cannot start ({' '.join(stderr[:200].split())})", _sandbox_fix(detail))
     if errored and any(word in detail for word in ("login", "api key", "authenticat", "unauthorized", "401", "oauth")):
         return "authentication failed"
     loaded = _loaded_skills(events)
@@ -314,7 +407,9 @@ def _answer(final: dict[str, object]) -> dict[str, object]:
 
 @final
 class ClaudeCode:
-    def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None) -> None:
+    def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
+                 out: Path | None = None) -> None:
+        self.out = out
         found = shutil.which("claude") if executable is None else str(executable)
         if found is None:
             raise RuntimeError("Claude Code is unavailable")
@@ -322,15 +417,35 @@ class ClaudeCode:
         self.model = string(model, "explicit model")
         self.budget = budget
         self.checkpoint = checkpoint
+        self.credential: _Credential | None = None
+        self._temporary: Path | None = None
+        if sys.platform == "darwin":
+            self.config_dir = _host_config_dir()
+            return
+        self.credential = _Credential.find()
+        self.config_dir = self._temporary = Path(tempfile.mkdtemp(prefix=CONFIG_PREFIX))
+        try:
+            (self.config_dir / CREDENTIALS).symlink_to(self.credential.path)
+        except OSError:
+            shutil.rmtree(self.config_dir, ignore_errors=True)
+            raise
 
     def close(self) -> None:
-        pass
+        """Delete the temporary config directory. Then stop when the credential link no longer holds the same file."""
+        directory, self._temporary = self._temporary, None
+        if directory is None or self.credential is None:
+            return
+        changed = not self.credential.holds(directory / CREDENTIALS)
+        shutil.rmtree(directory, ignore_errors=True)
+        if changed:
+            raise CodedError("credential-changed", f"the Claude login file {self.credential.path} changed during the run; "
+                             + "Claude Code replaced or moved it. Log in again with `claude`, then start a new run")
 
     def _environment(self, workspace: Path) -> dict[str, str]:
         environment = {"PATH": f"{self.executable.parent}:/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
         environment |= {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1"}
-        return environment | {name: os.environ[name] for name in AUTHENTICATION if name in os.environ}
+        return environment | {"CLAUDE_CONFIG_DIR": str(self.config_dir)}
 
     def _command(self, settings_path: Path, schema: dict[str, object] | None) -> list[str]:
         command = [str(self.executable), "--restricted", "-p", "--tools", TOOLS, "--strict-mcp-config",
@@ -341,25 +456,25 @@ class ClaudeCode:
     def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float) -> tuple[int, str, list[dict[str, object]]]:
         _ = shutil.copytree(workspace / ".agents/skills", workspace / ".claude/skills")
         settings_path = workspace.parent / "settings.json"
-        _ = settings_path.write_text(json.dumps(settings(workspace)))
+        _ = settings_path.write_text(json.dumps(settings(workspace, self.out)))
         result = process(self._command(settings_path, schema), cwd=workspace, timeout=timeout,
                          environment=self._environment(workspace), input_text=prompt)
         return result.returncode, result.stderr, _events(result.stdout)
 
     def environment_key(self) -> str:
-        """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment."""
-        environment = {name: value for name, value in self._environment(Path("/TASK")).items() if name not in AUTHENTICATION}
-        credentials = sorted(name for name in AUTHENTICATION if name in os.environ)
-        return digest({"settings": settings(Path("/TASK")), "environment": environment, "tools": TOOLS,
-                       "skill": PROBE_SKILL, "platform": sys.platform, "credentials": credentials,
-                       "network_probe": NETWORK_PROBE})
+        """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment.
 
-    @staticmethod
-    def credentials_set() -> str:
-        """Name the credential variables that are set in the process environment, or `none`."""
-        return ", ".join(name for name in AUTHENTICATION if name in os.environ) or "none"
+        The key leaves out the per-process config directory, so it stays stable across processes.
+        """
+        environment = {name: value for name, value in self._environment(Path("/TASK")).items() if name != "CLAUDE_CONFIG_DIR"}
+        return digest({"settings": settings(Path("/TASK"), self.out), "environment": environment, "tools": TOOLS,
+                       "skill": PROBE_SKILL, "platform": sys.platform, "network_probe": NETWORK_PROBE})
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
+        if sys.platform != "darwin":
+            for helper in SANDBOX_HELPERS:
+                if shutil.which(helper) is None:
+                    raise SandboxUnavailable(f"{helper} is missing, and the Claude Code sandbox needs it", INSTALL_SOCAT)
         with listening() as port:
             script = probe(workspace, sealed, Path(__file__).resolve(), port)
             code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
@@ -416,6 +531,11 @@ class ClaudeCode:
             controlled = write_control.is_file() and write_control.read_text() == write_token
         if reached:
             raise NetworkIsolationFailed(LISTENER_REACHED)
+        if sys.platform == "darwin":
+            leak = _leak(events, [PROBE_SKILL])
+            if leak is not None:
+                raise CodedError("preflight-leak", f"Claude Code isolation preflight fails: {leak}; the real config "
+                                 + "directory exposes user entries; no unsafe fallback")
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
         network = _network_failure(events, port, network_token)
         if reason is None:
@@ -443,12 +563,12 @@ class ClaudeCode:
             failed = bool(returncode) or final is None or final.get("is_error") is True
             loaded = _loaded_skills(events)
             if loaded is None and not failed:
-                raise RuntimeError("Claude Code isolation fails: the stream has no init event, so the skill list is unknown; "
-                                   + "the invocation counts against the budget")
+                raise CodedError("isolation-failed", "Claude Code isolation fails: the stream has no init event, "
+                                 + "so the skill list is unknown; the invocation counts against the budget")
             if loaded is not None:
                 if set(loaded) - set(expected):
-                    raise RuntimeError(f"Claude Code isolation fails: skills in init event {loaded}, expected {expected}; "
-                                       + "the invocation counts against the budget")
+                    raise CodedError("isolation-failed", f"Claude Code isolation fails: skills in init event {loaded}, "
+                                     + f"expected {expected}; the invocation counts against the budget")
                 if candidate is not None and not loaded and not failed:
                     trace = _trace(events) + _token_events(cast(dict[str, object], final))
                     return {"answer": {"result_json": "", "load_marker": ""}, "events": [], "usage": usage(trace),
@@ -467,13 +587,14 @@ class ClaudeCode:
         name = "sandbox-exec" if system == "darwin" else "bwrap"
         tool = shutil.which(name)
         if tool is None:
-            raise RuntimeError(f"{name} is unavailable; no unsafe fallback")
+            raise SandboxUnavailable(f"{name} is unavailable", INSTALL_BUBBLEWRAP if system == "linux"
+                                     else "run on a macOS host that provides `sandbox-exec`")
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
         result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment), cwd=workspace,
                          timeout=min(20, self.budget.remaining()), environment={"PATH": "/usr/bin:/bin"})
         if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
-            raise RuntimeError(f"sandbox setup fails: {result.stderr[:200].strip()}; no unsafe fallback")
+            raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", _sandbox_fix(result.stderr))
         return result.returncode, result.stdout
 
     def check_candidate(self, candidate: Candidate) -> bool:

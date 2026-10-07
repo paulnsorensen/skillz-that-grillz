@@ -19,33 +19,31 @@ It does not scan native transcripts.[^cases]
 
 ## User workflow
 
-The optional `skillz-experiment` executable exposes six commands.
+The optional `skillz-experiment` executable exposes one run and one export.
 The skill routes `experiment` to its experiment reference.
-Existing `optimize` and `tighten` aliases still mean `improve`.[^implementation]
+Existing `optimize` and `tighten` aliases still mean `improve`.
+The [pragmatic autoimprove decisions](../decisions/skillz-pragmatic-autoimprove.md) replace the earlier six-command flow.[^implementation]
 
 | Command | Result |
 | --- | --- |
-| `dataset` | Validated case manifest, frozen seed, and private run directory. |
-| `baseline` | Original candidate measurements on train and validation cases. |
-| `search --mode prompt` | One GEPA proposal restricted to declared Markdown components. |
-| `search --mode prompt-cli` | One GEPA proposal that can also change the helper. |
-| `search --mode cli` | One GEPA proposal that changes only the helper. |
-| `search --mode wedge` | One GEPA proposal that offloads fixed work to a bundled script. It needs `--brief`. |
-| `evaluate` | Paired holdout outcomes for three locked arms: `original`, `prompt`, and one of `prompt-cli`, `cli`, or `wedge`. |
+| `run` | One resumable run: agent-drafted cases, one multi-iteration GEPA search, and one holdout gate. |
 | `export` | Private local patch and evidence report, without installation. |
-| `self-test` | The bounded workflow over public repository-authored cases. |
+| `audit-facts` | Fixed rubric facts for a skill directory. |
+| `self-test` | A harness preflight (`--preflight-only`) or the gate's simulated false-promotion rates (`--simulate`). |
+
+The `dataset`, `baseline`, `search`, and `evaluate` commands are removed and exit with `command-removed`.
 
 Run `uv run --project lib --extra experiments skillz-experiment --help` from the repository root.
-The skill's `references/experiments.md` documents exact commands and the version-one case schema.
+The skill's `references/experiments.md` documents exact commands and the case draft shape.
 Normal skill installation does not require GEPA.
 
 ## From sessions to approved cases
 
-The dataset boundary accepts authored cases or a user-approved normalized analytics export.
-Each case supplies an ID, task-family group, split, request, fixture files, expected JSON, provenance, provider approval, and visibility.
-Missing request, fixture, oracle, or approval leaves a case diagnostic-only.[^cases]
+The agent drafts the cases in one draft file. It may add cases from past sessions when analytics exists.
+Each case supplies an ID, task-family group, kind, request, fixture files, expected JSON, and source.
+The user approves the listed cases once, and code assigns the splits from a recorded seed.[^cases]
 
-Keep all cases of one task family in one split.
+Code keeps all cases of one task family in one split.
 Paths reject traversal, aliases, hidden components, and runtime-owned collisions.
 Private is the default visibility.
 Provider approval permits submission, not publication.
@@ -92,13 +90,14 @@ A failed isolation check stops execution without an unsafe fallback.
 
 ## Budget and sealed holdout
 
-The live run defaults to at most 20 invocations within 1,200 seconds. The `--max-invocations` and `--max-seconds` options change both limits.
-Baseline, search, reflection, failures, and holdout share the same counter and deadline.
+A run shows its estimated calls and seconds and asks once before any model call.
+After approval, the live run uses at most 200 calls within 7,200 seconds, and at most two calls run at once.
+Preflight, search, reflection, failures, and holdout share the same counter and deadline.
 Pauses between separate commands consume the same deadline.
-The runner reserves invocations for the holdout: three arms times the worst-case calls per holdout case.[^workflow]
+The runner reserves calls for the holdout gate: two candidates times the repeats times the calls per case.[^workflow]
 
 Selection finishes before holdout evaluation.
-The runner locks the candidate hashes of the three arms: `original`, `prompt`, and the searched `prompt-cli`, `cli`, or `wedge` arm.
+The runner locks the candidate hashes of the two candidates: the original and the winner.
 Holdout feedback never returns to GEPA.
 A consumed holdout cannot resume selection or rewrite completed evidence.
 

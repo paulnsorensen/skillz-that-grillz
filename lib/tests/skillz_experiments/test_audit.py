@@ -8,7 +8,6 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
-from skillz_experiments._cli import main
 from skillz_experiments._codex import Codex
 from skillz_experiments._runtime import Budget
 
@@ -31,20 +30,12 @@ def test_audit_review_is_distinct_from_provider_approval(tmp_path: Path) -> None
     assert load_cases(manifest(tmp_path, audit_case(reviewed=False)))[0].eligible is False
 
 
-def test_cli_rejects_invalid_label_evidence(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_loader_rejects_invalid_label_evidence(tmp_path: Path) -> None:
     case = audit_case()
     case["expected"] = {"labels": [{"id": "bad", "severity": "high", "explanation": "bad",
                                    "evidence": [{"path": "../secret", "start": True, "end": 1, "quote": "bad"}]}]}
-    target = tmp_path / "skill"
-    target.mkdir()
-    _ = (target / "SKILL.md").write_text("seed")
-    (target / "evals").mkdir()
-    _ = (target / "evals/autoimprove.json").write_text(
-        (Path(__file__).resolve().parents[3] / "skills/skillz/evals/autoimprove.json").read_text())
-    assert main(["dataset", str(manifest(tmp_path, case)), "--target", str(target),
-                 "--out", str(tmp_path / "run")]) == 1
-    assert "unsafe relative path" in capsys.readouterr().err
-    assert not (tmp_path / "run").exists()
+    with pytest.raises(ValueError, match="unsafe relative path"):
+        _ = load_cases(manifest(tmp_path, case))
 
 
 def test_explicit_hybrid_budget_accepts_forty_calls() -> None:

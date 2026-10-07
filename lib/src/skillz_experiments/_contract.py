@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -39,7 +40,6 @@ class Contract:
     helper: Helper | None = None
     editable: tuple[str, ...] = ()
     source: str = "skill"
-    overrides_skill_file: bool = False
 
     def grader(self, kind: str) -> Grader:
         if kind not in self.kinds:
@@ -86,8 +86,8 @@ _LEGACY_SKILLZ = Contract(
 def resolve(contract: Contract | None) -> Contract:
     """Return the contract, or the legacy skillz contract when a caller declares none.
 
-    This fallback stays because tests and `load_cases` without kinds build cases with no contract.
-    The CLI always loads the shipped contract and never takes this fallback.
+    The evaluators and `load_cases` use this fallback when a caller passes no contract.
+    `run` never takes it: it uses the target's contract or the intake contract.
     """
     return _LEGACY_SKILLZ if contract is None else contract
 
@@ -136,7 +136,7 @@ def _helper(value: object) -> Helper:
                   relative(string(item.get("input", "fixture.md"), "helper input")), tuple(fixtures))
 
 
-def parse(value: object, source: str, *, overrides_skill_file: bool = False) -> Contract:
+def parse(value: object, source: str) -> Contract:
     item = mapping(value)
     if item.get("status") == "draft":
         raise CodedError("contract-unapproved", "contract has status draft; approve it before a run")
@@ -157,19 +157,14 @@ def parse(value: object, source: str, *, overrides_skill_file: bool = False) -> 
     editable = tuple(relative(string(name, "editable path")) for name in cast(list[object], editable_raw))
     helper = _helper(item["helper"]) if "helper" in item else None
     return Contract(skill, string(item.get("invocation"), "contract invocation"),
-                    {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source,
-                    overrides_skill_file)
+                    {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source)
 
 
-def load_contract(target: Path, manifest: Mapping[str, object]) -> Contract:
-    """Load the contract from the manifest `target` block, else from `<target>/evals/autoimprove.json`."""
+def load_contract(target: Path) -> Contract:
+    """Load `<target>/evals/autoimprove.json`. Fail closed when it is not a bounded regular file."""
     path = target / LOCATION
-    exists = path.is_file()
-    if "target" in manifest:
-        return parse(manifest["target"], "manifest", overrides_skill_file=exists)
-    if not exists:
-        raise CodedError("contract-missing", "no autoimprove contract: add a `target` block to the case manifest "
-                         + f"or create {path}")
-    if path.is_symlink() or path.stat().st_size > 1_000_000:
-        raise ValueError("contract must be a bounded regular file, not a symlink")
+    if not os.path.lexists(path):
+        raise CodedError("contract-missing", f"no autoimprove contract: create {path}")
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_000_000:
+        raise CodedError("contract-unreadable", f"{path} must be a bounded regular file, not a symlink or directory")
     return parse(cast(object, json.loads(path.read_text(encoding="utf-8"))), "skill")

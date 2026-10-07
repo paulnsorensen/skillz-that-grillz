@@ -5,6 +5,7 @@ import sys
 import shutil
 import subprocess
 from pathlib import Path
+from collections.abc import Callable
 from typing import cast
 
 import pytest
@@ -13,9 +14,9 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cli import main
 from skillz_experiments._contract import load_contract, parse
 from skillz_experiments._harness import Configuration
-from skillz_experiments._records import prepare, read
+from skillz_experiments._workflow import run
+from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget, BudgetExhausted
-from skillz_experiments._workflow import execute
 
 
 def test_unsandboxed_wrapper_runs_probe_and_never_infers(tmp_path: Path) -> None:
@@ -68,23 +69,23 @@ def test_protocol_preflight_fails_before_inference(tmp_path: Path, mode: str) ->
 
 
 @pytest.mark.parametrize("mode", ["fail", "wrong-schema"])
-def test_failed_inference_is_charged(tmp_path: Path, mode: str) -> None:
+def test_failed_inference_is_charged_and_recorded(tmp_path: Path, mode: str, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     config, _, log = configured(tmp_path, mode)
-    run = tmp_path / "run"
-    _ = prepare(ROOT / "lib/src/skillz_experiments/fixtures/self-test.json", ROOT / "skills/skillz", run)
+    target, out = make_target(tmp_path), tmp_path / "run"
     with pytest.raises((ValueError, RuntimeError)):
-        _ = execute(run, "baseline", "offline", live=True, harness_config=config)
-    assert read(run / "run.json")["calls"] == 1
-    assert read(run / "run.json")["phase"] == "infrastructure-failure"
-    assert sum(item["operation"] == "infer" for item in requests(log)) == 1
+        _ = approved_run(target, out, configuration=Configuration.load(config, "offline"), model="offline")
+    record = read(out / "run.json")
+    inferred = sum(item["operation"] == "infer" for item in requests(log))
+    assert inferred >= 1 and record["calls"] == inferred
+    assert record["phase"] == "prepared" and "failure" in record
 
 
 @pytest.mark.parametrize("change", ["task", "reflection", "judge", "script", "settings"])
-def test_resume_rejects_each_frozen_role_or_command_file(tmp_path: Path, change: str) -> None:
-    config, settings, log = configured(tmp_path)
-    run = tmp_path / "run"
-    _ = prepare(ROOT / "lib/src/skillz_experiments/fixtures/self-test.json", ROOT / "skills/skillz", run)
-    _ = execute(run, "baseline", "offline", live=True, harness_config=config)
+def test_resume_rejects_each_frozen_role_or_command_file(tmp_path: Path, change: str, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
+    config, settings, log = configured(tmp_path, "fail")
+    target, out = make_target(tmp_path), tmp_path / "run"
+    with pytest.raises((ValueError, RuntimeError)):
+        _ = approved_run(target, out, configuration=Configuration.load(config, "offline"), model="offline")
     before = log.read_text()
     if change == "script":
         with (tmp_path / "wrapper.py").open("a") as script:
@@ -97,7 +98,7 @@ def test_resume_rejects_each_frozen_role_or_command_file(tmp_path: Path, change:
         document["roles"] = {change: {"model": "different"}}
         _ = config.write_text(json.dumps(document))
     with pytest.raises(ValueError, match="harness .* differs"):
-        _ = execute(run, "search", "offline", live=True, harness_config=config)
+        _ = run(target, out, "offline", live=True, configuration=Configuration.load(config, "offline"))
     assert log.read_text() == before
 
 
@@ -136,35 +137,25 @@ def test_writable_candidate_probe_stops_before_inference(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("mode", ["normal", "no-trace"])
-def test_custom_audit_uses_selected_judge_and_shared_evaluator(tmp_path: Path, mode: str) -> None:
+def test_selected_judge_model_reaches_the_judge_calls_of_an_intake_run(tmp_path: Path, mode: str, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     config, _, log = configured(tmp_path, mode)
     document = read(config)
     document["roles"] = {"judge": {"model": "judge-model"}}
     _ = config.write_text(json.dumps(document))
-    manifest = tmp_path / "manifest.json"
-    cases: list[dict[str, object]] = [{"id": str(index), "family": str(index), "split": split, "kind": "audit",
-              "request": "Audit fixture.md.", "files": {"fixture.md": "---\nname: safe\n---\n# Safe\n"},
-              "expected": {"labels": []}, "labels_reviewed": True,
-              "provider_approved": True, "provenance": "synthetic-clean-fixture"}
-             for index, split in enumerate(["train", "validation", "holdout", "holdout"])]
-    _ = manifest.write_text(json.dumps({"schema_version": 1, "cases": cases}))
-    run = tmp_path / "run"
-    _ = prepare(manifest, ROOT / "skills/skillz", run)
-    _ = execute(run, "baseline", "task-model", live=True, maximum=40, harness_config=config)
-    record = read(run / "run.json")
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = (target / "evals/autoimprove.json").unlink()
+    _ = approved_run(target, out, model="task-model", configuration=Configuration.load(config, "task-model"))
+    record = read(out / "run.json")
     assert record["judge_model"] == "judge-model"
-    outcomes = cast(list[dict[str, object]], record["outcomes"])
-    assert all(item["score"] == (1.0 if mode == "normal" else 0.0) for item in outcomes)
-    inferred = [item["model"] for item in requests(log) if item["operation"] == "infer"]
-    assert inferred == (["task-model", "judge-model"] * 2 if mode == "normal" else ["task-model"] * 2)
-    assert record["calls"] == len(inferred)
+    inferred = {str(item["model"]) for item in requests(log) if item["operation"] == "infer"}
+    assert "task-model" in inferred and ("judge-model" in inferred) == (mode == "normal")
 
 
 @pytest.mark.parametrize("inside", ["configuration", "script"])
-def test_harness_configuration_cannot_enter_candidate_snapshot(tmp_path: Path, inside: str) -> None:
+def test_harness_configuration_cannot_enter_candidate_snapshot(tmp_path: Path, inside: str, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     config, _, log = configured(tmp_path)
     target = tmp_path / "candidate"
-    _ = shutil.copytree(ROOT / "skills/skillz", target)
+    _ = shutil.copytree(make_target(tmp_path / "source"), target)
     if inside == "configuration":
         config = Path(shutil.copyfile(config, target / "harness.json"))
     else:
@@ -174,10 +165,9 @@ def test_harness_configuration_cannot_enter_candidate_snapshot(tmp_path: Path, i
         command = cast(list[str], document["command"])
         command[1] = str(script)
         _ = config.write_text(json.dumps(document))
-    run = tmp_path / "run"
-    _ = prepare(ROOT / "lib/src/skillz_experiments/fixtures/self-test.json", target, run)
+    out = tmp_path / "run"
     with pytest.raises(ValueError, match="outside the candidate"):
-        _ = execute(run, "baseline", "offline", live=True, harness_config=config)
+        _ = approved_run(target, out, model="offline", configuration=Configuration.load(config, "offline"))
     assert not log.exists()
 
 
@@ -200,23 +190,21 @@ def test_complete_mixed_roles_parse_without_invoking_codex(tmp_path: Path, monke
 
 
 @pytest.mark.parametrize("mode", ["empty-result", "whitespace-result", "invalid-result"])
-def test_invalid_inspection_text_scores_zero_without_aborting(tmp_path: Path, mode: str) -> None:
+def test_invalid_inspection_text_scores_zero_without_aborting(tmp_path: Path, mode: str, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     config, _, _ = configured(tmp_path, mode)
-    run = tmp_path / "run"
-    _ = prepare(ROOT / "lib/src/skillz_experiments/fixtures/self-test.json", ROOT / "skills/skillz", run)
-    _ = execute(run, "baseline", "offline", live=True, harness_config=config)
-    record = read(run / "run.json")
-    assert record["phase"] == "baseline"
-    assert record["calls"] == 2
-    outcomes = cast(list[dict[str, object]], record["outcomes"])
-    assert all(item["score"] == 0 and item["loaded"] and item["helper_executed"] for item in outcomes)
+    out = tmp_path / "run"
+    result = approved_run(make_target(tmp_path), out, model="offline",
+                          configuration=Configuration.load(config, "offline"))
+    assert result["phase"] == "complete"
+    outcomes = [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if "score" in item]
+    assert outcomes and all(item["score"] == 0 and item["loaded"] for item in outcomes)
 
 
 def echo_candidate(tmp_path: Path) -> Candidate:
     target = tmp_path / "echo-skill"
     _ = shutil.copytree(ROOT / "lib/tests/skillz_experiments/fixtures/echo-skill", target)
     _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
-    return Candidate.capture(target, ["SKILL.md"], load_contract(target, {}))
+    return Candidate.capture(target, ["SKILL.md"], load_contract(target))
 
 
 def test_contract_skill_name_reaches_discover_and_infer(tmp_path: Path) -> None:
@@ -250,16 +238,3 @@ def test_nested_helper_fixture_runs_through_command_adapter(tmp_path: Path) -> N
         assert adapter.transports["task"].check_candidate(candidate)
     finally:
         adapter.close()
-
-
-def test_multi_line_wedge_brief_still_reaches_the_reflection_payload(tmp_path: Path) -> None:
-    config, _, _ = configured(tmp_path)
-    adapter = Configuration.load(config, "offline").create("offline", Budget(10, 60, 0), lambda: None)
-    schema: dict[str, object] = {"type": "object", "properties": {"SKILL.md": {"type": "string"}},
-                                 "required": ["SKILL.md"], "additionalProperties": False}
-    prompt = "Reflect.\n Wedge brief:\nline one\nline two\n" + json.dumps({"candidate": {"SKILL.md": "seed"}})
-    try:
-        result = adapter.invoke(prompt, schema=schema)
-    finally:
-        adapter.close()
-    assert result["answer"] == {"SKILL.md": "seed\n# OPTIMIZED\n"}

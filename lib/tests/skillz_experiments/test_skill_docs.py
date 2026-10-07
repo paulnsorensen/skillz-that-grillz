@@ -98,6 +98,16 @@ def test_no_contract_step_offers_judge_only_or_draft_contract() -> None:
     assert "until the user approves" in tail and '`"status": "approved"` only after the user approves' in tail
 
 
+def test_autoimprove_docs_ask_at_most_three_questions_and_name_at_most_seven_concepts() -> None:
+    text = EXPERIMENTS.read_text()
+    concepts = re.findall(r"^- \*\*.+?\*\*:", _section(text, "Concepts"), re.M)
+    questions = re.findall(r"^\d+\. ", _section(text, "Questions"), re.M)
+    assert 1 <= len(concepts) <= 7
+    assert len(questions) == 3
+    asked = [line for line in _section(text, "Questions").splitlines() if re.match(r"^\d+\. ", line)]
+    assert not [line for line in asked if re.search(r"\b(keys?|tokens?|manifests?|contracts?)\b", line, re.I)]
+
+
 def _long(path: Path, inspector: ModuleType, maximum: int) -> list[dict[str, int]]:
     lines = path.read_text().splitlines()
     start = 0

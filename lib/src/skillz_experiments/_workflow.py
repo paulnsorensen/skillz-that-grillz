@@ -1,28 +1,75 @@
+"""One resumable autoimprove run: intake, one search, one holdout gate. `export` stays write-only.
+
+Phases: prepared, searched, gated, complete. `run.json` (schema 2) holds the checkpoint of each phase.
+"""
 from __future__ import annotations
 
 import difflib
+import errno
 import fcntl
 import json
+import math
 import os
+import stat
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import partial
 from pathlib import Path
-from typing import Protocol, cast, final, get_args
+from typing import Protocol, TextIO, cast, final, get_args
 
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
-from skillz_experiments._codex import Codex, VERSION
-from skillz_experiments._contract import Contract, parse, resolve
+from skillz_experiments._codex import VERSION
+from skillz_experiments._contract import Contract, parse
+from skillz_experiments._gate import case_deltas, verdict as gate_verdict
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
-from skillz_experiments._records import read, write
-from skillz_experiments._runtime import Budget, BudgetExhausted
-from skillz_experiments._search import Mode, optimize
-from skillz_experiments._wedge import COMPONENT, admit, new_script
+from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
+                                        load_draft, skill_facts, split_cases)
+from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
+from skillz_experiments._runtime import (APPROVED_CALLS, APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted,
+                                         BudgetUnapproved, Estimate, approve, estimate)
+from skillz_experiments._search import Edit, REFLECTION_MINIBATCH, overshoot, search as pareto_search
 
-BRIEF_LIMIT = 65536
+DEFAULT_SEED = 20261006
+DEFAULT_REPEATS = 3
+PREFLIGHT_CALLS = 3
+SEARCH_CASE_FACTOR = 4
+CALLS_PER_REFLECTION = 2 * REFLECTION_MINIBATCH
+MINIMUM_SEARCH_MARGIN = 4
+HOLDOUT_RETRIES_PER_ARM = 1
+HarnessName = str
+
+
+class Stop(CodedError):
+    """A non-interactive stop. The outer agent reads `data`, answers the question, and calls `run` again."""
+
+    def __init__(self, code: str, message: str, data: dict[str, object]) -> None:
+        super().__init__(code, message)
+        self.data: dict[str, object] = {"stop": code, "message": message} | data
+
+
+def _failed_outcome(case: Case, candidate: Candidate, error: Exception) -> dict[str, object]:
+    """Return the outcome that records a failed search evaluation as a zero score."""
+    return {"arm": "search", "split": case.split, "case_id": case.identifier, "score": 0.0,
+            "status": "evaluation-failed", "failure": str(error), "search_candidate": candidate.identity}
+
+
+def _baseline_rejected() -> Stop:
+    return Stop("baseline-contract-rejected", "original candidate fails the frozen native/helper contract",
+                {"next": "fix the skill or its contract, then start a new run in a new directory"})
+
+
+def _unit_score(value: object) -> float:
+    """Clamp a provider score to 0..1. A NaN counts as 0."""
+    return min(1.0, max(0.0, float(cast(float, value))))
+
+
+def _inside(path: Path, root: Path) -> bool:
+    """Return whether `path` resolves, through any symlink, to `root` or below it."""
+    return path.resolve().is_relative_to(root.resolve())
 
 
 class _Provider(Protocol):
@@ -60,6 +107,13 @@ def _number_field(record: dict[str, object], key: str) -> float:
     return cast(float, value)
 
 
+def _int_field(record: dict[str, object], key: str) -> int:
+    value = _field(record, key)
+    if type(value) is not int or value < 0:
+        raise ValueError(f"run record field {key} must be a nonnegative integer")
+    return value
+
+
 def _outcomes(record: dict[str, object]) -> list[dict[str, object]]:
     value = _field(record, "outcomes")
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in cast(list[object], value)):
@@ -68,69 +122,177 @@ def _outcomes(record: dict[str, object]) -> list[dict[str, object]]:
 
 
 @dataclass(frozen=True)
-class _Resume:
-    dataset_hash: str
-    seed_hash: str
-    seed: Candidate
-    contract: Contract | None
-    calls: int
-    arms: dict[str, object]
-    outcomes: list[dict[str, object]]
+class _Plan:
+    metric_calls: int
+    reflection_calls: int
+    holdout_calls: int
+    retry_calls: int
+    sized: Estimate
 
 
-def _resume_fields(record: dict[str, object]) -> _Resume:
-    """Validate the run-record fields that a resume reads, once, at the read boundary."""
-    editable = _field(record, "editable")
-    if not isinstance(editable, list) or not all(isinstance(name, str) for name in cast(list[object], editable)):
-        raise ValueError("run record field editable must be a list of text")
-    calls = _field(record, "calls")
-    if type(calls) is not int or calls < 0:
-        raise ValueError("run record field calls must be a nonnegative integer")
-    _ = _text_field(record, "phase")
-    contract: Contract | None = None
-    if "contract" in record:
-        contract = parse(record["contract"], _text_field(record, "contract_source"))
-        if contract.identity != _text_field(record, "contract_hash"):
-            raise ValueError("contract differs from the frozen record; create a new run")
-    return _Resume(_text_field(record, "dataset_hash"), _text_field(record, "seed_hash"),
-                   Candidate(candidate_files(_field(record, "seed")), tuple(cast(list[str], editable)), contract),
-                   contract, calls, mapping(_field(record, "arms")), _outcomes(record))
+def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int) -> _Plan:
+    """Size the run. Shrink the search share to fit the cap; stop when the fixed cost alone exceeds it.
+
+    `metric` counts metric calls: one search evaluation of one case. A metric call costs `per_evaluation` model calls.
+    `_Plan.metric_calls` and `reflection_calls` keep that unit. `holdout_calls` and `sized.calls` count model calls.
+    `holdout_calls` is the gate reserve. It holds the gate and `HOLDOUT_RETRIES_PER_ARM` retries per arm,
+    because a failed holdout call stays claimed.
+    """
+    retry_calls = 2 * HOLDOUT_RETRIES_PER_ARM * per_evaluation
+    holdout_calls = 2 * holdout * repeats * per_evaluation + retry_calls
+    if PREFLIGHT_CALLS + holdout_calls > APPROVED_CALLS:
+        raise Stop("budget-unapproved", f"the preflight and the holdout gate alone need {PREFLIGHT_CALLS + holdout_calls} "
+                   + f"calls; the cap is {APPROVED_CALLS}; lower --repeats or the holdout size", {})
+
+    def size(metric: int) -> Estimate:
+        return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=2 * holdout, calls_per_evaluation=per_evaluation,
+                        repeats=repeats, search_calls=metric * per_evaluation, retry_calls=retry_calls,
+                        reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION))
+
+    metric = SEARCH_CASE_FACTOR * (train + validation)
+    while metric > 0 and size(metric).calls > APPROVED_CALLS:
+        metric -= 1
+    if metric < overshoot(validation) + MINIMUM_SEARCH_MARGIN:
+        raise Stop("budget-unapproved", "too few calls are left for a search under the cap; "
+                   + "lower --repeats or the holdout size", {})
+    return _Plan(metric, math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls, retry_calls, size(metric))
+
+
+def _editable(files: Mapping[str, str], contract: Contract, edit: Edit) -> list[str]:
+    """Return the editable names: Markdown for `prose`, plus helper scripts for `prose+cli`."""
+    base = list(contract.editable) or [name for name in files if name.endswith(".md") or name.startswith("scripts/")]
+    if contract.helper is not None and contract.helper.path not in files:
+        raise CodedError("helper-file-missing", f"the contract helper {contract.helper.path} is missing from the target")
+    names = sorted(name for name in base if name.endswith(".md"))
+    if not names:
+        raise CodedError("prompt-components-missing", "search needs editable Markdown")
+    if edit == "prose+cli":
+        code = {name for name in base if not name.endswith(".md")}
+        if contract.helper is not None:
+            code.add(contract.helper.path)
+        if not code:
+            raise CodedError("helper-missing", "prose+cli needs a helper script to edit; add one under scripts/")
+        names += sorted(code)
+    absent = [name for name in names if name not in files]
+    if absent:
+        raise CodedError("helper-file-missing", f"editable files are missing from the target: {', '.join(absent)}")
+    return names
+
+
+def _scored_kind(contract: Contract) -> str:
+    if "task" in contract.kinds:
+        return "task"
+    if len(contract.kinds) == 1:
+        return next(iter(contract.kinds))
+    raise CodedError("contract-kinds", f"the contract declares the kinds {', '.join(sorted(contract.kinds))}; "
+                     + "run needs a contract with a `task` kind or exactly one kind")
+
+
+def _supported_kind(contract: Contract) -> str:
+    """Return the scored kind. Stop on an audit-graded kind: intake never reviews labels, so no case is eligible."""
+    kind = _scored_kind(contract)
+    if contract.kinds[kind].type == "audit":
+        raise CodedError("contract-audit-unsupported", f"the scored kind {kind!r} uses the audit grader; "
+                         + "run does not support audit-graded kinds yet")
+    return kind
+
+
+def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object]:
+    """Return the estimate that `run.json` records. `_prepare` writes it and `_verify_budget` rebuilds it."""
+    return {"calls": plan.sized.calls, "seconds": plan.sized.seconds, "search_calls": plan.metric_calls,
+            "repeats": repeats, "holdout_cases": holdout_cases, "holdout_retry_calls": plan.retry_calls,
+            "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls}
+
+
+def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
+             approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False) -> None:
+    """Run the two approvals and write the prepared record. No model call happens here."""
+    draft = out / DRAFT_NAME
+    if not draft.is_file():
+        raise Stop("cases-missing", f"write the case draft to {draft}, then call run again",
+                   {"draft": str(draft), "facts": skill_facts(target)})
+    split_seed = DEFAULT_SEED if seed is None else seed
+    contract = intake_contract(target)
+    kind = _supported_kind(contract)
+    cases = split_cases(load_draft(draft), split_seed, kind)
+    held = sum(case.split == "holdout" and case.kind == kind for case in cases)
+    if held < HOLDOUT_MINIMUM:
+        raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
+                         + "add task cases in more families to the draft, then call run again")
+    expected = case_hash(cases, split_seed)
+    if resolve_harness:
+        _ = Configuration.single(adapter, model)
+    if approve_cases != expected:
+        raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
+                   {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
+                    "seed": split_seed})
+    freeze(out / "cases.json", cases, split_seed, expected)
+    scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
+    count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
+    per_evaluation = max(contract.calls(case.kind) for case in scored)
+    skeleton = Candidate.capture(target, [], contract)
+    seed_candidate = Candidate(skeleton.files, tuple(_editable(skeleton.files, contract, edit)), contract)
+    plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats)
+    shown = _estimate(plan, repeats, count["holdout"])
+    try:
+        budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls)
+    except BudgetUnapproved as error:
+        raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS"}) from None
+    write(out / "run.json", {
+        "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
+        "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
+        "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
+        "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
+        "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
+        "estimate": shown,
+        "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve, "approved": budget.approved},
+        "outcomes": [], "started": time.time(), "started_monotonic": time.monotonic()})
 
 
 @final
 class _Session:
-    def __init__(self, out: Path, model: str, maximum: int, seconds: float, factory: Factory,
-                 configuration: Configuration | None = None) -> None:
+    def __init__(self, out: Path, model: str, adapter: HarnessName, factory: Factory | None,
+                 supplied: Configuration | None) -> None:
         self.out = out
-        self.record = read(out / "run.json")
-        resume = _resume_fields(self.record)
-        self.contract = resolve(resume.contract)
-        imported, judged = self._import_cases(resume.dataset_hash)
+        self.lock = threading.RLock()
+        self.record = open_record(out / "run.json")
+        if _phase(self.record) not in _PHASES:
+            raise Stop("run-record-tampered", "the recorded phase is unknown; create a new run", {})
+        for field, flag, value in ("model", "--model", model), ("adapter", "--harness", adapter):
+            if _text_field(self.record, field) != value:
+                raise _config_differs(flag)
+        self.contract = parse(_field(self.record, "contract"), _text_field(self.record, "contract_source"))
+        if self.contract.identity != _text_field(self.record, "contract_hash"):
+            raise ValueError("contract differs from the frozen record; create a new run")
+        imported, judged = self._import_cases()
         self.cases = [case for case in imported if case.eligible]
-        self.seed = resume.seed
-        self._freeze_identities(model, configuration, judged, resume.seed_hash)
-        self.budget = self._open_budget(model, maximum, seconds, resume.calls)
-        self.provider = factory(model, self.budget, self.checkpoint)
-        self.arms = resume.arms
-        self.outcomes = resume.outcomes
-        self._candidates: dict[str, Candidate] = {}
-        self._validation: dict[str, list[dict[str, object]]] = {}
+        editable = _field(self.record, "editable")
+        if not isinstance(editable, list) or not all(isinstance(name, str) for name in cast(list[object], editable)):
+            raise ValueError("run record field editable must be a list of text")
+        self.seed = Candidate(candidate_files(_field(self.record, "seed")), tuple(cast(list[str], editable)), self.contract)
+        self.edit: Edit = cast(Edit, _text_field(self.record, "edit"))
+        self.outcomes = _outcomes(self.record)
+        configuration = supplied if supplied is not None else (
+            Configuration.single(adapter, model) if factory is None else None)
+        self._freeze_identities(model, configuration, judged)
+        self.budget = self._open_budget()
+        self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out) if configuration is not None
+                                    else cast(Factory, factory)(model, self.budget, self.checkpoint))
+        self._fault: CodedError | None = None
+        self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
 
-    def _import_cases(self, dataset_hash: str) -> tuple[list[Case], bool]:
+    @property
+    def phase(self) -> str:
+        return _text_field(self.record, "phase")
+
+    def _import_cases(self) -> tuple[list[Case], bool]:
         """Load the frozen cases. Return them and whether any case needs a judge."""
-        if dataset_hash != digest(read(self.out / "cases.json")):
+        if _text_field(self.record, "dataset_hash") != digest(read(self.out / "cases.json")):
             raise ValueError("dataset differs from the frozen record")
         imported = load_cases(self.out / "cases.json", self.contract.grader_types())
-        rules = self.contract
-        audit = any(rules.grader(case.kind).type == "audit" for case in imported)
-        if audit and (
-                any(not case.eligible for case in imported)
-                or not all(any(case.split == split for case in imported) for split in ("train", "validation"))
-                or sum(case.split == "holdout" for case in imported) != 2):
-            raise ValueError("audit comparison requires reviewed, provider-approved cases and complete splits")
-        return imported, any(rules.judged(case.kind) for case in imported)
+        return imported, any(self.contract.judged(case.kind) for case in imported)
 
-    def _freeze_identities(self, model: str, configuration: Configuration | None, judged: bool, seed_hash: str) -> None:
+    def _freeze_identities(self, model: str, configuration: Configuration | None, judged: bool) -> None:
         if configuration is not None:
             target = self.record.get("target_root")
             if not isinstance(target, str):
@@ -146,147 +308,303 @@ class _Session:
             _ = self.record.setdefault("judge", judge_identity(judge_model))
             if self.record["judge"] != judge_identity(judge_model):
                 raise ValueError("judge differs from the frozen record; create a new run")
-        if self.seed.identity != seed_hash:
+        if self.seed.identity != _text_field(self.record, "seed_hash"):
             raise ValueError("seed differs from the frozen record")
         _ = self.record.setdefault("engine_hash", _engine_hash())
         if self.record["engine_hash"] != _engine_hash():
             raise ValueError("evaluator differs from the frozen record; create a new run")
 
-    def _open_budget(self, model: str, maximum: int, seconds: float, calls: int) -> Budget:
-        _ = self.record.setdefault("started", time.time())
-        _ = self.record.setdefault("started_monotonic", time.monotonic())
-        _ = self.record.setdefault("max_seconds", seconds)
-        _ = self.record.setdefault("max_invocations", maximum)
-        _ = self.record.setdefault("model", model)
-        if (self.record["max_seconds"], self.record["max_invocations"], self.record["model"]) != (seconds, maximum, model):
-            raise ValueError("run configuration differs from the frozen record; create a new run")
+    def _open_budget(self) -> Budget:
+        """Rebuild the approved budget. A resumed run keeps `approved=True` and the calls it already spent."""
+        budget = mapping(_field(self.record, "budget"))
+        self._verify_budget(budget)
         elapsed = time.monotonic() - _number_field(self.record, "started_monotonic")
         if elapsed < 0:
             raise ValueError("run cannot resume after a monotonic clock reset")
+        seconds = _number_field(budget, "seconds")
         if seconds - elapsed <= 0:
             raise BudgetExhausted("global deadline exhausted")
-        reserve = 3 * sum(self.contract.calls(case.kind) for case in self.cases_for("holdout"))
-        self.record["holdout_reserve"] = reserve
-        return Budget(maximum, seconds - elapsed, reserve=reserve, calls=calls)
+        return Budget(_int_field(budget, "maximum"), seconds - elapsed, reserve=_int_field(budget, "reserve"),
+                      calls=_int_field(self.record, "calls"), approved=budget.get("approved") is True)
+
+    def _verify_budget(self, budget: dict[str, object]) -> None:
+        """Stop when the recorded budget differs from the plan that the frozen cases, repeats, and edit give."""
+        count = {split: sum(case.split == split for case in self.cases) for split in cast(tuple[str, ...], get_args(Split))}
+        repeats = _int_field(self.record, "repeats")
+        plan = _plan(count["train"], count["validation"], count["holdout"],
+                     max(self.contract.calls(case.kind) for case in self.cases), repeats)
+        expected = _estimate(plan, repeats, count["holdout"])
+        recorded = mapping(_field(self.record, "estimate"))
+        maximum = max(plan.sized.calls, 1)
+        seconds = _number_field(budget, "seconds")
+
+        def differs(found: object, wanted: object) -> bool:
+            return isinstance(found, bool) or found != wanted
+
+        if (any(differs(recorded.get(key), value) for key, value in expected.items())
+                or differs(budget.get("maximum"), maximum)
+                or differs(budget.get("reserve"), min(plan.holdout_calls, maximum))
+                or not 0 < seconds <= APPROVED_SECONDS):
+            raise Stop("run-record-tampered", "the recorded budget differs from the plan of the frozen run; create a new run", {})
 
     def checkpoint(self) -> None:
-        self.record["calls"] = self.budget.calls
-        write(self.out / "run.json", self.record)
+        with self.lock:
+            self.record["calls"] = self.budget.calls
+            write(self.out / "run.json", self.record)
 
     def cases_for(self, split: Split) -> list[Case]:
-        return [case for case in self.cases if case.split == split]
+        return sorted((case for case in self.cases if case.split == split), key=lambda case: case.identifier)
 
-    def evaluate_case(self, candidate: Candidate, case: Case, arm: str, *, holdout: bool = False) -> dict[str, object]:
-        result = self.provider.evaluate(candidate, case, holdout=holdout)
-        result.update({"arm": arm, "split": case.split})
-        self.outcomes.append(result)
+    def preflight(self) -> None:
+        recorded = self.record.get("preflight")
+        preflight = (self.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
+                     if isinstance(self.provider, Harness) else self.provider.preflight())
+        environment_hash = preflight.get("environment_hash")
+        _ = self.record.setdefault("environment_hash", environment_hash)
+        if self.record["environment_hash"] != environment_hash:
+            raise EnvironmentDiffers("runtime environment differs from the frozen record")
+        self.record["preflight"] = preflight
+        if isinstance(self.provider, Harness) and any(
+                role.adapter == "codex" for role in self.provider.configuration.roles.values()):
+            self.record["codex_version"] = VERSION
         self.checkpoint()
+
+    def evaluate_case(self, candidate: Candidate, case: Case, arm: str, *, holdout: bool = False,
+                      repeat: int | None = None) -> dict[str, object]:
+        """Score one case. The model call runs outside the lock; the record update runs inside it."""
+        self._raise_fault()
+        try:
+            result = self.provider.evaluate(candidate, case, holdout=holdout)
+        except CodedError as error:
+            self._latch(error)
+            raise
+        result.update({"arm": arm, "split": case.split, "case_id": case.identifier})
+        if arm == "search":
+            result["search_candidate"] = candidate.identity
+        if repeat is not None:
+            result["repeat"] = repeat
+        with self.lock:
+            self.outcomes.append(result)
+            self.checkpoint()
         return result
 
-    def baseline(self) -> None:
-        if self.record["phase"] != "prepared":
-            raise ValueError("baseline requires a new prepared run")
-        cases = self.cases_for("train") + self.cases_for("validation")
-        if not cases:
-            raise ValueError("baseline requires eligible train and validation cases")
-        self.arms["original"] = self.seed.files
-        for case in cases:
-            result = self.evaluate_case(self.seed, case, "original")
-            if result.get("status") == "candidate-contract-rejected":
-                raise ValueError("original candidate fails the frozen native/helper contract")
-        self.record["phase"] = "baseline"
-        self.checkpoint()
-
-    def _wedge_candidate(self, components: dict[str, str]) -> Candidate:
-        skill = components["SKILL.md"]
-        if components[COMPONENT] == "{}" and skill == self.seed.files["SKILL.md"]:
-            return self.seed
-        contract = self.seed.contract
-        added = admit(self.seed.files, components, contract.skill if contract is not None else None)
-        files = self.seed.files | {"SKILL.md": skill} | added
-        return Candidate(files, self.seed.editable, self.seed.contract, new_script(self.seed.files, files))
-
-    def _evaluate_example(self, mode: Mode, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
-        case = next((item for item in self.cases if item.identifier == example and item.split != "holdout"), None)
+    def _evaluate_example(self, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
+        case = self._search_cases.get(cast(str, example))
         if case is None:
             raise ValueError("holdout must not enter optimization")
-        if mode == "wedge":
-            try:
-                candidate = self._wedge_candidate(components)
-            except ValueError as error:
-                return 0.0, {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
-        else:
+        try:
             candidate = self.seed.changed(components)
-        self._candidates[candidate.identity] = candidate
-        result = self.evaluate_case(candidate, case, mode)
-        if case.split == "validation":
-            self._validation.setdefault(candidate.identity, []).append(result)
-        feedback: dict[str, object] = {"task_correct": result["score"], "request": case.request}
+        except ValueError as error:
+            return 0.0, {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
+        try:
+            result = self.evaluate_case(candidate, case, "search")
+        except CodedError:
+            raise
+        except (OSError, ValueError, RuntimeError) as error:
+            result = _failed_outcome(case, candidate, error)
+            with self.lock:
+                self.outcomes.append(result)
+                self.checkpoint()
+        self._keep_if_best(candidate, case)
+        score = _unit_score(result["score"])
+        feedback: dict[str, object] = {"task_correct": score, "request": case.request}
+        if "failure" in result:
+            feedback["failure"] = result["failure"]
         if "scores" in result:
             feedback["grader_scores"] = result["scores"]
-        if mode in ("cli", "wedge"):
-            usage = mapping(result.get("usage") or {})
-            feedback["usage"] = {key: value if type(value := usage.get(key)) is int and value >= 0 else None
-                                 for key in ("input_tokens", "output_tokens")}
-        return cast(float, result["score"]), feedback
+        return score, feedback
 
-    def _propose(self, mode: Mode, brief: str | None, candidate: dict[str, str],
-                 feedback: Mapping[str, Sequence[Mapping[str, object]]], components: list[str]) -> dict[str, str]:
-        prompt, schema = _reflection_request(mode, candidate, feedback, components, self.contract.skill, brief)
-        result = self.provider.invoke(prompt, schema=schema)
-        self.outcomes.append({"arm": mode, "split": "reflection", "usage": result.get("usage"),
-                              "latency_seconds": result.get("latency_seconds")})
-        self.checkpoint()
+    def _validation_means(self, validation: list[str]) -> dict[str, float]:
+        """Return the mean score of each search candidate that has a score on every validation case."""
+        scores: dict[str, dict[str, float]] = {}
+        for item in self.outcomes:
+            if item.get("arm") == "search" and item.get("split") == "validation" and "search_candidate" in item:
+                scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
+        return {identity: sum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
+                if set(by_case) == set(validation)}
+
+    def _keep_if_best(self, candidate: Candidate, case: Case) -> None:
+        """Record the files of the best non-seed candidate when it completes the validation set. The record stays small."""
+        if case.split != "validation" or candidate.identity == self.seed.identity:
+            return
+        with self.lock:
+            validation = [item.identifier for item in self.cases_for("validation")]
+            mean = self._validation_means(validation).get(candidate.identity)
+            kept = self.record.get("best_validated")
+            if mean is not None and (not isinstance(kept, dict) or mean > _number_field(cast(dict[str, object], kept), "mean")):
+                self.record["best_validated"] = {"identity": candidate.identity, "mean": mean,
+                                                 "files": {name: candidate.files[name] for name in self.seed.editable}}
+                self.checkpoint()
+
+    def _propose(self, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                 components: list[str]) -> dict[str, str]:
+        self._raise_fault()
+        prompt, schema = _reflection_request(self.edit, candidate, feedback, components)
+        try:
+            result = self.provider.invoke(prompt, schema=schema)
+        except CodedError as error:
+            self._latch(error)
+            raise
+        with self.lock:
+            self.outcomes.append({"arm": "search", "split": "reflection", "usage": result.get("usage"),
+                                  "latency_seconds": result.get("latency_seconds")})
+            self.checkpoint()
         answer = mapping(result["answer"])
         if set(answer) != set(components) or not all(isinstance(value, str) for value in answer.values()):
             raise ValueError("reflection keys differ from the frozen components")
         return cast(dict[str, str], answer)
 
-    def search(self, mode: Mode, brief: str | None = None) -> None:
-        if self.record["phase"] not in {"baseline", "search"} or mode in self.arms:
-            raise ValueError("search requires baseline and an unsearched arm")
-        self._candidates = {self.seed.identity: self.seed}
-        self._validation = {}
-        editable = ({"SKILL.md": self.seed.files["SKILL.md"], COMPONENT: "{}"} if mode == "wedge"
-                    else {key: self.seed.files[key] for key in self.seed.editable})
-        try:
-            helper = self.contract.helper
-            _ = optimize(editable, mode, [case.identifier for case in self.cases_for("train")],
-                         [case.identifier for case in self.cases_for("validation")],
-                         partial(self._evaluate_example, mode), partial(self._propose, mode, brief),
-                         code=helper.path if helper is not None else None)
-            winner = _select(self._candidates, self._validation, len(self.cases_for("validation")), self.seed)
-            reason = "validation-selection"
-        except BudgetExhausted:
-            winner, reason = self.seed, "budget-exhausted-seed-retained"
-        self.arms[mode] = winner.files
-        self.record[mode + "_selection"] = {"reason": reason, "retained_seed": winner.identity == self.seed.identity}
-        self.record["phase"] = "search"
+    def _latch(self, error: CodedError) -> None:
+        """Keep one CodedError from a model call. A terminal code replaces a held fault with another code. A coded fault replaces a held budget stop. Otherwise the first fault stays."""
+        with self.lock:
+            held = self._fault
+            if held is None:
+                replace = True
+            elif error.code in _TERMINAL_CODES:
+                replace = held.code not in _TERMINAL_CODES
+            else:
+                replace = isinstance(held, BudgetExhausted) and not isinstance(error, BudgetExhausted)
+            if replace:
+                self._fault = error
+
+    def take_budget_stop(self) -> None:
+        """Clear a latched budget stop so the gate can run. Re-raise any other latched fault."""
+        with self.lock:
+            fault = self._fault
+            if fault is not None and not isinstance(fault, BudgetExhausted):
+                raise fault
+            self._fault = None
+
+    def authoritative(self, error: Exception) -> Exception:
+        """Return the fault that ends the run: a latched fault other than a budget stop, else `error`."""
+        with self.lock:
+            fault = self._fault
+        if fault is not None and not isinstance(fault, BudgetExhausted):
+            return fault
+        return error
+
+    def record_failure(self, error: Exception) -> None:
+        """Record the failure text and code, drop a stale code, and forget the preflight pass after a terminal code."""
+        self.record["failure"] = str(error)
+        code = error.code if isinstance(error, CodedError) else None
+        if code is None:
+            _ = self.record.pop("failure_code", None)
+        else:
+            self.record["failure_code"] = code
+        if code in _TERMINAL_CODES:
+            _ = self.record.pop("preflight", None)
         self.checkpoint()
 
-    def holdout(self) -> None:
-        locked = ({"original", "prompt", "prompt-cli"}, {"original", "prompt", "cli"}, {"original", "prompt", "wedge"})
-        if set(self.arms) not in locked or self.record.get("holdout_consumed"):
-            raise ValueError("holdout requires three locked arms and an unused holdout")
-        cases = self.cases_for("holdout")
-        if len(cases) != 2:
-            raise ValueError("bounded comparison requires exactly two holdout cases")
-        _ = self.budget.remaining()
-        self.record["locked_arms"] = {name: digest(files) for name, files in self.arms.items()}
-        self.record["holdout_consumed"] = True
+    def _raise_fault(self) -> None:
+        """Re-raise the first CodedError from a model call. A budget stop ends the search; any other code stops the run. GEPA turns each proposer exception into a skipped proposal."""
+        with self.lock:
+            fault = self._fault
+        if fault is not None:
+            raise fault
+
+    def _search_outcomes(self) -> list[dict[str, object]]:
+        """Return the recorded search evaluations on train and validation cases."""
+        return [item for item in self.outcomes
+                if item.get("arm") == "search" and item.get("split") in ("train", "validation")]
+
+    def check_seed(self) -> None:
+        """Stop before any search call when the seed fails the local candidate contract check."""
+        check = cast(Callable[[Candidate], bool] | None, getattr(self.provider, "check_candidate", None))
+        if check is not None and not check(self.seed):
+            raise _baseline_rejected()
+
+    def search(self) -> None:
+        """Run the one GEPA search over train and validation cases. Holdout cases never enter it."""
+        files = {name: self.seed.files[name] for name in self.seed.editable}
+        train = [case.identifier for case in self.cases_for("train")]
+        validation = [case.identifier for case in self.cases_for("validation")]
+        planned = _int_field(mapping(_field(self.record, "estimate")), "metric_calls")
+        spent = len(self._search_outcomes())
+        allowance = planned - spent - overshoot(len(validation))
+        reason = "search-share-spent-best-validated"
+        if allowance >= 1:
+            try:
+                pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
+                              self._evaluate_example, self._propose, metric_calls=allowance)
+                self._raise_fault()
+                reason = "validation-mean"
+            except BudgetExhausted:
+                self.take_budget_stop()
+                reason = "budget-exhausted-best-validated"
+        winner = self._best_validated(validation)
+        if reason == "budget-exhausted-best-validated" and winner.identity == self.seed.identity:
+            reason = "budget-exhausted-seed-retained"
+        scored = self._search_outcomes()
+        if scored and all(item.get("status") == "evaluation-failed" for item in scored):
+            raise CodedError("search-failed", "every search evaluation failed: " + str(scored[-1]["failure"])
+                             + "; check the model, then start a new run directory")
+        self.record["winner"] = winner.files
+        self.record["search"] = {"reason": reason, "retained_seed": winner.identity == self.seed.identity}
+        self.record["phase"] = "searched"
         self.checkpoint()
-        for name, files in self.arms.items():
-            files = candidate_files(files)
-            candidate = Candidate(files, self.seed.editable, self.seed.contract,
-                                  new_script(self.seed.files, files) or self.seed.script)
-            for case in cases:
-                _ = self.evaluate_case(candidate, case, name, holdout=True)
+
+    def _best_validated(self, validation: list[str]) -> Candidate:
+        """Return the recorded candidate with the best validation mean. The seed wins ties."""
+        means = self._validation_means(validation)
+        kept = self.record.get("best_validated")
+        if not isinstance(kept, dict):
+            return self.seed
+        kept = cast(dict[str, object], kept)
+        identity = _text_field(kept, "identity")
+        if identity in means and means[identity] > means.get(self.seed.identity, -1.0):
+            return self.seed.changed(candidate_files(kept.get("files")))
+        return self.seed
+
+    def _holdout_scores(self, arm: str) -> dict[str, list[float]]:
+        scores: dict[str, list[tuple[int, float]]] = {}
+        for item in self.outcomes:
+            if item.get("split") == "holdout" and item.get("arm") == arm:
+                scores.setdefault(cast(str, item["case_id"]), []).append(
+                    (cast(int, item["repeat"]), _unit_score(item["score"])))
+        return {case_id: [score for _, score in sorted(pairs)] for case_id, pairs in scores.items()}
+
+    def gate(self) -> None:
+        """Score baseline and winner on the unseen holdout, `repeats` times per case, then record the verdict."""
+        holdout = self.cases_for("holdout")
+        repeats = _int_field(self.record, "repeats")
+        winner = self.seed.changed({name: candidate_files(_field(self.record, "winner"))[name]
+                                    for name in self.seed.editable})
+        if winner.identity == self.seed.identity:
+            self.record["gate"] = {"verdict": "inconclusive", "delta": 0.0, "se": 0.0, "cases": len(holdout),
+                                   "repeats": repeats, "reason": "winner-equals-baseline"}
+        else:
+            _ = self.budget.remaining()
+            if any(item.get("arm") == "baseline" and item.get("status") == "candidate-contract-rejected"
+                   for item in self.outcomes):
+                raise _baseline_rejected()
+            arms = {"baseline": self.seed, "winner": winner}
+            done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in self.outcomes
+                    if item.get("split") == "holdout"}
+            todo = [(arm, case, repeat) for arm in arms for case in holdout for repeat in range(repeats)
+                    if (arm, case.identifier, repeat) not in done]
+
+            def score(task: tuple[str, Case, int]) -> None:
+                arm, case, repeat = task
+                result = self.evaluate_case(arms[arm], case, arm, holdout=True, repeat=repeat)
+                if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
+                    raise _baseline_rejected()
+
+            need = sum(self.contract.calls(case.kind) for _, case, _ in todo)
+            if self.budget.maximum - self.budget.calls < need:
+                raise Stop("gate-budget-exhausted", f"the holdout gate needs {need} more calls; "
+                           + f"{self.budget.maximum - self.budget.calls} remain in the approved budget",
+                           {"next": "start a new run in a new directory"})
+            with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
+                _ = list(pool.map(score, todo))
+            outcome = gate_verdict(case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner")))
+            self.record["gate"] = {"verdict": outcome.verdict, "delta": outcome.delta, "se": outcome.se,
+                                   "cases": outcome.cases, "repeats": repeats}
+        self.record["winner_hash"] = winner.identity
+        self.record["phase"] = "gated"
+        self.checkpoint()
+
+    def finish(self) -> None:
         self.record["phase"] = "complete"
-        self.record["improvement"] = "inconclusive-bounded-smoke-test"
-        measured = [mapping(result.get("usage") or {}).get(key) for result in self.outcomes
-                    if result.get("split") == "holdout" for key in ("input_tokens", "output_tokens")]
-        self.record["token_comparison"] = ("measured-bounded-smoke-test" if all(type(value) is int for value in measured)
-                                            else "inconclusive-unknown-usage")
         self.checkpoint()
 
 
@@ -295,136 +613,167 @@ _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified T
              "and at most 25 words per descriptive sentence. ")
 
 
-def _reflection_request(mode: Mode, candidate: dict[str, str],
+def _reflection_request(edit: Edit, candidate: dict[str, str],
                         feedback: Mapping[str, Sequence[Mapping[str, object]]],
-                        components: list[str], skill: str, brief: str | None = None) -> tuple[str, dict[str, object]]:
+                        components: list[str]) -> tuple[str, dict[str, object]]:
     schema: dict[str, object] = {"type": "object",
         "properties": {key: {"type": "string"} for key in components},
         "required": components, "additionalProperties": False}
-    if mode == "cli":
-        instruction = (f"Improve only {components[0]}. Preserve all skill text and the helper CLI contract. "
-                       + "Preserve correctness first; reduce measured input-plus-output tokens for correctness ties. "
-                       + "Token feedback combines task and judge usage; null means unknown. ")
-    elif mode == "wedge":
-        instruction = (f"Improve SKILL.md and add one stdlib-only Python script. Set {COMPONENT} to a JSON object with "
-                       + "exactly one key, scripts/<name>.py, whose value is the script source. "
-                       + "Reference that path in SKILL.md, bare or after one prefix: ./, ${CLAUDE_SKILL_DIR}/, "
-                       + f"<this-skill-directory>/, or .agents/skills/{skill}/. Add no other file. Preserve the helper CLI contract. "
-                       + "Preserve correctness first; reduce measured input-plus-output tokens for correctness ties. "
-                       + "Token feedback combines task and judge usage; null means unknown. ")
+    if edit == "prose+cli":
+        instruction = ("Improve the supplied skill text and helper script components. "
+                       + "Keep each script's command-line contract and output format. ")
     else:
         instruction = "Improve only the supplied skill text components. Preserve the helper CLI contract. "
-    head = (instruction + _STE_RULE
-            + "Return complete component contents. Do not alter independent checks or permissions.")
-    block = f" Wedge brief:\n{brief.rstrip()}\n" if brief else "\n"
-    return head + block + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
+    head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions.\n"
+    return head + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
 
-def _select(candidates: dict[str, Candidate], validation: dict[str, list[dict[str, object]]],
-            count: int, seed: Candidate) -> Candidate:
-    ranked: list[tuple[float, float, bool, str]] = []
-    for identity, results in validation.items():
-        if len(results) != count:
-            continue
-        score = sum(cast(float, result["score"]) for result in results) / count
-        tokens = [mapping(result["usage"]).get("input_tokens") for result in results]
-        output = [mapping(result["usage"]).get("output_tokens") for result in results]
-        measured = tokens + output
-        total = sum(cast(int, value) for value in measured) if all(isinstance(value, int) for value in measured) else float("inf")
-        ranked.append((-score, total, identity != seed.identity, identity))
-    return candidates[min(ranked)[3]] if ranked else seed
+_TERMINAL_CODES = frozenset({"isolation-failed", "credential-changed"})
 
 
-def _read_brief(path: Path) -> str:
-    with path.open("rb") as stream:
-        raw = stream.read(BRIEF_LIMIT + 1)
-    if len(raw) > BRIEF_LIMIT:
-        raise ValueError(f"brief exceeds {BRIEF_LIMIT} bytes")
-    return raw.decode("utf-8")
+_PHASES = ("prepared", "searched", "gated", "complete")
 
 
-def _require_helper(out: Path, stage: str, mode: Mode) -> None:
-    """Raise a `CodedError` before any model call when the run lacks a helper that it needs.
+def _phase(record: dict[str, object]) -> str:
+    return _text_field(record, "phase")
 
-    A helper arm needs a declared helper. A run with a declared contract needs the helper file in every stage.
-    A run with the legacy fallback contract checks the helper file for `search --mode cli` only.
+
+def _config_differs(field: str) -> CodedError:
+    return CodedError("run-config-differs", f"{field} differs from the frozen record; resume with the first-run value or create a new run")
+
+
+def _require_private(out: Path) -> None:
+    """Stop unless `out` is a real directory, owned by this user, that no other user can enter."""
+    status = out.lstat()
+    if not stat.S_ISDIR(status.st_mode):
+        raise CodedError("out-unsafe", f"{out} is not a plain directory; use a private directory from `mktemp -d`")
+    if status.st_uid != os.getuid() or status.st_mode & 0o077:
+        raise CodedError("out-unsafe", f"{out} must be owned by you and closed to other users (mode 0700); "
+                         + "use a private directory from `mktemp -d`")
+
+
+def _refuse_terminated(path: Path) -> None:
+    """Stop when the run directory records a terminal code."""
+    stopped = open_record(path).get("failure_code")
+    if stopped in _TERMINAL_CODES:
+        raise Stop("run-terminated", f"the run stopped with {stopped}; start a new run directory",
+                   {"next": "start a new run in a new directory", "failure_code": stopped})
+
+
+def _close(session: _Session, pending: BaseException | None) -> None:
+    """Close the provider and checkpoint any close fault.
+
+    With no pending exception, the run keeps its result and records the fault as `close_warning`. When the run
+    itself raises another exception, that exception stays, the close fault goes to `close_failure` and a note, and a
+    terminal close code also becomes the run's `failure_code`.
     """
-    resume = _resume_fields(read(out / "run.json"))
-    contract = resolve(resume.contract)
-    helper = contract.helper
-    label = "self-test" if stage == "self-test" else f"{mode} search" if stage == "search" else stage
-    if helper is None:
-        if stage == "self-test" or stage == "search" and mode in ("cli", "prompt-cli"):
-            raise CodedError("helper-missing", f"{label} needs a contract helper; declare `helper` in the contract")
-        return
-    if helper.path not in resume.seed.editable and (
-            contract.source != "legacy" or stage == "search" and mode == "cli"):
-        raise CodedError("helper-file-missing", f"{label} needs the helper file {helper.path} in the target")
+    try:
+        session.provider.close()
+    except CodedError as error:
+        detail = {"code": error.code, "message": str(error)}
+        with session.lock:
+            terminal = error.code in _TERMINAL_CODES and session.record.get("failure_code") not in _TERMINAL_CODES
+            if pending is not None:
+                session.record["close_failure"] = detail
+                if terminal:
+                    session.record["failure_code"] = error.code
+                    _ = session.record.pop("preflight", None)
+                session.checkpoint()
+            else:
+                session.record["close_warning"] = detail
+                session.checkpoint()
+        if pending is not None:
+            pending.add_note(f"closing the provider also failed with {error.code}: {error}")
 
 
-def execute(out: Path, stage: str, model: str, *, live: bool = False, maximum: int = 20,
-            seconds: float = 1200, factory: Factory = Codex, mode: Mode = "prompt",
-            harness_config: Path | None = None, brief: Path | None = None) -> dict[str, object]:
-    if stage == "search" and mode == "wedge" and brief is None:
-        raise ValueError("wedge search requires --brief PATH")
-    if brief is not None and mode != "wedge":
-        raise ValueError("--brief applies to wedge mode only")
-    brief_text = _read_brief(brief) if brief is not None else None
+def _open_lock(out: Path) -> TextIO:
+    """Open `run.lock` without following a symlink."""
+    try:
+        descriptor = os.open(out / "run.lock", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as error:
+        if error.errno in (errno.ELOOP, errno.EMLINK):
+            raise CodedError("out-unsafe", f"{out / 'run.lock'} is a symlink; remove it or use a new directory") from None
+        raise
+    return os.fdopen(descriptor, "w")
+
+
+def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
+        edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
+        approve_cases: str | None = None, approve_budget: int | None = None,
+        factory: Factory | None = None, configuration: Configuration | None = None) -> dict[str, object]:
+    """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data."""
+    if adapter not in ("claude", "codex"):
+        raise ValueError("harness must be claude or codex")
+    if edit is not None and edit not in get_args(Edit):
+        raise ValueError("edit must be prose or prose+cli")
+    if repeats is not None and repeats < 1:
+        raise ValueError("repeats must be at least 1")
+    if _inside(out, target):
+        raise ValueError("--out must be outside the target skill directory")
+    out.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _require_private(out)
+    path = out / "run.json"
+    if path.exists():
+        record = open_record(path)
+        for field, value in ("edit", edit), ("repeats", repeats):
+            if value is not None and value != record.get(field):
+                raise _config_differs(f"--{field}")
+        _refuse_terminated(path)
+        if record.get("phase") == "complete":
+            return summary(record)
+    else:
+        _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed, approve_cases,
+                 approve_budget, resolve_harness=factory is None and configuration is None)
     if not live:
-        raise ValueError("live model calls require --live")
-    _require_helper(out, stage, mode)
-    resume = _resume_fields(read(out / "run.json"))
-    if (stage == "search" and mode in ("prompt", "prompt-cli") or stage == "self-test") and not any(
-            name.endswith(".md") for name in resume.seed.editable):
-        raise CodedError("prompt-components-missing", "prompt search needs editable Markdown")
-    with (out / "run.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        if read(out / "run.json").get("holdout_consumed"):
-            raise ValueError("holdout ran; the run cannot resume")
-        configuration = Configuration.load(harness_config, model) if factory is Codex or harness_config is not None else None
-        session = _Session(out, model, maximum, seconds,
-                           configuration.create if configuration is not None else factory, configuration)
+        raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
+    with _open_lock(out) as lock:
         try:
-            recorded = session.record.get("preflight")
-            preflight = (session.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
-                         if isinstance(session.provider, Harness) else session.provider.preflight())
-            environment_hash = preflight.get("environment_hash")
-            _ = session.record.setdefault("environment_hash", environment_hash)
-            if session.record["environment_hash"] != environment_hash:
-                raise EnvironmentDiffers("runtime environment differs from the frozen record")
-            session.record["preflight"] = preflight
-            if configuration is None or any(role.adapter == "codex" for role in configuration.roles.values()):
-                session.record["codex_version"] = VERSION
-            session.checkpoint()
-            if stage in {"baseline", "self-test"}:
-                session.baseline()
-            if stage == "search":
-                session.search(mode, brief_text)
-            if stage == "self-test":
-                session.search("prompt")
-                session.search("prompt-cli")
-            if stage in {"evaluate", "self-test"}:
-                session.holdout()
-            return summary(session.record)
-        except EnvironmentDiffers:
-            raise
-        except (OSError, ValueError, RuntimeError):
-            session.record["phase"] = "infrastructure-failure"
-            session.checkpoint()
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Stop("run-in-progress", "another run holds this run directory",
+                       {"next": "wait for the other run to finish, then call run again"}) from None
+        _refuse_terminated(path)
+        session = _Session(out, model, adapter, factory, configuration)
+        pending: BaseException | None = None
+        try:
+            try:
+                session.preflight()
+                if session.phase == "prepared":
+                    session.check_seed()
+                    session.search()
+                if session.phase == "searched":
+                    session.gate()
+                if session.phase == "gated":
+                    session.finish()
+            except EnvironmentDiffers:
+                raise
+            except (OSError, ValueError, RuntimeError, OverflowError) as error:
+                fault = session.authoritative(error)
+                session.record_failure(fault)
+                if fault is error:
+                    raise
+                raise fault from error
+        except BaseException as error:
+            pending = error
             raise
         finally:
-            session.provider.close()
+            _close(session, pending)
+        return summary(session.record)
 
 
 def summary(record: dict[str, object]) -> dict[str, object]:
-    return {key: record.get(key) for key in
-            ("schema_version", "phase", "calls", "model", "codex_version", "harness", "judge",
-             "improvement", "token_comparison", "locked_arms", "contract_hash", "contract_source")}
+    keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
+            "gate", "search", "estimate", "contract_hash", "contract_source")
+    result = {key: record.get(key) for key in keys}
+    if "close_warning" in record:
+        result["close_warning"] = {"code": mapping(record["close_warning"]).get("code"),
+                                   "hint": "log in again before the next run"}
+    return result
 
 
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:
-    allowed = {"arm", "split", "score", "status", "loaded", "helper_executed", "candidate_hash", "case_hash",
-               "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
+    allowed = {"arm", "split", "case_id", "repeat", "score", "status", "loaded", "helper_executed", "candidate_hash",
+               "case_hash", "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
                "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate", "scores"}
     result = {key: value for key, value in item.items() if key in allowed}
     for key in ("usage", "task_usage", "judge_usage"):
@@ -435,38 +784,32 @@ def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     return result
 
 
-def export(out: Path, destination: Path, arm: str) -> dict[str, object]:
-    record = read(out / "run.json")
+def export(out: Path, destination: Path) -> dict[str, object]:
+    """Write the winner as a private patch and a redacted report. Never apply it."""
+    record = open_record(out / "run.json")
     if record.get("phase") != "complete":
-        raise ValueError("export requires a completed locked evaluation")
+        raise ValueError("export requires a completed run")
     if record.get("engine_hash") != _engine_hash():
         raise ValueError("evaluator differs from the frozen record; create a new run")
     if "judge" in record:
         judge_model = _text_field(record, "judge_model" if "judge_model" in record else "model")
         if record["judge"] != judge_identity(judge_model):
             raise ValueError("judge differs from the frozen record; create a new run")
-    arms = mapping(_field(record, "arms"))
-    if arm not in get_args(Mode) or arm not in arms:
-        raise ValueError("export arm must be an evaluated prompt, prompt-cli, cli, or wedge arm")
-    outcomes = _outcomes(record)
-    seed, candidate = candidate_files(_field(record, "seed")), candidate_files(arms[arm])
-    names = (*seed, *(name for name in candidate if name not in seed))
+    if not os.path.lexists(destination) and _inside(destination, Path(_text_field(record, "target_root"))):
+        raise CodedError("export-into-target", "the export destination must be outside the target skill directory")
+    seed, candidate = candidate_files(_field(record, "seed")), candidate_files(_field(record, "winner"))
     lines: list[str] = []
-    for name in names:
-        if name in seed and seed[name] == candidate[name]:
-            continue
-        if name not in seed and not candidate[name]:
-            lines.extend((f"diff --git a/{name} b/{name}\n", "new file mode 100644\n"))
-            continue
-        lines.extend(difflib.unified_diff(seed.get(name, "").splitlines(keepends=True),
-                                          candidate[name].splitlines(keepends=True),
-                                          fromfile="a/" + name if name in seed else "/dev/null", tofile="b/" + name))
+    for name in seed:
+        if seed[name] != candidate[name]:
+            lines.extend(difflib.unified_diff(seed[name].splitlines(keepends=True),
+                                              candidate[name].splitlines(keepends=True),
+                                              fromfile="a/" + name, tofile="b/" + name))
     patch = "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
     destination.mkdir(mode=0o700)
     descriptor = os.open(destination / "candidate.patch", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         _ = stream.write(patch)
-    report = summary(record) | {"sharing": "private-local-only", "arm": arm,
-                                "outcomes": [_export_outcome(item) for item in outcomes], "cost_usd": None}
+    report = summary(record) | {"sharing": "private-local-only",
+                                "outcomes": [_export_outcome(item) for item in _outcomes(record)], "cost_usd": None}
     write(destination / "report.json", report)
     return {"export": str(destination), "sharing": "private-local-only", "installed": False}

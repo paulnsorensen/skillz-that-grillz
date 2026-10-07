@@ -149,7 +149,7 @@ The runner suppresses GEPA's raw proposal output because proposed text can conta
 Exact JSON grading distinguishes booleans from numbers.
 These corrections have regression coverage in the canonical build.[^runtime]
 
-[^selftest]: Authenticated local run `skillz-live-20260928-retry`, 2026-09-28; aggregate evidence computed from private run records. Seed hash `40d663101dc626aa1b55cf6d97ffb32e1603830814f924d858d91bd614b217da`. Frozen public cases: `lib/src/skillz_experiments/fixtures/self-test.json:1-106`. Implementation and verification are published in [PR #107](https://github.com/paulnsorensen/skillz-that-grillz/pull/107).
+[^selftest]: Authenticated local run `skillz-live-20260928-retry`, 2026-09-28; aggregate evidence computed from private run records. Seed hash `40d663101dc626aa1b55cf6d97ffb32e1603830814f924d858d91bd614b217da`. Frozen public cases: `lib/src/skillz_experiments/fixtures/self-test.json:1-106` (removed from the tree; read it in git history). Implementation and verification are published in [PR #107](https://github.com/paulnsorensen/skillz-that-grillz/pull/107).
 
 [^runtime]: GEPA 0.1.4 installed public signatures, inspected 2026-09-28; `lib/src/skillz_experiments/_search.py` and `_codex.py`. Model-free `Codex.preflight()` returns `isolation: passed` with zero live calls on Codex 0.154.0, 2026-09-28.
 

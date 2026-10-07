@@ -427,15 +427,12 @@ def _target_with_contract(tmp_path: Path, status: str) -> tuple[Path, dict[str, 
     return target, document
 
 
-def _cases_file(tmp_path: Path) -> Path:
-    cases = [{"id": split, "family": split, "split": split, "kind": "rewrite", "request": "Rewrite the note.",
-              "files": {"note.txt": "hello\n"}, "expected": {"text": "hello"},
-              "provenance": "test", "provider_approved": True}
-             for split in ("train", "validation", "holdout", "holdout")]
-    cases[3] = cases[3] | {"id": "holdout-2", "family": "holdout-2"}
-    path = tmp_path / "cases.json"
-    _ = path.write_text(json.dumps({"schema_version": 1, "cases": cases}), encoding="utf-8")
-    return path
+def _draft(out: Path) -> None:
+    cases = [{"id": f"c{family}-{index}", "family": f"f{family}", "kind": "task", "request": "Rewrite the note.",
+              "files": {"note.txt": "hello\n"}, "expected": {"text": "hello"}, "source": "skill"}
+             for family in range(5) for index in range(2)]
+    out.mkdir(mode=0o700, parents=True)
+    _ = (out / "cases.draft.json").write_text(json.dumps(cases), encoding="utf-8")
 
 
 def test_drafted_contract_is_rejected_with_contract_unapproved_before_any_model_call(
@@ -449,33 +446,22 @@ def test_drafted_contract_is_rejected_with_contract_unapproved_before_any_model_
 
     monkeypatch.setattr(Codex, "invoke", invoke)
     target, _ = _target_with_contract(tmp_path, "draft")
-    code = main(["self-test", "--model", "controlled", "--live", "--target", str(target),
-                 "--manifest", str(_cases_file(tmp_path)), "--out", str(tmp_path / "live")])
+    _draft(tmp_path / "live")
+    code = main(["run", "--target", str(target), "--out", str(tmp_path / "live"), "--model", "controlled", "--live"])
     error = cast(dict[str, object], json.loads(capsys.readouterr().err))
     assert code == 1 and error["code"] == "contract-unapproved" and calls == []
-    assert not (tmp_path / "live").exists()
+    assert not (tmp_path / "live/run.json").exists()
     with pytest.raises(Exception, match="draft") as raised:
         _ = parse(_target_with_contract(tmp_path / "again", "draft")[1], "skill")
     assert getattr(raised.value, "code") == "contract-unapproved"
 
 
-def test_the_same_contract_runs_once_the_user_approves_it(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    target, _ = _target_with_contract(tmp_path, "approved")
-    code = main(["dataset", str(_cases_file(tmp_path)), "--target", str(target), "--out", str(tmp_path / "run")])
-    assert code == 0 and (tmp_path / "run/run.json").is_file()
-    assert capsys.readouterr().err == ""
-
-
-# live profile: the existing dataset and baseline commands, never part of the gate
-
-
-def test_published_manifest_prepares_a_run_against_the_skill_and_baseline_needs_live(
+def test_the_same_contract_reaches_the_case_approval_once_the_user_approves_it(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    run = tmp_path / "run"
-    assert main(["dataset", str(PUBLISHED), "--target", str(SKILL_DIR), "--out", str(run)]) == 0
-    assert json.loads(capsys.readouterr().out)
-    assert main(["baseline", str(run), "--model", "controlled"]) == 1
-    assert "live" in capsys.readouterr().err.lower()
+    target, _ = _target_with_contract(tmp_path, "approved")
+    _draft(tmp_path / "run")
+    code = main(["run", "--target", str(target), "--out", str(tmp_path / "run"), "--model", "controlled", "--live"])
+    assert code == 1 and json.loads(capsys.readouterr().err)["code"] == "cases-unapproved"
 
 
 # Mode steps that the fixtures depend on

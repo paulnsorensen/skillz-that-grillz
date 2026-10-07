@@ -13,10 +13,12 @@ import pytest
 
 from skillz_experiments import _claude
 from skillz_experiments._candidate import Candidate
+from skillz_experiments._cases import CodedError
 from skillz_experiments._claude import ClaudeCode
 from skillz_experiments._harness import Configuration, Harness
 from skillz_experiments._runtime import Budget
 
+pytestmark = pytest.mark.usefixtures("host_login")
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 SKILL = "---\nname: skillz\ndescription: x\n---\n"
 SCRIPTED = '''#!/usr/bin/env python3
@@ -146,9 +148,8 @@ def test_floor_settings_are_unaffected_by_a_hostile_home_directory(
 def test_the_claude_child_environment_holds_only_the_allowed_names(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("HOST_SECRET", "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "ANTHROPIC_BASE_URL",
-                 "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME"):
+                 "XDG_CONFIG_HOME", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
         monkeypatch.setenv(name, "leak")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
@@ -157,7 +158,7 @@ def test_the_claude_child_environment_holds_only_the_allowed_names(
         session.close()
     environment = cast(dict[str, str], calls(executable)[0]["environment"])
     assert set(environment) - {"LC_CTYPE"} <= {"PATH", "HOME", "TMPDIR", "LANG", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
-                                               "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS", "ANTHROPIC_API_KEY"}
+                                               "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS", "CLAUDE_CONFIG_DIR"}
     assert environment["HOME"] != str(Path.home())
 
 
@@ -193,7 +194,7 @@ def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and
     executable = fake_claude(tmp_path, mode)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="no unsafe fallback"):
+        with pytest.raises((RuntimeError, CodedError), match="no unsafe fallback"):
             _ = session.preflight()
     finally:
         session.close()
@@ -249,7 +250,7 @@ def test_a_malformed_init_skills_field_fails_closed_for_judge_and_reflection_cal
         init["skills"] = skills
     session = harness(tmp_path, scripted(tmp_path, [init, DONE]))
     try:
-        with pytest.raises(RuntimeError, match="not a list of names"):
+        with pytest.raises(CodedError, match="not a list of names"):
             _ = session.transports["judge"].invoke("hello")
     finally:
         session.close()
@@ -303,7 +304,7 @@ def test_preflight_without_the_os_sandbox_tool_fails_closed_before_any_live_call
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="no unsafe fallback"):
+        with pytest.raises(CodedError, match="no unsafe fallback"):
             _ = session.preflight()
     finally:
         session.close()
@@ -358,21 +359,24 @@ def test_invoke_fails_closed_on_a_hostile_event_stream_and_counts_the_call(
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
-        with pytest.raises(RuntimeError, match=reason):
+        with pytest.raises(CodedError if "isolation" in reason else RuntimeError, match=reason) as caught:
             _ = session.transports["task"].invoke("hello", candidate())
     finally:
         session.close()
     assert budget.calls == 1
+    if "isolation" in reason:
+        assert cast(CodedError, caught.value).code == "isolation-failed"
 
 
 def test_invoke_with_a_later_foreign_init_event_is_stopped_too(tmp_path: Path) -> None:
     lines = [INIT_OK, {"type": "system", "subtype": "init", "skills": ["skillz", "intruder"]}, DONE]
     session = harness(tmp_path, scripted(tmp_path, lines))
     try:
-        with pytest.raises(RuntimeError, match="isolation"):
+        with pytest.raises(CodedError, match="isolation") as caught:
             _ = session.transports["task"].invoke("hello", candidate())
     finally:
         session.close()
+    assert caught.value.code == "isolation-failed"
 
 
 @pytest.mark.parametrize("usage", [{"input_tokens": -5, "output_tokens": True}, {"input_tokens": "9"},
@@ -424,7 +428,7 @@ def test_invoke_without_a_candidate_stops_when_a_foreign_skill_loads(tmp_path: P
     executable = fake_claude(tmp_path, "foreign-skill")
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="isolation"):
+        with pytest.raises(CodedError, match="isolation"):
             _ = session.transports["judge"].invoke("grade this")
     finally:
         session.close()
@@ -472,8 +476,8 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     elif change == "settings":
         original = _claude.settings
 
-        def weaker(workspace: Path) -> dict[str, object]:
-            document = original(workspace)
+        def weaker(workspace: Path, out: Path | None = None) -> dict[str, object]:
+            document = original(workspace, out)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
         monkeypatch.setattr(_claude, "settings", weaker)
@@ -611,19 +615,20 @@ def test_a_candidate_that_does_not_load_still_reports_the_usage_of_the_charged_c
     assert cast(dict[str, object], result["usage"])["output_tokens"] == 1
 
 
-def test_environment_key_names_the_present_credential_variables_but_never_their_values(
+def test_environment_key_ignores_token_variables_and_the_per_process_config_dir(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in _claude.AUTHENTICATION:
-        monkeypatch.delenv(name, raising=False)
     executable = fake_claude(tmp_path)
+    adapters: list[ClaudeCode] = []
 
     def key() -> str:
-        return ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable).environment_key()
-    none = key()
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-one")
-    api = key()
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret-two")
-    assert key() == api != none
-    monkeypatch.delenv("ANTHROPIC_API_KEY")
-    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "secret-one")
-    assert key() not in (none, api)
+        adapters.append(ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable))
+        return adapters[-1].environment_key()
+    try:
+        none = key()
+        for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+            monkeypatch.setenv(name, "secret")
+            assert key() == none
+        assert len({adapter.config_dir for adapter in adapters}) == len(adapters)
+    finally:
+        for adapter in adapters:
+            adapter.close()

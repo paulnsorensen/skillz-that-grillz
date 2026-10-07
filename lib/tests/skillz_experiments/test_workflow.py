@@ -2,44 +2,12 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
-from typing import cast
 
 import pytest
 
 from skillz_experiments._candidate import Candidate, snapshot_outputs
-from skillz_experiments._cases import load_cases, mapping
-from skillz_experiments._records import prepare, read
-
-SKILLZ_CONTRACT = Path(__file__).resolve().parents[3] / "skills/skillz/evals/autoimprove.json"
-
-
-def test_cli_dataset_is_local_and_complete(tmp_path: Path) -> None:
-    target = tmp_path / "skill"
-    target.mkdir()
-    _ = (target / "SKILL.md").write_text("---\nname: skillz\ndescription: test\n---\nInspect.\n")
-    (target / "evals").mkdir()
-    _ = (target / "evals/autoimprove.json").write_text(SKILLZ_CONTRACT.read_text())
-    manifest = tmp_path / "cases.json"
-    _ = manifest.write_text(json.dumps({"schema_version": 1, "cases": [
-        {"id": split, "family": split, "split": split, "request": "Inspect SKILL.md",
-         "files": {"SKILL.md": "---\nname: fixture\n---\nBody\n"}, "expected": {"name": "fixture"},
-         "provenance": "public", "provider_approved": True}
-        for split in ["train", "validation", "holdout"]]}))
-    out = tmp_path / "run"
-    command = [sys.executable, "-m", "skillz_experiments", "dataset", str(manifest),
-               "--target", str(target), "--out", str(out)]
-    result = subprocess.run(command, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    record = mapping(cast(object, json.loads((out / "run.json").read_text())))
-    assert record["phase"] == "prepared"
-    assert record["calls"] == 0
-    assert record["contract_source"] == "skill" and mapping(record["contract"])["skill"] == "skillz"
-    assert "evals/autoimprove.json" not in mapping(record["seed"])
-    assert (out / "run.json").stat().st_mode & 0o077 == 0
-    assert "feedback" not in mapping(cast(object, json.loads(result.stdout)))
-
+from skillz_experiments._cases import load_cases
 
 def test_host_alias_directory_passes_but_package_symlinks_fail(tmp_path: Path) -> None:
     physical = tmp_path / "physical"
@@ -88,17 +56,12 @@ def test_capture_skips_ignored_hidden_files_symlinks_and_nested_git(tmp_path: Pa
     assert Candidate.capture(skill, ["SKILL.md"]).files == {"SKILL.md": "seed"}
 
 
-def test_capture_excludes_the_evals_directory_and_the_manifest_under_the_target(tmp_path: Path) -> None:
+def test_capture_excludes_the_evals_directory_under_the_target(tmp_path: Path) -> None:
     target = tmp_path / "skill"
     (target / "evals").mkdir(parents=True)
-    (target / "cases").mkdir()
     _ = (target / "SKILL.md").write_text("seed")
     _ = (target / "evals/evals.json").write_text('{"answer": 1}')
-    manifest = target / "cases/manifest.json"
-    _ = manifest.write_text(json.dumps({"schema_version": 1, "cases": []}))
-    out = tmp_path / "run"
-    _ = prepare(manifest, target, out)
-    assert read(out / "run.json")["seed"] == {"SKILL.md": "seed"}
+    assert Candidate.capture(target, []).files == {"SKILL.md": "seed"}
 
 
 def test_snapshot_outputs_works_when_the_workspace_sits_below_a_symlinked_parent(tmp_path: Path) -> None:

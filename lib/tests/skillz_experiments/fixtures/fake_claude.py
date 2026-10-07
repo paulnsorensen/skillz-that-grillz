@@ -2,7 +2,7 @@
 """Deterministic stand-in for the `claude` executable. It is not evidence of isolation.
 
 The mode comes from a sidecar file named `<script>.mode`. Each call appends its argv, working
-directory, settings, and standard input to `<script>.log`.
+directory, settings, standard input, environment, and the entries of its `CLAUDE_CONFIG_DIR` to `<script>.log`.
 """
 from __future__ import annotations
 
@@ -132,6 +132,14 @@ def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: 
     return 0
 
 
+def config_entries() -> dict[str, str]:
+    """List the config directory: each symlink maps to its target, and each other entry to `file`."""
+    directory = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/nonexistent"))
+    if not directory.is_dir():
+        return {}
+    return {path.name: os.readlink(path) if path.is_symlink() else "file" for path in directory.iterdir()}
+
+
 def main() -> int:
     script = Path(__file__).resolve()
     mode_file = script.with_name(script.name + ".mode")
@@ -141,7 +149,7 @@ def main() -> int:
     settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
     with script.with_name(script.name + ".log").open("a") as log:
         _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,
-                                  "environment": dict(os.environ)}) + "\n")
+                                  "environment": dict(os.environ), "config_entries": config_entries()}) + "\n")
     if mode == "no-init-auth":
         print("Invalid API key - Please run /login", file=sys.stderr)
         return 1
@@ -159,7 +167,15 @@ def main() -> int:
     if mode == "missing-skill":
         skills = []
     if mode != "no-init":
-        emit({"type": "system", "subtype": "init", "skills": skills, "tools": ["Bash", "Read", "Skill"]})
+        init: dict[str, object] = {"type": "system", "subtype": "init", "skills": skills, "tools": ["Bash", "Read", "Skill"],
+                                   "plugins": [], "mcp_servers": [], "agents": ["general-purpose", "Explore"]}
+        if mode == "foreign-plugin":
+            init["plugins"] = [{"name": "user-plugin", "path": "/x"}]
+        if mode == "foreign-mcp":
+            init["mcp_servers"] = [{"name": "user-server", "status": "connected"}]
+        if mode == "foreign-agent":
+            init["agents"] = ["general-purpose", "user-agent"]
+        emit(init)
     if mode == "auth-fail":
         emit({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key - Please run /login",
               "usage": {}})

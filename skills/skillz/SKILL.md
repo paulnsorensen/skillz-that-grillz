@@ -40,15 +40,16 @@ Ask for a target when the mode requires one.
 | `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | yes, unless it reuses a current audit | the analytics cache; the target after approval | approved fixes + residual findings |
 | `audit <path>` | none | a `SKILL.md` or agent file | yes | the analytics cache only; never the target | calibrated report |
 | `wedge <path>` | none | a `SKILL.md` | no | the target skill: each selected CLI, its delivery files, its call site, and any dependency write | an offload brief, then one CLI per selected candidate, each in its own directory when wedged, or with a stated reason |
-| `autoimprove <path>` | `experiment` | a skill with an autoimprove contract, or the public self-test | approved normalized cases only | isolated run directory | paired measurements and a private candidate patch |
+| `autoimprove <path>` | `experiment` | a skill directory; no contract or manifest | cases that the user approves; agent-drafted session cases when analytics exists | isolated run directory | a holdout gate verdict and a private candidate patch |
 
 `audit` never modifies the target. The Usage ceremony of `audit` and `improve` runs `ingest.py`, which creates or refreshes the analytics cache.
 `references/analytics-ceremony.md` has the details. Skip Usage and the raw-log fallback write no cache.
 
 For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
-When the user selects a harness command or the `claude` adapter, also read `references/experiment-harness.md`.
-Ask which harness command and model the user wants before setup.
-When the target has no contract, follow `No contract` in `references/experiments.md`.
+The agent drafts the cases. The user needs no contract and no case manifest.
+Run `scripts/skillz-experiment.pyz run`, answer each coded stop, and then run `export`.
+Ask at most three questions: harness and model, case approval, and budget approval.
+When the user selects the `claude` adapter or a custom command check, also read `references/experiment-harness.md`.
 Use the installed `scripts/skillz-experiment.pyz`. Do not require a source checkout.
 
 ## Shared protocol
@@ -266,5 +267,5 @@ Read on demand:
 - `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs. For the analytics ceremony, pass each pack path and the target kind to its pack context. Read a pack only when the host has no sub-agents.
 - `engine/scripts/` and `engine/references/` — internal analytics ingestion, query, schema, conventions, and coverage; not a separate skill.
 - `references/calibration.md` — when you tag a finding's severity and confidence; the confidence × severity kernel.
-- `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the contract, graders, wedge mode, case schema, isolation, the frozen inspection contract, and the audit facts contract.
-- `references/experiment-harness.md` — the user selects a command or `claude` adapter, or separate roles.
+- `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the run flow, case draft, gate verdict, export, optional contract, graders, isolation, and the helper contracts.
+- `references/experiment-harness.md` — the user selects the `claude` adapter, or checks a custom command or role files.
