@@ -82,13 +82,24 @@ The directory holds only a symlink named `.credentials.json` to your real login 
 The real file comes from `$CLAUDE_CONFIG_DIR/.credentials.json`, or else `~/.claude/.credentials.json`.
 A settings rule denies the Read tool on that temporary directory.
 Without a login file, the run stops with the code `login-missing`. Run `claude` once and log in.
-The runner deletes the temporary directory when the role closes, even after an error.
-If the link no longer points to the same file, the run stops with the code `credential-changed`.
-This can happen, for example, if Claude Code replaces or moves the file. Log in again, then start a new run.
+All Claude roles of one run share this temporary directory and its link.
+The runner deletes the directory once, after every role closes, even after an error.
+Claude Code can refresh the login and write a refreshed login file in place of the link.
+A refreshed login file has an OAuth entry with a nonempty access token and refresh token, and the same top-level keys as the real file.
+When the real file is unchanged at close, the runner copies the refreshed login file back with mode 0600.
+The close then records the warning `credential-refreshed`, and the run stays resumable.
+If another process replaced the real file with a login file during the run, the link still resolves to it.
+The close records the warning `credential-rotated`, and the run stays resumable.
+In every other case, the run stops with the code `credential-changed`. Log in again, then start a new run.
+The runner never copies a refreshed login file over a real file that also changed.
+A run that completes records the warning code as `close_warning` in the summary.
+A run that fails records the code as `close_failure` in `run.json` and in a note on the error.
 On macOS, the login lives in the Keychain, so there is no file to link.
 The runner sets `CLAUDE_CONFIG_DIR` to your real config directory.
-That directory can expose your own skills, plugins, agents, or MCP servers.
-The live preflight stops with the code `preflight-leak` when the init event lists any of them.
+`--restricted` makes Claude Code ignore the user settings files in that directory.
+The directory can still expose your own memory, skills, plugins, agents, or MCP servers.
+Before any model call, the preflight stops with the code `preflight-leak` when `CLAUDE.md` or a `rules` directory with `.md` files exists there.
+The live preflight also stops with `preflight-leak` when the init event lists a user skill, plugin, agent, or MCP server.
 Only the candidate skill and the built-in agents are allowed.
 
 Before the first live task, a live isolation preflight runs. It runs once per run, not once per `run` command.
@@ -248,5 +259,7 @@ Codex and command preflights make no inference invocation.
 Each `claude` role makes one live preflight call per run.
 Every attempted inference, including a failed response, consumes the shared invocation budget.
 All roles share the same deadline and holdout reservation.
+The reservation holds the gate calls and the gate's estimated time: the gate calls times 60 seconds, divided by 2 parallel calls.
+Search and reflection calls stop when only the reserved time is left. The gate then gets the reserved time.
 The runner terminates the process group at the deadline and does not retry.
 No adapter installs a winning candidate.

@@ -10,6 +10,7 @@ from typing import Literal
 import fromargs
 
 from skillz_experiments._cases import CodedError
+from skillz_experiments._claude import NOTICE_CODES
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._gate import simulate as simulate_gate
 from skillz_experiments._harness import Configuration
@@ -82,10 +83,17 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
     with _coded():
         configuration = Configuration.load(harness_config, model)
         adapter = configuration.create(model, Budget(max_invocations, max_seconds, reserve=0), lambda: None)
+        warning: str | None = None
         try:
-            return adapter.preflight()
+            result = adapter.preflight()
         finally:
-            adapter.close()
+            try:
+                adapter.close()
+            except CodedError as error:
+                if error.code not in NOTICE_CODES:
+                    raise
+                warning = str(error)
+        return result if warning is None else result | {"close_warning": warning}
 
 
 def main(argv: list[str] | None = None) -> int:

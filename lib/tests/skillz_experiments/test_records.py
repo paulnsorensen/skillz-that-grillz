@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
+from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write, write_bytes
 
 
 @pytest.mark.usefixtures("umask_022")
@@ -39,3 +40,24 @@ def test_open_record_rejects_other_schema_versions_with_a_code(tmp_path: Path) -
     assert caught.value.code == "run-schema-old"
     write(record, {"schema_version": SCHEMA_VERSION, "phase": "prepared"})
     assert open_record(record)["phase"] == "prepared"
+
+
+def test_write_bytes_leaves_the_target_and_no_temporary_when_the_guard_refuses(tmp_path: Path) -> None:
+    target = tmp_path / "login.json"
+    assert write_bytes(target, b"one") and target.read_bytes() == b"one" and target.stat().st_mode & 0o777 == 0o600
+    assert not write_bytes(target, b"two", guard=lambda: False)
+    assert target.read_bytes() == b"one" and [path.name for path in tmp_path.iterdir()] == ["login.json"]
+
+
+def test_write_bytes_returns_true_when_the_directory_fsync_fails_after_the_replace(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "login.json"
+    real_open = os.open
+
+    def no_directory(path: str | Path, flags: int, *args: int) -> int:
+        if flags & os.O_DIRECTORY:
+            raise OSError("directory fsync unsupported")
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(os, "open", no_directory)
+    assert write_bytes(target, b"one") and target.read_bytes() == b"one"

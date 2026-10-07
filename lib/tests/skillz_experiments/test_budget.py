@@ -29,6 +29,7 @@ from skillz_experiments._runtime import (
     Estimate,
     approve,
     estimate,
+    gate_seconds,
     process,
 )
 
@@ -174,3 +175,34 @@ def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
     assert time.monotonic() - late < 3.2
     for holder in holders:
         holder.join()
+
+
+def test_the_time_reserve_holds_the_end_of_the_deadline_for_the_gate() -> None:
+    budget = Budget(10, 100, 0, reserve_seconds=90)
+    assert 9 < budget.remaining() <= 10
+    budget.claim()
+    budget.started -= 10.5
+    with pytest.raises(BudgetExhausted, match="holdout gate holds"):
+        budget.claim()
+    with pytest.raises(BudgetExhausted, match="holdout gate holds"):
+        budget.claim(holdout=True)
+    budget.reserve_time(0)
+    assert 89 < budget.remaining() <= 90.5
+    budget.claim(holdout=True)
+    assert budget.calls == 2
+    budget.started -= 100
+    with pytest.raises(BudgetExhausted, match="global deadline"):
+        _ = budget.remaining()
+
+
+def test_approve_sizes_the_time_reserve_from_the_gate_calls() -> None:
+    assert gate_seconds(38) == math.ceil(38 * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
+    assert gate_seconds(0) == 0
+    sized = estimate(preflight_calls=3, holdout=12, repeats=3, search_calls=40)
+    budget = approve(sized, sized.calls, reserve=38, reserve_time=gate_seconds(38))
+    assert budget.reserve_seconds == gate_seconds(38)
+    assert approve(Estimate(2, 60), 2, reserve=2, reserve_time=600).reserve_seconds == 60
+    with pytest.raises(ValueError, match="time reservation"):
+        _ = Budget(10, 100, 0, reserve_seconds=-1)
+    with pytest.raises(ValueError, match="time reservation"):
+        budget.reserve_time(-1)

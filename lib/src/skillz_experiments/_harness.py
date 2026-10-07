@@ -10,7 +10,7 @@ from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
-from skillz_experiments._claude import ClaudeCode
+from skillz_experiments._claude import NOTICE_CODES, TERMINAL_CODES, ClaudeCode, ClaudeLogin
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._command import Command
 from skillz_experiments._evaluator import Transport, evaluate
@@ -61,9 +61,10 @@ class Role:
         return digest({"adapter": self.adapter, "model": self.model, "command": self.command,
                        "identity": self.identity, "files": files})
 
-    def create(self, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None) -> Transport:
+    def create(self, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None,
+               login: ClaudeLogin | None = None) -> Transport:
         if self.adapter == "claude":
-            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out)
+            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out, login)
         return (Codex(self.model, budget, checkpoint) if self.adapter == "codex"
                 else Command(self.command, self.model, budget, checkpoint))
 
@@ -134,6 +135,11 @@ class Configuration:
         return Harness(self, budget, checkpoint, out)
 
 
+def _severity(error: Exception) -> int:
+    code = error.code if isinstance(error, CodedError) else None
+    return 0 if code in TERMINAL_CODES else 2 if code in NOTICE_CODES else 1
+
+
 @final
 class Harness:
     def __init__(self, configuration: Configuration, budget: Budget, checkpoint: Callable[[], None],
@@ -141,9 +147,14 @@ class Harness:
         self.configuration = configuration
         self.identity = configuration.identity()
         self.transports: dict[str, Transport] = {}
+        self.login: ClaudeLogin | None = None
         try:
             for name, role in configuration.roles.items():
-                self.transports[name] = role.create(budget, checkpoint, out)
+                transport = (role.create(budget, checkpoint, out) if self.login is None
+                             else role.create(budget, checkpoint, out, self.login))
+                self.transports[name] = transport
+                if self.login is None and isinstance(transport, ClaudeCode):
+                    self.login, transport.owns_login = transport.login, False
         except (OSError, ValueError, RuntimeError):
             with contextlib.suppress(Exception):
                 self.close()
@@ -188,14 +199,18 @@ class Harness:
         return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live, "reuse_keys": reuse_keys}
 
     def close(self) -> None:
+        """Close every transport, then the shared Claude login once. Raise the most severe error.
+
+        A terminal code ranks first, then any other error, then a notice code.
+        """
         errors: list[Exception] = []
-        for adapter in self.transports.values():
+        for closer in [adapter.close for adapter in self.transports.values()] + ([self.login.close] if self.login else []):
             try:
-                adapter.close()
+                closer()
             except Exception as error:
                 errors.append(error)
         if errors:
-            raise errors[0]
+            raise min(errors, key=_severity)
 
     def check_candidate(self, candidate: Candidate) -> bool:
         """Run the local contract check of the task role. It makes no model call."""

@@ -263,6 +263,7 @@ def _budget_mutations() -> dict[str, Callable[[dict[str, object]], None]]:
             "maximum-bool": set_budget("maximum", True), "seconds-huge": set_budget("seconds", 10**9),
             "seconds-nan": set_budget("seconds", float("nan")), "reserve-zero": set_budget("reserve", 0),
             "approved-false": set_budget("approved", False), "approved-text": set_budget("approved", "yes"),
+            "reserve-seconds-zero": set_budget("reserve_seconds", 0), "reserve-seconds-bool": set_budget("reserve_seconds", False),
             "metric-calls-huge": set_estimate}
 
 
@@ -284,19 +285,46 @@ def test_tampered_budget_never_exceeds_the_approved_ceiling_on_resume(
     assert sum(1 for _name, _held, _files in spy.evaluated) + len(spy.prompts) <= prep.calls
 
 
-@pytest.mark.parametrize("started", ["expired", "future"])
+@pytest.mark.parametrize("started", ["expired", "expired-wall", "expired-sleep", "future-wall", "future-wall-6"])
 def test_resume_past_the_deadline_or_clock_reset_creates_no_provider(
         started: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
-    """PA-2: a record older than 7200 s, or from a later clock, stops before any provider."""
+    """PA-2: a record older than 7200 s by either clock, or from a later wall clock, stops before any provider.
+
+    `expired-wall` models a reboot: the monotonic clock restarts below the recorded value, and the wall clock
+    still shows the deadline as past.
+    """
     prep = prepare(tmp_path, make_target, write_draft, approvals)
-    offset = -7300.0 if started == "expired" else 10**7
-    tamper(prep.out, lambda record: record.update(started_monotonic=time.monotonic() + offset))
+    clocks: dict[str, dict[str, object]] = {
+        "expired": {"started_monotonic": time.monotonic() - 7300.0},
+        "expired-wall": {"started_monotonic": time.monotonic() + 10**7, "started": time.time() - 7300.0},
+        "expired-sleep": {"started": time.time() - 7300.0},
+        "future-wall": {"started": time.time() + 10**7},
+        "future-wall-6": {"started": time.time() + 6.0},
+    }
+    tamper(prep.out, lambda record: record.update(clocks[started]))
     spy = Spy(refuse=True)
     with pytest.raises((RuntimeError, ValueError)) as stopped:
         _ = run(prep.target, prep.out, MODEL, live=True, factory=spy.factory)
-    if started == "expired":
+    if started.startswith("expired"):
         assert cast(CodedError, stopped.value).code == "budget-exhausted"
+    else:
+        assert cast(CodedError, stopped.value).code == "clock-skew"
+        assert "wall clock" in str(stopped.value)
+
+
+@pytest.mark.parametrize("clock", ["within-tolerance", "reboot"])
+def test_resume_inside_the_budget_completes_when_the_clocks_agree_or_the_monotonic_clock_reset(
+        clock: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    """A wall clock up to 5 s early resumes. After a reboot the negative monotonic span falls back to the wall clock."""
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    clocks: dict[str, dict[str, object]] = {
+        "within-tolerance": {"started": time.time() + 4.0},
+        "reboot": {"started_monotonic": time.monotonic() + 10**7, "started": time.time() - 60.0},
+    }
+    tamper(prep.out, lambda record: record.update(clocks[clock]))
+    assert run(prep.target, prep.out, MODEL, live=True, factory=Spy().factory)["phase"] == "complete"
 
 
 @pytest.mark.parametrize("repeats", [1, 2, 10, 13, 16, 17, 40, 10**6, 10**18])
@@ -830,17 +858,19 @@ def test_a_predictable_attacker_symlink_cannot_capture_the_config_dir(tmp_path: 
 
 
 @linux_only
-def test_close_after_the_login_inode_is_replaced_raises_credential_changed_and_still_deletes_the_dir(
+def test_close_after_the_login_inode_is_replaced_warns_with_credential_rotated_and_still_deletes_the_dir(
         tmp_path: Path, host_login: Path) -> None:
-    """PA-12: an atomic rename over the login file is reported, and the temp dir still goes."""
+    """PA-12: an atomic rename over the login file is a resumable warning, and the temp dir still goes."""
     session = _claude(tmp_path)
     directory = session.config_dir
     replacement = host_login.with_name("rotated")
-    _ = replacement.write_text("{\"rotated\": true}")
+    login = json.dumps({"claudeAiOauth": {"accessToken": "rotated", "refreshToken": "r-rotated"}})
+    _ = replacement.write_text(login)
     _ = replacement.replace(host_login)
     with pytest.raises(CodedError) as caught:
         session.close()
-    assert caught.value.code == "credential-changed" and not directory.exists()
+    assert caught.value.code == "credential-rotated" and not directory.exists()
+    assert host_login.read_text() == login
     session.close()
 
 
