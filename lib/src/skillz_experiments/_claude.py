@@ -20,6 +20,7 @@ from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
 from skillz_experiments._isolation import listening, probe, watched
+from skillz_experiments._records import write_bytes
 from skillz_experiments._runtime import Budget, process
 
 TOOLS = "Bash,Read,Skill"
@@ -31,6 +32,8 @@ LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted
 CONFIG_PREFIX = "skillz-claude-config-"
 CREDENTIALS = ".credentials.json"
 CREDENTIAL_LIMIT = 1_000_000
+TERMINAL_CODES = frozenset({"isolation-failed", "credential-changed"})
+NOTICE_CODES = frozenset({"credential-rotated", "credential-refreshed"})
 SANDBOX_HELPERS = ("socat",)
 # Agents that Claude Code lists without any user file. The `--tools` list leaves no way to run them.
 BUILTIN_AGENTS = frozenset({"general-purpose", "Explore", "Plan", "statusline-setup", "output-style-setup",
@@ -88,6 +91,34 @@ def _host_config_dir() -> Path:
 CredentialState = Literal["held", "rotated", "refreshed", "lost"]
 
 
+def _load(path: Path) -> tuple[bytes, dict[str, object]] | None:
+    """Read a regular login file of at most `CREDENTIAL_LIMIT` bytes without following a symlink.
+
+    Return None unless the file holds a JSON object.
+    """
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            return None
+        data = stream.read(CREDENTIAL_LIMIT + 1)
+    if len(data) > CREDENTIAL_LIMIT:
+        return None
+    try:
+        return data, mapping(loads_untrusted(data.decode("utf-8")))
+    except ValueError:
+        return None
+
+
+def _signed_in(document: dict[str, object], keys: set[str] | None = None) -> bool:
+    """Check that `claudeAiOauth` holds nonempty `accessToken` and `refreshToken` strings, and that the top-level keys equal `keys`."""
+    oauth = document.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        return False
+    tokens = cast(dict[str, object], oauth)
+    if not all(isinstance(tokens.get(name), str) and tokens.get(name) for name in ("accessToken", "refreshToken")):
+        return False
+    return keys is None or set(document) == keys
+
+
 @dataclass(frozen=True)
 class _Credential:
     """The identity of the linked login file: its resolved path and its device and inode numbers."""
@@ -107,20 +138,22 @@ class _Credential:
             raise CodedError("login-missing", f"no Claude login at {source}; {LOGIN_HINT}")
         return cls(target, info.st_dev, info.st_ino)
 
+    def _matches(self, info: os.stat_result) -> bool:
+        return stat.S_ISREG(info.st_mode) and (info.st_dev, info.st_ino) == (self.device, self.inode)
+
     def unchanged(self) -> bool:
-        """Check that the real login path still holds this device and inode."""
+        """Check that the real login path still holds this regular file, by device and inode."""
         try:
-            info = self.path.lstat()
+            return self._matches(self.path.lstat())
         except OSError:
             return False
-        return (info.st_dev, info.st_ino) == (self.device, self.inode)
 
     def state(self, link: Path) -> CredentialState:
         """Classify the config-directory entry `link` when the run closes.
 
         `held`: a symlink to this file, unchanged. `rotated`: a symlink to the login path, where another
-        process put a new regular file. `refreshed`: Claude Code replaced the symlink with a regular file.
-        `lost`: any other state.
+        process put a new login file that has the login shape. `refreshed`: Claude Code replaced the symlink
+        with a regular file. `lost`: any other state, including a new real file that is not a login.
         """
         try:
             info = link.lstat()
@@ -129,18 +162,20 @@ class _Credential:
             if not stat.S_ISLNK(info.st_mode) or Path(os.readlink(link)) != self.path:
                 return "lost"
             current = self.path.lstat()
+            if self._matches(current):
+                return "held"
+            loaded = _load(self.path) if stat.S_ISREG(current.st_mode) else None
         except OSError:
             return "lost"
-        if not stat.S_ISREG(current.st_mode):
-            return "lost"
-        return "held" if (current.st_dev, current.st_ino) == (self.device, self.inode) else "rotated"
+        return "rotated" if loaded is not None and _signed_in(loaded[1]) else "lost"
 
     def restore(self, refreshed: Path) -> bool:
         """Copy a refreshed login over the real file with mode 0600. Return False when the copy cannot happen.
 
         The source must be a regular JSON-object file of at most `CREDENTIAL_LIMIT` bytes, opened without
-        following a symlink. The copy happens only while the real file is unchanged, so it never overwrites a
-        newer login. Any `OSError` also returns False.
+        following a symlink. It must hold the login shape and the top-level keys of the real file. The copy
+        happens only while the real file appears unchanged, so it never overwrites a newer login.
+        Any `OSError` also returns False.
         """
         try:
             return self._restore(refreshed)
@@ -148,41 +183,80 @@ class _Credential:
             return False
 
     def _restore(self, refreshed: Path) -> bool:
-        source = os.open(refreshed, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(source, "rb") as stream:
-            info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_size > CREDENTIAL_LIMIT:
-                return False
-            data = stream.read(CREDENTIAL_LIMIT + 1)
-        if len(data) > CREDENTIAL_LIMIT:
+        source = _load(refreshed)
+        if source is None or not self.unchanged():
             return False
+        original = _load(self.path)
+        if original is None or not _signed_in(source[1], set(original[1])):
+            return False
+        return write_bytes(self.path, source[0], guard=self.unchanged)
+
+
+@final
+class ClaudeLogin:
+    """The one config directory and login link that every Claude role of a run shares.
+
+    The owner closes it once. Close deletes the directory, then reports what happened to the login.
+    """
+
+    def __init__(self) -> None:
+        self.credential: _Credential | None = None
+        self._temporary: Path | None = None
+        if sys.platform == "darwin":
+            self.config_dir = _host_config_dir()
+            return
+        self.credential = _Credential.find()
+        self.config_dir = self._temporary = Path(tempfile.mkdtemp(prefix=CONFIG_PREFIX))
         try:
-            _ = mapping(loads_untrusted(data.decode("utf-8")))
-        except (UnicodeDecodeError, ValueError):
-            return False
-        if not self.unchanged():
-            return False
-        temporary = self.path.with_name(f".{self.path.name}.skillz-{secrets.token_hex(8)}")
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        try:
-            with os.fdopen(descriptor, "wb") as stream:
-                _ = stream.write(data)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
-        except BaseException:
-            temporary.unlink(missing_ok=True)
+            (self.config_dir / CREDENTIALS).symlink_to(self.credential.path)
+        except OSError:
+            shutil.rmtree(self.config_dir, ignore_errors=True)
             raise
-        return True
+
+    def close(self) -> None:
+        """Delete the temporary config directory, then report what happened to the login.
+
+        `rotated` and `refreshed` are warnings: the run stays resumable. Claude Code can replace the symlink with a
+        refreshed login; the runner copies that file back while the real file is unchanged, before the directory goes.
+        Any other change stops the run with `credential-changed`. A second call does nothing.
+        """
+        directory, self._temporary = self._temporary, None
+        if directory is None or self.credential is None:
+            return
+        restored = False
+        try:
+            state = self.credential.state(directory / CREDENTIALS)
+            if state == "refreshed":
+                restored = self.credential.restore(directory / CREDENTIALS)
+        finally:
+            shutil.rmtree(directory, ignore_errors=True)
+        path = self.credential.path
+        if state == "rotated":
+            raise CodedError("credential-rotated", f"another process replaced the Claude login file {path} during the run; "
+                             + "the run used the current file")
+        if restored:
+            raise CodedError("credential-refreshed", f"Claude Code refreshed the login during the run; the runner copied "
+                             + f"it back to {path}")
+        if state != "held":
+            raise CodedError("credential-changed", f"the Claude login file {path} changed during the run; "
+                             + "the Claude login link moved, or the runner could not restore a refreshed login. "
+                             + "Log in again with `claude`, then start a new run")
 
 
 def _user_memory(config_dir: Path) -> list[str]:
-    """Return the user memory entries in `config_dir` that Claude Code would load: `CLAUDE.md` and a nonempty `rules`."""
+    """Return the user memory entries in `config_dir` that Claude Code would load: `CLAUDE.md` and `rules` with `.md` files."""
     rules = config_dir / "rules"
     found = ["CLAUDE.md"] if os.path.lexists(config_dir / "CLAUDE.md") else []
-    if os.path.lexists(rules) and (not rules.is_dir() or any(rules.iterdir())):
-        found.append("rules")
+    try:
+        if os.path.lexists(rules) and (not rules.is_dir() or any(path.is_file() for path in rules.rglob("*.md"))):
+            found.append("rules")
+    except OSError as error:
+        raise _preflight_leak(f"the user memory directory {rules} cannot be scanned ({error.strerror or error})") from None
     return found
+
+
+def _preflight_leak(detail: str) -> CodedError:
+    return CodedError("preflight-leak", f"Claude Code isolation preflight fails: {detail}; no unsafe fallback")
 
 
 def settings(workspace: Path, out: Path | None = None) -> dict[str, object]:
@@ -482,7 +556,7 @@ def _answer(final: dict[str, object]) -> dict[str, object]:
 @final
 class ClaudeCode:
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
-                 out: Path | None = None) -> None:
+                 out: Path | None = None, login: ClaudeLogin | None = None) -> None:
         self.out = out
         found = shutil.which("claude") if executable is None else str(executable)
         if found is None:
@@ -491,46 +565,15 @@ class ClaudeCode:
         self.model = string(model, "explicit model")
         self.budget = budget
         self.checkpoint = checkpoint
-        self.credential: _Credential | None = None
-        self._temporary: Path | None = None
-        if sys.platform == "darwin":
-            self.config_dir = _host_config_dir()
-            return
-        self.credential = _Credential.find()
-        self.config_dir = self._temporary = Path(tempfile.mkdtemp(prefix=CONFIG_PREFIX))
-        try:
-            (self.config_dir / CREDENTIALS).symlink_to(self.credential.path)
-        except OSError:
-            shutil.rmtree(self.config_dir, ignore_errors=True)
-            raise
+        self.owns_login = login is None
+        self.login = ClaudeLogin() if login is None else login
+        self.credential = self.login.credential
+        self.config_dir = self.login.config_dir
 
     def close(self) -> None:
-        """Delete the temporary config directory, then report what happened to the login.
-
-        `rotated` and `refreshed` are warnings: the run stays resumable. Claude Code can replace the symlink with a
-        refreshed login; the runner copies that file back while the real file is unchanged, before the directory goes.
-        Any other change stops the run with `credential-changed`.
-        """
-        directory, self._temporary = self._temporary, None
-        if directory is None or self.credential is None:
-            return
-        restored = False
-        try:
-            state = self.credential.state(directory / CREDENTIALS)
-            if state == "refreshed":
-                restored = self.credential.restore(directory / CREDENTIALS)
-        finally:
-            shutil.rmtree(directory, ignore_errors=True)
-        path = self.credential.path
-        if state == "rotated":
-            raise CodedError("credential-rotated", f"another process replaced the Claude login file {path} during the run; "
-                             + "the run used the current file")
-        if restored:
-            raise CodedError("credential-refreshed", f"Claude Code refreshed the login during the run; the runner copied "
-                             + f"it back to {path}")
-        if state != "held":
-            raise CodedError("credential-changed", f"the Claude login file {path} changed during the run; "
-                             + "Claude Code replaced or moved it. Log in again with `claude`, then start a new run")
+        """Close the login when this role created it. The harness closes a login that it shares."""
+        if self.owns_login:
+            self.login.close()
 
     def _environment(self, workspace: Path) -> dict[str, str]:
         environment = {"PATH": f"{self.executable.parent}:/usr/bin:/bin", "HOME": str(workspace / "home"),
@@ -584,8 +627,8 @@ class ClaudeCode:
         """On macOS, stop before any call when user memory in the real config directory would load."""
         memory = _user_memory(self.config_dir) if sys.platform == "darwin" else []
         if memory:
-            raise CodedError("preflight-leak", f"Claude Code isolation preflight fails: user memory {memory} in the real "
-                             + f"config directory {self.config_dir} would load; move it out for the run; no unsafe fallback")
+            raise _preflight_leak(f"user memory {', '.join(memory)} in the real config directory {self.config_dir} "
+                                  + "would load; move it out for the run")
 
     def check_sandbox(self) -> None:
         """Run the free user-memory check and helper sandbox probe. They make no model call, so every stage can run them."""
@@ -634,8 +677,7 @@ class ClaudeCode:
         if sys.platform == "darwin":
             leak = _leak(events, [PROBE_SKILL])
             if leak is not None:
-                raise CodedError("preflight-leak", f"Claude Code isolation preflight fails: {leak}; the real config "
-                                 + "directory exposes user entries; no unsafe fallback")
+                raise _preflight_leak(f"{leak}; the real config directory exposes user entries")
         reason = _failure(returncode, stderr, events, [PROBE_SKILL])
         network = _network_failure(events, port, network_token)
         if reason is None:
@@ -651,6 +693,7 @@ class ClaudeCode:
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        self._check_memory()
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)

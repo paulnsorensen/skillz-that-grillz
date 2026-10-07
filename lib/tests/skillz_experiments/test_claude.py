@@ -9,7 +9,7 @@ import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import cast, final
 
 import pytest
 
@@ -18,6 +18,7 @@ from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError
 from skillz_experiments._claude import ClaudeCode, NetworkIsolationFailed, sandbox_argv, seatbelt_profile
 from skillz_experiments._contract import load_contract, parse
+from skillz_experiments._evaluator import Transport
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._harness import Configuration, Harness
 from skillz_experiments._runtime import Budget
@@ -802,17 +803,23 @@ def test_close_deletes_the_config_dir(tmp_path: Path) -> None:
     adapter.close()
 
 
-@pytest.mark.parametrize(("change", "code"), [("regular-file", "credential-changed"), ("repointed", "credential-changed"),
-                                            ("removed", "credential-changed"), ("target-replaced", "credential-rotated")])
+def _login(token: str = "a", **extra: str) -> str:
+    return json.dumps({"claudeAiOauth": {"accessToken": token, "refreshToken": f"r-{token}"}, **extra})
+
+
+@pytest.mark.parametrize(("change", "code"), [
+    ("regular-file", "credential-changed"), ("repointed", "credential-changed"), ("removed", "credential-changed"),
+    ("target-replaced", "credential-rotated"), ("target-replaced-by-a-logout", "credential-changed")])
 def test_close_reports_how_the_login_changed_and_deletes_the_config_dir(
         tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch, change: str, code: str) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
     original = host_login.read_text()
     adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
     directory = adapter.config_dir
     link = directory / ".credentials.json"
     other = tmp_path / "other.json"
-    _ = other.write_text("{\"other\": true}")
+    _ = other.write_text("{\"other\": true}" if change.endswith("logout") else _login("other"))
     if change == "regular-file":
         link.unlink()
         _ = link.write_text("not json")
@@ -826,51 +833,106 @@ def test_close_reports_how_the_login_changed_and_deletes_the_config_dir(
     with pytest.raises(CodedError) as caught:
         adapter.close()
     assert caught.value.code == code
+    if code == "credential-changed":
+        assert "Log in again" in str(caught.value)
     assert not directory.exists()
-    if change != "target-replaced":
+    if not change.startswith("target-replaced"):
         assert host_login.read_text() == original
 
 
 def test_close_copies_a_refreshed_login_back_while_the_real_file_is_unchanged(
         tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
     adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
     directory = adapter.config_dir
     link = directory / ".credentials.json"
     link.unlink()
-    _ = link.write_text("{\"token\": \"refreshed\"}")
+    _ = link.write_text(_login("refreshed"))
     with pytest.raises(CodedError) as caught:
         adapter.close()
     assert caught.value.code == "credential-refreshed"
     real = host_login.resolve()
-    assert real.read_text() == "{\"token\": \"refreshed\"}" and stat.S_IMODE(real.stat().st_mode) == 0o600
+    assert real.read_text() == _login("refreshed") and stat.S_IMODE(real.stat().st_mode) == 0o600
     assert not directory.exists() and not list(real.parent.glob(".*.skillz-*"))
+
+
+@pytest.mark.parametrize("refreshed", ["{\"token\": \"refreshed\"}", json.dumps({"claudeAiOauth": {"accessToken": "a"}}),
+                                       json.dumps({"claudeAiOauth": {"accessToken": "", "refreshToken": "r"}}),
+                                       _login("refreshed", extra="key"), "[]"])
+def test_close_refuses_a_refreshed_file_that_is_not_the_same_kind_of_login(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch, refreshed: str) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    link = adapter.config_dir / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(refreshed)
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == "credential-changed" and host_login.read_text() == _login()
 
 
 def test_close_never_overwrites_a_login_that_another_process_also_replaced(
         tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
     adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
     link = adapter.config_dir / ".credentials.json"
     link.unlink()
-    _ = link.write_text("{\"token\": \"ours\"}")
+    _ = link.write_text(_login("ours"))
     newer = tmp_path / "newer.json"
-    _ = newer.write_text("{\"token\": \"theirs\"}")
+    _ = newer.write_text(_login("theirs"))
     os.replace(newer, host_login.resolve())
     with pytest.raises(CodedError) as caught:
         adapter.close()
     assert caught.value.code == "credential-changed"
-    assert host_login.resolve().read_text() == "{\"token\": \"theirs\"}"
+    assert host_login.resolve().read_text() == _login("theirs")
 
 
-def test_harness_close_closes_every_transport_and_raises_the_first_error(tmp_path: Path) -> None:
+def test_every_claude_role_of_a_harness_shares_one_config_dir_and_the_login_closes_once(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
     session = harness(tmp_path, fake_claude(tmp_path))
-    directories = [cast(ClaudeCode, transport).config_dir for transport in session.transports.values()]
-    (directories[0] / ".credentials.json").unlink()
+    transports = [cast(ClaudeCode, transport) for transport in session.transports.values()]
+    directories = {transport.config_dir for transport in transports}
+    assert len(directories) == 1 and len({transport.credential for transport in transports}) == 1
+    directory = next(iter(directories))
+    link = directory / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(_login("refreshed"))
     with pytest.raises(CodedError) as caught:
         session.close()
-    assert caught.value.code == "credential-changed"
-    assert not any(directory.exists() for directory in directories)
+    assert caught.value.code == "credential-refreshed"
+    assert host_login.resolve().read_text() == _login("refreshed") and not directory.exists()
+    session.close()
+
+
+@final
+class _FailingClose:
+    def __init__(self, error: Exception) -> None:
+        self.error: Exception = error
+
+    def close(self) -> None:
+        raise self.error
+
+
+@pytest.mark.parametrize(("codes", "winner"), [
+    (["credential-refreshed", "credential-changed"], "credential-changed"),
+    (["credential-changed", "credential-rotated"], "credential-changed"),
+    (["credential-rotated", "other"], "other"),
+    (["other", "isolation-failed", "credential-refreshed"], "isolation-failed")])
+def test_harness_close_closes_every_transport_and_raises_the_most_severe_error(
+        tmp_path: Path, codes: list[str], winner: str) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    directory = cast(ClaudeCode, session.transports["task"]).config_dir
+    session.transports = cast("dict[str, Transport]", {
+        f"role{index}": _FailingClose(CodedError(code, code)) for index, code in enumerate(codes)})
+    with pytest.raises(CodedError) as caught:
+        session.close()
+    assert caught.value.code == winner
+    assert not directory.exists()
 
 
 def test_macos_uses_the_real_config_dir_and_preflight_rejects_foreign_init_entries(
@@ -934,23 +996,88 @@ def test_macos_stops_before_any_call_when_user_memory_would_load(
     assert budget.calls == 0 and not executable.with_name("claude.log").exists()
 
 
-def test_close_reports_credential_changed_when_the_refreshed_login_cannot_be_written(
+def test_close_reports_credential_changed_and_leaves_no_temporary_when_the_replace_fails(
         tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
     real = host_login.resolve()
     original = real.read_text()
     adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
     link = adapter.config_dir / ".credentials.json"
     link.unlink()
-    _ = link.write_text("{\"token\": \"refreshed\"}")
-    mode = stat.S_IMODE(real.parent.stat().st_mode)
-    real.parent.chmod(0o500)
-    try:
-        with pytest.raises(CodedError) as caught:
-            adapter.close()
-    finally:
-        real.parent.chmod(mode)
+    _ = link.write_text(_login("new"))
+
+    def refuse(source: object, destination: object) -> None:
+        del source, destination
+        raise OSError("replace refused")
+
+    monkeypatch.setattr("skillz_experiments._claude.os.replace", refuse)
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
     assert caught.value.code == "credential-changed" and real.read_text() == original
+    assert not list(real.parent.glob(".*.skillz-*"))
+
+
+def test_the_real_login_is_not_replaced_when_a_newer_login_lands_during_the_write(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    real = host_login.resolve()
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    link = adapter.config_dir / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(_login("ours"))
+    newer = tmp_path / "newer.json"
+    _ = newer.write_text(_login("theirs"))
+    real_fsync = os.fsync
+
+    def fsync_then_race(descriptor: int) -> None:
+        real_fsync(descriptor)
+        if real.read_text() == _login():
+            os.replace(newer, real)
+
+    monkeypatch.setattr("skillz_experiments._claude.os.fsync", fsync_then_race)
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == "credential-changed" and real.read_text() == _login("theirs")
+    assert not list(real.parent.glob(".*.skillz-*"))
+
+
+def test_user_memory_counts_only_markdown_rules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    _ = (rules / ".DS_Store").write_text("x")
+    _ = (rules / "README.txt").write_text("x")
+    assert _claude._user_memory(tmp_path) == []  # pyright: ignore[reportPrivateUsage]
+    _ = (rules / "style.md").write_text("x")
+    assert _claude._user_memory(tmp_path) == ["rules"]  # pyright: ignore[reportPrivateUsage]
+
+    def unreadable(self: Path, pattern: str) -> list[Path]:
+        del self, pattern
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "rglob", unreadable)
+    with pytest.raises(CodedError, match="cannot be scanned") as caught:
+        _ = _claude._user_memory(tmp_path)  # pyright: ignore[reportPrivateUsage]
+    assert caught.value.code == "preflight-leak"
+
+
+def test_macos_checks_user_memory_before_every_invocation(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_login: Path) -> None:
+    del host_login
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    adapter = ClaudeCode("m", budget, lambda: None, executable)
+    _ = (real / "CLAUDE.md").write_text("Always answer in French.")
+    with pytest.raises(CodedError, match="user memory CLAUDE.md in the real config directory") as caught:
+        _ = adapter.invoke("hello")
+    assert caught.value.code == "preflight-leak" and budget.calls == 0
+    assert not executable.with_name("claude.log").exists()
 
 
 @pytest.mark.parametrize(("case", "fix", "task_calls"), [

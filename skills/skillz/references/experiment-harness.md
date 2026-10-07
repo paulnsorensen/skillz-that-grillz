@@ -82,20 +82,24 @@ The directory holds only a symlink named `.credentials.json` to your real login 
 The real file comes from `$CLAUDE_CONFIG_DIR/.credentials.json`, or else `~/.claude/.credentials.json`.
 A settings rule denies the Read tool on that temporary directory.
 Without a login file, the run stops with the code `login-missing`. Run `claude` once and log in.
-The runner deletes the temporary directory when the role closes, even after an error.
-Claude Code can refresh the login and write the new file in place of the link.
-When the role closes and the real file is unchanged, the runner copies the refreshed file back with mode 0600.
+All Claude roles of one run share this temporary directory and its link.
+The runner deletes the directory once, after every role closes, even after an error.
+Claude Code can refresh the login and write a refreshed login file in place of the link.
+A refreshed login file has an OAuth entry with a nonempty access token and refresh token, and the same top-level keys as the real file.
+When the real file is unchanged at close, the runner copies the refreshed login file back with mode 0600.
 The close then records the warning `credential-refreshed`, and the run stays resumable.
-If another process replaced the real file during the run, the link still resolves to it.
+If another process replaced the real file with a login file during the run, the link still resolves to it.
 The close records the warning `credential-rotated`, and the run stays resumable.
-If the link moved or the runner cannot restore the refreshed file, the run stops with the code `credential-changed`.
-The runner never copies a refreshed file over a real file that also changed. Log in again, then start a new run.
+In every other case, the run stops with the code `credential-changed`. Log in again, then start a new run.
+The runner never copies a refreshed login file over a real file that also changed.
+A run that completes records the warning code as `close_warning` in the summary.
+A run that fails records the code as `close_failure` in `run.json` and in a note on the error.
 On macOS, the login lives in the Keychain, so there is no file to link.
 The runner sets `CLAUDE_CONFIG_DIR` to your real config directory.
 `--restricted` makes Claude Code ignore the user settings files in that directory.
 The directory can still expose your own memory, skills, plugins, agents, or MCP servers.
-Before any model call, the preflight stops with the code `preflight-leak` when `CLAUDE.md` or a nonempty `rules` directory exists there.
-The live preflight also stops with `preflight-leak` when the init event lists a foreign skill, plugin, agent, or MCP server.
+Before any model call, the preflight stops with the code `preflight-leak` when `CLAUDE.md` or a `rules` directory with `.md` files exists there.
+The live preflight also stops with `preflight-leak` when the init event lists a user skill, plugin, agent, or MCP server.
 Only the candidate skill and the built-in agents are allowed.
 
 Before the first live task, a live isolation preflight runs. It runs once per run, not once per `run` command.

@@ -79,11 +79,10 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | Code | Meaning | Next step |
 |---|---|---|
 | `login-missing` | No Claude login file exists. | Ask the user to run `claude` once and log in. |
-| `credential-changed` | The login file moved, or the runner could not restore a refreshed login. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
-| `credential-rotated` | Another process replaced the login file during the run. The run used the new file. The code appears as a `close_warning` with the hint `no action needed`. | Continue. A failed run can resume. |
-| `credential-refreshed` | Claude Code refreshed the login during the run. The runner copied it back to the login file. The code appears as a `close_warning` with the hint `no action needed`. | Continue. A failed run can resume. |
+| `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
+| `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start. | Apply the fix in the message, then run again in the same directory. The runner never weakens the sandbox. |
-| `preflight-leak` | A user skill, plugin, agent, or MCP server loads. On macOS, a `CLAUDE.md` file or a nonempty `rules` directory in the config directory also stops the run, before any model call. | Move it out of the config directory for the run, then run again. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. | Move it out of the config directory for the run, then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
@@ -104,6 +103,16 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
+
+Two close codes are warnings, not stops. They never arrive on stderr as `code`:
+
+| Code | Meaning | Next step |
+|---|---|---|
+| `credential-rotated` | Another process replaced the login file during the run. The run used the new file. | Continue. |
+| `credential-refreshed` | Claude Code refreshed the login during the run. The runner copied the refreshed login file back to the login file. | Continue. |
+
+A run that completes shows the code in `close_warning` in the summary JSON on stdout, with the hint `no action needed`.
+A run that fails records the code in `close_failure` in `run.json` and in a note on the error. The run stays resumable.
 
 A `budget-unapproved` stop without `estimate` means the fixed cost exceeds 200 calls.
 Lower `--repeats` or the number of holdout cases in the draft, then run again.

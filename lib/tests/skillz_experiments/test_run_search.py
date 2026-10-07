@@ -576,6 +576,23 @@ def test_a_credential_change_found_on_close_after_a_failure_keeps_the_failure_an
     assert second.value.code == "run-terminated"
 
 
+@pytest.mark.parametrize("code", ["credential-rotated", "credential-refreshed"])
+def test_a_handled_login_change_on_close_after_a_failure_does_not_end_the_run(
+        code: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.fail_holdout = 1
+    state.close_error = CodedError(code, "the login changed and the run handled it")
+    with pytest.raises(RuntimeError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    recorded = read(out / "run.json")
+    assert recorded["close_failure"] == {"code": code, "message": "the login changed and the run handled it"}
+    assert "failure_code" not in recorded
+    state.fail_holdout = 0
+    state.close_error = None
+    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+
+
 def test_a_failed_sandbox_preflight_leaves_the_run_fixable_and_a_later_run_goes_ahead(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:

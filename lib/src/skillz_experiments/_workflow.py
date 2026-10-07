@@ -22,6 +22,7 @@ from typing import Protocol, TextIO, cast, final, get_args
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
+from skillz_experiments._claude import NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._gate import case_deltas, verdict as gate_verdict
@@ -131,6 +132,11 @@ class _Plan:
     retry_calls: int
     sized: Estimate
 
+    @property
+    def reserve_seconds(self) -> int:
+        """Return the seconds that the holdout gate holds, never more than the whole run."""
+        return min(gate_seconds(self.holdout_calls), self.sized.seconds)
+
 
 def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int) -> _Plan:
     """Size the run. Shrink the search share to fit the cap; stop when the fixed cost alone exceeds it.
@@ -237,7 +243,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats)
     shown = _estimate(plan, repeats, count["holdout"])
     try:
-        budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls, reserve_time=gate_seconds(plan.holdout_calls))
+        budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS"}) from None
     write(out / "run.json", {
@@ -246,7 +252,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
-        "estimate": shown,
+        "estimate": shown, "engine_hash": _engine_hash(),
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
                    "reserve_seconds": budget.reserve_seconds, "approved": budget.approved},
         "outcomes": [], "started": time.time(), "started_monotonic": time.monotonic()})
@@ -261,9 +267,6 @@ class _Session:
         self.record = open_record(out / "run.json")
         if _phase(self.record) not in _PHASES:
             raise Stop("run-record-tampered", "the recorded phase is unknown; create a new run", {})
-        for field, flag, value in ("model", "--model", model), ("adapter", "--harness", adapter):
-            if _text_field(self.record, field) != value:
-                raise _config_differs(flag)
         self.contract = parse(_field(self.record, "contract"), _text_field(self.record, "contract_source"))
         if self.contract.identity != _text_field(self.record, "contract_hash"):
             raise ValueError("contract differs from the frozen record; create a new run")
@@ -328,9 +331,10 @@ class _Session:
         self._verify_budget(budget)
         wall = time.time() - _number_field(self.record, "started")
         if not -CLOCK_TOLERANCE <= wall < math.inf:
-            raise ValueError("run cannot resume: the wall clock is earlier than the run start")
+            raise CodedError("clock-skew", "the wall clock is more than "
+                             + f"{CLOCK_TOLERANCE:g} seconds earlier than the run start; set the clock right, or create a new run")
         monotonic = time.monotonic() - _number_field(self.record, "started_monotonic")
-        elapsed = max(wall, monotonic, 0.0) if monotonic >= 0 else max(wall, 0.0)
+        elapsed = max(wall, monotonic, 0.0)
         seconds = _number_field(budget, "seconds")
         if seconds - elapsed <= 0:
             raise BudgetExhausted("global deadline exhausted")
@@ -347,6 +351,8 @@ class _Session:
         recorded = mapping(_field(self.record, "estimate"))
         maximum = max(plan.sized.calls, 1)
         seconds = _number_field(budget, "seconds")
+        if "reserve_seconds" not in budget:
+            raise ValueError("run was prepared by an older runner; create a new run")
 
         def differs(found: object, wanted: object) -> bool:
             return isinstance(found, bool) or found != wanted
@@ -354,7 +360,7 @@ class _Session:
         if (any(differs(recorded.get(key), value) for key, value in expected.items())
                 or differs(budget.get("maximum"), maximum)
                 or differs(budget.get("reserve"), min(plan.holdout_calls, maximum))
-                or differs(budget.get("reserve_seconds"), min(gate_seconds(plan.holdout_calls), plan.sized.seconds))
+                or differs(budget.get("reserve_seconds"), plan.reserve_seconds)
                 or not 0 < seconds <= APPROVED_SECONDS):
             raise Stop("run-record-tampered", "the recorded budget differs from the plan of the frozen run; create a new run", {})
 
@@ -643,11 +649,6 @@ def _reflection_request(edit: Edit, candidate: dict[str, str],
     return head + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
 
-_TERMINAL_CODES = frozenset({"isolation-failed", "credential-changed"})
-# Close codes that report a login change the run handled. The user does nothing.
-_NOTICE_CODES = frozenset({"credential-rotated", "credential-refreshed"})
-
-
 _PHASES = ("prepared", "searched", "gated", "complete")
 
 
@@ -669,9 +670,9 @@ def _require_private(out: Path) -> None:
                          + "use a private directory from `mktemp -d`")
 
 
-def _refuse_terminated(path: Path) -> None:
-    """Stop when the run directory records a terminal code."""
-    stopped = open_record(path).get("failure_code")
+def _refuse_terminated(record: dict[str, object]) -> None:
+    """Stop when the run record has a terminal code."""
+    stopped = record.get("failure_code")
     if stopped in _TERMINAL_CODES:
         raise Stop("run-terminated", f"the run stopped with {stopped}; start a new run directory",
                    {"next": "start a new run in a new directory", "failure_code": stopped})
@@ -715,8 +716,11 @@ def _open_lock(out: Path) -> TextIO:
 
 
 def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
-                  seed: int | None) -> None:
-    """Stop when a resume names another target, edit, repeats, or seed than the first run."""
+                  seed: int | None, model: str, adapter: HarnessName) -> None:
+    """Stop when a resume names another model, adapter, target, edit, repeats, or seed than the first run."""
+    for flag, value, field in ("--model", model, "model"), ("--harness", adapter, "adapter"):
+        if _text_field(record, field) != value:
+            raise _config_differs(flag)
     for flag, value, field in ("--edit", edit, "edit"), ("--repeats", repeats, "repeats"), ("--seed", seed, "split_seed"):
         if value is not None and value != record.get(field):
             raise _config_differs(flag)
@@ -748,10 +752,10 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                        {"next": "wait for the other run to finish, then call run again"}) from None
         if path.exists():
             record = open_record(path)
-            _check_resume(record, target, edit, repeats, seed)
-            _refuse_terminated(path)
+            _refuse_terminated(record)
             if record.get("phase") == "complete":
                 return summary(record)
+            _check_resume(record, target, edit, repeats, seed, model, adapter)
         else:
             _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed, approve_cases,
                      approve_budget, resolve_harness=factory is None and configuration is None)

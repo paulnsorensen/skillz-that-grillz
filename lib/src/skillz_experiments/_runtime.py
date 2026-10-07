@@ -58,7 +58,11 @@ def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, h
         raise ValueError("estimate needs nonnegative counts and at least 1 call per evaluation and 1 repeat")
     cases = train + validation + holdout
     calls = preflight_calls + cases * calls_per_evaluation * repeats + search_calls + reflection_calls + retry_calls
-    return Estimate(calls, math.ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS))
+    return Estimate(calls, _seconds(calls))
+
+
+def _seconds(calls: int) -> int:
+    return math.ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
 
 
 @dataclass
@@ -86,8 +90,7 @@ class Budget:
             raise ValueError(f"budget exceeds {max_calls} calls or {max_seconds} seconds")
         if not 0 <= self.reserve <= self.maximum:
             raise ValueError("invalid holdout reservation")
-        if not 0 <= self.reserve_seconds <= max_seconds:
-            raise ValueError("invalid holdout time reservation")
+        self._check_reserve_seconds(self.reserve_seconds)
 
     def remaining(self) -> float:
         """Return the seconds left before the deadline, less any time that the holdout gate still holds."""
@@ -101,9 +104,12 @@ class Budget:
 
     def reserve_time(self, seconds: float) -> None:
         """Hold `seconds` at the end of the deadline for the holdout gate. A value of 0 gives the time back."""
-        if not 0 <= seconds <= APPROVED_SECONDS:
-            raise ValueError("invalid holdout time reservation")
+        self._check_reserve_seconds(seconds)
         self.reserve_seconds = seconds
+
+    def _check_reserve_seconds(self, seconds: float) -> None:
+        if not 0 <= seconds <= (APPROVED_SECONDS if self.approved else UNAPPROVED_SECONDS):
+            raise ValueError("invalid holdout time reservation")
 
     def check(self, count: int, *, holdout: bool = False) -> None:
         _ = self.remaining()
@@ -119,7 +125,7 @@ class Budget:
 
 def gate_seconds(calls: int) -> int:
     """Return the seconds to hold for `calls` gate calls: ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)."""
-    return math.ceil(max(calls, 0) * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
+    return _seconds(max(calls, 0))
 
 
 def approve(sized: Estimate, approved_calls: int | None, *, reserve: int, reserve_time: int = 0) -> Budget:

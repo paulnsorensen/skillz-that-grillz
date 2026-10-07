@@ -513,6 +513,55 @@ def test_a_resume_in_the_searched_phase_gets_the_reserved_time_back(
     assert state.holdout_calls() > 0
 
 
+def test_a_run_prepared_by_an_older_runner_stops_with_a_create_a_new_run_message(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    _ = cast(dict[str, object], record["budget"]).pop("reserve_seconds")
+    _ = record.pop("engine_hash", None)
+    write(out / "run.json", record)
+    with pytest.raises(ValueError, match="older runner; create a new run"):
+        _ = run(target, out, MODEL, live=True, factory=State().factory())
+
+
+def test_a_prepared_run_records_the_engine_hash(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    out = _prepared(tmp_path, make_target(tmp_path), write_draft, approvals)
+    assert isinstance(read(out / "run.json").get("engine_hash"), str)
+
+
+def test_a_completed_run_returns_its_summary_even_when_the_target_moved(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+    moved = tmp_path / "moved"
+    _ = shutil.copytree(target, moved)
+    assert run(moved, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+
+
+def test_a_terminated_run_resumed_with_another_flag_reports_the_termination_first(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    record["failure_code"] = "credential-changed"
+    write(out / "run.json", record)
+    with pytest.raises(Stop) as stopped:
+        _ = run(target, out, MODEL, live=True, seed=999, factory=State().factory())
+    assert stopped.value.code == "run-terminated"
+
+
+def test_a_resume_with_another_model_stops_before_the_live_check(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    with pytest.raises(CodedError) as stopped:
+        _ = run(target, out, "other-model", live=False)
+    assert stopped.value.code == "run-config-differs"
+
+
 @pytest.mark.parametrize("change", ["seed", "target"])
 def test_a_resume_with_another_seed_or_target_stops_before_any_call(
         change: str, tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
