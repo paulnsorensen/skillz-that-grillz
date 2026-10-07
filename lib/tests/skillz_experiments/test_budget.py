@@ -6,7 +6,16 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import override
+from typing import Callable, ParamSpec, TypeVar
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+try:
+    from typing import override
+except ImportError:
+    def override(function: Callable[P, R], /) -> Callable[P, R]:
+        return function
 
 import pytest
 
@@ -91,9 +100,12 @@ def test_process_runs_at_most_two_children_at_once(tmp_path: Path) -> None:
 class _YieldingBudget(Budget):
     """Yield the GIL between the limit check and the increment to expose an unlocked claim."""
 
+    yields: int = 0
+
     @override
     def check(self, count: int, *, holdout: bool = False) -> None:
         super().check(count, holdout=holdout)
+        self.yields += 1
         time.sleep(0.001)
 
 
@@ -115,6 +127,8 @@ def test_concurrent_claims_never_overspend() -> None:
         worker.join()
     assert budget.calls == 40
     assert len(refused) == 40
+    # The race window exists only when `claim` runs the overridden `check`.
+    assert budget.yields >= 40
 
 
 def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
@@ -134,8 +148,8 @@ def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
     with pytest.raises(BudgetExhausted, match="terminated"):
         _ = process([sys.executable, "-c", "import time;time.sleep(30)"], cwd=tmp_path, timeout=2.5,
                     environment={"PATH": os.defpath})
-    # Holders free the slots about 1.3 s after `late`; without the slot-wait
-    # subtraction the call would end near 1.3 + 2.5 = 3.8 s.
+    # Holders free the slots about 1.3 s after `late`. Without the slot-wait
+    # subtraction, the call ends near 1.3 + 2.5 = 3.8 s.
     assert time.monotonic() - late < 3.2
     for holder in holders:
         holder.join()
