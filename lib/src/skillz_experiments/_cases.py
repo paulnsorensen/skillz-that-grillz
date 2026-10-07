@@ -14,7 +14,7 @@ LEGACY_KINDS = {"inspection": "exact-json", "audit": "audit"}
 
 
 class CodedError(ValueError):
-    """A validation failure that carries a stable machine-readable code."""
+    """A coded validation failure or run stop that carries a stable machine-readable code."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
