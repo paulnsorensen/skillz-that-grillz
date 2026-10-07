@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -29,20 +30,22 @@ CHILD = ("import sys,time,pathlib; d=pathlib.Path(sys.argv[1]); n=sys.argv[2]; "
 
 def test_estimate_and_single_approval_gate_the_opt_in_ceiling() -> None:
     sized = estimate(preflight_calls=2, train=4, validation=3, holdout=3, calls_per_evaluation=2, repeats=3,
-                     search_calls=5, reflection_calls=4)
-    assert sized == Estimate(2 + 10 * 2 * 3 + 5 + 4, math.ceil(71 * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS))
-    assert sized.calls == 71 and sized.seconds == 2130
+                     search_calls=5, reflection_calls=4, retry_calls=1)
+    assert sized == Estimate(2 + 10 * 2 * 3 + 5 + 4 + 1, math.ceil(72 * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS))
+    assert sized.calls == 72 and sized.seconds == 2160
 
-    for approval in (None, 70):
+    for approval in (None, 71):
         with pytest.raises(BudgetUnapproved) as refused:
             _ = approve(sized, approval, reserve=6)
         assert refused.value.code == "budget-unapproved"
     assert isinstance(BudgetUnapproved("x"), CodedError)
 
-    budget = approve(sized, 71, reserve=6)
-    assert (budget.maximum, budget.seconds, budget.approved) == (71, 7200, True)
+    budget = approve(sized, 72, reserve=6)
+    assert (budget.maximum, budget.seconds, budget.reserve, budget.approved) == (72, 7200, 6, True)
+    assert approve(Estimate(3, 90), 3, reserve=6).reserve == 3
+    assert Budget(40, 2400).maximum == 40
     with pytest.raises(ValueError, match="40 calls"):
-        _ = Budget(71, 2400)
+        _ = Budget(41, 2400)
     with pytest.raises(ValueError, match="2400 seconds"):
         _ = Budget(10, 2401)
     with pytest.raises(ValueError, match="200 calls"):
@@ -85,18 +88,37 @@ def test_process_runs_at_most_two_children_at_once(tmp_path: Path) -> None:
     assert peak == MAX_CONCURRENT_CALLS
 
 
-def test_concurrent_claims_count_exactly() -> None:
-    budget = Budget(40, 2400, reserve=0)
-    workers = [threading.Thread(target=lambda: [budget.claim() for _ in range(10)]) for _ in range(4)]
+class _YieldingBudget(Budget):
+    """Yield the GIL between the limit check and the increment to expose an unlocked claim."""
+
+    @override
+    def check(self, count: int, *, holdout: bool = False) -> None:
+        super().check(count, holdout=holdout)
+        time.sleep(0.001)
+
+
+def test_concurrent_claims_never_overspend() -> None:
+    budget = _YieldingBudget(40, 2400, reserve=0)
+    refused: list[BudgetExhausted] = []
+
+    def spend() -> None:
+        for _ in range(10):
+            try:
+                budget.claim()
+            except BudgetExhausted as error:
+                refused.append(error)
+
+    workers = [threading.Thread(target=spend) for _ in range(8)]
     for worker in workers:
         worker.start()
     for worker in workers:
         worker.join()
     assert budget.calls == 40
+    assert len(refused) == 40
 
 
 def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
-    holders = [threading.Thread(target=process, args=([sys.executable, "-c", "import time;time.sleep(1.5)"],),
+    holders = [threading.Thread(target=process, args=([sys.executable, "-c", "import time;time.sleep(2.0)"],),
                                 kwargs={"cwd": tmp_path, "timeout": 30, "environment": {"PATH": os.defpath}})
                for _ in range(MAX_CONCURRENT_CALLS)]
     for holder in holders:
@@ -112,6 +134,8 @@ def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
     with pytest.raises(BudgetExhausted, match="terminated"):
         _ = process([sys.executable, "-c", "import time;time.sleep(30)"], cwd=tmp_path, timeout=2.5,
                     environment={"PATH": os.defpath})
-    assert time.monotonic() - late < 2.8
+    # Holders free the slots about 1.3 s after `late`; without the slot-wait
+    # subtraction the call would end near 1.3 + 2.5 = 3.8 s.
+    assert time.monotonic() - late < 3.2
     for holder in holders:
         holder.join()

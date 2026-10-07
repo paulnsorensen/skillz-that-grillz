@@ -22,7 +22,7 @@ _CHILDREN = threading.BoundedSemaphore(MAX_CONCURRENT_CALLS)
 
 
 class BudgetExhausted(CodedError):
-    """The call budget or the deadline ran out. The agent starts a new run directory.
+    """The call budget or the deadline is exhausted. The agent starts a new run directory.
 
     A `ValueError` subclass through `CodedError`; it is a runtime stop, not a validation failure.
     """

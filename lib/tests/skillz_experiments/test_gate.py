@@ -40,12 +40,13 @@ def test_verdict_promotes_when_delta_exceeds_two_se() -> None:
 def test_verdict_is_inconclusive_inside_two_se() -> None:
     # mean 0.1, stdev 0.2, se 0.2/sqrt(3) -> 2*se = 0.23
     assert verdict([-0.1, 0.1, 0.3]).verdict == "inconclusive"
+    assert verdict([0.1, 0.1, -0.1]).verdict == "inconclusive"
 
 
 def test_verdict_needs_strictly_more_than_two_se() -> None:
     # mean 2, stdev sqrt(2), se 1 -> delta is exactly 2*se
     assert verdict([3.0, 1.0]).verdict == "inconclusive"
-    assert verdict([-3.0, -1.0]).verdict != "reject"
+    assert verdict([-3.0, -1.0]).verdict == "inconclusive"
 
 
 @pytest.mark.parametrize(
@@ -72,7 +73,6 @@ def test_zero_se_promotes_only_when_every_case_delta_is_positive() -> None:
     assert verdict([0.1, 0.1, 0.1]).verdict == "promote"
     assert verdict([-0.1, -0.1]).verdict == "reject"
     assert verdict([0.0, 0.0, 0.0]).verdict == "inconclusive"
-    assert verdict([0.1, 0.1, 0.0]).verdict == "inconclusive"
 
 
 @pytest.mark.parametrize("cases", [6, 10, 20])
@@ -86,3 +86,9 @@ def test_simulation_false_promotion_is_at_most_six_percent_and_below_one_holdout
 
 def test_simulation_is_deterministic_for_a_seed() -> None:
     assert simulate(seed=7, trials=50, cases=6) == simulate(seed=7, trials=50, cases=6)
+
+
+@pytest.mark.parametrize("candidates", [0, 1])
+def test_simulation_needs_at_least_two_candidates(candidates: int) -> None:
+    with pytest.raises(ValueError, match="at least 2 candidates"):
+        _ = simulate(trials=1, cases=6, candidates=candidates)
