@@ -53,6 +53,8 @@ def verdict(deltas: Mapping[str, float] | Sequence[float]) -> Verdict:
 
 def _verdict(values: list[float]) -> Verdict:
     count = len(values)
+    if not all(math.isfinite(value) for value in values):
+        return Verdict("inconclusive", math.nan, math.nan, count)
     if count < 2:
         return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, 0.0, count)
     delta = statistics.fmean(values)
@@ -118,10 +120,13 @@ def simulate(
 
     The split gate selects on a validation set and gates on a separate holdout of
     `cases` cases. The one-holdout rule selects and gates on one set of `cases`
-    cases. The split gate scores only the candidates on validation, so it spends
-    (candidates * validation + 2 * cases) * repeats calls. That is at most the
-    one-holdout spend of (candidates + 1) * cases * repeats, so the comparison
-    favors the one-holdout rule.
+    cases. The one-holdout arm models skill-creator's select-and-gate rule: it
+    promotes when the best candidate mean beats the baseline, with no 2*SE test.
+    The split gate scores only the candidates on validation, so it spends
+    (candidates * validation + 2 * cases) * repeats calls. For `cases >= 2` that is
+    at most the one-holdout spend of (candidates + 1) * cases * repeats, so the
+    comparison favors the one-holdout rule. At `cases == 1` the validation floor
+    of one case breaks this bound.
     """
     rng = random.Random(seed)
     split = single = 0

@@ -22,7 +22,10 @@ _CHILDREN = threading.BoundedSemaphore(MAX_CONCURRENT_CALLS)
 
 
 class BudgetExhausted(CodedError):
-    """The call budget or the deadline ran out. The agent starts a new run directory."""
+    """The call budget or the deadline ran out. The agent starts a new run directory.
+
+    A `ValueError` subclass through `CodedError`; it is a runtime stop, not a validation failure.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__("budget-exhausted", message)
@@ -91,7 +94,7 @@ class Budget:
             self.calls += 1
 
 
-def approve(sized: Estimate, approved_calls: int | None, *, reserve: int = 6) -> Budget:
+def approve(sized: Estimate, approved_calls: int | None, *, reserve: int) -> Budget:
     """Return the opt-in Budget for a sized run. Raise `BudgetUnapproved` without a matching approval.
 
     The ceiling is `sized.calls` calls and `APPROVED_SECONDS` seconds, because the

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from skillz_experiments._gate import case_deltas, simulate, verdict
@@ -40,6 +42,23 @@ def test_verdict_is_inconclusive_inside_two_se() -> None:
     assert verdict([-0.1, 0.1, 0.3]).verdict == "inconclusive"
 
 
+def test_verdict_needs_strictly_more_than_two_se() -> None:
+    # mean 2, stdev sqrt(2), se 1 -> delta is exactly 2*se
+    assert verdict([3.0, 1.0]).verdict == "inconclusive"
+    assert verdict([-3.0, -1.0]).verdict != "reject"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [[math.nan] * 6, [math.inf] * 6, [math.inf, 0.0, 0.0, 0.0], [-math.inf] * 4, [0.5, 0.5, math.nan, 0.5], [math.nan],
+     [math.inf, -math.inf, 0.0, 0.0]],
+)
+def test_verdict_is_inconclusive_for_non_finite_deltas(values: list[float]) -> None:
+    result = verdict(values)
+    assert result.verdict == "inconclusive"
+    assert result.cases == len(values)
+
+
 def test_verdict_rejects_when_delta_is_below_minus_two_se() -> None:
     assert verdict({"a": -0.1, "b": -0.2, "c": -0.3}).verdict == "reject"
 
@@ -57,10 +76,13 @@ def test_zero_se_promotes_only_when_every_case_delta_is_positive() -> None:
 
 
 @pytest.mark.parametrize("cases", [6, 10, 20])
-def test_simulation_false_promotion_is_at_most_six_percent_and_below_skill_creator(
+def test_simulation_false_promotion_is_at_most_six_percent_and_below_one_holdout(
     cases: int,
 ) -> None:
-    first = simulate(seed=20261006, trials=2000, cases=cases, repeats=3)
-    assert first.rate_2se <= 0.06
-    assert first.rate_2se < first.rate_one_holdout
-    assert simulate(seed=20261006, trials=2000, cases=cases, repeats=3) == first
+    result = simulate(seed=20261006, trials=2000, cases=cases, repeats=3)
+    assert result.rate_2se <= 0.06
+    assert result.rate_2se < result.rate_one_holdout
+
+
+def test_simulation_is_deterministic_for_a_seed() -> None:
+    assert simulate(seed=7, trials=50, cases=6) == simulate(seed=7, trials=50, cases=6)

@@ -35,24 +35,26 @@ def test_estimate_and_single_approval_gate_the_opt_in_ceiling() -> None:
 
     for approval in (None, 70):
         with pytest.raises(BudgetUnapproved) as refused:
-            _ = approve(sized, approval)
+            _ = approve(sized, approval, reserve=6)
         assert refused.value.code == "budget-unapproved"
     assert isinstance(BudgetUnapproved("x"), CodedError)
 
-    budget = approve(sized, 71)
+    budget = approve(sized, 71, reserve=6)
     assert (budget.maximum, budget.seconds, budget.approved) == (71, 7200, True)
     with pytest.raises(ValueError, match="40 calls"):
         _ = Budget(71, 2400)
+    with pytest.raises(ValueError, match="2400 seconds"):
+        _ = Budget(10, 2401)
     with pytest.raises(ValueError, match="200 calls"):
         _ = Budget(201, 7200, approved=True)
     with pytest.raises(ValueError, match="7200 seconds"):
         _ = Budget(10, 7201, approved=True)
 
-    top = approve(estimate(search_calls=200), 200)
+    top = approve(estimate(search_calls=200), 200, reserve=6)
     assert top.maximum == 200
     for too_big in (estimate(search_calls=201), Estimate(10, 7201)):
         with pytest.raises(BudgetUnapproved, match="cap of 200 calls and 7200 seconds"):
-            _ = approve(too_big, 999)
+            _ = approve(too_big, 999, reserve=6)
 
 
 def test_process_runs_at_most_two_children_at_once(tmp_path: Path) -> None:
