@@ -111,15 +111,16 @@ class _Credential:
             return False
 
 
-def settings(workspace: Path) -> dict[str, object]:
+def settings(workspace: Path, out: Path | None = None) -> dict[str, object]:
     """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
 
     Sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
     workspace and the runtime roots. The Read tool follows permission rules, not the sandbox, so a deny
-    rule covers the host roots for that tool.
+    rule covers the host roots, `/proc`, and the run directory `out` for that tool.
     """
     runtime = [*RUNTIME_READ, *(MACOS_READ if sys.platform == "darwin" else ())]
     temporary = _unique([tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())])
+    hidden = ["/proc", *([] if out is None else [str(out), str(out.resolve())])]
     return {"sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
                         "network": {"allowedDomains": [], "strictAllowlist": True},
                         "filesystem": {"denyRead": ["/"],
@@ -127,7 +128,7 @@ def settings(workspace: Path) -> dict[str, object]:
                                        "allowRead": _unique([str(workspace), str(workspace.resolve()), *runtime])}},
             "disableBundledSkills": True, "disableAllHooks": True,
             "permissions": {"allow": ["Skill"],
-                            "deny": [*[f"Read(/{root}/**)" for root in _unique([*PERMISSION_DENY_ROOTS, str(Path.home())])],
+                            "deny": [*[f"Read(/{root}/**)" for root in _unique([*PERMISSION_DENY_ROOTS, str(Path.home()), *hidden])],
                                      *[f"Read(/{root}/{CONFIG_PREFIX}*/**)" for root in temporary]]}}
 
 
@@ -406,7 +407,9 @@ def _answer(final: dict[str, object]) -> dict[str, object]:
 
 @final
 class ClaudeCode:
-    def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None) -> None:
+    def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
+                 out: Path | None = None) -> None:
+        self.out = out
         found = shutil.which("claude") if executable is None else str(executable)
         if found is None:
             raise RuntimeError("Claude Code is unavailable")
@@ -453,7 +456,7 @@ class ClaudeCode:
     def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float) -> tuple[int, str, list[dict[str, object]]]:
         _ = shutil.copytree(workspace / ".agents/skills", workspace / ".claude/skills")
         settings_path = workspace.parent / "settings.json"
-        _ = settings_path.write_text(json.dumps(settings(workspace)))
+        _ = settings_path.write_text(json.dumps(settings(workspace, self.out)))
         result = process(self._command(settings_path, schema), cwd=workspace, timeout=timeout,
                          environment=self._environment(workspace), input_text=prompt)
         return result.returncode, result.stderr, _events(result.stdout)
@@ -464,7 +467,7 @@ class ClaudeCode:
         The key leaves out the per-process config directory, so it stays stable across processes.
         """
         environment = {name: value for name, value in self._environment(Path("/TASK")).items() if name != "CLAUDE_CONFIG_DIR"}
-        return digest({"settings": settings(Path("/TASK")), "environment": environment, "tools": TOOLS,
+        return digest({"settings": settings(Path("/TASK"), self.out), "environment": environment, "tools": TOOLS,
                        "skill": PROBE_SKILL, "platform": sys.platform, "network_probe": NETWORK_PROBE})
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:

@@ -25,7 +25,8 @@ The optional custom contract is outside these seven concepts. A first run does n
 ## Questions
 
 Ask the user at most these three questions, in this order.
-Never ask about keys, tokens, manifests, or contracts.
+Never ask about keys, tokens, or manifests.
+The contract question under `No contract` is outside these three. Ask it only when the user requests a contract.
 
 1. Harness and model: "Which harness and model do you want to use? Use `claude` or `codex`." Skip it when the user already named both.
 2. Case approval: show the `question` text from the `cases-unapproved` stop, and ask the user to approve the listed cases.
@@ -65,30 +66,37 @@ Map each coded stop to its next step:
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls) | Ask question 3. Run again with `--approve-budget CALLS`. |
 | `baseline-contract-rejected` | `next` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
+| `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
+| `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |
+| `run-terminated` | `next`, `failure_code` | The run directory holds a stop from `isolation-failed` or `credential-changed`. Start a new run directory. |
+| `run-record-tampered` | An empty object | The budget in `run.json` differs from the plan that the frozen cases give, or the `phase` is unknown. Start a new run directory. |
 
-These other codes arrive on stderr as `code`, with no data:
+These other codes arrive on stderr as `code`, with no data on stdout:
 
 | Code | Meaning | Next step |
 |---|---|---|
 | `login-missing` | No Claude login file exists. | Ask the user to run `claude` once and log in. |
-| `credential-changed` | The login file changed during the run. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, keep the result and export it, then log in again before the next run. Otherwise log in again and start a new run directory. |
+| `credential-changed` | The login file changed during the run. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start. | Apply the fix in the message, then run again in the same directory. The runner never weakens the sandbox. |
 | `preflight-leak` | A user skill, plugin, agent, or MCP server loads. | Remove it from the config directory, then run again. |
-| `live-required` | The run needs a model call and `--live` is missing. | Run again with `--live`. |
-| `run-in-progress` | Another run holds the run directory. | Wait for it to finish, then run again. |
-| `run-terminated` | The run directory holds a stop from `isolation-failed` or `credential-changed`. Any call on it, with or without `--live`, gets this code. | Start a new run directory. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
 | `harness-changed` | The harness executable or script differs from the frozen record. | Restore the frozen harness, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
+| `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. The run stops before case approval. | Install the CLI or put it on `PATH`, then run again. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--edit`, or `--repeats` than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
+| `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
+| `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
+| `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
+| `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
 | `contract-kinds` | The skill contract has no `task` kind and more than one kind. | Read `The autoimprove contract` below. |
 | `contract-unapproved` | The skill contract has `status` `draft`. | Ask the user to approve the contract, then set `approved`. |
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
-| `run-record-tampered` | The budget in `run.json` differs from the plan that the frozen cases give. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
 
@@ -172,12 +180,12 @@ Unknown fields and malformed values stop the run.
 
 ## No contract
 
-A run needs no contract. Draft one only when the user wants deterministic grading.
-When the user wants a contract and the skill has none, ask the user to choose one path.
+A run needs no contract. Follow this section only when the user asks for a contract.
+When the skill has none, ask the user to choose one path.
 
 1. Choose judge-only grading. No flag selects it.
    Draft a contract that maps each kind to the `judge` grader with a `rubric`.
-   Set the powerful model in the harness `judge` role.
+   Under `run`, the judge uses the `--model` value, so pass a powerful model there.
    Show the user the rubric.
 2. Use a contract. Find an existing contract, or draft one with the user.
 
@@ -379,6 +387,6 @@ Keep exactly two `holdout` cases. Use `train` and `validation` for the rest.
 
 The fixture JSON files are the source of truth. Edit them directly; no generator script exists.
 
-The live run is opt-in and never part of `just build` or `just ci`.
-The `run` command cannot load the fixture manifest, so no command runs these fixtures live.
+No command runs these fixtures live, so they never run in `just build` or `just ci`.
+The `run` command cannot load the fixture manifest.
 The offline tests cover them.

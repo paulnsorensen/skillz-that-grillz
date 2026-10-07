@@ -116,8 +116,8 @@ class Judge:
 def harness(monkeypatch: pytest.MonkeyPatch, task: Task, judge: Judge, budget: Budget | None = None) -> Harness:
     transports = {"task": task, "judge": judge, "reflection": judge}
 
-    def create(self: Role, budget: Budget, checkpoint: object) -> Task | Judge:
-        del checkpoint
+    def create(self: Role, budget: Budget, checkpoint: object, out: Path | None = None) -> Task | Judge:
+        del checkpoint, out
         transport = transports[self.adapter]
         transport.budget = budget
         return transport

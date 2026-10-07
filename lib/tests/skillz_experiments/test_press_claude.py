@@ -476,8 +476,8 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     elif change == "settings":
         original = _claude.settings
 
-        def weaker(workspace: Path) -> dict[str, object]:
-            document = original(workspace)
+        def weaker(workspace: Path, out: Path | None = None) -> dict[str, object]:
+            document = original(workspace, out)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
         monkeypatch.setattr(_claude, "settings", weaker)
@@ -623,10 +623,12 @@ def test_environment_key_ignores_token_variables_and_the_per_process_config_dir(
     def key() -> str:
         adapters.append(ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable))
         return adapters[-1].environment_key()
-    none = key()
-    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
-        monkeypatch.setenv(name, "secret")
-        assert key() == none
-    assert len({adapter.config_dir for adapter in adapters}) == len(adapters)
-    for adapter in adapters:
-        adapter.close()
+    try:
+        none = key()
+        for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+            monkeypatch.setenv(name, "secret")
+            assert key() == none
+        assert len({adapter.config_dir for adapter in adapters}) == len(adapters)
+    finally:
+        for adapter in adapters:
+            adapter.close()

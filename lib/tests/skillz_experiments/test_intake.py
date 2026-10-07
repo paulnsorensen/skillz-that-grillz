@@ -136,6 +136,13 @@ def test_intake_contract_prefers_the_skill_contract_else_builds_a_judge_task(tmp
     assert set(built.kinds) == {"task"} and built.kinds["task"].type == "judge" and built.kinds["task"].rubric
 
 
+def test_intake_contract_rejects_an_invalid_skill_name_like_a_file_contract(tmp_path: Path) -> None:
+    target = tmp_path / "My_Skill"
+    target.mkdir()
+    with pytest.raises(ValueError, match="lowercase directory name"):
+        _ = intake_contract(target)
+
+
 def sized(sizes: list[int]) -> list[dict[str, object]]:
     return [{"id": f"c{family}-{index}", "family": f"f{family}", "kind": "task", "request": "Do it",
              "files": {"input.txt": "x\n"}, "expected": "y", "source": "skill"}

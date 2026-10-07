@@ -279,7 +279,12 @@ def test_run_with_a_non_utf8_file_outside_git_still_reports_a_coded_error(
         tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     target = echo_skill(tmp_path)
     _ = (target / "notes.dat").write_bytes(b"\x80abc")
-    monkeypatch.setenv("PATH", str(tmp_path / "empty-path"))
+    harness_only = tmp_path / "empty-path"
+    harness_only.mkdir()
+    for name in ("claude", "codex"):
+        _ = (harness_only / name).write_text("#!/bin/sh\nexit 0\n")
+        (harness_only / name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(harness_only))
     code, error = run_intake(tmp_path, target, capsys)
     assert code == 1 and error["code"] == "undecodable-file"
 

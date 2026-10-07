@@ -4,18 +4,17 @@ No function here calls a model. Trigger and near-miss cases stay pending until a
 """
 from __future__ import annotations
 
-import json
 import os
 import random
 import re
-import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 from skillz_experiments._cases import CodedError, Split, digest, loads_untrusted, string, text_map
-from skillz_experiments._contract import LOCATION, Contract, Grader, load_contract
+from skillz_experiments._contract import LOCATION, Contract, Grader, load_contract, parse
+from skillz_experiments._records import write
 
 DRAFT_NAME = "cases.draft.json"
 KINDS = ("trigger", "near-miss", "task")
@@ -168,10 +167,7 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
             scored.append(item)
     pending = [case.data() for case in cases if case.pending]
     document = {"schema_version": 1, "seed": seed, "approved_hash": expected, "cases": scored, "pending": pending}
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=out.parent, prefix=out.name, suffix=".tmp",
-                                     delete=False) as handle:
-        _ = handle.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
-    os.replace(handle.name, out)
+    write(out, document)
 
 
 def skill_facts(target: Path) -> dict[str, object]:
@@ -200,4 +196,5 @@ def intake_contract(target: Path) -> Contract:
     if os.path.lexists(target / LOCATION):
         return load_contract(target)
     name = cast(str, skill_facts(target)["name"])
-    return Contract(name, f"${name}", {"task": Grader("judge", rubric=TASK_RUBRIC)}, source="intake")
+    built = Contract(name, f"${name}", {"task": Grader("judge", rubric=TASK_RUBRIC)}, source="intake")
+    return parse(built.data(), "intake")

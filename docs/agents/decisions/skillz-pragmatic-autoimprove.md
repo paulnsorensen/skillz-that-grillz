@@ -10,7 +10,8 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
 ### ADR-001: Reuse the existing Claude login and fail closed without a sandbox  [status: accepted]
 
 - **Context:** The Claude transport isolates `HOME` and forwards only token variables, so a Linux user must set a token. The Codex transport already links `auth.json`. Prototype pc-2 showed that `CLAUDE_CONFIG_DIR` with a symlinked `.credentials.json` logs in with no key. The prototype host could not run the Claude Bash sandbox because of the AppArmor user-namespace restriction and a missing `socat`.
-- **Decision:** On Linux, set `CLAUDE_CONFIG_DIR` to a temporary directory outside the workspace that holds only a symlink to `.credentials.json`. On macOS, use the real config directory and let the live preflight stop a run when user skills, settings, or `CLAUDE.md` load. Forward no token variable. Stop with `credential-changed` when the link no longer resolves to the same file. Stop with `sandbox-unavailable` and a fix hint when the Bash sandbox cannot start.
+- **Decision:** On Linux, set `CLAUDE_CONFIG_DIR` to a temporary directory outside the workspace that holds only a symlink to `.credentials.json`. On macOS, use the real config directory and let the live preflight stop a run when user skills, settings, or `CLAUDE.md` load. Forward no token variable. Stop with `credential-changed` when the link no longer resolves to the same file.
+  Stop with `sandbox-unavailable` and a fix hint when the Bash sandbox cannot start.
 - **Alternatives:** A token from `claude setup-token`. A copied credential file. An exported Keychain item on macOS. A weaker nested sandbox.
 - **Consequences:** No key setup on Linux. This record amends ADR-004 in `skillz-autoimprove.md`, which rejected copied OAuth credentials. macOS behavior needs a test on a real Mac.
 

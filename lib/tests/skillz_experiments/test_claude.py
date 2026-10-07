@@ -259,8 +259,8 @@ def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(
         original_settings = _claude.settings
         original_environment = ClaudeCode._environment  # pyright: ignore[reportPrivateUsage]
 
-        def without_setting(workspace: Path) -> dict[str, object]:
-            return {key: value for key, value in original_settings(workspace).items() if key != "disableBundledSkills"}
+        def without_setting(workspace: Path, out: Path | None = None) -> dict[str, object]:
+            return {key: value for key, value in original_settings(workspace, out).items() if key != "disableBundledSkills"}
 
         def without_variable(self: ClaudeCode, workspace: Path) -> dict[str, str]:
             return {key: value for key, value in original_environment(self, workspace).items()
@@ -407,8 +407,8 @@ def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path
     before = session.environment_key()
     original = _claude.settings
 
-    def open_network(workspace: Path) -> dict[str, object]:
-        changed = original(workspace)
+    def open_network(workspace: Path, out: Path | None = None) -> dict[str, object]:
+        changed = original(workspace, out)
         changed["sandbox"] = cast(dict[str, object], changed["sandbox"]) | {
             "network": {"allowedDomains": ["example.com"], "strictAllowlist": True}}
         return changed
@@ -649,8 +649,8 @@ def test_preflight_fails_when_the_workspace_allow_is_missing(
     del sandbox_passes
     original = _claude.settings
 
-    def without_allow(workspace: Path) -> dict[str, object]:
-        document = original(workspace)
+    def without_allow(workspace: Path, out: Path | None = None) -> dict[str, object]:
+        document = original(workspace, out)
         cast(dict[str, dict[str, object]], document["sandbox"])["filesystem"]["allowRead"] = []
         return document
     monkeypatch.setattr(_claude, "settings", without_allow)
@@ -901,3 +901,22 @@ def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
     assert caught.value.code == "sandbox-unavailable"
     assert fix in str(caught.value) and "no unsafe fallback" in str(caught.value)
     assert budget.calls == task_calls == (len(calls(executable)) if task_calls else 0)
+
+
+def test_settings_deny_reading_proc_and_the_run_directory(tmp_path: Path) -> None:
+    out = tmp_path / "run"
+    out.mkdir()
+    deny = cast(dict[str, list[str]], _claude.settings(tmp_path / "workspace", out)["permissions"])["deny"]
+    assert {"Read(//proc/**)", f"Read(/{out}/**)", f"Read(/{out.resolve()}/**)"} <= set(deny)
+    assert f"Read(/{out}/**)" not in cast(dict[str, list[str]], _claude.settings(tmp_path / "workspace")["permissions"])["deny"]
+
+
+def test_environment_key_changes_with_the_run_directory(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    first = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, tmp_path / "a")
+    second = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, tmp_path / "b")
+    try:
+        assert first.environment_key() != second.environment_key()
+    finally:
+        first.close()
+        second.close()

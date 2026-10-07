@@ -110,10 +110,13 @@ class _Provider:
 def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_path: Path, capsys: pytest.CaptureFixture[str],
                                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     """Drive `main(["run", ...])` through its three stops to `complete`. Only the harness `create` step is faked."""
-    def create(_self: Configuration, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> _Provider:
+    def create(_self: Configuration, _model: str, budget: Budget, checkpoint: Callable[[], None],
+               _out: Path | None = None) -> _Provider:
         return _Provider(budget, checkpoint)
 
     monkeypatch.setattr(Configuration, "create", create)
+    claude = _executable(tmp_path / "claude-bin/claude", "#!/bin/sh\nexit 0\n")
+    monkeypatch.setenv("PATH", f"{claude.parent}:{os.environ['PATH']}")
     target = tmp_path / "echo-skill"
     _ = shutil.copytree(FIXTURES / "echo-skill", target)
     _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
@@ -127,7 +130,9 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
                      "--live", *approvals])
         captured = capsys.readouterr()
         if code:
-            stops.append(cast(str, json.loads(captured.err)["code"]))
+            error = cast(dict[str, object], json.loads(captured.err))
+            assert "code" in error, error
+            stops.append(cast(str, error["code"]))
         return code, cast(dict[str, object], json.loads(captured.out))
 
     code, missing = call()
@@ -148,3 +153,28 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
     assert exported == 0
     assert (tmp_path / "export/candidate.patch").is_file()
     assert sorted(path.name for path in target.iterdir()) == ["SKILL.md"]
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+def test_missing_builtin_harness_stops_with_a_code_before_any_approval(
+        harness: str, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """A built-in harness needs a PATH hit; a file of that name in the cwd does not count."""
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    _ = _executable(tmp_path / harness, "#!/bin/sh\nexit 0\n")
+    monkeypatch.chdir(tmp_path)
+    target = tmp_path / "echo-skill"
+    _ = shutil.copytree(FIXTURES / "echo-skill", target)
+    _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
+    shutil.rmtree(target / "evals")
+    out = tmp_path / "run"
+    args = ["run", "--target", str(target), "--out", str(out), "--model", "m", "--harness", harness, "--live"]
+    assert main(args) == 1
+    _ = capsys.readouterr()
+    draft = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-{family}-{index}",
+              "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"}
+             for family in range(5) for index in range(2)]
+    _ = (out / "cases.draft.json").write_text(json.dumps(draft))
+    assert main(args) == 1
+    assert json.loads(capsys.readouterr().err)["code"] == "harness-missing"

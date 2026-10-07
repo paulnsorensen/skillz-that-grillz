@@ -268,4 +268,4 @@ Read on demand:
 - `engine/scripts/` and `engine/references/` — internal analytics ingestion, query, schema, conventions, and coverage; not a separate skill.
 - `references/calibration.md` — when you tag a finding's severity and confidence; the confidence × severity kernel.
 - `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the run flow, case draft, gate verdict, export, optional contract, graders, isolation, and the helper contracts.
-- `references/experiment-harness.md` — the user selects the `claude` adapter, or checks a custom command or separate roles.
+- `references/experiment-harness.md` — the user selects the `claude` adapter, or checks a custom command or role files.

@@ -1,8 +1,9 @@
 # Custom experiment harness
 
-Read this reference when the user selects the `claude` adapter, checks a command adapter, or configures separate roles.
+Read this reference when the user selects the `claude` adapter, checks a command adapter, or checks role files with `self-test --preflight-only`.
 `run` accepts only `claude` or `codex` for `--harness`.
 A command adapter or a role file applies only to `self-test --preflight-only --harness-config`.
+Under `run`, the judge uses `--model`.
 
 ## Select a command
 

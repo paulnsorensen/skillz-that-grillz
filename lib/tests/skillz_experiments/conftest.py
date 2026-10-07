@@ -39,6 +39,27 @@ def limits(inspector: ModuleType) -> tuple[int, int]:
     return cast(int, getattr(inspector, "ADVISORY_WORDS")), cast(int, getattr(inspector, "MAX_WORDS"))
 
 
+@pytest.fixture(scope="session")
+def harness_bin(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Make stub `claude` and `codex` executables once per session."""
+    directory = tmp_path_factory.mktemp("harness-bin")
+    for name in ("claude", "codex"):
+        stub = directory / name
+        _ = stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+    return directory
+
+
+@pytest.fixture(autouse=True)
+def harness_on_path(harness_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put the stub harness executables on PATH, so `run` does not depend on the host's `claude` or `codex`.
+
+    `run` resolves the built-in harness before the first approval stop. A test that checks
+    `harness-missing` sets its own PATH.
+    """
+    monkeypatch.setenv("PATH", f"{harness_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
 @pytest.fixture
 def umask_022() -> Iterator[None]:
     """Run a privacy test under the common umask, so only the explicit file and directory modes make it private."""

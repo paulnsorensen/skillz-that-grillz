@@ -293,8 +293,10 @@ def test_resume_past_the_deadline_or_clock_reset_creates_no_provider(
     offset = -7300.0 if started == "expired" else 10**7
     tamper(prep.out, lambda record: record.update(started_monotonic=time.monotonic() + offset))
     spy = Spy(refuse=True)
-    with pytest.raises((RuntimeError, ValueError)):
+    with pytest.raises((RuntimeError, ValueError)) as stopped:
         _ = run(prep.target, prep.out, MODEL, live=True, factory=spy.factory)
+    if started == "expired":
+        assert cast(CodedError, stopped.value).code == "budget-exhausted"
 
 
 @pytest.mark.parametrize("repeats", [1, 2, 10, 13, 16, 17, 40, 10**6, 10**18])
@@ -387,7 +389,7 @@ def test_holdout_ids_requests_and_expected_values_never_reach_search_or_reflecti
     seen: dict[str, list[object]] = {}
 
     def spy_search(seed: dict[str, str], edit_mode: Edit, train: list[object], validation: list[object],
-                   evaluate: Evaluate, propose: Propose, *, metric_calls: int) -> dict[str, str]:
+                   evaluate: Evaluate, propose: Propose, *, metric_calls: int) -> object:
         seen["train"], seen["validation"] = list(train), list(validation)
         return search(seed, edit_mode, train, validation, evaluate, propose, metric_calls=metric_calls)
 
@@ -915,3 +917,112 @@ def test_a_missing_login_stops_coded_and_leaves_no_temp_dir(
         _ = _claude(tmp_path)
     assert caught.value.code == "login-missing"
     assert not list(scratch.glob(CONFIG_PREFIX + "*"))
+
+
+# --- Coded stops for tampered records, config changes, and unsafe exports -----------------------------------
+
+def test_a_tampered_estimate_stops_as_run_record_tampered(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    tamper(prep.out, lambda record: cast(dict[str, object], record["estimate"]).update(metric_calls=10**6))
+    with pytest.raises(Stop) as stopped:
+        _ = run(prep.target, prep.out, MODEL, live=True, factory=Spy(refuse=True).factory)
+    assert stopped.value.code == "run-record-tampered"
+
+
+def test_an_unknown_phase_stops_as_run_record_tampered_and_runs_no_stage(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    tamper(prep.out, lambda record: record.update(phase="gating"))
+    spy = Spy(refuse=True)
+    with pytest.raises(Stop) as stopped:
+        _ = run(prep.target, prep.out, MODEL, live=True, factory=spy.factory)
+    assert stopped.value.code == "run-record-tampered"
+
+
+def test_a_tampered_seed_stops_resume(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    tamper(prep.out, lambda record: cast(dict[str, str], record["seed"]).update(
+        {"SKILL.md": cast(dict[str, str], record["seed"])["SKILL.md"] + "\ntampered\n"}))
+    with pytest.raises(ValueError, match="seed differs from the frozen record"):
+        _ = run(prep.target, prep.out, MODEL, live=True, factory=Spy(refuse=True).factory)
+
+
+def test_a_changed_engine_hash_stops_resume(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    tamper(prep.out, lambda record: record.update(engine_hash="0" * 64))
+    with pytest.raises(ValueError, match="evaluator differs from the frozen record"):
+        _ = run(prep.target, prep.out, MODEL, live=True, factory=Spy(refuse=True).factory)
+
+
+@pytest.mark.parametrize(("change", "flag"), [({"model": "other-model"}, "--model"), ({"edit": "prose+cli"}, "--edit"),
+                                              ({"repeats": 7}, "--repeats")])
+def test_a_resume_with_a_different_config_stops_as_run_config_differs_and_names_the_flag(
+        change: dict[str, object], flag: str, tmp_path: Path, make_target: Callable[..., Path],
+        write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    model = cast(str, change.get("model", MODEL))
+    with pytest.raises(CodedError) as stopped:
+        _ = run(prep.target, prep.out, model, live=True, factory=Spy(refuse=True).factory,
+                edit=cast(Edit | None, change.get("edit")), repeats=cast(int | None, change.get("repeats")))
+    assert stopped.value.code == "run-config-differs" and flag in str(stopped.value)
+
+
+def test_an_export_into_the_target_stops_as_export_into_target(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    assert run(prep.target, prep.out, MODEL, live=True, factory=Spy().factory)["phase"] == "complete"
+    with pytest.raises(CodedError) as stopped:
+        _ = export(prep.out, prep.target / "export")
+    assert stopped.value.code == "export-into-target"
+
+
+def test_a_corrupt_record_creates_no_harness_resources(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    """The record validates before `Configuration.create`, which makes the credential symlink dirs."""
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    tamper(prep.out, lambda record: record.update(outcomes="corrupt"))
+    created: list[object] = []
+
+    def create(*args: object, **_kwargs: object) -> None:
+        created.append(args)
+
+    monkeypatch.setattr(Configuration, "create", create)
+    with pytest.raises(ValueError, match="outcomes"):
+        _ = run(prep.target, prep.out, MODEL, live=True, configuration=Configuration({}))
+    assert created == []
+
+
+def test_an_oversized_proposal_scores_zero_with_a_rejected_feedback_entry(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    prep = prepare(tmp_path, make_target, write_draft, approvals)
+    session = _workflow._Session(prep.out, MODEL, "claude", Spy().factory, None)
+    try:
+        components = {name: "x" * 262145 for name in session.seed.editable}
+        score, feedback = session._evaluate_example(components, next(iter(session._search_cases)))
+    finally:
+        session.provider.close()
+    assert score == 0.0 and "proposal exceeds" in str(feedback["rejected"])
+    assert session.outcomes == []
+
+
+def test_a_missing_builtin_harness_stops_before_the_cases_approval(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    with pytest.raises(CodedError) as stopped:
+        _ = run(target, out, MODEL, live=True)
+    assert stopped.value.code == "harness-missing" and not (out / "run.json").exists()

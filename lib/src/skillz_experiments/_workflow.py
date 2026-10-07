@@ -197,8 +197,15 @@ def _supported_kind(contract: Contract) -> str:
     return kind
 
 
+def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object]:
+    """Return the estimate that `run.json` records. `_prepare` writes it and `_verify_budget` rebuilds it."""
+    return {"calls": plan.sized.calls, "seconds": plan.sized.seconds, "search_calls": plan.metric_calls,
+            "repeats": repeats, "holdout_cases": holdout_cases, "holdout_retry_calls": plan.retry_calls,
+            "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls}
+
+
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
-             approve_cases: str | None, approve_budget: int | None) -> None:
+             approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False) -> None:
     """Run the two approvals and write the prepared record. No model call happens here."""
     draft = out / DRAFT_NAME
     if not draft.is_file():
@@ -213,6 +220,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
                          + "add task cases in more families to the draft, then call run again")
     expected = case_hash(cases, split_seed)
+    if resolve_harness:
+        _ = Configuration.single(adapter, model)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
@@ -224,9 +233,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     skeleton = Candidate.capture(target, [], contract)
     seed_candidate = Candidate(skeleton.files, tuple(_editable(skeleton.files, contract, edit)), contract)
     plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats)
-    shown: dict[str, object] = {"calls": plan.sized.calls, "seconds": plan.sized.seconds,
-                                "search_calls": plan.metric_calls, "repeats": repeats,
-                                "holdout_cases": count["holdout"], "holdout_retry_calls": plan.retry_calls}
+    shown = _estimate(plan, repeats, count["holdout"])
     try:
         budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls)
     except BudgetUnapproved as error:
@@ -237,7 +244,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
-        "estimate": shown | {"metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls},
+        "estimate": shown,
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve, "approved": budget.approved},
         "outcomes": [], "started": time.time(), "started_monotonic": time.monotonic()})
 
@@ -249,8 +256,11 @@ class _Session:
         self.out = out
         self.lock = threading.RLock()
         self.record = open_record(out / "run.json")
-        if (_text_field(self.record, "model"), _text_field(self.record, "adapter")) != (model, adapter):
-            raise ValueError("run configuration differs from the frozen record; create a new run")
+        if _phase(self.record) not in _PHASES:
+            raise Stop("run-record-tampered", "the recorded phase is unknown; create a new run", {})
+        for field, flag, value in ("model", "--model", model), ("adapter", "--harness", adapter):
+            if _text_field(self.record, field) != value:
+                raise _config_differs(flag)
         self.contract = parse(_field(self.record, "contract"), _text_field(self.record, "contract_source"))
         if self.contract.identity != _text_field(self.record, "contract_hash"):
             raise ValueError("contract differs from the frozen record; create a new run")
@@ -261,13 +271,13 @@ class _Session:
             raise ValueError("run record field editable must be a list of text")
         self.seed = Candidate(candidate_files(_field(self.record, "seed")), tuple(cast(list[str], editable)), self.contract)
         self.edit: Edit = cast(Edit, _text_field(self.record, "edit"))
+        self.outcomes = _outcomes(self.record)
         configuration = supplied if supplied is not None else (
             Configuration.single(adapter, model) if factory is None else None)
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
-        self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint) if configuration is not None
+        self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out) if configuration is not None
                                     else cast(Factory, factory)(model, self.budget, self.checkpoint))
-        self.outcomes = _outcomes(self.record)
         self._fault: CodedError | None = None
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
 
@@ -323,9 +333,7 @@ class _Session:
         repeats = _int_field(self.record, "repeats")
         plan = _plan(count["train"], count["validation"], count["holdout"],
                      max(self.contract.calls(case.kind) for case in self.cases), repeats)
-        expected = {"calls": plan.sized.calls, "seconds": plan.sized.seconds, "search_calls": plan.metric_calls,
-                    "repeats": repeats, "holdout_cases": count["holdout"], "holdout_retry_calls": plan.retry_calls,
-                    "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls}
+        expected = _estimate(plan, repeats, count["holdout"])
         recorded = mapping(_field(self.record, "estimate"))
         maximum = max(plan.sized.calls, 1)
         seconds = _number_field(budget, "seconds")
@@ -384,7 +392,10 @@ class _Session:
         case = self._search_cases.get(cast(str, example))
         if case is None:
             raise ValueError("holdout must not enter optimization")
-        candidate = self.seed.changed(components)
+        try:
+            candidate = self.seed.changed(components)
+        except ValueError as error:
+            return 0.0, {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
         try:
             result = self.evaluate_case(candidate, case, "search")
         except CodedError:
@@ -513,8 +524,8 @@ class _Session:
         reason = "search-share-spent-best-validated"
         if allowance >= 1:
             try:
-                _ = pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
-                                  self._evaluate_example, self._propose, metric_calls=allowance)
+                pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
+                              self._evaluate_example, self._propose, metric_calls=allowance)
                 self._raise_fault()
                 reason = "validation-mean"
             except BudgetExhausted:
@@ -620,6 +631,17 @@ def _reflection_request(edit: Edit, candidate: dict[str, str],
 _TERMINAL_CODES = frozenset({"isolation-failed", "credential-changed"})
 
 
+_PHASES = ("prepared", "searched", "gated", "complete")
+
+
+def _phase(record: dict[str, object]) -> str:
+    return _text_field(record, "phase")
+
+
+def _config_differs(field: str) -> CodedError:
+    return CodedError("run-config-differs", f"{field} differs from the frozen record; resume with the first-run value or create a new run")
+
+
 def _require_private(out: Path) -> None:
     """Stop unless `out` is a real directory, owned by this user, that no other user can enter."""
     status = out.lstat()
@@ -641,9 +663,9 @@ def _refuse_terminated(path: Path) -> None:
 def _close(session: _Session, pending: BaseException | None) -> None:
     """Close the provider and checkpoint any close fault.
 
-    A completed run keeps its result and records the fault as `close_warning`. When the run itself raises another
-    exception, that exception stays, the recorded failure text stays, and the close fault goes to `close_failure` and a note.
-    Otherwise a terminal code is recorded and propagates.
+    With no pending exception, the run keeps its result and records the fault as `close_warning`. When the run
+    itself raises another exception, that exception stays, the close fault goes to `close_failure` and a note, and a
+    terminal close code also becomes the run's `failure_code`.
     """
     try:
         session.provider.close()
@@ -657,15 +679,11 @@ def _close(session: _Session, pending: BaseException | None) -> None:
                     session.record["failure_code"] = error.code
                     _ = session.record.pop("preflight", None)
                 session.checkpoint()
-            elif session.record.get("phase") == "complete":
+            else:
                 session.record["close_warning"] = detail
                 session.checkpoint()
-            elif terminal:
-                session.record_failure(error)
         if pending is not None:
             pending.add_note(f"closing the provider also failed with {error.code}: {error}")
-        elif session.record.get("phase") != "complete":
-            raise
 
 
 def _open_lock(out: Path) -> TextIO:
@@ -697,14 +715,15 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
     path = out / "run.json"
     if path.exists():
         record = open_record(path)
-        if (edit is not None and edit != record.get("edit")) or (repeats is not None and repeats != record.get("repeats")):
-            raise ValueError("run configuration differs from the frozen record; create a new run")
+        for field, value in ("edit", edit), ("repeats", repeats):
+            if value is not None and value != record.get(field):
+                raise _config_differs(f"--{field}")
         _refuse_terminated(path)
         if record.get("phase") == "complete":
             return summary(record)
     else:
         _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed, approve_cases,
-                 approve_budget)
+                 approve_budget, resolve_harness=factory is None and configuration is None)
     if not live:
         raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
     with _open_lock(out) as lock:

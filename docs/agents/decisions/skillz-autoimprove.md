@@ -7,7 +7,7 @@ The user settled each decision in a Mold session on 2026-10-03.
 ## Records
 
 Skillz-pragmatic-autoimprove ADR-003 removes the `dataset`, `baseline`, `search`, and `evaluate` commands and the `cli`-only and `wedge` arms.
-In this file, the records about those commands and arms are superseded by that ADR where they apply: ADR-001 (case manifest location), ADR-002 (arm scoring), and ADR-005 (wedge arm).
+That ADR supersedes the records about those commands and arms in this file. These records are ADR-001 (case manifest location), ADR-002 (arm scoring), and ADR-005 (wedge arm).
 
 ### ADR-001: Declare the autoimprove contract in one schema with two locations  [status: accepted]
 - **Context:** The runner hard-wires skillz: staging path, `$skillz audit` prompt, `inspect_skill.py` helper, and grader (`_codex.py:145`, `_evaluator.py:24-35`). The [GEPA research](../research/gepa-session-optimization.md) says a generic optimizer accepts a declared build and test contract.

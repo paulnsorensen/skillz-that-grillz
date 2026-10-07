@@ -107,8 +107,8 @@ class FakeJudge:
 def harness(monkeypatch: pytest.MonkeyPatch, task: FakeTask, judge: FakeJudge) -> Harness:
     transports = {"task": task, "judge": judge, "reflection": judge}
 
-    def create(self: Role, budget: Budget, checkpoint: object) -> FakeTask | FakeJudge:
-        del checkpoint
+    def create(self: Role, budget: Budget, checkpoint: object, out: Path | None = None) -> FakeTask | FakeJudge:
+        del checkpoint, out
         transport = transports[self.adapter]
         transport.budget = budget
         return transport

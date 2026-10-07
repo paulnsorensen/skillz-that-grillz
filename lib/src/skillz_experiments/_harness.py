@@ -27,13 +27,16 @@ class EnvironmentDiffers(CodedError):
         super().__init__("environment-differs", message)
 
 
-def _command(value: object, root: Path) -> tuple[str, ...]:
+def _command(value: object, root: Path, *, path_only: bool = False) -> tuple[str, ...]:
     if not isinstance(value, list) or not value:
         raise ValueError("harness command must be a nonempty argument array, not a shell string")
     parts = [string(item, "command argument") for item in cast(list[object], value)]
     executable = shutil.which(parts[0])
     if executable is None:
         candidate = root / parts[0]
+        if path_only:
+            raise CodedError("harness-missing", f"the `{parts[0]}` executable is not on PATH; install it and log in, "
+                             + "or choose the other harness with --harness")
         if not candidate.is_file():
             raise ValueError("harness executable is unavailable")
         executable = str(candidate)
@@ -58,14 +61,14 @@ class Role:
         return digest({"adapter": self.adapter, "model": self.model, "command": self.command,
                        "identity": self.identity, "files": files})
 
-    def create(self, budget: Budget, checkpoint: Callable[[], None]) -> Transport:
+    def create(self, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None) -> Transport:
         if self.adapter == "claude":
-            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]))
+            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out)
         return (Codex(self.model, budget, checkpoint) if self.adapter == "codex"
                 else Command(self.command, self.model, budget, checkpoint))
 
 
-def _role(value: dict[str, object], model: str, root: Path) -> Role:
+def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False) -> Role:
     if set(value) - {"adapter", "command", "identity", "model"}:
         raise ValueError("unknown harness role configuration field")
     adapter = value.get("adapter", "codex")
@@ -73,14 +76,14 @@ def _role(value: dict[str, object], model: str, root: Path) -> Role:
     if adapter == "codex":
         if set(value) - {"adapter", "model"}:
             raise ValueError("Codex role accepts only adapter and model")
-        return Role("codex", selected_model, _command(["codex"], root), VERSION)
+        return Role("codex", selected_model, _command(["codex"], root, path_only=path_only), VERSION)
     if adapter == "claude":
         if set(value) - {"adapter", "model", "command"}:
             raise ValueError("Claude role accepts only adapter, model, and command")
         parts = value.get("command", ["claude"])
         if not isinstance(parts, list) or len(cast(list[object], parts)) != 1:
             raise ValueError("Claude command must name only the executable")
-        return Role("claude", selected_model, _command(cast(list[object], parts), root), CLAUDE_IDENTITY)
+        return Role("claude", selected_model, _command(cast(list[object], parts), root, path_only=path_only), CLAUDE_IDENTITY)
     if adapter != "command":
         raise ValueError("harness adapter must be codex, claude, or command")
     return Role("command", selected_model, _command(value.get("command"), root),
@@ -111,7 +114,7 @@ class Configuration:
         """Return a configuration that runs every role on one headless harness: `claude` or `codex`."""
         if adapter not in ("claude", "codex"):
             raise ValueError("harness must be claude or codex")
-        role = _role({"adapter": adapter}, model, Path.cwd())
+        role = _role({"adapter": adapter}, model, Path.cwd(), path_only=True)
         return cls({name: role for name in ("task", "reflection", "judge")})
 
     def check_boundary(self, target: Path) -> None:
@@ -126,20 +129,21 @@ class Configuration:
         return {name: {"adapter": role.adapter, "model": role.model, "fingerprint": role.fingerprint()}
                 for name, role in self.roles.items()}
 
-    def create(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> Harness:
+    def create(self, model: str, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None) -> Harness:
         _ = model
-        return Harness(self, budget, checkpoint)
+        return Harness(self, budget, checkpoint, out)
 
 
 @final
 class Harness:
-    def __init__(self, configuration: Configuration, budget: Budget, checkpoint: Callable[[], None]) -> None:
+    def __init__(self, configuration: Configuration, budget: Budget, checkpoint: Callable[[], None],
+                 out: Path | None = None) -> None:
         self.configuration = configuration
         self.identity = configuration.identity()
         self.transports: dict[str, Transport] = {}
         try:
             for name, role in configuration.roles.items():
-                self.transports[name] = role.create(budget, checkpoint)
+                self.transports[name] = role.create(budget, checkpoint, out)
         except (OSError, ValueError, RuntimeError):
             with contextlib.suppress(Exception):
                 self.close()
