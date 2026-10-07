@@ -57,19 +57,20 @@ Do not create or request provider credentials.
 When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, or `--seed`.
 
 Each stop prints one JSON object on stdout and a coded error on stderr.
+Each object holds `stop` (the code) and `message`. The table lists the other fields.
 Map each coded stop to its next step:
 
 | Code | Data on stdout | Next step |
 |---|---|---|
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files) | Write the case draft, then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed` | Ask question 2. Run again with `--approve-cases HASH`. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls) | Ask question 3. Run again with `--approve-budget CALLS`. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` in the command. |
 | `baseline-contract-rejected` | `next` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
 | `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |
 | `run-terminated` | `next`, `failure_code` | The run directory holds a stop from `isolation-failed` or `credential-changed`. Start a new run directory. |
-| `run-record-tampered` | An empty object | The budget in `run.json` differs from the plan that the frozen cases give, or the `phase` is unknown. Start a new run directory. |
+| `run-record-tampered` | Only `stop` and `message` | The budget in `run.json` differs from the plan that the frozen cases give, or the `phase` is unknown. Start a new run directory. |
 
 These other codes arrive on stderr as `code`, with no data on stdout:
 
