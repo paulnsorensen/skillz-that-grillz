@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import shutil
 from collections.abc import Callable
@@ -105,6 +106,14 @@ class Configuration:
                  for name in ("task", "reflection", "judge")}
         return cls(roles, path.resolve() if path is not None else None)
 
+    @classmethod
+    def single(cls, adapter: str, model: str) -> Configuration:
+        """Return a configuration that runs every role on one headless harness: `claude` or `codex`."""
+        if adapter not in ("claude", "codex"):
+            raise ValueError("harness must be claude or codex")
+        role = _role({"adapter": adapter}, model, Path.cwd())
+        return cls({name: role for name in ("task", "reflection", "judge")})
+
     def check_boundary(self, target: Path) -> None:
         paths = [Path(argument) for role in self.roles.values() for argument in role.command
                  if Path(argument).is_absolute()]
@@ -132,12 +141,13 @@ class Harness:
             for name, role in configuration.roles.items():
                 self.transports[name] = role.create(budget, checkpoint)
         except (OSError, ValueError, RuntimeError):
-            self.close()
+            with contextlib.suppress(Exception):
+                self.close()
             raise
 
     def _unchanged(self) -> None:
         if self.configuration.identity() != self.identity:
-            raise ValueError("harness executable or script differs from the frozen record")
+            raise CodedError("harness-changed", "harness executable or script differs from the frozen record")
 
     def _reuse_key(self, name: str, adapter: ClaudeCode) -> str:
         return digest({"fingerprint": mapping(self.identity[name])["fingerprint"], "environment": adapter.environment_key()})
@@ -156,8 +166,9 @@ class Harness:
                       if isinstance(adapter, ClaudeCode)}
         if any(name in keys and keys[name] != key for name, key in reuse_keys.items()):
             raise EnvironmentDiffers(
-                "runtime environment differs from the frozen record; a change in the set of credential variables "
-                + f"also causes this (set now: {ClaudeCode.credentials_set()}); restore the first-run environment and resume. "
+                "runtime environment differs from the frozen record; a changed executable, platform, or sandbox "
+                + "setting causes this (a token variable does not, because the runner forwards none); "
+                + "restore the first-run environment and resume. "
                 + "A runner upgrade that changes the sandbox settings or the network probe also causes this; "
                 + "restoring the environment cannot fix that case, so start a new run")
         evidence: dict[str, object] = {}
@@ -173,8 +184,19 @@ class Harness:
         return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live, "reuse_keys": reuse_keys}
 
     def close(self) -> None:
+        errors: list[Exception] = []
         for adapter in self.transports.values():
-            adapter.close()
+            try:
+                adapter.close()
+            except Exception as error:
+                errors.append(error)
+        if errors:
+            raise errors[0]
+
+    def check_candidate(self, candidate: Candidate) -> bool:
+        """Run the local contract check of the task role. It makes no model call."""
+        self._unchanged()
+        return self.transports["task"].check_candidate(candidate)
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self._unchanged()

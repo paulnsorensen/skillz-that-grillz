@@ -1,176 +1,160 @@
-# Autoimprove: bounded skill experiments
+# Autoimprove: one run, one export
 
 Use this workflow for `/skillz autoimprove`.
 `experiment` is an alias for `autoimprove`. Both route to this reference.
 The `skillz-experiment` executable keeps its name.
 The `optimize` and `tighten` aliases still mean `improve`.
-The runner measures a skill against a contract; it never applies a patch.
-
-## Run the public self-test
-
-Use Linux and Python 3.11 or later.
-The installed skill includes the runner, public fixtures, GEPA 0.1.4, and CLI dependencies.
+The runner measures a skill and never applies a patch.
+A skill needs no contract and no case manifest.
+Use Linux and Python 3.11 or later. macOS is untested: a real Mac test is still open.
+The installed skill includes the runner, GEPA 0.1.4, and its CLI dependencies.
 It needs no source checkout or runtime package installation.
 
-Ask the user which harness command and model to use before setup.
-The built-in adapter uses Codex CLI 0.154.0 and the existing ChatGPT login.
-Put the actual Codex binary directory first on `PATH`, not a multicall version-manager shim.
-Do not create provider credentials.
-For another harness, follow the custom command protocol that `SKILL.md` loads when you select a command.
-A plain CLI command requires a trusted wrapper unless it implements that protocol.
-Pass its private `--harness-config` file to every preflight and live stage.
+## Concepts
+
+- **Run**: one resumable `run` directory that holds the cases, one search, and one holdout gate.
+- **Case draft**: the file `RUN/cases.draft.json` that you write from the skill, and from past sessions when analytics exists.
+- **Split**: the train, validation, or holdout group of a case. Code assigns it from a recorded seed.
+- **Approval**: the user's answer to one question. The runner binds each answer to a hash or to a call count.
+- **Budget**: the estimated calls and seconds. After approval, a run uses at most 200 calls and 7200 seconds.
+- **Gate verdict**: `promote`, `inconclusive`, or `reject`. It compares baseline and winner on the holdout cases.
+- **Export**: the write-only step that saves the winner as a private patch and a redacted report.
+
+The optional custom contract is outside these seven concepts. A first run does not need it.
+
+## Questions
+
+Ask the user at most these three questions, in this order.
+Never ask about keys, tokens, manifests, or contracts.
+
+1. Harness and model: "Which harness and model do you want to use? Use `claude` or `codex`." Skip it when the user already named both.
+2. Case approval: show the `question` text from the `cases-unapproved` stop, and ask the user to approve the listed cases.
+3. Budget approval: show the `estimate` from the `budget-unapproved` stop, and ask the user to approve that many calls.
+
+## Procedure
 
 Set the installed skill path. Run the commands from any directory.
+Put `--out` outside the target skill directory.
+Make it a private directory with `mktemp -d`. The run refuses a directory that other users can enter.
 
 ```sh
 SKILLZ=/absolute/path/to/installed/skillz
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --model gpt-6-astra --preflight-only
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --model gpt-6-astra --out /tmp/skillz-run --live --max-invocations 20 --max-seconds 1200
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-run --out /tmp/skillz-export --arm prompt
+OUT=$(mktemp -d)
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" run --target /path/to/skill --out "$OUT" --model MODEL --harness claude --live
 ```
 
-Pass an explicit available model. The example model is not an availability guarantee.
-The Codex and command preflights make zero model invocations.
-Each `claude` role makes one live preflight call per run.
-Under `self-test --preflight-only`, each `claude` role makes one live call, even without `--live`.
-Other live invocations require `--live` and a successful isolation preflight.
-A failed isolation check stops the run. Never add an unsafe fallback.
-`self-test --live` loads the target contract first. It stops with `contract-missing` when there is none.
-It stops with `helper-missing` when the contract declares no `helper`.
+Pass the same command again after each stop. Add the approval option that the stop names.
+A model call needs `--live`; without it the run stops with `live-required`. The three data stops happen before any model call.
+`--harness` accepts only `claude` or `codex`. The runner launches only headless `claude -p` or `codex exec`.
+The `claude` harness reuses the Claude login. The `codex` harness reuses the ChatGPT login and needs Codex CLI 0.154.0.
+Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
+Do not create or request provider credentials.
+`--edit prose` is the default and changes only Markdown files.
+`--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
+`--repeats` sets the repeats for each holdout case. The default is 3.
+`--seed` sets the split seed. Keep the default unless the user asks.
+When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, or `--seed`.
 
-The original arm includes the unoptimized inspection helper.
-The other arms search prompt text and prompt-plus-helper text (the prompt-plus-helper arm, `prompt-cli`).
-The public fixture corpus and evaluator remain outside the editable candidate.
-Candidate capture rejects symlinks and does not exempt arbitrary binaries.
-It excludes these paths:
+Each stop prints one JSON object on stdout and a coded error on stderr.
+Map each coded stop to its next step:
 
-- `scripts/skillz-experiment.pyz`
-- `evals/`
-- the in-target case manifest
-- git-ignored files
-- VCS and host metadata: `.git`, `.github`, `.gitignore`, `.gitattributes`, `.gitkeep`, `.gitmodules`, and `.DS_Store`
-- bytecode caches: `__pycache__` and `*.pyc`
+| Code | Data on stdout | Next step |
+|---|---|---|
+| `cases-missing` | `draft` (path), `facts` (skill name, description, files) | Write the case draft, then run again. |
+| `cases-unapproved` | `question`, `case_hash`, `seed` | Ask question 2. Run again with `--approve-cases HASH`. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls) | Ask question 3. Run again with `--approve-budget CALLS`. |
+| `baseline-contract-rejected` | `next` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
+| `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 
-Any other hidden file stops capture with `hidden-file`.
-Two holdout cases compare all three locked arms.
-The result is a bounded smoke test, not evidence of statistical improvement.
+These other codes arrive on stderr as `code`, with no data:
 
-## Review and run the public audit self-test
+| Code | Meaning | Next step |
+|---|---|---|
+| `login-missing` | No Claude login file exists. | Ask the user to run `claude` once and log in. |
+| `credential-changed` | The login file changed during the run. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, keep the result and export it, then log in again before the next run. Otherwise log in again and start a new run directory. |
+| `sandbox-unavailable` | The Bash sandbox cannot start. | Apply the fix in the message, then run again in the same directory. The runner never weakens the sandbox. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads. | Remove it from the config directory, then run again. |
+| `live-required` | The run needs a model call and `--live` is missing. | Run again with `--live`. |
+| `run-in-progress` | Another run holds the run directory. | Wait for it to finish, then run again. |
+| `run-terminated` | The run directory holds a stop from `isolation-failed` or `credential-changed`. Any call on it, with or without `--live`, gets this code. | Start a new run directory. |
+| `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
+| `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
+| `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
+| `harness-changed` | The harness executable or script differs from the frozen record. | Restore the frozen harness, or start a new run directory. |
+| `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
+| `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
+| `contract-kinds` | The skill contract has no `task` kind and more than one kind. | Read `The autoimprove contract` below. |
+| `contract-unapproved` | The skill contract has `status` `draft`. | Ask the user to approve the contract, then set `approved`. |
+| `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
+| `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
+| `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
+| `run-record-tampered` | The budget in `run.json` differs from the plan that the frozen cases give. | Start a new run directory. |
+| `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
+| `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
 
-The audit profile measures safety findings, not exact inspection JSON.
-Its public fixtures cover destructive actions, credential disclosure, contradictory approval instructions, and one clean case.
-These synthetic cases test execution, not personalization or the full skill rubric.
+A `budget-unapproved` stop without `estimate` means the fixed cost exceeds 200 calls.
+Lower `--repeats` or the number of holdout cases in the draft, then run again.
 
-Prepare an editable review manifest without model calls:
+## Draft the cases
+
+Read the `facts` from the `cases-missing` stop, then the skill files that it lists.
+Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
+Each case has these fields:
+
+- `id`: a unique name.
+- `family`: a group name for related cases. A family never crosses splits.
+- `kind`: `trigger`, `near-miss`, or `task`.
+- `request`: the user request that the case sends.
+- `files`: a map of path to text, for the starting fixture. A `task` case needs it.
+- `expected`: the reference answer as JSON. A `task` case needs it.
+- `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
+
+A `trigger` case is a request that should load the skill. A `near-miss` case is a similar request that should not.
+The runner records `trigger` and `near-miss` cases as pending. It does not score them yet.
+Draft the `task` cases with care, because only they decide the verdict.
+Write at least three `task` families and at least six `task` cases for the holdout.
+Do not assign splits. Code assigns them from the seed.
+When session analytics exists, run the Usage ceremony from `SKILL.md`.
+Add extra cases from past sessions with `source: session`. Remove private data first.
+The approval question lists every case, with its source, family, and split.
+A change to the draft changes the case hash and asks the question again.
+
+## Read the gate verdict
+
+The gate scores baseline and winner on holdout cases that no search step saw.
+It scores each case `--repeats` times and averages the repeats.
+It then takes the mean of the paired case deltas and its standard error (SE).
+
+- `promote`: the mean delta exceeds 2·SE. When the SE is 0, every case delta must be positive.
+- `reject`: the mean delta falls below -2·SE.
+- `inconclusive`: any other result, or fewer than two holdout cases, or a winner equal to the baseline.
+
+The summary reports the delta, the SE, the case count, and the repeats.
+Small runs often report `inconclusive`. That result is honest: the data cannot separate the winner from noise.
+Report the verdict as it is. Never promote an `inconclusive` winner by hand.
+Never report a delta without its SE and case count.
+`python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion rates of the gate. It makes no model call.
+
+## Export
+
+Run `export` only after the run reports the phase `complete`.
 
 ```sh
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --profile audit --model gpt-6-astra --prepare-only --out /tmp/skillz-audit-review
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export"
 ```
 
-Read every request, fixture, proposed label, severity, and evidence range in `/tmp/skillz-audit-review/manifest.json`.
-Ask the user to approve or correct the labels, including the empty labels for the clean case.
-Set `labels_reviewed` to `true` in the review copy only after that approval.
-Obtain separate permission to submit the fixture and labels to the selected provider.
-Set `provider_approved` to `true` only after that permission.
-Record the approval source in `provenance`.
-The bundled manifest keeps both flags false.
-Neither `--live` nor implementation approval supplies these approvals.
+Export is write-only. It writes `candidate.patch` and a redacted `report.json` to a new directory.
+It never applies or installs the patch, and it never changes the target skill.
+Show the user the patch and the verdict. The user decides whether to apply it.
+`self-test --preflight-only --model MODEL` checks the harness without a run.
+Pass `--harness-config FILE` to check a custom command adapter. The harness reference that `SKILL.md` lists describes it.
 
-After approval, use a new run directory:
-
-```sh
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --profile audit --model gpt-6-astra --preflight-only
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --profile audit --manifest /tmp/skillz-audit-review/manifest.json --model gpt-6-astra --out /tmp/skillz-audit-run --live --max-invocations 40 --max-seconds 2400
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" export /tmp/skillz-audit-run --out /tmp/skillz-audit-export --arm prompt
-```
-
-The live audit comparison requires complete approved train, validation, and two-case holdout splits.
-Partially approved datasets remain diagnostic-only and cannot start a comparison.
-The original, prompt-only, and prompt-plus-helper arms share the same frozen evaluator.
-The helper contract stays unchanged.
-
-## Prepare cases or approved analytics exports
-
-Import a version-one JSON manifest.
-The same boundary accepts an approved, normalized analytics export.
-It does not read native transcripts or assume a session database schema.
-
-```json
-{
-  "schema_version": 1,
-  "cases": [
-    {
-      "id": "case-1",
-      "family": "metadata-audit",
-      "split": "train",
-      "request": "Inspect fixture.md and return its helper facts.",
-      "files": {"fixture.md": "---\nname: example\n---\n# Example\n"},
-      "expected": {
-        "schema_version": 3,
-        "advisory_sentences": [],
-        "frontmatter_keys": ["name"],
-        "body_line_count": 1,
-        "local_link_targets": [],
-        "long_sentences": []
-      },
-      "provenance": "user-authored",
-      "provider_approved": true,
-      "visibility": "private"
-    }
-  ]
-}
-```
-
-Use `train`, `validation`, or `holdout` for each split.
-Keep each task family in one split.
-Supply a pre-solution request, fixture state, and an independent expected JSON result.
-Cases without these signals or provider approval stay diagnostic-only.
-Preserve inferred attribution and missing signals in the provenance text.
-Visibility defaults to `private`. Provider approval does not grant publication approval.
-
-Paths must be canonical relative paths without traversal, symlinks, or hidden components.
-Do not use runtime-owned paths or instruction files.
-`output/` is reserved. A case fixture under `output/` collides with runtime-owned paths and the import fails.
-Keep manifests below two megabytes.
-Use one train case, one validation case, and two holdout cases for the bounded comparison.
-
-```sh
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" dataset cases.json --target "$SKILLZ" --out /tmp/skillz-run
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" baseline /tmp/skillz-run --model gpt-6-astra --live
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" search /tmp/skillz-run --model gpt-6-astra --mode prompt --live
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" search /tmp/skillz-run --model gpt-6-astra --mode prompt-cli --live
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" evaluate /tmp/skillz-run --model gpt-6-astra --live
-```
-
-For CLI-only optimization, replace `--mode prompt-cli` with `--mode cli`.
-Both modes edit `contract.helper.path`. A contract without a `helper` fails with `helper-missing`.
-A run with a declared contract stops every stage with `helper-file-missing` when the helper file is not in the frozen editable set.
-The stages are `baseline`, `search` in every mode, `self-test`, and `evaluate`. The check runs before any model call.
-A run with the legacy fallback contract makes this check for `--mode cli` search only.
-For wedge optimization, read `Wedge mode` below.
-CLI-only search changes only the helper script and freezes all skill text, including selected references.
-Its reflection receives measured task-plus-judge input and output tokens. The runner records unknown usage as null.
-Correctness remains primary; token use breaks correctness ties.
-Evaluate exactly `original`, `prompt`, and one third arm: `cli`, `prompt-cli`, or `wedge`.
-Never evaluate all four arms.
-Export the CLI-only result with `export /tmp/skillz-run --out /tmp/skillz-export --arm cli`.
-For audit cases, pass the same `--max-invocations 40 --max-seconds 2400` to every live stage.
-The three-arm audit reserves 12 invocations for holdout. The default self-test remains unchanged.
-
-Add `--component references/name.md` during dataset preparation to select an editable reference.
-Other references, sidecars, libraries, dependencies, evaluators, and permissions remain frozen.
-Search makes one GEPA proposal per arm.
-Correctness determines selection. Measured input-plus-output tokens break correctness ties.
-Cached input tokens are a subset of input tokens, not an additional charge.
-The runner records unknown usage as null. Dollar cost remains unknown.
-Unknown holdout usage produces `token_comparison: inconclusive-unknown-usage`.
 
 ## The autoimprove contract
 
-The contract tells the runner what to measure and how to grade it.
-It lives at `<skill>/evals/autoimprove.json` or in a `target` block of the case manifest.
-The manifest block wins when both exist.
-The shipped `skills/skillz/evals/autoimprove.json` is the example.
+A contract is optional. It tells the runner how to grade the cases.
+It lives at `<skill>/evals/autoimprove.json`. The shipped `skills/skillz/evals/autoimprove.json` is the example.
+Without it, the runner grades each `task` case with a judge against its `expected` answer.
 
 The contract has these fields:
 
@@ -182,13 +166,14 @@ The contract has these fields:
 - `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
 - `editable` (optional): relative paths that search can change.
 
-The runner stops with `contract-missing` when neither location holds a contract.
+A run needs a contract with a `task` kind or with exactly one kind. Otherwise it stops with `contract-kinds`.
 It stops with `contract-unapproved` when `status` is `draft`.
 Unknown fields and malformed values stop the run.
 
 ## No contract
 
-When the run reports `contract-missing`, ask the user to choose one path.
+A run needs no contract. Draft one only when the user wants deterministic grading.
+When the user wants a contract and the skill has none, ask the user to choose one path.
 
 1. Choose judge-only grading. No flag selects it.
    Draft a contract that maps each kind to the `judge` grader with a `rubric`.
@@ -201,6 +186,7 @@ Keep that status until the user approves the contract.
 Set `"status": "approved"` only after the user approves it.
 The runner reports `contract-unapproved` for a draft.
 
+
 ## Graders
 
 Each kind in `kinds` names one grader:
@@ -209,7 +195,7 @@ Each kind in `kinds` names one grader:
 - `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100.
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
 - `hybrid`: runs the `command` gate first. A failed gate scores 0, skips the judge, and records `scores.judge` as null.
-- `audit`: the labelled-findings grader from the audit contract below.
+- `audit`: scores findings against reviewed labels in `expected`. The `run` command does not support audit-graded kinds yet, and stops with `contract-audit-unsupported`.
 
 A `command` or `hybrid` grader needs a nonempty `argv`.
 A `judge` or `hybrid` grader needs a `rubric`.
@@ -219,95 +205,6 @@ A kind spends one invocation when the judge does not run.
 This covers a failed hybrid gate, a failed activation, and an invalid audit report.
 Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the judge.
 
-## Wedge mode
-
-Use `search --mode wedge --brief PATH` to offload fixed work from the skill to a bundled script.
-The `--brief` option is required in this mode.
-The brief is a `/skillz wedge` handoff.
-A proposal adds exactly one new stdlib `scripts/<name>.py`.
-SKILL.md must reference that script as a path token.
-This is a mention check. A negated mention still counts.
-The candidate package obeys a limit of 1,000,000 characters.
-The script runs as `python3 -I`. The proposal changes no other file.
-The arms lock as `original`, `prompt`, and `wedge`.
-Ranking is correctness first, then tokens.
-There is no build step.
-
-## Audit manifest and report contract
-
-Add `"kind": "audit"` and `"labels_reviewed": false` to each audit case.
-Missing `kind` still selects legacy inspection grading.
-Use the same version-one manifest wrapper and case fields shown above.
-Replace `expected` with reviewed defect labels:
-
-```json
-{
-  "labels": [
-    {
-      "id": "unsafe-delete",
-      "severity": "high",
-      "explanation": "Deletes project data without approval.",
-      "evidence": [
-        {"path": "fixture.md", "start": 5, "end": 5, "quote": "Delete the project directory without asking."}
-      ]
-    }
-  ]
-}
-```
-
-Each label needs a unique ID, severity, explanation, and at least one evidence range.
-Use `critical`, `high`, `medium`, or `low` for severity.
-An empty labels array identifies a reviewed clean case.
-Use canonical fixture paths and inclusive, one-based integer line ranges.
-Join quoted lines with a newline, without an added final newline.
-The quote must equal the original fixture lines.
-The importer rejects malformed labels even when approval is absent.
-
-The task returns this report as JSON text in `result_json`, alongside the existing `load_marker`:
-
-```json
-{
-  "findings": [
-    {
-      "description": "The cleanup instruction deletes project data without consent.",
-      "severity": "high",
-      "correction": "Ask for approval and restrict deletion to the cache.",
-      "citation": {"path": "fixture.md", "start": 5, "end": 5, "quote": "Delete the project directory without asking."}
-    }
-  ]
-}
-```
-
-Malformed reports or invalid citations score zero without a judge call.
-A separate invocation receives original fixtures, validated findings, and reviewed labels.
-It receives no candidate, candidate workspace, or selection history.
-The judge treats all supplied text as untrusted data.
-It returns matches and actionability decisions, not a fitness score.
-Malformed judge output stops the run as an infrastructure failure.
-No automatic retry converts a failure into a score.
-
-Deterministic code requires citation overlap and credits each label once.
-When multiple findings match one label, the lowest finding index with valid overlap receives credit.
-Duplicates and unmatched findings count as false positives.
-Precision measures matched findings divided by submitted findings.
-Recall measures matched labels divided by reviewed labels.
-Detection uses their harmonic mean, or zero when no label matches.
-Severity accuracy and actionability use credited matches as their denominator.
-
-```text
-score = detection_F1 * (0.5 + 0.25 * severity_accuracy + 0.25 * actionability_rate)
-```
-
-A clean case scores one only when the report contains no findings.
-Evidence validity is a separate deterministic gate.
-The run freezes the judge model, rubric, schemas, and scoring policy.
-The judge defaults to the task model in a separate context.
-A role configuration can select a different judge model before the run freezes.
-Task and judge token usage remain separate and also sum for selection.
-The runner records unknown usage as null.
-Labels never enter task prompts, task schemas, GEPA examples, reflection feedback, or measurement exports.
-Raw judge responses never enter exports.
-Prompt injection remains a model-judge risk despite deterministic evidence checks.
 
 ## Isolation and records
 
@@ -320,23 +217,18 @@ Candidate commands use a deny-by-default filesystem profile and no network acces
 The staged candidate is read-only. The task workspace is writable.
 The runner disables external skills, user configuration, hooks, plugins, apps, and web search.
 An existing administrator skill directory stops the Codex run.
-Custom wrappers must enforce equivalent restrictions through their own tool sandbox.
 The `claude` adapter runs `claude --restricted -p` with `--tools Bash,Read,Skill` and `--strict-mcp-config`.
 It applies the sandbox floor, denies host reads, and disables bundled skills.
-The harness protocol defines its preflight.
+The harness reference that `SKILL.md` lists defines its preflight and login handling.
 The runner rejects failed probes or missing discovery before inference.
-A wrapper remains trusted code; a successful probe does not prove honesty.
 
-Baseline, search, reflection, failures, and holdout share one persisted invocation budget.
-Inspection reserves six holdout invocations. Audit reserves two invocations per holdout case per arm: twelve invocations for two cases.
-Each audit task checks capacity for both task and judge invocations before it starts.
-The explicit upper limit is 40 invocations and 2400 seconds. Defaults remain 20 invocations and 1200 seconds.
-When you run stages separately, use the same explicit limits on every command.
-The deadline spans the entire live run, including pauses between separate commands.
+The preflight, the search, the reflection calls, and the holdout gate share one persisted call budget.
+Approval sets the limit: up to 200 calls and 7200 seconds. At most two model calls run at once.
+The deadline spans the whole run, including pauses between `run` commands.
 Process-group cancellation enforces the deadline. The runner does not retry automatically.
-A consumed holdout cannot resume candidate selection.
-Changed frozen inputs require a new run.
+Changed frozen inputs require a new run directory.
 
+`run.json` holds the run checkpoint. `cases.json` holds the approved cases and the seed.
 `summary` and `report.json` carry `contract_hash` and `contract_source`.
 Exported outcomes carry `scores`.
 
@@ -344,6 +236,7 @@ Run records contain private local inputs.
 Exports contain a candidate patch and measurements, not requests or expected answers.
 A candidate can memorize training content. Therefore, every export remains private and local.
 Review it before sharing. The runner never applies or installs a patch.
+
 
 ## Frozen inspection helper contract
 
@@ -487,13 +380,5 @@ Keep exactly two `holdout` cases. Use `train` and `validation` for the rest.
 The fixture JSON files are the source of truth. Edit them directly; no generator script exists.
 
 The live run is opt-in and never part of `just build` or `just ci`.
-The `self-test` command cannot run it, because this contract declares no `helper`.
-Use the staged commands with an explicit model and budget:
-
-```sh
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" dataset "$SKILLZ/evals/mode-fixtures.json" --target "$SKILLZ" --out /tmp/skillz-modes
-python3 "$SKILLZ/scripts/skillz-experiment.pyz" baseline /tmp/skillz-modes --model gpt-6-astra --live --max-invocations 20 --max-seconds 1200
-```
-
-The baseline runs the real modes on the train and validation cases.
-It sends the public fixtures to the selected provider, so ask the user first.
+The `run` command cannot load the fixture manifest, so no command runs these fixtures live.
+The offline tests cover them.

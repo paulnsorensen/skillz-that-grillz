@@ -22,24 +22,39 @@ def echo_skill(tmp_path: Path) -> Path:
     target = tmp_path / "echo-skill"
     _ = shutil.copytree(ECHO, target)
     _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
+    set_contract(target, kinds={"echo": {"grader": "exact-json"}})
     return target
 
 
-def echo_cases(tmp_path: Path, kind: str = "echo", extra: dict[str, object] | None = None) -> Path:
-    cases = [{"id": split, "family": split, "split": split, "kind": kind, "request": "Echo hello",
-              "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello"},
-              "provenance": "test", "provider_approved": True} for split in ("train", "validation", "holdout")]
-    path = tmp_path / "cases.json"
-    _ = path.write_text(json.dumps({"schema_version": 1, "cases": cases} | (extra or {})))
-    return path
+def run_intake(tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str]) -> tuple[int, dict[str, object]]:
+    """Walk `run` through both approval stops. Return the exit code and the parsed stderr JSON.
 
-
-def dataset(tmp_path: Path, target: Path, manifest: Path, capsys: pytest.CaptureFixture[str]) -> tuple[int, dict[str, object], dict[str, object]]:
-    code = main(["dataset", str(manifest), "--target", str(target), "--out", str(tmp_path / "run")])
-    captured = capsys.readouterr()
-    out = cast(dict[str, object], json.loads(captured.out)) if captured.out.strip() else {}
-    err = cast(dict[str, object], json.loads(captured.err)) if captured.err.strip() else {}
-    return code, out, err
+    The final call has no `--live`, so a prepared run ends with the `live-required` stop and exit code 1.
+    """
+    out = tmp_path / "run"
+    out.mkdir(mode=0o700)
+    cases = [{"id": f"c{family}-{index}", "family": f"f{family}", "kind": "task", "request": "Echo hello",
+              "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello"}, "source": "skill"}
+             for family in range(5) for index in range(2)]
+    _ = (out / "cases.draft.json").write_text(json.dumps(cases))
+    command = ["run", "--target", str(target), "--out", str(out), "--model", "offline"]
+    stops = ("cases-unapproved", "budget-unapproved")
+    arguments = command
+    for stop in stops:
+        code = main(arguments)
+        captured = capsys.readouterr()
+        error = cast(dict[str, object], json.loads(captured.err)) if captured.err.strip() else {}
+        if error.get("code") != stop:
+            return code, error
+        data = cast(dict[str, object], json.loads(captured.out))
+        if stop == "cases-unapproved":
+            arguments = [*command, "--approve-cases", str(data["case_hash"])]
+        else:
+            estimate = cast(dict[str, int], data["estimate"])
+            arguments = [*arguments, "--approve-budget", str(estimate["calls"])]
+    code = main(arguments)
+    error = cast(dict[str, object], json.loads(capsys.readouterr().err))
+    return code, error
 
 
 def set_contract(target: Path, **changes: object) -> None:
@@ -101,14 +116,14 @@ def test_manifest_version_is_not_boolean(tmp_path: Path) -> None:
 
 def test_contract_staging_uses_the_declared_skill_name(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = echo_skill(tmp_path)
-    code, out, _ = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
-    assert code == 0 and out["contract_source"] == "skill"
+    code, err = run_intake(tmp_path, target, capsys)
+    assert code == 1 and err["code"] == "live-required"
     record = mapping(cast(object, json.loads((tmp_path / "run/run.json").read_text())))
     assert mapping(record["contract"])["skill"] == "echo-skill"
     assert "evals/autoimprove.json" not in mapping(record["seed"])
     from skillz_experiments._contract import load_contract
 
-    contract = load_contract(target, {})
+    contract = load_contract(target)
     candidate = Candidate.capture(target, ["SKILL.md"], contract)
     workspace = make_workspace(tmp_path / "workspace")
     stage_task(workspace, candidate, None)
@@ -146,49 +161,29 @@ def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monke
     assert not adapter.check_candidate(candidate)
 
 
-def test_contract_manifest_block_overrides_the_skill_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    target = echo_skill(tmp_path)
-    block = {"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill other",
-             "kinds": {"echo": {"grader": "exact-json"}}}
-    code, out, _ = dataset(tmp_path, target, echo_cases(tmp_path, extra={"target": block}), capsys)
-    assert code == 0 and out["contract_source"] == "manifest"
-    record = mapping(cast(object, json.loads((tmp_path / "run/run.json").read_text())))
-    assert record["contract_source"] == "manifest" and record["contract_override"] is True
-    assert mapping(record["contract"])["invocation"] == "$echo-skill other"
-
-
-def test_contract_missing_names_both_locations(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    target = echo_skill(tmp_path)
-    (target / "evals/autoimprove.json").unlink()
-    code, _, err = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
-    assert code == 1 and err["code"] == "contract-missing"
-    assert "evals/autoimprove.json" in str(err["error"]) and "target" in str(err["error"])
-    assert not (tmp_path / "run").exists()
-
-
 def test_contract_unapproved_stops_a_draft(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = echo_skill(tmp_path)
     set_contract(target, status="draft")
-    code, _, err = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
+    code, err = run_intake(tmp_path, target, capsys)
     assert code == 1 and err["code"] == "contract-unapproved"
-    assert not (tmp_path / "run").exists()
+    assert not (tmp_path / "run/run.json").exists()
 
 
-@pytest.mark.parametrize(("kind", "accepted"), [("rewrite", True), ("poem", False)])
-def test_kind_must_be_declared_in_the_contract(tmp_path: Path, capsys: pytest.CaptureFixture[str],
-                                               kind: str, accepted: bool) -> None:
+def test_a_contract_without_a_task_kind_and_with_several_kinds_stops_with_a_coded_error(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = echo_skill(tmp_path)
-    code, _, err = dataset(tmp_path, target, echo_cases(tmp_path, kind), capsys)
-    assert (code == 0) is accepted
-    assert accepted or "not declared" in str(err["error"])
-    assert (tmp_path / "run").exists() is accepted
+    set_contract(target, kinds={"echo": {"grader": "exact-json"}, "rewrite": {"grader": "exact-json"}})
+    code, err = run_intake(tmp_path, target, capsys)
+    assert code == 1 and err["code"] == "contract-kinds"
+    assert "echo, rewrite" in str(err["error"]) and "`task` kind or exactly one kind" in str(err["error"])
+    assert not (tmp_path / "run/run.json").exists()
 
 
 def test_undecodable_file_is_a_structured_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = echo_skill(tmp_path)
     (target / "assets").mkdir()
     _ = (target / "assets/x.bin").write_bytes(b"\xff\xfe\x00")
-    code, _, err = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
+    code, err = run_intake(tmp_path, target, capsys)
     assert code == 1 and err["code"] == "undecodable-file"
     assert "assets/x.bin" in str(err["error"])
 
@@ -228,8 +223,8 @@ def test_ignored_file_is_skipped_by_capture(tmp_path: Path, capsys: pytest.Captu
     target = echo_skill(tmp_path)
     (target / "__pycache__").mkdir()
     _ = (target / "__pycache__/x.pyc").write_bytes(b"\xff\xfe\x00")
-    code, _, _ = dataset(tmp_path, target, echo_cases(tmp_path), capsys)
-    assert code == 0
+    code, err = run_intake(tmp_path, target, capsys)
+    assert code == 1 and err["code"] == "live-required"
     record = mapping(cast(object, json.loads((tmp_path / "run/run.json").read_text())))
     assert list(mapping(record["seed"])) == ["SKILL.md"]
 

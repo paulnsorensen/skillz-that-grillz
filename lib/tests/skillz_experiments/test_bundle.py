@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 from typing import cast
 
@@ -12,7 +13,6 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import mapping
-from skillz_experiments._records import read
 
 ROOT = Path(__file__).resolve().parents[3]
 BUNDLE = ROOT / "skills/skillz/scripts/skillz-experiment.pyz"
@@ -39,74 +39,38 @@ def test_runtime_exclusion_is_exact_and_rejects_symlinks(tmp_path: Path) -> None
         _ = Candidate.capture(tmp_path, ["SKILL.md"])
 
 
-def test_installed_bundle_loads_public_fixtures_outside_checkout(tmp_path: Path) -> None:
+def run_installed(tmp_path: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     installed = tmp_path / "installed"
-    _ = shutil.copytree(ROOT / "skills/skillz", installed)
-    out = tmp_path / "prepared"
-    result = subprocess.run(
-        [sys.executable, "-I", "-S", str(installed / "scripts/skillz-experiment.pyz"),
-         "self-test", "--model", "offline", "--prepare-only", "--out", str(out)],
+    if not installed.exists():
+        _ = shutil.copytree(ROOT / "skills/skillz", installed)
+    return subprocess.run(
+        [sys.executable, "-I", "-S", str(installed / "scripts/skillz-experiment.pyz"), *arguments],
         cwd="/", env={"PATH": os.defpath, "SHIV_ROOT": str(tmp_path / "cache")},
         capture_output=True, text=True, timeout=60,
     )
-    assert result.returncode == 0, result.stderr
-    assert (out / "manifest.json").is_file()
 
 
-def run_installed_self_test(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
-    installed = tmp_path / "installed"
-    _ = shutil.copytree(ROOT / "skills/skillz", installed)
-    wrapper = tmp_path / "wrapper.py"
-    _ = shutil.copyfile(Path(__file__).parent / "fixtures/command_wrapper.py", wrapper)
-    settings = tmp_path / "settings.json"
-    log = tmp_path / "requests.jsonl"
-    _ = settings.write_text(json.dumps({"log": str(log)}))
-    config = tmp_path / "harness.json"
-    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "command", "identity": "protocol-fixture",
-                                     "command": [sys.executable, str(wrapper), str(settings)]}))
-    run = tmp_path / "run"
-    result = subprocess.run(
-        [sys.executable, "-I", "-S", str(installed / "scripts/skillz-experiment.pyz"), "self-test",
-         "--model", "offline", "--harness-config", str(config), "--live", "--out", str(run),
-         "--max-invocations", "40"],
-        cwd="/", env={"PATH": os.defpath, "SHIV_ROOT": str(tmp_path / "cache")},
-        capture_output=True, text=True, timeout=60,
-    )
-    assert result.returncode == 0, result.stderr
-    return installed, wrapper, settings, run
+def test_installed_bundle_runs_the_intake_stop_outside_checkout(tmp_path: Path) -> None:
+    out = tmp_path / "run"
+    result = run_installed(tmp_path, "run", "--target", str(tmp_path / "installed"), "--out", str(out),
+                           "--model", "offline")
+    assert result.returncode == 1, result.stderr
+    stop = mapping(cast(object, json.loads(result.stdout)))
+    assert stop["stop"] == "cases-missing" and stop["draft"] == str(out / "cases.draft.json")
+    assert mapping(stop["facts"])["name"] == "skillz"
+    assert json.loads(result.stderr)["code"] == "cases-missing"
+    assert not (out / "run.json").exists()
 
 
-def test_bundle_runs_actual_gepa_and_evaluator_from_installed_target(tmp_path: Path) -> None:
-    installed, wrapper, settings, run = run_installed_self_test(tmp_path)
-    record = read(run / "run.json")
-    assert record["phase"] == "complete"
-    assert record["holdout_consumed"] is True
-    arms = mapping(record["arms"])
-    assert set(arms) == {"original", "prompt", "prompt-cli"}
-    assert "OPTIMIZED" in str(mapping(arms["prompt"])["SKILL.md"])
-    assert "scripts/skillz-experiment.pyz" not in mapping(record["seed"])
-    assert "wedge/scripts/wedge.pyz" not in mapping(record["seed"])
-    outcomes = cast(list[dict[str, object]], record["outcomes"])
-    assert any(item["split"] == "reflection" for item in outcomes)
-    assert all(mapping(item["usage"])["input_tokens"] is None for item in outcomes)
-    holdout = [item for item in outcomes if item["split"] == "holdout"]
-    assert len(holdout) == 6
-    assert all(item["loaded"] and item["helper_executed"] for item in holdout)
-    assert all(item["score"] == 1 for item in holdout if item["arm"] != "original")
-    assert record["improvement"] == "inconclusive-bounded-smoke-test"
-    assert (installed / "SKILL.md").read_text() == (ROOT / "skills/skillz/SKILL.md").read_text()
+def test_installed_bundle_simulates_the_gate_and_rejects_removed_commands(tmp_path: Path) -> None:
+    simulated = run_installed(tmp_path, "self-test", "--simulate")
+    assert simulated.returncode == 0, simulated.stderr
+    rates = mapping(cast(object, json.loads(simulated.stdout)))
+    assert rates["live_calls"] == 0 and cast(float, rates["rate_2se"]) <= 0.06
+    removed = run_installed(tmp_path, "baseline", "anything")
+    assert removed.returncode == 1 and json.loads(removed.stderr)["code"] == "command-removed"
 
-    assert record["token_comparison"] == "inconclusive-unknown-usage"
-    destination = tmp_path / "export"
-    exported = subprocess.run(
-        [sys.executable, "-I", "-S", str(installed / "scripts/skillz-experiment.pyz"), "export", str(run),
-         "--out", str(destination)], cwd="/",
-        env={"PATH": os.defpath, "SHIV_ROOT": str(tmp_path / "cache")},
-        capture_output=True, text=True, timeout=60,
-    )
-    assert exported.returncode == 0, exported.stderr
-    report_text = (destination / "report.json").read_text()
-    assert str(wrapper) not in report_text and str(settings) not in report_text
-    report = read(destination / "report.json")
-    assert report["token_comparison"] == "inconclusive-unknown-usage"
-    assert mapping(mapping(report["harness"])["judge"])["model"] == "offline"
+
+def test_installed_bundle_carries_the_pinned_search_engine() -> None:
+    with zipfile.ZipFile(BUNDLE) as archive:
+        assert any(name.startswith("site-packages/gepa/") for name in archive.namelist())

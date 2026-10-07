@@ -1,10 +1,12 @@
 # Custom experiment harness
 
-Read this reference when the user selects a command adapter or configures separate experiment roles.
+Read this reference when the user selects the `claude` adapter, checks a command adapter, or configures separate roles.
+`run` accepts only `claude` or `codex` for `--harness`.
+A command adapter or a role file applies only to `self-test --preflight-only --harness-config`.
 
 ## Select a command
 
-Ask: "Which harness command and model do you want to use?"
+Ask: "Which harness command and model do you want to check?"
 Ask for an explicit argument array, not a shell command string.
 A raw harness CLI does not automatically implement this protocol.
 Use a trusted user-installed wrapper when the harness lacks these operations.
@@ -55,9 +57,8 @@ For mixed adapters, omit the top-level adapter fields. Define each role complete
 
 Use one command configuration for all roles unless the user requests separate settings.
 
-Pass `--harness-config /absolute/path/to/harness.json` to every preflight and live stage.
-The option applies to `self-test`, `baseline`, `search`, and `evaluate`.
-Dataset preparation and export make no harness invocations.
+Pass `--harness-config /absolute/path/to/harness.json` to each `self-test --preflight-only` check.
+`run` does not read it. `export` makes no harness invocation.
 
 The runner resolves executable paths and existing file arguments before freezing each role.
 Pass script and configuration paths as separate arguments, not embedded `--config=PATH` strings.
@@ -73,7 +74,23 @@ The settings enable the sandbox floor and disable bundled skills.
 They deny host reads from `/`. They allow only the workspace and the runtime roots that commands need.
 The runner places only the staged candidate under the workspace skill directory.
 
-Before the first live task, a live isolation preflight runs. It runs once per run, not once per stage.
+The role reuses your Claude login. It asks for no key or token and forwards no token variable.
+On Linux, `HOME` stays the isolated workspace home.
+The runner sets `CLAUDE_CONFIG_DIR` to a fresh temporary directory outside the workspace.
+The directory holds only a symlink named `.credentials.json` to your real login file.
+The real file comes from `$CLAUDE_CONFIG_DIR/.credentials.json`, or else `~/.claude/.credentials.json`.
+A settings rule denies the Read tool on that temporary directory.
+Without a login file, the run stops with the code `login-missing`. Run `claude` once and log in.
+The runner deletes the temporary directory when the role closes, even after an error.
+If the link no longer points to the same file, the run stops with the code `credential-changed`.
+This can happen, for example, if Claude Code replaces or moves the file. Log in again, then start a new run.
+On macOS, the login lives in the Keychain, so there is no file to link.
+The runner sets `CLAUDE_CONFIG_DIR` to your real config directory.
+That directory can expose your own skills, plugins, agents, or MCP servers.
+The live preflight stops with the code `preflight-leak` when the init event lists any of them.
+Only the candidate skill and the built-in agents are allowed.
+
+Before the first live task, a live isolation preflight runs. It runs once per run, not once per `run` command.
 The preflight asks Claude Code to run `cat` on a sealed host file and on a workspace file.
 It passes only when a Bash command read the sealed path, the host read failed, and the workspace read returned its token.
 The same call also asks Claude to run three exact Bash commands against a loopback listener that the runner owns.
@@ -86,19 +103,25 @@ A command that differs from the generated command, a missing output, or a malfor
 Both failures use the code `network-isolation-failed`.
 The probe does not cover name lookup or a non-loopback address. Treat these as a residual gap.
 The run record keeps the pass and its live calls under `preflight`.
-Each Claude role makes one live preflight per run. Each one counts against `--max-invocations`.
-Later stages reuse the recorded pass and make no new live call.
-Every stage still runs the free helper sandbox probe, which makes no model call.
+Each Claude role makes one live preflight per run. Each one counts against the approved call budget.
+A resumed `run` reuses the recorded pass and makes no new live call.
+Every resume still runs the free helper sandbox probe, which makes no model call.
 The reuse key joins the role fingerprint and the Claude environment hash.
 The environment hash includes the network probe version.
-The environment hash includes the names, not the values, of the set authentication variables.
-A changed key stops the stage with the code `environment-differs` and the text "runtime environment differs from the frozen record".
+The environment hash leaves out token variables and the per-process config directory, so it stays stable across processes.
+A changed key stops the run with the code `environment-differs` and the text "runtime environment differs from the frozen record".
 The run stays resumable. Resume it after you restore the first-run environment.
 A runner upgrade that changes the sandbox settings or the network probe also changes the key. Restoring the environment cannot fix that case, so start a new run.
 The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
-A missing sandbox tool stops the run.
+A sandbox that cannot start stops the run before any task call, with the code `sandbox-unavailable`.
+The message names the cause and the fix. The runner never weakens the sandbox.
+If `bwrap` is missing, install bubblewrap.
+If `socat` is missing, install socat.
+If the host restricts user namespaces, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
+Or add an AppArmor profile for `bwrap`.
+A failure in the live preflight can cost its one call, but it never reaches a task call.
 The macOS path is unverified live. Verify it before you authorize private data.
 The network probes cover only direct loopback TCP and the proxy HTTP path on the live Bash path. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
 Manual macOS checklist:
@@ -211,7 +234,6 @@ Return `usage: null` when usage is unavailable.
 Individual counts can also be absent or null.
 Counts must be nonnegative integers when known.
 Unknown usage never becomes zero.
-Unknown holdout usage produces `token_comparison: inconclusive-unknown-usage`.
 
 ## Trust and limits
 

@@ -1,138 +1,89 @@
 from __future__ import annotations
 
-import json
+import threading
 from collections.abc import Mapping, Sequence
+from typing import cast
 
 import pytest
 
-from skillz_experiments._search import Mode, optimize
-from skillz_experiments._wedge import admit, new_script
+from skillz_experiments._runtime import MAX_CONCURRENT_CALLS
+from skillz_experiments._search import Edit, search
 
 
-@pytest.mark.parametrize("mode", ["prompt", "prompt-cli"])
-def test_real_gepa_evaluates_changed_components(mode: Mode, capsys: pytest.CaptureFixture[str]) -> None:
-    seed = {"SKILL.md": "seed", "scripts/inspect_skill.py": "original"}
-    replacement = "better PRIVATE_CANDIDATE_SENTINEL"
-    seen: list[tuple[dict[str, str], object]] = []
-
-    def evaluate(candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
-        assert example in ("train", "validation")
-        seen.append((candidate.copy(), example))
-        return float(candidate["SKILL.md"] == replacement), {"failure": "Use better"}
-
-    def propose(candidate: dict[str, str], reflective_dataset: Mapping[str, Sequence[Mapping[str, object]]],
-                components_to_update: list[str]) -> dict[str, str]:
-        assert candidate
-        assert reflective_dataset
-        return {key: replacement if key == "SKILL.md" else "changed" for key in components_to_update}
-
-    winner = optimize(seed, mode, ["train"], ["validation"], evaluate, propose, code="scripts/inspect_skill.py")
-    assert winner["SKILL.md"] == replacement
-    assert winner["scripts/inspect_skill.py"] == ("original" if mode == "prompt" else "changed")
-    assert any(item != seed and example == "train" for item, example in seen)
-    assert any(item != seed and example == "validation" for item, example in seen)
-    captured = capsys.readouterr()
-    assert "PRIVATE_CANDIDATE_SENTINEL" not in captured.out + captured.err
-
-
-def test_cli_gepa_freezes_all_text() -> None:
-    seed = {"SKILL.md": "seed", "references/selected.md": "reference",
-            "scripts/inspect_skill.py": "original", "scripts/other.py": "frozen"}
-    seen: list[tuple[dict[str, str], object]] = []
+def test_search_runs_several_pareto_iterations_and_picks_by_validation_mean() -> None:
+    train_scores = {"v0": 0.2, "bad": 0.0, "mid": 0.5, "top": 0.6, "late": 0.9}
+    validation_scores = {"v0": 0.2, "mid": 0.7, "top": 0.8, "late": 0.3}
+    proposals = iter(["bad", "mid", "top", "late"])
+    lock = threading.Lock()
+    validated: list[str] = []
+    proposed: list[str] = []
 
     def evaluate(candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
-        seen.append((candidate.copy(), example))
-        assert {key: value for key, value in candidate.items() if key != "scripts/inspect_skill.py"} == {
-            key: value for key, value in seed.items() if key != "scripts/inspect_skill.py"}
-        return float(candidate["scripts/inspect_skill.py"] == "changed"), {"task_correct": 0.0}
+        text = candidate["SKILL.md"]
+        if str(example).startswith("val"):
+            with lock:
+                validated.append(text)
+            return validation_scores.get(text, 0.0), {"task_correct": 0.0}
+        return train_scores.get(text, 0.0), {"task_correct": 0.0}
 
-    def propose(candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
                 components: list[str]) -> dict[str, str]:
-        assert candidate == {"scripts/inspect_skill.py": "original"}
-        assert components == ["scripts/inspect_skill.py"]
-        assert feedback
-        return {"scripts/inspect_skill.py": "changed"}
+        text = next(proposals, "extra")
+        proposed.append(text)
+        return {key: text for key in components}
 
-    winner = optimize(seed, "cli", ["train"], ["validation"], evaluate, propose, code="scripts/inspect_skill.py")
-    assert winner == seed | {"scripts/inspect_skill.py": "changed"}
-    assert (winner, "train") in seen
-    assert (winner, "validation") in seen
-
-
-SEED_WEDGE = {"SKILL.md": "seed", "scripts/inspect_skill.py": "original"}
-NEW_PATH = "scripts/offload.py"
-
-
-def _proposal(files: dict[str, str], skill: str = f"Run {NEW_PATH}.") -> dict[str, str]:
-    return {"SKILL.md": skill, "wedge-files": json.dumps(files)}
+    winner = search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], ["val1", "val2"], evaluate, propose,
+                    metric_calls=80)
+    assert proposed[:4] == ["bad", "mid", "top", "late"]
+    assert "bad" not in validated
+    assert set(validated) >= {"v0", "mid", "top", "late"}
+    best = max(set(validated), key=lambda text: validation_scores.get(text, 0.0))
+    assert best == "top"
+    assert winner["SKILL.md"] == best
 
 
-def test_wedge_admission_accepts_one_referenced_new_script() -> None:
-    assert admit(SEED_WEDGE, _proposal({NEW_PATH: "print(1)\n"})) == {NEW_PATH: "print(1)\n"}
-    assert new_script(SEED_WEDGE, SEED_WEDGE | {NEW_PATH: "x"}) == NEW_PATH
-    assert new_script(SEED_WEDGE, SEED_WEDGE) is None
+def test_search_skips_a_minibatch_the_parent_already_scores_perfectly() -> None:
+    proposed: list[str] = []
 
-
-@pytest.mark.parametrize("source", ["import requests\n", "from requests import get\n",
-                                    "from . import helper\n", "from .helper import run\n", "def broken(\n"])
-def test_wedge_admission_rejects_nonstdlib_or_invalid_source(source: str) -> None:
-    with pytest.raises(ValueError):
-        _ = admit(SEED_WEDGE, _proposal({NEW_PATH: source}))
-
-
-def test_wedge_admission_keeps_empty_and_stdlib_source() -> None:
-    assert admit(SEED_WEDGE, _proposal({NEW_PATH: ""})) == {NEW_PATH: ""}
-    source = "import os.path\nfrom pathlib import Path\n"
-    assert admit(SEED_WEDGE, _proposal({NEW_PATH: source})) == {NEW_PATH: source}
-
-
-@pytest.mark.parametrize("proposal", [
-    _proposal({NEW_PATH: "x"}, skill="Run nothing."),
-    _proposal({NEW_PATH: "x", "scripts/second.py": "y"}),
-    _proposal({"references/notes.py": "x"}, skill="Run references/notes.py."),
-    _proposal({"notes.md": "x"}, skill="Run notes.md."),
-    _proposal({"scripts/inspect_skill.py": "changed"}, skill="Run scripts/inspect_skill.py."),
-    _proposal({"scripts/../escape.py": "x"}, skill="Run scripts/../escape.py."),
-    _proposal({}),
-    {"SKILL.md": f"Run {NEW_PATH}.", "wedge-files": "not json"},
-    {"SKILL.md": f"Run {NEW_PATH}.", "wedge-files": json.dumps({NEW_PATH: 7})},
-    {"SKILL.md": f"Run {NEW_PATH}.", "wedge-files": "[" * 100_000},
-    _proposal({NEW_PATH: "x"}, skill="Run scripts/offload.pyz."),
-    _proposal({NEW_PATH: "x"}, skill="Run myscripts/offload.py."),
-    _proposal({NEW_PATH: "x"}, skill=f"Run python3 .agents/skills/other-skill/{NEW_PATH}."),
-])
-def test_wedge_admission_rejects_other_proposals(proposal: dict[str, str]) -> None:
-    with pytest.raises(ValueError):
-        _ = admit(SEED_WEDGE, proposal, "echo-skill")
-
-
-def test_wedge_mode_searches_skill_text_and_the_wedge_component() -> None:
-    seed = {"SKILL.md": "seed", "wedge-files": "{}"}
-
-    def evaluate(candidate: dict[str, str], _example: object) -> tuple[float, dict[str, object]]:
-        return float(NEW_PATH in candidate["wedge-files"]), {"task_correct": 0.0}
-
-    def propose(candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
                 components: list[str]) -> dict[str, str]:
-        assert sorted(components) == ["SKILL.md", "wedge-files"]
-        assert sorted(candidate) == ["SKILL.md", "wedge-files"]
-        return _proposal({NEW_PATH: "print(1)\n"})
+        proposed.append("called")
+        return {key: "changed" for key in components}
 
-    winner = optimize(seed, "wedge", ["train"], ["validation"], evaluate, propose, code=None)
-    assert NEW_PATH in winner["wedge-files"]
-
-
-@pytest.mark.parametrize("prefix", ["./", "${CLAUDE_SKILL_DIR}/", "<this-skill-directory>/", ".agents/skills/echo-skill/", ""])
-def test_wedge_admission_accepts_a_prefixed_reference(prefix: str) -> None:
-    skill = f"Run python3 {prefix}{NEW_PATH}."
-    assert admit(SEED_WEDGE, _proposal({NEW_PATH: "x"}, skill=skill), "echo-skill") == {NEW_PATH: "x"}
+    winner = search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], lambda candidate, example: (1.0, {}),
+                    propose, metric_calls=12)
+    assert proposed == []
+    assert winner == {"SKILL.md": "v0"}
 
 
-def test_wedge_admission_accepts_a_reference_that_ends_a_sentence() -> None:
-    assert admit(SEED_WEDGE, _proposal({NEW_PATH: "x"}, skill=f"Run `{NEW_PATH}`. Then stop.")) == {NEW_PATH: "x"}
+def test_prose_edits_only_markdown_and_prose_cli_adds_helper_scripts() -> None:
+    seed = {"SKILL.md": "seed", "references/a.md": "ref", "scripts/inspect_skill.py": "original"}
+
+    def run(edit: Edit) -> tuple[dict[str, str], set[str]]:
+        offered: set[str] = set()
+
+        def evaluate(candidate: dict[str, str], _example: object) -> tuple[float, dict[str, object]]:
+            assert set(candidate) == set(seed)
+            return float(candidate["SKILL.md"] == "changed"), {"task_correct": 0.0}
+
+        def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                    components: list[str]) -> dict[str, str]:
+            offered.update(components)
+            return {key: "changed" for key in components}
+
+        winner = search(seed, edit, ["t1", "t2"], ["v"], evaluate, propose, metric_calls=30)
+        return winner, offered
+
+    prose, prose_offered = run("prose")
+    assert prose_offered == {"SKILL.md", "references/a.md"}
+    assert prose["scripts/inspect_skill.py"] == "original"
+    both, both_offered = run("prose+cli")
+    assert both_offered == set(seed)
+    assert both["scripts/inspect_skill.py"] == "changed"
+    assert MAX_CONCURRENT_CALLS == 2
 
 
-def test_cli_search_without_a_helper_path_is_an_error_not_the_skillz_default() -> None:
-    with pytest.raises(ValueError, match="needs a helper path"):
-        _ = optimize({"SKILL.md": "seed"}, "cli", ["train"], ["validation"],
-                     lambda candidate, example: (0.0, {}), lambda candidate, feedback, components: {}, code=None)
+def test_search_rejects_an_unknown_edit() -> None:
+    with pytest.raises(ValueError, match="prose or prose\\+cli"):
+        _ = search({"SKILL.md": "x"}, cast(Edit, cast(object, "cli")), ["t"], ["v"], lambda c, e: (0.0, {}),
+                   lambda c, f, k: {}, metric_calls=5)

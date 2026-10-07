@@ -102,7 +102,7 @@
       "family": "mode-contract",
       "split": "train",
       "kind": "contract",
-      "request": "The autoimprove runner reported contract-missing for skills/demo. Follow the no-contract path: choose judge-only grading and draft the contract. Write it to skills/demo/evals/autoimprove.json.",
+      "request": "The user wants deterministic grading for skills/demo, and the skill has no contract. Follow the no-contract path: choose judge-only grading and draft the contract. Write it to skills/demo/evals/autoimprove.json.",
       "files": {
         "skills/demo/SKILL.md": "---\nname: demo\ndescription: Rewrite a note in plain words. Use when asked to \"rewrite\".\n---\n\n# demo\n\n1. Rewrite the note in plain words.\n"
       },

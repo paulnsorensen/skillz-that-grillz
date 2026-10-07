@@ -6,6 +6,9 @@ The user settled each decision in a Mold session on 2026-10-03.
 
 ## Records
 
+Skillz-pragmatic-autoimprove ADR-003 removes the `dataset`, `baseline`, `search`, and `evaluate` commands and the `cli`-only and `wedge` arms.
+In this file, the records about those commands and arms are superseded by that ADR where they apply: ADR-001 (case manifest location), ADR-002 (arm scoring), and ADR-005 (wedge arm).
+
 ### ADR-001: Declare the autoimprove contract in one schema with two locations  [status: accepted]
 - **Context:** The runner hard-wires skillz: staging path, `$skillz audit` prompt, `inspect_skill.py` helper, and grader (`_codex.py:145`, `_evaluator.py:24-35`). The [GEPA research](../research/gepa-session-optimization.md) says a generic optimizer accepts a declared build and test contract.
 - **Decision:** A contract names the skill, task kinds, invocation, optional helper, grader per kind, and editable files. It lives in `<skill>/evals/autoimprove.json` or in a `target` block of the case manifest; the manifest block wins. With neither, autoimprove asks the user to choose judge-only grading with a powerful model, or to find or draft a contract. A drafted contract carries `"status": "draft"` and `dataset` refuses it until the user approves it.
@@ -23,9 +26,9 @@ The user settled each decision in a Mold session on 2026-10-03.
 - **Decision:** Skillz docs and add, improve, and reflection prose use STE. `inspect_skill.py` schema v2 adds `long_sentences` facts. A `Prose (ASD-STE100)` audit lens judges passive voice and multi-instruction sentences.
   Schema v3 moves `long_sentences` to sentences over 25 words and adds `advisory_sentences` for 21 to 25 words.
 - **Alternatives:** A judge-only lens. A separate STE script.
-- **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `lib/src/skillz_experiments/_evaluation.py`, `skills/skillz/evals/autoimprove.json`, `lib/src/skillz_experiments/fixtures/self-test.json`, and the `skills/skillz/references/experiments.md` example.
+- **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `lib/src/skillz_experiments/_evaluation.py`, `skills/skillz/evals/autoimprove.json`, and the `skills/skillz/references/experiments.md` example.
 
-### ADR-004: Run the Claude Code adapter in --restricted mode  [status: accepted]
+### ADR-004: Run the Claude Code adapter in --restricted mode  [status: accepted; amended by skillz-pragmatic-autoimprove ADR-001]
 - **Context:** The Codex adapter isolates discovery, filesystem, and network. Claude Code documents `--restricted` for eval harnesses; `--bare` needs an API key.
 - **Decision:** `claude --restricted -p` with `--tools Bash,Read,Skill`, `--strict-mcp-config`, and a sandbox with `failIfUnavailable`, no unsandboxed commands, and an empty strict allowlist. A live preflight proves auth and that only the candidate skill loads, or stops the run.
 - **Alternatives:** `--bare` with an API key. A temporary config dir with copied OAuth credentials. The generic command protocol only.
@@ -53,4 +56,4 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** A per-evaluation `.pyz` build. Optimizing the brief text only.
 - **Consequences:** No build in the loop. Packaging as a `.pyz` stays a separate, optional step.
 
-_Source: Mold session 2026-10-03 and PR #118 Affinage review · Updated: 2026-10-04_
+_Source: Mold session 2026-10-03 and PR #118 Affinage review · Updated: 2026-10-06_

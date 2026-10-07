@@ -4,9 +4,11 @@ from pathlib import Path
 
 import pytest
 
-from skillz_experiments._records import read, write
+from skillz_experiments._cases import CodedError
+from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 
 
+@pytest.mark.usefixtures("umask_022")
 def test_orphan_checkpoint_does_not_block_a_new_write(tmp_path: Path) -> None:
     record = tmp_path / "run.json"
     orphan = tmp_path / "run.tmp"
@@ -27,3 +29,13 @@ def test_failed_checkpoint_preserves_record_and_cleans_its_temporary(tmp_path: P
     assert set(tmp_path.iterdir()) == before
     write(record, {"phase": "baseline"})
     assert read(record) == {"phase": "baseline"}
+
+
+def test_open_record_rejects_other_schema_versions_with_a_code(tmp_path: Path) -> None:
+    record = tmp_path / "run.json"
+    write(record, {"schema_version": SCHEMA_VERSION - 1, "phase": "baseline"})
+    with pytest.raises(CodedError) as caught:
+        _ = open_record(record)
+    assert caught.value.code == "run-schema-old"
+    write(record, {"schema_version": SCHEMA_VERSION, "phase": "prepared"})
+    assert open_record(record)["phase"] == "prepared"
