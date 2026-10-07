@@ -63,6 +63,12 @@ def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, h
 
 @dataclass
 class Budget:
+    """The call and time budget of one run.
+
+    `reserve` holds calls for holdout claims. `reserve_seconds` holds the end of the deadline for the
+    holdout gate: while it is above 0, `remaining` treats that time as spent. Set it with `reserve_time`.
+    """
+
     maximum: int
     seconds: float
     reserve: int = 6
@@ -70,6 +76,7 @@ class Budget:
     started: float = field(default_factory=time.monotonic)
     _: KW_ONLY
     approved: bool = False
+    reserve_seconds: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -79,12 +86,24 @@ class Budget:
             raise ValueError(f"budget exceeds {max_calls} calls or {max_seconds} seconds")
         if not 0 <= self.reserve <= self.maximum:
             raise ValueError("invalid holdout reservation")
+        if not 0 <= self.reserve_seconds <= max_seconds:
+            raise ValueError("invalid holdout time reservation")
 
     def remaining(self) -> float:
+        """Return the seconds left before the deadline, less any time that the holdout gate still holds."""
         remaining = self.seconds - (time.monotonic() - self.started)
         if remaining <= 0:
             raise BudgetExhausted("global deadline exhausted")
-        return remaining
+        reserved = self.reserve_seconds
+        if remaining <= reserved:
+            raise BudgetExhausted("search deadline exhausted; the holdout gate holds the remaining time")
+        return remaining - reserved
+
+    def reserve_time(self, seconds: float) -> None:
+        """Hold `seconds` at the end of the deadline for the holdout gate. A value of 0 gives the time back."""
+        if not 0 <= seconds <= APPROVED_SECONDS:
+            raise ValueError("invalid holdout time reservation")
+        self.reserve_seconds = seconds
 
     def check(self, count: int, *, holdout: bool = False) -> None:
         _ = self.remaining()
@@ -98,11 +117,17 @@ class Budget:
             self.calls += 1
 
 
-def approve(sized: Estimate, approved_calls: int | None, *, reserve: int) -> Budget:
+def gate_seconds(calls: int) -> int:
+    """Return the seconds to hold for `calls` gate calls: ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)."""
+    return math.ceil(max(calls, 0) * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
+
+
+def approve(sized: Estimate, approved_calls: int | None, *, reserve: int, reserve_time: int = 0) -> Budget:
     """Return the opt-in Budget for a sized run. Raise `BudgetUnapproved` without a matching approval.
 
     The ceiling is `sized.calls` calls and `APPROVED_SECONDS` seconds, because the
     estimate assumes ideal concurrency and the wall clock needs headroom.
+    `reserve_time` is the number of seconds at the end of the deadline that the holdout gate holds.
     Raise `ValueError` when the estimate has no calls.
     """
     if sized.calls < 1:
@@ -112,7 +137,8 @@ def approve(sized: Estimate, approved_calls: int | None, *, reserve: int) -> Bud
         raise BudgetUnapproved(f"estimate of {sized.calls} calls and {sized.seconds} seconds exceeds the cap of {cap}")
     if approved_calls is None or approved_calls < sized.calls:
         raise BudgetUnapproved(f"approve {sized.calls} calls (about {sized.seconds} seconds) before any model call")
-    return Budget(sized.calls, APPROVED_SECONDS, min(reserve, sized.calls), approved=True)
+    return Budget(sized.calls, APPROVED_SECONDS, min(reserve, sized.calls), approved=True,
+                  reserve_seconds=min(reserve_time, sized.seconds))
 
 
 def process(command: list[str], *, cwd: Path, timeout: float,

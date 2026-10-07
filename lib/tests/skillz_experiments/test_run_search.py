@@ -529,6 +529,18 @@ def test_a_credential_change_found_when_the_provider_closes_a_complete_run_keeps
     assert "login file" not in (destination / "report.json").read_text()
 
 
+@pytest.mark.parametrize("code", ["credential-rotated", "credential-refreshed"])
+def test_a_handled_login_change_on_close_keeps_the_result_and_asks_for_no_login(
+        code: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.close_error = CodedError(code, "the login changed and the run handled it")
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert result["phase"] == "complete"
+    assert result["close_warning"] == {"code": code, "hint": "no action needed"}
+    assert "failure_code" not in read(out / "run.json")
+
+
 def test_a_run_called_inside_an_except_block_does_not_mistake_the_caller_error_for_its_own(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:

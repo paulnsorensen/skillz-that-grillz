@@ -21,7 +21,7 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import BudgetExhausted
+from skillz_experiments._runtime import Budget, BudgetExhausted
 from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Factory, Stop, _Session, export, run  # pyright: ignore[reportPrivateUsage]
 
@@ -426,8 +426,128 @@ def test_a_symlinked_run_lock_is_refused_and_its_target_stays_intact(
     out = _prepared(tmp_path, target, write_draft, approvals)
     victim = tmp_path / "victim.txt"
     _ = victim.write_text("keep me")
+    (out / "run.lock").unlink(missing_ok=True)
     os.symlink(victim, out / "run.lock")
     with pytest.raises(CodedError) as caught:
         _ = run(target, out, MODEL, live=True, factory=state.factory())
     assert caught.value.code == "out-unsafe" and "symlink" in str(caught.value)
     assert victim.read_text() == "keep me" and state.evaluated == []
+
+
+class _Spending:
+    """A fake that claims the budget for each call and spends `delay` seconds on each search call.
+
+    Its preflight reads the time left, as the real transports do through the sandbox probe.
+    """
+
+    def __init__(self, state: State, budget: Budget, delay: float) -> None:
+        self.state: State = state
+        self.budget: Budget = budget
+        self.delay: float = delay
+
+    def preflight(self) -> dict[str, object]:
+        _ = self.budget.remaining()
+        return self.state.preflight(None)
+
+    def close(self) -> None:
+        pass
+
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        self.budget.claim(holdout=holdout)
+        if not holdout:
+            time.sleep(min(self.delay, self.budget.remaining()))
+        return self.state.evaluate(candidate, case, holdout)
+
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        del prompt, candidate, case
+        self.budget.claim(holdout=holdout)
+        assert schema is not None
+        return {"answer": {name: "improved" for name in cast(list[str], schema["required"])}}
+
+
+def test_a_resume_with_less_time_than_the_reserve_still_reaches_the_gate(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    budget = cast(dict[str, object], record["budget"])
+    # Only half of the gate reserve is left: preflight runs, the search stops at once, and the gate runs.
+    budget["seconds"] = time.time() - cast(float, record["started"]) + cast(float, budget["reserve_seconds"]) / 2
+    write(out / "run.json", record)
+    factory: Factory = lambda _model, spent, _checkpoint: _Spending(state, spent, 0.0)
+    assert run(target, out, MODEL, live=True, factory=factory)["phase"] == "complete"
+    recorded = read(out / "run.json")
+    assert cast(dict[str, object], recorded["search"])["reason"] == "budget-exhausted-seed-retained"
+    assert cast(dict[str, object], recorded["gate"])["reason"] == "winner-equals-baseline"
+
+
+def test_a_slow_search_stops_at_the_gate_reserve_and_the_run_still_completes(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    budget = cast(dict[str, object], record["budget"])
+    reserved = cast(float, budget["reserve_seconds"])
+    assert reserved > 0
+    # The search gets about 0.5 s; each search call takes 0.2 s, so the planned search cannot finish.
+    budget["seconds"] = time.time() - cast(float, record["started"]) + reserved + 0.5
+    write(out / "run.json", record)
+    factory: Factory = lambda _model, spent, _checkpoint: _Spending(state, spent, 0.2)
+    result = run(target, out, MODEL, live=True, factory=factory)
+    recorded = read(out / "run.json")
+    assert result["phase"] == "complete" and "gate" in recorded
+    assert str(cast(dict[str, object], recorded["search"])["reason"]).startswith("budget-exhausted")
+
+
+def test_a_resume_in_the_searched_phase_gets_the_reserved_time_back(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
+    record = read(out / "run.json")
+    budget = cast(dict[str, object], record["budget"])
+    # Less time is left than the reserve; only the gate may use it now.
+    budget["seconds"] = time.time() - cast(float, record["started"]) + cast(float, budget["reserve_seconds"]) / 2
+    write(out / "run.json", record)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+    assert state.holdout_calls() > 0
+
+
+@pytest.mark.parametrize("change", ["seed", "target"])
+def test_a_resume_with_another_seed_or_target_stops_before_any_call(
+        change: str, tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    other = tmp_path / "copy"
+    _ = shutil.copytree(target, other)
+    with pytest.raises(CodedError) as caught:
+        if change == "seed":
+            _ = run(target, out, MODEL, live=True, seed=7, factory=state.factory())
+        else:
+            _ = run(other, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "run-config-differs"
+    assert state.preflights == [] and state.evaluated == []
+
+
+def test_a_resume_with_the_recorded_seed_runs(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    seed = cast(int, read(out / "run.json")["split_seed"])
+    assert run(target, out, MODEL, live=True, seed=seed, factory=state.factory())["phase"] == "complete"
+
+
+def test_a_first_call_waits_for_the_run_lock_before_it_writes_the_record(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = tmp_path / "run"
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    frozen = (out / "cases.json").stat().st_mtime_ns if (out / "cases.json").exists() else None
+    with (out / "run.lock").open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(Stop) as caught:
+            _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls)
+    assert caught.value.code == "run-in-progress"
+    assert not (out / "run.json").exists()
+    assert ((out / "cases.json").stat().st_mtime_ns if (out / "cases.json").exists() else None) == frozen

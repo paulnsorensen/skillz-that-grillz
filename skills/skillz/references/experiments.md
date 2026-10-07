@@ -17,6 +17,7 @@ It needs no source checkout or runtime package installation.
 - **Split**: the train, validation, or holdout group of a case. Code assigns it from a recorded seed.
 - **Approval**: the user's answer to one question. The runner binds each answer to a hash or to a call count.
 - **Budget**: the estimated calls and seconds. After approval, a run uses at most 200 calls and 7200 seconds.
+  The search stops early enough to leave the holdout gate its estimated calls and time.
 - **Gate verdict**: `promote`, `inconclusive`, or `reject`. It compares baseline and winner on the holdout cases.
 - **Export**: the write-only step that saves the winner as a private patch and a redacted report.
 
@@ -55,6 +56,7 @@ Do not create or request provider credentials.
 `--repeats` sets the repeats for each holdout case. The default is 3.
 `--seed` sets the split seed. Keep the default unless the user asks.
 When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, or `--seed`.
+A value that you pass on a resume must match the first run. The target skill directory must also match.
 
 Each stop prints one JSON object on stdout and a coded error on stderr.
 Each object holds `stop` (the code) and `message`. The table lists the other fields.
@@ -77,9 +79,11 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | Code | Meaning | Next step |
 |---|---|---|
 | `login-missing` | No Claude login file exists. | Ask the user to run `claude` once and log in. |
-| `credential-changed` | The login file changed during the run. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
+| `credential-changed` | The login file moved, or the runner could not restore a refreshed login. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
+| `credential-rotated` | Another process replaced the login file during the run. The run used the new file. The code appears as a `close_warning` with the hint `no action needed`. | Continue. A failed run can resume. |
+| `credential-refreshed` | Claude Code refreshed the login during the run. The runner copied it back to the login file. The code appears as a `close_warning` with the hint `no action needed`. | Continue. A failed run can resume. |
 | `sandbox-unavailable` | The Bash sandbox cannot start. | Apply the fix in the message, then run again in the same directory. The runner never weakens the sandbox. |
-| `preflight-leak` | A user skill, plugin, agent, or MCP server loads. | Remove it from the config directory, then run again. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads. On macOS, a `CLAUDE.md` file or a nonempty `rules` directory in the config directory also stops the run, before any model call. | Move it out of the config directory for the run, then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
@@ -87,7 +91,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. The run stops before case approval. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--edit`, or `--repeats` than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--edit`, `--repeats`, `--seed`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |

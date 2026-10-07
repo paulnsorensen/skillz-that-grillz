@@ -802,26 +802,65 @@ def test_close_deletes_the_config_dir(tmp_path: Path) -> None:
     adapter.close()
 
 
-@pytest.mark.parametrize("change", ["regular-file", "repointed", "target-replaced"])
-def test_close_raises_credential_changed_when_the_link_is_replaced(
-        tmp_path: Path, host_login: Path, change: str) -> None:
+@pytest.mark.parametrize(("change", "code"), [("regular-file", "credential-changed"), ("repointed", "credential-changed"),
+                                            ("removed", "credential-changed"), ("target-replaced", "credential-rotated")])
+def test_close_reports_how_the_login_changed_and_deletes_the_config_dir(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch, change: str, code: str) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    original = host_login.read_text()
     adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
     directory = adapter.config_dir
     link = directory / ".credentials.json"
     other = tmp_path / "other.json"
-    _ = other.write_text("other")
+    _ = other.write_text("{\"other\": true}")
     if change == "regular-file":
         link.unlink()
-        _ = link.write_text("rotated")
+        _ = link.write_text("not json")
     elif change == "repointed":
         link.unlink()
         link.symlink_to(other)
+    elif change == "removed":
+        link.unlink()
     else:
         os.replace(other, host_login)
-    with pytest.raises(CodedError, match="Log in again") as caught:
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == code
+    assert not directory.exists()
+    if change != "target-replaced":
+        assert host_login.read_text() == original
+
+
+def test_close_copies_a_refreshed_login_back_while_the_real_file_is_unchanged(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    directory = adapter.config_dir
+    link = directory / ".credentials.json"
+    link.unlink()
+    _ = link.write_text("{\"token\": \"refreshed\"}")
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == "credential-refreshed"
+    real = host_login.resolve()
+    assert real.read_text() == "{\"token\": \"refreshed\"}" and stat.S_IMODE(real.stat().st_mode) == 0o600
+    assert not directory.exists() and not list(real.parent.glob(".*.skillz-*"))
+
+
+def test_close_never_overwrites_a_login_that_another_process_also_replaced(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    link = adapter.config_dir / ".credentials.json"
+    link.unlink()
+    _ = link.write_text("{\"token\": \"ours\"}")
+    newer = tmp_path / "newer.json"
+    _ = newer.write_text("{\"token\": \"theirs\"}")
+    os.replace(newer, host_login.resolve())
+    with pytest.raises(CodedError) as caught:
         adapter.close()
     assert caught.value.code == "credential-changed"
-    assert not directory.exists()
+    assert host_login.resolve().read_text() == "{\"token\": \"theirs\"}"
 
 
 def test_harness_close_closes_every_transport_and_raises_the_first_error(tmp_path: Path) -> None:
@@ -861,6 +900,57 @@ def test_macos_uses_the_real_config_dir_and_preflight_rejects_foreign_init_entri
     finally:
         session.close()
     assert real.is_dir() and not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
+
+
+@pytest.mark.parametrize(("memory", "stage"), [("CLAUDE.md", "preflight"), ("rules", "preflight"),
+                                               ("CLAUDE.md", "resume"), ("none", "resume")])
+def test_macos_stops_before_any_call_when_user_memory_would_load(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, memory: str, stage: str) -> None:
+    """A first preflight and the free probe on every resume both check memory. An empty `rules` directory passes."""
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    (real / "rules").mkdir()
+    if memory == "CLAUDE.md":
+        _ = (real / "CLAUDE.md").write_text("Always answer in French.")
+    elif memory == "rules":
+        _ = (real / "rules" / "style.md").write_text("Always answer in French.")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    adapter = ClaudeCode("m", budget, lambda: None, executable)
+    check = adapter.preflight if stage == "preflight" else adapter.check_sandbox
+    try:
+        if memory == "none":
+            _ = check()
+            return
+        with pytest.raises(CodedError, match="user memory") as caught:
+            _ = check()
+    finally:
+        adapter.close()
+    assert caught.value.code == "preflight-leak" and memory in str(caught.value)
+    assert budget.calls == 0 and not executable.with_name("claude.log").exists()
+
+
+def test_close_reports_credential_changed_when_the_refreshed_login_cannot_be_written(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    real = host_login.resolve()
+    original = real.read_text()
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    link = adapter.config_dir / ".credentials.json"
+    link.unlink()
+    _ = link.write_text("{\"token\": \"refreshed\"}")
+    mode = stat.S_IMODE(real.parent.stat().st_mode)
+    real.parent.chmod(0o500)
+    try:
+        with pytest.raises(CodedError) as caught:
+            adapter.close()
+    finally:
+        real.parent.chmod(mode)
+    assert caught.value.code == "credential-changed" and real.read_text() == original
 
 
 @pytest.mark.parametrize(("case", "fix", "task_calls"), [
