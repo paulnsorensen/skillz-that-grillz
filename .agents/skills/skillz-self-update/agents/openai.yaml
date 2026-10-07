@@ -1,5 +1,5 @@
 interface:
   display_name: "skillz self-update"
-  short_description: "Refresh harness research and maintain the published skillz skill"
+  short_description: "Refresh harness research, then improve and autoimprove the published skillz skill"
 policy:
   allow_implicit_invocation: false

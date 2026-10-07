@@ -4,6 +4,10 @@
   "skill": "skillz",
   "invocation": "$skillz audit",
   "kinds": {
+    "task": {
+      "grader": "judge",
+      "rubric": "Score the audit report of fixture.md against the expected findings. Give 100 when the report names every expected finding at its location with a correct fix and adds no false finding. Subtract an equal share for each missed finding, wrong location, wrong fix, or false finding. Give 0 when the report is missing or audits a different file."
+    },
     "inspection": {
       "grader": "exact-json"
     },
