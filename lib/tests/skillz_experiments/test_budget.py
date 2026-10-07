@@ -69,6 +69,21 @@ def test_estimate_and_single_approval_gate_the_opt_in_ceiling() -> None:
             _ = approve(too_big, 999, reserve=6)
 
 
+def test_approve_refuses_an_estimate_with_no_calls() -> None:
+    with pytest.raises(ValueError, match="at least 1 call"):
+        _ = approve(Estimate(0, 0), 0, reserve=6)
+
+
+@pytest.mark.parametrize(
+    "sizes",
+    [{"preflight_calls": -1}, {"train": -5, "validation": 10}, {"holdout": -1}, {"search_calls": -1},
+     {"reflection_calls": -1}, {"retry_calls": -1}, {"calls_per_evaluation": 0}, {"repeats": 0}],
+)
+def test_estimate_refuses_counts_that_lower_the_total(sizes: dict[str, int]) -> None:
+    with pytest.raises(ValueError, match="nonnegative counts"):
+        _ = estimate(**sizes)
+
+
 def test_process_runs_at_most_two_children_at_once(tmp_path: Path) -> None:
     errors: list[BaseException] = []
 
@@ -132,12 +147,18 @@ def test_concurrent_claims_never_overspend() -> None:
 
 
 def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
-    holders = [threading.Thread(target=process, args=([sys.executable, "-c", "import time;time.sleep(2.0)"],),
+    hold = "import pathlib,sys,time;pathlib.Path(sys.argv[1]).touch();time.sleep(2.0)"
+    markers = [tmp_path / f"holding-{index}" for index in range(MAX_CONCURRENT_CALLS)]
+    holders = [threading.Thread(target=process, args=([sys.executable, "-c", hold, str(marker)],),
                                 kwargs={"cwd": tmp_path, "timeout": 30, "environment": {"PATH": os.defpath}})
-               for _ in range(MAX_CONCURRENT_CALLS)]
+               for marker in markers]
     for holder in holders:
         holder.start()
-    time.sleep(0.3)
+    # A marker exists only after its child runs, so its holder occupies a slot.
+    deadline = time.monotonic() + 10
+    while not all(marker.exists() for marker in markers):
+        assert time.monotonic() < deadline, "holders did not occupy every call slot"
+        time.sleep(0.01)
     began = time.monotonic()
     with pytest.raises(BudgetExhausted, match="call slot"):
         _ = process([sys.executable, "-c", "pass"], cwd=tmp_path, timeout=0.4,
@@ -148,8 +169,8 @@ def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
     with pytest.raises(BudgetExhausted, match="terminated"):
         _ = process([sys.executable, "-c", "import time;time.sleep(30)"], cwd=tmp_path, timeout=2.5,
                     environment={"PATH": os.defpath})
-    # Holders free the slots about 1.3 s after `late`. Without the slot-wait
-    # subtraction, the call ends near 1.3 + 2.5 = 3.8 s.
+    # Holders free the slots at most 1.6 s after `late`. Without the slot-wait
+    # subtraction, the call ends near 1.6 + 2.5 = 4.1 s.
     assert time.monotonic() - late < 3.2
     for holder in holders:
         holder.join()

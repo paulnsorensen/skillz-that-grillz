@@ -92,3 +92,21 @@ def test_simulation_is_deterministic_for_a_seed() -> None:
 def test_simulation_needs_at_least_two_candidates(candidates: int) -> None:
     with pytest.raises(ValueError, match="at least 2 candidates"):
         _ = simulate(trials=1, cases=6, candidates=candidates)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [({"trials": 0}, "at least 1 trial"), ({"trials": -1}, "at least 1 trial"),
+     ({"cases": 1}, "at least 2 cases"), ({"cases": 0}, "at least 2 cases"),
+     ({"repeats": 0}, "at least 1 repeat"), ({"repeats": -1}, "at least 1 repeat")],
+)
+def test_simulation_rejects_sizes_that_cannot_run_a_trial(overrides: dict[str, int], message: str) -> None:
+    arguments = {"trials": 1, "cases": 6, "repeats": 1} | overrides
+    with pytest.raises(ValueError, match=message):
+        _ = simulate(**arguments)
+
+
+def test_simulation_accepts_the_smallest_valid_sizes() -> None:
+    result = simulate(seed=7, trials=1, cases=2, repeats=1, candidates=2)
+    assert result.trials == 1
+    assert result.cases == 2

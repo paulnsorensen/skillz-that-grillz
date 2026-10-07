@@ -124,9 +124,16 @@ def simulate(
     (candidates * validation + 2 * cases) * repeats calls. For `candidates >= 2` and
     `cases >= 2` that is at most the one-holdout spend of
     (candidates + 1) * cases * repeats, so the comparison favors the one-holdout
-    rule. At `cases == 1` the validation floor of one case breaks this bound.
-    Raise `ValueError` when `candidates < 2`.
+    rule. The gate cannot promote with fewer than 2 cases, so a smaller holdout
+    reports a false rate of zero without a test.
+    Raise `ValueError` when `trials < 1`, `cases < 2`, `repeats < 1`, or `candidates < 2`.
     """
+    if trials < 1:
+        raise ValueError("simulate needs at least 1 trial")
+    if cases < 2:
+        raise ValueError("simulate needs at least 2 cases")
+    if repeats < 1:
+        raise ValueError("simulate needs at least 1 repeat")
     if candidates < 2:
         raise ValueError("simulate needs at least 2 candidates")
     rng = random.Random(seed)
