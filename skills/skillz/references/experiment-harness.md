@@ -36,7 +36,9 @@ Task, reflection, and judge roles inherit the top-level adapter, command, and CL
 Each role can override inherited fields.
 The adapter is `codex`, `command`, or `claude`.
 A Codex role accepts only `adapter` and `model`, without inherited command or identity fields.
-A `claude` role accepts `adapter`, `model`, and `command`. The command names only the executable.
+A `claude` role accepts `adapter`, `model`, `command`, `effort`, `sandbox_read`, and `sandbox_seconds`. The command names only the executable.
+`effort`, `sandbox_read`, and `sandbox_seconds` match the `run` options `--effort`, `--sandbox-read`, and `--sandbox-seconds`.
+The role fingerprint includes them.
 A `command` role sends the contract skill name and path to the wrapper.
 For mixed adapters, omit the top-level adapter fields. Define each role completely:
 
@@ -127,6 +129,11 @@ A runner upgrade that changes the sandbox settings or the network probe also cha
 The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
+By default, those commands read only the system runtime and the workspace.
+Each `sandbox_read` root is mounted read-only at its own path. A root that overlaps the login, the temporary directory, or the run directory stops the run.
+Under `bwrap`, a command has its own network namespace. It can reach a server that it starts itself on loopback, but not the host loopback.
+Under `sandbox-exec`, a command has no network, including loopback.
+A sandbox command stops after `sandbox_seconds`, 20 by default.
 A sandbox that cannot start stops the run before any task call, with the code `sandbox-unavailable`.
 The message names the cause and the fix. The runner never weakens the sandbox.
 If `bwrap` is missing, install bubblewrap.

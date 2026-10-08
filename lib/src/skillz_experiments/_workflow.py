@@ -22,7 +22,8 @@ from typing import Protocol, TextIO, cast, final, get_args
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
-from skillz_experiments._claude import NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES
+from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES, ClaudeOptions,
+                                        resolve_read_roots)
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._gate import case_deltas, verdict as gate_verdict
@@ -213,7 +214,8 @@ def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object
 
 
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
-             approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False) -> None:
+             approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
+             options: ClaudeOptions) -> None:
     """Run the two approvals and write the prepared record. No model call happens here."""
     draft = out / DRAFT_NAME
     if not draft.is_file():
@@ -229,7 +231,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
                          + "add task cases in more families to the draft, then call run again")
     expected = case_hash(cases, split_seed)
     if resolve_harness:
-        _ = Configuration.single(adapter, model)
+        _ = Configuration.single(adapter, model, options)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
@@ -248,6 +250,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS"}) from None
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
+        "claude_options": options.data(),
         "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
@@ -278,8 +281,9 @@ class _Session:
         self.seed = Candidate(candidate_files(_field(self.record, "seed")), tuple(cast(list[str], editable)), self.contract)
         self.edit: Edit = cast(Edit, _text_field(self.record, "edit"))
         self.outcomes = _outcomes(self.record)
+        options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
         configuration = supplied if supplied is not None else (
-            Configuration.single(adapter, model) if factory is None else None)
+            Configuration.single(adapter, model, options) if factory is None else None)
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out) if configuration is not None
@@ -715,14 +719,21 @@ def _open_lock(out: Path) -> TextIO:
     return os.fdopen(descriptor, "w")
 
 
+_OPTION_FLAGS = (("--effort", "effort"), ("--sandbox-read", "sandbox_read"), ("--sandbox-seconds", "sandbox_seconds"))
+
+
 def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
-                  seed: int | None, model: str, adapter: HarnessName) -> None:
-    """Stop when a resume names another model, adapter, target, edit, repeats, or seed than the first run."""
+                  seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object]) -> None:
+    """Stop when a resume names another model, adapter, target, edit, repeats, seed, or Claude option than the first run."""
     for flag, value, field in ("--model", model, "model"), ("--harness", adapter, "adapter"):
         if _text_field(record, field) != value:
             raise _config_differs(flag)
     for flag, value, field in ("--edit", edit, "edit"), ("--repeats", repeats, "repeats"), ("--seed", seed, "split_seed"):
         if value is not None and value != record.get(field):
+            raise _config_differs(flag)
+    recorded = ClaudeOptions.parse(mapping(record.get("claude_options", {})))
+    for flag, field in _OPTION_FLAGS:
+        if given.get(field) is not None and given[field] != getattr(recorded, field):
             raise _config_differs(flag)
     if str(target.resolve()) != record.get("target_root"):
         raise _config_differs("the target skill directory")
@@ -731,14 +742,23 @@ def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, re
 def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
         edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
         approve_cases: str | None = None, approve_budget: int | None = None,
+        effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None) -> dict[str, object]:
-    """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data."""
+    """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
+
+    `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
+    them. A resume uses the recorded options. A value that a resume passes must match the record.
+    """
     if adapter not in ("claude", "codex"):
         raise ValueError("harness must be claude or codex")
     if edit is not None and edit not in get_args(Edit):
         raise ValueError("edit must be prose or prose+cli")
     if repeats is not None and repeats < 1:
         raise ValueError("repeats must be at least 1")
+    given: dict[str, object] = {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
+                                "sandbox_seconds": sandbox_seconds}
+    if adapter == "codex" and any(value is not None for value in given.values()):
+        raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
     if _inside(out, target):
         raise ValueError("--out must be outside the target skill directory")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -755,10 +775,12 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             _refuse_terminated(record)
             if record.get("phase") == "complete":
                 return summary(record)
-            _check_resume(record, target, edit, repeats, seed, model, adapter)
+            _check_resume(record, target, edit, repeats, seed, model, adapter, given)
         else:
+            options = ClaudeOptions.parse({field: value for field, value in given.items() if value is not None})
+            _ = resolve_read_roots(options.sandbox_read, out)
             _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed, approve_cases,
-                     approve_budget, resolve_harness=factory is None and configuration is None)
+                     approve_budget, resolve_harness=factory is None and configuration is None, options=options)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = _Session(out, model, adapter, factory, configuration)

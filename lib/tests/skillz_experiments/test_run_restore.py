@@ -562,6 +562,31 @@ def test_a_resume_with_another_model_stops_before_the_live_check(
     assert stopped.value.code == "run-config-differs"
 
 
+def test_a_first_run_records_the_claude_options_and_a_resume_must_match_them(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = tmp_path / "run"
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    with pytest.raises(Stop) as caught:
+        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, effort="xhigh", sandbox_seconds=120)
+    assert caught.value.code == "live-required"
+    assert read(out / "run.json")["claude_options"] == {"effort": "xhigh", "sandbox_seconds": 120}
+    with pytest.raises(Stop) as resumed:
+        _ = run(target, out, MODEL, effort="xhigh")
+    assert resumed.value.code == "live-required"
+    with pytest.raises(CodedError) as seconds:
+        _ = run(target, out, MODEL, sandbox_seconds=60)
+    with pytest.raises(CodedError) as effort:
+        _ = run(target, out, MODEL, effort="high")
+    assert seconds.value.code == effort.value.code == "run-config-differs"
+    assert "--sandbox-seconds" in str(seconds.value) and "--effort" in str(effort.value)
+
+
+def test_claude_options_are_refused_for_the_codex_harness(tmp_path: Path, make_target: Maker) -> None:
+    with pytest.raises(ValueError, match="only to --harness claude"):
+        _ = run(make_target(tmp_path), tmp_path / "run", MODEL, adapter="codex", effort="high")
+
 @pytest.mark.parametrize("change", ["seed", "target"])
 def test_a_resume_with_another_seed_or_target_stops_before_any_call(
         change: str, tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:

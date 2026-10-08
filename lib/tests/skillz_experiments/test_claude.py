@@ -16,7 +16,8 @@ import pytest
 from skillz_experiments import _claude, _codex
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import ClaudeCode, NetworkIsolationFailed, sandbox_argv, seatbelt_profile
+from skillz_experiments._claude import (ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots, sandbox_argv,
+                                        seatbelt_profile)
 from skillz_experiments._contract import load_contract, parse
 from skillz_experiments._evaluator import Transport
 from skillz_experiments._graders import Sandbox
@@ -107,6 +108,67 @@ def test_argv_or_settings_or_usage_argv_is_restricted_and_tool_limited(tmp_path:
     assert "--strict-mcp-config" in argv
     assert argv[argv.index("--model") + 1] == "claude-test-model"
     assert "--settings" in argv
+    assert "--effort" not in argv
+
+
+def _claude_config(tmp_path: Path, executable: Path, **options: object) -> Configuration:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [str(executable)], **options}))
+    return Configuration.load(config, "claude-test-model")
+
+
+def test_a_claude_role_effort_reaches_every_call_and_the_fingerprint(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    configuration = _claude_config(tmp_path, executable, effort="xhigh")
+    session = configuration.create("claude-test-model", Budget(10, 120, 0), lambda: None)
+    try:
+        _ = session.transports["judge"].invoke("hello")
+    finally:
+        session.close()
+    argv = cast(list[str], calls(executable)[0]["argv"])
+    assert argv[argv.index("--effort") + 1] == "xhigh"
+    plain = _claude_config(tmp_path, executable)
+    assert configuration.roles["judge"].fingerprint() != plain.roles["judge"].fingerprint()
+
+
+@pytest.mark.parametrize("options", [{"effort": "turbo"}, {"sandbox_read": ["relative/browsers"]},
+                                     {"sandbox_read": "/usr"}, {"sandbox_seconds": 0}, {"sandbox_seconds": 601},
+                                     {"sandbox_seconds": 2.5}])
+def test_invalid_claude_options_stop_the_configuration(tmp_path: Path, options: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="effort|sandbox_read|sandbox_seconds"):
+        _ = _claude_config(tmp_path, fake_claude(tmp_path), **options)
+
+
+def test_claude_options_are_refused_for_another_adapter(tmp_path: Path) -> None:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "command", "identity": "w",
+                                      "command": [str(fake_claude(tmp_path))], "effort": "high"}))
+    with pytest.raises(ValueError, match="only to a claude role"):
+        _ = Configuration.load(config, "m")
+    with pytest.raises(ValueError, match="only to --harness claude"):
+        _ = Configuration.single("codex", "m", ClaudeOptions(effort="high"))
+
+
+def test_sandbox_read_roots_that_overlap_the_login_temp_home_or_run_directory_are_refused(
+        tmp_path: Path, host_login: Path) -> None:
+    out = tmp_path / "run"
+    (out / "inner").mkdir(parents=True)
+    (tmp_path / "scratch/other").mkdir()
+    for root in (host_login.parent, host_login.parents[1], tmp_path, tmp_path / "scratch/other", out / "inner"):
+        with pytest.raises(ValueError, match="overlaps"):
+            _ = resolve_read_roots((str(root),), out)
+    with pytest.raises(ValueError, match="does not exist"):
+        _ = resolve_read_roots((str(tmp_path / "missing"),), out)
+    quoted = tmp_path / 'we"ird'
+    quoted.mkdir()
+    with pytest.raises(ValueError, match="quote"):
+        _ = resolve_read_roots((str(quoted),), out)
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    assert resolve_read_roots((str(browsers),), out) == (str(browsers.resolve()),)
+    with pytest.raises(ValueError, match="overlaps"):
+        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path),
+                       options=ClaudeOptions(sandbox_read=(str(host_login.parent),)))
 
 
 def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Path) -> None:
@@ -503,6 +565,47 @@ def test_bubblewrap_argv_binds_the_candidate_directory_read_only_after_the_works
     assert ("--bind", "/w/workspace") in binds
     assert binds.index(("--ro-bind", "/w/workspace/.agents")) > binds.index(("--bind", "/w/workspace"))
     assert "--unshare-all" in argv and argv[-1] == "/usr/bin/true"
+
+
+def test_bubblewrap_argv_mounts_each_read_root_read_only_at_its_own_path() -> None:
+    argv = sandbox_argv("linux", "/usr/bin/bwrap", Path("/w/workspace"), ["/usr/bin/true"], {}, ("/opt/pw-browsers",))
+    index = argv.index("/opt/pw-browsers")
+    assert argv[index - 1:index + 2] == ["--ro-bind", "/opt/pw-browsers", "/opt/pw-browsers"]
+    assert argv.count("/opt/pw-browsers") == 2 and "--unshare-all" in argv
+
+
+def test_seatbelt_profile_allows_reads_only_of_each_read_root() -> None:
+    lines = seatbelt_profile(Path("/w/workspace"), ("/opt/pw-browsers",)).splitlines()
+    assert '(allow file-read* (subpath "/opt/pw-browsers"))' in lines
+    assert not any("/opt/pw-browsers" in line for line in lines if "write" in line or "network" in line)
+
+
+@needs_bwrap
+def test_a_bubblewrap_command_reads_a_read_root_and_serves_itself_on_loopback(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The capture case: read a browser root, start a server inside the sandbox, and reach it on loopback."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    _ = (browsers / "chrome").write_text("browser")
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path),
+                         options=ClaudeOptions(sandbox_read=(str(browsers),)))
+    script = ("import pathlib,socket\n"
+              f"root=pathlib.Path({str(browsers.resolve())!r})\n"
+              "assert (root/'chrome').read_text()=='browser'\n"
+              "try: (root/'written').write_text('x')\n"
+              "except OSError: pass\n"
+              "else: raise SystemExit('read root is writable')\n"
+              "server=socket.create_server(('127.0.0.1',0))\n"
+              "client=socket.create_connection(server.getsockname(),timeout=2)\n"
+              "peer=server.accept()[0];client.sendall(b'ping')\n"
+              "print(peer.recv(4).decode())\n")
+    try:
+        code, output = adapter.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/python3", "-c", script])
+    finally:
+        adapter.close()
+    assert (code, output.strip()) == (0, "ping")
+    assert not (browsers / "written").exists()
 
 
 def test_seatbelt_profile_denies_network_host_reads_and_candidate_writes() -> None:

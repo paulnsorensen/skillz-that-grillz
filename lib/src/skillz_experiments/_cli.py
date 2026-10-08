@@ -19,6 +19,7 @@ from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Stop, export as export_run, run as run_workflow
 
 Harness = Literal["claude", "codex"]
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -47,11 +48,25 @@ app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. 
 @app.command(name="run")
 def run_command(*, target: Path, out: Path, model: str, harness: Harness = "claude", live: bool = False,
                 edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
-                approve_cases: str | None = None, approve_budget: int | None = None) -> dict[str, object]:
-    """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question."""
+                approve_cases: str | None = None, approve_budget: int | None = None,
+                effort: Effort | None = None, sandbox_read: list[Path] | None = None,
+                sandbox_seconds: int | None = None) -> dict[str, object]:
+    """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
+
+    Parameters
+    ----------
+    effort
+        Claude Code effort level for every role (claude harness only).
+    sandbox_read
+        Absolute host path that the runner's OS sandbox mounts read-only. Repeat for more paths.
+    sandbox_seconds
+        Time limit of one OS sandbox command. The default is 20.
+    """
     with _coded():
         return run_workflow(target, out, model, adapter=harness, live=live, edit=edit, repeats=repeats, seed=seed,
-                            approve_cases=approve_cases, approve_budget=approve_budget)
+                            approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
+                            sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
+                            sandbox_seconds=sandbox_seconds)
 
 
 @app.command(name="export")

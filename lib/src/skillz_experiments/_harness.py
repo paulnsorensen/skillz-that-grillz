@@ -4,13 +4,13 @@ import contextlib
 import hashlib
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
-from skillz_experiments._claude import NOTICE_CODES, TERMINAL_CODES, ClaudeCode, ClaudeLogin
+from skillz_experiments._claude import NOTICE_CODES, OPTION_FIELDS, TERMINAL_CODES, ClaudeCode, ClaudeLogin, ClaudeOptions
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._command import Command
 from skillz_experiments._evaluator import Transport, evaluate
@@ -54,23 +54,25 @@ class Role:
     model: str
     command: tuple[str, ...]
     identity: str
+    options: ClaudeOptions = ClaudeOptions()
 
     def fingerprint(self) -> str:
         files = {part: (str(Path(part).resolve()), hashlib.sha256(Path(part).read_bytes()).hexdigest())
                  for part in self.command if Path(part).is_absolute() and Path(part).is_file()}
+        options = self.options.data()
         return digest({"adapter": self.adapter, "model": self.model, "command": self.command,
-                       "identity": self.identity, "files": files})
+                       "identity": self.identity, "files": files, **({"options": options} if options else {})})
 
     def create(self, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None,
                login: ClaudeLogin | None = None) -> Transport:
         if self.adapter == "claude":
-            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out, login)
+            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out, login, self.options)
         return (Codex(self.model, budget, checkpoint) if self.adapter == "codex"
                 else Command(self.command, self.model, budget, checkpoint))
 
 
 def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False) -> Role:
-    if set(value) - {"adapter", "command", "identity", "model"}:
+    if set(value) - {"adapter", "command", "identity", "model", *OPTION_FIELDS}:
         raise ValueError("unknown harness role configuration field")
     adapter = value.get("adapter", "codex")
     selected_model = string(value.get("model", model), "role model")
@@ -79,14 +81,17 @@ def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool =
             raise ValueError("Codex role accepts only adapter and model")
         return Role("codex", selected_model, _command(["codex"], root, path_only=path_only), VERSION)
     if adapter == "claude":
-        if set(value) - {"adapter", "model", "command"}:
-            raise ValueError("Claude role accepts only adapter, model, and command")
+        if set(value) - {"adapter", "model", "command", *OPTION_FIELDS}:
+            raise ValueError("Claude role accepts only adapter, model, command, effort, sandbox_read, and sandbox_seconds")
         parts = value.get("command", ["claude"])
         if not isinstance(parts, list) or len(cast(list[object], parts)) != 1:
             raise ValueError("Claude command must name only the executable")
-        return Role("claude", selected_model, _command(cast(list[object], parts), root, path_only=path_only), CLAUDE_IDENTITY)
+        return Role("claude", selected_model, _command(cast(list[object], parts), root, path_only=path_only), CLAUDE_IDENTITY,
+                    ClaudeOptions.parse(value))
     if adapter != "command":
         raise ValueError("harness adapter must be codex, claude, or command")
+    if set(value) & OPTION_FIELDS:
+        raise ValueError("effort, sandbox_read, and sandbox_seconds apply only to a claude role")
     return Role("command", selected_model, _command(value.get("command"), root),
                 string(value.get("identity"), "adapter identity"))
 
@@ -111,11 +116,17 @@ class Configuration:
         return cls(roles, path.resolve() if path is not None else None)
 
     @classmethod
-    def single(cls, adapter: str, model: str) -> Configuration:
-        """Return a configuration that runs every role on one headless harness: `claude` or `codex`."""
+    def single(cls, adapter: str, model: str, options: ClaudeOptions | None = None) -> Configuration:
+        """Return a configuration that runs every role on one headless harness: `claude` or `codex`.
+
+        `options` apply to every role, and only the `claude` harness takes them.
+        """
         if adapter not in ("claude", "codex"):
             raise ValueError("harness must be claude or codex")
+        if adapter == "codex" and options is not None and options.data():
+            raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
         role = _role({"adapter": adapter}, model, Path.cwd(), path_only=True)
+        role = role if options is None else replace(role, options=options)
         return cls({name: role for name in ("task", "reflection", "judge")})
 
     def check_boundary(self, target: Path) -> None:
