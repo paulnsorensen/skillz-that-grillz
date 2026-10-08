@@ -4,6 +4,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
+from skillz_experiments._cases import CodedError
+
+# Linux and macOS limit an AF_UNIX path to about 104-108 bytes, including the terminating NUL.
+SOCKET_PATH_LIMIT = 100
+
 
 @contextmanager
 def _server() -> Generator[socket.socket]:
@@ -20,6 +25,25 @@ def listening() -> Generator[int]:
         yield cast(int, server.getsockname()[1])
 
 
+def _connected(server: socket.socket) -> Callable[[str], bool]:
+    def connected(token: str) -> bool:
+        while True:
+            try:
+                client = server.accept()[0]
+            except BlockingIOError:
+                return False
+            with client:
+                client.settimeout(1)
+                try:
+                    if token.encode() in client.recv(256):
+                        return True
+                except TimeoutError:
+                    continue
+                except OSError:
+                    return True
+    return connected
+
+
 @contextmanager
 def watched() -> Generator[tuple[int, Callable[[str], bool]]]:
     """Listen on host loopback and yield the port with a check.
@@ -29,24 +53,47 @@ def watched() -> Generator[tuple[int, Callable[[str], bool]]]:
     """
     with _server() as server:
         server.setblocking(False)
+        yield cast(int, server.getsockname()[1]), _connected(server)
 
-        def connected(token: str) -> bool:
-            while True:
-                try:
-                    client = server.accept()[0]
-                except BlockingIOError:
-                    return False
-                with client:
-                    client.settimeout(1)
-                    try:
-                        if token.encode() in client.recv(256):
-                            return True
-                    except TimeoutError:
-                        continue
-                    except OSError:
-                        return True
-        yield cast(int, server.getsockname()[1]), connected
 
+@contextmanager
+def watched_unix(directory: Path, *, active: bool = True) -> Generator[tuple[Path, Callable[[str], bool]]]:
+    """Listen on a host Unix socket in `directory` and yield its path with the same check as `watched`.
+
+    When `active` is False, nothing listens and the check is always False.
+    """
+    path = directory / "u.sock"
+    if not active:
+        yield path, lambda _token: False
+        return
+    if len(str(path).encode()) > SOCKET_PATH_LIMIT:
+        raise CodedError("preflight-leak", f"the Unix-socket probe path {path} is too long for AF_UNIX; "
+                         + "set TMPDIR to a short directory such as /tmp, then run again")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        server.bind(str(path))
+        server.listen(16)
+        server.setblocking(False)
+        try:
+            yield path, _connected(server)
+        finally:
+            path.unlink(missing_ok=True)
+
+
+@contextmanager
+def watched_abstract(name: str, *, active: bool = True) -> Generator[Callable[[str], bool]]:
+    """Listen on a host abstract Unix socket named `name` (Linux) and yield the same check as `watched`.
+
+    An abstract socket has no file, so filesystem rules cannot hide it; only a network namespace or Landlock
+    scoping can. When `active` is False, nothing listens and the check is always False.
+    """
+    if not active:
+        yield lambda _token: False
+        return
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        server.bind("\0" + name)
+        server.listen(16)
+        server.setblocking(False)
+        yield _connected(server)
 
 def probe(workspace: Path, sealed: Path, engine: Path, port: int) -> str:
     """Build the isolation probe script. It must fail to reach the host loopback listener on `port`."""

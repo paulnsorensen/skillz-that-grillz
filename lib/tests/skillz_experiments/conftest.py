@@ -13,7 +13,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _claude
+from skillz_experiments import _claude, _workflow
 from skillz_experiments._harness import Configuration
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._search import Edit
@@ -59,6 +59,25 @@ def harness_on_path(harness_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setenv("PATH", f"{harness_bin}{os.pathsep}{os.environ.get('PATH', '')}")
 
+
+@pytest.fixture(autouse=True)
+def nested_userns_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report that the host allows a nested user namespace, so the sandbox settings do not depend on the host's AppArmor.
+
+    A test of the blocked case patches `_claude.nested_userns_blocked` itself.
+    """
+    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report a ready host to `run`, so the stub harness executables pass the free host checks.
+
+    The doctor tests call `_doctor.doctor` directly.
+    """
+    def ready(harness: str, isolation: str = "claude") -> dict[str, object]:
+        return {"ok": True, "harness": harness, "isolation": isolation, "checks": [], "live_calls": 0}
+    monkeypatch.setattr(_workflow, "doctor", ready)
 
 @pytest.fixture
 def umask_022() -> Iterator[None]:

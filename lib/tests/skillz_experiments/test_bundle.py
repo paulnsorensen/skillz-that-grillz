@@ -50,15 +50,17 @@ def run_installed(tmp_path: Path, *arguments: str) -> subprocess.CompletedProces
     )
 
 
-def test_installed_bundle_runs_the_intake_stop_outside_checkout(tmp_path: Path) -> None:
+def test_installed_bundle_runs_the_host_checks_outside_checkout(tmp_path: Path) -> None:
+    """Without `claude` on PATH, a fresh run stops at the free host checks, before the case draft and any model call."""
     out = tmp_path / "run"
     result = run_installed(tmp_path, "run", "--target", str(tmp_path / "installed"), "--out", str(out),
                            "--model", "offline")
     assert result.returncode == 1, result.stderr
     stop = mapping(cast(object, json.loads(result.stdout)))
-    assert stop["stop"] == "cases-missing" and stop["draft"] == str(out / "cases.draft.json")
-    assert mapping(stop["facts"])["name"] == "skillz"
-    assert json.loads(result.stderr)["code"] == "cases-missing"
+    assert stop["stop"] == "host-not-ready" and stop["ok"] is False and stop["live_calls"] == 0
+    claude = next(mapping(row) for row in cast(list[object], stop["checks"]) if mapping(row)["check"] == "claude")
+    assert claude["status"] == "fail" and claude["fix"]
+    assert json.loads(result.stderr)["code"] == "host-not-ready"
     assert not (out / "run.json").exists()
 
 

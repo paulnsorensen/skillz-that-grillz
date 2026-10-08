@@ -5,7 +5,7 @@ import json
 import shutil
 import stat
 import sys
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -27,6 +27,10 @@ from pathlib import Path
 here = Path(__file__).resolve()
 argv = sys.argv[1:]
 prompt = sys.stdin.read()
+if "--input-format" in argv:
+    print(json.dumps({"type": "control_response", "response": {"subtype": "success",
+                      "response": {"commands": [{"name": "skillz"}, {"name": "doctor", "builtin": True}]}}}))
+    sys.exit(0)
 with here.with_name("claude.log").open("a") as log:
     log.write(json.dumps({"argv": argv, "prompt": prompt}) + "\\n")
 sys.stdout.write(here.with_name("claude.out").read_text())
@@ -95,7 +99,7 @@ FLOOR: dict[str, object] = {"enabled": True, "failIfUnavailable": True, "allowUn
 
 def assert_floor(call: dict[str, object]) -> None:
     argv = cast(list[str], call["argv"])
-    assert argv[:2] == ["--restricted", "-p"]
+    assert argv[:3] == ["-p", "--setting-sources", "project"] and "--restricted" not in argv
     assert argv[argv.index("--tools") + 1] == "Bash,Read,Skill"
     assert "--strict-mcp-config" in argv
     settings = cast(dict[str, dict[str, object]], json.loads(cast(str, call["settings"])))
@@ -199,7 +203,7 @@ def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and
     finally:
         session.close()
     logged = calls(executable)
-    assert len(logged) == 1 and "--restricted" in cast(list[str], logged[0]["argv"])
+    assert len(logged) == 1 and "--restricted" not in cast(list[str], logged[0]["argv"])
     assert not any("--dangerously-skip-permissions" in cast(list[str], call["argv"]) for call in logged)
 
 
@@ -212,7 +216,7 @@ def test_preflight_stops_when_the_agents_write_succeeds_or_the_write_control_fai
     del probes
     session = harness(tmp_path, fake_claude(tmp_path, mode))
     try:
-        with pytest.raises(RuntimeError, match=reason):
+        with pytest.raises(CodedError, match=reason):
             _ = session.preflight()
     finally:
         session.close()
@@ -289,7 +293,7 @@ def test_preflight_stops_before_any_live_call_when_the_sandbox_probe_does_not_pa
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="no unsafe fallback"):
+        with pytest.raises(CodedError, match="no unsafe fallback"):
             _ = session.preflight()
     finally:
         session.close()
@@ -317,7 +321,7 @@ def test_a_failed_preflight_leaves_no_partial_pass_in_a_second_attempt(tmp_path:
     session = harness(tmp_path, executable)
     try:
         for _ in range(2):
-            with pytest.raises(RuntimeError, match="foreign skill"):
+            with pytest.raises(CodedError, match="foreign skill"):
                 _ = session.preflight()
     finally:
         session.close()
@@ -476,8 +480,9 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     elif change == "settings":
         original = _claude.settings
 
-        def weaker(workspace: Path, out: Path | None = None) -> dict[str, object]:
-            document = original(workspace, out)
+        def weaker(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
+                   unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
+            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
         monkeypatch.setattr(_claude, "settings", weaker)
@@ -583,7 +588,7 @@ def test_reuse_with_a_failing_sandbox_probe_stops_and_makes_no_live_call(
     monkeypatch.setattr(ClaudeCode, "sandbox", broken)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="no unsafe fallback"):
+        with pytest.raises(CodedError, match="no unsafe fallback"):
             _ = session.preflight(recorded)
     finally:
         session.close()

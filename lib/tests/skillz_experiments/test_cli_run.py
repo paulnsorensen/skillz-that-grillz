@@ -55,7 +55,7 @@ def test_run_accepts_only_claude_or_codex_and_launches_headless(tmp_path: Path, 
     logged = [cast(dict[str, object], json.loads(line))
               for line in claude.with_name("claude.log").read_text().splitlines()]
     claude_argv = cast(list[str], logged[0]["argv"])
-    assert claude_argv[:2] == ["--restricted", "-p"]
+    assert claude_argv[:3] == ["-p", "--setting-sources", "project"] and "--restricted" not in claude_argv
 
     if Path("/etc/codex/skills").exists():
         pytest.skip("admin skill roots stop the Codex transport")

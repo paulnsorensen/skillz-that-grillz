@@ -11,6 +11,7 @@ import fromargs
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._claude import NOTICE_CODES
+from skillz_experiments._doctor import doctor
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._gate import simulate as simulate_gate
 from skillz_experiments._harness import Configuration
@@ -19,6 +20,7 @@ from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Stop, export as export_run, run as run_workflow
 
 Harness = Literal["claude", "codex"]
+Isolation = Literal["claude", "nono"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -45,13 +47,23 @@ app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. 
 
 
 @app.command(name="run")
-def run_command(*, target: Path, out: Path, model: str, harness: Harness = "claude", live: bool = False,
-                edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
+def run_command(*, target: Path, out: Path, model: str, harness: Harness = "claude", isolation: Isolation = "claude",
+                live: bool = False, edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
                 approve_cases: str | None = None, approve_budget: int | None = None) -> dict[str, object]:
-    """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question."""
+    """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
+
+    `--isolation nono` confines the whole Claude process with nono on Linux and needs ANTHROPIC_API_KEY on the host.
+    """
     with _coded():
         return run_workflow(target, out, model, adapter=harness, live=live, edit=edit, repeats=repeats, seed=seed,
-                            approve_cases=approve_cases, approve_budget=approve_budget)
+                            approve_cases=approve_cases, approve_budget=approve_budget, isolation=isolation)
+
+
+@app.command(name="doctor")
+def doctor_command(*, harness: Harness = "claude", isolation: Isolation = "claude") -> dict[str, object]:
+    """Check the host for a run with no model call: tools, login, sandbox, and skill isolation, in one pass."""
+    with _coded():
+        return doctor(harness, isolation)
 
 
 @app.command(name="export")
