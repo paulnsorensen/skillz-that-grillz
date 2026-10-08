@@ -130,7 +130,13 @@ The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
 By default, those commands read only the system runtime and the workspace.
-Each `sandbox_read` root is mounted read-only at its own path. A root that overlaps the login, the temporary directory, or the run directory stops the run.
+The runner mounts each `sandbox_read` root read-only at its own path.
+A root must exist, and it must not be a symlink.
+A root must not hold the home directory, the Claude config directory, the temporary directory, or the run directory.
+A root must not equal, hold, or sit inside `/proc`, `/sys`, `/dev`, `/run`, `/var/run`, or `$XDG_RUNTIME_DIR`.
+A root must not equal, hold, or sit inside `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.docker`, `~/.kube`, `~/.netrc`, or `~/.claude.json`.
+Home caches such as `~/.cache/ms-playwright` stay allowed.
+A refused root stops the run with the code `sandbox-read-invalid`.
 Under `bwrap`, a command has its own network namespace. It can reach a server that it starts itself on loopback, but not the host loopback.
 Under `sandbox-exec`, a command has no network, including loopback.
 A sandbox command stops after `sandbox_seconds`, 20 by default.

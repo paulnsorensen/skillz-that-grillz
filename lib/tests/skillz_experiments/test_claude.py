@@ -131,12 +131,19 @@ def test_a_claude_role_effort_reaches_every_call_and_the_fingerprint(tmp_path: P
     assert configuration.roles["judge"].fingerprint() != plain.roles["judge"].fingerprint()
 
 
-@pytest.mark.parametrize("options", [{"effort": "turbo"}, {"sandbox_read": ["relative/browsers"]},
-                                     {"sandbox_read": "/usr"}, {"sandbox_seconds": 0}, {"sandbox_seconds": 601},
-                                     {"sandbox_seconds": 2.5}])
-def test_invalid_claude_options_stop_the_configuration(tmp_path: Path, options: dict[str, object]) -> None:
-    with pytest.raises(ValueError, match="effort|sandbox_read|sandbox_seconds"):
+@pytest.mark.parametrize("options, message", [
+    ({"effort": "turbo"}, "effort must be one of"), ({"sandbox_read": ["relative/browsers"]}, "sandbox_read must be a list"),
+    ({"sandbox_read": "/usr"}, "sandbox_read must be a list"), ({"sandbox_seconds": 0}, "sandbox_seconds must be an integer"),
+    ({"sandbox_seconds": 601}, "sandbox_seconds must be an integer"), ({"sandbox_seconds": 2.5}, "sandbox_seconds must be an integer")])
+def test_invalid_claude_options_stop_the_configuration(tmp_path: Path, options: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
         _ = _claude_config(tmp_path, fake_claude(tmp_path), **options)
+
+
+def test_claude_options_are_normalized_unique_and_sorted() -> None:
+    parsed = ClaudeOptions.parse({"sandbox_read": ["/b/../b/", "/z", "/a", "/a", "/b"]})
+    assert parsed.sandbox_read == ("/a", "/b", "/z")
+    assert ClaudeOptions.parse(parsed.data()) == parsed
 
 
 def test_claude_options_are_refused_for_another_adapter(tmp_path: Path) -> None:
@@ -145,7 +152,10 @@ def test_claude_options_are_refused_for_another_adapter(tmp_path: Path) -> None:
                                       "command": [str(fake_claude(tmp_path))], "effort": "high"}))
     with pytest.raises(ValueError, match="only to a claude role"):
         _ = Configuration.load(config, "m")
-    with pytest.raises(ValueError, match="only to --harness claude"):
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "codex", "effort": "high"}))
+    with pytest.raises(ValueError, match="Codex role accepts only adapter and model"):
+        _ = Configuration.load(config, "m")
+    with pytest.raises(ValueError, match="Codex role accepts only adapter and model"):
         _ = Configuration.single("codex", "m", ClaudeOptions(effort="high"))
 
 
@@ -154,21 +164,87 @@ def test_sandbox_read_roots_that_overlap_the_login_temp_home_or_run_directory_ar
     out = tmp_path / "run"
     (out / "inner").mkdir(parents=True)
     (tmp_path / "scratch/other").mkdir()
-    for root in (host_login.parent, host_login.parents[1], tmp_path, tmp_path / "scratch/other", out / "inner"):
-        with pytest.raises(ValueError, match="overlaps"):
+    overlapping = (host_login.parent, host_login.parents[1], Path.home(), Path("/"), tmp_path, tmp_path / "scratch/other",
+                   out / "inner")
+    for root in overlapping:
+        with pytest.raises(CodedError, match="overlaps the home, Claude config, temporary, or run directory") as caught:
             _ = resolve_read_roots((str(root),), out)
-    with pytest.raises(ValueError, match="does not exist"):
+        assert caught.value.code == "sandbox-read-invalid"
+    with pytest.raises(CodedError, match="does not exist") as missing:
         _ = resolve_read_roots((str(tmp_path / "missing"),), out)
+    assert missing.value.code == "sandbox-read-invalid"
     quoted = tmp_path / 'we"ird'
     quoted.mkdir()
-    with pytest.raises(ValueError, match="quote"):
+    with pytest.raises(CodedError, match="quote"):
         _ = resolve_read_roots((str(quoted),), out)
     browsers = tmp_path / "browsers"
     browsers.mkdir()
     assert resolve_read_roots((str(browsers),), out) == (str(browsers.resolve()),)
-    with pytest.raises(ValueError, match="overlaps"):
+    with pytest.raises(CodedError, match="overlaps"):
         _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path),
                        options=ClaudeOptions(sandbox_read=(str(host_login.parent),)))
+
+
+def test_a_symlinked_sandbox_read_root_is_refused_with_its_resolved_path(tmp_path: Path) -> None:
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    (tmp_path / "alias").symlink_to(browsers)
+    with pytest.raises(CodedError, match="symlink") as caught:
+        _ = resolve_read_roots((str(tmp_path / "alias"),), None)
+    assert caught.value.code == "sandbox-read-invalid" and str(browsers.resolve()) in str(caught.value)
+
+
+def test_sandbox_read_roots_that_expose_runtime_paths_or_credentials_are_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = Path.home()
+    runtime = tmp_path / "xdg-runtime"
+    (runtime / "bus-dir").mkdir(parents=True)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    system = [Path(root) for root in _claude.RUNTIME_DENY if Path(root).exists()]
+    assert Path("/proc") in system
+    credentials: list[Path] = []
+    for name in _claude.HOME_DENY:
+        path = home / name
+        if name.endswith("json") or name == ".netrc":
+            _ = path.write_text("{}")
+        else:
+            (path / "inner").mkdir(parents=True)
+            credentials.append(path / "inner")
+        credentials.append(path)
+    for root in (*system, runtime, runtime / "bus-dir", *credentials):
+        # A symlinked path such as `/var/run` stops at the symlink rule before the deny list.
+        with pytest.raises(CodedError, match="runtime or credential path|symlink") as caught:
+            _ = resolve_read_roots((str(root),), None)
+        assert caught.value.code == "sandbox-read-invalid", root
+    playwright = home / ".cache/ms-playwright"
+    playwright.mkdir(parents=True)
+    assert resolve_read_roots((str(playwright),), None) == (str(playwright.resolve()),)
+
+
+def test_a_sandbox_command_uses_sandbox_seconds_and_the_probe_keeps_the_floor(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    limits: list[float] = []
+
+    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
+                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        del cwd, environment, input_text
+        limits.append(timeout)
+        return subprocess.CompletedProcess(command, 0, "isolation-ok\n", "")
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+
+    monkeypatch.setattr(_claude, "process", process)
+    monkeypatch.setattr(shutil, "which", which)
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=5))
+    workspace = make_workspace(tmp_path / "workspace")
+    try:
+        _ = adapter.sandbox(workspace, ["/usr/bin/true"])
+        adapter._probe_sandbox(workspace, tmp_path / "sealed")  # pyright: ignore[reportPrivateUsage]
+        _ = adapter.sandbox(workspace, ["/usr/bin/true"])
+    finally:
+        adapter.close()
+    assert limits == [5, _claude.SANDBOX_SECONDS, 5]
 
 
 def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import shutil
 import sys
@@ -12,18 +13,22 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast, final
 
 import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
+from skillz_experiments._claude import ClaudeCode, ClaudeOptions
+from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._runtime import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments._search import Edit
-from skillz_experiments._workflow import Factory, Stop, _Session, export, run  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments._workflow import HOLDOUT_RETRIES_PER_ARM, Factory, Stop, export, run, summary
+from skillz_experiments._workflow import _command_seconds, _estimate, _plan, _Session  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -586,6 +591,117 @@ def test_a_first_run_records_the_claude_options_and_a_resume_must_match_them(
 def test_claude_options_are_refused_for_the_codex_harness(tmp_path: Path, make_target: Maker) -> None:
     with pytest.raises(ValueError, match="only to --harness claude"):
         _ = run(make_target(tmp_path), tmp_path / "run", MODEL, adapter="codex", effort="high")
+
+
+def _claude_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    executable = tmp_path / "bin" / "claude"
+    executable.parent.mkdir()
+    _ = shutil.copyfile(Path(__file__).parent / "fixtures/fake_claude.py", executable)
+    executable.chmod(0o755)
+    _ = executable.with_name("claude.mode").write_text("ok")
+    monkeypatch.setenv("PATH", f"{executable.parent}{os.pathsep}{os.environ['PATH']}")
+    return executable
+
+
+def test_a_live_resume_gives_the_recorded_claude_options_to_every_call(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    with pytest.raises(Stop):
+        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, effort="xhigh", sandbox_seconds=120)
+    executable = _claude_on_path(tmp_path, monkeypatch)
+    session = _Session(out, MODEL, "claude", None, None)
+    try:
+        provider = cast(Harness, session.provider)
+        _ = provider.transports["judge"].invoke("hello")
+        assert cast(ClaudeCode, provider.transports["task"]).sandbox_seconds == 120
+    finally:
+        session.provider.close()
+    argv = cast(list[str], json.loads(executable.with_name("claude.log").read_text().splitlines()[0])["argv"])
+    assert argv[argv.index("--effort") + 1] == "xhigh"
+
+
+def test_the_cli_passes_each_repeated_sandbox_read_to_run(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake(*_arguments: object, **options: object) -> dict[str, object]:
+        seen.update(options)
+        return {}
+
+    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    assert main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "run"), "--model", MODEL,
+                 "--sandbox-read", "/opt/a", "--sandbox-read", "/opt/b", "--effort", "high", "--sandbox-seconds", "90"]) == 0
+    assert (seen["sandbox_read"], seen["effort"], seen["sandbox_seconds"]) == (["/opt/a", "/opt/b"], "high", 90)
+
+
+def test_a_resume_compares_sandbox_read_as_a_canonical_set_and_the_summary_reports_it(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    roots = [tmp_path / "browsers", tmp_path / "fonts"]
+    for root in roots:
+        root.mkdir()
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    with pytest.raises(Stop):
+        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls,
+                sandbox_read=[f"{roots[0]}/", str(roots[1]), str(roots[0])])
+    record = read(out / "run.json")
+    assert record["claude_options"] == {"sandbox_read": [str(roots[0]), str(roots[1])]}
+    assert summary(record)["claude_options"] == record["claude_options"]
+    with pytest.raises(Stop) as reordered:
+        _ = run(target, out, MODEL, sandbox_read=[str(roots[1]), str(roots[0])])
+    assert reordered.value.code == "live-required"
+    with pytest.raises(CodedError) as fewer:
+        _ = run(target, out, MODEL, sandbox_read=[str(roots[0])])
+    assert fewer.value.code == "run-config-differs" and "--sandbox-read" in str(fewer.value)
+
+
+def test_both_approval_stops_echo_the_claude_options(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    with pytest.raises(Stop) as cases:
+        _ = run(target, out, MODEL, effort="high")
+    assert cases.value.code == "cases-unapproved" and cases.value.data["claude_options"] == {"effort": "high"}
+    with pytest.raises(Stop) as budget:
+        _ = run(target, out, MODEL, effort="high", approve_cases=cast(str, cases.value.data["case_hash"]))
+    assert budget.value.code == "budget-unapproved" and budget.value.data["claude_options"] == {"effort": "high"}
+
+
+def test_a_supplied_configuration_refuses_option_values_and_its_roots_stop_before_the_approvals(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    configuration = _harness(tmp_path, monkeypatch, State())
+    with pytest.raises(ValueError, match="built-in harness"):
+        _ = run(target, out, MODEL, configuration=configuration, effort="high")
+    roles = tmp_path / "roles.json"
+    _ = roles.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [sys.executable],
+                                     "sandbox_read": [str(tmp_path / "missing")]}))
+    with pytest.raises(CodedError) as missing:
+        _ = run(target, out, MODEL, configuration=Configuration.load(roles, MODEL))
+    assert missing.value.code == "sandbox-read-invalid" and not (out / "run.json").exists()
+    case_hash, calls = approvals(target, out)
+    with pytest.raises(Stop) as prepared:
+        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, configuration=configuration)
+    assert prepared.value.code == "live-required" and "claude_options" not in read(out / "run.json")
+
+
+def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reserve() -> None:
+    plain, slow = _plan(6, 6, 6, 1, 3), _plan(6, 6, 6, 1, 3, 600)
+    gate_evaluations = 2 * 6 * 3 + 2 * HOLDOUT_RETRIES_PER_ARM
+    assert slow.sandbox_gate == math.ceil(gate_evaluations * 600 / MAX_CONCURRENT_CALLS)
+    assert slow.sized.calls == plain.sized.calls
+    assert slow.sized.seconds == plain.sized.seconds + slow.sandbox_total > plain.sized.seconds
+    assert slow.reserve_seconds > plain.reserve_seconds
+    assert _estimate(slow, 3, 6)["sandbox_seconds"] == slow.sandbox_total
+    assert "sandbox_seconds" not in _estimate(plain, 3, 6)
+    contract = Contract("s", "$s", {"task": Grader("command", ("x",)), "plain": Grader("exact-json")})
+    task, other = (cast(Case, cast(object, SimpleNamespace(kind=kind))) for kind in ("task", "plain"))
+    options = ClaudeOptions(sandbox_seconds=90)
+    assert _command_seconds(contract, [task], options) == 90 and _command_seconds(contract, [other], options) == 0
 
 @pytest.mark.parametrize("change", ["seed", "target"])
 def test_a_resume_with_another_seed_or_target_stops_before_any_call(

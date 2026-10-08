@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast, final
+from typing import Literal, cast, final, get_args
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
@@ -51,7 +51,12 @@ RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/se
                 "/dev/null", "/dev/zero", "/dev/random", "/dev/urandom")
 MACOS_READ = ("/System", "/Library")
 SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORTS = get_args(Effort)
+# Host paths that hold sockets or runtime state. A read root must not equal, hold, or sit inside one.
+RUNTIME_DENY = ("/proc", "/sys", "/dev", "/run", "/var/run")
+# Credential paths under the home directory. A read root must not equal, hold, or sit inside one.
+HOME_DENY = (".ssh", ".gnupg", ".aws", ".config", ".docker", ".kube", ".netrc", ".claude.json")
 SANDBOX_SECONDS = 20
 SANDBOX_SECONDS_LIMIT = 600
 OPTION_FIELDS = frozenset({"effort", "sandbox_read", "sandbox_seconds"})
@@ -72,7 +77,10 @@ class ClaudeOptions:
 
     @classmethod
     def parse(cls, value: Mapping[str, object]) -> ClaudeOptions:
-        """Read the option fields of a role mapping or a run record. The caller checks the other fields."""
+        """Read the option fields of a role mapping or a run record. The caller checks the other fields.
+
+        The read roots become normalized, unique, and sorted, so a reordered or aliased list gives the same options.
+        """
         effort = value.get("effort")
         if effort is not None and effort not in EFFORTS:
             raise ValueError(f"effort must be one of {', '.join(EFFORTS)}")
@@ -83,7 +91,8 @@ class ClaudeOptions:
         seconds = value.get("sandbox_seconds", SANDBOX_SECONDS)
         if type(seconds) is not int or not 1 <= seconds <= SANDBOX_SECONDS_LIMIT:
             raise ValueError(f"sandbox_seconds must be an integer from 1 to {SANDBOX_SECONDS_LIMIT}")
-        return cls(cast(str | None, effort), tuple(cast(Sequence[str], roots)), seconds)
+        canonical = sorted({os.path.normpath(root) for root in cast(Sequence[str], roots)})
+        return cls(cast(str | None, effort), tuple(canonical), seconds)
 
     def data(self) -> dict[str, object]:
         """Return the fields that differ from the defaults. `parse` reads this mapping back."""
@@ -98,23 +107,32 @@ class ClaudeOptions:
 
 
 def resolve_read_roots(roots: tuple[str, ...], out: Path | None) -> tuple[str, ...]:
-    """Check the extra sandbox read roots. Return their resolved paths.
+    """Check the extra sandbox read roots. Return their paths.
 
-    Each root must exist, and the seatbelt profile must be able to quote it. A root must not hold or sit inside
-    the Claude config directory, the temporary root of the workspaces and the login link, or the run directory.
-    A root must not hold the home directory.
+    Each root must exist, must not be a symlink, and must be quotable in the seatbelt profile.
+    A root must not equal, hold, or sit inside the Claude config directory, the temporary directory, or the run directory.
+    The temporary directory holds the workspaces and the login link.
+    A root must not equal or hold the home directory.
+    A root must not equal, hold, or sit inside a runtime path (`RUNTIME_DENY`, `$XDG_RUNTIME_DIR`) or a home credential path (`HOME_DENY`).
     """
-    hidden = [path.resolve() for path in (_host_config_dir(), Path(tempfile.gettempdir()), *([] if out is None else [out]))]
     home = Path.home().resolve()
+    hidden = [path.resolve() for path in (_host_config_dir(), Path(tempfile.gettempdir()), *([] if out is None else [out]))]
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    denied = [Path(path).resolve() for path in (*RUNTIME_DENY, *([runtime] if runtime else []))]
+    denied += [(home / name).resolve() for name in HOME_DENY]
     resolved: list[str] = []
     for root in roots:
         path = Path(root).resolve()
         if not path.exists():
-            raise ValueError(f"sandbox read root {root} does not exist")
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} does not exist")
+        if os.path.normpath(root) != str(path):
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} is or holds a symlink; give the resolved path {path}")
         if '"' in str(path) or "\\" in str(path) or not str(path).isprintable():
-            raise ValueError(f"sandbox read root {root} holds a quote, a backslash, or a control character")
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} holds a quote, a backslash, or a control character")
         if home.is_relative_to(path) or any(path.is_relative_to(item) or item.is_relative_to(path) for item in hidden):
-            raise ValueError(f"sandbox read root {root} overlaps the home, Claude config, temporary, or run directory")
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} overlaps the home, Claude config, temporary, or run directory")
+        if any(path.is_relative_to(item) or item.is_relative_to(path) for item in denied):
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} overlaps a runtime or credential path")
         resolved.append(str(path))
     return tuple(resolved)
 
@@ -593,10 +611,11 @@ def seatbelt_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
 
 def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str],
                  read_roots: tuple[str, ...] = ()) -> list[str]:
-    """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No network, no host files.
+    """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No external network.
+    Host access is read-only and limited to the system runtime and the extra read roots.
 
-    Each extra read root is mounted read-only. Under bubblewrap, the command gets its own network namespace,
-    so it can reach a server that it starts itself on loopback, but not the host loopback.
+    Under bubblewrap, the command gets its own network namespace.
+    It can reach a server that it starts on loopback, but not the host loopback.
 
     Under bubblewrap, a shell discards the command's standard error before the command starts. Only
     bubblewrap can then write to the process standard error, so a message that starts with `bwrap:` is
@@ -632,6 +651,7 @@ class ClaudeCode:
         self.out = out
         self.options = options or ClaudeOptions()
         self.read_roots = resolve_read_roots(self.options.sandbox_read, out)
+        self.sandbox_seconds = self.options.sandbox_seconds
         found = shutil.which("claude") if executable is None else str(executable)
         if found is None:
             raise RuntimeError("Claude Code is unavailable")
@@ -686,7 +706,11 @@ class ClaudeCode:
                     raise SandboxUnavailable(f"{helper} is missing, and the Claude Code sandbox needs it", INSTALL_SOCAT)
         with listening() as port:
             script = probe(workspace, sealed, Path(__file__).resolve(), port)
-            code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
+            self.sandbox_seconds = max(SANDBOX_SECONDS, self.options.sandbox_seconds)
+            try:
+                code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
+            finally:
+                self.sandbox_seconds = self.options.sandbox_seconds
         if code != 0 or output.strip() != "isolation-ok":
             raise RuntimeError("Claude Code isolation preflight fails: sandbox probe failed; no unsafe fallback")
 
@@ -810,7 +834,7 @@ class ClaudeCode:
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
         result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots), cwd=workspace,
-                         timeout=min(self.options.sandbox_seconds, self.budget.remaining()), environment={"PATH": "/usr/bin:/bin"})
+                         timeout=min(self.sandbox_seconds, self.budget.remaining()), environment={"PATH": "/usr/bin:/bin"})
         if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
             raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", _sandbox_fix(result.stderr))
         return result.returncode, result.stdout

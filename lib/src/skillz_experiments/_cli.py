@@ -10,7 +10,7 @@ from typing import Literal
 import fromargs
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import NOTICE_CODES
+from skillz_experiments._claude import NOTICE_CODES, Effort
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._gate import simulate as simulate_gate
 from skillz_experiments._harness import Configuration
@@ -19,7 +19,6 @@ from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Stop, export as export_run, run as run_workflow
 
 Harness = Literal["claude", "codex"]
-Effort = Literal["low", "medium", "high", "xhigh", "max"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -60,7 +59,7 @@ def run_command(*, target: Path, out: Path, model: str, harness: Harness = "clau
     sandbox_read
         Absolute host path that the runner's OS sandbox mounts read-only. Repeat for more paths.
     sandbox_seconds
-        Time limit of one OS sandbox command. The default is 20.
+        Time limit of one OS sandbox command, in seconds.
     """
     with _coded():
         return run_workflow(target, out, model, adapter=harness, live=live, edit=edit, repeats=repeats, seed=seed,

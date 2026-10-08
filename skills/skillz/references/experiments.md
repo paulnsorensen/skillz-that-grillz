@@ -58,8 +58,15 @@ Do not create or request provider credentials.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
 `--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
 Use it for a browser install, for example `/opt/pw-browsers`.
-A root must exist. It must not hold the home directory, and it must not overlap the Claude config directory, the temporary directory, or `--out`.
+A root must exist, and it must not be a symlink. Give the resolved path.
+A root must not hold the home directory, the Claude config directory, the temporary directory, or `--out`.
+A root must not equal, hold, or sit inside a runtime path or a credential path.
+The runtime paths are `/proc`, `/sys`, `/dev`, `/run`, `/var/run`, and `$XDG_RUNTIME_DIR`.
+The credential paths are `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.docker`, `~/.kube`, `~/.netrc`, and `~/.claude.json`.
+Home caches such as `~/.cache/ms-playwright` stay allowed.
 `--sandbox-seconds N` sets the time limit of one OS sandbox command, from 1 to 600. The default is 20.
+The estimate and the holdout gate reserve add this time for each command-grader evaluation.
+The stops that ask for approval echo the options as `claude_options`.
 These three options apply only to `--harness claude`. The first run records them.
 When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, or Claude option.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
@@ -85,6 +92,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | Code | Meaning | Next step |
 |---|---|---|
 | `login-missing` | No Claude login file exists. | Ask the user to run `claude` once and log in. |
+| `sandbox-read-invalid` | A `--sandbox-read` root is missing, is a symlink, holds an unsafe character, or overlaps a refused path. The message names the root. | Restore the path or start a new `--out`. |
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start. | Apply the fix in the message, then run again in the same directory. The runner never weakens the sandbox. |

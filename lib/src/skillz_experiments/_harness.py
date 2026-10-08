@@ -4,7 +4,7 @@ import contextlib
 import hashlib
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast, final
 
@@ -123,10 +123,7 @@ class Configuration:
         """
         if adapter not in ("claude", "codex"):
             raise ValueError("harness must be claude or codex")
-        if adapter == "codex" and options is not None and options.data():
-            raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
-        role = _role({"adapter": adapter}, model, Path.cwd(), path_only=True)
-        role = role if options is None else replace(role, options=options)
+        role = _role({"adapter": adapter, **({} if options is None else options.data())}, model, Path.cwd(), path_only=True)
         return cls({name: role for name in ("task", "reflection", "judge")})
 
     def check_boundary(self, target: Path) -> None:
