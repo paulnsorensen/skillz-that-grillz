@@ -2,8 +2,9 @@
 name: skillz-self-update
 description: >-
   Refresh the cross-harness research, then audit, improve, and autoimprove this repository's published skillz skill.
-  Use when a maintainer asks to "self-update skillz", "refresh the harness layout",
-  or invokes /skillz-self-update. Do NOT use for audits of other skills.
+  Use when a maintainer asks to "self-update skillz", "update the published skillz skill",
+  "refresh the harness layout", or invokes /skillz-self-update.
+  Do NOT use for audits of other skills or as a /skillz mode.
 disable-model-invocation: true
 license: MIT
 metadata:
@@ -31,16 +32,14 @@ Do not treat this as a published `/skillz` mode.
    Record each rejected claim and its reason under `## Rejected`.
 5. Run `/skillz audit skills/skillz/SKILL.md`, then `/skillz improve skills/skillz/SKILL.md`.
    Keep the published modes and the `/skillz wedge` and `autoimprove` boundaries unchanged.
-6. Run `/skillz autoimprove skills/skillz` after the improve fixes land. Follow `skills/skillz/references/experiments.md`.
+6. Run `/skillz autoimprove skills/skillz` after the improve fixes land.
+   Follow `skills/skillz/references/experiments.md` for the questions, the run, the gate, and the export.
    Run the checkout's `skills/skillz/scripts/skillz-experiment.pyz`, not an installed copy.
    Pass `--edit prose+cli` so the search can also change `scripts/inspect_skill.py`.
-   Put `--out` in a private `mktemp -d` directory outside the checkout.
    Draft `task` cases that each audit one skill fixture named `fixture.md`.
    Put the expected findings in `expected`. The shipped contract judges them with its `task` rubric.
-   Ask the three autoimprove questions. Never skip the case or budget approval.
+   Never skip the case or budget approval.
    When the user declines a question, skip this step and report the skip.
-   Run `export` only after the run reports the phase `complete`.
-   Show the patch with the gate verdict, the delta, the SE, and the case count.
    Apply the patch only on a `promote` verdict and the user's approval. Then run the step 5 audit again.
 7. This repository has no deploy step. Do not install or sync the result to any installed copy.
 8. Run `just build` and fix any failure.

@@ -135,6 +135,7 @@ A `trigger` case is a request that should load the skill. A `near-miss` case is 
 The runner records `trigger` and `near-miss` cases as pending. It does not score them yet.
 Draft the `task` cases with care, because only they decide the verdict.
 Write at least three `task` families and at least six `task` cases for the holdout.
+When the target contract has a `task` rubric, draft each `task` case so the rubric can score it.
 Do not assign splits. Code assigns them from the seed.
 When session analytics exists, run the Usage ceremony from `SKILL.md`.
 Add extra cases from past sessions with `source: session`. Remove private data first.

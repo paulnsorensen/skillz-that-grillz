@@ -6,7 +6,7 @@
   "kinds": {
     "task": {
       "grader": "judge",
-      "rubric": "Score the audit report of fixture.md against the expected findings. Give 100 when the report names every expected finding at its location with a correct fix and adds no false finding. Subtract an equal share for each missed finding, wrong location, wrong fix, or false finding. Give 0 when the report is missing or audits a different file."
+      "rubric": "Score the audit report of fixture.md against the findings in `reference`. When `reference` lists no findings, give 100 only to a report with no findings. Otherwise give 100 when the report names each reference finding, its location, and a correct fix, with no false finding. Subtract 100 divided by the number of reference findings for each missed finding, wrong location, wrong fix, or false finding. Do not go below 0. Give 0 when the report is missing or audits a different file."
     },
     "inspection": {
       "grader": "exact-json"
@@ -46,5 +46,11 @@
       }
     ]
   },
-  "editable": []
+  "editable": [
+    "SKILL.md",
+    "references/anti-patterns.md",
+    "references/description-optimization.md",
+    "references/offload.md",
+    "references/progressive-disclosure.md"
+  ]
 }
