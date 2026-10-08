@@ -15,10 +15,11 @@ from pathlib import Path
 from typing import Literal, cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
+from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, relative, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
+from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._isolation import listening, probe, watched
 from skillz_experiments._records import write_bytes
 from skillz_experiments._runtime import Budget, process
@@ -768,10 +769,30 @@ class ClaudeCode:
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        return self._invoke(prompt, candidate, case, {}, holdout=holdout, schema=schema)
+
+    def view(self, prompt: str, attachments: Mapping[str, bytes], *, holdout: bool = False,
+             schema: dict[str, object] | None = None) -> dict[str, object]:
+        """Invoke without a candidate or a case. Write each attachment under `capture/` in the workspace first.
+
+        The prompt gets the absolute path of each attachment, so the model can open it with the Read tool.
+        """
+        return self._invoke(prompt, None, None, attachments, holdout=holdout, schema=schema)
+
+    def _invoke(self, prompt: str, candidate: Candidate | None, case: Case | None, attachments: Mapping[str, bytes],
+                *, holdout: bool, schema: dict[str, object] | None) -> dict[str, object]:
         self._check_memory()
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)
+            paths: list[str] = []
+            for name, data in sorted(attachments.items()):
+                path = workspace / CAPTURE_DIRECTORY / relative(name)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _ = path.write_bytes(data)
+                paths.append(str(path.resolve()))
+            if paths:
+                prompt += "\nCAPTURE FILES:\n" + "\n".join(paths)
             self.budget.claim(holdout=holdout)
             self.checkpoint()
             started = time.monotonic()

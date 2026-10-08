@@ -80,6 +80,25 @@ def calls(executable: Path) -> list[dict[str, object]]:
     return [cast(dict[str, object], json.loads(line)) for line in log.read_text().splitlines()]
 
 
+def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_paths(tmp_path: Path) -> None:
+    from skillz_experiments._graders import JUDGE_SCHEMA, Viewer
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    attachments = {"page.png": b"\x89PNG\r\n\x1a\nimage", "notes/page.txt": b"text"}
+    try:
+        judge = session.transports["judge"]
+        assert isinstance(judge, Viewer)
+        result = judge.view("score it", attachments, schema=JUDGE_SCHEMA)
+    finally:
+        session.close()
+    call = calls(executable)[0]
+    workspace = Path(cast(str, call["cwd"])).resolve()
+    captured = cast(dict[str, str | None], call["captured"])
+    assert captured == {str(workspace / "capture" / name): data.hex() for name, data in sorted(attachments.items())}
+    assert cast(str, call["prompt"]).startswith("score it\nCAPTURE FILES:\n")
+    assert result["answer"] == {"score_percent": 80}
+
+
 def test_partial_claude_usage_stays_unknown() -> None:
     from skillz_experiments._claude import _token_events  # pyright: ignore[reportPrivateUsage]
     from skillz_experiments._evaluation import usage

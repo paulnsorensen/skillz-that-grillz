@@ -106,6 +106,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-unapproved` | The skill contract has `status` `draft`. | Ask the user to approve the contract, then set `approved`. |
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
+| `contract-capture-unsupported` | A kind declares `capture`, and the harness is not `claude`. | Run with `--harness claude`, or remove `capture`. |
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
@@ -190,7 +191,7 @@ The contract has these fields:
 - `status`: `approved` or `draft`. A draft stops the run.
 - `skill`: the skill directory name.
 - `invocation`: the request that calls the skill. It supports `{skill}` and `{path}`.
-- `kinds`: a map of case kind to `{grader, argv?, rubric?}`.
+- `kinds`: a map of case kind to `{grader, argv?, rubric?, capture?, pillars?}`.
 - `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
 - `editable` (optional): relative paths that search can change.
 
@@ -227,10 +228,31 @@ Each kind in `kinds` names one grader:
 
 A `command` or `hybrid` grader needs a nonempty `argv`.
 A `judge` or `hybrid` grader needs a `rubric`.
+
+A `judge` or `hybrid` grader can also declare these fields:
+
+- `capture`: a nonempty argv that shows the output to the judge as files.
+  It runs after the task and after a passed hybrid gate, in the same kind of workspace as `command`.
+  It saves files under `capture/`. Ship the capture script as a case fixture. A fixture path must not start with `capture/`.
+  The runner accepts at most 16 regular files: `.png` files with a PNG signature and UTF-8 `.txt` files.
+  Each file has a limit of 4,000,000 bytes, and all files together have a limit of 16,000,000 bytes.
+  The judge workspace gets the files under `capture/`. The judge prompt lists their absolute paths, and the judge opens them with the Read tool.
+  A non-zero exit, no files, a symlink, or a file that breaks a rule scores 0 with status `capture-failed` and skips the judge.
+  The record then holds `capture_failure`. After a successful capture, the record holds `capture_files`.
+  Only the `claude` harness supports `capture`. Other harnesses stop with `contract-capture-unsupported`.
+  The capture runs in the OS sandbox of the task role, so `--sandbox-read` and `--sandbox-seconds` apply.
+  On macOS the sandbox blocks all network access, loopback included, so a capture that starts a local server needs Linux.
+- `pillars`: 1 to 8 unique names of lowercase letters, digits, and underscores, such as `["ui", "ux", "information_flow"]`.
+  The judge answers one required integer from 0 to 100 for each pillar, and no `score_percent`.
+  The kind score is the mean of the pillar scores. The record holds each pillar score in `scores.pillars`, from 0 to 1.
+  An answer that leaves out a pillar or adds a field fails the evaluation.
+
+The contract hash covers `capture` and `pillars`.
+
 A case of a `command` kind without `expected` stops with `expected-missing`.
 A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: one for the task and one for the judge.
 A kind spends one invocation when the judge does not run.
-This covers a failed hybrid gate, a failed activation, and an invalid audit report.
+This covers a failed hybrid gate, a failed capture, a failed activation, and an invalid audit report.
 Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the judge.
 
 

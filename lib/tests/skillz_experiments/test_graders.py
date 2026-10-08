@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from collections.abc import Mapping
 from typing import cast
 
 import pytest
@@ -79,9 +80,10 @@ class SandboxedTask(FakeTask):
 
 
 class FakeJudge:
-    def __init__(self, percent: object = 70) -> None:
+    def __init__(self, percent: object = 70, answer: dict[str, object] | None = None) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.percent: object = percent
+        self.answer: dict[str, object] | None = answer
         self.prompts: list[str] = []
         self.schemas: list[dict[str, object] | None] = []
 
@@ -101,7 +103,21 @@ class FakeJudge:
         self.budget.claim(holdout=holdout)
         self.prompts.append(prompt)
         self.schemas.append(schema)
-        return {"answer": {"score_percent": self.percent}, "usage": TOKENS.copy(), "latency_seconds": 0.1}
+        answer = {"score_percent": self.percent} if self.answer is None else self.answer
+        return {"answer": answer, "usage": TOKENS.copy(), "latency_seconds": 0.1}
+
+
+class FakeViewer(FakeJudge):
+    """A judge transport with the optional Viewer capability."""
+
+    def __init__(self, percent: object = 70, answer: dict[str, object] | None = None) -> None:
+        super().__init__(percent, answer)
+        self.attachments: list[dict[str, bytes]] = []
+
+    def view(self, prompt: str, attachments: Mapping[str, bytes], *, holdout: bool = False,
+             schema: dict[str, object] | None = None) -> dict[str, object]:
+        self.attachments.append(dict(attachments))
+        return self.invoke(prompt, holdout=holdout, schema=schema)
 
 
 def harness(monkeypatch: pytest.MonkeyPatch, task: FakeTask, judge: FakeJudge) -> Harness:
@@ -276,3 +292,154 @@ def test_wedge_script_prompt_requires_isolated_python(tmp_path: Path, monkeypatc
     result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
     assert "python3 -I .agents/skills/echo-skill/scripts/x.py" in task.prompts[0]
     assert result["loaded"] is True and result["helper_executed"] is executed
+
+
+PNG = b"\x89PNG\r\n\x1a\n"
+CAPTURE_SCRIPT = ("import pathlib\n"
+                  "text = pathlib.Path('output/result.txt').read_bytes()\n"
+                  "pathlib.Path('capture/page.png').write_bytes(b'\\x89PNG\\r\\n\\x1a\\n' + text)\n"
+                  "pathlib.Path('capture/notes').mkdir()\n"
+                  "pathlib.Path('capture/notes/page.txt').write_bytes(text)\n")
+PILLARS = ["ui", "ux", "information_flow"]
+
+
+def capture_contract(script: str = CAPTURE_SCRIPT, *, grader: str = "judge", gate: str = GATE_SCRIPT["pass"],
+                     pillars: list[str] | None = None, capture: bool = True) -> Contract:
+    entry: dict[str, object] = {"grader": grader, "rubric": RUBRIC}
+    if capture:
+        entry["capture"] = [sys.executable, "-I", "-c", script]
+    if grader == "hybrid":
+        entry["argv"] = [sys.executable, "-I", "-c", gate]
+    if pillars is not None:
+        entry["pillars"] = pillars
+    return parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
+                  "kinds": {"look": entry}}, "skill")
+
+
+def test_the_capture_sees_the_task_output_and_its_files_reach_the_judge(tmp_path: Path,
+                                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = capture_contract()
+    task, judge = SandboxedTask(), FakeViewer(70)
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case)
+    assert judge.attachments == [{"page.png": PNG + b"rewritten\n", "notes/page.txt": b"rewritten\n"}]
+    assert result["capture_files"] == ["notes/page.txt", "page.png"]
+    assert result["score"] == 0.7 and result["scores"] == {"judge": 0.7}
+    assert "Read tool" in judge.prompts[0] and '"capture_files": ["notes/page.txt", "page.png"]' in judge.prompts[0]
+    workspace = task.workspaces[0]
+    assert workspace["output/result.txt"] == "rewritten\n" and "EXPECTED_SENTINEL" not in "".join(workspace.values())
+
+
+@pytest.mark.parametrize("script", [
+    "raise SystemExit(3)",
+    "pass",
+    "import pathlib; pathlib.Path('capture/page.html').write_text('x')",
+    "import pathlib; pathlib.Path('capture/page.png').write_bytes(b'not a png')",
+    "import pathlib; pathlib.Path('capture/page.txt').write_bytes(b'\\xff')",
+    "import pathlib; pathlib.Path('capture/.page.txt').write_text('x')",
+    "import os; os.symlink('/etc/hosts', 'capture/page.txt')",
+    "import os; os.symlink('/etc', 'capture/host')",
+    "import pathlib; pathlib.Path('capture/page.png').write_bytes(b'\\x89PNG\\r\\n\\x1a\\n' + bytes(4_000_000))",
+    "import pathlib\nfor n in range(17): pathlib.Path(f'capture/{n}.txt').write_text('x')",
+], ids=["exit", "empty", "type", "bad-png", "bad-text", "hidden", "file-link", "directory-link", "too-big", "too-many"])
+def test_a_failed_capture_scores_zero_and_skips_the_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                          script: str) -> None:
+    rules = capture_contract(script)
+    judge = FakeViewer()
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
+    assert judge.prompts == [] and result["judge_usage"] is None
+    assert result["status"] == "capture-failed" and isinstance(result["capture_failure"], str)
+    assert result["score"] == 0.0 and result["scores"] == {"judge": None}
+
+
+def test_a_hybrid_kind_that_passes_the_gate_and_fails_the_capture_scores_zero(tmp_path: Path,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = capture_contract("raise SystemExit(1)", grader="hybrid")
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case)
+    assert result["status"] == "capture-failed" and result["score"] == 0.0
+    assert result["scores"] == {"command": 1.0, "judge": None}
+
+
+@pytest.mark.parametrize(("task", "judge", "message"), [
+    (SandboxedTask, FakeJudge, "view files"), (FakeTask, FakeViewer, "sandbox")])
+def test_a_capture_kind_needs_both_capabilities_before_any_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                                 task: type[FakeTask], judge: type[FakeJudge],
+                                                                 message: str) -> None:
+    rules = capture_contract()
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    runner, viewer = task(), judge()
+    with pytest.raises(ValueError, match=message):
+        _ = harness(monkeypatch, runner, viewer).evaluate(candidate, case)
+    assert runner.prompts == [] and viewer.prompts == []
+
+
+def test_pillar_scores_are_required_and_the_kind_score_is_their_mean(tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = capture_contract(capture=False, pillars=PILLARS)
+    judge = FakeJudge(answer={"ui": 80, "ux": 70, "information_flow": 90})
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case)
+    assert result["score"] == pytest.approx(0.8)
+    assert result["scores"] == {"judge": result["score"], "pillars": {"ui": 0.8, "ux": 0.7, "information_flow": 0.9}}
+    schema = cast(dict[str, object], judge.schemas[0])
+    assert schema["required"] == PILLARS and list(cast(dict[str, object], schema["properties"])) == PILLARS
+    assert schema["additionalProperties"] is False
+    assert "for each pillar: ui, ux, information_flow" in judge.prompts[0] and "score_percent" not in judge.prompts[0]
+
+
+@pytest.mark.parametrize("answer", [
+    {"ui": 80, "ux": 70},
+    {"ui": 80, "ux": 70, "information_flow": 90, "score_percent": 80},
+    {"score_percent": 80},
+    {"ui": 80, "ux": 70, "information_flow": 101},
+    {"ui": 80, "ux": True, "information_flow": 90},
+])
+def test_a_judge_answer_without_exactly_the_pillars_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                         answer: dict[str, object]) -> None:
+    rules = capture_contract(capture=False, pillars=PILLARS)
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    with pytest.raises(ValueError, match="judge"):
+        _ = harness(monkeypatch, FakeTask(), FakeJudge(answer=answer)).evaluate(candidate, case)
+
+
+def test_pillars_and_capture_work_together(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = capture_contract(pillars=PILLARS)
+    judge = FakeViewer(answer={"ui": 60, "ux": 60, "information_flow": 90})
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
+    assert len(judge.attachments) == 1 and result["score"] == pytest.approx(0.7)
+    assert cast(dict[str, object], result["scores"])["pillars"] == {"ui": 0.6, "ux": 0.6, "information_flow": 0.9}
+
+
+@pytest.mark.parametrize(("entry", "message"), [
+    ({"grader": "command", "argv": ["x"], "capture": ["y"]}, "does not take capture"),
+    ({"grader": "exact-json", "pillars": ["ui"]}, "does not take pillars"),
+    ({"grader": "judge", "rubric": "r", "capture": []}, "nonempty argv"),
+    ({"grader": "judge", "rubric": "r", "capture": "python3 capture.py"}, "nonempty argv"),
+    ({"grader": "judge", "rubric": "r", "pillars": []}, "1 to 8"),
+    ({"grader": "judge", "rubric": "r", "pillars": [f"p{n}" for n in range(9)]}, "1 to 8"),
+    ({"grader": "judge", "rubric": "r", "pillars": ["ui", "ui"]}, "unique"),
+    ({"grader": "judge", "rubric": "r", "pillars": ["UI"]}, "unique lowercase"),
+    ({"grader": "judge", "rubric": "r", "pillars": ["score percent"]}, "unique lowercase"),
+])
+def test_the_contract_rejects_a_bad_capture_or_pillar_field(entry: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _ = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "run",
+                   "kinds": {"look": entry}}, "skill")
+
+
+def test_capture_and_pillars_round_trip_and_leave_other_contracts_unchanged() -> None:
+    rules = capture_contract(grader="hybrid", pillars=PILLARS)
+    assert parse(rules.data(), "skill") == rules
+    plain = contract().data()
+    assert all(set(cast(dict[str, object], entry)) <= {"grader", "argv", "rubric"}
+               for entry in cast(dict[str, object], plain["kinds"]).values())
+    assert capture_contract(capture=False).identity != capture_contract().identity
+    assert capture_contract(capture=False).identity != capture_contract(capture=False, pillars=PILLARS).identity
+
+
+def test_a_fixture_under_capture_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="runtime-owned"):
+        _ = case_and_candidate(tmp_path, "look", capture_contract(), files={"capture/page.png": "x"})

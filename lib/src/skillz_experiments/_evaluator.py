@@ -51,6 +51,8 @@ def evaluate(task: Transport, judge_transport: Transport, candidate: Candidate, 
         instruction = "Return the requested result as JSON text in result_json."
     if grader.type in ("command", "hybrid"):
         _graders.require_sandbox(task)
+    if grader.capture:
+        _graders.require_viewer(task, judge_transport)
     if rules.judged(case.kind):
         task.budget.check(2, holdout=holdout)
     result = task.invoke(_prompt(rules, candidate, instruction, case), candidate, case, holdout=holdout)
@@ -108,22 +110,35 @@ def _evaluate_audit(judge_transport: Transport, case: Case, result: dict[str, ob
 
 def _evaluate_scored(task: Transport, judge_transport: Transport, rules: Contract, case: Case, result: dict[str, object],
                      answer: dict[str, object], files: dict[str, str] | None, *, holdout: bool) -> dict[str, object]:
-    """Score a command, judge, or hybrid kind. A failed hybrid gate skips the judge."""
+    """Score a command, judge, or hybrid kind. A failed hybrid gate or a failed capture skips the judge."""
     grader = rules.grader(case.kind)
-    scores: dict[str, float | None] = {}
+    scores: dict[str, object] = {}
     result["scores"] = scores
     if not result["loaded"] or not result["helper_executed"]:
         result["status"] = "activation-rejected"
         return result
     if grader.type in ("command", "hybrid"):
-        scores["command"] = result["score"] = _graders.command(task, grader.argv, case, files)
-        if grader.type == "hybrid" and scores["command"] <= 0:
+        command = _graders.command(task, grader.argv, case, files)
+        scores["command"] = result["score"] = command
+        if grader.type == "hybrid" and command <= 0:
             scores["judge"] = None
             result["status"] = "gate-failed"
             return result
     if grader.type in ("judge", "hybrid"):
-        score, judge = _graders.judge(judge_transport, grader.rubric, case, answer.get("result_json"), files, holdout=holdout)
+        attachments: dict[str, bytes] | None = None
+        if grader.capture:
+            try:
+                attachments = _graders.capture(task, grader.capture, case, files)
+            except _graders.CaptureFailed as error:
+                scores["judge"] = None
+                result.update({"score": 0.0, "status": "capture-failed", "capture_failure": str(error)})
+                return result
+            result["capture_files"] = sorted(attachments)
+        score, pillars, judge = _graders.judge(judge_transport, grader, case, answer.get("result_json"), files,
+                                               attachments, holdout=holdout)
         scores["judge"] = result["score"] = score
+        if pillars is not None:
+            scores["pillars"] = pillars
         result["judge_usage"] = judge.get("usage", usage([]))
         result["usage"] = _audit.combined_usage(mapping(result["task_usage"]), mapping(result["judge_usage"]))
         result["judge_latency_seconds"] = judge.get("latency_seconds")

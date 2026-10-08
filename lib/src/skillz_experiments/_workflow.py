@@ -224,6 +224,10 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)
     kind = _supported_kind(contract)
+    captured = sorted(name for name, grader in contract.kinds.items() if grader.capture)
+    if captured and adapter != "claude":
+        raise CodedError("contract-capture-unsupported", f"the kinds {', '.join(captured)} declare capture, and only "
+                         + "the claude harness can show capture files to the judge; run with --harness claude")
     cases = split_cases(load_draft(draft), split_seed, kind)
     held = sum(case.split == "holdout" and case.kind == kind for case in cases)
     if held < HOLDOUT_MINIMUM:

@@ -52,7 +52,7 @@ def relative(value: str) -> str:
 
 def text_map(value: object) -> dict[str, str]:
     files = {relative(key): string(item, key) for key, item in mapping(value).items()}
-    forbidden = {"home", "tmp", "output", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
+    forbidden = {"home", "tmp", "output", "capture", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
     if any(PurePosixPath(key).parts[0] in forbidden or PurePosixPath(key).name == "AGENTS.md" for key in files):
         raise ValueError("fixture collides with runtime-owned paths")
     return files

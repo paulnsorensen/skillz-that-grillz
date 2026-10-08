@@ -147,9 +147,13 @@ def main() -> int:
     argv = sys.argv[1:]
     prompt = sys.stdin.read()
     settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
+    captured: dict[str, str | None] = {}
+    for line in prompt.split("\nCAPTURE FILES:\n", 1)[1].splitlines() if "\nCAPTURE FILES:\n" in prompt else []:
+        captured[line] = Path(line).read_bytes().hex() if Path(line).is_file() else None
     with script.with_name(script.name + ".log").open("a") as log:
         _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,
-                                  "environment": dict(os.environ), "config_entries": config_entries()}) + "\n")
+                                  "environment": dict(os.environ), "config_entries": config_entries(),
+                                  "captured": captured}) + "\n")
     if mode == "no-init-auth":
         print("Invalid API key - Please run /login", file=sys.stderr)
         return 1

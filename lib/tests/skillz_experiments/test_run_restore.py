@@ -192,6 +192,20 @@ def test_an_audit_graded_scored_kind_stops_before_any_approval_or_model_call(
     assert state.evaluated == [] and not (out / "run.json").exists()
 
 
+def test_a_capture_kind_on_a_harness_other_than_claude_stops_before_any_approval_or_model_call(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
+    target, out, state = make_target(tmp_path), tmp_path / "run", State()
+    path = target / "evals/autoimprove.json"
+    document = cast(dict[str, object], json.loads(path.read_text()))
+    _ = path.write_text(json.dumps(document | {"kinds": {"echo": {
+        "grader": "judge", "rubric": "r", "capture": ["/usr/bin/python3", "capture.py"]}}}))
+    _ = write_draft(out)
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, adapter="codex", live=True, factory=state.factory())
+    assert caught.value.code == "contract-capture-unsupported" and "echo" in str(caught.value)
+    assert state.evaluated == [] and not (out / "run.json").exists()
+
+
 @pytest.mark.parametrize(("variant", "code"), [
     ("helper-file-missing", "helper-file-missing"),
     ("prompt-components-missing", "prompt-components-missing"),
