@@ -43,6 +43,8 @@ child["FAKE_NONO_WRITE"] = os.pathsep.join([os.getcwd(), *fs["allow"]])
 os.execve(argv[argv.index("--") + 1], argv[argv.index("--") + 1:], child)
 '''
 pytestmark = pytest.mark.usefixtures("host_login")
+# Read at import, because `nono_bin` patches `sys.platform` to linux.
+LINUX_HOST = sys.platform == "linux"
 
 
 @pytest.fixture
@@ -53,7 +55,8 @@ def nono_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     nono = directory / "nono"
     _ = nono.write_text(NONO)
     nono.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin")
+    # Keep the stub `bwrap` from `host_login` last, so the host-tool check passes on a host without bubblewrap.
+    monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin:{tmp_path / 'fallback-bin'}")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-host-secret")
     monkeypatch.setattr(_nono, "landlock_abi", lambda: 8)
     monkeypatch.setattr(sys, "platform", "linux")
@@ -228,7 +231,12 @@ def test_a_nono_role_is_refused_on_macos(tmp_path: Path, nono_bin: Path, monkeyp
 
 @pytest.fixture
 def nono_sandbox_passes(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Pass the OS sandbox probe, and use a short temp root so the Unix-socket probe path fits AF_UNIX."""
+    """Pass the OS sandbox probe, and use a short temp root so the Unix-socket probe path fits AF_UNIX.
+
+    The nono preflight binds an abstract socket, which exists only on Linux, so the test skips elsewhere.
+    """
+    if not LINUX_HOST:
+        pytest.skip("abstract Unix sockets exist only on Linux")
     directory = Path(tempfile.mkdtemp(prefix="skz", dir="/tmp"))
     monkeypatch.setattr(tempfile, "tempdir", str(directory))
     def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:

@@ -26,6 +26,8 @@ from skillz_experiments._runtime import Budget
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 ROOT = Path(__file__).parents[3]
 TOKENS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+# Read at import, before any test patches `sys.platform`.
+LINUX_HOST = sys.platform == "linux"
 
 
 def _bwrap_works() -> bool:
@@ -1168,7 +1170,12 @@ def live_settings(executable: Path) -> dict[str, object]:
 
 @pytest.fixture
 def short_tempdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Use a short temp root, so a preflight Unix socket path stays under the AF_UNIX length limit."""
+    """Use a short temp root, so a preflight Unix socket path stays under the AF_UNIX length limit.
+
+    The socket probe also binds an abstract socket, which exists only on Linux, so the test skips elsewhere.
+    """
+    if not LINUX_HOST:
+        pytest.skip("abstract Unix sockets exist only on Linux")
     directory = Path(tempfile.mkdtemp(prefix="skz", dir="/tmp"))
     monkeypatch.setattr(tempfile, "tempdir", str(directory))
     yield directory

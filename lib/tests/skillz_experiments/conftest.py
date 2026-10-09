@@ -102,7 +102,18 @@ def umask_022() -> Iterator[None]:
 
 @pytest.fixture
 def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Give each test a fake host login and a private temp dir, so no test touches the real `~/.claude`."""
+    """Give each test a fake host login and a private temp dir, so no test touches the real `~/.claude`.
+
+    The last PATH entry holds a stub `bwrap`, so the host-tool check passes on a Linux host without bubblewrap.
+    Tests that run the real OS sandbox skip without it, and a real `bwrap` earlier on PATH still wins.
+    The stub fails like a broken sandbox, so a test that runs it by mistake stops.
+    """
+    fallback = tmp_path / "fallback-bin"
+    fallback.mkdir()
+    bwrap = fallback / "bwrap"
+    _ = bwrap.write_text("#!/bin/sh\necho 'bwrap: test stub, no OS sandbox' >&2\nexit 1\n")
+    bwrap.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{os.environ.get('PATH', '')}{os.pathsep}{fallback}")
     credential = tmp_path / "host-home/.claude/.credentials.json"
     credential.parent.mkdir(parents=True)
     _ = credential.write_text("{}")
