@@ -5,7 +5,7 @@ import json
 import shutil
 import stat
 import sys
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -27,6 +27,11 @@ from pathlib import Path
 here = Path(__file__).resolve()
 argv = sys.argv[1:]
 prompt = sys.stdin.read()
+if "--input-format" in argv:
+    names = sorted(path.name for path in Path.cwd().glob(".claude/skills/*"))
+    print(json.dumps({"type": "control_response", "response": {"subtype": "success",
+                      "response": {"commands": [{"name": name} for name in names] + [{"name": "doctor", "builtin": True}]}}}))
+    sys.exit(0)
 with here.with_name("claude.log").open("a") as log:
     log.write(json.dumps({"argv": argv, "prompt": prompt}) + "\\n")
 sys.stdout.write(here.with_name("claude.out").read_text())
@@ -75,8 +80,8 @@ def probes(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     """Replace the OS sandbox probe with a recorder that passes, so live-call steps run on any host."""
     seen: list[list[str]] = []
 
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, seconds
         seen.append(argv)
         return 0, "isolation-ok\n"
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
@@ -95,7 +100,7 @@ FLOOR: dict[str, object] = {"enabled": True, "failIfUnavailable": True, "allowUn
 
 def assert_floor(call: dict[str, object]) -> None:
     argv = cast(list[str], call["argv"])
-    assert argv[:2] == ["--restricted", "-p"]
+    assert argv[:3] == ["-p", "--setting-sources", "project"] and "--restricted" not in argv
     assert argv[argv.index("--tools") + 1] == "Bash,Read,Skill"
     assert "--strict-mcp-config" in argv
     settings = cast(dict[str, dict[str, object]], json.loads(cast(str, call["settings"])))
@@ -187,7 +192,8 @@ def test_claude_role_with_a_blank_model_is_rejected(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("mode", ["auth-fail", "foreign-skill", "sandbox-unavailable", "no-init-auth", "no-init",
                                   "missing-skill", "read-host", "bash-broken", "read-fallback", "skips-cat",
-                                  "write-agents", "write-broken", "write-skips-agents"])
+                                  "write-agents", "write-broken", "write-skips-agents",
+                                  "write-claude", "write-skips-claude"])
 def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and_no_retry(
         tmp_path: Path, probes: list[list[str]], mode: str) -> None:
     del probes
@@ -199,20 +205,22 @@ def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and
     finally:
         session.close()
     logged = calls(executable)
-    assert len(logged) == 1 and "--restricted" in cast(list[str], logged[0]["argv"])
+    assert len(logged) == 1 and "--restricted" not in cast(list[str], logged[0]["argv"])
     assert not any("--dangerously-skip-permissions" in cast(list[str], call["argv"]) for call in logged)
 
 
 @pytest.mark.parametrize(("mode", "reason"), [
     ("write-agents", "write isolation failed"),
     ("write-broken", "no positive control"),
-    ("write-skips-agents", "write probe has no evidence")])
+    ("write-skips-agents", "write probe has no evidence"),
+    ("write-claude", "write isolation failed"),
+    ("write-skips-claude", "write probe has no evidence")])
 def test_preflight_stops_when_the_agents_write_succeeds_or_the_write_control_fails(
         tmp_path: Path, probes: list[list[str]], mode: str, reason: str) -> None:
     del probes
     session = harness(tmp_path, fake_claude(tmp_path, mode))
     try:
-        with pytest.raises(RuntimeError, match=reason):
+        with pytest.raises(CodedError, match=reason):
             _ = session.preflight()
     finally:
         session.close()
@@ -238,7 +246,7 @@ def test_write_probe_needs_a_failed_printf_to_agents_not_any_command_that_names_
             {"type": "tool_use", "id": f"u{index}", "name": "Bash", "input": {"command": command}}]}})
         events.append({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": f"u{index}", "is_error": error}]}})
-    assert _claude._write_failure(events, agents, False, True) == (  # pyright: ignore[reportPrivateUsage]
+    assert _claude._write_failure(events, [agents], False, True) == (  # pyright: ignore[reportPrivateUsage]
         "write probe has no evidence: no failed Bash printf to .agents")
 
 
@@ -282,14 +290,14 @@ def test_invoke_answer_is_empty_when_the_result_text_is_deeply_nested_json(tmp_p
                                     (0, "ISOLATION-OK"), (2, "isolation-ok"), (-9, "isolation-ok")])
 def test_preflight_stops_before_any_live_call_when_the_sandbox_probe_does_not_pass_exactly(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: tuple[int, str]) -> None:
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace, argv
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, argv, seconds
         return result
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="no unsafe fallback"):
+        with pytest.raises(CodedError, match="no unsafe fallback"):
             _ = session.preflight()
     finally:
         session.close()
@@ -317,7 +325,7 @@ def test_a_failed_preflight_leaves_no_partial_pass_in_a_second_attempt(tmp_path:
     session = harness(tmp_path, executable)
     try:
         for _ in range(2):
-            with pytest.raises(RuntimeError, match="foreign skill"):
+            with pytest.raises(CodedError, match="foreign skill"):
                 _ = session.preflight()
     finally:
         session.close()
@@ -470,14 +478,15 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     if change == "tools":
         monkeypatch.setattr(_claude, "TOOLS", "Bash,Read,Skill,Write")
     elif change == "probe-skill":
-        monkeypatch.setattr(_claude, "PROBE_SKILL", "other")
+        monkeypatch.setattr(_claude, "PROBE_PREFIX", "other-")
     elif change == "platform":
         monkeypatch.setattr(sys, "platform", "darwin")
     elif change == "settings":
         original = _claude.settings
 
-        def weaker(workspace: Path, out: Path | None = None) -> dict[str, object]:
-            document = original(workspace, out)
+        def weaker(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
+                   unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
+            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
         monkeypatch.setattr(_claude, "settings", weaker)
@@ -577,13 +586,13 @@ def test_reuse_with_a_failing_sandbox_probe_stops_and_makes_no_live_call(
     recorded = recorded_pass(tmp_path, executable)
     logged = len(calls(executable))
 
-    def broken(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace, argv
+    def broken(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, argv, seconds
         return 1, ""
     monkeypatch.setattr(ClaudeCode, "sandbox", broken)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="no unsafe fallback"):
+        with pytest.raises(CodedError, match="no unsafe fallback"):
             _ = session.preflight(recorded)
     finally:
         session.close()

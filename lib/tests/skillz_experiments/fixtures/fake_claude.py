@@ -3,6 +3,8 @@
 
 The mode comes from a sidecar file named `<script>.mode`. Each call appends its argv, working
 directory, settings, standard input, environment, and the entries of its `CLAUDE_CONFIG_DIR` to `<script>.log`.
+An `initialize` control request (the free skill inventory) logs to `<script>.inventory.log` instead.
+Like Claude Code 2.1.29x, it lists its own commands and built-in plugins even when bundled skills are off.
 """
 from __future__ import annotations
 
@@ -11,10 +13,16 @@ import os
 import re
 import socket
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
 USAGE = {"input_tokens": 10, "cache_creation_input_tokens": 5, "cache_read_input_tokens": 20, "output_tokens": 7}
+BUILTIN_COMMANDS = ("design", "doctor", "clear")
+BUILTIN_SKILLS = ("design", "doctor")
+BUILTIN_PLUGINS = [{"name": "cc-plugin-agents-md", "path": "builtin", "source": "cc-plugin-agents-md@builtin"}]
+ACCOUNT_SKILL = "anthropic-skills:pdf"
+PLUGIN_SKILL = "plug:tool"
 
 
 def emit(event: dict[str, object]) -> None:
@@ -25,8 +33,17 @@ def _inside(path: str, roots: list[str]) -> bool:
     return any(path == root or path.startswith(root.rstrip("/") + "/") for root in roots)
 
 
+def _nono_roots(name: str) -> list[str] | None:
+    """Return the roots that the fake `nono` grants in the variable `name`, or None outside nono."""
+    value = os.environ.get(name)
+    return None if value is None else value.split(os.pathsep)
+
+
 def _readable(path: str, settings: dict[str, object]) -> bool:
-    """Mimic the sandbox read rule: the narrower allow wins over a deny."""
+    """Mimic the sandbox read rule: the narrower allow wins over a deny. Under the fake `nono`, only its read grants count."""
+    granted = _nono_roots("FAKE_NONO_READ")
+    if granted is not None:
+        return _inside(path, granted)
     filesystem = cast(dict[str, list[str]], cast(dict[str, object], settings.get("sandbox", {})).get("filesystem", {}))
     denied = [root for root in filesystem.get("denyRead", []) if _inside(path, [root])]
     allowed = [root for root in filesystem.get("allowRead", []) if _inside(path, [root])]
@@ -36,7 +53,10 @@ def _readable(path: str, settings: dict[str, object]) -> bool:
 
 
 def _writable(path: str, settings: dict[str, object]) -> bool:
-    """Mimic the sandbox write rule: a path under a `denyWrite` root fails."""
+    """Mimic the sandbox write rule: a path under a `denyWrite` root fails. Under the fake `nono`, only its write grants count."""
+    granted = _nono_roots("FAKE_NONO_WRITE")
+    if granted is not None:
+        return _inside(path, granted)
     filesystem = cast(dict[str, list[str]], cast(dict[str, object], settings.get("sandbox", {})).get("filesystem", {}))
     return not any(_inside(path, [root]) for root in filesystem.get("denyWrite", []))
 
@@ -44,14 +64,17 @@ def _writable(path: str, settings: dict[str, object]) -> bool:
 def write_probe(writes: list[tuple[str, str]], mode: str, config: dict[str, object]) -> list[str]:
     """Answer the preflight write probe. `write-agents` lets the `.agents` write succeed; `write-broken` fails every write.
 
-    `write-skips-agents` runs the control write and skips the `.agents` write.
+    `write-skips-agents` runs the control write and skips the `.agents` write. `write-claude` and `write-skips-claude`
+    do the same for the `.claude` write.
     """
     texts: list[str] = []
     for index, (token, path) in enumerate(writes):
         agents = "/.agents/" in path
-        if mode == "write-skips-agents" and agents:
+        claude = "/.claude/" in path
+        if (mode == "write-skips-agents" and agents) or (mode == "write-skips-claude" and claude):
             continue
-        writes_file = mode != "write-broken" and (_writable(path, config) or (mode == "write-agents" and agents))
+        writes_file = mode != "write-broken" and (_writable(path, config) or (mode == "write-agents" and agents)
+                                                 or (mode == "write-claude" and claude))
         if writes_file:
             _ = Path(path).write_text(token)
         texts.append("" if writes_file else "denied")
@@ -82,6 +105,9 @@ def network_probe(prompt: str, mode: str) -> list[str]:
     for index, command in enumerate(cast(list[str], re.findall(r"`(/usr/bin/(?:python3 -c|curl) [^`]*)`", prompt))):
         if mode == "net-skipped":
             break
+        if "AF_UNIX" in command:
+            texts.append(unix_probe(index, command, mode))
+            continue
         direct = "connect_ex" in command
         port = int(cast(re.Match[str], re.search(r"(?:connect_ex\(\('127\.0\.0\.1',|:)(\d+)[)/]", command)).group(1))
         token = cast(re.Match[str], re.search(r"([0-9a-f]{32})", command)).group(1)
@@ -103,6 +129,72 @@ def network_probe(prompt: str, mode: str) -> list[str]:
               "is_error": False, "content": text}]}})
         texts.append(text)
     return texts
+
+
+def unix_probe(index: int, command: str, mode: str) -> str:
+    """Answer the host Unix-socket probe. `unix-open` connects and sends the token; `unix-skipped` prints nothing.
+
+    `abstract-open` and `abstract-skipped` do the same for the abstract-socket command only.
+    """
+    path = cast(re.Match[str], re.search(r"connect_ex\('([^']+)'\)", command)).group(1)
+    abstract = path.startswith("\\0")
+    path = "\0" + path[2:] if abstract else path
+    token = cast(re.Match[str], re.search(r"([0-9a-f]{32})", command)).group(1)
+    text = "" if mode == "unix-skipped" or (mode == "abstract-skipped" and abstract) else f"denied-{token}"
+    if mode == "unix-open" or (mode == "abstract-open" and abstract):
+        with socket.socket(socket.AF_UNIX) as client:
+            client.connect(path)
+            client.sendall(token.encode())
+        text = f"open-{token}"
+    emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"u{index}", "name": "Bash",
+          "input": {"command": command}}]}})
+    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"u{index}",
+          "is_error": False, "content": text}]}})
+    return text
+
+
+def listed_skills(mode: str, config: dict[str, object]) -> list[str]:
+    """Return the non-built-in skills that load: the project skills, then the mode's account or plugin skill.
+
+    `skillOverrides` turns off every skill it names except a plugin skill, as in Claude Code.
+    """
+    project = next((root for root in (Path.cwd(), Path.cwd().parent) if (root / ".claude/skills").is_dir()), Path.cwd())
+    skills_root = project / ".claude/skills"
+    skills = sorted(path.name for path in skills_root.iterdir()) if skills_root.is_dir() else []
+    if mode == "account-skill":
+        skills.append(ACCOUNT_SKILL)
+    off = {name for name, value in cast(dict[str, str], config.get("skillOverrides", {})).items() if value == "off"}
+    skills = [name for name in skills if name not in off]
+    return skills + ([PLUGIN_SKILL] if mode == "plugin-skill" else [])
+
+
+def inventory(mode: str, config: dict[str, object]) -> int:
+    """Answer an `initialize` control request. `inventory-broken` sends no command list.
+
+    `inventory-error` sends an error response, `inventory-auth` fails to log in, and `inventory-hang` never answers.
+    `inventory-nonzero` sends a valid list and still exits 1.
+
+    `builtin-echo` also lists `echo-skill` as a Claude Code command, so the echo candidate name collides with it.
+    """
+    commands: list[dict[str, object]] = [{"name": name, "description": ""} for name in listed_skills(mode, config)]
+    builtin = [*BUILTIN_COMMANDS, *(["echo-skill"] if mode == "builtin-echo" else [])]
+    commands += [cast(dict[str, object], {"name": name, "description": "", "builtin": True}) for name in builtin]
+    if mode == "inventory-hang":
+        time.sleep(30)
+    if mode == "inventory-auth":
+        print("Invalid API key - Please run /login", file=sys.stderr)
+        return 1
+    if mode == "inventory-error":
+        emit({"type": "control_response", "response": {"subtype": "error", "request_id": "skillz-inventory",
+                                                      "error": "profile rejected"}})
+        print("nono: profile rejected", file=sys.stderr)
+        return 2
+    body: dict[str, object] = {} if mode == "inventory-broken" else {"commands": commands, "agents": []}
+    if mode == "inventory-bad-row":
+        body["commands"] = ["not-an-object"]
+    emit({"type": "control_response", "response": {"subtype": "success", "request_id": "skillz-inventory",
+                                                  "response": body}})
+    return 1 if mode == "inventory-nonzero" else 0
 
 
 def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object], prompt: str) -> int:
@@ -150,21 +242,23 @@ def main() -> int:
     captured: dict[str, str | None] = {}
     for line in prompt.split("\nCAPTURE FILES:\n", 1)[1].splitlines() if "\nCAPTURE FILES:\n" in prompt else []:
         captured[line] = Path(line).read_bytes().hex() if Path(line).is_file() else None
-    with script.with_name(script.name + ".log").open("a") as log:
+    listing = "--input-format" in argv
+    with script.with_name(script.name + (".inventory.log" if listing else ".log")).open("a") as log:
         _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,
                                   "environment": dict(os.environ), "config_entries": config_entries(),
                                   "captured": captured}) + "\n")
+    config = cast(dict[str, object], json.loads(settings or "{}"))
+    if listing:
+        return inventory(mode, config)
     if mode == "no-init-auth":
         print("Invalid API key - Please run /login", file=sys.stderr)
         return 1
     if mode == "sandbox-unavailable":
         print("sandbox is unavailable: bubblewrap is missing and failIfUnavailable is set", file=sys.stderr)
         return 1
-    skills_root = Path.cwd() / ".claude/skills"
-    skills = sorted(path.name for path in skills_root.iterdir()) if skills_root.is_dir() else []
+    skills = listed_skills(mode, config) + list(BUILTIN_SKILLS)
     if mode == "foreign-skill":
         skills.append("personal-intruder")
-    config = cast(dict[str, object], json.loads(settings or "{}"))
     bundled_off = config.get("disableBundledSkills") is True or os.environ.get("CLAUDE_CODE_DISABLE_BUNDLED_SKILLS") == "1"
     if mode == "bundled-skill" and not bundled_off:
         skills.append("code-review")
@@ -172,9 +266,11 @@ def main() -> int:
         skills = []
     if mode != "no-init":
         init: dict[str, object] = {"type": "system", "subtype": "init", "skills": skills, "tools": ["Bash", "Read", "Skill"],
-                                   "plugins": [], "mcp_servers": [], "agents": ["general-purpose", "Explore"]}
+                                   "plugins": list(BUILTIN_PLUGINS), "mcp_servers": [], "agents": ["general-purpose", "Explore"]}
         if mode == "foreign-plugin":
             init["plugins"] = [{"name": "user-plugin", "path": "/x"}]
+        if mode == "spoofed-plugin":
+            init["plugins"] = [{"name": "user-plugin", "path": "builtin", "source": "user-plugin@elsewhere"}]
         if mode == "foreign-mcp":
             init["mcp_servers"] = [{"name": "user-server", "status": "connected"}]
         if mode == "foreign-agent":

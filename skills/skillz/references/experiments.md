@@ -50,7 +50,14 @@ A model call needs `--live`; without it the run stops with `live-required`. The 
 `--harness` accepts only `claude` or `codex`. The runner launches only headless `claude -p` or `codex exec`.
 The `claude` harness reuses the Claude login. The `codex` harness reuses the ChatGPT login and needs Codex CLI 0.154.0.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
-Do not create or request provider credentials.
+Do not create or request provider credentials. The one exception is the API key that `--isolation nono` needs after the user chooses it.
+A fresh run first runs the free host checks of `doctor`. They make no model call.
+A failed check stops the run with `host-not-ready` before the case draft. The stop lists every check and its fix.
+Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" doctor --harness claude` to see the checks without a run.
+`--isolation claude` is the default. Claude Code's own sandbox then confines Bash commands.
+`--isolation nono` runs the whole Claude process in nono on Linux. Use it only when the user asks or the host needs it.
+The nono backend needs `nono`, Linux 6.7 or later, and `ANTHROPIC_API_KEY` on the host.
+nono injects the key through its proxy, so the sandbox never sees it. This backend bills the API key, not the Claude login.
 `--edit prose` is the default and changes only Markdown files.
 `--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
 `--repeats` sets the repeats for each holdout case. The default is 3.
@@ -58,8 +65,19 @@ Do not create or request provider credentials.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
 `--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
 Use it for a browser install, for example `/opt/pw-browsers`.
-A root must exist. It must not hold the home directory, and it must not overlap the Claude config directory, the temporary directory, or `--out`.
+A root must exist, and it must not be a symlink. Give the resolved path.
+A root must not equal or hold the home directory.
+A root must not equal, hold, or sit inside the Claude config directory, the temporary directory, or `--out`.
+A root must not equal, hold, or sit inside a runtime path or a credential path.
+The runtime paths are `/proc`, `/sys`, `/dev`, `/run`, `/var/run`, `/tmp`, `/var/tmp`, `/var/snap`, `/var/lib`, and `$XDG_RUNTIME_DIR`.
+The credential paths are `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.claude.json`, the shell rc and history files, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.password-store`, `~/.local/share/keyrings`, and the Claude login file.
+A root must not hold a socket entry. A tree of more than 100000 entries is too large to check, so the runner refuses it.
+Home caches such as `~/.cache/ms-playwright` stay allowed.
 `--sandbox-seconds N` sets the time limit of one OS sandbox command, from 1 to 600. The default is 20.
+Once any scored case uses a command or hybrid grader, this time applies to every evaluation.
+Parallel calls share it. The estimate and the holdout gate reserve include it.
+The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
+The stops that ask for approval echo the options as `claude_options`.
 These three options apply only to `--harness claude`. The first run records them.
 When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, or Claude option.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
@@ -70,7 +88,8 @@ Map each coded stop to its next step:
 
 | Code | Data on stdout | Next step |
 |---|---|---|
-| `cases-missing` | `draft` (path), `facts` (skill name, description, files) | Write the case draft, then run again. |
+| `host-not-ready` | `ok`, `harness`, `isolation`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
+| `cases-missing` | `draft` (path), `facts` (skill name, description, files), `doctor` (the host checks) | Write the case draft, then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed` | Ask question 2. Run again with `--approve-cases HASH`. |
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` in the command. |
 | `baseline-contract-rejected` | `next` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
@@ -84,19 +103,22 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 
 | Code | Meaning | Next step |
 |---|---|---|
-| `login-missing` | No Claude login file exists. | Ask the user to run `claude` once and log in. |
+| `login-missing` | No Claude login file exists, or Claude Code rejects the login during the preflight (authentication failed). Under nono, the host API key is missing or invalid. | Ask the user to run `claude` once and log in. Under nono, export a valid `ANTHROPIC_API_KEY`. |
+| `sandbox-read-invalid` | A `--sandbox-read` root is missing, is a symlink, holds an unsafe character, overlaps a refused path, holds a socket entry, or is too large to check. The message names the root. | On a fresh run, give a valid resolved path. On a resume, restore the path or start a new `--out`. |
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
-| `sandbox-unavailable` | The Bash sandbox cannot start. | Apply the fix in the message, then run again in the same directory. The runner never weakens the sandbox. |
-| `preflight-leak` | A user skill, plugin, agent, or MCP server loads. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. | Move it out of the config directory for the run, then run again. |
+| `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. | For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
+| `nono-unavailable` | `--isolation nono` cannot run. The message names each unmet requirement and its fix. | Apply each fix, or use `--isolation claude`. |
+| `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill, so the init event cannot show that the candidate loaded. No model call ran. | Rename the skill for the run, then start a new run directory. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
 | `harness-changed` | The harness executable or script differs from the frozen record. | Restore the frozen harness, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
-| `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. The run stops before case approval. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
@@ -142,6 +164,7 @@ A `trigger` case is a request that should load the skill. A `near-miss` case is 
 The runner records `trigger` and `near-miss` cases as pending. It does not score them yet.
 Draft the `task` cases with care, because only they decide the verdict.
 Write at least three `task` families and at least six `task` cases for the holdout.
+When the target contract has a `task` rubric, draft each `task` case so the rubric can score it.
 Do not assign splits. Code assigns them from the seed.
 When session analytics exists, run the Usage ceremony from `SKILL.md`.
 Add extra cases from past sessions with `source: session`. Remove private data first.
@@ -175,6 +198,7 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export
 Export is write-only. It writes `candidate.patch` and a redacted `report.json` to a new directory.
 It never applies or installs the patch, and it never changes the target skill.
 Show the user the patch and the verdict. The user decides whether to apply it.
+`doctor --harness claude` runs the free host checks without a run. Add `--isolation nono` to check the nono backend.
 `self-test --preflight-only --model MODEL` checks the harness without a run.
 Pass `--harness-config FILE` to check a custom command adapter. The harness reference that `SKILL.md` lists describes it.
 
@@ -267,8 +291,8 @@ Candidate commands use a deny-by-default filesystem profile and no network acces
 The staged candidate is read-only. The task workspace is writable.
 The runner disables external skills, user configuration, hooks, plugins, apps, and web search.
 An existing administrator skill directory stops the Codex run.
-The `claude` adapter runs `claude --restricted -p` with `--tools Bash,Read,Skill` and `--strict-mcp-config`.
-It applies the sandbox floor, denies host reads, and disables bundled skills.
+The `claude` adapter runs `claude -p --setting-sources project` with `--tools Bash,Read,Skill` and `--strict-mcp-config`.
+It applies the sandbox floor, denies host reads, and disables bundled skills. It turns off every foreign skill that a free inventory finds.
 The harness reference that `SKILL.md` lists defines its preflight and login handling.
 The runner rejects failed probes or missing discovery before inference.
 

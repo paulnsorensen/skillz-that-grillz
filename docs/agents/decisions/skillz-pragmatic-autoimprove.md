@@ -7,7 +7,7 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
 
 ## Records
 
-### ADR-001: Reuse the existing Claude login and fail closed without a sandbox  [status: accepted]
+### ADR-001: Reuse the existing Claude login and fail closed without a sandbox  [status: superseded in part by skillz-autoimprove ADR-006]
 
 - **Context:** The Claude transport isolates `HOME` and forwards only token variables, so a Linux user must set a token. The Codex transport already links `auth.json`. Prototype pc-2 showed that `CLAUDE_CONFIG_DIR` with a symlinked `.credentials.json` logs in with no key. The prototype host could not run the Claude Bash sandbox because of the AppArmor user-namespace restriction and a missing `socat`.
 - **Decision:** On Linux, set `CLAUDE_CONFIG_DIR` to a temporary directory outside the workspace that holds only a symlink to `.credentials.json`. On macOS, use the real config directory with `--restricted`, which ignores user settings files. The preflight stops a run before any model call when `CLAUDE.md` or a `rules` directory with `.md` files exists there. The live preflight stops a run when user skills, plugins, agents, or MCP servers load. Forward no token variable.

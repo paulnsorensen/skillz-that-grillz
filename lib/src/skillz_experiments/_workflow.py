@@ -26,8 +26,9 @@ from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_
                                         resolve_read_roots)
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
+from skillz_experiments._doctor import doctor
 from skillz_experiments._gate import case_deltas, verdict as gate_verdict
-from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
+from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
@@ -132,39 +133,72 @@ class _Plan:
     holdout_calls: int
     retry_calls: int
     sized: Estimate
+    sandbox_gate: int = 0
+    sandbox_total: int = 0
 
     @property
     def reserve_seconds(self) -> int:
         """Return the seconds that the holdout gate holds, never more than the whole run."""
-        return min(gate_seconds(self.holdout_calls), self.sized.seconds)
+        return min(gate_seconds(self.holdout_calls) + self.sandbox_gate, self.sized.seconds)
 
 
-def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int) -> _Plan:
+def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeOptions) -> int:
+    """Return the sandbox time limit of one evaluation, or 0 when no scored case runs a command grader."""
+    return options.sandbox_seconds if any(contract.grader(case.kind).type in ("command", "hybrid") for case in cases) else 0
+
+
+def _sizing_options(configuration: Configuration | None, options: ClaudeOptions) -> ClaudeOptions:
+    """Return the options that size the run: the task role of a supplied configuration, or the run's own `options`."""
+    if configuration is None:
+        return options
+    role = configuration.roles["task"]
+    return role.options if role.adapter == "claude" else ClaudeOptions()
+
+
+def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int, sandbox_seconds: int = 0) -> _Plan:
     """Size the run. Shrink the search share to fit the cap; stop when the fixed cost alone exceeds it.
 
     `metric` counts metric calls: one search evaluation of one case. A metric call costs `per_evaluation` model calls.
     `_Plan.metric_calls` and `reflection_calls` keep that unit. `holdout_calls` and `sized.calls` count model calls.
     `holdout_calls` is the gate reserve. It holds the gate and `HOLDOUT_RETRIES_PER_ARM` retries per arm,
     because a failed holdout call stays claimed.
+    `sandbox_seconds` is the time limit of one evaluation, and it applies once any scored case uses a command or hybrid grader.
+    The sandbox time of every evaluation adds to the estimate and to the gate reserve, shared across parallel calls.
+    The search shrinks until both the call cap and the time cap hold, sandbox time included.
     """
+    holdout_evaluations = 2 * holdout * repeats + 2 * HOLDOUT_RETRIES_PER_ARM
     retry_calls = 2 * HOLDOUT_RETRIES_PER_ARM * per_evaluation
     holdout_calls = 2 * holdout * repeats * per_evaluation + retry_calls
     if PREFLIGHT_CALLS + holdout_calls > APPROVED_CALLS:
         raise Stop("budget-unapproved", f"the preflight and the holdout gate alone need {PREFLIGHT_CALLS + holdout_calls} "
                    + f"calls; the cap is {APPROVED_CALLS}; lower --repeats or the holdout size", {})
 
+    def sandbox_total(metric: int) -> int:
+        return math.ceil((metric + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
+
     def size(metric: int) -> Estimate:
         return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=2 * holdout, calls_per_evaluation=per_evaluation,
                         repeats=repeats, search_calls=metric * per_evaluation, retry_calls=retry_calls,
                         reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION))
 
+    def fits(metric: int) -> bool:
+        sized = size(metric)
+        return sized.calls <= APPROVED_CALLS and sized.seconds + sandbox_total(metric) <= APPROVED_SECONDS
+
+    if not fits(0):
+        raise Stop("budget-unapproved", "the preflight, the holdout gate, and their sandbox time alone need "
+                   + f"{size(0).seconds + sandbox_total(0)} seconds; the cap is {APPROVED_SECONDS}; "
+                   + "lower --repeats, the holdout size, or --sandbox-seconds", {})
     metric = SEARCH_CASE_FACTOR * (train + validation)
-    while metric > 0 and size(metric).calls > APPROVED_CALLS:
+    while metric > 0 and not fits(metric):
         metric -= 1
     if metric < overshoot(validation) + MINIMUM_SEARCH_MARGIN:
         raise Stop("budget-unapproved", "too few calls are left for a search under the cap; "
                    + "lower --repeats or the holdout size", {})
-    return _Plan(metric, math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls, retry_calls, size(metric))
+    sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
+    sized, total = size(metric), sandbox_total(metric)
+    return _Plan(metric, math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls, retry_calls,
+                 Estimate(sized.calls, sized.seconds + total), sandbox_gate, total)
 
 
 def _editable(files: Mapping[str, str], contract: Contract, edit: Edit) -> list[str]:
@@ -210,17 +244,26 @@ def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object
     """Return the estimate that `run.json` records. `_prepare` writes it and `_verify_budget` rebuilds it."""
     return {"calls": plan.sized.calls, "seconds": plan.sized.seconds, "search_calls": plan.metric_calls,
             "repeats": repeats, "holdout_cases": holdout_cases, "holdout_retry_calls": plan.retry_calls,
-            "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls}
+            "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls,
+            **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {})}
 
 
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
-             options: ClaudeOptions) -> None:
-    """Run the two approvals and write the prepared record. No model call happens here."""
+             options: ClaudeOptions, configuration: Configuration | None = None, isolation: str = "claude") -> None:
+    """Run the two approvals and write the prepared record. No model call happens here.
+
+    A fresh run with a built-in harness first runs the free host checks, so a host problem stops the run
+    before the user drafts or approves any case.
+    """
     draft = out / DRAFT_NAME
     if not draft.is_file():
+        report = doctor(adapter, isolation) if resolve_harness else None
+        if report is not None and not report["ok"]:
+            raise Stop("host-not-ready", "fix each failed host check, then call run again; no model call ran", report)
+        data: dict[str, object] = {"draft": str(draft), "facts": skill_facts(target)}
         raise Stop("cases-missing", f"write the case draft to {draft}, then call run again",
-                   {"draft": str(draft), "facts": skill_facts(target)})
+                   data | ({"doctor": report} if report else {}))
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)
     kind = _supported_kind(contract)
@@ -234,27 +277,32 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
                          + "add task cases in more families to the draft, then call run again")
     expected = case_hash(cases, split_seed)
-    if resolve_harness:
-        _ = Configuration.single(adapter, model, options)
+    if resolve_harness or configuration is not None:
+        chosen = configuration if configuration is not None else Configuration.single(adapter, model, isolation, options)
+        for role in chosen.roles.values():
+            _ = resolve_read_roots(role.options.sandbox_read, out)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
-                    "seed": split_seed})
+                    "seed": split_seed, **({} if configuration is not None else {"claude_options": options.data()})})
     freeze(out / "cases.json", cases, split_seed, expected)
     scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
     per_evaluation = max(contract.calls(case.kind) for case in scored)
     skeleton = Candidate.capture(target, [], contract)
     seed_candidate = Candidate(skeleton.files, tuple(_editable(skeleton.files, contract, edit)), contract)
-    plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats)
+    plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats,
+                 _command_seconds(contract, scored, _sizing_options(configuration, options)))
     shown = _estimate(plan, repeats, count["holdout"])
+    shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
         budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
-        raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS"}) from None
+        raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
+                                                              **shown_options}) from None
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
-        "claude_options": options.data(),
+        "isolation": isolation, **({"claude_options": options.data()} if resolve_harness else {}),
         "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
@@ -268,7 +316,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
 @final
 class _Session:
     def __init__(self, out: Path, model: str, adapter: HarnessName, factory: Factory | None,
-                 supplied: Configuration | None) -> None:
+                 supplied: Configuration | None, isolation: str = "claude") -> None:
         self.out = out
         self.lock = threading.RLock()
         self.record = open_record(out / "run.json")
@@ -287,7 +335,8 @@ class _Session:
         self.outcomes = _outcomes(self.record)
         options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
         configuration = supplied if supplied is not None else (
-            Configuration.single(adapter, model, options) if factory is None else None)
+            Configuration.single(adapter, model, isolation, options) if factory is None else None)
+        self.sizing = _sizing_options(configuration, options)
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out) if configuration is not None
@@ -354,12 +403,13 @@ class _Session:
         count = {split: sum(case.split == split for case in self.cases) for split in cast(tuple[str, ...], get_args(Split))}
         repeats = _int_field(self.record, "repeats")
         plan = _plan(count["train"], count["validation"], count["holdout"],
-                     max(self.contract.calls(case.kind) for case in self.cases), repeats)
+                     max(self.contract.calls(case.kind) for case in self.cases), repeats,
+                     _command_seconds(self.contract, self.cases, self.sizing))
         expected = _estimate(plan, repeats, count["holdout"])
         recorded = mapping(_field(self.record, "estimate"))
         maximum = max(plan.sized.calls, 1)
         seconds = _number_field(budget, "seconds")
-        if "reserve_seconds" not in budget:
+        if "reserve_seconds" not in budget or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded):
             raise ValueError("run was prepared by an older runner; create a new run")
 
         def differs(found: object, wanted: object) -> bool:
@@ -531,6 +581,12 @@ class _Session:
         """Return the recorded search evaluations on train and validation cases."""
         return [item for item in self.outcomes
                 if item.get("arm") == "search" and item.get("split") in ("train", "validation")]
+
+    def check_name(self) -> None:
+        """Stop before any live call when the seed name matches a Claude Code command or a foreign skill."""
+        check = cast(Callable[[Candidate], None] | None, getattr(self.provider, "check_name", None))
+        if check is not None:
+            check(self.seed)
 
     def check_seed(self) -> None:
         """Stop before any search call when the seed fails the local candidate contract check."""
@@ -727,17 +783,22 @@ _OPTION_FLAGS = (("--effort", "effort"), ("--sandbox-read", "sandbox_read"), ("-
 
 
 def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
-                  seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object]) -> None:
-    """Stop when a resume names another model, adapter, target, edit, repeats, seed, or Claude option than the first run."""
+                  seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object],
+                  isolation: str = "claude") -> None:
+    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, seed, or Claude option than
+    the first run.
+    """
     for flag, value, field in ("--model", model, "model"), ("--harness", adapter, "adapter"):
         if _text_field(record, field) != value:
             raise _config_differs(flag)
+    if record.get("isolation", "claude") != isolation:
+        raise _config_differs("--isolation")
     for flag, value, field in ("--edit", edit, "edit"), ("--repeats", repeats, "repeats"), ("--seed", seed, "split_seed"):
         if value is not None and value != record.get(field):
             raise _config_differs(flag)
     recorded = ClaudeOptions.parse(mapping(record.get("claude_options", {})))
     for flag, field in _OPTION_FLAGS:
-        if given.get(field) is not None and given[field] != getattr(recorded, field):
+        if field in given and given[field] != getattr(recorded, field):
             raise _config_differs(flag)
     if str(target.resolve()) != record.get("target_root"):
         raise _config_differs("the target skill directory")
@@ -747,7 +808,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
         approve_cases: str | None = None, approve_budget: int | None = None,
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
-        factory: Factory | None = None, configuration: Configuration | None = None) -> dict[str, object]:
+        factory: Factory | None = None, configuration: Configuration | None = None,
+        isolation: str = "claude") -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
@@ -755,14 +817,21 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
     """
     if adapter not in ("claude", "codex"):
         raise ValueError("harness must be claude or codex")
+    validate_isolation(adapter, isolation)
     if edit is not None and edit not in get_args(Edit):
         raise ValueError("edit must be prose or prose+cli")
     if repeats is not None and repeats < 1:
         raise ValueError("repeats must be at least 1")
-    given: dict[str, object] = {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
-                                "sandbox_seconds": sandbox_seconds}
-    if adapter == "codex" and any(value is not None for value in given.values()):
+    values = {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
+              "sandbox_seconds": sandbox_seconds}
+    given = {field: value for field, value in values.items() if value is not None}
+    if given and adapter == "codex":
         raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
+    if given and (configuration is not None or factory is not None):
+        raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to the built-in harness; "
+                         + "set them in the supplied configuration")
+    requested = ClaudeOptions.parse(given)
+    given = {field: getattr(requested, field) for field in given}
     if _inside(out, target):
         raise ValueError("--out must be outside the target skill directory")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -779,18 +848,19 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             _refuse_terminated(record)
             if record.get("phase") == "complete":
                 return summary(record)
-            _check_resume(record, target, edit, repeats, seed, model, adapter, given)
+            _check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation)
         else:
-            options = ClaudeOptions.parse({field: value for field, value in given.items() if value is not None})
-            _ = resolve_read_roots(options.sandbox_read, out)
             _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed, approve_cases,
-                     approve_budget, resolve_harness=factory is None and configuration is None, options=options)
+                     approve_budget, resolve_harness=factory is None and configuration is None, options=requested,
+                     configuration=configuration, isolation=isolation)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
-        session = _Session(out, model, adapter, factory, configuration)
+        session = _Session(out, model, adapter, factory, configuration, isolation)
         pending: BaseException | None = None
         try:
             try:
+                if session.phase == "prepared":
+                    session.check_name()
                 session.preflight()
                 if session.phase == "prepared":
                     session.check_seed()
@@ -817,7 +887,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
 
 def summary(record: dict[str, object]) -> dict[str, object]:
     keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
-            "gate", "search", "estimate", "contract_hash", "contract_source")
+            "gate", "search", "estimate", "contract_hash", "contract_source", "isolation", "claude_options")
     result = {key: record.get(key) for key in keys}
     if "close_warning" in record:
         code = mapping(record["close_warning"]).get("code")

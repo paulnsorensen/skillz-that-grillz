@@ -23,7 +23,7 @@ import pytest
 from skillz_experiments import _workflow
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments._claude import CONFIG_PREFIX, CREDENTIALS, ClaudeCode, settings
+from skillz_experiments._claude import CONFIG_PREFIX, CREDENTIALS, ClaudeCode, Inventory, settings
 from skillz_experiments._cli import main
 from skillz_experiments._gate import case_deltas, verdict
 from skillz_experiments._harness import Configuration
@@ -916,12 +916,17 @@ def test_no_token_variable_reaches_the_child_environment(
         name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """PA-12: whatever token variable the host sets, the child sees only the fixed allowlist."""
     monkeypatch.setenv(name, "sk-secret-value")
+
+    def empty(self: ClaudeCode) -> Inventory:
+        del self
+        return Inventory(frozenset(), frozenset())
+    monkeypatch.setattr(ClaudeCode, "inventory", empty)
     session = _claude(tmp_path)
     try:
         workspace = tmp_path / "workspace"
         for directory in ("home", "tmp", ".agents/skills"):
             (workspace / directory).mkdir(parents=True, exist_ok=True)
-        _code, _stderr, events = session._run(workspace, "hello", None, 30)
+        _code, _stderr, events = session._run(workspace, "hello", None, 30, [])
         child = cast(dict[str, str], events[0])
         assert "sk-secret-value" not in json.dumps(child)
         assert not any(key.upper().replace(" ", "") == name.upper().replace(" ", "") for key in child)

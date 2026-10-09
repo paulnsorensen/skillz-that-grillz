@@ -13,13 +13,14 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _claude
+from skillz_experiments import _claude, _workflow
 from skillz_experiments._harness import Configuration
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Factory, Stop, run
 
 FIXTURES = Path(__file__).parent / "fixtures"
+_REAL_NESTED_USERNS_BLOCKED = _claude.nested_userns_blocked
 INSPECTOR = Path(__file__).resolve().parents[3] / "skills/skillz/scripts/inspect_skill.py"
 
 
@@ -60,6 +61,35 @@ def harness_on_path(harness_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", f"{harness_bin}{os.pathsep}{os.environ.get('PATH', '')}")
 
 
+@pytest.fixture(autouse=True)
+def nested_userns_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report that the host allows a nested user namespace, so the sandbox settings do not depend on the host's AppArmor.
+
+    A test of the blocked case patches `_claude.nested_userns_blocked` itself.
+    """
+    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: False)
+
+
+@pytest.fixture
+def real_nested_userns_probe(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], bool]]:
+    """Restore the real, cached `nested_userns_blocked` for a test of the probe itself, and clear its cache around the test."""
+    monkeypatch.setattr(_claude, "nested_userns_blocked", _REAL_NESTED_USERNS_BLOCKED)
+    cache_clear = cast(Callable[[], None], getattr(_REAL_NESTED_USERNS_BLOCKED, "cache_clear"))
+    cache_clear()
+    yield _REAL_NESTED_USERNS_BLOCKED
+    cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report a ready host to `run`, so the stub harness executables pass the free host checks.
+
+    The doctor tests call `_doctor.doctor` directly.
+    """
+    def ready(harness: str, isolation: str = "claude") -> dict[str, object]:
+        return {"ok": True, "harness": harness, "isolation": isolation, "checks": [], "live_calls": 0}
+    monkeypatch.setattr(_workflow, "doctor", ready)
+
 @pytest.fixture
 def umask_022() -> Iterator[None]:
     """Run a privacy test under the common umask, so only the explicit file and directory modes make it private."""
@@ -72,7 +102,18 @@ def umask_022() -> Iterator[None]:
 
 @pytest.fixture
 def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Give each test a fake host login and a private temp dir, so no test touches the real `~/.claude`."""
+    """Give each test a fake host login and a private temp dir, so no test touches the real `~/.claude`.
+
+    The last PATH entry holds a stub `bwrap`, so the host-tool check passes on a Linux host without bubblewrap.
+    Tests that run the real OS sandbox skip without it, and a real `bwrap` earlier on PATH still wins.
+    The stub fails like a broken sandbox, so a test that runs it by mistake stops.
+    """
+    fallback = tmp_path / "fallback-bin"
+    fallback.mkdir()
+    bwrap = fallback / "bwrap"
+    _ = bwrap.write_text("#!/bin/sh\necho 'bwrap: test stub, no OS sandbox' >&2\nexit 1\n")
+    bwrap.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{os.environ.get('PATH', '')}{os.pathsep}{fallback}")
     credential = tmp_path / "host-home/.claude/.credentials.json"
     credential.parent.mkdir(parents=True)
     _ = credential.write_text("{}")
@@ -82,6 +123,7 @@ def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(tempfile, "tempdir", str(scratch))
     monkeypatch.setattr(_claude, "SANDBOX_HELPERS", ())
+    monkeypatch.setattr(_claude, "SOCKET_DENY", ())  # pytest roots live under /tmp, which production denies
     return credential
 
 
