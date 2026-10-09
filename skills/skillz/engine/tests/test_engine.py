@@ -94,7 +94,9 @@ class AdapterDefaultPathTest(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        root = Path(directory.name)
+        # Resolve symlinks (macOS /var -> /private/var): os.getcwd() in the
+        # child returns the real path, so a relative value resolves there.
+        root = Path(directory.name).resolve()
         self.home = root / "home"
         self.cwd = root / "cwd"
         self.cwd.mkdir()
@@ -135,10 +137,10 @@ class AdapterDefaultPathTest(unittest.TestCase):
 
     def test_cursor_project_slug_resolves_under_home_default(self):
         log = self.home / ".cursor" / "projects" / "tmp" / "agent-transcripts" / "s.jsonl"
-        same = _ingest_eval(
-            "ingest._cursor_project_cwd(sys.argv[2]) == ingest._cursor_resolve_slug('tmp')",
+        decoded = _ingest_eval(
+            "ingest._cursor_project_cwd(sys.argv[2])",
             self.env, self.cwd, str(log))
-        self.assertEqual(same, "True")
+        self.assertEqual(decoded, "/tmp")
 
 
 class EngineSmokeTest(unittest.TestCase):
