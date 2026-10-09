@@ -239,10 +239,14 @@ def main() -> int:
     argv = sys.argv[1:]
     prompt = sys.stdin.read()
     settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
+    captured: dict[str, str | None] = {}
+    for line in prompt.split("\nCAPTURE FILES:\n", 1)[1].splitlines() if "\nCAPTURE FILES:\n" in prompt else []:
+        captured[line] = Path(line).read_bytes().hex() if Path(line).is_file() else None
     listing = "--input-format" in argv
     with script.with_name(script.name + (".inventory.log" if listing else ".log")).open("a") as log:
         _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,
-                                  "environment": dict(os.environ), "config_entries": config_entries()}) + "\n")
+                                  "environment": dict(os.environ), "config_entries": config_entries(),
+                                  "captured": captured}) + "\n")
     config = cast(dict[str, object], json.loads(settings or "{}"))
     if listing:
         return inventory(mode, config)
