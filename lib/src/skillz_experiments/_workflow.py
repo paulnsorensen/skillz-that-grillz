@@ -25,8 +25,9 @@ from skillz_experiments._cases import Case, CodedError, Split, digest, load_case
 from skillz_experiments._claude import NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
+from skillz_experiments._doctor import doctor
 from skillz_experiments._gate import case_deltas, verdict as gate_verdict
-from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
+from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
@@ -213,12 +214,21 @@ def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object
 
 
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
-             approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False) -> None:
-    """Run the two approvals and write the prepared record. No model call happens here."""
+             approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
+             isolation: str = "claude") -> None:
+    """Run the two approvals and write the prepared record. No model call happens here.
+
+    A fresh run with a built-in harness first runs the free host checks, so a host problem stops the run
+    before the user drafts or approves any case.
+    """
     draft = out / DRAFT_NAME
     if not draft.is_file():
+        report = doctor(adapter, isolation) if resolve_harness else None
+        if report is not None and not report["ok"]:
+            raise Stop("host-not-ready", "fix each failed host check, then call run again; no model call ran", report)
+        data: dict[str, object] = {"draft": str(draft), "facts": skill_facts(target)}
         raise Stop("cases-missing", f"write the case draft to {draft}, then call run again",
-                   {"draft": str(draft), "facts": skill_facts(target)})
+                   data | ({"doctor": report} if report else {}))
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)
     kind = _supported_kind(contract)
@@ -229,7 +239,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
                          + "add task cases in more families to the draft, then call run again")
     expected = case_hash(cases, split_seed)
     if resolve_harness:
-        _ = Configuration.single(adapter, model)
+        _ = Configuration.single(adapter, model, isolation)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
@@ -248,6 +258,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS"}) from None
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
+        "isolation": isolation,
         "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
@@ -261,7 +272,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
 @final
 class _Session:
     def __init__(self, out: Path, model: str, adapter: HarnessName, factory: Factory | None,
-                 supplied: Configuration | None) -> None:
+                 supplied: Configuration | None, isolation: str = "claude") -> None:
         self.out = out
         self.lock = threading.RLock()
         self.record = open_record(out / "run.json")
@@ -279,7 +290,7 @@ class _Session:
         self.edit: Edit = cast(Edit, _text_field(self.record, "edit"))
         self.outcomes = _outcomes(self.record)
         configuration = supplied if supplied is not None else (
-            Configuration.single(adapter, model) if factory is None else None)
+            Configuration.single(adapter, model, isolation) if factory is None else None)
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out) if configuration is not None
@@ -524,6 +535,12 @@ class _Session:
         return [item for item in self.outcomes
                 if item.get("arm") == "search" and item.get("split") in ("train", "validation")]
 
+    def check_name(self) -> None:
+        """Stop before any live call when the seed name matches a Claude Code command or a foreign skill."""
+        check = cast(Callable[[Candidate], None] | None, getattr(self.provider, "check_name", None))
+        if check is not None:
+            check(self.seed)
+
     def check_seed(self) -> None:
         """Stop before any search call when the seed fails the local candidate contract check."""
         check = cast(Callable[[Candidate], bool] | None, getattr(self.provider, "check_candidate", None))
@@ -716,11 +733,13 @@ def _open_lock(out: Path) -> TextIO:
 
 
 def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
-                  seed: int | None, model: str, adapter: HarnessName) -> None:
-    """Stop when a resume names another model, adapter, target, edit, repeats, or seed than the first run."""
+                  seed: int | None, model: str, adapter: HarnessName, isolation: str = "claude") -> None:
+    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, or seed than the first run."""
     for flag, value, field in ("--model", model, "model"), ("--harness", adapter, "adapter"):
         if _text_field(record, field) != value:
             raise _config_differs(flag)
+    if record.get("isolation", "claude") != isolation:
+        raise _config_differs("--isolation")
     for flag, value, field in ("--edit", edit, "edit"), ("--repeats", repeats, "repeats"), ("--seed", seed, "split_seed"):
         if value is not None and value != record.get(field):
             raise _config_differs(flag)
@@ -731,10 +750,12 @@ def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, re
 def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
         edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
         approve_cases: str | None = None, approve_budget: int | None = None,
-        factory: Factory | None = None, configuration: Configuration | None = None) -> dict[str, object]:
+        factory: Factory | None = None, configuration: Configuration | None = None,
+        isolation: str = "claude") -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data."""
     if adapter not in ("claude", "codex"):
         raise ValueError("harness must be claude or codex")
+    validate_isolation(adapter, isolation)
     if edit is not None and edit not in get_args(Edit):
         raise ValueError("edit must be prose or prose+cli")
     if repeats is not None and repeats < 1:
@@ -755,16 +776,18 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             _refuse_terminated(record)
             if record.get("phase") == "complete":
                 return summary(record)
-            _check_resume(record, target, edit, repeats, seed, model, adapter)
+            _check_resume(record, target, edit, repeats, seed, model, adapter, isolation)
         else:
             _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed, approve_cases,
-                     approve_budget, resolve_harness=factory is None and configuration is None)
+                     approve_budget, resolve_harness=factory is None and configuration is None, isolation=isolation)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
-        session = _Session(out, model, adapter, factory, configuration)
+        session = _Session(out, model, adapter, factory, configuration, isolation)
         pending: BaseException | None = None
         try:
             try:
+                if session.phase == "prepared":
+                    session.check_name()
                 session.preflight()
                 if session.phase == "prepared":
                     session.check_seed()
@@ -791,7 +814,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
 
 def summary(record: dict[str, object]) -> dict[str, object]:
     keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
-            "gate", "search", "estimate", "contract_hash", "contract_source")
+            "gate", "search", "estimate", "contract_hash", "contract_source", "isolation")
     result = {key: record.get(key) for key in keys}
     if "close_warning" in record:
         code = mapping(record["close_warning"]).get("code")

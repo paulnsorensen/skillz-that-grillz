@@ -69,11 +69,21 @@ Reports contain adapter names, model names, and fingerprints, never command argu
 
 ## The claude adapter
 
-The `claude` role runs `claude --restricted -p` with `--tools Bash,Read,Skill`.
-It also passes `--strict-mcp-config` and a generated settings file.
+The `claude` role runs `claude -p --setting-sources project` with `--tools Bash,Read,Skill`.
+It also passes `--strict-mcp-config`, `--no-session-persistence`, and a generated settings file.
 The settings enable the sandbox floor and disable bundled skills.
 They deny host reads from `/`. They allow only the workspace and the runtime roots that commands need.
+They deny Bash writes to `.agents` and `.claude` in the workspace, so a task cannot change the candidate or plant project settings.
 The runner places only the staged candidate under the workspace skill directory.
+The runner does not use `--restricted`. On Claude Code 2.1.289 and later, `--restricted` drops project skills, so the candidate never loads.
+`--setting-sources project` drops user settings, user skills, and plugins, and keeps the project skill.
+
+Before any model call, a free skill inventory runs. It sends Claude Code one `initialize` control request, which starts no model turn.
+The response lists every command. Claude Code marks its own commands with `builtin: true`.
+The runner turns off each other name except the candidate with `skillOverrides: off`, then asks again.
+A name that stays on, such as a plugin skill, stops the run with `preflight-leak`.
+The init event checks ignore Claude Code's own commands and plugins with the path `builtin`. Docs keep those commands hidden from the model.
+Any other skill, plugin, agent, or MCP server in an init event still stops the run.
 
 The role reuses your Claude login. It asks for no key or token and forwards no token variable.
 On Linux, `HOME` stays the isolated workspace home.
@@ -96,11 +106,11 @@ A run that completes records the warning code as `close_warning` in the summary.
 A run that fails records the code as `close_failure` in `run.json` and in a note on the error.
 On macOS, the login lives in the Keychain, so there is no file to link.
 The runner sets `CLAUDE_CONFIG_DIR` to your real config directory.
-`--restricted` makes Claude Code ignore the user settings files in that directory.
-The directory can still expose your own memory, skills, plugins, agents, or MCP servers.
+`--setting-sources project` makes Claude Code ignore the user settings files and user skills in that directory.
+The directory can still expose your own memory, account skills, agents, or MCP servers.
 Before any model call, the preflight stops with the code `preflight-leak` when `CLAUDE.md` or a `rules` directory with `.md` files exists there.
 The live preflight also stops with `preflight-leak` when the init event lists a user skill, plugin, agent, or MCP server.
-Only the candidate skill and the built-in agents are allowed.
+Only the candidate skill, Claude Code's own commands and built-in plugins, and the built-in agents are allowed.
 
 Before the first live task, a live isolation preflight runs. It runs once per run, not once per `run` command.
 The preflight asks Claude Code to run `cat` on a sealed host file and on a workspace file.
@@ -128,11 +138,20 @@ The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
 A sandbox that cannot start stops the run before any task call, with the code `sandbox-unavailable`.
-The message names the cause and the fix. The runner never weakens the sandbox.
+The message names the cause and the fix.
 If `bwrap` is missing, install bubblewrap.
 If `socat` is missing, install socat.
-If the host restricts user namespaces, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
-Or add an AppArmor profile for `bwrap`.
+If the host restricts user namespaces for every process, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
+Or add an AppArmor profile for `bwrap`, or use `--isolation nono`.
+
+On Ubuntu 24.04 and later, the AppArmor profile `bwrap-userns-restrict` lets `bwrap` start, but strips capabilities from every process that `bwrap` starts.
+The sysctl does not lift that profile. Claude Code's Unix-socket filter needs a nested user namespace, so it fails there.
+A free probe detects this case: it creates a user namespace inside a first-level `bwrap`.
+When the probe fails, the settings set `sandbox.network.allowAllUnixSockets: true`.
+A Claude Code maintainer verified that this setting turns off only Unix-socket filtering. File rules and domain rules stay on.
+The live preflight then also probes a runner-owned host Unix socket. A Bash command that reaches it stops the run with `network-isolation-failed`.
+The environment hash includes this setting, so a resume on a host with the other result stops with `environment-differs`.
+The preflight evidence records `unix_socket_filter` as `on`, `off`, or `nono`.
 A failure in the live preflight can cost its one call, but it never reaches a task call.
 The macOS path is unverified live. Verify it before you authorize private data.
 The network probes cover only direct loopback TCP and the proxy HTTP path on the live Bash path. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
@@ -142,6 +161,28 @@ Manual macOS checklist:
 2. Confirm that the helper sandbox probe and the live network probe both pass.
 3. Record the macOS version and the Claude Code version in the ADR.
 4. Remove the "unverified" lines only after a recorded pass.
+
+## The nono backend
+
+`--isolation nono` runs each Claude process inside nono on Linux. Claude Code's own sandbox is off.
+nono uses Landlock, which needs no user namespace, so the AppArmor restriction does not apply.
+One boundary covers the file tools and the Bash commands.
+The profile grants read-write access to the workspace and to a fresh, empty config directory for each process.
+Bash can read that directory, so no transcript or memory from another call is there. Claude Code also saves no session.
+It grants read-only access to the system core paths, the Claude executable directory, the settings file, and the staged skills.
+The staged `.agents` and `.claude` trees sit beside the workspace, because Landlock cannot keep a directory inside a writable grant read-only.
+The profile includes no shared temporary directory, so the run directory and other temporary files stay unreadable.
+nono's proxy allows only `api.anthropic.com`. Direct connections and UDP fail. Pathname Unix sockets need an explicit grant.
+nono injects `ANTHROPIC_API_KEY` from the host. The sandbox sees only a per-session proxy token, never the key.
+The config directory links no Claude login. The run bills the API key.
+With its own sandbox off, Claude Code needs an explicit rule to run Bash, so the settings allow Bash. nono is the boundary.
+A workspace symlink `.agents` points to the read-only tree, so the task prompt and the activation check keep their relative paths.
+The live preflight runs the same read, write, TCP, HTTP, and Unix-socket probes as the default backend.
+It also probes a runner-owned abstract Unix socket, which has no file and which only Landlock scoping can hide.
+The environment hash includes the nono binary digest and the Landlock ABI, so a nono or kernel upgrade stops a resume with `environment-differs`.
+The helper sandbox probe and helper fixtures still run in `bwrap`, so the host still needs bubblewrap.
+Residual risk: a task command can send requests to `api.anthropic.com` through the proxy token. It cannot reach another host or read the key.
+The nono backend is unverified on macOS. A fresh run stops there with `host-not-ready`. A resume stops with `nono-unavailable`.
 
 ## JSON protocol, version one
 

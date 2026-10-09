@@ -28,7 +28,7 @@ That ADR supersedes the records about those commands and arms in this file. Thes
 - **Alternatives:** A judge-only lens. A separate STE script.
 - **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `lib/src/skillz_experiments/_evaluation.py`, `skills/skillz/evals/autoimprove.json`, and the `skills/skillz/references/experiments.md` example.
 
-### ADR-004: Run the Claude Code adapter in --restricted mode  [status: accepted; amended by skillz-pragmatic-autoimprove ADR-001]
+### ADR-004: Run the Claude Code adapter in --restricted mode  [status: superseded in part by ADR-006; amended by skillz-pragmatic-autoimprove ADR-001]
 - **Context:** The Codex adapter isolates discovery, filesystem, and network. Claude Code documents `--restricted` for eval harnesses; `--bare` needs an API key.
 - **Decision:** `claude --restricted -p` with `--tools Bash,Read,Skill`, `--strict-mcp-config`, and a sandbox with `failIfUnavailable`, no unsandboxed commands, and an empty strict allowlist. A live preflight proves auth and that only the candidate skill loads, or stops the run.
 - **Alternatives:** `--bare` with an API key. A temporary config dir with copied OAuth credentials. The generic command protocol only.
@@ -56,4 +56,16 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** A per-evaluation `.pyz` build. Optimizing the brief text only.
 - **Consequences:** No build in the loop. Packaging as a `.pyz` stays a separate, optional step.
 
-_Source: Mold session 2026-10-03 and PR #118 Affinage review · Updated: 2026-10-06_
+### ADR-006: Replace --restricted with project setting sources and a free skill inventory  [status: accepted]
+- **Context:** Issue #168. On Claude Code 2.1.289 and later, `--restricted` drops project skills, so the candidate never loads. `disableBundledSkills` keeps Claude Code's own commands and `@builtin` plugins in the init event, and account skills load with the login. Ubuntu's `bwrap-userns-restrict` profile blocks the nested user namespace of the Unix-socket filter, and the documented sysctl does not lift it.
+- **Decision:** Run `claude -p --setting-sources project`. Deny Bash writes to the workspace `.claude` directory. Before any model call, send one `initialize` control request, turn off every non-builtin, non-candidate name with `skillOverrides`, and check again. Allow commands with `builtin: true` and plugins with the path `builtin`. When a free probe shows a blocked nested user namespace, set `allowAllUnixSockets: true` and probe a host Unix socket in the live preflight. Raise `preflight-leak` instead of a bare runtime error. Run a free `doctor` before the case draft.
+- **Alternatives:** A fixed list of built-in names (breaks on each release). `--bare` (hides the skill list from the model and needs an API key). Unloading the AppArmor profile (needs root and weakens every bwrap user).
+- **Consequences:** Account skills cost no extra approval. A skill that `skillOverrides` cannot turn off stops the run before any model call. The Unix-socket fallback widens one sandbox rule on affected hosts; the live socket probe guards it. The user approved these choices on 2026-10-08.
+
+### ADR-007: Offer nono as an opt-in isolation backend for the Claude role  [status: accepted]
+- **Context:** Issue #169 asks for a backend that hides host setup. A survey found nono the only maintained, no-root tool that wraps any CLI on Linux and macOS with a domain allowlist and credential injection. Research: `research/harness-ergonomics-168-169/harness-ergonomics-168-169.md` in the durable cheese corpus.
+- **Decision:** `--isolation nono` runs the whole Claude process in nono on Linux, with Claude Code's sandbox off. The profile grants the workspace and config directory and keeps the staged skills read-only beside the workspace. It allows only `api.anthropic.com`, mediates pathname Unix sockets, and gives the host `ANTHROPIC_API_KEY` only to the nono proxy. Claude and its Bash commands get only a per-session proxy token. The default stays `--isolation claude`.
+- **Alternatives:** A runner-owned bwrap and Seatbelt outer sandbox with a Python proxy (more security code to maintain). Docker Sandboxes or microsandbox (need KVM). Anthropic sandbox-runtime (needs Node and has the same seccomp bug).
+- **Consequences:** The nono backend bills an API key, not the Claude login. A task command can call `api.anthropic.com` with the proxy token, but cannot read the key or reach another host. macOS stays unverified. A fresh run stops with `host-not-ready`, and a resume stops with `nono-unavailable`. A free local check with a stand-in Claude passed the full preflight under real nono on Ubuntu 26.04. No paid live run has exercised it yet. Under nono, `sandboxed=False` drops the `.claude` deny rule, and the workspace is read-write. A task can create `<workspace>/.claude/skills/*`.
+
+_Source: Mold session 2026-10-03, PR #118 Affinage review, and the issue #168 and #169 research · Updated: 2026-10-08_
