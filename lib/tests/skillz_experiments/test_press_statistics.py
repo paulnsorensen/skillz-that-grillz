@@ -59,7 +59,7 @@ class _Provider:
 
 # --- contract parsing ------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", ["max_token_increase_per_gain", "min_token_saving"])
+@pytest.mark.parametrize("name", ["max_token_budget", "token_saving"])
 def test_parse_rejects_an_unknown_field(name: str) -> None:
     with pytest.raises(CodedError) as caught:
         _ = parse(_document(statistics={name: 0.5}), "skill")
