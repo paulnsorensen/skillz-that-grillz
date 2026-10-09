@@ -33,6 +33,7 @@ PROBE_PREFIX = "skillz-probe-"
 AUTH_FAILED = "authentication failed"
 CLAUDE_MEMORY = ("CLAUDE.md", "CLAUDE.local.md")
 NETWORK_PROBE = "loopback-tcp-http-v2"
+READ_PROBE = "read-tool-outside-workspace-v1"
 # Curl exit codes that show a request attempt. Codes 5 and 6 are name-resolution failures, and 22 needs `-f`.
 CURL_ATTEMPTED = frozenset({0, 7, 28, 52, 56, 97})
 LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted a connection from the Bash probe"
@@ -426,7 +427,8 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
 
     Sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
     workspace and the runtime roots. The Read tool follows permission rules, not the sandbox, so a deny
-    rule covers the host roots, `/proc`, and the run directory `out` for that tool. Commands cannot write
+    rule covers the host roots, `/proc`, and the run directory `out` for that tool. Nothing else confines that
+    tool, so the live preflight proves it: the Read tool must fail to read a file outside the workspace. Commands cannot write
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
     Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
     `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter, which cannot start where the host blocks
@@ -678,6 +680,33 @@ def _read_failure(events: list[dict[str, object]], sealed_token: str, sealed: st
         return "read probe has no evidence: no Bash command read the sealed host file"
     if not _bash_control_passed(events, control_file, control_token):
         return "read probe has no positive control: Bash cannot read a workspace file"
+    return None
+
+
+def _read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed: Path, *, evidence: bool) -> str | None:
+    """Judge the Read-tool probe. The Read tool must try the sealed host file and fail to return its token.
+
+    Without `evidence`, only a returned token fails. With it, a missing Read call also fails.
+
+    Claude Code's `claude -p` has no flag that confines the Read tool to the workspace, so only this probe proves it.
+    """
+    uses: set[str] = set()
+    answered = False
+    for event in events:
+        message = event.get("message")
+        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
+        for block in cast(list[object], content) if isinstance(content, list) else []:
+            item = mapping(block)
+            if item.get("type") == "tool_use" and item.get("name") == "Read" and isinstance(item.get("id"), str):
+                target = mapping(item.get("input", {})).get("file_path")
+                if isinstance(target, str) and Path(target).resolve() == sealed.resolve():
+                    uses.add(cast(str, item["id"]))
+            if item.get("type") == "tool_result" and item.get("tool_use_id") in uses:
+                if sealed_token in json.dumps(item):
+                    return "read isolation failed: the Read tool reached a path outside the workspace"
+                answered = True
+    if evidence and not answered:
+        return "read-tool probe has no evidence: no Read tool call answered for the sealed host file"
     return None
 
 
@@ -1042,7 +1071,7 @@ class ClaudeCode:
                           "landlock_abi": _nono.landlock_abi(), "profile": self._profile(
                               Path("/CONFIG"), Path("/PROJECT"), Path("/PROJECT/settings.json"), environment)}
         return digest({"settings": self._floor(Path("/TASK"), ()), "environment": environment, "tools": TOOLS,
-                       "skill": PROBE_PREFIX, "platform": sys.platform, "network_probe": NETWORK_PROBE,
+                       "skill": PROBE_PREFIX, "platform": sys.platform, "network_probe": NETWORK_PROBE, "read_probe": READ_PROBE,
                        "setting_sources": SETTING_SOURCES} | isolation)
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
@@ -1081,6 +1110,7 @@ class ClaudeCode:
     def _prompt(self, sealed: Path, control_file: Path, protected: list[Path], write_control: Path, write_token: str,
                 commands: list[str]) -> str:
         return (f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
+                + f"Then read the file `{sealed}` with the Read tool, not Bash. "
                 + "".join(f"Then run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
                 + f"Then run `printf {write_token} > {write_control}` with the Bash tool. "
                 + "".join(f"Then run `{command}` with the Bash tool. " for command in commands)
@@ -1142,7 +1172,11 @@ class ClaudeCode:
         if network is None and probing:
             network = _unix_failure(events, "\\0" + abstract, network_token)
         if reason is None:
+            reason = _read_tool_failure(events, token, sealed, evidence=False)
+        if reason is None:
             reason = _read_failure(events, token, str(sealed), control, str(control_file))
+        if reason is None:
+            reason = _read_tool_failure(events, token, sealed, evidence=True)
         if reason is None:
             reason = _write_failure(events, [str(file) for file in protected], wrote, controlled)
         if reason is None and network is not None:
