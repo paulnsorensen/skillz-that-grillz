@@ -77,6 +77,7 @@ jobs:
           curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
             -o /tmp/duckdb_cli.zip
           sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
+          uv sync --locked --all-groups
 
       - name: Run gate (just ci)
         env:

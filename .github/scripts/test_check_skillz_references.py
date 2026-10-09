@@ -12,10 +12,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import check_skillz_references as check  # noqa: E402
+# The test runs as a script and loads its sibling module from this directory.
+import check_skillz_references as check  # noqa: E402  # pyright: ignore[reportImplicitRelativeImport]
 
 
-def _run(references: Path) -> tuple[int, str, str]:
+def _run(references: Path | None) -> tuple[int, str, str]:
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
         code = check.main(references)
@@ -32,12 +33,12 @@ class CheckSkillzReferencesTest(unittest.TestCase):
     def test_link_bare_and_backtick_mentions_fail(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "a.md").write_text(
+            _ = (root / "a.md").write_text(
                 "See [b](b.md) and `references/c.md`.\nRead d.md next.\n"
             )
-            (root / "b.md").write_text("No mention.\n")
-            (root / "c.md").write_text("No mention.\n")
-            (root / "d.md").write_text("No mention.\n")
+            _ = (root / "b.md").write_text("No mention.\n")
+            _ = (root / "c.md").write_text("No mention.\n")
+            _ = (root / "d.md").write_text("No mention.\n")
             code, out, _ = _run(root)
         self.assertEqual(code, 1)
         self.assertIn("a.md:1: names b.md", out)
@@ -47,11 +48,10 @@ class CheckSkillzReferencesTest(unittest.TestCase):
     def test_engine_references_are_allowed_but_mixed_line_still_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "a.md").write_text(
-                "Reads `engine/references/b.md` and [x](../engine/references/b.md).\n"
-                "Reads `engine/references/b.md` then b.md.\n"
+            _ = (root / "a.md").write_text(
+                "Reads `engine/references/b.md` and [x](../engine/references/b.md).\nReads `engine/references/b.md` then b.md.\n"
             )
-            (root / "b.md").write_text("No mention.\n")
+            _ = (root / "b.md").write_text("No mention.\n")
             code, out, _ = _run(root)
         self.assertEqual(code, 1)
         self.assertNotIn("a.md:1", out)
@@ -60,8 +60,8 @@ class CheckSkillzReferencesTest(unittest.TestCase):
     def test_independent_references_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "a.md").write_text("Plain text.\n")
-            (root / "b.md").write_text("More text.\n")
+            _ = (root / "a.md").write_text("Plain text.\n")
+            _ = (root / "b.md").write_text("More text.\n")
             self.assertEqual(_run(root)[0], 0)
 
     def test_shipped_references_pass(self):
@@ -71,4 +71,4 @@ class CheckSkillzReferencesTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

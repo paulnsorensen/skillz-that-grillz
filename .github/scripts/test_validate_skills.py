@@ -11,10 +11,13 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from typing_extensions import override
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import validate_skills  # noqa: E402
+# The test runs as a script and loads its sibling module from this directory.
+import validate_skills  # noqa: E402  # pyright: ignore[reportImplicitRelativeImport]
 
 VALID_BODY = """---
 name: {name}
@@ -27,6 +30,11 @@ body
 
 
 class ValidateSkillsTest(unittest.TestCase):
+    # unittest assigns these in setUp before it calls each test.
+    _cwd: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+    tmpdir: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+
+    @override
     def setUp(self) -> None:
         self._cwd = Path.cwd()
         self.tmpdir = Path(tempfile.mkdtemp(prefix="validate-skills-"))
@@ -40,7 +48,7 @@ class ValidateSkillsTest(unittest.TestCase):
     def _write(self, rel: str, content: str) -> None:
         path = self.tmpdir / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        _ = path.write_text(content, encoding="utf-8")
 
     def _write_skill(self, name: str, parent: str = "skills") -> None:
         self._write(f"{parent}/{name}/SKILL.md", VALID_BODY.format(name=name))
@@ -166,6 +174,17 @@ class ValidateSkillsTest(unittest.TestCase):
         self.assertIn("disallowed frontmatter keys", err)
         self.assertIn("bogus", err)
 
+    def test_mixed_frontmatter_keys_fail_without_crash(self) -> None:
+        self._write(
+            "skills/foo/SKILL.md",
+            "---\nname: foo\ndescription: x\nbogus: 1\ntrue: 2\n---\n",
+        )
+        rc, _, err = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("disallowed frontmatter keys", err)
+        self.assertIn("bogus", err)
+        self.assertIn("True", err)
+
     def test_description_at_limit_passes(self) -> None:
         desc = "a" * validate_skills.DESCRIPTION_MAX_LEN
         self._write(
@@ -234,7 +253,7 @@ class ValidateBodyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             full = Path(tmp) / path
             full.parent.mkdir(parents=True, exist_ok=True)
-            full.write_text(BODY_SKILL.format(name=name, body=body), encoding="utf-8")
+            _ = full.write_text(BODY_SKILL.format(name=name, body=body), encoding="utf-8")
             return validate_skills.validate_body(full)
 
     def test_body_violation_fails(self) -> None:
@@ -352,4 +371,4 @@ class ValidateBodyTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

@@ -28,7 +28,7 @@ This is a repository-local skill for skillz-that-grillz. It lives under `.agents
 4. Validate untrusted input once at the boundary, then work with typed trusted data.
 5. Choose the clearest succinct Python construct; do not compress code until it becomes harder to read.
 6. Remove only slop introduced by the change and code that the change orphaned.
-7. Type-check changed files with basedpyright, run targeted tests, regenerate generated artifacts, then run the project's full gate.
+7. Run targeted tests, regenerate generated artifacts, then run `just build`. It includes root basedpyright and Vulture checks.
 
 Done when every item in the completion check holds.
 
@@ -80,21 +80,28 @@ Done when every item in the completion check holds.
 
 ## Type-check with basedpyright
 
-- Run `basedpyright <changed .py files>` before finishing. If the binary is absent, fall back to `uvx basedpyright@<version>` with the project's pinned version. Changed files must report zero errors and warnings.
-- Read configuration from `[tool.basedpyright]` in `pyproject.toml` or from `pyrightconfig.json`. Respect its include paths, `pythonVersion`, and execution environments.
-- An unset `typeCheckingMode` means `recommended`: every rule is on, and `failOnWarnings` fails the run on warnings too.
-- Fix any diagnostic that your change surfaces. When the project keeps a baseline, do not add new entries to it.
+- Run `just build` after a Python change. Its root basedpyright check covers authored Python in `.github/scripts`, `lib`, and `skills`.
+- Root configuration in `pyproject.toml` uses Python 3.11, the root `.venv`, and execution environments for local packages.
+- Keep `typeCheckingMode = "recommended"` and `failOnWarnings = true`. Fix all errors and warnings without a baseline.
+- Preserve the independent fromargs type check and its package configuration.
 - basedpyright is stricter than stock pyright. Assign deliberately ignored call results to `_` (`reportUnusedCallResult`), collapse implicit string concatenations, and `cast` untrusted boundary reads to their validated type.
 - Fix the type at its source. When a suppression is genuinely unavoidable, use a rule-scoped `# pyright: ignore[ruleName]`, never a bare `# type: ignore` or a file-wide switch. `reportIgnoreCommentWithoutRule` flags unscoped ignores.
 - Use `--outputjson` when a tool needs machine-readable diagnostics. In GitHub Actions the CLI detects CI and emits inline PR annotations with no extra flags.
 - Read exit codes precisely: 0 no errors, 1 errors reported, 2 fatal internal error, 3 unreadable config, 4 bad CLI arguments. Warnings exit 1 only when `failOnWarnings` is on; when it is off, read the warning count in the output, because exit 0 does not prove zero warnings. Treat 2–4 as tooling breakage to fix or report, never as type findings.
 - Pin basedpyright to an exact version for reproducible results.
 
+## Check unused code with Vulture
+
+- `just build` runs Vulture at 60% minimum confidence across authored Python, including tests and examples.
+- Treat findings as potential dead code. Trace dynamic callers before deletion.
+- Exempt only proven framework callbacks with narrow decorator or name rules. Do not add a broad whitelist or a baseline.
+- Vulture exit 3 means unused code was found. Resolve each real finding before completion.
+
 ## Test and finish
 
 - Test observable behavior and the reason it matters; do not add assertions that can pass when the implementation is broken.
 - Keep filesystem tests inside `tmp_path` or an equivalent temporary directory. Do not depend on user paths, repository-external state, network access, or auto-loaded pytest plugins.
-- Run the most focused affected tests first, and the project's full gate (for example `just check` or `just build`) last.
+- Run the most focused affected tests first, then run `just build` as the canonical full gate.
 
 ## Completion check
 
@@ -106,5 +113,5 @@ Confirm:
 - Generated artifacts match their sources when applicable.
 - CLI and validator failures remain loud, read-only validators remain read-only, and tests are hermetic.
 - No silent failures, speculative abstractions, narration comments, unnecessary local annotations, or unrelated cleanup remain.
-- Changed Python files pass basedpyright with zero errors and warnings.
-- A fresh run of the project's full gate passed.
+- Root basedpyright reports zero errors and warnings. Vulture reports no unused code at 60% confidence.
+- A fresh `just build` run passed.

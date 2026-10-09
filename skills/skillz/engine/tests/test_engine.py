@@ -7,14 +7,20 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import ClassVar, TypeAlias, cast
+from typing_extensions import override
+
+_RowValue: TypeAlias = str | int | float | bool | None
+_Row: TypeAlias = dict[str, _RowValue]
 
 ENGINE = Path(__file__).resolve().parents[1]
 REQUIRE_DUCKDB = os.environ.get("REQUIRE_DUCKDB") == "1"
 
 
-def _bash_db_path(env, cwd):
+def _bash_db_path(env: dict[str, str], cwd: Path) -> str:
     result = subprocess.run(
         ["bash", "-c", 'source "$1"; sessions_db_path', "_",
          str(ENGINE / "scripts" / "db-path.sh")],
@@ -23,11 +29,11 @@ def _bash_db_path(env, cwd):
     return result.stdout.strip()
 
 
-def _python_db_path(env, cwd, engine=ENGINE):
+def _python_db_path(env: dict[str, str], cwd: Path, engine: Path = ENGINE) -> str:
     result = subprocess.run(
         ["python3", "-B", "-c",
-         "import sys; sys.path.insert(0, sys.argv[1]); import ingest; "
-         "print(ingest.DB_PATH)", str(engine / "scripts")],
+         "import sys; sys.path.insert(0, sys.argv[1]); import ingest; print(ingest.DB_PATH)",
+         str(engine / "scripts")],
         env=env, cwd=cwd, capture_output=True, text=True, check=True,
     )
     return result.stdout.strip()
@@ -36,7 +42,7 @@ def _python_db_path(env, cwd, engine=ENGINE):
 class DbPathParityTest(unittest.TestCase):
     """Bash and Python must resolve the same database path — no DuckDB needed."""
 
-    CASES = {
+    CASES: ClassVar[dict[str, Callable[[Path], dict[str, str]]]] = {
         "sessions_db_absolute": lambda root: {"SESSIONS_DB": str(root / "abs.duckdb")},
         "sessions_db_relative": lambda root: {"SESSIONS_DB": "rel.duckdb"},
         "sessions_db_tilde": lambda root: {"SESSIONS_DB": "~/x.duckdb"},
@@ -52,8 +58,8 @@ class DbPathParityTest(unittest.TestCase):
             engine = shutil.copytree(ENGINE, root / "engine",
                                      ignore=shutil.ignore_patterns("__pycache__"))
             env = os.environ.copy()
-            env.pop("PYTHONDONTWRITEBYTECODE", None)
-            env.pop("PYTHONPYCACHEPREFIX", None)
+            _ = env.pop("PYTHONDONTWRITEBYTECODE", None)
+            _ = env.pop("PYTHONPYCACHEPREFIX", None)
             env["SESSIONS_DB"] = str(root / "sessions.duckdb")
             self.assertEqual(_python_db_path(env, root, engine), env["SESSIONS_DB"])
             self.assertEqual(list(engine.rglob("__pycache__")), [])
@@ -67,8 +73,8 @@ class DbPathParityTest(unittest.TestCase):
                 home.mkdir()
                 cwd.mkdir()
                 env = os.environ | {"HOME": str(home)}
-                env.pop("SESSIONS_DB", None)
-                env.pop("XDG_CACHE_HOME", None)
+                _ = env.pop("SESSIONS_DB", None)
+                _ = env.pop("XDG_CACHE_HOME", None)
                 env |= make_overrides(root)
                 bash_path = _bash_db_path(env, cwd)
                 python_path = _python_db_path(env, cwd)
@@ -98,7 +104,7 @@ class EngineSmokeTest(unittest.TestCase):
                     }],
                 },
             }
-            (logs / "session.jsonl").write_text(json.dumps(entry) + "\n")
+            _ = (logs / "session.jsonl").write_text(json.dumps(entry) + "\n")
             env = os.environ | {
                 "HOME": str(root),
                 "CLAUDE_CONFIG_DIR": str(root / "claude"),
@@ -106,7 +112,7 @@ class EngineSmokeTest(unittest.TestCase):
                 "CURSOR_HOME": str(root / "cursor"),
                 "XDG_CACHE_HOME": str(root / "cache"),
             }
-            env.pop("SESSIONS_DB", None)
+            _ = env.pop("SESSIONS_DB", None)
             database = root / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
             path = subprocess.run(
                 ["bash", "-c", 'source "$1"; sessions_db_path', "_",
@@ -152,7 +158,7 @@ class EngineSmokeTest(unittest.TestCase):
                     "CURSOR_HOME": str(root / "cursor"),
                     "XDG_CACHE_HOME": str(root / "cache"),
                 }
-                env.pop("SESSIONS_DB", None)
+                _ = env.pop("SESSIONS_DB", None)
                 query = subprocess.run(
                     ["bash", str(ENGINE / "scripts" / "query.sh"), "sql", "SELECT 1"],
                     env=env, capture_output=True, text=True,
@@ -173,22 +179,22 @@ PACK_NAMES = ("skill-usage.md", "agent-orchestration.md", "drift-regression.md")
 SQL_BLOCK = re.compile(r"```sql\n(.*?)```", re.S)
 
 
-def _start_tables():
+def _start_tables() -> dict[str, tuple[str, str]]:
     """Read the kind-to-table mapping from its single source, the conventions file."""
-    rows = re.findall(r"^- `(\w+)`: `(\w+)`, `(\w+)`$", CONVENTIONS.read_text(), re.M)
-    return {kind: (table, column) for kind, table, column in rows}
+    matches = re.finditer(r"^- `(\w+)`: `(\w+)`, `(\w+)`$", CONVENTIONS.read_text(), re.M)
+    return {match.group(1): (match.group(2), match.group(3)) for match in matches}
 
 
 START = _start_tables()
 
 
-def _pack_sql(pack, kind, target):
+def _pack_sql(pack: str, kind: str, target: str) -> list[str]:
     table, column = START[kind]
     return [
-        block.replace("{START_TABLE}", table)
+        match.group(1).replace("{START_TABLE}", table)
         .replace("{NAME_COLUMN}", column)
         .replace("{TARGET}", target)
-        for block in SQL_BLOCK.findall((PACKS / pack).read_text())
+        for match in SQL_BLOCK.finditer((PACKS / pack).read_text())
     ]
 
 
@@ -206,7 +212,7 @@ class PackStaticTest(unittest.TestCase):
 
     def test_every_pack_query_starts_from_the_start_table(self):
         for pack in PACK_NAMES:
-            blocks = SQL_BLOCK.findall((PACKS / pack).read_text())
+            blocks = [match.group(1) for match in SQL_BLOCK.finditer((PACKS / pack).read_text())]
             self.assertTrue(blocks, pack)
             for block in blocks:
                 with self.subTest(pack=pack, sql=block[:60]):
@@ -228,18 +234,22 @@ class PackStaticTest(unittest.TestCase):
 class PackTargetKindTest(unittest.TestCase):
     """Each pack starts from the table that matches the target kind."""
 
+    directory: ClassVar[tempfile.TemporaryDirectory[str]]
+    database: ClassVar[Path]
+
     @classmethod
-    def setUpClass(cls):
+    @override
+    def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
         logs = root / "claude" / "projects" / "sample"
         logs.mkdir(parents=True)
         base = datetime.now(timezone.utc) - timedelta(days=3)
 
-        def stamp(minutes):
+        def stamp(minutes: int) -> str:
             return (base + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        def use(minutes, call_id, name, tool_input):
+        def use(minutes: int, call_id: str, name: str, tool_input: dict[str, str]) -> dict[str, object]:
             return {
                 "type": "assistant", "timestamp": stamp(minutes),
                 "sessionId": "fixture-session", "cwd": str(root / "project"),
@@ -248,8 +258,8 @@ class PackTargetKindTest(unittest.TestCase):
                 }]},
             }
 
-        def result(minutes, call_id, content, is_error=False):
-            block = {"type": "tool_result", "tool_use_id": call_id, "content": content}
+        def result(minutes: int, call_id: str, content: str, is_error: bool = False) -> dict[str, object]:
+            block: dict[str, _RowValue] = {"type": "tool_result", "tool_use_id": call_id, "content": content}
             if is_error:
                 block["is_error"] = True
             return {
@@ -271,17 +281,17 @@ class PackTargetKindTest(unittest.TestCase):
             use(30, "read-out", "Read", {"file_path": "b"}),
             result(30, "read-out", "fine"),
         ]
-        (logs / "session.jsonl").write_text("".join(json.dumps(e) + "\n" for e in entries))
+        _ = (logs / "session.jsonl").write_text("".join(json.dumps(e) + "\n" for e in entries))
 
         # Cursor logs carry minute-resolution timestamps: one user turn stamps
         # the spawn, the Read, and the second spawn with the same time.
         transcripts = root / "cursor" / "projects" / "sample" / "agent-transcripts"
         transcripts.mkdir(parents=True)
 
-        def turn(role, content):
+        def turn(role: str, content: list[dict[str, object]]) -> dict[str, object]:
             return {"role": role, "message": {"content": content}}
 
-        def call(name, tool_input):
+        def call(name: str, tool_input: dict[str, str]) -> dict[str, object]:
             return turn("assistant", [{"type": "tool_use", "name": name, "input": tool_input}])
 
         user = turn("user", [{"type": "text", "text":
@@ -292,9 +302,9 @@ class PackTargetKindTest(unittest.TestCase):
             call("Read", {"file_path": "a"}),
             call("Task", {"subagent_type": "helper", "description": "help"}),
         ]
-        (transcripts / "cursor-shared.jsonl").write_text(
+        _ = (transcripts / "cursor-shared.jsonl").write_text(
             "".join(json.dumps(e) + "\n" for e in shared))
-        (transcripts / "cursor-readonly.jsonl").write_text(
+        _ = (transcripts / "cursor-readonly.jsonl").write_text(
             "".join(json.dumps(e) + "\n" for e in (user, call("Read", {"file_path": "c"}))))
 
         env = os.environ | {
@@ -304,35 +314,54 @@ class PackTargetKindTest(unittest.TestCase):
             "CURSOR_HOME": str(root / "cursor"),
             "SESSIONS_DB": str(root / "sessions.duckdb"),
         }
-        subprocess.run(["python3", "-B", str(ENGINE / "scripts" / "ingest.py")],
+        _ = subprocess.run(["python3", "-B", str(ENGINE / "scripts" / "ingest.py")],
                        env=env, capture_output=True, text=True, check=True)
         cls.database = root / "sessions.duckdb"
 
     @classmethod
-    def tearDownClass(cls):
+    @override
+    def tearDownClass(cls) -> None:
         cls.directory.cleanup()
 
-    def _run(self, sql):
+    def _run(self, sql: str) -> list[_Row]:
         result = subprocess.run(
             ["duckdb", "-readonly", str(self.database), "-json", "-c", sql],
             capture_output=True, text=True, check=True,
         )
-        return json.loads(result.stdout) if result.stdout.strip() else []
+        if not result.stdout.strip():
+            return []
+        rows = cast(object, json.loads(result.stdout))
+        assert isinstance(rows, list)
+        checked: list[_Row] = []
+        for raw_row in cast(list[object], rows):
+            assert isinstance(raw_row, dict)
+            row = cast(dict[object, object], raw_row)
+            assert all(
+                isinstance(key, str)
+                and isinstance(value, (str, int, float, bool, type(None)))
+                for key, value in row.items()
+            )
+            checked.append(cast(_Row, row))
+        return checked
 
-    def _pack(self, pack, kind, target):
+    def _pack(self, pack: str, kind: str, target: str) -> list[list[_Row]]:
         return [self._run(sql) for sql in _pack_sql(pack, kind, target)]
 
     def test_agent_target_reports_usage_trend_and_decay(self):
         coverage, total, weekly, projects, peers = self._pack("skill-usage.md", "agent", "reviewer")
         self.assertEqual({row["harness"] for row in coverage}, {"claude", "cursor"})
         self.assertEqual(total[0]["total_invocations"], 1)
-        self.assertEqual(sum(row["invocations"] for row in weekly), 1)
+        assert all(isinstance(row["invocations"], int) for row in weekly)
+        self.assertEqual(sum(cast(int, row["invocations"]) for row in weekly), 1)
         self.assertEqual(len(projects), 1)
         self.assertEqual((peers[0]["target_rank"], peers[0]["population"]), (1, 3))
         _, decay, trend, signatures = self._pack("drift-regression.md", "agent", "reviewer")
-        self.assertEqual(int(decay[0]["recent_4w"]), 1)
-        self.assertEqual(sum(row["calls"] for row in trend), 2)
-        self.assertEqual(sum(round(row["error_pct"] * row["calls"] / 100) for row in trend), 1)
+        recent = decay[0]["recent_4w"]
+        assert isinstance(recent, (str, int, float))
+        self.assertEqual(int(recent), 1)
+        assert all(isinstance(row["calls"], int) and isinstance(row["error_pct"], (int, float)) for row in trend)
+        self.assertEqual(sum(cast(int, row["calls"]) for row in trend), 2)
+        self.assertEqual(sum(round(cast(float, row["error_pct"]) * cast(int, row["calls"]) / 100) for row in trend), 1)
         self.assertEqual([(row["error"], row["occurrences"]) for row in signatures],
                          [("boom", 1)])
 
@@ -381,4 +410,4 @@ class PackTargetKindTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()
