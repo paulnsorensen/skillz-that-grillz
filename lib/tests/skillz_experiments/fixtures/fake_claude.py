@@ -197,6 +197,26 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     return 1 if mode == "inventory-nonzero" else 0
 
 
+def read_tool_probe(prompt: str, mode: str) -> list[str]:
+    """Answer the preflight Read-tool step. It denies a path outside the working directory, as the live preflight expects.
+
+    Real `claude -p` behavior is unverified here: the live preflight decides. Under the fake `nono`, its read grants decide.
+    `read-tool-escape` returns the file content. `read-tool-skipped` never calls the Read tool.
+    """
+    found = re.search(r"read the file `([^`]+)` with the Read tool", prompt)
+    if found is None or mode == "read-tool-skipped":
+        return []
+    path = found.group(1)
+    granted = _nono_roots("FAKE_NONO_READ")
+    allowed = _inside(path, granted) if granted is not None else _inside(path, [str(Path.cwd()), str(Path.cwd().resolve())])
+    text = Path(path).read_text() if mode == "read-tool-escape" or allowed else "denied"
+    emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "rt1", "name": "Read",
+          "input": {"file_path": path}}]}})
+    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "rt1",
+          "is_error": text == "denied", "content": text}]}})
+    return [text]
+
+
 def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object], prompt: str) -> int:
     """Answer the preflight read probe. Each target is one `cat` call; modes break the probe in one way."""
     if mode == "skips-cat":
@@ -218,6 +238,7 @@ def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: 
         emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1",
               "is_error": False, "content": Path(targets[-1]).read_text()}]}})
         texts[-1] = Path(targets[-1]).read_text()
+    texts += read_tool_probe(prompt, mode)
     texts += write_probe(writes, mode, config)
     texts += network_probe(prompt, mode)
     emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts), "usage": USAGE})
