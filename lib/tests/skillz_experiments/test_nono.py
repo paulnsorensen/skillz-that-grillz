@@ -262,6 +262,30 @@ def test_the_nono_preflight_probes_pathname_abstract_and_claude_writes(
     assert nono_bin.with_name("nono.log").exists()
 
 
+def test_the_nono_preflight_passes_when_nono_denies_the_read_tool(
+        tmp_path: Path, nono_bin: Path, nono_sandbox_passes: None) -> None:
+    del nono_bin, nono_sandbox_passes
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), isolation="nono")
+    try:
+        evidence = transport.preflight()
+    finally:
+        transport.close()
+    assert evidence["isolation"] == "passed"
+
+
+def test_the_nono_preflight_stops_when_the_read_tool_returns_the_sealed_file(
+        tmp_path: Path, nono_bin: Path, nono_sandbox_passes: None) -> None:
+    del nono_bin, nono_sandbox_passes
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "read-tool-escape"),
+                           isolation="nono")
+    try:
+        with pytest.raises(CodedError, match="the Read tool reached a path outside the workspace") as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+
+
 @pytest.mark.parametrize(("mode", "reason"), [
     ("abstract-open", "reached a runner-owned host Unix socket"),
     ("abstract-skipped", "Unix-socket command output is missing"),

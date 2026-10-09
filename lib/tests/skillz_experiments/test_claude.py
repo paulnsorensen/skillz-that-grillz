@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -254,6 +255,46 @@ def test_preflight_stops_when_a_host_file_is_readable(tmp_path: Path, sandbox_pa
     assert caught.value.code == "preflight-leak"
     prompt = cast(str, calls(executable)[0]["prompt"])
     assert "cat " in prompt
+
+
+def test_preflight_asks_the_read_tool_for_the_sealed_file_and_passes_when_it_is_denied(
+        tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    assert re.search(r"read the file `[^`]+/sealed` with the Read tool, not Bash", cast(str, calls(executable)[0]["prompt"]))
+    assert budget.calls == len(calls(executable)) == evidence["live_calls"]
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("read-tool-escape", "the Read tool reached a path outside the workspace"),
+    ("read-tool-skipped", "read-tool probe has no evidence"),
+])
+def test_preflight_stops_when_the_read_tool_leaves_the_workspace_or_is_not_probed(
+        tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        with pytest.raises(CodedError, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    assert budget.calls == len(calls(executable))
+
+
+def test_environment_key_changes_when_the_read_probe_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    before = session.environment_key()
+    monkeypatch.setattr(_claude, "READ_PROBE", "other")
+    assert session.environment_key() != before
 
 
 def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(

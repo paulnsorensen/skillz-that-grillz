@@ -110,6 +110,9 @@ The runner sets `CLAUDE_CONFIG_DIR` to your real config directory.
 The directory can still expose your own memory, account skills, agents, or MCP servers.
 Before any model call, the preflight stops with the code `preflight-leak` when `CLAUDE.md` or a `rules` directory with `.md` files exists there.
 The live preflight also stops with `preflight-leak` when the init event lists a user skill, plugin, agent, or MCP server.
+The live preflight also asks the Read tool to read a sealed file outside the workspace.
+The run stops with `preflight-leak` when the Read tool returns that file, or when the model never calls the Read tool.
+The `--restricted` flag no longer confines the Read tool, so only this probe proves it.
 Only the candidate skill, Claude Code's own commands and built-in plugins, and the built-in agents are allowed.
 
 Before the first live task, a live isolation preflight runs. It runs once per run, not once per `run` command.
@@ -177,7 +180,7 @@ nono injects `ANTHROPIC_API_KEY` from the host. The sandbox sees only a per-sess
 The config directory links no Claude login. The run bills the API key.
 With its own sandbox off, Claude Code needs an explicit rule to run Bash, so the settings allow Bash. nono is the boundary.
 A workspace symlink `.agents` points to the read-only tree, so the task prompt and the activation check keep their relative paths.
-The live preflight runs the same read, write, TCP, HTTP, and Unix-socket probes as the default backend.
+The live preflight runs the same read, Read-tool, write, TCP, HTTP, and Unix-socket probes as the default backend.
 It also probes a runner-owned abstract Unix socket, which has no file and which only Landlock scoping can hide.
 The environment hash includes the nono binary digest and the Landlock ABI, so a nono or kernel upgrade stops a resume with `environment-differs`.
 The helper sandbox probe and helper fixtures still run in `bwrap`, so the host still needs bubblewrap.
