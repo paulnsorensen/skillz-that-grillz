@@ -79,7 +79,8 @@ Parallel calls share it. The estimate and the holdout gate reserve include it.
 The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
 The stops that ask for approval echo the options as `claude_options`.
 These three options apply only to `--harness claude`. The first run records them.
-When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, or Claude option.
+`--min-gain N` and `--min-lower-bound N` set the floors of the gate. Each value is at least 0. "Set promotion thresholds" describes them.
+When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, Claude option, or threshold flag.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
 Each stop prints one JSON object on stdout and a coded error on stderr.
@@ -90,14 +91,14 @@ Map each coded stop to its next step:
 |---|---|---|
 | `host-not-ready` | `ok`, `harness`, `isolation`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `doctor` (the host checks) | Write the case draft, then run again. |
-| `cases-unapproved` | `question`, `case_hash`, `seed` | Ask question 2. Run again with `--approve-cases HASH`. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` in the command. |
+| `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `baseline-contract-rejected` | `next` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
 | `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |
 | `run-terminated` | `next`, `failure_code` | The run directory holds a stop from `isolation-failed` or `credential-changed`. Start a new run directory. |
-| `run-record-tampered` | Only `stop` and `message` | The budget in `run.json` differs from the plan that the frozen cases give, or the `phase` is unknown. Start a new run directory. |
+| `run-record-tampered` | Only `stop` and `message` | The budget in `run.json` differs from the plan that the frozen cases give, the `phase` is unknown, or the `statistics` are malformed. Start a new run directory. |
 
 These other codes arrive on stderr as `code`, with no data on stdout:
 
@@ -118,7 +119,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
@@ -129,6 +130,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
 | `contract-capture-unsupported` | A kind declares `capture`, and the harness is not `claude`. | Run with `--harness claude`, or remove `capture`. |
+| `contract-statistics-invalid` | The `statistics` object is not an object, holds an unknown field, a negative value, or a value that is not a finite number. | Fix the contract, then run again. |
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
@@ -177,10 +179,18 @@ The gate scores baseline and winner on holdout cases that no search step saw.
 It scores each case `--repeats` times and averages the repeats.
 It then takes the mean of the paired case deltas and its standard error (SE).
 
-- `promote`: the mean delta exceeds 2·SE. When the SE is 0, every case delta must be positive.
+- `promote`: the mean delta exceeds 2·SE and passes the floors. When the SE is 0, every case delta must be positive.
 - `reject`: the mean delta falls below -2·SE.
 - `inconclusive`: any other result, or fewer than two holdout cases, or a winner equal to the baseline.
 
+The floors apply only to a result that would promote. That result needs `delta >= min_gain` and `delta > 2·SE + min_lower_bound`.
+When the SE is 0, the second test uses 2·SE = 0.
+A result that fails a floor becomes `inconclusive`. A floor never creates a `reject`.
+With both floors at 0, the verdict equals the built-in rule.
+
+The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`.
+A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
+The summary and the export report show `reasons` in the `gate` object.
 The summary reports the delta, the SE, the case count, and the repeats.
 Small runs often report `inconclusive`. That result is honest: the data cannot separate the winner from noise.
 Report the verdict as it is. Never promote an `inconclusive` winner by hand.
@@ -218,10 +228,32 @@ The contract has these fields:
 - `kinds`: a map of case kind to `{grader, argv?, rubric?, capture?, pillars?}`.
 - `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
 - `editable` (optional): relative paths that search can change.
+- `statistics` (optional): promotion thresholds for the holdout gate. See "Set promotion thresholds".
 
 A run needs a contract with a `task` kind or with exactly one kind. Otherwise it stops with `contract-kinds`.
 It stops with `contract-unapproved` when `status` is `draft`.
 Unknown fields and malformed values stop the run.
+
+## Set promotion thresholds
+
+The `statistics` object in the contract makes the gate stricter. It never makes the gate looser.
+These thresholds are floors: each one only tightens the rule.
+A contract without it keeps its identity hash and the built-in rule.
+The object accepts these fields:
+
+- `min_gain`: the smallest mean holdout delta that can promote. The default is 0.
+- `min_lower_bound`: the margin that the delta must clear beyond 2·SE. The default is 0.
+
+Each value is a finite number of at least 0. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
+The SE multiplier stays 2. A negative floor would loosen the rule, so the runner refuses it.
+
+Each field resolves in this order: the CLI flag, then the contract, then the built-in default.
+The flags are `--min-gain` and `--min-lower-bound`. A flag may set a value below the contract value.
+Every flag value must still be at least 0, so the gate stays at least as strict as the built-in rule.
+The first run freezes the resolved values in `run.json`.
+The flags repeat on every call until `run.json` exists. The approval stops echo the resolved values as `statistics`.
+A flag that you drop after an approval stop changes the frozen values.
+A resume that passes a different value stops with `run-config-differs`. A resume that passes none keeps the frozen values.
 
 ## No contract
 
