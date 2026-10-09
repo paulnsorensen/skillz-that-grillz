@@ -7,7 +7,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Iterator
 from pathlib import Path
 from typing import cast, final
 
@@ -27,6 +27,8 @@ from skillz_experiments._runtime import Budget
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 ROOT = Path(__file__).parents[3]
 TOKENS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+# Read at import, before any test patches `sys.platform`.
+LINUX_HOST = sys.platform == "linux"
 
 
 def _bwrap_works() -> bool:
@@ -95,7 +97,7 @@ def test_partial_claude_usage_stays_unknown() -> None:
         "input_tokens": 14, "cached_input_tokens": 5, "output_tokens": 3}
 
 
-def test_argv_or_settings_or_usage_argv_is_restricted_and_tool_limited(tmp_path: Path) -> None:
+def test_argv_or_settings_or_usage_argv_reads_only_project_settings_and_is_tool_limited(tmp_path: Path) -> None:
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
@@ -103,7 +105,7 @@ def test_argv_or_settings_or_usage_argv_is_restricted_and_tool_limited(tmp_path:
     finally:
         session.close()
     argv = cast(list[str], calls(executable)[0]["argv"])
-    assert argv[:2] == ["--restricted", "-p"]
+    assert argv[:3] == ["-p", "--setting-sources", "project"] and "--restricted" not in argv
     assert argv[argv.index("--tools") + 1] == "Bash,Read,Skill"
     assert "--strict-mcp-config" in argv
     assert argv[argv.index("--model") + 1] == "claude-test-model"
@@ -156,7 +158,7 @@ def test_claude_options_are_refused_for_another_adapter(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Codex role accepts only adapter and model"):
         _ = Configuration.load(config, "m")
     with pytest.raises(ValueError, match="Codex role accepts only adapter and model"):
-        _ = Configuration.single("codex", "m", ClaudeOptions(effort="high"))
+        _ = Configuration.single("codex", "m", options=ClaudeOptions(effort="high"))
 
 
 def test_sandbox_read_roots_that_overlap_the_login_temp_home_or_run_directory_are_refused(
@@ -297,25 +299,26 @@ def test_argv_or_settings_or_usage_usage_comes_from_the_json_result(tmp_path: Pa
     assert result["answer"] == {"result_json": "{}", "load_marker": ""}
 
 
-@pytest.mark.parametrize(("mode", "reason"), [
-    ("auth-fail", "authentication"),
-    ("foreign-skill", "foreign skill"),
+@pytest.mark.parametrize(("mode", "reason", "code"), [
+    ("auth-fail", "authentication", "login-missing"),
+    ("foreign-skill", "foreign skill", "preflight-leak"),
 ])
 def test_preflight_stops_on_isolation_failure_without_fallback(
-        tmp_path: Path, mode: str, reason: str, sandbox_passes: None) -> None:
+        tmp_path: Path, mode: str, reason: str, code: str, sandbox_passes: None) -> None:
     del sandbox_passes
     executable = fake_claude(tmp_path, mode)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="isolation") as caught:
+        with pytest.raises(CodedError, match="isolation") as caught:
             _ = session.preflight()
     finally:
         session.close()
     assert reason in str(caught.value)
+    assert caught.value.code == code
     assert "no unsafe fallback" in str(caught.value)
     logged = calls(executable)
     assert len(logged) == 1
-    assert all("--restricted" in cast(list[str], call["argv"]) for call in logged)
+    assert all("--restricted" not in cast(list[str], call["argv"]) for call in logged)
 
 
 def test_preflight_passes_when_only_the_probe_skill_loads(tmp_path: Path, sandbox_passes: None) -> None:
@@ -368,10 +371,11 @@ def test_preflight_runs_the_isolation_probe_through_the_sandbox(
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="isolation preflight fails.*no unsafe fallback"):
+        with pytest.raises(CodedError, match="isolation preflight fails.*no unsafe fallback") as caught:
             _ = session.preflight()
     finally:
         session.close()
+    assert caught.value.code == "preflight-leak"
     assert seen and "read isolation failed" in seen[0][-1]
     assert not executable.with_name("claude.log").exists()
 
@@ -381,10 +385,11 @@ def test_preflight_stops_when_a_host_file_is_readable(tmp_path: Path, sandbox_pa
     executable = fake_claude(tmp_path, "read-host")
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(RuntimeError, match="read isolation.*no unsafe fallback"):
+        with pytest.raises(CodedError, match="read isolation.*no unsafe fallback") as caught:
             _ = session.preflight()
     finally:
         session.close()
+    assert caught.value.code == "preflight-leak"
     prompt = cast(str, calls(executable)[0]["prompt"])
     assert "cat " in prompt
 
@@ -398,15 +403,18 @@ def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(
         original_settings = _claude.settings
         original_environment = ClaudeCode._environment  # pyright: ignore[reportPrivateUsage]
 
-        def without_setting(workspace: Path, out: Path | None = None) -> dict[str, object]:
-            return {key: value for key, value in original_settings(workspace, out).items() if key != "disableBundledSkills"}
+        def without_setting(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
+                            unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
+            return {key: value for key, value in original_settings(workspace, out, overrides=overrides,
+                                                                   unix_sockets=unix_sockets, sandboxed=sandboxed).items()
+                    if key != "disableBundledSkills"}
 
         def without_variable(self: ClaudeCode, workspace: Path) -> dict[str, str]:
             return {key: value for key, value in original_environment(self, workspace).items()
                     if key != "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"}
         monkeypatch.setattr(_claude, "settings", without_setting)
         monkeypatch.setattr(ClaudeCode, "_environment", without_variable)
-        with pytest.raises(RuntimeError, match="foreign skill.*code-review"):
+        with pytest.raises(CodedError, match="foreign skill.*code-review"):
             _ = session.preflight()
     finally:
         session.close()
@@ -416,8 +424,9 @@ def test_auth_failure_without_an_init_event_is_reported_as_authentication(tmp_pa
     del sandbox_passes
     session = harness(tmp_path, fake_claude(tmp_path, "no-init-auth"))
     try:
-        with pytest.raises(RuntimeError, match="authentication failed.*no unsafe fallback"):
+        with pytest.raises(CodedError, match="authentication failed.*no unsafe fallback") as caught:
             _ = session.preflight()
+        assert caught.value.code == "login-missing"
         with pytest.raises(RuntimeError, match="authentication failed"):
             _ = session.transports["task"].invoke("hello", Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",)))
     finally:
@@ -492,7 +501,9 @@ def test_a_network_leak_keeps_its_code_when_the_run_then_fails(
     original = cast(Callable[..., object], getattr(_claude, "process"))
 
     def run_then_time_out(*args: object, **kwargs: object) -> object:
-        _ = original(*args, **kwargs)
+        result = original(*args, **kwargs)
+        if "--input-format" in cast(list[str], args[0]):
+            return result
         raise TimeoutError("deadline")
     monkeypatch.setattr(_claude, "process", run_then_time_out)
     session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
@@ -508,8 +519,8 @@ def test_a_network_leak_keeps_its_code_when_an_earlier_check_also_fails(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
 
-    def write_fails(events: list[dict[str, object]], agents_file: str, wrote: bool, controlled: bool) -> str:
-        del events, agents_file, wrote, controlled
+    def write_fails(events: list[dict[str, object]], files: list[str], wrote: bool, controlled: bool) -> str:
+        del events, files, wrote, controlled
         return "write isolation failed: test"
     monkeypatch.setattr(_claude, "_write_failure", write_fails)
     session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
@@ -546,8 +557,9 @@ def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path
     before = session.environment_key()
     original = _claude.settings
 
-    def open_network(workspace: Path, out: Path | None = None) -> dict[str, object]:
-        changed = original(workspace, out)
+    def open_network(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
+                     unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
+        changed = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
         changed["sandbox"] = cast(dict[str, object], changed["sandbox"]) | {
             "network": {"allowedDomains": ["example.com"], "strictAllowlist": True}}
         return changed
@@ -818,10 +830,11 @@ def test_preflight_needs_evidence_that_bash_ran_and_read_the_workspace(
     del sandbox_passes
     session = harness(tmp_path, fake_claude(tmp_path, mode))
     try:
-        with pytest.raises(RuntimeError, match=reason):
+        with pytest.raises(CodedError, match=reason) as caught:
             _ = session.preflight()
     finally:
         session.close()
+    assert caught.value.code == "preflight-leak"
 
 
 def test_preflight_fails_when_the_workspace_allow_is_missing(
@@ -829,17 +842,19 @@ def test_preflight_fails_when_the_workspace_allow_is_missing(
     del sandbox_passes
     original = _claude.settings
 
-    def without_allow(workspace: Path, out: Path | None = None) -> dict[str, object]:
-        document = original(workspace, out)
+    def without_allow(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
+                      unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
+        document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
         cast(dict[str, dict[str, object]], document["sandbox"])["filesystem"]["allowRead"] = []
         return document
     monkeypatch.setattr(_claude, "settings", without_allow)
     session = harness(tmp_path, fake_claude(tmp_path))
     try:
-        with pytest.raises(RuntimeError, match="positive control"):
+        with pytest.raises(CodedError, match="positive control") as caught:
             _ = session.preflight()
     finally:
         session.close()
+    assert caught.value.code == "preflight-leak"
 
 
 def test_preflight_reuses_the_recorded_pass_without_a_live_call(tmp_path: Path, sandbox_passes: None) -> None:
@@ -906,10 +921,11 @@ def test_preflight_runs_the_free_sandbox_probe_when_it_reuses_a_pass(
     try:
         first = session.preflight()
         logged = len(calls(executable))
-        with pytest.raises(RuntimeError, match="sandbox probe failed"):
+        with pytest.raises(CodedError, match="sandbox probe failed") as caught:
             _ = session.preflight(first)
     finally:
         session.close()
+    assert caught.value.code == "preflight-leak"
     assert len(calls(executable)) == logged
 
 
@@ -1162,7 +1178,11 @@ def test_macos_stops_before_any_call_when_user_memory_would_load(
     executable = fake_claude(tmp_path)
     budget = Budget(10, 120, 0)
     adapter = ClaudeCode("m", budget, lambda: None, executable)
-    check = adapter.preflight if stage == "preflight" else adapter.check_sandbox
+    def free_checks() -> None:
+        adapter.check_helper_sandbox()
+        _ = adapter.inventory()
+
+    check = adapter.preflight if stage == "preflight" else free_checks
     try:
         if memory == "none":
             _ = check()
@@ -1316,3 +1336,388 @@ def test_environment_key_changes_with_the_run_directory(tmp_path: Path) -> None:
     finally:
         first.close()
         second.close()
+
+
+def inventory_calls(executable: Path) -> list[dict[str, object]]:
+    log = executable.with_name("claude.inventory.log")
+    return [cast(dict[str, object], json.loads(line)) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def live_settings(executable: Path) -> dict[str, object]:
+    return cast(dict[str, object], json.loads(cast(str, calls(executable)[0]["settings"])))
+
+
+@pytest.fixture
+def short_tempdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Use a short temp root, so a preflight Unix socket path stays under the AF_UNIX length limit.
+
+    The socket probe also binds an abstract socket, which exists only on Linux, so the test skips elsewhere.
+    """
+    if not LINUX_HOST:
+        pytest.skip("abstract Unix sockets exist only on Linux")
+    directory = Path(tempfile.mkdtemp(prefix="skz", dir="/tmp"))
+    monkeypatch.setattr(tempfile, "tempdir", str(directory))
+    yield directory
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_preflight_allows_claude_codes_own_commands_and_builtin_plugins(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    assert evidence["live_calls"] == len(session.transports)
+    assert "skillOverrides" not in live_settings(executable)
+    assert len(inventory_calls(executable)) == len(session.transports)
+
+
+def test_inventory_turns_off_an_account_skill_without_a_model_call(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, "account-skill")
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        inventory = transport.inventory()
+        assert budget.calls == 0 and calls_or_none(executable) is None
+        _ = transport.preflight()
+    finally:
+        transport.close()
+    assert inventory.foreign == {"anthropic-skills:pdf"} and {"design", "doctor"} <= inventory.builtin
+    assert live_settings(executable)["skillOverrides"] == {"anthropic-skills:pdf": "off"}
+    assert len(inventory_calls(executable)) == 2
+
+
+def calls_or_none(executable: Path) -> list[dict[str, object]] | None:
+    return calls(executable) if executable.with_name("claude.log").exists() else None
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("plugin-skill", "skillOverrides cannot turn off \\['plug:tool'\\]"),
+    ("inventory-broken", "no valid command list"),
+])
+def test_preflight_stops_before_any_model_call_when_the_inventory_cannot_be_cleaned(
+        tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        with pytest.raises(CodedError, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    assert budget.calls == 0 and calls_or_none(executable) is None
+
+
+def test_invoke_never_turns_off_the_candidate_skill(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "account-skill")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        _ = transport.invoke("hello", echo_candidate(tmp_path))
+    finally:
+        transport.close()
+    overrides = cast(dict[str, str], live_settings(executable)["skillOverrides"])
+    assert overrides == {"anthropic-skills:pdf": "off"} and "echo-skill" not in overrides
+
+
+def test_preflight_stops_on_a_plugin_that_does_not_ship_with_claude_code(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, "foreign-plugin"))
+    try:
+        with pytest.raises(CodedError, match="foreign plugin.*user-plugin") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_settings_deny_bash_writes_to_project_settings(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    sandbox = cast(dict[str, dict[str, list[str]]], _claude.settings(workspace)["sandbox"])
+    assert {f"{workspace}/.agents", f"{workspace}/.claude"} <= set(sandbox["filesystem"]["denyWrite"])
+    assert "allowAllUnixSockets" not in sandbox["network"]
+
+
+def test_blocked_nested_namespace_turns_off_the_socket_filter_and_probes_a_host_socket(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: True)
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        evidence = transport.preflight()
+    finally:
+        transport.close()
+    network = cast(dict[str, dict[str, object]], live_settings(executable)["sandbox"])["network"]
+    assert network["allowAllUnixSockets"] is True and network["allowedDomains"] == []
+    assert "AF_UNIX" in cast(str, calls(executable)[0]["prompt"])
+    assert evidence["unix_socket_filter"] == "off"
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("unix-open", "reached a runner-owned host Unix socket"),
+    ("unix-skipped", "Unix-socket command output is missing"),
+])
+def test_socket_probe_failure_stops_the_preflight(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch,
+        mode: str, reason: str) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: True)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match=reason):
+            _ = transport.preflight()
+    finally:
+        transport.close()
+
+
+def test_environment_key_changes_when_the_socket_filter_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    executable = fake_claude(tmp_path)
+    allowed = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    blocked = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        before = allowed.environment_key()
+        monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: True)
+        assert before != blocked.environment_key()
+    finally:
+        allowed.close()
+        blocked.close()
+
+
+@pytest.mark.parametrize("mode", ["builtin-echo", "account-echo"])
+def test_a_candidate_named_like_another_command_stops_before_the_call(tmp_path: Path, mode: str) -> None:
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    if mode == "account-echo":
+        transport._inventory = _claude.Inventory(frozenset(), frozenset({"echo-skill"}))  # pyright: ignore[reportPrivateUsage]
+    candidate = echo_candidate(tmp_path)
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = transport.invoke("hello", candidate)
+        with pytest.raises(CodedError) as seed:
+            _ = transport.check_candidate(candidate)
+    finally:
+        transport.close()
+    assert caught.value.code == seed.value.code == "candidate-name-taken" and budget.calls == 0
+    assert calls_or_none(executable) is None
+
+
+def test_a_taken_seed_name_stops_the_harness_before_any_live_call(tmp_path: Path) -> None:
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, fake_claude(tmp_path, "builtin-echo"), budget)
+    try:
+        with pytest.raises(CodedError) as caught:
+            session.check_name(echo_candidate(tmp_path))
+    finally:
+        session.close()
+    assert caught.value.code == "candidate-name-taken" and budget.calls == 0
+
+
+def stub_bwrap(directory: Path, stderr: str, code: int) -> Path:
+    """Put a `bwrap` stub in `directory` that counts its runs, writes `stderr`, and exits with `code`."""
+    directory.mkdir()
+    counter = directory / "runs"
+    stub = directory / "bwrap"
+    _ = stub.write_text(f"#!/bin/sh\necho x >> {counter}\nprintf '%s' '{stderr}' >&2\nexit {code}\n")
+    stub.chmod(0o755)
+    return counter
+
+
+@pytest.mark.parametrize(("stderr", "code", "blocked"), [
+    ("map", 1, True),
+    ("unshare", 1, True),
+    ("bwrap: setting up uid map: Permission denied", 1, False),
+    ("", 0, False),
+])
+def test_nested_namespace_probe_reads_only_the_probe_verdict_and_caches_it(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, real_nested_userns_probe: Callable[[], bool],
+        stderr: str, code: int, blocked: bool) -> None:
+    counter = stub_bwrap(tmp_path / "stub", stderr, code)
+    monkeypatch.setenv("PATH", str(counter.parent))
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert real_nested_userns_probe() is blocked
+    assert real_nested_userns_probe() is blocked
+    assert len(counter.read_text().splitlines()) == 1
+
+
+def test_every_role_asks_the_host_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                       real_nested_userns_probe: Callable[[], bool]) -> None:
+    del real_nested_userns_probe
+    counter = stub_bwrap(tmp_path / "stub", "map", 1)
+    monkeypatch.setenv("PATH", str(counter.parent))
+    monkeypatch.setattr(sys, "platform", "linux")
+    executable = fake_claude(tmp_path)
+    roles = [ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable) for _ in range(3)]
+    try:
+        assert [role.unix_sockets() for role in roles] == [True, True, True]
+    finally:
+        for role in roles:
+            role.close()
+    assert len(counter.read_text().splitlines()) == 1
+
+
+def test_the_inventory_runs_through_the_shared_process_runner(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original = cast(Callable[..., object], getattr(_claude, "process"))
+    seen: list[list[str]] = []
+
+    def recording(*args: object, **kwargs: object) -> object:
+        seen.append(cast(list[str], args[0]))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(_claude, "process", recording)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    try:
+        _ = transport.inventory()
+    finally:
+        transport.close()
+    assert seen and all("--input-format" in command for command in seen)
+
+
+@pytest.mark.parametrize(("mode", "code", "parts"), [
+    ("inventory-auth", "login-missing", ["authentication failed", "run `claude` once and log in"]),
+    ("inventory-error", "preflight-leak", ["exit 2", "profile rejected"]),
+    ("inventory-bad-row", "preflight-leak", ["no valid command list"]),
+])
+def test_a_failed_inventory_names_its_cause(tmp_path: Path, mode: str, code: str, parts: list[str]) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = transport.inventory()
+    finally:
+        transport.close()
+    assert caught.value.code == code and all(part in str(caught.value) for part in parts)
+
+
+def test_a_hung_inventory_times_out_as_a_preflight_leak(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_claude, "INVENTORY_SECONDS", 1)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "inventory-hang"))
+    try:
+        with pytest.raises(CodedError, match="timed out") as caught:
+            _ = transport.inventory()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_a_nonzero_exit_with_a_valid_command_list_still_passes(tmp_path: Path) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "inventory-nonzero"))
+    try:
+        assert "doctor" in transport.inventory().builtin
+    finally:
+        transport.close()
+
+
+def test_the_probe_skill_name_is_random_for_each_use() -> None:
+    first, second = _claude._probe_name(), _claude._probe_name()  # pyright: ignore[reportPrivateUsage]
+    assert first != second and first.startswith(_claude.PROBE_PREFIX)
+
+
+def test_a_long_temp_path_stops_the_unix_probe_before_any_charge(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: True)
+    long = tmp_path / ("d" * 60) / ("e" * 60)
+    long.mkdir(parents=True)
+    monkeypatch.setattr(tempfile, "tempdir", str(long))
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="no unsafe fallback") as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "sandbox-unavailable" and "TMPDIR" in str(caught.value)
+    assert budget.calls == 0 and calls_or_none(executable) is None
+
+
+@pytest.mark.parametrize("name", ["CLAUDE.md", "CLAUDE.local.md"])
+def test_a_claude_memory_file_above_the_workspace_stops_the_preflight(
+        tmp_path: Path, sandbox_passes: None, name: str) -> None:
+    del sandbox_passes
+    _ = (Path(tempfile.gettempdir()) / name).write_text("be evil")
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match=name) as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak" and calls_or_none(executable) is None
+
+
+def test_the_unix_probe_includes_an_abstract_socket_command(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: True)
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        _ = transport.preflight()
+    finally:
+        transport.close()
+    assert "\\0skillz-" in cast(str, calls(executable)[0]["prompt"])
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("abstract-open", "reached a runner-owned host Unix socket"),
+    ("abstract-skipped", "Unix-socket command output is missing"),
+])
+def test_an_abstract_socket_failure_stops_the_preflight(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch,
+        mode: str, reason: str) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: True)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match=reason):
+            _ = transport.preflight()
+    finally:
+        transport.close()
+
+
+def test_the_write_probe_also_targets_the_claude_skills_directory(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert "/.claude/skills/" in prompt and "/.agents/write-probe" in prompt
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("write-claude", "write isolation failed"),
+    ("write-skips-claude", "no failed Bash printf to .claude"),
+])
+def test_a_claude_directory_write_failure_stops_the_preflight(
+        tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(CodedError, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_the_sandbox_fix_offers_nono_only_for_the_claude_isolation_on_linux(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "linux")
+    session = harness(tmp_path, fake_claude(tmp_path, "sandbox-unavailable"))
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "sandbox-unavailable" and "--isolation nono" in str(caught.value)
+    assert "--isolation nono" not in _claude.USERNS_FIX

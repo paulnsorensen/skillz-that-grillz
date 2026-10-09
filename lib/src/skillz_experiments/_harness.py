@@ -10,7 +10,8 @@ from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
-from skillz_experiments._claude import NOTICE_CODES, OPTION_FIELDS, TERMINAL_CODES, ClaudeCode, ClaudeLogin, ClaudeOptions
+from skillz_experiments._claude import (ISOLATIONS, NOTICE_CODES, OPTION_FIELDS, TERMINAL_CODES, ClaudeCode, ClaudeLogin,
+                                        ClaudeOptions)
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._command import Command
 from skillz_experiments._evaluator import Transport, evaluate
@@ -54,6 +55,7 @@ class Role:
     model: str
     command: tuple[str, ...]
     identity: str
+    isolation: str = "claude"
     options: ClaudeOptions = ClaudeOptions()
 
     def fingerprint(self) -> str:
@@ -61,33 +63,49 @@ class Role:
                  for part in self.command if Path(part).is_absolute() and Path(part).is_file()}
         options = self.options.data()
         return digest({"adapter": self.adapter, "model": self.model, "command": self.command,
-                       "identity": self.identity, "files": files, **({"options": options} if options else {})})
+                       "identity": self.identity, "files": files}
+                      | ({"isolation": self.isolation} if self.isolation != "claude" else {})
+                      | ({"options": options} if options else {}))
 
     def create(self, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None,
                login: ClaudeLogin | None = None) -> Transport:
         if self.adapter == "claude":
-            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out, login, self.options)
+            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out, login, self.isolation,
+                              self.options)
         return (Codex(self.model, budget, checkpoint) if self.adapter == "codex"
                 else Command(self.command, self.model, budget, checkpoint))
 
 
-def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False) -> Role:
-    if set(value) - {"adapter", "command", "identity", "model", *OPTION_FIELDS}:
+def validate_isolation(adapter: str, isolation: str) -> None:
+    """Raise `ValueError` unless `isolation` is known and fits `adapter`. Only the claude harness supports nono."""
+    if isolation not in ISOLATIONS:
+        raise ValueError("isolation must be claude or nono")
+    if isolation == "nono" and adapter != "claude":
+        raise ValueError("nono isolation supports only the claude harness")
+
+
+def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False,
+          isolation: str = "claude") -> Role:
+    if set(value) - {"adapter", "command", "identity", "model", "isolation", *OPTION_FIELDS}:
         raise ValueError("unknown harness role configuration field")
     adapter = value.get("adapter", "codex")
     selected_model = string(value.get("model", model), "role model")
+    selected = string(value.get("isolation", isolation), "role isolation")
+    validate_isolation(str(adapter), selected)
+    fields = set(value) - {"isolation"}
     if adapter == "codex":
-        if set(value) - {"adapter", "model"}:
+        if fields - {"adapter", "model"}:
             raise ValueError("Codex role accepts only adapter and model")
         return Role("codex", selected_model, _command(["codex"], root, path_only=path_only), VERSION)
     if adapter == "claude":
-        if set(value) - {"adapter", "model", "command", *OPTION_FIELDS}:
-            raise ValueError("Claude role accepts only adapter, model, command, effort, sandbox_read, and sandbox_seconds")
+        if fields - {"adapter", "model", "command", *OPTION_FIELDS}:
+            raise ValueError("Claude role accepts only adapter, model, command, isolation, effort, sandbox_read, "
+                             + "and sandbox_seconds")
         parts = value.get("command", ["claude"])
         if not isinstance(parts, list) or len(cast(list[object], parts)) != 1:
             raise ValueError("Claude command must name only the executable")
-        return Role("claude", selected_model, _command(cast(list[object], parts), root, path_only=path_only), CLAUDE_IDENTITY,
-                    ClaudeOptions.parse(value))
+        return Role("claude", selected_model, _command(cast(list[object], parts), root, path_only=path_only),
+                    CLAUDE_IDENTITY, selected, ClaudeOptions.parse(value))
     if adapter != "command":
         raise ValueError("harness adapter must be codex, claude, or command")
     if set(value) & OPTION_FIELDS:
@@ -100,6 +118,10 @@ def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool =
 class Configuration:
     roles: dict[str, Role]
     source: Path | None = None
+
+    def __post_init__(self) -> None:
+        if len({role.isolation for role in self.roles.values() if role.adapter == "claude"}) > 1:
+            raise ValueError("every Claude role of a run must use the same isolation")
 
     @classmethod
     def load(cls, path: Path | None, model: str) -> Configuration:
@@ -116,14 +138,16 @@ class Configuration:
         return cls(roles, path.resolve() if path is not None else None)
 
     @classmethod
-    def single(cls, adapter: str, model: str, options: ClaudeOptions | None = None) -> Configuration:
+    def single(cls, adapter: str, model: str, isolation: str = "claude", options: ClaudeOptions | None = None) -> Configuration:
         """Return a configuration that runs every role on one headless harness: `claude` or `codex`.
 
+        `isolation` is `claude` (Claude Code's own sandbox) or `nono`, which only the `claude` harness supports.
         `options` apply to every role, and only the `claude` harness takes them.
         """
         if adapter not in ("claude", "codex"):
             raise ValueError("harness must be claude or codex")
-        role = _role({"adapter": adapter, **({} if options is None else options.data())}, model, Path.cwd(), path_only=True)
+        role = _role({"adapter": adapter, **({} if options is None else options.data())}, model, Path.cwd(), path_only=True,
+                     isolation=isolation)
         return cls({name: role for name in ("task", "reflection", "judge")})
 
     def check_boundary(self, target: Path) -> None:
@@ -199,7 +223,8 @@ class Harness:
             kept = passes.get(name)
             if (isinstance(adapter, ClaudeCode) and keys.get(name) == reuse_keys[name] and isinstance(kept, dict)
                     and cast(dict[str, object], kept).get("isolation") == "passed"):
-                adapter.check_sandbox()
+                adapter.check_helper_sandbox()
+                _ = adapter.inventory()
                 evidence[name] = kept
                 continue
             evidence[name] = adapter.preflight()
@@ -219,6 +244,13 @@ class Harness:
                 errors.append(error)
         if errors:
             raise min(errors, key=_severity)
+
+    def check_name(self, candidate: Candidate) -> None:
+        """Stop when the task role cannot load the candidate under its name. It makes no model call."""
+        self._unchanged()
+        check = cast(Callable[[Candidate], None] | None, getattr(self.transports["task"], "check_name", None))
+        if check is not None:
+            check(candidate)
 
     def check_candidate(self, candidate: Candidate) -> bool:
         """Run the local contract check of the task role. It makes no model call."""

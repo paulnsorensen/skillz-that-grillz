@@ -75,7 +75,6 @@ class State:
         return lambda _model, _budget, _checkpoint: _Fake(self)
 
 
-@final
 class _Fake:
     def __init__(self, state: State) -> None:
         self.state: State = state
@@ -540,10 +539,27 @@ def test_a_completed_run_returns_its_summary_even_when_the_target_moved(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, state = make_target(tmp_path), State()
     out = _prepared(tmp_path, target, write_draft, approvals)
-    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+    summary = run(target, out, MODEL, live=True, factory=state.factory())
+    assert summary["phase"] == "complete" and summary["isolation"] == "claude"
     moved = tmp_path / "moved"
     _ = shutil.copytree(target, moved)
     assert run(moved, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+
+
+def test_a_taken_seed_name_stops_the_run_before_the_live_preflight(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+
+    @final
+    class Taken(_Fake):
+        def check_name(self, candidate: Candidate) -> None:
+            raise CodedError("candidate-name-taken", f"{candidate.skill!r} is taken")
+
+    with pytest.raises(CodedError) as stopped:
+        _ = run(target, out, MODEL, live=True, factory=lambda _model, _budget, _checkpoint: Taken(state))
+    assert stopped.value.code == "candidate-name-taken"
+    assert state.preflights == [] and state.evaluated == []
 
 
 def test_a_terminated_run_resumed_with_another_flag_reports_the_termination_first(
