@@ -182,7 +182,8 @@ It also probes a runner-owned abstract Unix socket, which has no file and which 
 The environment hash includes the nono binary digest and the Landlock ABI, so a nono or kernel upgrade stops a resume with `environment-differs`.
 The helper sandbox probe and helper fixtures still run in `bwrap`, so the host still needs bubblewrap.
 Residual risk: a task command can send requests to `api.anthropic.com` through the proxy token. It cannot reach another host or read the key.
-The nono backend is unverified on macOS. On macOS, it stops with `nono-unavailable`.
+The nono backend is unverified on macOS. A fresh run stops there with `host-not-ready`. A resume stops with `nono-unavailable`.
+
 ## JSON protocol, version one
 
 The runner starts the configured argument array directly, without shell interpolation.

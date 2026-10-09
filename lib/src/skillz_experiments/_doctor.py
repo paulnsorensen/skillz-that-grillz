@@ -6,17 +6,20 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from skillz_experiments import _claude, _nono
 from skillz_experiments._cases import CodedError
 from skillz_experiments._codex import Codex
+from skillz_experiments._harness import validate_isolation
 from skillz_experiments._runtime import Budget
 
 Status = Literal["pass", "fail", "info", "needs-live"]
 APPARMOR_SYSCTL = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
 APPARMOR_BWRAP = Path("/etc/apparmor.d/bwrap-userns-restrict")
-LIVE_TOOLS = ("/usr/bin/python3", "/usr/bin/curl")
+PROBE_FIX = "; ".join((_claude.INSTALL_BUBBLEWRAP, _claude.INSTALL_SOCAT, _claude.USERNS_FIX))
+INVENTORY_FIX = "run `claude` once to see why its skill list fails, and remove any plugin or setting that blocks it"
+SETUP_FIX = "check that TMPDIR and HOME name writable directories, then run again"
 CODEX_FIX = "install the pinned Codex version and log in with `codex`, or run with `--harness claude`"
 LIVE_PREFLIGHT = ("one model call after budget approval checks Bash reads, writes, and network inside the sandbox; "
                   "a free check cannot prove them")
@@ -44,9 +47,11 @@ def _version(executable: str) -> str:
     return result.stdout.strip() or "unknown version"
 
 
-def _failed(name: str, error: Exception, fix: str | None = None) -> Check:
+def _failed(name: str, error: Exception, fix: str) -> Check:
+    """Fail `name` with the fix that the error carries, then the fix in its text, then `fix`."""
     text = str(error)
-    return Check(name, "fail", text, text.partition("; fix: ")[2] or fix)
+    carried = cast(str | None, getattr(error, "fix", None))
+    return Check(name, "fail", text, carried or text.partition("; fix: ")[2] or fix)
 
 
 def _apparmor() -> Check:
@@ -71,53 +76,73 @@ def _nono_checks() -> list[Check]:
     return checks
 
 
-def _claude_checks(isolation: str) -> list[Check]:
-    executable = shutil.which("claude")
-    if executable is None:
-        return [Check("claude", "fail", "the `claude` executable is not on PATH", "install Claude Code, then run `claude` once and log in")]
-    checks = [Check("claude", "pass", _version(executable))]
+def _tool_checks(isolation: str) -> list[Check]:
+    """Report each host tool row of `_claude.host_tools`, so one pass names every missing tool."""
+    return [Check(f"tool:{name}", "pass" if found else "fail", f"`{name}` found", None if found else fix)
+            for name, found, fix in _claude.host_tools(isolation)]
+
+
+def _probe_checks(transport: _claude.ClaudeCode, probe: bool) -> list[Check]:
+    """Report the helper sandbox probe and the skill inventory as separate rows. The inventory never waits on the probe."""
+    checks: list[Check] = []
+    if probe:
+        try:
+            transport.check_helper_sandbox()
+        except (CodedError, OSError, RuntimeError) as error:
+            checks.append(_failed("sandbox-probe", error, PROBE_FIX))
+        else:
+            checks.append(Check("sandbox-probe", "pass", "the helper sandbox probe passed"))
+    try:
+        inventory = transport.inventory()
+    except (CodedError, OSError, RuntimeError) as error:
+        checks.append(_failed("skill-inventory", error, INVENTORY_FIX))
+    else:
+        turned_off = f"; turned off {sorted(inventory.foreign)}" if inventory.foreign else ""
+        checks.append(Check("skill-inventory", "pass", f"only the probe skill loads besides {len(inventory.builtin)} "
+                            + f"Claude Code commands{turned_off}"))
+    return checks
+
+
+def _login_checks(executable: str, isolation: str, probe: bool) -> list[Check]:
     nono = isolation == "nono"
-    if nono:
-        checks += _nono_checks()
-    if sys.platform != "darwin":
-        helpers = () if nono else _claude.SANDBOX_HELPERS
-        checks += [Check(f"tool:{name}", "pass" if shutil.which(name) else "fail", f"`{name}` on PATH",
-                         None if shutil.which(name) else fix)
-                   for name, fix in (("bwrap", _claude.INSTALL_BUBBLEWRAP), *((helper, _claude.INSTALL_SOCAT)
-                                                                             for helper in helpers))]
-        if not nono:
-            checks.append(_apparmor())
-    checks += [Check(f"tool:{path}", "pass" if Path(path).is_file() else "fail", "the live preflight runs it",
-                     None if Path(path).is_file() else f"install {Path(path).name}") for path in LIVE_TOOLS]
-    if any(check.status == "fail" for check in checks if check.name == "nono"):
-        return checks
     try:
         transport = _claude.ClaudeCode("doctor", Budget(1, 120, 0), lambda: None, Path(executable), isolation=isolation)
     except CodedError as error:
-        return [*checks, _failed("login", error, _claude.LOGIN_HINT)]
+        return [_failed("login", error, _claude.LOGIN_HINT)]
+    except (OSError, RuntimeError) as error:
+        return [_failed("claude-setup", error, SETUP_FIX)]
+    checks = [Check("login", "pass", "nono injects the host API key" if nono else
+                    "Claude login found" if transport.credential else "macOS Keychain login")]
     try:
-        login = ("nono injects the host API key" if nono else
-                 "Claude login found" if transport.credential else "macOS Keychain login")
-        checks.append(Check("login", "pass", login))
         if transport.unix_sockets():
             checks.append(Check("nested-namespace", "info", "this host blocks a user namespace inside bwrap, so the runner "
                                 + "turns off Claude Code's Unix-socket filter (allowAllUnixSockets); file and domain rules "
                                 + "stay on, and the live preflight proves that a host Unix socket stays unreachable"))
-        try:
-            transport.check_sandbox()
-        except (CodedError, OSError, RuntimeError) as error:
-            checks.append(_failed("sandbox-and-skills", error))
-        else:
-            inventory = transport.inventory()
-            turned_off = f"; turned off {sorted(inventory.foreign)}" if inventory.foreign else ""
-            checks.append(Check("sandbox-and-skills", "pass", "the helper sandbox probe passed, and only the probe skill "
-                                + f"loads besides {len(inventory.builtin)} Claude Code commands{turned_off}"))
+        checks += _probe_checks(transport, probe)
     finally:
         try:
             transport.close()
         except CodedError as error:
-            checks.append(_failed("login-close", error))
+            checks.append(Check("login-close", "info", str(error)) if error.code in _claude.NOTICE_CODES
+                          else _failed("login-close", error, _claude.LOGIN_HINT))
     return checks
+
+
+def _claude_checks(isolation: str) -> list[Check]:
+    executable = shutil.which("claude")
+    if executable is None:
+        return [Check("claude", "fail", "the `claude` executable is not on PATH", "install Claude Code, then run `claude` once and log in")]
+    nono = isolation == "nono"
+    checks = [Check("claude", "pass", _version(executable))]
+    if nono:
+        checks += _nono_checks()
+    tools = _tool_checks(isolation)
+    checks += tools
+    if sys.platform != "darwin" and not nono:
+        checks.append(_apparmor())
+    if any(check.status == "fail" for check in checks if check.name == "nono"):
+        return checks
+    return checks + _login_checks(executable, isolation, all(tool.status == "pass" for tool in tools))
 
 
 def _codex_checks() -> list[Check]:
@@ -140,8 +165,10 @@ def doctor(harness: str, isolation: str = "claude") -> dict[str, object]:
     `ok` is False when any check fails. Checks that need a model call report `needs-live`.
     `isolation` is `claude` or `nono`; only the `claude` harness supports `nono`.
     """
-    if isolation == "nono" and harness != "claude":
-        checks = [Check("isolation", "fail", "nono isolation supports only the claude harness", "use `--harness claude`")]
+    try:
+        validate_isolation(harness, isolation)
+    except ValueError as error:
+        checks = [Check("isolation", "fail", str(error), "use `--isolation claude`, or `--harness claude` with nono")]
     else:
         checks = _claude_checks(isolation) if harness == "claude" else _codex_checks()
     if harness == "claude":

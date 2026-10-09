@@ -67,8 +67,8 @@ def watched_unix(directory: Path, *, active: bool = True) -> Generator[tuple[Pat
         yield path, lambda _token: False
         return
     if len(str(path).encode()) > SOCKET_PATH_LIMIT:
-        raise CodedError("preflight-leak", f"the Unix-socket probe path {path} is too long for AF_UNIX; "
-                         + "set TMPDIR to a short directory such as /tmp, then run again")
+        raise CodedError("sandbox-unavailable", f"Claude Code sandbox unavailable: the Unix-socket probe path {path} is too "
+                         + "long for AF_UNIX; no unsafe fallback; fix: set TMPDIR to a short directory such as /tmp, then run again")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
         server.bind(str(path))
         server.listen(16)

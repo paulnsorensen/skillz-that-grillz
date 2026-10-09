@@ -22,13 +22,12 @@ from typing import Protocol, TextIO, cast, final, get_args
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
-from skillz_experiments._claude import (ISOLATIONS as _ISOLATIONS, NOTICE_CODES as _NOTICE_CODES,
-                                        TERMINAL_CODES as _TERMINAL_CODES)
+from skillz_experiments._claude import NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._doctor import doctor
 from skillz_experiments._gate import case_deltas, verdict as gate_verdict
-from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
+from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
@@ -536,6 +535,12 @@ class _Session:
         return [item for item in self.outcomes
                 if item.get("arm") == "search" and item.get("split") in ("train", "validation")]
 
+    def check_name(self) -> None:
+        """Stop before any live call when the seed name matches a Claude Code command or a foreign skill."""
+        check = cast(Callable[[Candidate], None] | None, getattr(self.provider, "check_name", None))
+        if check is not None:
+            check(self.seed)
+
     def check_seed(self) -> None:
         """Stop before any search call when the seed fails the local candidate contract check."""
         check = cast(Callable[[Candidate], bool] | None, getattr(self.provider, "check_candidate", None))
@@ -750,8 +755,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data."""
     if adapter not in ("claude", "codex"):
         raise ValueError("harness must be claude or codex")
-    if isolation not in _ISOLATIONS or (isolation == "nono" and adapter != "claude"):
-        raise ValueError("isolation must be claude, or nono with the claude harness")
+    validate_isolation(adapter, isolation)
     if edit is not None and edit not in get_args(Edit):
         raise ValueError("edit must be prose or prose+cli")
     if repeats is not None and repeats < 1:
@@ -782,6 +786,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         pending: BaseException | None = None
         try:
             try:
+                if session.phase == "prepared":
+                    session.check_name()
                 session.preflight()
                 if session.phase == "prepared":
                     session.check_seed()
@@ -808,7 +814,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
 
 def summary(record: dict[str, object]) -> dict[str, object]:
     keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
-            "gate", "search", "estimate", "contract_hash", "contract_source")
+            "gate", "search", "estimate", "contract_hash", "contract_source", "isolation")
     result = {key: record.get(key) for key in keys}
     if "close_warning" in record:
         code = mapping(record["close_warning"]).get("code")

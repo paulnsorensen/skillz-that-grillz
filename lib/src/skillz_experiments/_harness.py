@@ -71,6 +71,14 @@ class Role:
                 else Command(self.command, self.model, budget, checkpoint))
 
 
+def validate_isolation(adapter: str, isolation: str) -> None:
+    """Raise `ValueError` unless `isolation` is known and fits `adapter`. Only the claude harness supports nono."""
+    if isolation not in ISOLATIONS:
+        raise ValueError("isolation must be claude or nono")
+    if isolation == "nono" and adapter != "claude":
+        raise ValueError("nono isolation supports only the claude harness")
+
+
 def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False,
           isolation: str = "claude") -> Role:
     if set(value) - {"adapter", "command", "identity", "model", "isolation"}:
@@ -78,10 +86,7 @@ def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool =
     adapter = value.get("adapter", "codex")
     selected_model = string(value.get("model", model), "role model")
     selected = string(value.get("isolation", isolation), "role isolation")
-    if selected not in ISOLATIONS:
-        raise ValueError("isolation must be claude or nono")
-    if selected != "claude" and adapter != "claude":
-        raise ValueError("nono isolation supports only the claude harness")
+    validate_isolation(str(adapter), selected)
     fields = set(value) - {"isolation"}
     if adapter == "codex":
         if fields - {"adapter", "model"}:
@@ -208,7 +213,8 @@ class Harness:
             kept = passes.get(name)
             if (isinstance(adapter, ClaudeCode) and keys.get(name) == reuse_keys[name] and isinstance(kept, dict)
                     and cast(dict[str, object], kept).get("isolation") == "passed"):
-                adapter.check_sandbox()
+                adapter.check_helper_sandbox()
+                _ = adapter.inventory()
                 evidence[name] = kept
                 continue
             evidence[name] = adapter.preflight()
@@ -228,6 +234,13 @@ class Harness:
                 errors.append(error)
         if errors:
             raise min(errors, key=_severity)
+
+    def check_name(self, candidate: Candidate) -> None:
+        """Stop when the task role cannot load the candidate under its name. It makes no model call."""
+        self._unchanged()
+        check = cast(Callable[[Candidate], None] | None, getattr(self.transports["task"], "check_name", None))
+        if check is not None:
+            check(candidate)
 
     def check_candidate(self, candidate: Candidate) -> bool:
         """Run the local contract check of the task role. It makes no model call."""

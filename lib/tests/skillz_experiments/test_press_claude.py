@@ -28,8 +28,9 @@ here = Path(__file__).resolve()
 argv = sys.argv[1:]
 prompt = sys.stdin.read()
 if "--input-format" in argv:
+    names = sorted(path.name for path in Path.cwd().glob(".claude/skills/*"))
     print(json.dumps({"type": "control_response", "response": {"subtype": "success",
-                      "response": {"commands": [{"name": "skillz"}, {"name": "doctor", "builtin": True}]}}}))
+                      "response": {"commands": [{"name": name} for name in names] + [{"name": "doctor", "builtin": True}]}}}))
     sys.exit(0)
 with here.with_name("claude.log").open("a") as log:
     log.write(json.dumps({"argv": argv, "prompt": prompt}) + "\\n")
@@ -191,7 +192,8 @@ def test_claude_role_with_a_blank_model_is_rejected(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("mode", ["auth-fail", "foreign-skill", "sandbox-unavailable", "no-init-auth", "no-init",
                                   "missing-skill", "read-host", "bash-broken", "read-fallback", "skips-cat",
-                                  "write-agents", "write-broken", "write-skips-agents"])
+                                  "write-agents", "write-broken", "write-skips-agents",
+                                  "write-claude", "write-skips-claude"])
 def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and_no_retry(
         tmp_path: Path, probes: list[list[str]], mode: str) -> None:
     del probes
@@ -210,7 +212,9 @@ def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and
 @pytest.mark.parametrize(("mode", "reason"), [
     ("write-agents", "write isolation failed"),
     ("write-broken", "no positive control"),
-    ("write-skips-agents", "write probe has no evidence")])
+    ("write-skips-agents", "write probe has no evidence"),
+    ("write-claude", "write isolation failed"),
+    ("write-skips-claude", "write probe has no evidence")])
 def test_preflight_stops_when_the_agents_write_succeeds_or_the_write_control_fails(
         tmp_path: Path, probes: list[list[str]], mode: str, reason: str) -> None:
     del probes
@@ -242,7 +246,7 @@ def test_write_probe_needs_a_failed_printf_to_agents_not_any_command_that_names_
             {"type": "tool_use", "id": f"u{index}", "name": "Bash", "input": {"command": command}}]}})
         events.append({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": f"u{index}", "is_error": error}]}})
-    assert _claude._write_failure(events, agents, False, True) == (  # pyright: ignore[reportPrivateUsage]
+    assert _claude._write_failure(events, [agents], False, True) == (  # pyright: ignore[reportPrivateUsage]
         "write probe has no evidence: no failed Bash printf to .agents")
 
 
@@ -474,7 +478,7 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     if change == "tools":
         monkeypatch.setattr(_claude, "TOOLS", "Bash,Read,Skill,Write")
     elif change == "probe-skill":
-        monkeypatch.setattr(_claude, "PROBE_SKILL", "other")
+        monkeypatch.setattr(_claude, "PROBE_PREFIX", "other-")
     elif change == "platform":
         monkeypatch.setattr(sys, "platform", "darwin")
     elif change == "settings":

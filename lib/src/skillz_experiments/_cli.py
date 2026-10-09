@@ -10,7 +10,7 @@ from typing import Literal
 import fromargs
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import NOTICE_CODES
+from skillz_experiments._claude import NOTICE_CODES, Isolation
 from skillz_experiments._doctor import doctor
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._gate import simulate as simulate_gate
@@ -20,7 +20,6 @@ from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Stop, export as export_run, run as run_workflow
 
 Harness = Literal["claude", "codex"]
-Isolation = Literal["claude", "nono"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -61,7 +60,10 @@ def run_command(*, target: Path, out: Path, model: str, harness: Harness = "clau
 
 @app.command(name="doctor")
 def doctor_command(*, harness: Harness = "claude", isolation: Isolation = "claude") -> dict[str, object]:
-    """Check the host for a run with no model call: tools, login, sandbox, and skill isolation, in one pass."""
+    """Check the host for a run with no model call: tools, login, sandbox, and skill isolation, in one pass.
+
+    The command exits 0 even when a check fails. Read `ok` in the report: it is false when any check fails.
+    """
     with _coded():
         return doctor(harness, isolation)
 

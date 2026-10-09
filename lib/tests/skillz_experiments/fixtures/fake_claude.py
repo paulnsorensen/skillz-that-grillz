@@ -13,6 +13,7 @@ import os
 import re
 import socket
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -32,8 +33,17 @@ def _inside(path: str, roots: list[str]) -> bool:
     return any(path == root or path.startswith(root.rstrip("/") + "/") for root in roots)
 
 
+def _nono_roots(name: str) -> list[str] | None:
+    """Return the roots that the fake `nono` grants in the variable `name`, or None outside nono."""
+    value = os.environ.get(name)
+    return None if value is None else value.split(os.pathsep)
+
+
 def _readable(path: str, settings: dict[str, object]) -> bool:
-    """Mimic the sandbox read rule: the narrower allow wins over a deny."""
+    """Mimic the sandbox read rule: the narrower allow wins over a deny. Under the fake `nono`, only its read grants count."""
+    granted = _nono_roots("FAKE_NONO_READ")
+    if granted is not None:
+        return _inside(path, granted)
     filesystem = cast(dict[str, list[str]], cast(dict[str, object], settings.get("sandbox", {})).get("filesystem", {}))
     denied = [root for root in filesystem.get("denyRead", []) if _inside(path, [root])]
     allowed = [root for root in filesystem.get("allowRead", []) if _inside(path, [root])]
@@ -43,7 +53,10 @@ def _readable(path: str, settings: dict[str, object]) -> bool:
 
 
 def _writable(path: str, settings: dict[str, object]) -> bool:
-    """Mimic the sandbox write rule: a path under a `denyWrite` root fails."""
+    """Mimic the sandbox write rule: a path under a `denyWrite` root fails. Under the fake `nono`, only its write grants count."""
+    granted = _nono_roots("FAKE_NONO_WRITE")
+    if granted is not None:
+        return _inside(path, granted)
     filesystem = cast(dict[str, list[str]], cast(dict[str, object], settings.get("sandbox", {})).get("filesystem", {}))
     return not any(_inside(path, [root]) for root in filesystem.get("denyWrite", []))
 
@@ -51,14 +64,17 @@ def _writable(path: str, settings: dict[str, object]) -> bool:
 def write_probe(writes: list[tuple[str, str]], mode: str, config: dict[str, object]) -> list[str]:
     """Answer the preflight write probe. `write-agents` lets the `.agents` write succeed; `write-broken` fails every write.
 
-    `write-skips-agents` runs the control write and skips the `.agents` write.
+    `write-skips-agents` runs the control write and skips the `.agents` write. `write-claude` and `write-skips-claude`
+    do the same for the `.claude` write.
     """
     texts: list[str] = []
     for index, (token, path) in enumerate(writes):
         agents = "/.agents/" in path
-        if mode == "write-skips-agents" and agents:
+        claude = "/.claude/" in path
+        if (mode == "write-skips-agents" and agents) or (mode == "write-skips-claude" and claude):
             continue
-        writes_file = mode != "write-broken" and (_writable(path, config) or (mode == "write-agents" and agents))
+        writes_file = mode != "write-broken" and (_writable(path, config) or (mode == "write-agents" and agents)
+                                                 or (mode == "write-claude" and claude))
         if writes_file:
             _ = Path(path).write_text(token)
         texts.append("" if writes_file else "denied")
@@ -116,12 +132,16 @@ def network_probe(prompt: str, mode: str) -> list[str]:
 
 
 def unix_probe(index: int, command: str, mode: str) -> str:
-    """Answer the host Unix-socket probe. `unix-open` connects and sends the token; `unix-skipped` prints nothing."""
+    """Answer the host Unix-socket probe. `unix-open` connects and sends the token; `unix-skipped` prints nothing.
+
+    `abstract-open` and `abstract-skipped` do the same for the abstract-socket command only.
+    """
     path = cast(re.Match[str], re.search(r"connect_ex\('([^']+)'\)", command)).group(1)
-    path = "\0" + path[2:] if path.startswith("\\0") else path
+    abstract = path.startswith("\\0")
+    path = "\0" + path[2:] if abstract else path
     token = cast(re.Match[str], re.search(r"([0-9a-f]{32})", command)).group(1)
-    text = "" if mode == "unix-skipped" else f"denied-{token}"
-    if mode == "unix-open":
+    text = "" if mode == "unix-skipped" or (mode == "abstract-skipped" and abstract) else f"denied-{token}"
+    if mode == "unix-open" or (mode == "abstract-open" and abstract):
         with socket.socket(socket.AF_UNIX) as client:
             client.connect(path)
             client.sendall(token.encode())
@@ -151,15 +171,30 @@ def listed_skills(mode: str, config: dict[str, object]) -> list[str]:
 def inventory(mode: str, config: dict[str, object]) -> int:
     """Answer an `initialize` control request. `inventory-broken` sends no command list.
 
+    `inventory-error` sends an error response, `inventory-auth` fails to log in, and `inventory-hang` never answers.
+    `inventory-nonzero` sends a valid list and still exits 1.
+
     `builtin-echo` also lists `echo-skill` as a Claude Code command, so the echo candidate name collides with it.
     """
     commands: list[dict[str, object]] = [{"name": name, "description": ""} for name in listed_skills(mode, config)]
     builtin = [*BUILTIN_COMMANDS, *(["echo-skill"] if mode == "builtin-echo" else [])]
     commands += [cast(dict[str, object], {"name": name, "description": "", "builtin": True}) for name in builtin]
+    if mode == "inventory-hang":
+        time.sleep(30)
+    if mode == "inventory-auth":
+        print("Invalid API key - Please run /login", file=sys.stderr)
+        return 1
+    if mode == "inventory-error":
+        emit({"type": "control_response", "response": {"subtype": "error", "request_id": "skillz-inventory",
+                                                      "error": "profile rejected"}})
+        print("nono: profile rejected", file=sys.stderr)
+        return 2
     body: dict[str, object] = {} if mode == "inventory-broken" else {"commands": commands, "agents": []}
+    if mode == "inventory-bad-row":
+        body["commands"] = ["not-an-object"]
     emit({"type": "control_response", "response": {"subtype": "success", "request_id": "skillz-inventory",
                                                   "response": body}})
-    return 0
+    return 1 if mode == "inventory-nonzero" else 0
 
 
 def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object], prompt: str) -> int:
@@ -230,6 +265,8 @@ def main() -> int:
                                    "plugins": list(BUILTIN_PLUGINS), "mcp_servers": [], "agents": ["general-purpose", "Explore"]}
         if mode == "foreign-plugin":
             init["plugins"] = [{"name": "user-plugin", "path": "/x"}]
+        if mode == "spoofed-plugin":
+            init["plugins"] = [{"name": "user-plugin", "path": "builtin", "source": "user-plugin@elsewhere"}]
         if mode == "foreign-mcp":
             init["mcp_servers"] = [{"name": "user-server", "status": "connected"}]
         if mode == "foreign-agent":

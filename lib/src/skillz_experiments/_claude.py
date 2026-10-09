@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -14,7 +15,7 @@ import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast, final
+from typing import Literal, cast, final, get_args
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
@@ -24,10 +25,12 @@ from skillz_experiments._evaluator import answer_schema
 from skillz_experiments import _nono
 from skillz_experiments._isolation import listening, probe, watched, watched_abstract, watched_unix
 from skillz_experiments._records import write_bytes
-from skillz_experiments._runtime import Budget, process
+from skillz_experiments._runtime import Budget, BudgetExhausted, process
 
 TOOLS = "Bash,Read,Skill"
-PROBE_SKILL = "skillz"
+PROBE_PREFIX = "skillz-probe-"
+AUTH_FAILED = "authentication failed"
+CLAUDE_MEMORY = ("CLAUDE.md", "CLAUDE.local.md")
 NETWORK_PROBE = "loopback-tcp-http-v2"
 # Curl exit codes that show a request attempt. Codes 5 and 6 are name-resolution failures, and 22 needs `-f`.
 CURL_ATTEMPTED = frozenset({0, 7, 28, 52, 56, 97})
@@ -45,11 +48,14 @@ LOGIN_HINT = "run `claude` once and log in"
 INSTALL_BUBBLEWRAP = "install bubblewrap (for example `sudo apt install bubblewrap`)"
 INSTALL_SOCAT = "install socat (for example `sudo apt install socat`)"
 USERNS_FIX = ("allow unprivileged user namespaces with `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, "
-              "or add an AppArmor profile for bwrap, or run with `--isolation nono`")
+              "or add an AppArmor profile for bwrap")
+NONO_HINT = "or run with `--isolation nono`"
 # Settings sources that Claude Code reads besides `--settings`. `project` keeps the staged project skill and drops user
 # settings, user skills, and plugins. `--restricted` would also drop the project skill, so the runner does not use it.
 SETTING_SOURCES = "project"
-ISOLATIONS = ("claude", "nono")
+Isolation = Literal["claude", "nono"]
+ISOLATIONS: tuple[str, ...] = get_args(Isolation)
+LIVE_TOOLS = ("/usr/bin/python3", "/usr/bin/curl")
 INVENTORY_REQUEST = json.dumps({"type": "control_request", "request_id": "skillz-inventory",
                                 "request": {"subtype": "initialize"}}) + "\n"
 INVENTORY_SECONDS = 60
@@ -74,11 +80,23 @@ class SandboxUnavailable(CodedError):
     """The Bash sandbox cannot start. The message names the cause and the fix. The run never falls back."""
 
     def __init__(self, cause: str, fix: str) -> None:
+        self.fix: str = fix
         super().__init__("sandbox-unavailable", f"Claude Code sandbox unavailable: {cause}; no unsafe fallback; fix: {fix}")
 
 
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def host_tools(isolation: str) -> list[tuple[str, bool, str]]:
+    """List each host tool that the sandbox and the live preflight need, as (name, found, fix).
+
+    The doctor reports these rows, and the helper sandbox probe stops on the first missing one.
+    """
+    wanted = [] if sys.platform == "darwin" else [
+        ("bwrap", INSTALL_BUBBLEWRAP), *([] if isolation == "nono" else [(helper, INSTALL_SOCAT) for helper in SANDBOX_HELPERS])]
+    return [*((name, shutil.which(name) is not None, fix) for name, fix in wanted),
+            *((path, Path(path).is_file(), f"install {Path(path).name}") for path in LIVE_TOOLS)]
 
 
 def _sandbox_fix(detail: str) -> str:
@@ -207,16 +225,13 @@ class ClaudeLogin:
     """The one config directory and login link that every Claude role of a run shares.
 
     The owner closes it once. Close deletes the directory, then reports what happened to the login.
-    With `api_key`, the directory starts empty and links no login: nono injects the host API key instead.
+    With `api_key`, no directory exists and no login links: nono injects the host API key instead.
     """
 
     def __init__(self, *, api_key: bool = False) -> None:
         self.credential: _Credential | None = None
         self._temporary: Path | None = None
-        if api_key:
-            self.config_dir = self._temporary = Path(tempfile.mkdtemp(prefix=CONFIG_PREFIX))
-            return
-        if sys.platform == "darwin":
+        if api_key or sys.platform == "darwin":
             self.config_dir = _host_config_dir()
             return
         self.credential = _Credential.find()
@@ -235,8 +250,6 @@ class ClaudeLogin:
         Any other change stops the run with `credential-changed`. A second call does nothing.
         """
         directory, self._temporary = self._temporary, None
-        if directory is not None and self.credential is None:
-            shutil.rmtree(directory, ignore_errors=True)
         if directory is None or self.credential is None:
             return
         restored = False
@@ -275,6 +288,19 @@ def _preflight_leak(detail: str) -> CodedError:
     return CodedError("preflight-leak", f"Claude Code isolation preflight fails: {detail}; no unsafe fallback")
 
 
+def _login_failed(fix: str) -> CodedError:
+    return CodedError("login-missing", f"Claude Code isolation preflight fails: {AUTH_FAILED}; no unsafe fallback; fix: {fix}")
+
+
+def _check_ancestors(workspace: Path) -> None:
+    """Stop when Claude Code would load a `CLAUDE.md` or `CLAUDE.local.md` from an ancestor of `workspace`."""
+    for directory in workspace.resolve().parents:
+        for name in CLAUDE_MEMORY:
+            if os.path.lexists(directory / name):
+                raise _preflight_leak(f"Claude Code would load {directory / name}, an ancestor of the workspace; "
+                                      + "move it out, or set TMPDIR to a directory without one")
+
+
 def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
              unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
     """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
@@ -283,9 +309,11 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
     workspace and the runtime roots. The Read tool follows permission rules, not the sandbox, so a deny
     rule covers the host roots, `/proc`, and the run directory `out` for that tool. Commands cannot write
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
-    `overrides` names the skills that `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter,
-    which cannot start where the host blocks a nested user namespace; the live preflight then probes a host socket.
-    `sandboxed=False` turns Claude Code's own sandbox off, for a role that nono confines as a whole.
+    Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
+    `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter, which cannot start where the host blocks
+    a nested user namespace; the live preflight then probes a host socket. `sandboxed=False` turns Claude Code's own
+    sandbox off, for a role that nono confines as a whole. Then nono keeps the staged trees beside the workspace
+    read-only, and the deny rules do not apply: a task can still create `<workspace>/.claude` entries.
     """
     runtime = [*RUNTIME_READ, *(MACOS_READ if sys.platform == "darwin" else ())]
     temporary = _unique([tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())])
@@ -322,26 +350,27 @@ class Inventory:
     foreign: frozenset[str]
 
 
-def _commands(stdout: str) -> tuple[frozenset[str], frozenset[str]]:
-    """Read the `initialize` control response. Return the built-in names and the other names."""
-    for event in _events(stdout):
-        if event.get("type") != "control_response" or not isinstance(event.get("response"), dict):
-            continue
-        body = mapping(event["response"]).get("response")
-        rows = mapping(cast(object, body)).get("commands") if isinstance(body, dict) else None
-        if not isinstance(rows, list):
-            break
-        builtin: set[str] = set()
-        other: set[str] = set()
-        for row in (mapping(item) for item in cast(list[object], rows)):
-            name = row.get("name")
-            if not isinstance(name, str) or not name:
-                break
-            (builtin if row.get("builtin") is True else other).add(name)
-        else:
-            return frozenset(builtin), frozenset(other)
-        break
-    raise _preflight_leak("the Claude Code initialize response has no valid command list, so the skill inventory is unknown")
+def _control_response(events: list[dict[str, object]]) -> dict[str, object]:
+    response = next((event.get("response") for event in events
+                     if event.get("type") == "control_response" and isinstance(event.get("response"), dict)), None)
+    return cast(dict[str, object], response) if isinstance(response, dict) else {}
+
+
+def _commands(events: list[dict[str, object]]) -> tuple[frozenset[str], frozenset[str]] | None:
+    """Read the `initialize` control response. Return the built-in names and the other names, or None without a valid list."""
+    body = _control_response(events).get("response")
+    rows = cast(dict[str, object], body).get("commands") if isinstance(body, dict) else None
+    if not isinstance(rows, list):
+        return None
+    builtin: set[str] = set()
+    other: set[str] = set()
+    for row in cast(list[object], rows):
+        entry = cast(dict[str, object], row) if isinstance(row, dict) else {}
+        name = entry.get("name")
+        if not isinstance(name, str) or not name:
+            return None
+        (builtin if entry.get("builtin") is True else other).add(name)
+    return frozenset(builtin), frozenset(other)
 
 
 def _events(stdout: str) -> list[dict[str, object]]:
@@ -417,18 +446,20 @@ def _leak(events: list[dict[str, object]], skills: list[str], builtin: Collectio
 
 
 def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skills: list[str],
-             builtin: Collection[str] = ()) -> str | None:
+             builtin: Collection[str] = (), *, nono_fix: bool = False) -> str | None:
     """Name the isolation failure that a probe run shows, or return None when the run is isolated.
 
-    Raise SandboxUnavailable when the Bash sandbox cannot start.
+    Raise SandboxUnavailable when the Bash sandbox cannot start. With `nono_fix`, its fix also offers nono.
     """
     final = _final(events)
     errored = returncode != 0 or (final is not None and final.get("is_error") is True)
     detail = (stderr[:8192] + " " + (str(final.get("result", ""))[:2048] if final else "")).lower()
     if returncode != 0 and "sandbox" in detail:
-        raise SandboxUnavailable(f"the Bash sandbox cannot start ({' '.join(stderr[:200].split())})", _sandbox_fix(detail))
+        fix = _sandbox_fix(detail)
+        raise SandboxUnavailable(f"the Bash sandbox cannot start ({' '.join(stderr[:200].split())})",
+                                 f"{fix}; {NONO_HINT}" if nono_fix else fix)
     if errored and any(word in detail for word in ("login", "api key", "authenticat", "unauthorized", "401", "oauth")):
-        return "authentication failed"
+        return AUTH_FAILED
     loaded = _loaded_skills(events, builtin)
     if loaded is None:
         return "no init event" if returncode == 0 else f"execution failed (exit {returncode})"
@@ -531,14 +562,17 @@ def _read_failure(events: list[dict[str, object]], sealed_token: str, sealed: st
     return None
 
 
-def _write_failure(events: list[dict[str, object]], agents_file: str, wrote: bool, controlled: bool) -> str | None:
-    """Judge the write probe. It needs a Bash write to `.agents` that fails, and a workspace write that succeeds."""
+def _write_failure(events: list[dict[str, object]], files: list[str], wrote: bool, controlled: bool) -> str | None:
+    """Judge the write probe. It needs a failed Bash write to each of `files` (in `.agents` and `.claude`),
+    and a workspace write that succeeds.
+    """
     if wrote:
-        return "write isolation failed: the task model can write to .agents"
+        return "write isolation failed: the task model can write to .agents or .claude"
     attempts = [mapping(item["item"]) for item in _trace(events)]
-    if not any(cast(str, item["command"]).startswith("printf") and agents_file in cast(str, item["command"])
-               and item["exit_code"] == 1 for item in attempts):
-        return "write probe has no evidence: no failed Bash printf to .agents"
+    for file in files:
+        if not any(cast(str, item["command"]).startswith("printf") and file in cast(str, item["command"])
+                   and item["exit_code"] == 1 for item in attempts):
+            return f"write probe has no evidence: no failed Bash printf to {'.agents' if '/.agents/' in file else '.claude'}"
     if not controlled:
         return "write probe has no positive control: Bash cannot write a workspace file"
     return None
@@ -617,13 +651,14 @@ NESTED_PROBE = ("import ctypes,os\n"
                 "print('nested-ok')\n")
 
 
+@functools.cache
 def nested_userns_blocked() -> bool:
     """Check, with no model call, whether a process that `bwrap` starts can create its own user namespace.
 
     Claude Code's Unix-socket filter needs that nested namespace. On Ubuntu 24.04 and later, the AppArmor profile
     `bwrap-userns-restrict` strips the capabilities it needs, and the sysctl alone does not lift it.
     Return False on macOS, without `bwrap`, or when the first-level sandbox itself fails; the sandbox checks
-    report those cases.
+    report those cases. The result holds for the process, so every role gets the same answer.
     """
     tool = shutil.which("bwrap")
     if sys.platform == "darwin" or tool is None:
@@ -682,10 +717,14 @@ def _answer(final: dict[str, object]) -> dict[str, object]:
         return {}
 
 
-def _probe_skill(workspace: Path) -> None:
-    skill = workspace / ".agents/skills" / PROBE_SKILL
+def _probe_name() -> str:
+    return f"{PROBE_PREFIX}{secrets.token_hex(8)}"
+
+
+def _probe_skill(workspace: Path, name: str) -> None:
+    skill = workspace / ".agents/skills" / name
     skill.mkdir()
-    _ = (skill / "SKILL.md").write_text(f"---\nname: {PROBE_SKILL}\ndescription: Inspect public fixtures\n---\nInspection probe.\n")
+    _ = (skill / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Inspect public fixtures\n---\nInspection probe.\n")
 
 
 @final
@@ -710,7 +749,6 @@ class ClaudeCode:
         self.credential = self.login.credential
         self.config_dir = self.login.config_dir
         self._inventory: Inventory | None = None
-        self._nested_blocked: bool | None = None
 
     def close(self) -> None:
         """Close the login when this role created it. The harness closes a login that it shares."""
@@ -723,11 +761,14 @@ class ClaudeCode:
         The settings then skip that filter. The filesystem and domain rules stay on, and the live preflight
         probes a host Unix socket instead. Under nono, Claude Code's own sandbox is off, so this is False.
         """
-        if self.nono is not None:
-            return False
-        if self._nested_blocked is None:
-            self._nested_blocked = nested_userns_blocked()
-        return self._nested_blocked
+        return self.nono is None and nested_userns_blocked()
+
+    def _nono_fix(self) -> bool:
+        """Return True when a failure of Claude Code's own sandbox can also be fixed by `--isolation nono`."""
+        return self.isolation == "claude" and sys.platform.startswith("linux")
+
+    def _login_fix(self) -> str:
+        return f"export a valid {_nono.CREDENTIAL}" if self.nono is not None else LOGIN_HINT
 
     def _floor(self, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
         return settings(workspace, self.out, overrides=overrides, unix_sockets=self.unix_sockets(),
@@ -776,10 +817,14 @@ class ClaudeCode:
         state.mkdir(exist_ok=True)
         self._config(workspace).mkdir(exist_ok=True)
         profile_path = workspace.parent / "nono-profile.json"
-        _ = profile_path.write_text(json.dumps(_nono.profile(
-            config_dir=self._config(workspace), project=workspace.parent, executable=self.executable.resolve(),
-            settings_file=settings_path, variables=sorted(environment))))
+        _ = profile_path.write_text(json.dumps(self._profile(self._config(workspace), workspace.parent, settings_path,
+                                                             environment)))
         return _nono.command(self.nono, profile_path, environment, argv), _nono.host_environment(state)
+
+    def _profile(self, config_dir: Path, project: Path, settings_file: Path, environment: dict[str, str]) -> dict[str, object]:
+        """Build the nono profile for `_launch` and `environment_key`, so the preflight key follows the real sandbox."""
+        return _nono.profile(config_dir=config_dir, project=project, executable=self.executable.resolve(),
+                             settings_file=settings_file, variables=sorted(environment))
 
     def _base(self, settings_path: Path) -> list[str]:
         return [str(self.executable), "-p", "--setting-sources", SETTING_SOURCES, "--no-session-persistence",
@@ -792,6 +837,7 @@ class ClaudeCode:
 
     def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float,
              expected: list[str]) -> tuple[int, str, list[dict[str, object]]]:
+        _check_ancestors(workspace)
         self._stage(workspace)
         settings_path = workspace.parent / "settings.json"
         _ = settings_path.write_text(json.dumps(self._floor(workspace, self.inventory().foreign - set(expected))))
@@ -801,39 +847,53 @@ class ClaudeCode:
 
     def _list(self, workspace: Path, overrides: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
         """Send one `initialize` control request and return the built-in and other command names. No model turn runs."""
+        _check_ancestors(workspace)
         settings_path = workspace.parent / "inventory-settings.json"
         _ = settings_path.write_text(json.dumps(self._floor(workspace, overrides)))
         command, environment = self._launch(workspace, [*self._base(settings_path), "--input-format", "stream-json"],
                                             settings_path)
+        timeout = min(INVENTORY_SECONDS, self.budget.remaining())
         try:
-            result = subprocess.run(command, cwd=workspace, env=environment, input=INVENTORY_REQUEST,
-                                    capture_output=True, text=True, timeout=INVENTORY_SECONDS, check=False,
-                                    start_new_session=True)
-        except subprocess.TimeoutExpired:
-            raise _preflight_leak("the Claude Code skill inventory timed out") from None
-        return _commands(result.stdout)
+            result = process(command, cwd=workspace, timeout=timeout, environment=environment, input_text=INVENTORY_REQUEST)
+        except BudgetExhausted:
+            if timeout < INVENTORY_SECONDS:
+                raise
+            raise _preflight_leak(f"the Claude Code skill inventory timed out after {INVENTORY_SECONDS} seconds") from None
+        events = _events(result.stdout)
+        commands = _commands(events)
+        if commands is None:
+            reason = _failure(result.returncode, result.stderr, events, [], nono_fix=self._nono_fix())
+            if reason == AUTH_FAILED:
+                raise _login_failed(self._login_fix())
+            error = str(_control_response(events).get("error", ""))[:200]
+            raise _preflight_leak("the Claude Code initialize response has no valid command list, so the skill inventory "
+                                  + f"is unknown (exit {result.returncode}; stderr: {' '.join(result.stderr[:200].split())!r}; "
+                                  + f"control response error: {error!r})")
+        return commands
 
     def inventory(self) -> Inventory:
         """List what Claude Code loads, with no model call, and turn each foreign skill off.
 
         The first `initialize` request lists every command. Each name that is not built-in and not the probe
         skill gets `skillOverrides: off`. A second request must then list only the probe skill. A name that
-        stays on, such as a plugin skill, stops the run with `preflight-leak`.
+        stays on, such as a plugin skill, stops the run with `preflight-leak`. The probe name is random for each
+        inventory, so a foreign skill cannot pass as the probe.
         """
         if self._inventory is not None:
             return self._inventory
+        name = _probe_name()
         with tempfile.TemporaryDirectory(prefix="skillz-inventory-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
-            _probe_skill(workspace)
+            _probe_skill(workspace, name)
             self._stage(workspace)
             builtin, listed = self._list(workspace, frozenset())
-            if PROBE_SKILL not in listed:
+            if name not in listed:
                 raise _preflight_leak(f"the staged probe skill does not load; Claude Code lists {sorted(listed)}")
-            foreign = listed - {PROBE_SKILL}
+            foreign = listed - {name}
             if foreign:
                 _, left = self._list(workspace, foreign)
-                if left != frozenset({PROBE_SKILL}):
-                    raise _preflight_leak(f"skillOverrides cannot turn off {sorted(left - {PROBE_SKILL})}, "
+                if left != frozenset({name}):
+                    raise _preflight_leak(f"skillOverrides cannot turn off {sorted(left - {name})}, "
                                           + f"or it hides the probe skill (listed: {sorted(left)})")
         self._inventory = Inventory(builtin, foreign)
         return self._inventory
@@ -849,18 +909,16 @@ class ClaudeCode:
         isolation: dict[str, object] = {"isolation": self.isolation}
         if self.nono is not None:
             isolation |= {"nono": self.nono, "nono_sha256": hashlib.sha256(Path(self.nono).read_bytes()).hexdigest(),
-                          "landlock_abi": _nono.landlock_abi(), "profile": _nono.profile(
-                              config_dir=Path("/CONFIG"), project=Path("/PROJECT"), executable=self.executable.resolve(),
-                              settings_file=Path("/PROJECT/settings.json"), variables=sorted(environment))}
+                          "landlock_abi": _nono.landlock_abi(), "profile": self._profile(
+                              Path("/CONFIG"), Path("/PROJECT"), Path("/PROJECT/settings.json"), environment)}
         return digest({"settings": self._floor(Path("/TASK"), ()), "environment": environment, "tools": TOOLS,
-                       "skill": PROBE_SKILL, "platform": sys.platform, "network_probe": NETWORK_PROBE,
+                       "skill": PROBE_PREFIX, "platform": sys.platform, "network_probe": NETWORK_PROBE,
                        "setting_sources": SETTING_SOURCES} | isolation)
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
-        if sys.platform != "darwin" and self.nono is None:
-            for helper in SANDBOX_HELPERS:
-                if shutil.which(helper) is None:
-                    raise SandboxUnavailable(f"{helper} is missing, and the Claude Code sandbox needs it", INSTALL_SOCAT)
+        for name, found, fix in host_tools(self.isolation):
+            if not found:
+                raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
         with listening() as port:
             script = probe(workspace, sealed, Path(__file__).resolve(), port)
             code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
@@ -882,19 +940,18 @@ class ClaudeCode:
             raise _preflight_leak(f"user memory {', '.join(memory)} in the real config directory {self.config_dir} "
                                   + "would load; move it out for the run")
 
-    def check_sandbox(self) -> None:
-        """Run the free checks: user memory, the helper sandbox probe, and the skill inventory. None makes a model call."""
+    def check_helper_sandbox(self) -> None:
+        """Run the free helper checks: user memory and the helper sandbox probe. Neither makes a model call."""
         self._check_memory()
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             workspace, sealed, _token = self._sealed(Path(directory))
             self._probe_sandbox(workspace, sealed)
-        _ = self.inventory()
 
-    def _prompt(self, sealed: Path, control_file: Path, agents_file: Path, write_control: Path, write_token: str,
+    def _prompt(self, sealed: Path, control_file: Path, protected: list[Path], write_control: Path, write_token: str,
                 commands: list[str]) -> str:
         return (f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
-                + f"Then run `printf {write_token} > {agents_file}` with the Bash tool. Then run "
-                + f"`printf {write_token} > {write_control}` with the Bash tool. "
+                + "".join(f"Then run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
+                + f"Then run `printf {write_token} > {write_control}` with the Bash tool. "
                 + "".join(f"Then run `{command}` with the Bash tool. " for command in commands)
                 + "Reply with the read outputs, or the word denied for each command that fails.")
 
@@ -905,56 +962,58 @@ class ClaudeCode:
             workspace, sealed, token = self._sealed(root)
             self._probe_sandbox(workspace, sealed)
             builtin = self.inventory().builtin
-            _probe_skill(workspace)
+            name = _probe_name()
+            _probe_skill(workspace, name)
             control = secrets.token_hex(16)
             control_file = workspace / "control.txt"
             _ = control_file.write_text(control)
-            agents_file = self.agents_dir(workspace) / "write-probe"
+            protected = [self.agents_dir(workspace) / "write-probe",
+                         self.agents_dir(workspace).parent / ".claude/skills" / name / "write-probe"]
             write_control = workspace / "write-control.txt"
             write_token = secrets.token_hex(16)
             network_token = secrets.token_hex(16)
             sockets = root / "s"
             sockets.mkdir()
-            self.budget.claim()
-            self.checkpoint()
             probing = self.unix_sockets() or self.nono is not None
             abstract = f"skillz-{network_token[:16]}"
             with (watched() as (port, connected), watched_unix(sockets, active=probing) as (socket_path, socket_reached),
-                  watched_abstract(abstract, active=self.nono is not None) as abstract_reached):
+                  watched_abstract(abstract, active=probing) as abstract_reached):
+                self.budget.claim()
+                self.checkpoint()
                 commands = network_commands(port, network_token)
                 if probing:
-                    commands.append(unix_command(str(socket_path), network_token))
-                if self.nono is not None:
-                    commands.append(unix_command("\\0" + abstract, network_token))
+                    commands += [unix_command(str(socket_path), network_token), unix_command("\\0" + abstract, network_token)]
                 try:
                     returncode, stderr, events = self._run(
-                        workspace, self._prompt(sealed, control_file, agents_file, write_control, write_token, commands),
-                        None, min(120, self.budget.remaining()), [PROBE_SKILL])
+                        workspace, self._prompt(sealed, control_file, protected, write_control, write_token, commands),
+                        None, min(120, self.budget.remaining()), [name])
                 except Exception:
                     if connected(network_token) or socket_reached(network_token) or abstract_reached(network_token):
                         raise NetworkIsolationFailed(LISTENER_REACHED) from None
                     raise
                 reached = connected(network_token)
                 socket_open = socket_reached(network_token) or abstract_reached(network_token)
-            wrote = agents_file.exists()
+            wrote = any(file.exists() for file in protected)
             controlled = write_control.is_file() and write_control.read_text() == write_token
         if reached:
             raise NetworkIsolationFailed(LISTENER_REACHED)
         if socket_open:
             raise NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
-        leak = _leak(events, [PROBE_SKILL], builtin)
+        leak = _leak(events, [name], builtin)
         if leak is not None:
             raise _preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
-        reason = _failure(returncode, stderr, events, [PROBE_SKILL], builtin)
+        reason = _failure(returncode, stderr, events, [name], builtin, nono_fix=self._nono_fix())
+        if reason == AUTH_FAILED:
+            raise _login_failed(self._login_fix())
         network = _network_failure(events, port, network_token)
         if network is None and probing:
             network = _unix_failure(events, str(socket_path), network_token)
-        if network is None and self.nono is not None:
+        if network is None and probing:
             network = _unix_failure(events, "\\0" + abstract, network_token)
         if reason is None:
             reason = _read_failure(events, token, str(sealed), control, str(control_file))
         if reason is None:
-            reason = _write_failure(events, str(agents_file), wrote, controlled)
+            reason = _write_failure(events, [str(file) for file in protected], wrote, controlled)
         if reason is None and network is not None:
             raise NetworkIsolationFailed(network)
         if reason is not None:
@@ -964,7 +1023,7 @@ class ClaudeCode:
                 "unix_socket_filter": "nono" if self.nono is not None else "off" if self.unix_sockets() else "on",
                 "environment_key": self.environment_key()}
 
-    def _check_name(self, candidate: Candidate) -> None:
+    def check_name(self, candidate: Candidate) -> None:
         """Stop when the candidate name matches a Claude Code command or a foreign skill. The init event lists names
         only, so it could not show whether the candidate or the other entry loaded. No model call runs.
         """
@@ -979,7 +1038,7 @@ class ClaudeCode:
         self._check_memory()
         builtin = self.inventory().builtin
         if candidate is not None:
-            self._check_name(candidate)
+            self.check_name(candidate)
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)
@@ -1005,7 +1064,8 @@ class ClaudeCode:
                             "workspace": str(workspace), "latency_seconds": time.monotonic() - started,
                             "output_files": snapshot_outputs(workspace)}
             if failed or final is None:
-                reason = _failure(returncode, stderr, events, expected, builtin) or "missing-final-response"
+                reason = (_failure(returncode, stderr, events, expected, builtin, nono_fix=self._nono_fix())
+                          or "missing-final-response")
                 raise RuntimeError(f"Claude Code fails: {reason} (exit {returncode}); the invocation counts against the budget")
             trace = _trace(events) + _token_events(final)
             return {"answer": _answer(final), "events": trace, "usage": usage(trace), "workspace": str(workspace),
@@ -1028,7 +1088,7 @@ class ClaudeCode:
         return result.returncode, result.stdout
 
     def check_candidate(self, candidate: Candidate) -> bool:
-        self._check_name(candidate)
+        self.check_name(candidate)
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             rules = resolve(candidate.contract)

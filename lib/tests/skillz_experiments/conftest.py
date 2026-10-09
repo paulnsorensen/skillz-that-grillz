@@ -20,6 +20,7 @@ from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Factory, Stop, run
 
 FIXTURES = Path(__file__).parent / "fixtures"
+_REAL_NESTED_USERNS_BLOCKED = _claude.nested_userns_blocked
 INSPECTOR = Path(__file__).resolve().parents[3] / "skills/skillz/scripts/inspect_skill.py"
 
 
@@ -67,6 +68,16 @@ def nested_userns_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     A test of the blocked case patches `_claude.nested_userns_blocked` itself.
     """
     monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: False)
+
+
+@pytest.fixture
+def real_nested_userns_probe(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], bool]]:
+    """Restore the real, cached `nested_userns_blocked` for a test of the probe itself, and clear its cache around the test."""
+    monkeypatch.setattr(_claude, "nested_userns_blocked", _REAL_NESTED_USERNS_BLOCKED)
+    cache_clear = cast(Callable[[], None], getattr(_REAL_NESTED_USERNS_BLOCKED, "cache_clear"))
+    cache_clear()
+    yield _REAL_NESTED_USERNS_BLOCKED
+    cache_clear()
 
 
 @pytest.fixture(autouse=True)

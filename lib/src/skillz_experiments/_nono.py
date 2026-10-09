@@ -67,7 +67,15 @@ def profile(*, config_dir: Path, project: Path, executable: Path, settings_file:
             variables: list[str]) -> dict[str, object]:
     """Build the nono profile for one Claude process. The working directory (the workspace) is the only write grant
     besides the config directory. `project` holds the staged `.claude` and `.agents` trees, which stay read-only.
+
+    The profile grants a recursive read of the executable's directory. Stop with `nono-unavailable` when that
+    directory is `$HOME`, `/`, or an ancestor of `project`, because the grant would then expose the host or the run.
     """
+    wide = executable.parent
+    if wide in (Path("/"), Path.home().resolve()) or project.resolve().is_relative_to(wide):
+        raise CodedError("nono-unavailable", f"nono isolation cannot grant read access to {wide}, the directory of the "
+                         + "Claude Code executable: it holds the host home, the root, or the run directory; no unsafe "
+                         + "fallback; fix: install or copy Claude Code into its own directory")
     return {
         "meta": {"name": "skillz-task", "description": "skillz autoimprove task process"},
         "groups": {"include": list(GROUPS)},

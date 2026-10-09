@@ -5,16 +5,17 @@ import json
 import shutil
 import stat
 import sys
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-from skillz_experiments import _nono
+from skillz_experiments import _claude, _nono
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import ClaudeCode
+from skillz_experiments._claude import ClaudeCode, NetworkIsolationFailed
 from skillz_experiments._doctor import doctor
 from skillz_experiments._harness import Configuration
 from skillz_experiments._runtime import Budget
@@ -36,6 +37,9 @@ with Path(__file__).with_name("nono.log").open("a") as log:
 allowed = set(profile["environment"]["allow_vars"])
 child = {name: value for name, value in os.environ.items() if name in allowed}
 child |= {"ANTHROPIC_API_KEY": "proxy-token", "ANTHROPIC_BASE_URL": "http://127.0.0.1:1/anthropic"}
+fs = profile["filesystem"]
+child["FAKE_NONO_READ"] = os.pathsep.join([os.getcwd(), *fs["allow"], *fs["read"], *fs["read_file"]])
+child["FAKE_NONO_WRITE"] = os.pathsep.join([os.getcwd(), *fs["allow"]])
 os.execve(argv[argv.index("--") + 1], argv[argv.index("--") + 1:], child)
 '''
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -132,7 +136,7 @@ def test_nono_is_refused_off_linux(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_nono_isolation_needs_the_claude_harness(tmp_path: Path, make_target: Callable[..., Path]) -> None:
     with pytest.raises(ValueError, match="only the claude harness"):
         _ = Configuration.single("codex", "m", "nono")
-    with pytest.raises(ValueError, match="nono with the claude harness"):
+    with pytest.raises(ValueError, match="only the claude harness"):
         _ = run(make_target(tmp_path), tmp_path / "out", "m", adapter="codex", isolation="nono")
 
 
@@ -152,12 +156,11 @@ def test_a_nono_role_needs_no_claude_login(tmp_path: Path, nono_bin: Path, host_
     del nono_bin
     host_login.unlink()
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), isolation="nono")
-    config_dir = transport.config_dir
     try:
-        assert transport.credential is None and not any(config_dir.iterdir())
+        assert transport.credential is None
+        assert not list(Path(tempfile.gettempdir()).glob(f"{_claude.CONFIG_PREFIX}*"))
     finally:
         transport.close()
-    assert not config_dir.exists()
 
 
 def test_a_resume_with_another_isolation_stops(
@@ -185,3 +188,112 @@ def test_doctor_lists_every_unmet_nono_requirement(monkeypatch: pytest.MonkeyPat
     failed = [row for row in cast(list[dict[str, object]], report["checks"]) if row["status"] == "fail"]
     assert report["ok"] is False and len([row for row in failed if row["check"] == "nono"]) == 3
     assert all(row.get("fix") for row in failed)
+
+
+@pytest.mark.parametrize("home", [True, False])
+def test_a_wide_executable_directory_is_refused_before_the_profile_grants_it(
+        nono_bin: Path, home: bool) -> None:
+    del nono_bin
+    directory = Path.home() if home else Path(tempfile.gettempdir())
+    claude = directory / "claude"
+    _ = claude.write_text("#!/bin/sh\n")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, claude, isolation="nono")
+    try:
+        with pytest.raises(CodedError, match="cannot grant read access") as caught:
+            _ = transport.invoke("hello", Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",)))
+    finally:
+        transport.close()
+    assert caught.value.code == "nono-unavailable"
+
+
+def test_the_host_api_key_reaches_neither_the_profile_nor_the_argv(tmp_path: Path, nono_bin: Path) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), isolation="nono")
+    try:
+        _ = transport.invoke("hello", Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",)))
+    finally:
+        transport.close()
+    nono = logged(nono_bin.with_name("nono.log"))[-1]
+    profile = cast(dict[str, dict[str, list[str]]], nono["profile"])
+    assert "ANTHROPIC_API_KEY" not in profile["environment"]["allow_vars"]
+    assert "sk-ant-host-secret" not in json.dumps(nono["argv"]) + json.dumps(nono["profile"])
+
+
+def test_a_nono_role_is_refused_on_macos(tmp_path: Path, nono_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    del nono_bin
+    monkeypatch.setattr(sys, "platform", "darwin")
+    with pytest.raises(CodedError) as caught:
+        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), isolation="nono")
+    assert caught.value.code == "nono-unavailable"
+
+
+@pytest.fixture
+def nono_sandbox_passes(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Pass the OS sandbox probe, and use a short temp root so the Unix-socket probe path fits AF_UNIX."""
+    directory = Path(tempfile.mkdtemp(prefix="skz", dir="/tmp"))
+    monkeypatch.setattr(tempfile, "tempdir", str(directory))
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
+        del self, workspace, argv
+        return 0, "isolation-ok\n"
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    yield
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_the_nono_preflight_probes_pathname_abstract_and_claude_writes(
+        tmp_path: Path, nono_bin: Path, nono_sandbox_passes: None) -> None:
+    del nono_sandbox_passes
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, isolation="nono")
+    try:
+        evidence = transport.preflight()
+    finally:
+        transport.close()
+    prompt = cast(str, logged(executable.with_name("claude.log"))[0]["prompt"])
+    assert evidence["unix_socket_filter"] == "nono"
+    assert "\\0skillz-" in prompt and "/.claude/skills/" in prompt
+    assert nono_bin.with_name("nono.log").exists()
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("abstract-open", "reached a runner-owned host Unix socket"),
+    ("abstract-skipped", "Unix-socket command output is missing"),
+])
+def test_the_nono_preflight_stops_on_an_abstract_socket_failure(
+        tmp_path: Path, nono_bin: Path, nono_sandbox_passes: None, mode: str, reason: str) -> None:
+    del nono_bin, nono_sandbox_passes
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode), isolation="nono")
+    try:
+        with pytest.raises(NetworkIsolationFailed, match=reason):
+            _ = transport.preflight()
+    finally:
+        transport.close()
+
+
+def test_the_nono_preflight_stops_on_a_spoofed_builtin_plugin(
+        tmp_path: Path, nono_bin: Path, nono_sandbox_passes: None) -> None:
+    del nono_bin, nono_sandbox_passes
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "spoofed-plugin"), isolation="nono")
+    try:
+        with pytest.raises(CodedError, match="foreign plugin") as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_the_nono_preflight_stops_when_the_claude_directory_is_writable(
+        tmp_path: Path, nono_bin: Path, nono_sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del nono_bin, nono_sandbox_passes
+    original = _nono.profile
+
+    def writable(**kwargs: object) -> dict[str, object]:
+        document = original(**kwargs)  # pyright: ignore[reportArgumentType]
+        cast(dict[str, list[str]], document["filesystem"])["allow"].append(str(cast(Path, kwargs["project"]) / ".claude"))
+        return document
+    monkeypatch.setattr(_nono, "profile", writable)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "write-claude"), isolation="nono")
+    try:
+        with pytest.raises(CodedError, match="write isolation failed"):
+            _ = transport.preflight()
+    finally:
+        transport.close()
