@@ -23,14 +23,19 @@ def _bash_db_path(env, cwd):
     return result.stdout.strip()
 
 
-def _python_db_path(env, cwd, engine=ENGINE):
+def _ingest_eval(expr, env, cwd, *argv, engine=ENGINE):
+    """Import ingest in a fresh interpreter and print one expression."""
     result = subprocess.run(
         ["python3", "-B", "-c",
-         "import sys; sys.path.insert(0, sys.argv[1]); import ingest; "
-         "print(ingest.DB_PATH)", str(engine / "scripts")],
+         "import json, sys; sys.path.insert(0, sys.argv[1]); import ingest; "
+         f"print({expr})", str(engine / "scripts"), *argv],
         env=env, cwd=cwd, capture_output=True, text=True, check=True,
     )
     return result.stdout.strip()
+
+
+def _python_db_path(env, cwd, engine=ENGINE):
+    return _ingest_eval("ingest.DB_PATH", env, cwd, engine=engine)
 
 
 class DbPathParityTest(unittest.TestCase):
@@ -73,6 +78,67 @@ class DbPathParityTest(unittest.TestCase):
                 bash_path = _bash_db_path(env, cwd)
                 python_path = _python_db_path(env, cwd)
                 self.assertEqual(bash_path, python_path)
+
+
+def _discovered(env, cwd):
+    return json.loads(_ingest_eval(
+        "json.dumps([ingest.claude_discover(), ingest.codex_discover(), "
+        "ingest.cursor_discover()])", env, cwd))
+
+
+class AdapterDefaultPathTest(unittest.TestCase):
+    """Adapter defaults resolve under HOME from any cwd — no DuckDB needed."""
+
+    NAMES = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME")
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        self.home = root / "home"
+        self.cwd = root / "cwd"
+        self.cwd.mkdir()
+        self.env = os.environ | {"HOME": str(self.home)}
+        for name in self.NAMES:
+            self.env.pop(name, None)
+
+    def _layout(self, base):
+        logs = [
+            base / ".claude" / "projects" / "p" / "s.jsonl",
+            base / ".codex" / "sessions" / "s.jsonl",
+            base / ".cursor" / "projects" / "p" / "agent-transcripts" / "s.jsonl",
+        ]
+        for log in logs:
+            log.parent.mkdir(parents=True)
+            log.write_text("{}\n")
+        return [[str(log)] for log in logs]
+
+    def test_unset_defaults_expand_home_outside_home(self):
+        expected = self._layout(self.home)
+        self.assertEqual(_discovered(self.env, self.cwd), expected)
+
+    def test_configured_tilde_value_stays_literal(self):
+        self._layout(self.home)
+        literal = self._layout(self.cwd / "~")
+        env = self.env | {
+            "CLAUDE_CONFIG_DIR": "~/.claude",
+            "CODEX_HOME": "~/.codex",
+            "CURSOR_HOME": "~/.cursor",
+        }
+        self.assertEqual(_discovered(env, self.cwd), literal)
+
+    def test_empty_value_uses_the_home_default(self):
+        # db-path.sh treats an empty variable as unset (`-n`). Ingest does the same.
+        expected = self._layout(self.home)
+        env = self.env | {name: "" for name in self.NAMES}
+        self.assertEqual(_discovered(env, self.cwd), expected)
+
+    def test_cursor_project_slug_resolves_under_home_default(self):
+        log = self.home / ".cursor" / "projects" / "tmp" / "agent-transcripts" / "s.jsonl"
+        same = _ingest_eval(
+            "ingest._cursor_project_cwd(sys.argv[2]) == ingest._cursor_resolve_slug('tmp')",
+            self.env, self.cwd, str(log))
+        self.assertEqual(same, "True")
 
 
 class EngineSmokeTest(unittest.TestCase):
