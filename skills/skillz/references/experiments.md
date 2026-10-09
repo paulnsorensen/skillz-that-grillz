@@ -79,7 +79,7 @@ Parallel calls share it. The estimate and the holdout gate reserve include it.
 The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
 The stops that ask for approval echo the options as `claude_options`.
 These three options apply only to `--harness claude`. The first run records them.
-`--min-gain N` and `--min-lower-bound N` set the floors of the gate. Each value is at least 0. "Set promotion thresholds" describes them.
+`--min-gain N` and `--min-lower-bound N` set the floors of the gate. `--family-budget N` sets the regression budget of every family. Each value is at least 0. "Set promotion thresholds" describes them.
 When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, Claude option, or threshold flag.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
@@ -119,7 +119,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
@@ -130,7 +130,8 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
 | `contract-capture-unsupported` | A kind declares `capture`, and the harness is not `claude`. | Run with `--harness claude`, or remove `capture`. |
-| `contract-statistics-invalid` | The `statistics` object is not an object, holds an unknown field, a negative value, or a value that is not a finite number. | Fix the contract, then run again. |
+| `contract-statistics-invalid` | The `statistics` value is not an object. Or it holds an unknown field, a negative value, or a value that is not a finite number (such as a bool or a string). Or `family_budgets` is not an object of numbers, or has an empty or blank name. | Fix the contract, then run again. |
+| `contract-family-unknown` | A `family_budgets` name matches no family in the case draft. The stop comes after the draft loads. | Fix the family name in the contract, or add the family to the draft. |
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
@@ -188,9 +189,17 @@ When the SE is 0, the second test uses 2·SE = 0.
 A result that fails a floor becomes `inconclusive`. A floor never creates a `reject`.
 With both floors at 0, the verdict equals the built-in rule.
 
-The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`.
+The family rule runs after the floors. It uses the holdout cases, grouped by `family`.
+A family needs at least two holdout cases. For that family, the gate takes the mean delta and its SE (SE_f).
+The budget is the `family_budgets` value for that family, else `family_budget`. A family with no budget has no family rule.
+The family breaches when `mean + 2·SE_f` is below `-budget`. When SE_f is 0, the family breaches when `mean` is below `-budget`.
+A breach turns any verdict into `reject`. This also applies to `promote`. Each breach adds the reason `family-regression:<name>`, sorted by family name.
+The rule skips a family with fewer than two holdout cases, whatever its budget. `skipped_families` lists it, sorted by name. A skipped family never changes the verdict.
+The gate object always holds `skipped_families`. Without a budget, the verdict stays the same.
+
+The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`.
 A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
-The summary and the export report show `reasons` in the `gate` object.
+The summary and the export report show `reasons` and `skipped_families` in the `gate` object.
 The summary reports the delta, the SE, the case count, and the repeats.
 Small runs often report `inconclusive`. That result is honest: the data cannot separate the winner from noise.
 Report the verdict as it is. Never promote an `inconclusive` winner by hand.
@@ -237,18 +246,22 @@ Unknown fields and malformed values stop the run.
 ## Set promotion thresholds
 
 The `statistics` object in the contract makes the gate stricter. It never makes the gate looser.
-These thresholds are floors: each one only tightens the rule.
+Each threshold only tightens the rule. Only `min_gain` and `min_lower_bound` are floors.
 A contract without it keeps its identity hash and the built-in rule.
 The object accepts these fields:
 
 - `min_gain`: the smallest mean holdout delta that can promote. The default is 0.
 - `min_lower_bound`: the margin that the delta must clear beyond 2·SE. The default is 0.
+- `family_budget`: the regression budget of every holdout family. The default is `null`, which turns the family rule off.
+- `family_budgets`: an object that maps a family name to its own budget. It overrides `family_budget` for that family. A flag cannot set it.
 
-Each value is a finite number of at least 0. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
-The SE multiplier stays 2. A negative floor would loosen the rule, so the runner refuses it.
+Each number is finite and at least 0. `family_budget` may also be `null`. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
+A `family_budgets` value that is not an object, or that has an empty or blank name, stops the run with the same code.
+Each name must match a family in the case draft, else the run stops with `contract-family-unknown`.
+The SE multiplier stays 2. A negative threshold would loosen the rule, so the runner refuses it.
 
 Each field resolves in this order: the CLI flag, then the contract, then the built-in default.
-The flags are `--min-gain` and `--min-lower-bound`. A flag may set a value below the contract value.
+The flags are `--min-gain`, `--min-lower-bound`, and `--family-budget`. A flag may set a value below the contract value.
 Every flag value must still be at least 0, so the gate stays at least as strict as the built-in rule.
 The first run freezes the resolved values in `run.json`.
 The flags repeat on every call until `run.json` exists. The approval stops echo the resolved values as `statistics`.

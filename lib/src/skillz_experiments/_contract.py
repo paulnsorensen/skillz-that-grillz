@@ -51,7 +51,7 @@ class Contract:
     helper: Helper | None = None
     editable: tuple[str, ...] = ()
     source: str = "skill"
-    statistics: Mapping[str, float] | None = None
+    statistics: Mapping[str, object] | None = None
 
     def grader(self, kind: str) -> Grader:
         if kind not in self.kinds:
@@ -172,7 +172,7 @@ def _helper(value: object) -> Helper:
                   relative(string(item.get("input", "fixture.md"), "helper input")), tuple(fixtures))
 
 
-def _statistics(value: object) -> dict[str, float]:
+def _statistics(value: object) -> dict[str, object]:
     try:
         return Statistics.declared(value)
     except ValueError as error:
