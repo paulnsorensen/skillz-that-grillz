@@ -62,7 +62,24 @@ nono injects the key through its proxy, so the sandbox never sees it. This backe
 `--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
 `--repeats` sets the repeats for each holdout case. The default is 3.
 `--seed` sets the split seed. Keep the default unless the user asks.
-When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, or `--seed`.
+`--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
+`--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
+Use it for a browser install, for example `/opt/pw-browsers`.
+A root must exist, and it must not be a symlink. Give the resolved path.
+A root must not equal or hold the home directory.
+A root must not equal, hold, or sit inside the Claude config directory, the temporary directory, or `--out`.
+A root must not equal, hold, or sit inside a runtime path or a credential path.
+The runtime paths are `/proc`, `/sys`, `/dev`, `/run`, `/var/run`, `/tmp`, `/var/tmp`, `/var/snap`, `/var/lib`, and `$XDG_RUNTIME_DIR`.
+The credential paths are `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.claude.json`, the shell rc and history files, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.password-store`, `~/.local/share/keyrings`, and the Claude login file.
+A root must not hold a socket entry. A tree of more than 100000 entries is too large to check, so the runner refuses it.
+Home caches such as `~/.cache/ms-playwright` stay allowed.
+`--sandbox-seconds N` sets the time limit of one OS sandbox command, from 1 to 600. The default is 20.
+Once any scored case uses a command or hybrid grader, this time applies to every evaluation.
+Parallel calls share it. The estimate and the holdout gate reserve include it.
+The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
+The stops that ask for approval echo the options as `claude_options`.
+These three options apply only to `--harness claude`. The first run records them.
+When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, or Claude option.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
 Each stop prints one JSON object on stdout and a coded error on stderr.
@@ -87,6 +104,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | Code | Meaning | Next step |
 |---|---|---|
 | `login-missing` | No Claude login file exists, or Claude Code rejects the login during the preflight (authentication failed). Under nono, the host API key is missing or invalid. | Ask the user to run `claude` once and log in. Under nono, export a valid `ANTHROPIC_API_KEY`. |
+| `sandbox-read-invalid` | A `--sandbox-read` root is missing, is a symlink, holds an unsafe character, overlaps a refused path, holds a socket entry, or is too large to check. The message names the root. | On a fresh run, give a valid resolved path. On a resume, restore the path or start a new `--out`. |
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
@@ -100,7 +118,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |

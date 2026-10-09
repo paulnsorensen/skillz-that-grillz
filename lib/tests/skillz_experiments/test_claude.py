@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -15,19 +17,22 @@ import pytest
 
 from skillz_experiments import _claude, _codex
 from skillz_experiments._candidate import Candidate, make_workspace
-from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import ClaudeCode, NetworkIsolationFailed, sandbox_argv, seatbelt_profile
+from skillz_experiments._cases import CodedError, digest
+from skillz_experiments._claude import (ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots, sandbox_argv,
+                                        seatbelt_profile)
 from skillz_experiments._contract import load_contract, parse
 from skillz_experiments._evaluator import Transport
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._harness import Configuration, Harness
-from skillz_experiments._runtime import Budget
+from skillz_experiments._runtime import Budget, BudgetExhausted
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 ROOT = Path(__file__).parents[3]
 TOKENS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 # Read at import, before any test patches `sys.platform`.
 LINUX_HOST = sys.platform == "linux"
+# Read at import, before `host_login` clears it for pytest roots under /tmp.
+PRODUCTION_SOCKET_DENY = _claude.SOCKET_DENY
 
 
 def _bwrap_works() -> bool:
@@ -47,8 +52,8 @@ pytestmark = pytest.mark.usefixtures("host_login")
 @pytest.fixture
 def sandbox_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stand in for the OS sandbox probe, which has its own tests, so the live-call steps run on any host."""
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace, argv
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, argv, seconds
         return 0, "isolation-ok\n"
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
 
@@ -109,6 +114,245 @@ def test_argv_or_settings_or_usage_argv_reads_only_project_settings_and_is_tool_
     assert "--strict-mcp-config" in argv
     assert argv[argv.index("--model") + 1] == "claude-test-model"
     assert "--settings" in argv
+    assert "--effort" not in argv
+
+
+def _claude_config(tmp_path: Path, executable: Path, **options: object) -> Configuration:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [str(executable)], **options}))
+    return Configuration.load(config, "claude-test-model")
+
+
+def test_a_claude_role_effort_reaches_every_call_and_the_fingerprint(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    configuration = _claude_config(tmp_path, executable, effort="xhigh")
+    session = configuration.create("claude-test-model", Budget(10, 120, 0), lambda: None)
+    try:
+        _ = session.transports["judge"].invoke("hello")
+        _ = session.transports["judge"].invoke("hello", schema={"type": "object", "properties": {}})
+    finally:
+        session.close()
+    model_calls = [cast(list[str], call["argv"]) for call in calls(executable) if "--model" in cast(list[str], call["argv"])]
+    assert len(model_calls) >= 2
+    assert all(argv[argv.index("--effort") + 1] == "xhigh" for argv in model_calls)
+    plain = _claude_config(tmp_path, executable)
+    assert configuration.roles["judge"].fingerprint() != plain.roles["judge"].fingerprint()
+
+
+def test_default_and_isolation_only_role_fingerprints_keep_the_pre_option_digest(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    role = _claude_config(tmp_path, executable).roles["judge"]
+    files = {str(executable.resolve()): (str(executable.resolve()), hashlib.sha256(executable.read_bytes()).hexdigest())}
+    base = {"adapter": role.adapter, "model": role.model, "command": role.command, "identity": role.identity, "files": files}
+    assert role.fingerprint() == digest(base)
+    assert _claude_config(tmp_path, executable, sandbox_seconds=20).roles["judge"].fingerprint() == digest(base)
+    assert _claude_config(tmp_path, executable, isolation="nono").roles["judge"].fingerprint() == digest(
+        base | {"isolation": "nono"})
+
+
+@pytest.mark.parametrize("options, message", [
+    ({"effort": "turbo"}, "effort must be one of"), ({"sandbox_read": ["relative/browsers"]}, "sandbox_read must be a list"),
+    ({"sandbox_read": "/usr"}, "sandbox_read must be a list"), ({"sandbox_seconds": 0}, "sandbox_seconds must be an integer"),
+    ({"sandbox_seconds": 601}, "sandbox_seconds must be an integer"), ({"sandbox_seconds": 2.5}, "sandbox_seconds must be an integer")])
+def test_invalid_claude_options_stop_the_configuration(tmp_path: Path, options: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _ = _claude_config(tmp_path, fake_claude(tmp_path), **options)
+
+
+def test_claude_options_are_normalized_unique_and_sorted() -> None:
+    parsed = ClaudeOptions.parse({"sandbox_read": ["/b/../b/", "/z", "/a", "/a", "/b"]})
+    assert parsed.sandbox_read == ("/a", "/b", "/z")
+    assert ClaudeOptions.parse(parsed.data()) == parsed
+
+
+def test_claude_options_are_refused_for_another_adapter(tmp_path: Path) -> None:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "command", "identity": "w",
+                                      "command": [str(fake_claude(tmp_path))], "effort": "high"}))
+    with pytest.raises(ValueError, match="only to a claude role"):
+        _ = Configuration.load(config, "m")
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "codex", "effort": "high"}))
+    with pytest.raises(ValueError, match="Codex role accepts only adapter and model"):
+        _ = Configuration.load(config, "m")
+    with pytest.raises(ValueError, match="Codex role accepts only adapter and model"):
+        _ = Configuration.single("codex", "m", options=ClaudeOptions(effort="high"))
+
+
+def test_sandbox_read_roots_that_overlap_the_login_temp_home_or_run_directory_are_refused(
+        tmp_path: Path, host_login: Path) -> None:
+    out = tmp_path / "run"
+    (out / "inner").mkdir(parents=True)
+    (tmp_path / "scratch/other").mkdir()
+    overlapping = (host_login.parent, host_login.parents[1], Path.home(), Path("/"), tmp_path, tmp_path / "scratch/other",
+                   out / "inner")
+    for root in overlapping:
+        with pytest.raises(CodedError, match="overlaps the home, Claude config, temporary, or run directory") as caught:
+            _ = resolve_read_roots((str(root),), out)
+        assert caught.value.code == "sandbox-read-invalid"
+    with pytest.raises(CodedError, match="does not exist") as missing:
+        _ = resolve_read_roots((str(tmp_path / "missing"),), out)
+    assert missing.value.code == "sandbox-read-invalid"
+    quoted = tmp_path / 'we"ird'
+    quoted.mkdir()
+    with pytest.raises(CodedError, match="quote"):
+        _ = resolve_read_roots((str(quoted),), out)
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    assert resolve_read_roots((str(browsers),), out) == (str(browsers.resolve()),)
+    with pytest.raises(CodedError, match="overlaps"):
+        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path),
+                       options=ClaudeOptions(sandbox_read=(str(host_login.parent),)))
+
+
+def test_a_symlinked_sandbox_read_root_is_refused_with_its_resolved_path(tmp_path: Path) -> None:
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    (tmp_path / "alias").symlink_to(browsers)
+    with pytest.raises(CodedError, match="symlink") as caught:
+        _ = resolve_read_roots((str(tmp_path / "alias"),), None)
+    assert caught.value.code == "sandbox-read-invalid" and str(browsers.resolve()) in str(caught.value)
+
+
+def test_sandbox_read_roots_under_shared_socket_locations_are_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert PRODUCTION_SOCKET_DENY == ("/tmp", "/var/tmp", "/var/snap", "/var/lib")
+    monkeypatch.setattr(_claude, "SOCKET_DENY", (str(tmp_path.parent),))  # `host_login` cleared it for roots under /tmp
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    with pytest.raises(CodedError, match="runtime or credential path") as caught:
+        _ = resolve_read_roots((str(browsers),), None)
+    assert caught.value.code == "sandbox-read-invalid"
+
+
+def test_a_sandbox_read_root_that_holds_a_socket_is_refused_without_following_links(tmp_path: Path) -> None:
+    holder = tmp_path / "h"
+    (holder / "inner").mkdir(parents=True)
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(str(holder / "inner/s"))
+        for root in (holder, holder / "inner"):
+            with pytest.raises(CodedError, match="socket entry") as caught:
+                _ = resolve_read_roots((str(root),), None)
+            assert caught.value.code == "sandbox-read-invalid"
+        (clean / "link").symlink_to(holder)
+        assert resolve_read_roots((str(clean),), None) == (str(clean.resolve()),)
+        file_root = clean / "file.txt"
+        _ = file_root.write_text("x")
+        assert resolve_read_roots((str(file_root),), None) == (str(file_root.resolve()),)
+
+
+def test_a_sandbox_read_root_that_holds_too_many_entries_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_claude, "SOCKET_WALK_LIMIT", 2)
+    root = tmp_path / "many"
+    root.mkdir()
+    for name in "abc":
+        _ = (root / name).write_text("")
+    with pytest.raises(CodedError, match="too large to check") as caught:
+        _ = resolve_read_roots((str(root),), None)
+    assert caught.value.code == "sandbox-read-invalid"
+
+
+def test_a_sandbox_read_root_over_the_credentials_link_target_is_refused(tmp_path: Path, host_login: Path) -> None:
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    _ = (dotfiles / "creds.json").write_text("{}")
+    host_login.unlink()
+    host_login.symlink_to(dotfiles / "creds.json")
+    with pytest.raises(CodedError, match="overlaps the home, Claude config, temporary, or run directory") as caught:
+        _ = resolve_read_roots((str(dotfiles),), None)
+    assert caught.value.code == "sandbox-read-invalid"
+
+
+def test_sandbox_read_roots_over_shell_history_and_credential_stores_are_refused() -> None:
+    names = (".bashrc", ".zshrc", ".zshenv", ".profile", ".bash_profile", ".bash_history", ".zsh_history", ".git-credentials",
+             ".npmrc", ".pypirc", ".password-store", ".local/share/keyrings")
+    assert set(names) <= set(_claude.HOME_DENY)
+    for name in names:
+        path = Path.home() / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("x")
+        with pytest.raises(CodedError, match="runtime or credential path") as caught:
+            _ = resolve_read_roots((str(path),), None)
+        assert caught.value.code == "sandbox-read-invalid", name
+
+
+def test_sandbox_read_roots_that_expose_runtime_paths_or_credentials_are_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = Path.home()
+    runtime = tmp_path / "xdg-runtime"
+    (runtime / "bus-dir").mkdir(parents=True)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    system = [Path(root) for root in _claude.RUNTIME_DENY if Path(root).exists()]
+    assert Path("/proc") in system
+    credentials: list[Path] = []
+    for name in _claude.HOME_DENY:
+        path = home / name
+        if name.endswith("json") or name == ".netrc":
+            _ = path.write_text("{}")
+        else:
+            (path / "inner").mkdir(parents=True)
+            credentials.append(path / "inner")
+        credentials.append(path)
+    for root in (*system, runtime, runtime / "bus-dir", *credentials):
+        # A symlinked path such as `/var/run` stops at the symlink rule before the deny list.
+        with pytest.raises(CodedError, match="runtime or credential path|symlink") as caught:
+            _ = resolve_read_roots((str(root),), None)
+        assert caught.value.code == "sandbox-read-invalid", root
+    playwright = home / ".cache/ms-playwright"
+    playwright.mkdir(parents=True)
+    assert resolve_read_roots((str(playwright),), None) == (str(playwright.resolve()),)
+
+
+def test_a_slow_sandbox_command_returns_124_but_budget_exhaustion_still_raises(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
+                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        del command, cwd, timeout, environment, input_text
+        raise BudgetExhausted("process group terminated at deadline")
+
+    monkeypatch.setattr(_claude, "process", process)
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+    monkeypatch.setattr(shutil, "which", which)
+    options = ClaudeOptions(sandbox_seconds=5)
+    workspace = make_workspace(tmp_path / "workspace")
+    slow = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=options)
+    try:
+        assert slow.sandbox(workspace, ["/usr/bin/true"]) == (124, "")
+    finally:
+        slow.close()
+    short = ClaudeCode("m", Budget(10, 2, 0), lambda: None, tmp_path / "bin/claude", options=options)
+    try:
+        with pytest.raises(BudgetExhausted):
+            _ = short.sandbox(workspace, ["/usr/bin/true"])
+    finally:
+        short.close()
+
+
+def test_a_sandbox_command_uses_sandbox_seconds_and_the_probe_keeps_the_floor(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    limits: list[float] = []
+
+    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
+                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+        del cwd, environment, input_text
+        limits.append(timeout)
+        return subprocess.CompletedProcess(command, 0, "isolation-ok\n", "")
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+
+    monkeypatch.setattr(_claude, "process", process)
+    monkeypatch.setattr(shutil, "which", which)
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=5))
+    workspace = make_workspace(tmp_path / "workspace")
+    try:
+        _ = adapter.sandbox(workspace, ["/usr/bin/true"])
+        adapter._probe_sandbox(workspace, tmp_path / "sealed")  # pyright: ignore[reportPrivateUsage]
+        _ = adapter.sandbox(workspace, ["/usr/bin/true"])
+    finally:
+        adapter.close()
+    assert limits == [5, _claude.SANDBOX_SECONDS, 5]
 
 
 def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Path) -> None:
@@ -225,8 +469,8 @@ def test_preflight_runs_the_isolation_probe_through_the_sandbox(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
 
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, seconds
         seen.append(argv)
         return 1, ""
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
@@ -517,6 +761,47 @@ def test_bubblewrap_argv_binds_the_candidate_directory_read_only_after_the_works
     assert "--unshare-all" in argv and argv[-1] == "/usr/bin/true"
 
 
+def test_bubblewrap_argv_mounts_each_read_root_read_only_at_its_own_path() -> None:
+    argv = sandbox_argv("linux", "/usr/bin/bwrap", Path("/w/workspace"), ["/usr/bin/true"], {}, ("/opt/pw-browsers",))
+    index = argv.index("/opt/pw-browsers")
+    assert argv[index - 1:index + 2] == ["--ro-bind", "/opt/pw-browsers", "/opt/pw-browsers"]
+    assert argv.count("/opt/pw-browsers") == 2 and "--unshare-all" in argv
+
+
+def test_seatbelt_profile_allows_reads_only_of_each_read_root() -> None:
+    lines = seatbelt_profile(Path("/w/workspace"), ("/opt/pw-browsers",)).splitlines()
+    assert '(allow file-read* (subpath "/opt/pw-browsers"))' in lines
+    assert not any("/opt/pw-browsers" in line for line in lines if "write" in line or "network" in line)
+
+
+@needs_bwrap
+def test_a_bubblewrap_command_reads_a_read_root_and_serves_itself_on_loopback(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The capture case: read a browser root, start a server inside the sandbox, and reach it on loopback."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    _ = (browsers / "chrome").write_text("browser")
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path),
+                         options=ClaudeOptions(sandbox_read=(str(browsers),)))
+    script = ("import pathlib,socket\n"
+              f"root=pathlib.Path({str(browsers.resolve())!r})\n"
+              "assert (root/'chrome').read_text()=='browser'\n"
+              "try: (root/'written').write_text('x')\n"
+              "except OSError: pass\n"
+              "else: raise SystemExit('read root is writable')\n"
+              "server=socket.create_server(('127.0.0.1',0))\n"
+              "client=socket.create_connection(server.getsockname(),timeout=2)\n"
+              "peer=server.accept()[0];client.sendall(b'ping')\n"
+              "print(peer.recv(4).decode())\n")
+    try:
+        code, output = adapter.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/python3", "-c", script])
+    finally:
+        adapter.close()
+    assert (code, output.strip()) == (0, "ping")
+    assert not (browsers / "written").exists()
+
+
 def test_seatbelt_profile_denies_network_host_reads_and_candidate_writes() -> None:
     profile = seatbelt_profile(Path("/w/workspace"))
     lines = profile.splitlines()
@@ -561,8 +846,8 @@ def test_nested_helper_fixture_runs_through_claude_adapter(tmp_path: Path, monke
     candidate = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: echo\n---\n",
                            "scripts/echo.py": "print(1)\n"}, ("SKILL.md", "scripts/echo.py"), contract)
 
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, seconds
         assert argv[-1] == "fixtures/nested/input.md"
         assert (workspace / argv[-1]).read_text() == "hi"
         return 0, '{"ok": true}'
@@ -732,8 +1017,8 @@ def test_preflight_runs_the_free_sandbox_probe_when_it_reuses_a_pass(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runs: list[int] = []
 
-    def sandbox(self: object, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace, argv
+    def sandbox(self: object, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, argv, seconds
         runs.append(1)
         return (0, "isolation-ok\n") if len(runs) <= len(session.transports) else (1, "")
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
@@ -1123,8 +1408,8 @@ def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
     if case == "userns-restricted":
         monkeypatch.setattr(_claude, "process", process)
     if case == "live-sandbox-failure":
-        def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-            del self, workspace, argv
+        def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+            del self, workspace, argv, seconds
             return 0, "isolation-ok\n"
         monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     executable = fake_claude(tmp_path, "sandbox-unavailable" if case == "live-sandbox-failure" else "ok")

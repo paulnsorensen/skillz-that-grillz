@@ -32,8 +32,8 @@ def host_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str],
     monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin")
     monkeypatch.setattr(_claude, "LIVE_TOOLS", (sys.executable,))
 
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace, argv
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, argv, seconds
         return 0, "isolation-ok\n"
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
 
@@ -105,8 +105,8 @@ def test_a_failed_probe_names_its_fix_and_leaves_the_inventory_row(
         host_bin: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _ = host_bin("ok")
 
-    def leaking(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace, argv
+    def leaking(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, argv, seconds
         return 0, "leaked\n"
     monkeypatch.setattr(ClaudeCode, "sandbox", leaking)
     checks = rows(_doctor.doctor("claude"))
