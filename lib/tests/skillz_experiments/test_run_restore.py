@@ -25,7 +25,7 @@ from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
+from skillz_experiments._runtime import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments._search import Edit
 from skillz_experiments._workflow import HOLDOUT_RETRIES_PER_ARM, Factory, Stop, export, run, summary
 from skillz_experiments._workflow import _command_seconds, _estimate, _plan, _Session  # pyright: ignore[reportPrivateUsage]
@@ -631,7 +631,7 @@ def test_a_live_resume_gives_the_recorded_claude_options_to_every_call(
     try:
         provider = cast(Harness, session.provider)
         _ = provider.transports["judge"].invoke("hello")
-        assert cast(ClaudeCode, provider.transports["task"]).sandbox_seconds == 120
+        assert cast(ClaudeCode, provider.transports["task"]).options.sandbox_seconds == 120
     finally:
         session.provider.close()
     argv = cast(list[str], json.loads(executable.with_name("claude.log").read_text().splitlines()[0])["argv"])
@@ -693,6 +693,8 @@ def test_a_supplied_configuration_refuses_option_values_and_its_roots_stop_befor
     configuration = _harness(tmp_path, monkeypatch, State())
     with pytest.raises(ValueError, match="built-in harness"):
         _ = run(target, out, MODEL, configuration=configuration, effort="high")
+    with pytest.raises(ValueError, match="built-in harness"):
+        _ = run(target, out, MODEL, factory=State().factory(), effort="high")
     roles = tmp_path / "roles.json"
     _ = roles.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [sys.executable],
                                      "sandbox_read": [str(tmp_path / "missing")]}))
@@ -706,9 +708,9 @@ def test_a_supplied_configuration_refuses_option_values_and_its_roots_stop_befor
 
 
 def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reserve() -> None:
-    plain, slow = _plan(6, 6, 6, 1, 3), _plan(6, 6, 6, 1, 3, 600)
+    plain, slow = _plan(6, 6, 6, 1, 3), _plan(6, 6, 6, 1, 3, 30)
     gate_evaluations = 2 * 6 * 3 + 2 * HOLDOUT_RETRIES_PER_ARM
-    assert slow.sandbox_gate == math.ceil(gate_evaluations * 600 / MAX_CONCURRENT_CALLS)
+    assert slow.sandbox_gate == math.ceil(gate_evaluations * 30 / MAX_CONCURRENT_CALLS)
     assert slow.sized.calls == plain.sized.calls
     assert slow.sized.seconds == plain.sized.seconds + slow.sandbox_total > plain.sized.seconds
     assert slow.reserve_seconds > plain.reserve_seconds
@@ -718,6 +720,57 @@ def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reser
     task, other = (cast(Case, cast(object, SimpleNamespace(kind=kind))) for kind in ("task", "plain"))
     options = ClaudeOptions(sandbox_seconds=90)
     assert _command_seconds(contract, [task], options) == 90 and _command_seconds(contract, [other], options) == 0
+
+
+def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:
+    plain = _plan(30, 30, 6, 1, 3)
+    shrunk = [_plan(30, 30, 6, 1, 3, seconds) for seconds in (20, 60, 100)]
+    assert all(plan.sized.seconds <= APPROVED_SECONDS for plan in shrunk)
+    assert shrunk[0].metric_calls < plain.metric_calls and shrunk[2].metric_calls < shrunk[0].metric_calls
+    with pytest.raises(Stop, match="sandbox time alone need") as caught:
+        _ = _plan(30, 30, 6, 1, 3, 600)
+    assert caught.value.code == "budget-unapproved"
+
+
+def _command_target(tmp_path: Path, make_target: Maker) -> Path:
+    target = make_target(tmp_path)
+    contract = cast(dict[str, object], json.loads((target / "evals/autoimprove.json").read_text()))
+    contract["kinds"] = {"echo": {"grader": "command", "argv": ["x"]}}
+    _ = (target / "evals/autoimprove.json").write_text(json.dumps(contract))
+    return target
+
+
+def test_a_run_prepared_before_command_grader_sandbox_time_stops_as_an_older_runner(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = _command_target(tmp_path, make_target)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    estimate = cast(dict[str, object], record["estimate"])
+    assert "sandbox_seconds" in estimate
+    _ = estimate.pop("sandbox_seconds")
+    write(out / "run.json", record)
+    with pytest.raises(ValueError, match="older runner; create a new run"):
+        _ = run(target, out, MODEL, live=True, factory=State().factory())
+
+
+def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_claude_options_out_of_the_stops(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
+    target, out = _command_target(tmp_path, make_target), tmp_path / "run"
+    _ = write_draft(out)
+    roles = tmp_path / "roles.json"
+    _ = roles.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [sys.executable],
+                                     "sandbox_seconds": 100}))
+    configuration = Configuration.load(roles, MODEL)
+    with pytest.raises(Stop) as cases:
+        _ = run(target, out, MODEL, configuration=configuration)
+    assert cases.value.code == "cases-unapproved" and "claude_options" not in cases.value.data
+    case_hash = cast(str, cases.value.data["case_hash"])
+    with pytest.raises(Stop) as budget:
+        _ = run(target, out, MODEL, configuration=configuration, approve_cases=case_hash)
+    assert budget.value.code == "budget-unapproved" and "claude_options" not in budget.value.data
+    estimate = cast(dict[str, int], budget.value.data["estimate"])
+    evaluations = estimate["metric_calls"] + 2 * estimate["holdout_cases"] * estimate["repeats"] + 2 * HOLDOUT_RETRIES_PER_ARM
+    assert estimate["sandbox_seconds"] == math.ceil(evaluations * 100 / MAX_CONCURRENT_CALLS)
 
 @pytest.mark.parametrize("change", ["seed", "target"])
 def test_a_resume_with_another_seed_or_target_stops_before_any_call(

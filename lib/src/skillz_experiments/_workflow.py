@@ -147,6 +147,14 @@ def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeO
     return options.sandbox_seconds if any(contract.grader(case.kind).type in ("command", "hybrid") for case in cases) else 0
 
 
+def _sizing_options(configuration: Configuration | None, options: ClaudeOptions) -> ClaudeOptions:
+    """Return the options that size the run: the task role of a supplied configuration, or the run's own `options`."""
+    if configuration is None:
+        return options
+    role = configuration.roles["task"]
+    return role.options if role.adapter == "claude" else ClaudeOptions()
+
+
 def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int, sandbox_seconds: int = 0) -> _Plan:
     """Size the run. Shrink the search share to fit the cap; stop when the fixed cost alone exceeds it.
 
@@ -154,7 +162,9 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     `_Plan.metric_calls` and `reflection_calls` keep that unit. `holdout_calls` and `sized.calls` count model calls.
     `holdout_calls` is the gate reserve. It holds the gate and `HOLDOUT_RETRIES_PER_ARM` retries per arm,
     because a failed holdout call stays claimed.
-    `sandbox_seconds` is the time limit of one command-grader evaluation. It adds time to the estimate and to the gate reserve.
+    `sandbox_seconds` is the time limit of one evaluation, and it applies once any scored case uses a command or hybrid grader.
+    The sandbox time of every evaluation adds to the estimate and to the gate reserve, shared across parallel calls.
+    The search shrinks until both the call cap and the time cap hold, sandbox time included.
     """
     holdout_evaluations = 2 * holdout * repeats + 2 * HOLDOUT_RETRIES_PER_ARM
     retry_calls = 2 * HOLDOUT_RETRIES_PER_ARM * per_evaluation
@@ -163,22 +173,32 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
         raise Stop("budget-unapproved", f"the preflight and the holdout gate alone need {PREFLIGHT_CALLS + holdout_calls} "
                    + f"calls; the cap is {APPROVED_CALLS}; lower --repeats or the holdout size", {})
 
+    def sandbox_total(metric: int) -> int:
+        return math.ceil((metric + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
+
     def size(metric: int) -> Estimate:
         return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=2 * holdout, calls_per_evaluation=per_evaluation,
                         repeats=repeats, search_calls=metric * per_evaluation, retry_calls=retry_calls,
                         reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION))
 
+    def fits(metric: int) -> bool:
+        sized = size(metric)
+        return sized.calls <= APPROVED_CALLS and sized.seconds + sandbox_total(metric) <= APPROVED_SECONDS
+
+    if not fits(0):
+        raise Stop("budget-unapproved", "the preflight, the holdout gate, and their sandbox time alone need "
+                   + f"{size(0).seconds + sandbox_total(0)} seconds; the cap is {APPROVED_SECONDS}; "
+                   + "lower --repeats, the holdout size, or --sandbox-seconds", {})
     metric = SEARCH_CASE_FACTOR * (train + validation)
-    while metric > 0 and size(metric).calls > APPROVED_CALLS:
+    while metric > 0 and not fits(metric):
         metric -= 1
     if metric < overshoot(validation) + MINIMUM_SEARCH_MARGIN:
         raise Stop("budget-unapproved", "too few calls are left for a search under the cap; "
                    + "lower --repeats or the holdout size", {})
     sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
-    sandbox_total = math.ceil((metric + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
-    sized = size(metric)
+    sized, total = size(metric), sandbox_total(metric)
     return _Plan(metric, math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls, retry_calls,
-                 Estimate(sized.calls, sized.seconds + sandbox_total), sandbox_gate, sandbox_total)
+                 Estimate(sized.calls, sized.seconds + total), sandbox_gate, total)
 
 
 def _editable(files: Mapping[str, str], contract: Contract, edit: Edit) -> list[str]:
@@ -260,7 +280,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
-                    "seed": split_seed, "claude_options": options.data()})
+                    "seed": split_seed, **({} if configuration is not None else {"claude_options": options.data()})})
     freeze(out / "cases.json", cases, split_seed, expected)
     scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
@@ -268,13 +288,14 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     skeleton = Candidate.capture(target, [], contract)
     seed_candidate = Candidate(skeleton.files, tuple(_editable(skeleton.files, contract, edit)), contract)
     plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats,
-                 _command_seconds(contract, scored, options))
+                 _command_seconds(contract, scored, _sizing_options(configuration, options)))
     shown = _estimate(plan, repeats, count["holdout"])
+    shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
         budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
-                                                              "claude_options": options.data()}) from None
+                                                              **shown_options}) from None
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
         "isolation": isolation, **({"claude_options": options.data()} if resolve_harness else {}),
@@ -311,6 +332,7 @@ class _Session:
         options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
         configuration = supplied if supplied is not None else (
             Configuration.single(adapter, model, isolation, options) if factory is None else None)
+        self.sizing = _sizing_options(configuration, options)
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out) if configuration is not None
@@ -376,15 +398,14 @@ class _Session:
         """Stop when the recorded budget differs from the plan that the frozen cases, repeats, and edit give."""
         count = {split: sum(case.split == split for case in self.cases) for split in cast(tuple[str, ...], get_args(Split))}
         repeats = _int_field(self.record, "repeats")
-        options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
         plan = _plan(count["train"], count["validation"], count["holdout"],
                      max(self.contract.calls(case.kind) for case in self.cases), repeats,
-                     _command_seconds(self.contract, self.cases, options))
+                     _command_seconds(self.contract, self.cases, self.sizing))
         expected = _estimate(plan, repeats, count["holdout"])
         recorded = mapping(_field(self.record, "estimate"))
         maximum = max(plan.sized.calls, 1)
         seconds = _number_field(budget, "seconds")
-        if "reserve_seconds" not in budget:
+        if "reserve_seconds" not in budget or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded):
             raise ValueError("run was prepared by an older runner; create a new run")
 
         def differs(found: object, wanted: object) -> bool:

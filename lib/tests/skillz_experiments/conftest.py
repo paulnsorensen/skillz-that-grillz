@@ -123,6 +123,7 @@ def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(tempfile, "tempdir", str(scratch))
     monkeypatch.setattr(_claude, "SANDBOX_HELPERS", ())
+    monkeypatch.setattr(_claude, "SOCKET_DENY", ())  # pytest roots live under /tmp, which production denies
     return credential
 
 

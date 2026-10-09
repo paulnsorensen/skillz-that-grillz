@@ -71,8 +71,13 @@ Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 # Host paths that hold sockets or runtime state. A read root must not equal, hold, or sit inside one.
 RUNTIME_DENY = ("/proc", "/sys", "/dev", "/run", "/var/run")
+# Shared locations that can hold a pathname socket (tmux, X11, lxd). A read root must not equal, hold, or sit inside one.
+SOCKET_DENY = ("/tmp", "/var/tmp", "/var/snap", "/var/lib")
+SOCKET_WALK_LIMIT = 100_000
 # Credential paths under the home directory. A read root must not equal, hold, or sit inside one.
-HOME_DENY = (".ssh", ".gnupg", ".aws", ".config", ".docker", ".kube", ".netrc", ".claude.json")
+HOME_DENY = (".ssh", ".gnupg", ".aws", ".config", ".docker", ".kube", ".netrc", ".claude.json", ".bashrc", ".zshrc", ".zshenv",
+             ".profile", ".bash_profile", ".bash_history", ".zsh_history", ".git-credentials", ".npmrc", ".pypirc",
+             ".password-store", ".local/share/keyrings")
 SANDBOX_SECONDS = 20
 SANDBOX_SECONDS_LIMIT = 600
 OPTION_FIELDS = frozenset({"effort", "sandbox_read", "sandbox_seconds"})
@@ -122,6 +127,30 @@ class ClaudeOptions:
         return data
 
 
+def _holds_socket(path: Path) -> bool:
+    """Return whether `path` is or holds a socket entry. The walk follows no link and fails closed on an error or past `SOCKET_WALK_LIMIT` entries."""
+    def is_socket(entry: str) -> bool:
+        try:
+            return stat.S_ISSOCK(os.lstat(entry).st_mode)
+        except OSError:
+            return True
+    failed = False
+
+    def onerror(_error: OSError) -> None:
+        nonlocal failed
+        failed = True
+    seen = 0
+    if is_socket(str(path)):
+        return True
+    if not path.is_dir():
+        return False
+    for directory, names, files in os.walk(path, followlinks=False, onerror=onerror):
+        seen += len(names) + len(files)
+        if failed or seen > SOCKET_WALK_LIMIT or any(is_socket(os.path.join(directory, name)) for name in (*names, *files)):
+            return True
+    return failed
+
+
 def resolve_read_roots(roots: tuple[str, ...], out: Path | None) -> tuple[str, ...]:
     """Check the extra sandbox read roots. Return their paths.
 
@@ -130,11 +159,14 @@ def resolve_read_roots(roots: tuple[str, ...], out: Path | None) -> tuple[str, .
     The temporary directory holds the workspaces and the login link.
     A root must not equal or hold the home directory.
     A root must not equal, hold, or sit inside a runtime path (`RUNTIME_DENY`, `$XDG_RUNTIME_DIR`) or a home credential path (`HOME_DENY`).
+    A root must not be or hold a socket entry. The check walks the tree without following links.
     """
     home = Path.home().resolve()
-    hidden = [path.resolve() for path in (_host_config_dir(), Path(tempfile.gettempdir()), *([] if out is None else [out]))]
+    credentials = _host_config_dir() / ".credentials.json"
+    hidden = [path.resolve() for path in (_host_config_dir(), Path(tempfile.gettempdir()), *([] if out is None else [out]),
+                                          *([credentials] if credentials.exists() else []))]
     runtime = os.environ.get("XDG_RUNTIME_DIR")
-    denied = [Path(path).resolve() for path in (*RUNTIME_DENY, *([runtime] if runtime else []))]
+    denied = [Path(path).resolve() for path in (*RUNTIME_DENY, *SOCKET_DENY, *([runtime] if runtime else []))]
     denied += [(home / name).resolve() for name in HOME_DENY]
     resolved: list[str] = []
     for root in roots:
@@ -149,6 +181,8 @@ def resolve_read_roots(roots: tuple[str, ...], out: Path | None) -> tuple[str, .
             raise CodedError("sandbox-read-invalid", f"sandbox read root {root} overlaps the home, Claude config, temporary, or run directory")
         if any(path.is_relative_to(item) or item.is_relative_to(path) for item in denied):
             raise CodedError("sandbox-read-invalid", f"sandbox read root {root} overlaps a runtime or credential path")
+        if _holds_socket(path):
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} holds a socket entry or is too large to check")
         resolved.append(str(path))
     return tuple(resolved)
 
@@ -831,7 +865,6 @@ class ClaudeCode:
         self.out = out
         self.options = options or ClaudeOptions()
         self.read_roots = resolve_read_roots(self.options.sandbox_read, out)
-        self.sandbox_seconds = self.options.sandbox_seconds
         found = shutil.which("claude") if executable is None else str(executable)
         if found is None:
             raise RuntimeError("Claude Code is unavailable")
@@ -1017,11 +1050,8 @@ class ClaudeCode:
                 raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
         with listening() as port:
             script = probe(workspace, sealed, Path(__file__).resolve(), port)
-            self.sandbox_seconds = max(SANDBOX_SECONDS, self.options.sandbox_seconds)
-            try:
-                code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
-            finally:
-                self.sandbox_seconds = self.options.sandbox_seconds
+            code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
+                                        max(SANDBOX_SECONDS, self.options.sandbox_seconds))
         if code != 0 or output.strip() != "isolation-ok":
             raise _preflight_leak("sandbox probe failed")
 
@@ -1171,8 +1201,11 @@ class ClaudeCode:
             return {"answer": _answer(final), "events": trace, "usage": usage(trace), "workspace": str(workspace),
                     "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        """Run `argv` in the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. Fail closed without it."""
+    def sandbox(self, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        """Run `argv` in the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. Fail closed without it.
+
+        A command that exceeds `seconds` (default `options.sandbox_seconds`) returns code 124. Budget exhaustion still raises.
+        """
         system = "darwin" if sys.platform == "darwin" else "linux"
         name = "sandbox-exec" if system == "darwin" else "bwrap"
         tool = shutil.which(name)
@@ -1181,8 +1214,15 @@ class ClaudeCode:
                                      else "run on a macOS host that provides `sandbox-exec`")
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
-        result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots), cwd=workspace,
-                         timeout=min(self.sandbox_seconds, self.budget.remaining()), environment={"PATH": "/usr/bin:/bin"})
+        limit = self.options.sandbox_seconds if seconds is None else seconds
+        timeout = min(limit, self.budget.remaining())
+        try:
+            result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots), cwd=workspace,
+                             timeout=timeout, environment={"PATH": "/usr/bin:/bin"})
+        except BudgetExhausted:
+            if timeout < limit:
+                raise
+            return 124, ""
         if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
             raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", _sandbox_fix(result.stderr))
         return result.returncode, result.stdout
