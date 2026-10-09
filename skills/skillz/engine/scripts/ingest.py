@@ -379,14 +379,16 @@ def _pi_family_turn_meta(msg: dict[str, _JsonValue]) -> dict[str, _JsonValue]:
     if not isinstance(snapshot, dict):
         snapshot = {}
     stop = msg.get("stopReason")
-    if isinstance(stop, (list, dict)):
-        raise TypeError(f"unhashable type: '{type(stop).__name__}'")
+    if isinstance(stop, str):
+        stop = _PI_FAMILY_STOP_REASONS.get(stop, stop)
+    elif isinstance(stop, (list, dict)):
+        stop = None
     model = msg.get("model")
     if model and msg.get("provider"):
         model = f"{msg['provider']}/{model}"
     meta: dict[str, _JsonValue] = {
         "model": model,
-        "stop_reason": _PI_FAMILY_STOP_REASONS.get(stop, stop) if isinstance(stop, str) else stop,
+        "stop_reason": stop,
         "error_message": msg.get("errorMessage"),
         "usage": {
             "input_tokens": usage.get("input"),
@@ -437,10 +439,8 @@ def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]
         role = msg.get("role")
         if role == "assistant":
             blocks: list[dict[str, _JsonValue]] = []
-            content = msg.get("content") or []
-            if not isinstance(content, (list, str, dict)):
-                raise TypeError(f"'{type(content).__name__}' object is not iterable")
-            for block in content:
+            content = msg.get("content")
+            for block in content if isinstance(content, list) else []:
                 if not isinstance(block, dict):
                     continue
                 if block.get("type") == "toolCall":
@@ -472,16 +472,13 @@ def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]
                 "message": {"content": blocks, **_pi_family_turn_meta(msg)},
             }
         elif role == "toolResult":
-            content = msg.get("content") or []
-            if not isinstance(content, (list, str, dict)):
-                raise TypeError(f"'{type(content).__name__}' object is not iterable")
+            content = msg.get("content")
             parts: list[str] = []
-            for block in content:
+            for block in content if isinstance(content, list) else []:
                 if isinstance(block, dict) and block.get("type") == "text":
                     block_text = block.get("text", "")
-                    if not isinstance(block_text, str):
-                        raise TypeError("sequence item is not a string")
-                    parts.append(block_text)
+                    if isinstance(block_text, str):
+                        parts.append(block_text)
             text = "\n".join(parts)
             yield {
                 "harness": harness,
@@ -671,7 +668,7 @@ def cursor_normalize(path: str) -> Iterator[dict[str, object]]:
                 if isinstance(block, dict) and block.get("type") == "text":
                     block_text = block.get("text") or ""
                     if not isinstance(block_text, str):
-                        raise TypeError("expected string or bytes-like object")
+                        continue
                     ts = _cursor_parse_timestamp(block_text)
                     if ts:
                         timestamp = ts

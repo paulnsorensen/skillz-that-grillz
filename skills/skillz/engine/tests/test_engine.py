@@ -10,8 +10,14 @@ import unittest
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import ClassVar, TypeAlias, cast
-from typing_extensions import override
+from typing import TYPE_CHECKING, ClassVar, TypeAlias, cast
+
+if TYPE_CHECKING:
+    from typing_extensions import override
+else:
+    # The engine ships with the skill and runs on bare Python 3.11, which lacks typing.override.
+    def override(method):
+        return method
 
 _RowValue: TypeAlias = str | int | float | bool | None
 _Row: TypeAlias = dict[str, _RowValue]
@@ -80,6 +86,59 @@ class DbPathParityTest(unittest.TestCase):
                 python_path = _python_db_path(env, cwd)
                 self.assertEqual(bash_path, python_path)
 
+
+def _normalize(adapter: str, path: Path, env: dict[str, str]) -> list[object]:
+    """Run one ingest adapter in a child process and return its canonical rows."""
+    result = subprocess.run(
+        ["python3", "-B", "-c",
+         "import json, sys; sys.path.insert(0, sys.argv[1]); import ingest; "
+         + "print(json.dumps(list(getattr(ingest, sys.argv[2])(sys.argv[3]))))",
+         str(ENGINE / "scripts"), adapter, str(path)],
+        env=env, capture_output=True, text=True, check=True,
+    )
+    return cast(list[object], json.loads(result.stdout))
+
+
+class MalformedRowTest(unittest.TestCase):
+    """A malformed log field is dropped instead of stopping the ingest. No DuckDB needed."""
+
+    def test_pi_rows_keep_their_valid_parts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.jsonl"
+            entries = [
+                {"type": "session", "id": "s1", "cwd": "/work"},
+                {"type": "message", "message": {"role": "assistant", "content": 5, "stopReason": ["x"]}},
+                {"type": "message", "message": {"role": "toolResult", "toolCallId": "c1", "content": [
+                    {"type": "text", "text": 7}, {"type": "text", "text": "ok"}]}},
+            ]
+            _ = path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+            rows = _normalize("pi_normalize", path, dict(os.environ))
+        envelope = {"harness": "pi", "timestamp": None, "sessionId": "s1", "cwd": "/work"}
+        usage = {"input_tokens": None, "output_tokens": None, "cache_read_input_tokens": None}
+        self.assertEqual(rows, [
+            envelope | {"type": "assistant", "message": {"content": [], "usage": usage}},
+            envelope | {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": "ok", "is_error": "false"}]}},
+        ])
+
+    def test_cursor_user_text_that_is_not_a_string_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "cursor"
+            transcripts = root / "projects" / "sample" / "agent-transcripts"
+            transcripts.mkdir(parents=True)
+            path = transcripts / "t1.jsonl"
+            stamp = "<timestamp>Monday, Jan 5, 2026, 10:00 AM (UTC+0)</timestamp> go"
+            entries = [
+                {"role": "user", "message": {"content": [
+                    {"type": "text", "text": 9}, {"type": "text", "text": stamp}]}},
+                {"type": "turn_ended", "status": "completed"},
+            ]
+            _ = path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+            rows = _normalize("cursor_normalize", path, os.environ | {"CURSOR_HOME": str(root)})
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        assert isinstance(row, dict)
+        self.assertEqual(cast(dict[str, object], row)["timestamp"], "2026-01-05T10:00:00Z")
 
 class EngineSmokeTest(unittest.TestCase):
     @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")

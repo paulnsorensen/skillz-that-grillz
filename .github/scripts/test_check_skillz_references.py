@@ -12,8 +12,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-# The test runs as a script and loads its sibling module from this directory.
-import check_skillz_references as check  # noqa: E402  # pyright: ignore[reportImplicitRelativeImport]
+import check_skillz_references as check  # noqa: E402
 
 
 def _run(references: Path | None) -> tuple[int, str, str]:

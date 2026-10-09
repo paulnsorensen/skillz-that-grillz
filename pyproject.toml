@@ -29,11 +29,7 @@ failOnWarnings = true
 
 [[tool.basedpyright.executionEnvironments]]
 root = "lib/fromargs"
-extraPaths = ["lib/fromargs/src", "lib/fromargs/examples", "lib/src"]
-
-[[tool.basedpyright.executionEnvironments]]
-root = "."
-extraPaths = ["lib/src", "lib/fromargs/src", "lib/fromargs/examples"]
+extraPaths = ["lib/fromargs/src", "lib/fromargs/examples"]
 
 [tool.vulture]
 paths = [".github/scripts", "lib", "skills"]

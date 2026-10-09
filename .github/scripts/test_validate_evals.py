@@ -26,8 +26,7 @@ from typing_extensions import override
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-# The test runs as a script and loads its sibling module from this directory.
-import validate_evals  # noqa: E402  # pyright: ignore[reportImplicitRelativeImport]
+import validate_evals  # noqa: E402
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
 
