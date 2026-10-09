@@ -35,8 +35,11 @@ Create a private configuration file outside the skill:
 Task, reflection, and judge roles inherit the top-level adapter, command, and CLI model.
 Each role can override inherited fields.
 The adapter is `codex`, `command`, or `claude`.
-A Codex role accepts only `adapter` and `model`, without inherited command or identity fields.
-A `claude` role accepts `adapter`, `model`, and `command`. The command names only the executable.
+A Codex role accepts only `adapter`, `model`, and `isolation: claude`, without inherited command or identity fields.
+A `claude` role accepts `adapter`, `model`, `command`, `effort`, `isolation`, `sandbox_read`, and `sandbox_seconds`. The command names only the executable.
+Every Claude role of a run must use the same isolation.
+`effort`, `sandbox_read`, and `sandbox_seconds` match the `run` options `--effort`, `--sandbox-read`, and `--sandbox-seconds`.
+The role fingerprint includes them.
 A `command` role sends the contract skill name and path to the wrapper.
 For mixed adapters, omit the top-level adapter fields. Define each role completely:
 
@@ -140,6 +143,21 @@ A runner upgrade that changes the sandbox settings or the network probe also cha
 The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
+By default, those commands read only the system runtime and the workspace.
+The runner mounts each `sandbox_read` root read-only at its own path.
+A root must exist, and it must not be a symlink.
+A root must not equal or hold the home directory.
+A root must not equal, hold, or sit inside the Claude config directory, the temporary directory, or the run directory.
+A root must not equal, hold, or sit inside `/proc`, `/sys`, `/dev`, `/run`, `/var/run`, `/tmp`, `/var/tmp`, `/var/snap`, `/var/lib`, or `$XDG_RUNTIME_DIR`.
+A root must not equal, hold, or sit inside `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.docker`, `~/.kube`, `~/.netrc`, or `~/.claude.json`.
+The same rule covers the shell files `~/.bashrc`, `~/.zshrc`, `~/.zshenv`, `~/.profile`, `~/.bash_profile`, `~/.bash_history`, and `~/.zsh_history`.
+It also covers `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.password-store`, `~/.local/share/keyrings`, and the Claude login file.
+A root must not hold a socket entry. The check walks the tree without following links, and it refuses a tree of more than 100000 entries.
+Home caches such as `~/.cache/ms-playwright` stay allowed.
+A refused root stops the run with the code `sandbox-read-invalid`.
+Under `bwrap`, a command has its own network namespace. It can reach a server that it starts itself on loopback, but not the host loopback.
+Under `sandbox-exec`, a command has no network, including loopback.
+A sandbox command stops after `sandbox_seconds`, 20 by default.
 A sandbox that cannot start stops the run before any task call, with the code `sandbox-unavailable`.
 The message names the cause and the fix.
 If `bwrap` is missing, install bubblewrap.

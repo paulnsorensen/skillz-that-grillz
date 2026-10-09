@@ -10,7 +10,7 @@ from typing import Literal
 import fromargs
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import NOTICE_CODES, Isolation
+from skillz_experiments._claude import NOTICE_CODES, Effort, Isolation
 from skillz_experiments._doctor import doctor
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._gate import simulate as simulate_gate
@@ -48,14 +48,27 @@ app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. 
 @app.command(name="run")
 def run_command(*, target: Path, out: Path, model: str, harness: Harness = "claude", isolation: Isolation = "claude",
                 live: bool = False, edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
-                approve_cases: str | None = None, approve_budget: int | None = None) -> dict[str, object]:
+                approve_cases: str | None = None, approve_budget: int | None = None,
+                effort: Effort | None = None, sandbox_read: list[Path] | None = None,
+                sandbox_seconds: int | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
     `--isolation nono` confines the whole Claude process with nono on Linux and needs ANTHROPIC_API_KEY on the host.
+
+    Parameters
+    ----------
+    effort
+        Claude Code effort level for every role (claude harness only).
+    sandbox_read
+        Absolute host path that the runner's OS sandbox mounts read-only. Repeat for more paths.
+    sandbox_seconds
+        Time limit of one OS sandbox command, in seconds.
     """
     with _coded():
         return run_workflow(target, out, model, adapter=harness, live=live, edit=edit, repeats=repeats, seed=seed,
-                            approve_cases=approve_cases, approve_budget=approve_budget, isolation=isolation)
+                            approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
+                            sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
+                            sandbox_seconds=sandbox_seconds, isolation=isolation)
 
 
 @app.command(name="doctor")

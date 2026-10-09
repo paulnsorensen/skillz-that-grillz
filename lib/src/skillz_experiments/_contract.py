@@ -16,13 +16,23 @@ GraderType = Literal["exact-json", "judge", "command", "hybrid", "audit"]
 GRADERS = ("exact-json", "judge", "command", "hybrid", "audit")
 JUDGED = ("audit", "judge", "hybrid")
 _SKILL = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+_PILLAR = re.compile(r"[a-z][a-z0-9_]{0,31}")
+PILLAR_LIMIT = 8
 
 
 @dataclass(frozen=True)
 class Grader:
+    """One kind's grader.
+
+    `capture` is an argv that runs after the task, in the command grader workspace, and saves files under
+    `capture/` for the judge to view. `pillars` names the judge scores; the kind score is their mean.
+    """
+
     type: GraderType
     argv: tuple[str, ...] = ()
     rubric: str = ""
+    capture: tuple[str, ...] = ()
+    pillars: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +74,10 @@ class Contract:
                 entry["argv"] = list(grader.argv)
             if grader.rubric:
                 entry["rubric"] = grader.rubric
+            if grader.capture:
+                entry["capture"] = list(grader.capture)
+            if grader.pillars:
+                entry["pillars"] = list(grader.pillars)
             kinds[kind] = entry
         document: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": self.skill,
                                        "invocation": self.invocation, "kinds": kinds,
@@ -97,26 +111,44 @@ def _fields(value: Mapping[str, object], allowed: set[str], name: str) -> None:
         raise ValueError(f"{name} has unknown fields: {', '.join(sorted(set(value) - allowed))}")
 
 
+def _argv(raw: object, name: str) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{name} needs a nonempty argv array")
+    return tuple(string(part, "argv entry") for part in cast(list[object], raw))
+
+
+def _pillars(raw: object, kind: str) -> tuple[str, ...]:
+    if not isinstance(raw, list) or not 1 <= len(cast(list[object], raw)) <= PILLAR_LIMIT:
+        raise ValueError(f"kind {kind} pillars must be a list of 1 to {PILLAR_LIMIT} names")
+    names = cast(list[object], raw)
+    if not all(isinstance(name, str) and _PILLAR.fullmatch(name) for name in names) or len(set(cast(list[str], names))) != len(names):
+        raise ValueError(f"kind {kind} pillars must be unique lowercase names of letters, digits, and underscores; each starts with a letter and has at most 32 characters")
+    return tuple(cast(list[str], names))
+
+
 def _grader(value: object, kind: str) -> Grader:
     item = mapping(value)
-    _fields(item, {"grader", "argv", "rubric"}, f"kind {kind}")
+    _fields(item, {"grader", "argv", "rubric", "capture", "pillars"}, f"kind {kind}")
     kind_type = item.get("grader")
     if kind_type not in GRADERS:
         raise ValueError(f"kind {kind} needs a grader: {', '.join(GRADERS)}")
     argv: tuple[str, ...] = ()
     if kind_type in ("command", "hybrid"):
-        raw = item.get("argv")
-        if not isinstance(raw, list) or not raw:
-            raise ValueError(f"kind {kind} needs a nonempty argv array")
-        argv = tuple(string(part, "argv entry") for part in cast(list[object], raw))
+        argv = _argv(item.get("argv"), f"kind {kind}")
     elif "argv" in item:
         raise ValueError(f"kind {kind} grader does not take argv")
     rubric = ""
+    capture: tuple[str, ...] = ()
+    pillars: tuple[str, ...] = ()
     if kind_type in ("judge", "hybrid"):
         rubric = string(item.get("rubric"), f"kind {kind} rubric")
-    elif "rubric" in item:
-        raise ValueError(f"kind {kind} grader does not take a rubric")
-    return Grader(cast(GraderType, item["grader"]), argv, rubric)
+        capture = _argv(item["capture"], f"kind {kind} capture") if "capture" in item else ()
+        pillars = _pillars(item["pillars"], kind) if "pillars" in item else ()
+    else:
+        for field in ("rubric", "capture", "pillars"):
+            if field in item:
+                raise ValueError(f"kind {kind} grader does not take {field}")
+    return Grader(cast(GraderType, item["grader"]), argv, rubric, capture, pillars)
 
 
 def _helper(value: object) -> Helper:

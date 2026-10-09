@@ -15,7 +15,7 @@ import pytest
 from skillz_experiments import _claude, _nono
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import ClaudeCode, NetworkIsolationFailed
+from skillz_experiments._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed
 from skillz_experiments._doctor import doctor
 from skillz_experiments._harness import Configuration
 from skillz_experiments._runtime import Budget
@@ -78,7 +78,8 @@ def logged(path: Path) -> list[dict[str, object]]:
 
 def test_invoke_runs_claude_inside_nono_with_read_only_skills_and_no_host_key(tmp_path: Path, nono_bin: Path) -> None:
     executable = fake_claude(tmp_path)
-    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, isolation="nono")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, isolation="nono",
+                           options=ClaudeOptions(effort="high"))
     try:
         result = transport.invoke("hello", Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",)))
     finally:
@@ -87,6 +88,7 @@ def test_invoke_runs_claude_inside_nono_with_read_only_skills_and_no_host_key(tm
     argv = cast(list[str], nono["argv"])
     assert argv[:2] == ["run", "--silent"] and "--allow-cwd" in argv
     assert argv[argv.index("--") + 1] == "/usr/bin/env" and str(executable) in argv
+    assert argv[argv.index("--effort") + 1] == "high"
     profile = cast(dict[str, dict[str, object]], nono["profile"])
     assert profile["network"] == {"allow_domain": ["api.anthropic.com"], "credentials": ["anthropic"]}
     assert profile["linux"] == {"af_unix_mediation": "pathname"}
@@ -239,8 +241,8 @@ def nono_sandbox_passes(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         pytest.skip("abstract Unix sockets exist only on Linux")
     directory = Path(tempfile.mkdtemp(prefix="skz", dir="/tmp"))
     monkeypatch.setattr(tempfile, "tempdir", str(directory))
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        del self, workspace, argv
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        del self, workspace, argv, seconds
         return 0, "isolation-ok\n"
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     yield

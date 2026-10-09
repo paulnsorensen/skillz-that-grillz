@@ -12,16 +12,17 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast, final, get_args
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
+from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, relative, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import fixture_result, usage
 from skillz_experiments._evaluator import answer_schema
+from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments import _nono
 from skillz_experiments._isolation import listening, probe, watched, watched_abstract, watched_unix
 from skillz_experiments._records import write_bytes
@@ -68,6 +69,124 @@ RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/se
                 "/dev/null", "/dev/zero", "/dev/random", "/dev/urandom")
 MACOS_READ = ("/System", "/Library")
 SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+EFFORTS = get_args(Effort)
+# Host paths that hold sockets or runtime state. A read root must not equal, hold, or sit inside one.
+RUNTIME_DENY = ("/proc", "/sys", "/dev", "/run", "/var/run")
+# Shared locations that can hold a pathname socket (tmux, X11, lxd). A read root must not equal, hold, or sit inside one.
+SOCKET_DENY = ("/tmp", "/var/tmp", "/var/snap", "/var/lib")
+SOCKET_WALK_LIMIT = 100_000
+# Credential paths under the home directory. A read root must not equal, hold, or sit inside one.
+HOME_DENY = (".ssh", ".gnupg", ".aws", ".config", ".docker", ".kube", ".netrc", ".claude.json", ".bashrc", ".zshrc", ".zshenv",
+             ".profile", ".bash_profile", ".bash_history", ".zsh_history", ".git-credentials", ".npmrc", ".pypirc",
+             ".password-store", ".local/share/keyrings")
+SANDBOX_SECONDS = 20
+SANDBOX_SECONDS_LIMIT = 600
+OPTION_FIELDS = frozenset({"effort", "sandbox_read", "sandbox_seconds"})
+
+
+@dataclass(frozen=True)
+class ClaudeOptions:
+    """Optional Claude role settings. The defaults keep the original behavior.
+
+    `effort` passes `--effort` to every Claude Code call of the role. `sandbox_read` lists host paths that the
+    runner's OS sandbox mounts read-only, for example a browser install. `sandbox_seconds` is the time limit of
+    one OS sandbox command.
+    """
+
+    effort: str | None = None
+    sandbox_read: tuple[str, ...] = ()
+    sandbox_seconds: int = SANDBOX_SECONDS
+
+    @classmethod
+    def parse(cls, value: Mapping[str, object]) -> ClaudeOptions:
+        """Read the option fields of a role mapping or a run record. The caller checks the other fields.
+
+        The read roots become normalized, unique, and sorted, so a reordered or aliased list gives the same options.
+        """
+        effort = value.get("effort")
+        if effort is not None and effort not in EFFORTS:
+            raise ValueError(f"effort must be one of {', '.join(EFFORTS)}")
+        roots = value.get("sandbox_read", ())
+        if not isinstance(roots, (list, tuple)) or not all(
+                isinstance(root, str) and Path(root).is_absolute() for root in cast(Sequence[object], roots)):
+            raise ValueError("sandbox_read must be a list of absolute paths")
+        seconds = value.get("sandbox_seconds", SANDBOX_SECONDS)
+        if type(seconds) is not int or not 1 <= seconds <= SANDBOX_SECONDS_LIMIT:
+            raise ValueError(f"sandbox_seconds must be an integer from 1 to {SANDBOX_SECONDS_LIMIT}")
+        canonical = sorted({os.path.normpath(root) for root in cast(Sequence[str], roots)})
+        return cls(cast(str | None, effort), tuple(canonical), seconds)
+
+    def data(self) -> dict[str, object]:
+        """Return the fields that differ from the defaults. `parse` reads this mapping back."""
+        data: dict[str, object] = {}
+        if self.effort is not None:
+            data["effort"] = self.effort
+        if self.sandbox_read:
+            data["sandbox_read"] = list(self.sandbox_read)
+        if self.sandbox_seconds != SANDBOX_SECONDS:
+            data["sandbox_seconds"] = self.sandbox_seconds
+        return data
+
+
+def _holds_socket(path: Path) -> bool:
+    """Return whether `path` is or holds a socket entry. The walk follows no link and fails closed on an error or past `SOCKET_WALK_LIMIT` entries."""
+    def is_socket(entry: str) -> bool:
+        try:
+            return stat.S_ISSOCK(os.lstat(entry).st_mode)
+        except OSError:
+            return True
+    failed = False
+
+    def onerror(_error: OSError) -> None:
+        nonlocal failed
+        failed = True
+    seen = 0
+    if is_socket(str(path)):
+        return True
+    if not path.is_dir():
+        return False
+    for directory, names, files in os.walk(path, followlinks=False, onerror=onerror):
+        seen += len(names) + len(files)
+        if failed or seen > SOCKET_WALK_LIMIT or any(is_socket(os.path.join(directory, name)) for name in (*names, *files)):
+            return True
+    return failed
+
+
+def resolve_read_roots(roots: tuple[str, ...], out: Path | None) -> tuple[str, ...]:
+    """Check the extra sandbox read roots. Return their paths.
+
+    Each root must exist, must not be a symlink, and must be quotable in the seatbelt profile.
+    A root must not equal, hold, or sit inside the Claude config directory, the temporary directory, or the run directory.
+    The temporary directory holds the workspaces and the login link.
+    A root must not equal or hold the home directory.
+    A root must not equal, hold, or sit inside a runtime path (`RUNTIME_DENY`, `$XDG_RUNTIME_DIR`) or a home credential path (`HOME_DENY`).
+    A root must not be or hold a socket entry. The check walks the tree without following links.
+    """
+    home = Path.home().resolve()
+    credentials = _host_config_dir() / ".credentials.json"
+    hidden = [path.resolve() for path in (_host_config_dir(), Path(tempfile.gettempdir()), *([] if out is None else [out]),
+                                          *([credentials] if credentials.exists() else []))]
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    denied = [Path(path).resolve() for path in (*RUNTIME_DENY, *SOCKET_DENY, *([runtime] if runtime else []))]
+    denied += [(home / name).resolve() for name in HOME_DENY]
+    resolved: list[str] = []
+    for root in roots:
+        path = Path(root).resolve()
+        if not path.exists():
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} does not exist")
+        if os.path.normpath(root) != str(path):
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} is or holds a symlink; give the resolved path {path}")
+        if '"' in str(path) or "\\" in str(path) or not str(path).isprintable():
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} holds a quote, a backslash, or a control character")
+        if home.is_relative_to(path) or any(path.is_relative_to(item) or item.is_relative_to(path) for item in hidden):
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} overlaps the home, Claude config, temporary, or run directory")
+        if any(path.is_relative_to(item) or item.is_relative_to(path) for item in denied):
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} overlaps a runtime or credential path")
+        if _holds_socket(path):
+            raise CodedError("sandbox-read-invalid", f"sandbox read root {root} holds a socket entry or is too large to check")
+        resolved.append(str(path))
+    return tuple(resolved)
 
 
 class NetworkIsolationFailed(CodedError):
@@ -701,24 +820,30 @@ def nested_userns_blocked() -> bool:
     return result.returncode != 0 and result.stderr.strip() in {"unshare", "map"}
 
 
-def seatbelt_profile(workspace: Path) -> str:
+def seatbelt_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
     """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
 
-    The profile allows no network. It allows reads of the system runtime and the workspace, and writes
-    to the workspace except `.agents`. Later rules win, so the `.agents` deny follows the write allow.
+    The profile allows no network. It allows reads of the system runtime, the extra read roots, and the
+    workspace, and writes to the workspace except `.agents`. Later rules win, so the `.agents` deny follows
+    the write allow.
     """
     path = str(workspace)
     rules = ["(version 1)", "(deny default)", "(allow process-fork)", "(allow process-exec)",
              "(allow signal (target self))", "(allow sysctl-read)", "(allow file-read-metadata)",
-             *[f'(allow file-read* (subpath "{root}"))' for root in SEATBELT_RUNTIME],
+             *[f'(allow file-read* (subpath "{root}"))' for root in (*SEATBELT_RUNTIME, *read_roots)],
              '(allow file-read* (literal "/dev/null") (literal "/dev/urandom"))',
              f'(allow file-read* (subpath "{path}"))', f'(allow file-write* (subpath "{path}"))',
              f'(deny file-write* (subpath "{path}/.agents"))', '(allow file-write* (literal "/dev/null"))']
     return "\n".join(rules) + "\n"
 
 
-def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str]) -> list[str]:
-    """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No network, no host files.
+def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str],
+                 read_roots: tuple[str, ...] = ()) -> list[str]:
+    """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No external network.
+    Host access is read-only and limited to the system runtime and the extra read roots.
+
+    Under bubblewrap, the command gets its own network namespace.
+    It can reach a server that it starts on loopback, but not the host loopback.
 
     Under bubblewrap, a shell discards the command's standard error before the command starts. Only
     bubblewrap can then write to the process standard error, so a message that starts with `bwrap:` is
@@ -726,11 +851,12 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
     """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
-        return [tool, "-p", seatbelt_profile(workspace), "/usr/bin/env", "-i", *assignments, *argv]
+        return [tool, "-p", seatbelt_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
     return [tool, "--unshare-all", "--die-with-parent", "--clearenv",
             "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",
             "--symlink", "usr/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev",
+            *[part for root in read_roots for part in ("--ro-bind", root, root)],
             "--bind", path, path, "--ro-bind", f"{path}/.agents", f"{path}/.agents", "--chdir", path,
             "/bin/sh", "-c", 'exec "$@" 2>/dev/null', "sh", "/usr/bin/env", "-i", *assignments, *argv]
 
@@ -759,13 +885,16 @@ def _probe_skill(workspace: Path, name: str) -> None:
 @final
 class ClaudeCode:
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
-                 out: Path | None = None, login: ClaudeLogin | None = None, isolation: str = "claude") -> None:
+                 out: Path | None = None, login: ClaudeLogin | None = None, isolation: str = "claude",
+                 options: ClaudeOptions | None = None) -> None:
         """`isolation` is `claude` (Claude Code's own Bash sandbox) or `nono` (nono confines the whole process)."""
         if isolation not in ISOLATIONS:
             raise ValueError("isolation must be claude or nono")
         self.isolation = isolation
         self.nono = _nono.require() if isolation == "nono" else None
         self.out = out
+        self.options = options or ClaudeOptions()
+        self.read_roots = resolve_read_roots(self.options.sandbox_read, out)
         found = shutil.which("claude") if executable is None else str(executable)
         if found is None:
             raise RuntimeError("Claude Code is unavailable")
@@ -861,7 +990,8 @@ class ClaudeCode:
                 "--output-format", "stream-json", "--verbose"]
 
     def _command(self, settings_path: Path, schema: dict[str, object] | None) -> list[str]:
-        command = [*self._base(settings_path), "--model", self.model]
+        command = [*self._base(settings_path), "--model", self.model,
+                   *(["--effort", self.options.effort] if self.options.effort is not None else [])]
         return command + (["--json-schema", json.dumps(schema)] if schema is not None else [])
 
     def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float,
@@ -950,7 +1080,8 @@ class ClaudeCode:
                 raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
         with listening() as port:
             script = probe(workspace, sealed, Path(__file__).resolve(), port)
-            code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script])
+            code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
+                                        max(SANDBOX_SECONDS, self.options.sandbox_seconds))
         if code != 0 or output.strip() != "isolation-ok":
             raise _preflight_leak("sandbox probe failed")
 
@@ -1069,6 +1200,18 @@ class ClaudeCode:
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        return self._invoke(prompt, candidate, case, {}, holdout=holdout, schema=schema)
+
+    def view(self, prompt: str, attachments: Mapping[str, bytes], *, holdout: bool = False,
+             schema: dict[str, object] | None = None) -> dict[str, object]:
+        """Invoke without a candidate or a case. Write each attachment under `capture/` in the workspace first.
+
+        The prompt gets the absolute path of each attachment, so the model can open it with the Read tool.
+        """
+        return self._invoke(prompt, None, None, attachments, holdout=holdout, schema=schema)
+
+    def _invoke(self, prompt: str, candidate: Candidate | None, case: Case | None, attachments: Mapping[str, bytes],
+                *, holdout: bool, schema: dict[str, object] | None) -> dict[str, object]:
         self._check_memory()
         builtin = self.inventory().builtin
         if candidate is not None:
@@ -1076,6 +1219,14 @@ class ClaudeCode:
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)
+            paths: list[str] = []
+            for name, data in sorted(attachments.items()):
+                path = workspace / CAPTURE_DIRECTORY / relative(name)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                _ = path.write_bytes(data)
+                paths.append(str(path.resolve()))
+            if paths:
+                prompt += "\nCAPTURE FILES:\n" + "\n".join(paths)
             expected = [] if candidate is None else [candidate.skill]
             self.budget.claim(holdout=holdout)
             self.checkpoint()
@@ -1105,8 +1256,11 @@ class ClaudeCode:
             return {"answer": _answer(final), "events": trace, "usage": usage(trace), "workspace": str(workspace),
                     "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
-        """Run `argv` in the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. Fail closed without it."""
+    def sandbox(self, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        """Run `argv` in the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. Fail closed without it.
+
+        A command that exceeds `seconds` (default `options.sandbox_seconds`) returns code 124. Budget exhaustion still raises.
+        """
         system = "darwin" if sys.platform == "darwin" else "linux"
         name = "sandbox-exec" if system == "darwin" else "bwrap"
         tool = shutil.which(name)
@@ -1115,8 +1269,15 @@ class ClaudeCode:
                                      else "run on a macOS host that provides `sandbox-exec`")
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
-        result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment), cwd=workspace,
-                         timeout=min(20, self.budget.remaining()), environment={"PATH": "/usr/bin:/bin"})
+        limit = self.options.sandbox_seconds if seconds is None else seconds
+        timeout = min(limit, self.budget.remaining())
+        try:
+            result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots), cwd=workspace,
+                             timeout=timeout, environment={"PATH": "/usr/bin:/bin"})
+        except BudgetExhausted:
+            if timeout < limit:
+                raise
+            return 124, ""
         if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
             raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", _sandbox_fix(result.stderr))
         return result.returncode, result.stdout

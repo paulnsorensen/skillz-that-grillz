@@ -62,7 +62,24 @@ nono injects the key through its proxy, so the sandbox never sees it. This backe
 `--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
 `--repeats` sets the repeats for each holdout case. The default is 3.
 `--seed` sets the split seed. Keep the default unless the user asks.
-When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, or `--seed`.
+`--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
+`--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
+Use it for a browser install, for example `/opt/pw-browsers`.
+A root must exist, and it must not be a symlink. Give the resolved path.
+A root must not equal or hold the home directory.
+A root must not equal, hold, or sit inside the Claude config directory, the temporary directory, or `--out`.
+A root must not equal, hold, or sit inside a runtime path or a credential path.
+The runtime paths are `/proc`, `/sys`, `/dev`, `/run`, `/var/run`, `/tmp`, `/var/tmp`, `/var/snap`, `/var/lib`, and `$XDG_RUNTIME_DIR`.
+The credential paths are `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.docker`, `~/.kube`, `~/.netrc`, `~/.claude.json`, the shell rc and history files, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, `~/.password-store`, `~/.local/share/keyrings`, and the Claude login file.
+A root must not hold a socket entry. A tree of more than 100000 entries is too large to check, so the runner refuses it.
+Home caches such as `~/.cache/ms-playwright` stay allowed.
+`--sandbox-seconds N` sets the time limit of one OS sandbox command, from 1 to 600. The default is 20.
+Once any scored case uses a command or hybrid grader, this time applies to every evaluation.
+Parallel calls share it. The estimate and the holdout gate reserve include it.
+The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
+The stops that ask for approval echo the options as `claude_options`.
+These three options apply only to `--harness claude`. The first run records them.
+When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, or Claude option.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
 Each stop prints one JSON object on stdout and a coded error on stderr.
@@ -87,6 +104,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | Code | Meaning | Next step |
 |---|---|---|
 | `login-missing` | No Claude login file exists, or Claude Code rejects the login during the preflight (authentication failed). Under nono, the host API key is missing or invalid. | Ask the user to run `claude` once and log in. Under nono, export a valid `ANTHROPIC_API_KEY`. |
+| `sandbox-read-invalid` | A `--sandbox-read` root is missing, is a symlink, holds an unsafe character, overlaps a refused path, holds a socket entry, or is too large to check. The message names the root. | On a fresh run, give a valid resolved path. On a resume, restore the path or start a new `--out`. |
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
@@ -100,7 +118,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
@@ -110,6 +128,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-unapproved` | The skill contract has `status` `draft`. | Ask the user to approve the contract, then set `approved`. |
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
+| `contract-capture-unsupported` | A kind declares `capture`, and the harness is not `claude`. | Run with `--harness claude`, or remove `capture`. |
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
@@ -196,7 +215,7 @@ The contract has these fields:
 - `status`: `approved` or `draft`. A draft stops the run.
 - `skill`: the skill directory name.
 - `invocation`: the request that calls the skill. It supports `{skill}` and `{path}`.
-- `kinds`: a map of case kind to `{grader, argv?, rubric?}`.
+- `kinds`: a map of case kind to `{grader, argv?, rubric?, capture?, pillars?}`.
 - `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
 - `editable` (optional): relative paths that search can change.
 
@@ -226,17 +245,42 @@ The runner reports `contract-unapproved` for a draft.
 Each kind in `kinds` names one grader:
 
 - `exact-json`: compares the task result with the case `expected` JSON. A `result_json` that is not a string scores 0 with status `invalid-answer`.
-- `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100.
+- `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100, unless the kind declares `pillars`.
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
 - `hybrid`: runs the `command` gate first. A failed gate scores 0, skips the judge, and records `scores.judge` as null.
 - `audit`: scores findings against reviewed labels in `expected`. The `run` command does not support audit-graded kinds yet, and stops with `contract-audit-unsupported`.
 
 A `command` or `hybrid` grader needs a nonempty `argv`.
 A `judge` or `hybrid` grader needs a `rubric`.
+
+A `judge` or `hybrid` grader can also declare these fields:
+
+- `capture`: a nonempty argv that shows the output to the judge as files.
+  It runs after the task and after a passed hybrid gate, in a workspace like the `command` workspace.
+  It saves files under `capture/`. Ship the capture script as a case fixture.
+  `capture/` is a reserved fixture root for every contract. A fixture path must not start with `capture/`.
+  The runner accepts at most 16 regular files: `.png` files with a PNG signature and UTF-8 `.txt` files.
+  The suffix match is case-sensitive, so `PAGE.PNG` fails.
+  The runner refuses a file name that starts with a dot, a hidden directory, and a name with a control character.
+  Each file has a limit of 4,000,000 bytes, and all files together have a limit of 16,000,000 bytes.
+  The judge workspace gets the files under `capture/`. The judge prompt lists their absolute paths, and the judge opens them with the Read tool.
+  A non-zero exit, no files, a symlink, or a file that breaks a rule scores 0 with status `capture-failed` and skips the judge.
+  The record then holds `capture_failure`. After a successful capture, the record holds `capture_files`.
+  Only the `claude` harness supports `capture`. Other harnesses stop with `contract-capture-unsupported`.
+  The capture runs in the OS sandbox of the task role, so `--sandbox-read` and `--sandbox-seconds` apply.
+  On macOS the sandbox blocks all network access, loopback included, so a capture that starts a local server needs Linux.
+- `pillars`: 1 to 8 unique names, such as `["ui", "ux", "information_flow"]`.
+  A name starts with a lowercase letter, has at most 32 characters, and holds only lowercase letters, digits, and underscores.
+  The judge answers one required integer from 0 to 100 for each pillar, and no `score_percent`.
+  The kind score is the mean of the pillar scores. The record holds each pillar score in `scores.pillars`, from 0 to 1.
+  An answer that leaves out a pillar or adds a field scores 0 with status `evaluation-failed`.
+
+The contract hash covers `capture` and `pillars`.
+
 A case of a `command` kind without `expected` stops with `expected-missing`.
 A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: one for the task and one for the judge.
 A kind spends one invocation when the judge does not run.
-This covers a failed hybrid gate, a failed activation, and an invalid audit report.
+This covers a failed hybrid gate, a failed capture, a failed activation, and an invalid audit report.
 Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the judge.
 
 
