@@ -6,7 +6,7 @@ candidate outputs sit under `output/`, so an output never replaces a fixture or 
 A hybrid kind whose command gate fails skips the judge. Its side-info `scores` then holds
 `{"command": 0.0, "judge": null}`. A `null` judge entry means the judge did not run.
 
-A judged kind with `capture` runs the capture argv in the same kind of workspace. The judge then views the
+A judged kind with `capture` runs the capture argv in a workspace like the `command` workspace. The judge then views the
 files that the argv saves under `capture/`. A kind with `pillars` gets one judge score per pillar. The kind
 score is their mean, and side-info `scores.pillars` holds each pillar score.
 """
@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import tempfile
+import unicodedata
 from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -55,9 +57,6 @@ def judge_schema(pillars: tuple[str, ...] = ()) -> dict[str, object]:
     fields = pillars or ("score_percent",)
     return {"type": "object", "properties": {name: {"type": "integer"} for name in fields},
             "required": list(fields), "additionalProperties": False}
-
-
-JUDGE_SCHEMA = judge_schema()
 
 
 class CaptureFailed(ValueError):
@@ -160,25 +159,38 @@ def _captured(root: Path) -> dict[str, bytes]:
         raise CaptureFailed("the capture directory is missing or is a symlink")
     found: dict[str, bytes] = {}
     total = 0
-    for directory, folders, names in os.walk(root):
-        base = Path(directory)
-        if any((base / entry).is_symlink() for entry in [*folders, *names]):
-            raise CaptureFailed("the capture directory holds a symlink")
-        for entry in sorted(names):
-            path = base / entry
-            name = path.relative_to(root).as_posix()
-            check = CAPTURE_TYPES.get(path.suffix)
-            if check is None or entry.startswith("."):
-                raise CaptureFailed(f"capture file {name} is not a .png or .txt file")
-            with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
-                data = stream.read(CAPTURE_BYTES_LIMIT + 1)
-            total += len(data)
-            if len(found) >= CAPTURE_FILE_LIMIT or len(data) > CAPTURE_BYTES_LIMIT or total > CAPTURE_TOTAL_LIMIT:
-                raise CaptureFailed(f"the capture exceeds {CAPTURE_FILE_LIMIT} files, {CAPTURE_BYTES_LIMIT} bytes "
-                                    + f"per file, or {CAPTURE_TOTAL_LIMIT} bytes in total")
-            if not check(data):
-                raise CaptureFailed(f"capture file {name} does not match its type")
-            found[relative(name)] = data
+    try:
+        for directory, folders, names, dirfd in os.fwalk(root, follow_symlinks=False):
+            base = Path(directory)
+            for entry in [*folders, *names]:
+                if stat.S_ISLNK(os.stat(entry, dir_fd=dirfd, follow_symlinks=False).st_mode):
+                    raise CaptureFailed("the capture directory holds a symlink")
+                if "\\" in entry or any(unicodedata.category(char) in ("Cc", "Cf") for char in entry):
+                    raise CaptureFailed(f"capture entry {entry!r} holds a backslash, control, or format character")
+            if any(folder.startswith(".") for folder in folders):
+                raise CaptureFailed("the capture directory holds a hidden directory")
+            for entry in sorted(names):
+                path = base / entry
+                name = path.relative_to(root).as_posix()
+                check = CAPTURE_TYPES.get(path.suffix)
+                if check is None or entry.startswith("."):
+                    raise CaptureFailed(f"capture file {name} is not a .png or .txt file")
+                descriptor = os.open(entry, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dirfd)
+                with os.fdopen(descriptor, "rb") as stream:
+                    if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                        raise CaptureFailed(f"capture file {name} is not a regular file")
+                    data = stream.read(CAPTURE_BYTES_LIMIT + 1)
+                total += len(data)
+                if len(found) >= CAPTURE_FILE_LIMIT or len(data) > CAPTURE_BYTES_LIMIT or total > CAPTURE_TOTAL_LIMIT:
+                    raise CaptureFailed(f"the capture exceeds {CAPTURE_FILE_LIMIT} files, {CAPTURE_BYTES_LIMIT} bytes "
+                                        + f"per file, or {CAPTURE_TOTAL_LIMIT} bytes in total")
+                if not check(data):
+                    raise CaptureFailed(f"capture file {name} does not match its type")
+                found[relative(name)] = data
+    except CaptureFailed:
+        raise
+    except (OSError, ValueError) as error:
+        raise CaptureFailed(f"the capture directory cannot be read safely: {error}") from None
     if not found:
         raise CaptureFailed("the capture argv saves no files")
     return found

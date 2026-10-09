@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -328,6 +329,7 @@ def test_the_capture_sees_the_task_output_and_its_files_reach_the_judge(tmp_path
     assert "Read tool" in judge.prompts[0] and '"capture_files": ["notes/page.txt", "page.png"]' in judge.prompts[0]
     workspace = task.workspaces[0]
     assert workspace["output/result.txt"] == "rewritten\n" and "EXPECTED_SENTINEL" not in "".join(workspace.values())
+    assert workspace["input.txt"] == "hello\n"
 
 
 @pytest.mark.parametrize("script", [
@@ -341,7 +343,18 @@ def test_the_capture_sees_the_task_output_and_its_files_reach_the_judge(tmp_path
     "import os; os.symlink('/etc', 'capture/host')",
     "import pathlib; pathlib.Path('capture/page.png').write_bytes(b'\\x89PNG\\r\\n\\x1a\\n' + bytes(4_000_000))",
     "import pathlib\nfor n in range(17): pathlib.Path(f'capture/{n}.txt').write_text('x')",
-], ids=["exit", "empty", "type", "bad-png", "bad-text", "hidden", "file-link", "directory-link", "too-big", "too-many"])
+    "import pathlib\nfor n in range(5): pathlib.Path(f'capture/{n}.txt').write_bytes(bytes(3_500_000))",
+    "import os; os.mkfifo('capture/pipe.txt')",
+    "import socket; socket.socket(socket.AF_UNIX).bind('capture/s.txt')",
+    "import pathlib; pathlib.Path('capture/.cache').mkdir(); pathlib.Path('capture/.cache/a.txt').write_text('x')",
+    "import pathlib; pathlib.Path('capture/a\\\\b.txt').write_text('x')",
+    "import pathlib; pathlib.Path('capture/a\\nb.txt').write_text('x')",
+    "import pathlib; pathlib.Path('capture/a\\u200bb.txt').write_text('x')",
+    "import os; os.mkdir('capture/real'); os.symlink('real', 'capture/link')",
+    "import os, shutil; shutil.rmtree('capture'); os.symlink('/etc', 'capture')",
+], ids=["exit", "empty", "type", "bad-png", "bad-text", "hidden", "file-link", "directory-link", "too-big", "too-many",
+        "too-big-in-total", "fifo", "socket", "hidden-directory", "backslash", "newline", "format-char",
+        "subdirectory-link", "root-link"])
 def test_a_failed_capture_scores_zero_and_skips_the_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                           script: str) -> None:
     rules = capture_contract(script)
@@ -353,6 +366,21 @@ def test_a_failed_capture_scores_zero_and_skips_the_judge(tmp_path: Path, monkey
     assert result["score"] == 0.0 and result["scores"] == {"judge": None}
 
 
+def test_a_capture_rule_failure_keeps_its_own_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    script = "import pathlib; d = pathlib.Path('capture/.cache'); d.mkdir(); (d / 'a.txt').write_text('x')"
+    case, candidate = case_and_candidate(tmp_path, "look", capture_contract(script))
+    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case)
+    assert result["capture_failure"] == "the capture directory holds a hidden directory"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads a mode 000 file")
+def test_an_unreadable_capture_file_fails_the_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = capture_contract("import pathlib; p = pathlib.Path('capture/a.txt'); p.write_text('x'); p.chmod(0)")
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case)
+    assert result["status"] == "capture-failed" and result["score"] == 0.0
+
+
 def test_a_hybrid_kind_that_passes_the_gate_and_fails_the_capture_scores_zero(tmp_path: Path,
                                                                               monkeypatch: pytest.MonkeyPatch) -> None:
     rules = capture_contract("raise SystemExit(1)", grader="hybrid")
@@ -360,6 +388,38 @@ def test_a_hybrid_kind_that_passes_the_gate_and_fails_the_capture_scores_zero(tm
     result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case)
     assert result["status"] == "capture-failed" and result["score"] == 0.0
     assert result["scores"] == {"command": 1.0, "judge": None}
+
+
+def test_a_hybrid_kind_whose_gate_fails_skips_the_capture_and_the_judge(tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = capture_contract(grader="hybrid", gate=GATE_SCRIPT["fail"])
+    task, judge = SandboxedTask(), FakeViewer()
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case)
+    assert result["status"] == "gate-failed" and result["score"] == 0.0
+    assert len(task.workspaces) == 1 and judge.prompts == [] and judge.attachments == []
+
+
+@pytest.mark.parametrize("script", [
+    "import pathlib\nfor n in range(16): pathlib.Path(f'capture/{n}.txt').write_text('x')",
+    "import pathlib; pathlib.Path('capture/big.txt').write_bytes(b'x' * 4_000_000)",
+], ids=["sixteen-files", "largest-file"])
+def test_a_capture_exactly_at_a_limit_is_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str) -> None:
+    rules = capture_contract(script)
+    judge = FakeViewer()
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
+    assert "capture_failure" not in result and len(judge.attachments) == 1
+
+
+def test_eight_pillars_and_scores_zero_and_one_hundred_are_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    names = [f"p{n}" for n in range(8)]
+    rules = capture_contract(capture=False, pillars=names)
+    judge = FakeJudge(answer={name: 0 if n % 2 else 100 for n, name in enumerate(names)})
+    case, candidate = case_and_candidate(tmp_path, "look", rules)
+    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case)
+    assert result["score"] == pytest.approx(0.5)
+    assert cast(dict[str, float], cast(dict[str, object], result["scores"])["pillars"])["p0"] == 1.0
 
 
 @pytest.mark.parametrize(("task", "judge", "message"), [

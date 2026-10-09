@@ -143,8 +143,13 @@ class _Plan:
 
 
 def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeOptions) -> int:
-    """Return the sandbox time limit of one evaluation, or 0 when no scored case runs a command grader."""
-    return options.sandbox_seconds if any(contract.grader(case.kind).type in ("command", "hybrid") for case in cases) else 0
+    """Return the sandbox time of one evaluation: one limit per sandbox run, taken at the costliest scored kind.
+
+    A command or hybrid grader runs one sandbox. A `capture` argv runs one more. The result is 0 when no scored case runs one.
+    """
+    runs = max((int(grader.type in ("command", "hybrid")) + int(bool(grader.capture))
+                for grader in (contract.grader(case.kind) for case in cases)), default=0)
+    return runs * options.sandbox_seconds
 
 
 def _sizing_options(configuration: Configuration | None, options: ClaudeOptions) -> ClaudeOptions:
@@ -162,7 +167,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     `_Plan.metric_calls` and `reflection_calls` keep that unit. `holdout_calls` and `sized.calls` count model calls.
     `holdout_calls` is the gate reserve. It holds the gate and `HOLDOUT_RETRIES_PER_ARM` retries per arm,
     because a failed holdout call stays claimed.
-    `sandbox_seconds` is the time limit of one evaluation, and it applies once any scored case uses a command or hybrid grader.
+    `sandbox_seconds` is the sandbox time of one evaluation: the limit times the sandbox runs of the costliest scored kind.
     The sandbox time of every evaluation adds to the estimate and to the gate reserve, shared across parallel calls.
     The search shrinks until both the call cap and the time cap hold, sandbox time included.
     """
@@ -267,9 +272,10 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)
     kind = _supported_kind(contract)
-    captured = sorted(name for name, grader in contract.kinds.items() if grader.capture)
-    if captured and adapter != "claude":
-        raise CodedError("contract-capture-unsupported", f"the kinds {', '.join(captured)} declare capture, and only "
+    judge = configuration.roles.get("judge") if configuration is not None else None
+    judge_adapter = judge.adapter if judge is not None else adapter
+    if contract.kinds[kind].capture and judge_adapter != "claude":
+        raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
     cases = split_cases(load_draft(draft), split_seed, kind)
     held = sum(case.split == "holdout" and case.kind == kind for case in cases)

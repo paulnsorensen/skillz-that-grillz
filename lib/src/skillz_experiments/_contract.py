@@ -122,7 +122,7 @@ def _pillars(raw: object, kind: str) -> tuple[str, ...]:
         raise ValueError(f"kind {kind} pillars must be a list of 1 to {PILLAR_LIMIT} names")
     names = cast(list[object], raw)
     if not all(isinstance(name, str) and _PILLAR.fullmatch(name) for name in names) or len(set(cast(list[str], names))) != len(names):
-        raise ValueError(f"kind {kind} pillars must be unique lowercase names of letters, digits, and underscores")
+        raise ValueError(f"kind {kind} pillars must be unique lowercase names of letters, digits, and underscores; each starts with a letter and has at most 32 characters")
     return tuple(cast(list[str], names))
 
 

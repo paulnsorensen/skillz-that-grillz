@@ -23,7 +23,7 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._claude import ClaudeCode, ClaudeOptions
 from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
-from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness
+from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, Role
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments._search import Edit
@@ -208,6 +208,21 @@ def test_a_capture_kind_on_a_harness_other_than_claude_stops_before_any_approval
         _ = run(target, out, MODEL, adapter="codex", live=True, factory=state.factory())
     assert caught.value.code == "contract-capture-unsupported" and "echo" in str(caught.value)
     assert state.evaluated == [] and not (out / "run.json").exists()
+
+
+def test_a_capture_kind_with_a_non_claude_judge_in_a_supplied_configuration_stops_before_approval(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
+    target, out, state = make_target(tmp_path), tmp_path / "run", State()
+    path = target / "evals/autoimprove.json"
+    document = cast(dict[str, object], json.loads(path.read_text()))
+    _ = path.write_text(json.dumps(document | {"kinds": {"echo": {
+        "grader": "judge", "rubric": "r", "capture": ["/usr/bin/python3", "capture.py"]}}}))
+    _ = write_draft(out)
+    roles = {name: Role("claude" if name == "task" else "codex", "m", ("fake",), "id") for name in ("task", "judge")}
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, configuration=Configuration(roles), factory=state.factory())
+    assert caught.value.code == "contract-capture-unsupported" and "echo" in str(caught.value)
+    assert not (out / "run.json").exists()
 
 
 @pytest.mark.parametrize(("variant", "code"), [
@@ -734,6 +749,11 @@ def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reser
     task, other = (cast(Case, cast(object, SimpleNamespace(kind=kind))) for kind in ("task", "plain"))
     options = ClaudeOptions(sandbox_seconds=90)
     assert _command_seconds(contract, [task], options) == 90 and _command_seconds(contract, [other], options) == 0
+    judged = Contract("s", "$s", {"look": Grader("judge", rubric="r", capture=("x",)),
+                                   "mix": Grader("hybrid", ("x",), "r", ("x",)), "hy": Grader("hybrid", ("x",), "r")})
+    look, mix, hybrid = (cast(Case, cast(object, SimpleNamespace(kind=kind))) for kind in ("look", "mix", "hy"))
+    assert _command_seconds(judged, [look], options) == 90 and _command_seconds(judged, [hybrid], options) == 90
+    assert _command_seconds(judged, [mix], options) == 180 and _command_seconds(judged, [look, mix], options) == 180
 
 
 def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:

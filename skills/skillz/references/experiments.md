@@ -245,7 +245,7 @@ The runner reports `contract-unapproved` for a draft.
 Each kind in `kinds` names one grader:
 
 - `exact-json`: compares the task result with the case `expected` JSON. A `result_json` that is not a string scores 0 with status `invalid-answer`.
-- `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100.
+- `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100, unless the kind declares `pillars`.
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
 - `hybrid`: runs the `command` gate first. A failed gate scores 0, skips the judge, and records `scores.judge` as null.
 - `audit`: scores findings against reviewed labels in `expected`. The `run` command does not support audit-graded kinds yet, and stops with `contract-audit-unsupported`.
@@ -256,9 +256,12 @@ A `judge` or `hybrid` grader needs a `rubric`.
 A `judge` or `hybrid` grader can also declare these fields:
 
 - `capture`: a nonempty argv that shows the output to the judge as files.
-  It runs after the task and after a passed hybrid gate, in the same kind of workspace as `command`.
-  It saves files under `capture/`. Ship the capture script as a case fixture. A fixture path must not start with `capture/`.
+  It runs after the task and after a passed hybrid gate, in a workspace like the `command` workspace.
+  It saves files under `capture/`. Ship the capture script as a case fixture.
+  `capture/` is a reserved fixture root for every contract. A fixture path must not start with `capture/`.
   The runner accepts at most 16 regular files: `.png` files with a PNG signature and UTF-8 `.txt` files.
+  The suffix match is case-sensitive, so `PAGE.PNG` fails.
+  The runner refuses a file name that starts with a dot, a hidden directory, and a name with a control character.
   Each file has a limit of 4,000,000 bytes, and all files together have a limit of 16,000,000 bytes.
   The judge workspace gets the files under `capture/`. The judge prompt lists their absolute paths, and the judge opens them with the Read tool.
   A non-zero exit, no files, a symlink, or a file that breaks a rule scores 0 with status `capture-failed` and skips the judge.
@@ -266,10 +269,11 @@ A `judge` or `hybrid` grader can also declare these fields:
   Only the `claude` harness supports `capture`. Other harnesses stop with `contract-capture-unsupported`.
   The capture runs in the OS sandbox of the task role, so `--sandbox-read` and `--sandbox-seconds` apply.
   On macOS the sandbox blocks all network access, loopback included, so a capture that starts a local server needs Linux.
-- `pillars`: 1 to 8 unique names of lowercase letters, digits, and underscores, such as `["ui", "ux", "information_flow"]`.
+- `pillars`: 1 to 8 unique names, such as `["ui", "ux", "information_flow"]`.
+  A name starts with a lowercase letter, has at most 32 characters, and holds only lowercase letters, digits, and underscores.
   The judge answers one required integer from 0 to 100 for each pillar, and no `score_percent`.
   The kind score is the mean of the pillar scores. The record holds each pillar score in `scores.pillars`, from 0 to 1.
-  An answer that leaves out a pillar or adds a field fails the evaluation.
+  An answer that leaves out a pillar or adds a field scores 0 with status `evaluation-failed`.
 
 The contract hash covers `capture` and `pillars`.
 
