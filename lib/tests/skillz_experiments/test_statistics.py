@@ -191,6 +191,18 @@ def test_a_contract_floor_is_frozen_and_the_gate_reports_its_reason(
     assert cast(dict[str, object], report["gate"])["reasons"] == ["min-gain"]
 
 
+def test_a_completed_run_with_a_different_statistics_flag_stops_with_run_config_differs(
+        tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _declare(target, min_gain=2.0)
+    assert approved_run(target, out, factory=_Provider)["phase"] == "complete"
+    with pytest.raises(CodedError) as changed:
+        _ = run(target, out, MODEL, statistics={"min_gain": 0.5})
+    assert changed.value.code == "run-config-differs" and "--min-gain" in str(changed.value)
+    assert run(target, out, MODEL, statistics={"min_gain": 2.0})["phase"] == "complete"
+    assert run(target, out, MODEL)["phase"] == "complete"
+
+
 def test_a_flag_below_the_contract_value_wins_and_the_default_gate_has_no_reasons(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
