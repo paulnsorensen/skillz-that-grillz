@@ -1,16 +1,32 @@
 from __future__ import annotations
 
+import hashlib
+import re
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
+from functools import cached_property
 from pathlib import Path
 
 from skillz_experiments._cases import Case, CodedError, digest, mapping, relative
 from skillz_experiments._contract import LOCATION, Contract, resolve
+from skillz_experiments._records import write_bytes
 
 OUTPUT_FILE_LIMIT = 64
 OUTPUT_BYTES_LIMIT = 262144
 PACKAGE_LIMIT = 1_000_000
+TEXT_FILE_LIMIT = 262144
+# Frozen bytes never count against PACKAGE_LIMIT. They have their own limits.
+FROZEN_FILE_LIMIT = 16 * 1024 * 1024
+FROZEN_TOTAL_LIMIT = 64 * 1024 * 1024
+# A candidate file under this prefix is wedge source from the repository, not a skill file.
+# The rest of the name is the path relative to the repository root. `materialize` never writes it.
+WEDGE_PREFIX = "@wedge/"
 _RUNTIME_OWNED = {"home", "tmp", ".agents", "answer.json", "response-schema.json"}
+
+
+def _megabytes(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MiB"
 
 
 def candidate_files(value: object) -> dict[str, str]:
@@ -22,7 +38,7 @@ def candidate_files(value: object) -> dict[str, str]:
     return files
 
 
-def _ignored(root: Path) -> set[str]:
+def ignored_files(root: Path) -> set[str]:
     """Return the git-ignored files under `root`. Any git failure gives an empty set.
 
     A root that git ignores itself gives an empty set too. Git would list every file below it.
@@ -48,25 +64,54 @@ def _metadata(posix: str) -> bool:
             or parts[-1] in (".gitignore", ".gitattributes", ".gitkeep", ".gitmodules", ".DS_Store") or parts[-1].endswith(".pyc"))
 
 
+def as_text(data: bytes) -> str | None:
+    """Return `data` as text, or None when it is binary, not UTF-8, or over the text limit."""
+    if len(data) > TEXT_FILE_LIMIT or b"\x00" in data:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 @dataclass(frozen=True)
 class Candidate:
+    """The skill files of one candidate.
+
+    `files` holds text, including wedge sources under `WEDGE_PREFIX`. `frozen` holds bytes that no
+    proposal edits: binary files, non-UTF-8 files, text over `TEXT_FILE_LIMIT`, and built `.pyz` files.
+    """
+
     files: dict[str, str]
     editable: tuple[str, ...]
     contract: Contract | None = None
     script: str | None = None
+    frozen: dict[str, bytes] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if sum(len(text) for text in self.files.values()) > PACKAGE_LIMIT:
             raise ValueError("candidate package exceeds size limit")
+        for name, data in self.frozen.items():
+            if len(data) > FROZEN_FILE_LIMIT:
+                raise CodedError("frozen-file-too-large",
+                                 f"{name} is {_megabytes(len(data))}; the limit is {_megabytes(FROZEN_FILE_LIMIT)} per file")
+        if sum(len(data) for data in self.frozen.values()) > FROZEN_TOTAL_LIMIT:
+            largest = max(self.frozen, key=lambda name: len(self.frozen[name]))
+            raise CodedError("frozen-file-too-large", f"the frozen files exceed {_megabytes(FROZEN_TOTAL_LIMIT)} in total; "
+                             + f"the largest is {largest}")
 
     @classmethod
     def capture(cls, root: Path, editable: list[str], contract: Contract | None = None,
                 exclude: tuple[str, ...] = ()) -> Candidate:
-        """Read the skill files under `root`. Skip git-ignored files, VCS metadata, bytecode caches, `evals/`, and `exclude`."""
+        """Read the skill files under `root`. Skip git-ignored files, VCS metadata, bytecode caches, `evals/`, and `exclude`.
+
+        A file that is binary, is not UTF-8, or exceeds `TEXT_FILE_LIMIT` becomes frozen bytes.
+        """
         if root.is_symlink():
             raise ValueError("candidate must not contain symlinks")
-        ignored = _ignored(root)
+        ignored = ignored_files(root)
         files: dict[str, str] = {}
+        frozen: dict[str, bytes] = {}
         for path in sorted(root.rglob("*")):
             posix = path.relative_to(root).as_posix()
             if posix in ignored or _metadata(posix) or posix.startswith("evals/"):
@@ -77,38 +122,96 @@ class Candidate:
                 if any(part.startswith(".") for part in posix.split("/")):
                     raise CodedError("hidden-file", f"{posix} is a hidden file; remove it")
                 name = relative(posix)
-                if name in ("scripts/skillz-experiment.pyz", "wedge/scripts/wedge.pyz", LOCATION, *exclude):
+                if name.startswith(WEDGE_PREFIX):
+                    raise CodedError("reserved-name", f"{name} starts with {WEDGE_PREFIX}, which names wedge sources; rename the file")
+                if name in (LOCATION, *exclude):
                     continue
-                if path.stat().st_size > 262144:
-                    raise ValueError("candidate file exceeds size limit")
-                try:
-                    files[name] = path.read_text(encoding="utf-8")
-                except UnicodeDecodeError:
-                    raise CodedError("undecodable-file", f"{name} is not UTF-8") from None
+                if path.stat().st_size > FROZEN_FILE_LIMIT:
+                    raise CodedError("frozen-file-too-large", f"{name} is {_megabytes(path.stat().st_size)}; "
+                                     + f"the limit is {_megabytes(FROZEN_FILE_LIMIT)} per file")
+                data = path.read_bytes()
+                text = as_text(data)
+                if text is None:
+                    frozen[name] = data
+                else:
+                    files[name] = text
         if "SKILL.md" not in files or not set(editable) <= files.keys():
             raise ValueError("candidate needs SKILL.md and existing editable components")
-        return cls(files, tuple(editable), contract)
+        return cls(files, tuple(editable), contract, frozen=frozen)
 
     @property
     def skill(self) -> str:
         return resolve(self.contract).skill
 
+    @cached_property
+    def frozen_digests(self) -> dict[str, str]:
+        return {name: hashlib.sha256(data).hexdigest() for name, data in sorted(self.frozen.items())}
+
     @property
     def identity(self) -> str:
-        return digest(self.files)
+        if not self.frozen:
+            return digest(self.files)
+        return digest({"files": self.files, "frozen": self.frozen_digests})
 
     def changed(self, components: dict[str, str]) -> Candidate:
         if set(components) != set(self.editable):
             raise ValueError("proposal components differ from the frozen set")
-        if any(len(text) > 262144 for text in components.values()):
+        if any(len(text) > TEXT_FILE_LIMIT for text in components.values()):
             raise ValueError("proposal exceeds component size limit")
-        return Candidate(self.files | components, self.editable, self.contract, self.script)
+        child = Candidate(self.files | components, self.editable, self.contract, self.script, self.frozen)
+        child.__dict__["frozen_digests"] = self.frozen_digests
+        return child
+
+    def with_frozen(self, built: dict[str, bytes]) -> Candidate:
+        """Return this candidate with `built` replacing the frozen bytes of the same names.
+
+        The digests of the other frozen files carry over, so they are not hashed again.
+        """
+        child = replace(self, frozen=self.frozen | built)
+        fresh = {name: hashlib.sha256(data).hexdigest() for name, data in built.items()}
+        child.__dict__["frozen_digests"] = dict(sorted((self.frozen_digests | fresh).items()))
+        return child
 
     def materialize(self, root: Path) -> None:
         for name, content in self.files.items():
+            if name.startswith(WEDGE_PREFIX):
+                continue
             path = root / relative(name)
             path.parent.mkdir(parents=True, exist_ok=True)
             _ = path.write_text(content, encoding="utf-8")
+        for name, data in self.frozen.items():
+            if name.startswith(WEDGE_PREFIX):
+                continue
+            path = root / relative(name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _ = path.write_bytes(data)
+            if name.endswith(".pyz"):
+                path.chmod(0o755)
+
+
+def store_frozen(candidate: Candidate, directory: Path) -> dict[str, str]:
+    """Write each frozen file of `candidate` to `directory`, named by its digest. Return the digest of each name."""
+    directory.mkdir(exist_ok=True)
+    for name, data in candidate.frozen.items():
+        _ = write_bytes(directory / candidate.frozen_digests[name], data)
+    return dict(candidate.frozen_digests)
+
+
+def load_frozen(digests: Mapping[str, object], directory: Path) -> dict[str, bytes]:
+    """Read the frozen files that `store_frozen` wrote. A missing or changed file is tampering."""
+    frozen: dict[str, bytes] = {}
+    for name, digest_text in digests.items():
+        blob = directory / str(digest_text)
+        if not isinstance(digest_text, str) or not re.fullmatch(r"[0-9a-f]{64}", digest_text) or not blob.is_file():
+            raise CodedError("run-record-tampered", f"the frozen file {name} is missing from the run; create a new run")
+        data = blob.read_bytes()
+        if hashlib.sha256(data).hexdigest() != digest_text:
+            raise CodedError("run-record-tampered", f"the frozen file {name} differs from the run record; create a new run")
+        try:
+            frozen[relative(name)] = data
+        except ValueError:
+            raise CodedError("run-record-tampered", f"the frozen file name {name} is not a skill path; create a new run") from None
+    return frozen
 
 
 def make_workspace(workspace: Path) -> Path:

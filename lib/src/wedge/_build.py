@@ -268,7 +268,7 @@ def _staged_paths(paths: BuildPaths, dest: Path, real: Path) -> list[Path]:
     return staged
 
 
-def stage_sources(paths: BuildPaths, dest: Path, overlay: Path | None = None) -> Path:
+def stage_sources(paths: BuildPaths, dest: Path, overlay: Path | None = None, *, overlay_only: bool = False) -> Path:
     """Copy the target's includes and source into the new directory ``dest``; return it.
 
     ``paths`` comes from ``resolve_target``. With ``overlay``, a file under it
@@ -276,15 +276,18 @@ def stage_sources(paths: BuildPaths, dest: Path, overlay: Path | None = None) ->
     in every staged root that contains that path. An overlay file must lie
     under an include root, or under the source and inside its ``source_paths``
     selectors; any other overlay file is an error.
+    With ``overlay_only``, nothing is read from the live checkout: ``dest`` holds
+    only the overlay files, laid out under the target's roots.
     A failure removes ``dest``, except when ``dest`` already exists.
     """
     replacements = _overlay_replacements(paths, overlay)
     dest = Path(dest)
     dest.mkdir(parents=True)
     try:
-        for local in paths.includes:
-            _copy_source(local, dest)
-        _copy_source(paths.source, dest, paths.source_paths)
+        if not overlay_only:
+            for local in paths.includes:
+                _copy_source(local, dest)
+            _copy_source(paths.source, dest, paths.source_paths)
         for real, replacement in replacements.items():
             for staged in _staged_paths(paths, dest, real):
                 staged.parent.mkdir(parents=True, exist_ok=True)

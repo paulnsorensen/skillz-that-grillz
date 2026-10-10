@@ -10,7 +10,7 @@ from typing import cast
 
 from skillz_experiments._cases import CodedError, mapping
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def write_bytes(path: Path, data: bytes, *, mode: int = 0o600, guard: Callable[[], bool] | None = None) -> bool:

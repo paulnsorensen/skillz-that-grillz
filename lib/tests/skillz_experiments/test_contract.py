@@ -179,13 +179,12 @@ def test_a_contract_without_a_task_kind_and_with_several_kinds_stops_with_a_code
     assert not (tmp_path / "run/run.json").exists()
 
 
-def test_undecodable_file_is_a_structured_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_undecodable_file_is_frozen_bytes(tmp_path: Path) -> None:
     target = echo_skill(tmp_path)
     (target / "assets").mkdir()
     _ = (target / "assets/x.bin").write_bytes(b"\xff\xfe\x00")
-    code, err = run_intake(tmp_path, target, capsys)
-    assert code == 1 and err["code"] == "undecodable-file"
-    assert "assets/x.bin" in str(err["error"])
+    captured = Candidate.capture(target, ["SKILL.md"])
+    assert captured.frozen["assets/x.bin"] == b"\xff\xfe\x00" and "assets/x.bin" not in captured.files
 
 
 def test_capture_skips_bytecode_caches_even_when_git_ignores_the_skill_root(tmp_path: Path) -> None:
