@@ -979,9 +979,9 @@ _OPTION_FLAGS = (("--effort", "effort"), ("--sandbox-read", "sandbox_read"), ("-
 
 def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
                   seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object],
-                  isolation: str, statistics_given: Mapping[str, float], frozen: Statistics) -> None:
-    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, seed, Claude option, or
-    statistics threshold than the first run.
+                  isolation: str) -> None:
+    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, seed, or Claude option
+    than the first run.
     """
     for flag, value, field in ("--model", model, "model"), ("--harness", adapter, "adapter"):
         if _text_field(record, field) != value:
@@ -995,11 +995,15 @@ def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, re
     for flag, field in _OPTION_FLAGS:
         if field in given and given[field] != getattr(recorded, field):
             raise _config_differs(flag)
+    if str(target.resolve()) != record.get("target_root"):
+        raise _config_differs("the target skill directory")
+
+
+def _check_statistics(statistics_given: Mapping[str, float], frozen: Statistics) -> None:
+    """Stop when a resume, or a call on a completed run, names another statistics threshold than the first run."""
     for name, value in statistics_given.items():
         if value != getattr(frozen, name):
             raise _config_differs(_statistics_flag(name))
-    if str(target.resolve()) != record.get("target_root"):
-        raise _config_differs("the target skill directory")
 
 
 def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
@@ -1054,11 +1058,11 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if path.exists():
             record = open_record(path)
             _refuse_terminated(record)
+            frozen = _frozen_statistics(record)
+            _check_statistics(statistics_given, frozen)
             if record.get("phase") == "complete":
                 return summary(record)
-            frozen = _frozen_statistics(record)
-            _check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation, statistics_given,
-                          frozen)
+            _check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation)
         else:
             frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,

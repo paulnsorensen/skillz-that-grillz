@@ -237,7 +237,7 @@ The score rule, the floors, and the family rule compare exactly. ADR-002 and the
 A family breach still turns any verdict, including `promote-cheaper`, into `reject`.
 A `promote-cheaper` winner counts as a promotion. Export it as you would a `promote` winner. The user decides whether to apply it.
 With a token field set, the winner choice breaks a validation-mean tie in favor of fewer mean task tokens. This holds for the best candidate and for the seed.
-A candidate with unknown task tokens, or equal task tokens, keeps the usual winner.
+A candidate with unknown task tokens, or equal task tokens, keeps the usual winner. In a tie, that is the incumbent.
 The reflection prompt then also says: "Prefer fewer tokens when correctness is equal."
 
 The winner choice treats two validation means as equal when they differ by a relative 1e-9 or an absolute 1e-12.

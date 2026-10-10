@@ -216,7 +216,12 @@ LAYOUTS: dict[str, Callable[[Path], Path]] = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(LAYOUTS))
+# The old inspector calls Path.resolve, which raises RuntimeError on a symlink loop before Python 3.13.
+_ORACLE_CRASHES = pytest.mark.skipif(sys.version_info < (3, 13), reason="the old inspector crashes on a loop here")
+
+
+@pytest.mark.parametrize("name", [pytest.param(name, marks=_ORACLE_CRASHES) if name == "symlink-loop-link" else name
+                                  for name in sorted(LAYOUTS)])
 def test_pyz_reports_what_the_old_inspector_reported_for_tricky_file_layouts(tmp_path: Path, old_script: Path, name: str) -> None:
     path = LAYOUTS[name](tmp_path / "root")
     assert new_outcome(path) == old_outcome(old_script, path)
@@ -341,7 +346,9 @@ def _assert_inside_the_contract(run: subprocess.CompletedProcess[str]) -> None:
 
 
 def test_a_link_to_a_symlink_loop_stays_inside_the_error_contract(tmp_path: Path) -> None:
-    _assert_inside_the_contract(run_pyz(str(_link_to_a_symlink_loop(tmp_path / "root"))))
+    path = _link_to_a_symlink_loop(tmp_path / "root")
+    _assert_inside_the_contract(run_pyz(str(path)))
+    assert new_outcome(path) == ("error", "package must not contain symlinks")
 
 
 def test_a_very_long_link_target_stays_inside_the_error_contract(tmp_path: Path) -> None:
