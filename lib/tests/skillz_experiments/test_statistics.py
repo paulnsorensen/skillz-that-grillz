@@ -126,7 +126,7 @@ def test_a_statistics_block_enters_the_identity_hash_and_round_trips() -> None:
 
 
 @pytest.mark.parametrize("block", [
-    {"family_budget": 0.1}, {"min_gain": 0.1, "surprise": 1}, {"min_gain": -0.1}, {"min_lower_bound": -1},
+    {"family_budget": -0.1}, {"min_gain": 0.1, "surprise": 1}, {"min_gain": -0.1}, {"min_lower_bound": -1},
     {"min_gain": "0.1"}, {"min_gain": True}, {"min_lower_bound": None}, {"min_gain": [0.1]},
     {"min_gain": math.nan}, {"min_gain": math.inf}, [], "0.1", None])
 def test_an_invalid_statistics_block_fails_parse_with_a_code(block: object) -> None:
@@ -182,7 +182,7 @@ def test_a_contract_floor_is_frozen_and_the_gate_reports_its_reason(
     target, out = make_target(tmp_path), tmp_path / "run"
     _declare(target, min_gain=2.0)
     result = approved_run(target, out, factory=_Provider)
-    assert read(out / "run.json")["statistics"] == {"min_gain": 2.0, "min_lower_bound": 0.0}
+    assert read(out / "run.json")["statistics"] == Statistics(min_gain=2.0).data()
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["delta"], gate["reasons"]) == ("inconclusive", 1.0, ["min-gain"])
     destination = tmp_path / "export"
@@ -212,7 +212,7 @@ def test_a_flag_below_the_contract_value_wins_and_the_default_gate_has_no_reason
     case_hash, calls = approvals(target, out)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
                  statistics={"min_gain": 0.5, "min_lower_bound": 0.0})
-    assert read(out / "run.json")["statistics"] == {"min_gain": 0.5, "min_lower_bound": 0.0}
+    assert read(out / "run.json")["statistics"] == Statistics(min_gain=0.5).data()
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"]) == ("promote", [])
 
@@ -244,7 +244,7 @@ def test_approval_stops_echo_the_thresholds_and_a_dropped_flag_falls_back_to_the
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
-    flagged = {"min_gain": 0.5, "min_lower_bound": 0.0}
+    flagged = Statistics(min_gain=0.5).data()
     with pytest.raises(Stop) as cases:
         _ = run(target, out, MODEL, statistics={"min_gain": 0.5})
     assert cases.value.code == "cases-unapproved" and cases.value.data["statistics"] == flagged
@@ -291,12 +291,13 @@ def test_a_negative_zero_or_int_flag_is_frozen_and_echoed_as_a_plain_float(
     given = {"min_gain": -0.0, "min_lower_bound": 1}
     with pytest.raises(Stop) as cases:
         _ = run(target, out, MODEL, statistics=given)
-    assert json.dumps(cases.value.data["statistics"]) == '{"min_gain": 0.0, "min_lower_bound": 1.0}'
+    assert json.dumps(cases.value.data["statistics"]) == json.dumps(Statistics(min_lower_bound=1.0).data())
     case_hash, calls = approvals(target, out)
     with pytest.raises(Stop) as prepared:
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics=given)
     assert prepared.value.code == "live-required"
-    assert json.dumps(read(out / "run.json")["statistics"]) == '{"min_gain": 0.0, "min_lower_bound": 1.0}'
+    expected = json.dumps(Statistics(min_lower_bound=1.0).data(), sort_keys=True)
+    assert json.dumps(read(out / "run.json")["statistics"], sort_keys=True) == expected
 
 
 def test_run_refuses_an_unknown_statistics_flag_name_and_lists_the_allowed_flags(

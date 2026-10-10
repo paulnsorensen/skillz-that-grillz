@@ -27,7 +27,7 @@ from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._doctor import doctor
-from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, case_deltas, threshold, verdict as gate_verdict
+from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, Verdict, case_deltas, verdict as gate_verdict
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
@@ -255,7 +255,7 @@ def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object
 
 def resolve_statistics(contract: Contract, given: Mapping[str, float]) -> Statistics:
     """Return each threshold from the CLI flag, else the contract, else the built-in default."""
-    return Statistics(**{**DEFAULT_STATISTICS.data(), **(contract.statistics or {}), **given})
+    return Statistics.parse({**DEFAULT_STATISTICS.data(), **(contract.statistics or {}), **given})
 
 
 def _statistics_flag(name: str) -> str:
@@ -300,6 +300,10 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
     cases = split_cases(load_draft(draft), split_seed, kind)
+    unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})
+    if unknown:
+        raise CodedError("contract-family-unknown", f"the contract family_budgets names no draft family: {', '.join(unknown)}; "
+                         + f"the draft families are {', '.join(sorted({case.family for case in cases}))}")
     held = sum(case.split == "holdout" and case.kind == kind for case in cases)
     if held < HOLDOUT_MINIMUM:
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
@@ -685,10 +689,11 @@ class _Session:
         repeats = _int_field(self.record, "repeats")
         winner = self.seed.changed({name: candidate_files(_field(self.record, "winner"))[name]
                                     for name in self.seed.editable})
+        families = {case.identifier: case.family for case in holdout}
         if winner.identity == self.seed.identity:
-            self.record["gate"] = {"verdict": "inconclusive", "delta": 0.0, "se": 0.0, "cases": len(holdout),
-                                   "repeats": repeats, "reason": "winner-equals-baseline",
-                                   "reasons": ["winner-equals-baseline"]}
+            tie = gate_verdict({case.identifier: 0.0 for case in holdout}, thresholds=self.statistics, families=families)
+            outcome = Verdict("inconclusive", 0.0, 0.0, tie.cases, ("winner-equals-baseline",), tie.skipped_families)
+            self.record["gate"] = {**outcome.data(), "repeats": repeats, "reason": "winner-equals-baseline"}
         else:
             _ = self.budget.remaining()
             if any(item.get("arm") == "baseline" and item.get("status") == "candidate-contract-rejected"
@@ -714,9 +719,8 @@ class _Session:
             with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
                 _ = list(pool.map(score, todo))
             outcome = gate_verdict(case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner")),
-                                   thresholds=self.statistics)
-            self.record["gate"] = {"verdict": outcome.verdict, "delta": outcome.delta, "se": outcome.se,
-                                   "cases": outcome.cases, "repeats": repeats, "reasons": list(outcome.reasons)}
+                                   thresholds=self.statistics, families=families)
+            self.record["gate"] = {**outcome.data(), "repeats": repeats}
         self.record["winner_hash"] = winner.identity
         self.record["phase"] = "gated"
         self.checkpoint()
@@ -877,10 +881,11 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if name not in Statistics.flags():
             allowed = ", ".join(_statistics_flag(flag) for flag in Statistics.flags())
             raise ValueError(f"unknown statistics flag: {name}; allowed: {allowed}")
-        checked = threshold(value)
-        if checked is None:
-            raise ValueError(f"{_statistics_flag(name)} must be a finite number of at least 0")
-        statistics_given[name] = checked
+        try:
+            checked = Statistics.declared({name: value})[name]
+        except ValueError as error:
+            raise ValueError(f"{_statistics_flag(name)} {str(error).removeprefix(f'statistics {name} ')}") from None
+        statistics_given[name] = cast(float, checked)
     if _inside(out, target):
         raise ValueError("--out must be outside the target skill directory")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -894,11 +899,14 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                        {"next": "wait for the other run to finish, then call run again"}) from None
         if path.exists():
             record = open_record(path)
-            frozen = _frozen_statistics(record)
             _refuse_terminated(record)
-            _check_statistics(statistics_given, frozen)
             if record.get("phase") == "complete":
+                # A completed run summarises without reading its statistics unless a flag asks to compare them.
+                if statistics_given:
+                    _check_statistics(statistics_given, _frozen_statistics(record))
                 return summary(record)
+            frozen = _frozen_statistics(record)
+            _check_statistics(statistics_given, frozen)
             _check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation)
         else:
             frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,

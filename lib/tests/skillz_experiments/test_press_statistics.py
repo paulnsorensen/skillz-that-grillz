@@ -59,11 +59,19 @@ class _Provider:
 
 # --- contract parsing ------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("name", ["family_budget", "family_budgets", "max_token_increase_per_gain", "min_token_saving"])
-def test_parse_rejects_c2_and_c3_fields_in_c1(name: str) -> None:
+@pytest.mark.parametrize("name", ["max_token_increase_per_gain", "min_token_saving"])
+def test_parse_rejects_an_unknown_field(name: str) -> None:
     with pytest.raises(CodedError) as caught:
         _ = parse(_document(statistics={name: 0.5}), "skill")
     assert caught.value.code == "contract-statistics-invalid"
+    assert "unknown fields" in str(caught.value)
+
+
+def test_parse_rejects_a_scalar_family_budgets() -> None:
+    with pytest.raises(CodedError) as caught:
+        _ = parse(_document(statistics={"family_budgets": 0.5}), "skill")
+    assert caught.value.code == "contract-statistics-invalid"
+    assert "object of numbers" in str(caught.value)
 
 
 @pytest.mark.parametrize("big", [10**400, -(10**400)])
@@ -191,7 +199,7 @@ def test_a_frozen_floor_beats_a_later_contract_edit(
     result = run(target, out, MODEL, live=True, factory=_Provider)
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"]) == ("promote", [])
-    assert read(out / "run.json")["statistics"] == {"min_gain": 0.5, "min_lower_bound": 0.0}
+    assert read(out / "run.json")["statistics"] == Statistics(min_gain=0.5).data()
 
 
 def test_a_tampered_frozen_floor_is_the_one_the_gate_uses(
@@ -199,7 +207,7 @@ def test_a_tampered_frozen_floor_is_the_one_the_gate_uses(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _prepare_only(target, out, write_draft, approvals)
-    _tamper(out, {"min_gain": 5.0, "min_lower_bound": 0.0})
+    _tamper(out, Statistics(min_gain=5.0).data())
     result = run(target, out, MODEL, live=True, factory=_Provider)
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["min-gain"])

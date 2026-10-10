@@ -5,8 +5,9 @@ from __future__ import annotations
 import math
 import random
 import statistics
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
+from types import MappingProxyType
 from typing import Literal, cast
 
 VerdictName = Literal["promote", "inconclusive", "reject"]
@@ -28,18 +29,42 @@ def threshold(value: object) -> float | None:
     return number + 0.0  # turns -0.0 into 0.0 so both hash alike
 
 
+def _budget_map(name: str, value: object) -> dict[str, float]:
+    """Check a map of family name to budget. Raise `ValueError` for a shape problem."""
+    if not isinstance(value, dict):
+        raise ValueError(f"statistics {name} must be an object of numbers")
+    result: dict[str, float] = {}
+    for key, number in cast(dict[object, object], value).items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"statistics {name} keys must be nonempty strings")
+        checked = threshold(number)
+        if checked is None:
+            raise ValueError(f"statistics {name} {key} must be a finite number of at least 0")
+        result[key] = checked
+    return result
+
+
 @dataclass(frozen=True)
 class Statistics:
     """Resolved promotion thresholds. The defaults reproduce the built-in 2*SE rule.
 
-    These thresholds are floors: each one only tightens the rule.
-    The SE multiplier stays 2 and every floor is at least 0.
-    A field with `flag` metadata also has a CLI flag. `declared`, `parse`, and `data` check the shape of a map,
-    not its agreement with any run record.
+    Each threshold only tightens the rule. The SE multiplier stays 2. `min_gain` and `min_lower_bound` are floors
+    of at least 0.
+    A field with `flag` metadata also has a CLI flag. A field with `nullable` metadata may be None, which
+    turns its rule off. A field with `map` metadata holds a name-to-number map and is contract-only.
+    A field with `check` metadata sets its own value check: a function that returns the checked float or None.
+    The default check is `threshold`. The `rule` metadata then names the accepted values in the error message.
+    `declared`, `parse`, and `data` check the shape of a map, not its agreement with any run record.
     """
 
     min_gain: float = field(default=0.0, metadata={"flag": True})
     min_lower_bound: float = field(default=0.0, metadata={"flag": True})
+    family_budget: float | None = field(default=None, metadata={"flag": True, "nullable": True})
+    family_budgets: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}), hash=False,
+                                                metadata={"map": True})
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "family_budgets", MappingProxyType(dict(sorted(self.family_budgets.items()))))
 
     @classmethod
     def names(cls) -> tuple[str, ...]:
@@ -50,7 +75,7 @@ class Statistics:
         return tuple(item.name for item in fields(cls) if item.metadata.get("flag"))
 
     @classmethod
-    def declared(cls, value: object) -> dict[str, float]:
+    def declared(cls, value: object) -> dict[str, object]:
         """Check a partial mapping of thresholds. Raise `ValueError` for a shape problem."""
         if not isinstance(value, dict):
             raise ValueError("statistics must be an object")
@@ -58,12 +83,20 @@ class Statistics:
         unknown = sorted(set(item) - set(cls.names()))
         if unknown:
             raise ValueError(f"statistics has unknown fields: {', '.join(unknown)}; allowed: {', '.join(cls.names())}")
-        result: dict[str, float] = {}
+        metadata = {entry.name: entry.metadata for entry in fields(cls)}
+        result: dict[str, object] = {}
         for name, number in item.items():
-            checked = threshold(number)
-            if checked is None:
-                raise ValueError(f"statistics {name} must be a finite number of at least 0")
-            result[name] = checked
+            if metadata[name].get("map"):
+                result[name] = _budget_map(name, number)
+            elif number is None and metadata[name].get("nullable"):
+                result[name] = None
+            else:
+                check = cast(Callable[[object], float | None], metadata[name].get("check", threshold))
+                checked = check(number)
+                if checked is None:
+                    rule = cast(str, metadata[name].get("rule", "a finite number of at least 0"))
+                    raise ValueError(f"statistics {name} must be {rule}")
+                result[name] = checked
         return result
 
     @classmethod
@@ -73,10 +106,14 @@ class Statistics:
         missing = sorted(set(cls.names()) - set(checked))
         if missing:
             raise ValueError(f"statistics lacks fields: {', '.join(missing)}")
-        return cls(**checked)
+        return cast(Callable[..., Statistics], cls)(**checked)
 
-    def data(self) -> dict[str, float]:
-        return {item.name: getattr(self, item.name) for item in fields(self)}
+    def data(self) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for item in fields(self):
+            value = cast(object, getattr(self, item.name))
+            result[item.name] = dict(cast(Mapping[str, float], value)) if item.metadata.get("map") else value
+        return result
 
 
 DEFAULT_STATISTICS = Statistics()
@@ -89,6 +126,12 @@ class Verdict:
     se: float
     cases: int
     reasons: tuple[str, ...] = ()
+    skipped_families: tuple[str, ...] = ()
+
+    def data(self) -> dict[str, object]:
+        """Return the gate keys of the run record, with each tuple as a list."""
+        return {"verdict": self.verdict, "delta": self.delta, "se": self.se, "cases": self.cases,
+                "reasons": list(self.reasons), "skipped_families": list(self.skipped_families)}
 
 
 @dataclass(frozen=True)
@@ -119,18 +162,55 @@ def case_deltas(
     return deltas
 
 
-def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statistics = DEFAULT_STATISTICS) -> Verdict:
+def _family_rule(deltas: Mapping[str, float], families: Mapping[str, str] | None,
+                 thresholds: Statistics) -> tuple[list[str], tuple[str, ...]]:
+    """Return the breached families and the skipped families, each sorted by family name.
+
+    The rule skips a family with fewer than 2 holdout cases, whatever its budget. A family with no budget is off.
+    """
+    if families is None:
+        return [], ()
+    grouped: dict[str, list[float]] = {}
+    for case_id, value in deltas.items():
+        if case_id in families:
+            grouped.setdefault(families[case_id], []).append(value)
+    breached: list[str] = []
+    skipped: list[str] = []
+    for name in sorted(grouped):
+        values = grouped[name]
+        if len(values) < 2:
+            skipped.append(name)
+            continue
+        budget = thresholds.family_budgets.get(name, thresholds.family_budget)
+        if budget is None or not all(math.isfinite(value) for value in values):
+            continue
+        se = statistics.stdev(values) / math.sqrt(len(values))
+        if (values[0] < -budget) if se == 0 else (statistics.fmean(values) + 2 * se < -budget):
+            breached.append(name)
+    return breached, tuple(skipped)
+
+
+def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statistics = DEFAULT_STATISTICS,
+            families: Mapping[str, str] | None = None) -> Verdict:
     """Promote when the mean case delta exceeds twice its standard error and passes the floors.
 
     The floors only tighten the rule: a `promote` that misses `min_gain` or `min_lower_bound` becomes
     `inconclusive`, and `reasons` names each floor that failed.
+    `families` maps a case id to its family name and needs deltas keyed by case id; else this raises `ValueError`.
+    A family whose mean delta plus twice its standard error is below the negative budget turns any verdict
+    into `reject`, and `reasons` gets `family-regression:<name>`.
+    `skipped_families` lists each family that the rule skipped, on every path.
     """
+    if families is not None and not isinstance(deltas, Mapping):
+        raise ValueError("families need deltas keyed by case id")
     values = list(deltas.values()) if isinstance(deltas, Mapping) else list(deltas)
     count = len(values)
+    breached, skipped = _family_rule(deltas if isinstance(deltas, Mapping) else {}, families, thresholds)
     if not all(math.isfinite(value) for value in values):
-        return Verdict("inconclusive", math.nan, math.nan, count)
+        return Verdict("inconclusive", math.nan, math.nan, count, skipped_families=skipped)
     if count < 2:
-        return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, 0.0, count)
+        return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, 0.0, count,
+                       skipped_families=skipped)
     delta = statistics.fmean(values)
     se = statistics.stdev(values) / math.sqrt(count)
     if se == 0:
@@ -154,7 +234,10 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
             reasons.append("lower-bound")
         if reasons:
             name = "inconclusive"
-    return Verdict(name, delta, se, count, tuple(reasons))
+    if breached:
+        name = "reject"
+        reasons.extend(f"family-regression:{family}" for family in breached)
+    return Verdict(name, delta, se, count, tuple(reasons), skipped)
 
 
 def _scores(rng: random.Random, chances: Sequence[float], repeats: int) -> list[float]:
