@@ -33,6 +33,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from typing import cast
 
 REQUIRED_ENTRY_FIELDS: dict[str, type | tuple[type, ...]] = {
     "id": int,
@@ -46,20 +47,21 @@ NON_EMPTY_STRING_FIELDS = {"name", "prompt", "expected_output"}
 
 def validate_file(path: Path) -> list[str]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = cast(object, json.loads(path.read_text(encoding="utf-8")))
     except json.JSONDecodeError as exc:
         return [f"{path}: invalid JSON: {exc}"]
 
     if not isinstance(data, dict):
         return [f"{path}: top-level value must be a JSON object with 'skill_name' and 'evals'"]
 
+    record = cast(dict[str, object], data)
     errors: list[str] = []
 
-    skill_name = data.get("skill_name")
+    skill_name = record.get("skill_name")
     if not isinstance(skill_name, str) or not skill_name.strip():
         errors.append(f"{path}: 'skill_name' must be a non-empty string")
 
-    evals = data.get("evals")
+    evals = record.get("evals")
     if not isinstance(evals, list):
         errors.append(f"{path}: 'evals' must be a list")
         return errors
@@ -67,18 +69,20 @@ def validate_file(path: Path) -> list[str]:
         errors.append(f"{path}: 'evals' must contain at least one entry")
         return errors
 
+    entries = cast(list[object], evals)
     seen_ids: set[int] = set()
-    for i, entry in enumerate(evals):
+    for i, entry in enumerate(entries):
         loc = f"{path}: evals[{i}]"
         if not isinstance(entry, dict):
             errors.append(f"{loc}: must be a JSON object")
             continue
 
+        item = cast(dict[str, object], entry)
         for field, expected_type in REQUIRED_ENTRY_FIELDS.items():
-            if field not in entry:
+            if field not in item:
                 errors.append(f"{loc}: missing required field '{field}'")
                 continue
-            value = entry[field]
+            value = item[field]
             # bool is a subclass of int; reject it for the int `id` field.
             if expected_type is int and isinstance(value, bool):
                 errors.append(f"{loc}: '{field}' must be an int, not a bool")
@@ -87,10 +91,10 @@ def validate_file(path: Path) -> list[str]:
                 type_name = getattr(expected_type, "__name__", str(expected_type))
                 errors.append(f"{loc}: '{field}' must be {type_name}")
                 continue
-            if field in NON_EMPTY_STRING_FIELDS and not value.strip():
+            if field in NON_EMPTY_STRING_FIELDS and isinstance(value, str) and not value.strip():
                 errors.append(f"{loc}: '{field}' must be a non-empty string")
 
-        entry_id = entry.get("id")
+        entry_id = item.get("id")
         if isinstance(entry_id, int) and not isinstance(entry_id, bool):
             if entry_id in seen_ids:
                 errors.append(f"{loc}: duplicate id {entry_id}")
@@ -99,8 +103,8 @@ def validate_file(path: Path) -> list[str]:
     return errors
 
 
-def _canonical_entry(**overrides: object) -> dict:
-    entry = {"id": 0, "name": "a", "prompt": "p", "expected_output": "e", "files": []}
+def _canonical_entry(**overrides: object) -> dict[str, object]:
+    entry: dict[str, object] = {"id": 0, "name": "a", "prompt": "p", "expected_output": "e", "files": []}
     entry.update(overrides)
     return entry
 
@@ -148,7 +152,7 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "evals.json"
         for label, payload, expect_errors in _SELF_TEST_CASES:
-            path.write_text(json.dumps(payload), encoding="utf-8")
+            _ = path.write_text(json.dumps(payload), encoding="utf-8")
             errors = validate_file(path)
             if bool(errors) != expect_errors:
                 verb = "expected errors but got none" if expect_errors else f"unexpected errors: {errors}"
