@@ -121,16 +121,17 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def first_party_files(paths: BuildPaths) -> list[Path]:
+    """Every file the build copies from the checkout: the include trees, then the selected source."""
+    return [
+        *(file for root in paths.includes for file in _iter_files(root)),
+        *selected_files(paths.source, paths.source_paths),
+    ]
+
+
 def compute_key(skill_dir: Path, config: WedgeConfig) -> str:
     paths = resolve_paths(skill_dir, config)
-    inputs = {
-        (file.relative_to(paths.project).as_posix(), _digest(file))
-        for root in (*paths.includes,)
-        for file in _iter_files(root)
-    } | {
-        (file.relative_to(paths.project).as_posix(), _digest(file))
-        for file in selected_files(paths.source, paths.source_paths)
-    }
+    inputs = {(file.relative_to(paths.project).as_posix(), _digest(file)) for file in first_party_files(paths)}
     document: dict[str, object] = {
         "format_version": FORMAT_VERSION,
         "target_python": TARGET_PYTHON,
@@ -141,5 +142,9 @@ def compute_key(skill_dir: Path, config: WedgeConfig) -> str:
     # Only when present, so a skill without shared defaults keeps its key.
     if paths.defaults_file is not None:
         document["defaults"] = _digest(paths.defaults_file)
+    # Only for [[target]] tables: targets share one file digest, so the name
+    # separates their keys. A single-target key keeps its shape and value.
+    if config.multi:
+        document["target"] = config.name
     canonical = json.dumps(document, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

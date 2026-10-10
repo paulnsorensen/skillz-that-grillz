@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import cast
 
 from wedge._build import BuildResult, build_many
-from wedge._config import ConfigError, WedgeConfig, load_config
+from wedge._config import ConfigError, WedgeConfig, load_targets, multi_target_message
 from wedge._digest import content_sha256
 from wedge._fanout import fan_out
 from wedge._lock import LockData, load_lock, lock_path
@@ -168,17 +168,17 @@ def _publish_built(
 def _load_publishable(
     skill_dirs: list[Path], repo: str
 ) -> tuple[dict[str, dict[str, str]], list[tuple[Path, WedgeConfig, LockData]]]:
-    """Load each skill's config and lock; returns failed results plus what is ready to build."""
-    configs: list[tuple[Path, WedgeConfig | None, str | None]] = []
+    """Load each skill's targets and locks; returns failed results plus what is ready to build."""
+    configs: list[tuple[Path, tuple[WedgeConfig, ...] | None, str | None]] = []
     for raw_skill in skill_dirs:
         skill_dir = Path(raw_skill)
         try:
-            config = load_config(skill_dir)
+            targets = load_targets(skill_dir)
         except (ConfigError, OSError) as exc:
             configs.append((skill_dir, None, str(exc)))
         else:
-            configs.append((skill_dir, config, None))
-    valid = [(path, config) for path, config, _error in configs if config is not None]
+            configs.append((skill_dir, targets, None))
+    valid = [(path, config) for path, targets, _error in configs if targets is not None for config in targets]
     names = [config.name for _path, config in valid]
     if len(names) != len(set(names)):
         raise ValueError("duplicate skill names are not publishable")
@@ -187,8 +187,8 @@ def _load_publishable(
 
     results: dict[str, dict[str, str]] = {}
     used_names = set(names)
-    for index, (skill_dir, config, error) in enumerate(configs):
-        if config is None:
+    for index, (skill_dir, targets, error) in enumerate(configs):
+        if targets is None:
             name = skill_dir.name
             while name in used_names:
                 name = f"{skill_dir.name}-{index}"
@@ -201,7 +201,12 @@ def _load_publishable(
         scripts = skill_dir / "scripts"
         if not lock_path(skill_dir, config.name).exists() and (scripts / f"{config.name}.pyz").is_file():
             # ADR-010 direct bundle: no release asset; `wedge bundle --check` verifies it.
+            # This holds for each target of a `[[target]]` skill too.
             results[config.name] = {"status": "skipped", "reason": "direct bundle; no release asset"}
+            continue
+        if config.multi:
+            # Release mode needs one lock per skill directory; tables have no lock shape yet.
+            results[config.name] = {"status": "failed", "reason": multi_target_message(skill_dir)}
             continue
         try:
             lock_data = load_lock(skill_dir, config.name)
@@ -234,8 +239,8 @@ def publish(
     """Publish every skill, ``jobs`` at a time; returns ``{name: {status, reason}}``.
 
     With ``branch``, refuse before any side effect unless ``target`` is on
-    that branch. Skills that share build inputs share one site directory, so
-    a repository of many skills over one package downloads its closure once.
+    that branch. Skills that share a project and group set share one site
+    layer, so a repository of many skills over one package downloads its closure once.
     """
     if not skill_dirs:
         return {}

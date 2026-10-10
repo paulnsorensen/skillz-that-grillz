@@ -83,6 +83,15 @@ _Source: PR #103, `lib/src/wedge/`, `lib/tests/wedge/test_cli.py`, and `lib/READ
 [^10]: `lib/src/wedge/_bundle.py`; `lib/tests/wedge/test_cli.py`
 [^11]: `lib/src/wedge/_config.py`; `lib/src/wedge/_key.py`; `lib/src/wedge/_build.py`; `lib/tests/wedge/test_key.py`
 
+### ADR-011: [[target]] tables and a reusable site layer  [status: accepted]
+
+- **Context:** One skill directory sometimes holds several CLIs, and each CLI needs its own archive. Separate builds install the same third-party closure again.
+- **Decision:** `wedge.toml` accepts `[[target]]` tables with the keys `name`, `entry`, `source`, `source_paths`, `include`, and `groups`. Top-level keys other than `name` and `entry` are defaults for every table. A top-level `name` or `entry` beside a table is an error, and so is a duplicate target name. An error names its table by index and name. The single-target form keeps its key and its archive bytes. The cache key adds the target name only for `[[target]]` tables, so `FORMAT_VERSION` stays 8. `build` and `bundle` accept the tables. `bundle` writes `scripts/<name>.pyz` per target, and `bundle --check` checks each one. `lock`, `check`, and release-mode `publish` reject the tables. `publish` skips each target that is a direct bundle, meaning a `scripts/<name>.pyz` and no lock. A site layer is a third-party install directory. Its key covers the wedge format version, the `uv.lock` digest, the sorted groups, and the target Python. `populate_site_layer` fills the layer once, may use the network, and writes the key to a file beside the layer. It refuses a destination whose key file already exists. A caller removes both the layer and its key file. `open_site_layer` reopens a layer and refuses changed inputs. `resolve_target` resolves a target once against the checkout. `stage_sources` copies the first-party files, and an optional overlay replaces or adds files by project-relative path. An added file must lie under an include root or under the source, and inside the `source_paths` selectors when they exist. Any other overlay file is an error. `build_from_layer` checks the key, copies the layer and the staged files, and runs shiv with no network. Every build path uses these steps. `build_many` shares one layer per project and group set.[^16]
+- **Alternatives:** Keep one site directory per target set in `build_many`. Rejected because it leaves two build paths. Reject several targets per skill and use one directory per CLI. Rejected because it repeats the install.
+- **Consequences:** The bytes of a single-target build do not change. The build rejects a first-party top-level `bin`, a symlink, and a name that shadows an installed package. It writes each archive through a temporary file and an atomic replace. A later change defines the lock shape for several targets.
+
+_Source: `lib/src/wedge/` and `lib/tests/wedge/test_targets.py` · Updated: 2026-10-10_
+
 ## Teaching the packaging workflow
 
 `/skillz` teaches the offload and packaging workflow without expanding the runtime contract.[^12]
@@ -113,6 +122,8 @@ A user who installs only the skill can then build without a wedge checkout or to
 Inside an archive, `sys.executable` is the host interpreter, so the builder runs `python -m shiv` with `PYTHONPATH` set to the directory that holds the imported shiv.
 CI consumers still pin wedge in a tool project (ADR-009).
 
+On 2026-10-10, `wedge.toml` gained `[[target]]` tables and a reusable site layer (ADR-011).
+
 On 2026-10-05 (#151), the separate `/wedge` skill moved into `/skillz wedge`.
 This reverses the earlier split, in which `/skillz wedge` wrote only a brief and `/wedge` implemented it.
 The goal is maximum CLI offload, so the offload decision and the packaging decision are one procedure.
@@ -121,11 +132,12 @@ A prompt such as "wedge this" no longer invokes it on its own; the user types `/
 `improve` now proposes each offload in its approval question instead of recording it as a residual.
 The autoimprove wedge arm (`skillz-autoimprove.md`, ADR-005) is unchanged; its alignment is deferred.
 
-_Source: the published teaching skill and the records above · Updated: 2026-10-05_
+_Source: the published teaching skill and the records above · Updated: 2026-10-10_
 
 [^12]: `skills/skillz/SKILL.md`; `skills/skillz/references/offload.md`
 [^13]: `skills/skillz/references/wedge-packaging.md`; `lib/tests/wedge/test_skill_template.py`
 [^15]: `skills/skillz/wedge/wedge.toml`; `pyproject.toml`; `lib/src/wedge/_build.py`; `lib/tests/wedge/test_bundled_cli.py`
+[^16]: `lib/src/wedge/_config.py`; `lib/src/wedge/_key.py`; `lib/src/wedge/_build.py`; `lib/src/wedge/_bundle.py`; `lib/src/wedge/_lock.py`; `lib/src/wedge/_publish.py`; `lib/tests/wedge/test_targets.py`; `lib/tests/wedge/test_press_targets.py`
 
 [^1]: `lib/src/wedge/_key.py`
 [^2]: `lib/src/wedge/_publish.py`
