@@ -51,7 +51,7 @@ def run_command(*, target: Path, out: Path, model: str, harness: Harness = "clau
                 approve_cases: str | None = None, approve_budget: int | None = None,
                 effort: Effort | None = None, sandbox_read: list[Path] | None = None,
                 sandbox_seconds: int | None = None, min_gain: float | None = None,
-                min_lower_bound: float | None = None) -> dict[str, object]:
+                min_lower_bound: float | None = None, family_budget: float | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
     `--isolation nono` confines the whole Claude process with nono on Linux and needs ANTHROPIC_API_KEY on the host.
@@ -68,8 +68,10 @@ def run_command(*, target: Path, out: Path, model: str, harness: Harness = "clau
         Smallest mean holdout delta that can promote. At least 0. Overrides the contract value.
     min_lower_bound
         Margin that the delta must clear beyond 2·SE. At least 0. Overrides the contract value.
+    family_budget
+        Regression budget of every holdout family. At least 0. A family in the contract `family_budgets` keeps its own.
     """
-    flags = {"min_gain": min_gain, "min_lower_bound": min_lower_bound}
+    flags = {"min_gain": min_gain, "min_lower_bound": min_lower_bound, "family_budget": family_budget}
     statistics = {name: value for name, value in flags.items() if value is not None}
     with _coded():
         return run_workflow(target, out, model, adapter=harness, live=live, edit=edit, repeats=repeats, seed=seed,
