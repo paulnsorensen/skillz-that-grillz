@@ -1,10 +1,11 @@
 ---
 status: accepted
 owner: skillz
-last_verified: 2026-09-28
+last_verified: 2026-10-09
 confidence: high
 sources:
   - skills/skillz/references/analytics-ceremony.md
+  - skills/skillz/engine/scripts/ingest.py
   - dotfiles@f6f0cbf5:skills/session-analytics/
 ---
 # skillz analytics engine decisions
@@ -37,7 +38,10 @@ The bundled engine carries these local fixes. They are not upstream yet.
 - Ingest and `query.sh` exit 3 with a clear message when DuckDB is absent.
 - `query.sh` reports exit non-zero and show the DuckDB error when a query fails.
 - `query.sh` does not query a stale database after automatic ingestion fails.
-- Python path resolution matches `db-path.sh` and does not expand `~`.
+- Python resolution of `SESSIONS_DB` matches `db-path.sh` and does not expand `~` in a set value.
+- Python resolution of `XDG_CACHE_HOME` matches `db-path.sh` and ignores a value that is not absolute.
+- The adapter log-root variables follow the `SESSIONS_DB` rule by choice, not for `db-path.sh` parity.
+- The built-in log-root defaults (`~/.claude`, `~/.codex`, `~/.cursor`) expand `~` to `HOME`.
 - Ingest passes `-init /dev/null`, so it ignores `~/.duckdbrc`.
 - Ingest stops when `DB_TMP_PATH` is a directory and does not delete it.
 

@@ -6,16 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, ParamSpec, TypeVar
-
-P = ParamSpec("P")
-R = TypeVar("R")
-
-try:
-    from typing import override
-except ImportError:
-    def override(function: Callable[P, R], /) -> Callable[P, R]:
-        return function
+from typing_extensions import override
 
 import pytest
 

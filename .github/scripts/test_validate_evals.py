@@ -21,6 +21,8 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from typing_extensions import override
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
@@ -28,17 +30,18 @@ import validate_evals  # noqa: E402
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
 
-VALID_EVALS = {
-    "skill_name": "foo",
-    "evals": [
-        {"id": 0, "name": "a", "prompt": "p", "expected_output": "e", "files": []},
-    ],
-}
+VALID_ENTRY: dict[str, object] = {"id": 0, "name": "a", "prompt": "p", "expected_output": "e", "files": []}
+VALID_EVALS: dict[str, object] = {"skill_name": "foo", "evals": [VALID_ENTRY]}
 
 
 class ValidateEvalsMainTest(unittest.TestCase):
     """Exercise main() — the path `just ci` runs, untouched by --self-test."""
 
+    # unittest assigns these in setUp before it calls each test.
+    _cwd: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+    tmpdir: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+
+    @override
     def setUp(self) -> None:
         self._cwd = Path.cwd()
         self.tmpdir = Path(tempfile.mkdtemp(prefix="validate-evals-"))
@@ -52,7 +55,7 @@ class ValidateEvalsMainTest(unittest.TestCase):
     def _write_eval(self, skill: str, payload: object) -> None:
         path = self.tmpdir / "skills" / skill / "evals" / "evals.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        _ = path.write_text(json.dumps(payload), encoding="utf-8")
 
     def _run(self) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
@@ -85,7 +88,7 @@ class ValidateEvalsMainTest(unittest.TestCase):
         # would be a no-op and the dual-schema split would persist.
         path = self.tmpdir / "skills" / "foo" / "evals" / "eval_set.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(VALID_EVALS), encoding="utf-8")
+        _ = path.write_text(json.dumps(VALID_EVALS), encoding="utf-8")
         rc, _, err = self._run()
         self.assertEqual(rc, 1)
         self.assertIn("no skills/*/evals/evals.json files found", err)
@@ -100,7 +103,7 @@ class ValidateEvalsMainTest(unittest.TestCase):
 
     def test_aggregates_across_files(self) -> None:
         self._write_eval("good", VALID_EVALS)
-        self._write_eval("alsogood", {"skill_name": "x", "evals": [VALID_EVALS["evals"][0]]})
+        self._write_eval("alsogood", {"skill_name": "x", "evals": [VALID_ENTRY]})
         rc, out, _ = self._run()
         self.assertEqual(rc, 0)
         self.assertIn("validated 2", out)
@@ -128,11 +131,8 @@ class SelfTestPassesTest(unittest.TestCase):
         with redirect_stdout(out), redirect_stderr(err):
             rc = validate_evals.self_test()
         self.assertEqual(rc, 0, err.getvalue())
-        self.assertIn(
-            f"{len(validate_evals._SELF_TEST_CASES)}/{len(validate_evals._SELF_TEST_CASES)} passed",
-            out.getvalue(),
-        )
+        self.assertIn("self-test: 14/14 passed", out.getvalue())
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

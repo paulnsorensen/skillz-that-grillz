@@ -10,18 +10,10 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from collections.abc import Iterator
-from typing import Callable, ClassVar, ParamSpec, TypeVar, cast
+from collections.abc import Callable, Iterator
+from typing import ClassVar, cast
+from typing_extensions import override
 from zipfile import ZIP_BZIP2, ZipFile
-
-P = ParamSpec("P")
-R = TypeVar("R")
-
-try:
-    from typing import override
-except ImportError:
-    def override(function: Callable[P, R], /) -> Callable[P, R]:
-        return function
 
 import pytest
 
