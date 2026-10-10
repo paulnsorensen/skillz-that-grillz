@@ -36,14 +36,19 @@ def _bash_db_path(env: dict[str, str], cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def _python_db_path(env: dict[str, str], cwd: Path, engine: Path = ENGINE) -> str:
+def _ingest_eval(expr: str, env: dict[str, str], cwd: Path, *argv: str, engine: Path = ENGINE) -> str:
+    """Import ingest in a fresh interpreter and print one expression."""
     result = subprocess.run(
         [sys.executable, "-B", "-c",
-         "import sys; sys.path.insert(0, sys.argv[1]); import ingest; print(ingest.DB_PATH)",
-         str(engine / "scripts")],
+         "import json, sys; sys.path.insert(0, sys.argv[1]); import ingest; "
+         + f"print({expr})", str(engine / "scripts"), *argv],
         env=env, cwd=cwd, capture_output=True, text=True, check=True,
     )
     return result.stdout.strip()
+
+
+def _python_db_path(env: dict[str, str], cwd: Path, engine: Path = ENGINE) -> str:
+    return _ingest_eval("ingest.DB_PATH", env, cwd, engine=engine)
 
 
 class DbPathParityTest(unittest.TestCase):
@@ -157,6 +162,72 @@ class MalformedRowTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         row = cast(dict[str, dict[str, list[dict[str, object]]]], rows[0])
         self.assertEqual(row["message"]["content"][0]["is_error"], "true")
+
+
+def _discovered(env: dict[str, str], cwd: Path) -> list[list[str]]:
+    return cast(list[list[str]], json.loads(_ingest_eval(
+        "json.dumps([ingest.claude_discover(), ingest.codex_discover(), "
+        + "ingest.cursor_discover()])", env, cwd)))
+
+
+class AdapterDefaultPathTest(unittest.TestCase):
+    """Adapter defaults resolve under HOME from any cwd — no DuckDB needed."""
+
+    NAMES: ClassVar[tuple[str, ...]] = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME")
+
+    def _sandbox(self) -> tuple[Path, Path, dict[str, str]]:
+        """Return a fresh HOME, a separate cwd, and an env without adapter overrides."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        # Resolve symlinks (macOS /var -> /private/var): os.getcwd() in the
+        # child returns the real path, so a relative value resolves there.
+        root = Path(directory.name).resolve()
+        home, cwd = root / "home", root / "cwd"
+        cwd.mkdir()
+        env = os.environ | {"HOME": str(home)}
+        for name in self.NAMES:
+            _ = env.pop(name, None)
+        return home, cwd, env
+
+    def _layout(self, base: Path) -> list[list[str]]:
+        logs = [
+            base / ".claude" / "projects" / "p" / "s.jsonl",
+            base / ".codex" / "sessions" / "s.jsonl",
+            base / ".cursor" / "projects" / "p" / "agent-transcripts" / "s.jsonl",
+        ]
+        for log in logs:
+            log.parent.mkdir(parents=True)
+            _ = log.write_text("{}\n")
+        return [[str(log)] for log in logs]
+
+    def test_unset_defaults_expand_home_outside_home(self) -> None:
+        home, cwd, env = self._sandbox()
+        expected = self._layout(home)
+        self.assertEqual(_discovered(env, cwd), expected)
+
+    def test_configured_tilde_value_stays_literal(self) -> None:
+        home, cwd, env = self._sandbox()
+        _ = self._layout(home)
+        literal = self._layout(cwd / "~")
+        env |= {
+            "CLAUDE_CONFIG_DIR": "~/.claude",
+            "CODEX_HOME": "~/.codex",
+            "CURSOR_HOME": "~/.cursor",
+        }
+        self.assertEqual(_discovered(env, cwd), literal)
+
+    def test_empty_value_uses_the_home_default(self) -> None:
+        # db-path.sh treats an empty variable as unset (`-n`). Ingest does the same.
+        home, cwd, env = self._sandbox()
+        expected = self._layout(home)
+        env |= {name: "" for name in self.NAMES}
+        self.assertEqual(_discovered(env, cwd), expected)
+
+    def test_cursor_project_slug_resolves_under_home_default(self) -> None:
+        home, cwd, env = self._sandbox()
+        log = home / ".cursor" / "projects" / "tmp" / "agent-transcripts" / "s.jsonl"
+        decoded = _ingest_eval("ingest._cursor_project_cwd(sys.argv[2])", env, cwd, str(log))
+        self.assertEqual(decoded, "/tmp")
 
 
 class EngineSmokeTest(unittest.TestCase):

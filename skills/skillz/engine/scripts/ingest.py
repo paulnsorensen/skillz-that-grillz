@@ -40,8 +40,10 @@ _JsonValue: TypeAlias = "None | bool | int | float | str | list[_JsonValue] | di
 
 
 def _configured_path(name: str, default: str) -> str:
-    # Matches db-path.sh: no `~` expansion; a relative value joins to cwd.
-    value = os.environ.get(name) or default
+    # SESSIONS_DB matches db-path.sh: a set value gets no `~` expansion, and a
+    # relative value joins to cwd. The adapter log roots use the same rule by
+    # choice. Only the built-in default expands `~` to HOME.
+    value = os.environ.get(name) or os.path.expanduser(default)
     return os.path.abspath(value)
 
 
