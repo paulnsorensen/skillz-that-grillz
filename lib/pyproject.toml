@@ -35,7 +35,7 @@ wedge = "wedge:main"
 skillz-experiment = "skillz_experiments._cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "basedpyright==1.40.1", "typing-extensions==4.16.0"]
+dev = ["pytest>=8", "basedpyright==1.40.2", "typing-extensions==4.16.0"]
 
 [build-system]
 requires = ["hatchling>=1.27.0"]
