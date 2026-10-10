@@ -150,6 +150,17 @@ Lower `--repeats` or the number of holdout cases in the draft, then run again.
 
 Read the `facts` from the `cases-missing` stop, then the skill files that it lists.
 Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
+
+When `<skill>/evals/evals.json` exists, start the draft from it.
+Map each entry to one case with `source: skill`.
+Use the entry `name` as the case `id` and `family`, and the `prompt` as the `request`.
+An entry with `expected_skill: null` is a `near-miss` case.
+An entry with no `assertions` is a `trigger` case. Every other entry is a `task` case.
+For a `task` case, read each listed fixture into `files`, keyed by its listed path.
+When the entry lists no fixture, draft the starting fixture that the request needs.
+Set `expected` to an object with the entry's `expected_output` and `assertions`.
+Then add cases until the draft meets the minimums below.
+
 Each case has these fields:
 
 - `id`: a unique name.

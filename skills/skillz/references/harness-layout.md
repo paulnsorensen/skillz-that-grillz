@@ -116,6 +116,32 @@ metadata:
 - `references/<file>.md` — read when <trigger>.
 ```
 
+## Evals (`add`)
+
+`add` writes `evals/evals.json` in the agentskills.io shape.
+Anthropic skill-creator and NVIDIA SkillEvaluator read the same shape.
+The repository validator also requires `name` on each entry.
+
+- `expected_skill`: the skill name, or `null` for a near-miss case.
+- `assertions`: checkable statements about the output. A trigger case has none.
+- `files`: fixture paths relative to the skill directory. Keep each fixture under `evals/files/`.
+
+`autoimprove` seeds its case draft from this file.
+
+```json
+{
+  "skill_name": "<name>",
+  "evals": [
+    {"id": 1, "name": "trigger-<slug>", "prompt": "<trigger phrase>", "expected_output": "The <name> skill loads.",
+     "files": [], "expected_skill": "<name>", "assertions": []},
+    {"id": 2, "name": "near-miss-<slug>", "prompt": "<anti-trigger request>",
+     "expected_output": "The <name> skill stays unloaded.", "files": [], "expected_skill": null, "assertions": []},
+    {"id": 3, "name": "task-<slug>", "prompt": "<realistic request>", "expected_output": "<what a correct run produces>",
+     "files": ["evals/files/<fixture>"], "expected_skill": "<name>", "assertions": ["<a statement a grader can verify>"]}
+  ]
+}
+```
+
 ## Sources
 
 The repository-local `skillz-self-update` skill queries each source for changes since its `Checked` date.
