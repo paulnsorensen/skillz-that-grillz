@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from skillz_experiments._cases import CodedError, repo_root
+from skillz_experiments._wedge_targets import audit_targets
+
 SCHEMA_VERSION = 1
 MAX_BYTES = 262144
 TOKEN_BUDGET = 5000
@@ -291,6 +294,28 @@ def _repository(context: _Context, package: Path, fields: dict[str, _Field], roo
                 os.path.relpath(link, package).replace(os.sep, "/") if link else ".claude/skills", None, status, detail)
 
 
+def _wedge(context: _Context, package: Path) -> None:
+    """Report the own wedge targets as editable or frozen, and each foreign `.pyz`."""
+    if not (package / "wedge.toml").is_file() and not any(package.rglob("*.pyz")):
+        return
+    try:
+        audit = audit_targets(package)
+    except CodedError as error:
+        context.add("wedge.own-targets", "wedge-first-class", "wedge.toml", None, FAIL, str(error))
+        return
+    if audit.inapplicable:
+        context.add("wedge.own-targets", "wedge-first-class", "wedge.toml", None, NOT_APPLICABLE, audit.inapplicable)
+        return
+    if (package / "wedge.toml").is_file():
+        listed = ", ".join(f"`{target.name}` (frozen: {target.frozen})" if target.frozen else f"`{target.name}` (editable)"
+                           for target in audit.targets)
+        context.add("wedge.own-targets", "wedge-first-class", "wedge.toml", None, PASS,
+                    f"{len(audit.targets)} own wedge target(s): {listed}")
+    for name in audit.foreign:
+        context.add("wedge.foreign-binary", "wedge-first-class", name, None, FAIL,
+                    f"`{name}` is a binary that no own wedge target builds")
+
+
 def _internal(fields: dict[str, _Field]) -> tuple[int, str] | None:
     metadata = fields.get("metadata")
     if metadata is None:
@@ -298,12 +323,6 @@ def _internal(fields: dict[str, _Field]) -> tuple[int, str] | None:
     if FLOW_INTERNAL.search(metadata.value):
         return metadata.line, metadata.value
     return next(((number, text) for number, text in metadata.block if INTERNAL.match(text)), None)
-
-
-def repo_root(start: Path) -> Path | None:
-    """Return the nearest ancestor of `start` (or `start`) that holds `.git`, or None."""
-    here = start.resolve()
-    return next((path for path in (here, *here.parents) if (path / ".git").exists()), None)
 
 
 def audit_facts(directory: Path) -> dict[str, object]:
@@ -335,6 +354,7 @@ def audit_facts(directory: Path) -> dict[str, object]:
             prefix = package.relative_to(root).as_posix() + "/" if root else ""
             _references(context, package, body, end + 1, prefix)
             _scripts(context, package, body, end + 1, prefix)
+            _wedge(context, package)
             _repository(context, package, fields, root)
     else:
         context.add("package.skill-file", "layout.skill-file", "SKILL.md", None, FAIL, "SKILL.md is missing")

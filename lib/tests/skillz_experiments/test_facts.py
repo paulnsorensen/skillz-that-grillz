@@ -109,7 +109,7 @@ CASES: list[tuple[str, str, str, int | None, dict[str, object]]] = [
     ("uninvoked script", "scripts.invocation-line", "SKILL.md", None,
      {"files": {"scripts/extra.sh": "true\n"}, "named": "scripts/extra.sh"}),
     ("script as substring of another file", "scripts.invocation-line", "SKILL.md", None,
-     {"files": {"scripts/tool.pyz": "x\n"}, "named": "scripts/tool.pyz"}),
+     {"files": {"scripts/tool.pyz": "x\n"}, "named": "scripts/tool.pyz", "also": ["wedge.foreign-binary"]}),
     ("script under another directory", "scripts.invocation-line", "SKILL.md", None,
      {"files": {"scripts/x.sh": "true\n"}, "named": "scripts/x.sh",
       "text": skill(body=BODY + "Run engine/scripts/x.sh now.\n")}),
@@ -128,7 +128,13 @@ def test_each_check_fails_on_its_fixture(check: str, path: str, line: int | None
     checks = run(package, capsys)
     hit = find(checks, check, path, cast(str | None, setup.get("named")))
     assert (hit["status"], hit["line"]) == ("fail", line)
-    assert [c["id"] for c in checks if c["status"] == "fail" and c["id"] != check] == []
+    allowed = {check, *cast(list[str], setup.get("also", []))}
+    assert [c["id"] for c in checks if c["status"] == "fail" and c["id"] not in allowed] == []
+    named = cast(str, setup.get("named"))
+    for extra in cast(list[str], setup.get("also", [])):
+        assert find(checks, extra, path=named)["status"] == "fail"
+    if "also" in setup:
+        assert find(checks, "scripts.invocation-line", named=named.removesuffix("z"))["status"] == "pass"
 
 
 def test_user_only_package_with_sidecar_passes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

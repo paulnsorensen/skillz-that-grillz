@@ -292,7 +292,7 @@ A project outside the repository root keeps its targets frozen.
 A git-ignored first-party file freezes its target.
 A source that a frozen target or a nested skill target also builds from is never editable.
 A target left with no source is frozen.
-The editable wedge sources together may hold up to 100,000 characters.
+The editable wedge sources together may hold up to 100,000 characters. This is the wedge edit limit.
 A source appears in the candidate as `@wedge/` plus its path relative to the repository root.
 The wedge overlay uses paths relative to the project. Do not mix the two forms.
 
@@ -311,6 +311,73 @@ The seed `.pyz` comes from a build of the seed sources, not from the file on dis
 A rebuild stages first-party files that no proposal edits, such as a data `.pyz`, from the seed.
 A resume reopens the site layers. It stops with `site-layer-drift` when `uv.lock`, the dependency groups, or `wedge.toml` changed.
 It also stops with that code when a recorded layer cannot be reused or the recorded targets no longer match `wedge.toml`.
+
+### New target (`@new-cli`)
+
+Under `--edit prose+cli`, a proposal can add one new fromargs wedge target. The component is `@new-cli`. Its seed value is empty.
+The runner offers `@new-cli` only when all of these conditions hold:
+
+- The skill has a `wedge.toml`, and one of its targets includes the fromargs package.
+- The `wedge.toml` has no top-level `source_paths`.
+- The populated site layer for the project with no groups provides `cyclopts`. The fromargs include provides `fromargs`.
+- The skill directory lies inside that project, and the project lies inside the repository root.
+- Each first-party file of the fromargs include is at most 16 MiB.
+
+When one condition fails, the run has no `@new-cli` component.
+When no editable target uses the no-group layer and `uv` or the layer population fails, the run drops the component and continues.
+The run records the reason as `new_cli_dropped` in the own-targets record.
+
+The value is TOML with exactly two keys:
+
+```toml
+name = "count-words"
+module = """...Python source with a main function..."""
+```
+
+`name` matches `[a-z][a-z0-9-]{1,39}`. The package name is `name` with each hyphen changed to an underscore.
+`module` is Python source of at most 262144 characters. The whole value is at most 524288 characters.
+The host writes `module` to `src/<package>/__init__.py` in the skill and builds `scripts/<name>.pyz`.
+The host appends a `[[target]]` with `entry = "<package>:main"` and the same fromargs include to `wedge.toml`.
+A single-target `wedge.toml` becomes the multi-target form. The host drops its comments.
+The new target sets `groups = []`. It never takes the dependency groups of another target. The base dependencies provide `cyclopts`, and the fromargs include provides `fromargs`.
+The preparation step populates the site layer for the project with no groups. This step needs the network.
+The host reads `module` with `ast`. It never imports or runs the module.
+The module may import only the standard library, its own package, fromargs, and the site layer.
+The module must define a top-level `main` (a function or an assignment). The entry is `<package>:main`.
+The static check does not see dynamic imports (`__import__`, `importlib`). They fail only inside the sandbox.
+
+The host rejects a bad value. The candidate scores 0, and the feedback shows the code as `reason`:
+
+| Code | Cause |
+|---|---|
+| `new-cli-malformed` | The value is not valid TOML or nests too deeply. `module` is not a string. |
+| `new-cli-second-target` | The value holds a `[[target]]` table or a list of names. |
+| `new-cli-extra-key` | The value has a key besides `name` and `module`. |
+| `new-cli-missing-key` | The value lacks `name` or `module`. |
+| `new-cli-bad-name` | `name` is not a string, does not match the pattern, its package name is not an identifier, or it is a Python keyword. |
+| `new-cli-module-size` | The value or `module` is over its size limit, or `module` is empty. |
+| `new-cli-name-collision` | `name` matches an existing target. |
+| `new-cli-package-collision` | The package matches a source package, an include package, a standard library module, a top-level module of the site layer, or a skill path. |
+| `new-cli-undeclared-import` | `module` imports a package outside the allowed set. |
+| `new-cli-syntax` | `module` does not parse or nests too deeply. |
+| `new-cli-no-main` | `module` defines no top-level `main`. |
+| `new-cli-unavailable` | The skill cannot take a new target. |
+| `build-failed` | The host build of the new target fails. |
+
+The `report.json` of an export holds `new_cli` with `target`, `package`, and `unused_helpers`.
+An unused helper is a `scripts/*.py` path that the seed `SKILL.md` names and the winner `SKILL.md` does not name.
+The helper file stays in the skill. Ask the user whether to delete it.
+
+### Fromargs aim
+
+Under `--edit prose+cli`, the reflection prompt names fromargs as the default for edits to wedged Python sources.
+It cites the fromargs rules: one parser, JSON errors on stderr, and stdout only for results.
+A usage error exits with code 2. A failed input contract exits with code 3.
+A non-Python helper keeps its language.
+A Python helper may be a stdlib `argparse` helper only when the skill has no `wedge.toml` that can build a fromargs target.
+The prompt describes `@new-cli` only when the run offers it.
+The `prose` prompt does not change.
+Run `audit-facts` first to see the wedge state of the skill.
 
 ## Export
 
@@ -562,11 +629,23 @@ The same input gives byte-identical output.
 | `registration.readme-row` | `registration` | the repository README `## Skills` table has no row for the skill |
 | `repo-local.internal-metadata` | `repo-local` | a repo-local skill lacks `metadata.internal: true` |
 | `repo-local.claude-symlink` | `repo-local` | `.claude/skills/<name>` is not a symlink that resolves to the skill |
+| `wedge.own-targets` | `wedge-first-class` | `wedge.toml` is not valid, or a source of an own target is unreadable; otherwise `pass` lists each own target as editable or frozen |
+| `wedge.foreign-binary` | `wedge-first-class` | a `.pyz` file is below the skill and no own target builds it; `path` names the file |
 
 A check that does not apply reports `not-applicable`. Examples are a model-invoked skill for the sidecar checks and a skill without references.
 Registration and repo-local checks also report `not-applicable` outside a repository.
+Wedge checks report `not-applicable` when the project has no `pyproject.toml` or `uv.lock`, such as an installed copy of the skill.
 The command finds the repository root by walking up for `.git`.
 A repo-local skill lives under `.agents/skills/` and needs no README row.
+The wedge checks read `wedge.toml` and the first-party sources. They build nothing and use no network.
+They run when the skill has a `wedge.toml` or holds a `.pyz` file. A `wedge.toml` that is not valid gives one failed `wedge.own-targets` check. An unreadable target source also fails it.
+A foreign `.pyz` bundle is a `.pyz` file below the skill that no own target builds.
+A `.pyz` that a lower `wedge.toml` builds is own when that directory has no sibling `SKILL.md`. A nested skill has one.
+The wedge edit limit counts characters with the same rule as the run planner.
+The check tests each own target alone, because a run's combined budget depends on the targets it offers.
+An own target is frozen for the planner reasons in `### Editable sources`. Examples are a source file over 262144 bytes and sources over the wedge edit limit.
+The `wedge.own-targets` detail marks each frozen target. This is not a failure.
+A `prose+cli` run cannot edit a frozen target. Use these checks to decide whether to wedge a skill before a run.
 A reference listed nowhere in `## References` reports `not-applicable` for `references.read-trigger`.
 A trigger clause is the text after the first dash or colon in the entry.
 The clause passes when it contains one of: when, whenever, if, once, until, while, before, after, only, fire, need, absent, select, flag, opt.

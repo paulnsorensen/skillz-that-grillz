@@ -35,7 +35,7 @@ class BuildPaths:
         return self.project / "uv.lock"
 
 
-def _inside_project(project: Path, raw: str, base: Path, key: str) -> Path:
+def _inside_project(project: Path, raw: str, base: Path, key: str, *, must_exist: bool = True) -> Path:
     candidate = base / raw
     common = Path(os.path.commonpath((str(base.resolve()), str(project.resolve()))))
     cursor: Path = candidate
@@ -48,7 +48,7 @@ def _inside_project(project: Path, raw: str, base: Path, key: str) -> Path:
     resolved = candidate.resolve()
     if resolved != project and project not in resolved.parents:
         raise ConfigError(f"{key} {raw!r} must resolve inside the project {project}")
-    if not resolved.exists():
+    if must_exist and not resolved.exists():
         raise ConfigError(f"{key} {raw!r} does not exist: {resolved}")
     return resolved
 
@@ -69,22 +69,24 @@ def _selected_path(source: Path, selector: str) -> Path:
     return resolved
 
 
-def resolve_paths(skill_dir: Path, config: WedgeConfig) -> BuildPaths:
+def resolve_paths(skill_dir: Path, config: WedgeConfig, *, missing_ok: bool = False) -> BuildPaths:
+    """Resolve ``config`` against the checkout. With ``missing_ok``, the source, include, and source_paths entries need not exist."""
     skill_dir = Path(skill_dir).resolve()
     project = (skill_dir / config.project).resolve()
     for required in ("pyproject.toml", "uv.lock"):
         if not (project / required).is_file():
             raise ConfigError(f"project {config.project!r} ({project}) has no {required}")
-    source = _inside_project(project, config.source, skill_dir, "source")
-    includes = tuple(_inside_project(project, item, skill_dir, "include") for item in config.include)
+    source = _inside_project(project, config.source, skill_dir, "source", must_exist=not missing_ok)
+    includes = tuple(_inside_project(project, item, skill_dir, "include", must_exist=not missing_ok) for item in config.include)
     if config.source_paths:
-        if not source.is_dir():
+        if not missing_ok and not source.is_dir():
             raise ConfigError("source_paths requires a source directory")
         for selector in config.source_paths:
             selector_path = Path(selector)
             if selector_path.is_absolute() or ".." in selector_path.parts or not selector_path.parts:
                 raise ConfigError(f"source_paths path must be relative and inside source: {selector!r}")
-            _ = _selected_path(source, selector)
+            if not missing_ok:
+                _ = _selected_path(source, selector)
     names = [path.name for path in (source, *includes)]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:

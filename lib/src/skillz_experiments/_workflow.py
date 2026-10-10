@@ -21,26 +21,27 @@ from pathlib import Path
 from typing import Protocol, TextIO, cast, final, get_args
 
 from skillz_experiments._audit import identity as judge_identity
-from skillz_experiments._candidate import WEDGE_PREFIX, Candidate, candidate_files, load_frozen, store_frozen
-from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping, relative
+from skillz_experiments._candidate import (NEW_CLI, WEDGE_PREFIX, Candidate, candidate_files, is_skill_file, load_frozen,
+                                           store_frozen)
+from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping, relative, repo_root
 from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES, ClaudeOptions,
                                         resolve_read_roots)
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._doctor import doctor
 from skillz_experiments._evaluator import task_tokens
-from skillz_experiments._facts import repo_root
 from skillz_experiments._gate import (DEFAULT_STATISTICS, Statistics, Verdict, case_deltas, close,
                                       verdict as gate_verdict)
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
+from skillz_experiments._new_cli import expand_files, parse_value, prompt_rule, unused_helpers
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._runtime import (APPROVED_CALLS, APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted,
                                          BudgetUnapproved, Estimate, approve, estimate, gate_seconds)
 from skillz_experiments._search import Edit, REFLECTION_MINIBATCH, overshoot, search as pareto_search
-from skillz_experiments._wedge_targets import (BuildFailed, Rebuilder, TargetPlan, never_editable, plan_targets, reopen,
-                                               seal)
+from skillz_experiments._wedge_targets import (Rebuilder, TargetPlan, never_editable, plan_targets, reopen, seal,
+                                               settle)
 
 DEFAULT_SEED = 20261006
 DEFAULT_REPEATS = 3
@@ -245,9 +246,13 @@ def _editable(files: Mapping[str, str], contract: Contract, edit: Edit, frozen: 
             code.add(helper)
         if plan is not None:
             code |= set(plan.sources)
+            if plan.capable is not None:
+                code.add(NEW_CLI)
         if not code:
             reasons: Mapping[str, str] = plan.reasons if plan is not None else {}
             frozen_why = "".join(f"; {name} is frozen because {why}" for name, why in reasons.items())
+            if plan is not None and plan.dropped:
+                frozen_why += f"; @new-cli is unavailable because {plan.dropped}"
             raise CodedError("helper-missing", "prose+cli needs a helper script to edit; add one under scripts/" + frozen_why)
         names += sorted(code)
     absent = [name for name in names if name not in files]
@@ -353,7 +358,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     per_evaluation = max(contract.calls(case.kind) for case in scored)
     skeleton = Candidate.capture(target, [], contract)
     wedge = plan_targets(target, skeleton.files, contract, edit)
-    files, frozen = skeleton.files | wedge.sources, skeleton.frozen | wedge.frozen
+    files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
+    frozen = skeleton.frozen | wedge.frozen
     seed_candidate = Candidate(files, tuple(_editable(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
     plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats,
                  _command_seconds(contract, scored, _sizing_options(configuration, options)))
@@ -364,7 +370,13 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
                                                      "statistics": resolved.data(), **shown_options}) from None
-    seed_candidate, owned = seal(wedge, seed_candidate, target, out / "site")
+    offered = wedge.capable is not None
+    wedge, layers = settle(wedge, out / "site")
+    if offered and wedge.capable is None:
+        files = skeleton.files | wedge.sources
+        frozen = skeleton.frozen | wedge.frozen
+        seed_candidate = Candidate(files, tuple(_editable(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
+    seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
@@ -807,7 +819,7 @@ class _Session:
         try:
             winner = self._built(self.seed.changed({name: candidate_files(_field(self.record, "winner"))[name]
                                                     for name in self.seed.editable}))
-        except BuildFailed as error:
+        except CodedError as error:
             raise Stop("build-failed", str(error), {"next": "the winner no longer builds; start a new run in a new directory"}) from None
         families = {case.identifier: case.family for case in holdout}
         if winner.identity == self.seed.identity:
@@ -867,6 +879,16 @@ _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified T
              "and at most 25 words per descriptive sentence. ")
 
 
+_FROMARGS_RULE = ("The fromargs package is the default for a wedged Python source. "
+                  "Use one parser. "
+                  "Print JSON errors on stderr. "
+                  "Exit with code 2 for a usage error and code 3 for a failed input contract. "
+                  "Print only results on stdout. "
+                  "A non-Python helper keeps its language. "
+                  "A Python helper may use a stdlib `argparse` helper only when the skill has no wedge.toml "
+                  "that can build a fromargs target. ")
+
+
 def _reflection_request(edit: Edit, candidate: dict[str, str],
                         feedback: Mapping[str, Sequence[Mapping[str, object]]],
                         components: list[str], *, cheaper: bool = False) -> tuple[str, dict[str, object]]:
@@ -875,7 +897,9 @@ def _reflection_request(edit: Edit, candidate: dict[str, str],
         "required": components, "additionalProperties": False}
     if edit == "prose+cli":
         instruction = ("Improve the supplied skill text and helper script components. "
-                       + "Keep each script's command-line contract and output format. ")
+                       + "Keep each script's command-line contract and output format. " + _FROMARGS_RULE)
+        if NEW_CLI in components:
+            instruction += prompt_rule()
     else:
         instruction = "Improve only the supplied skill text components. Preserve the helper CLI contract. "
     head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions."
@@ -1158,17 +1182,22 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     first, last = mapping(_field(record, "seed")), mapping(_field(record, "winner"))
     repo_names = {name: _repo_path(name.removeprefix(WEDGE_PREFIX), repo) for name in sorted(first.keys() | last.keys())
                   if name.startswith(WEDGE_PREFIX) and first.get(name) != last.get(name)}
-    seed, candidate = candidate_files(first), candidate_files(last)
+    seed, candidate = dict(candidate_files(first)), dict(candidate_files(last))
+    _ = seed.pop(NEW_CLI, None)
+    value = candidate.pop(NEW_CLI, "")
+    cli = parse_value(value) if value.strip() else None
+    if cli is not None:
+        candidate |= expand_files(Path(_text_field(record, "target_root")), seed, cli)
     skill_lines: list[str] = []
     wedge_lines: list[str] = []
     for name in sorted(seed.keys() | candidate.keys()):
         old, new = seed.get(name), candidate.get(name)
         if old == new:
             continue
-        if name.startswith(WEDGE_PREFIX):
-            wedge_lines.extend(_patch_lines(repo_names[name], old, new, git=True))
-        else:
+        if is_skill_file(name):
             skill_lines.extend(_patch_lines(name, old, new, git=False))
+        else:
+            wedge_lines.extend(_patch_lines(repo_names[name], old, new, git=True))
     destination.mkdir(mode=0o700)
     patches = ["candidate.patch"]
     _private_file(destination / "candidate.patch", _patch_text(skill_lines))
@@ -1177,5 +1206,7 @@ def export(out: Path, destination: Path) -> dict[str, object]:
         patches.append("wedge-sources.patch")
     report = summary(record) | {"sharing": "private-local-only",
                                 "outcomes": [_export_outcome(item) for item in _outcomes(record)], "cost_usd": None}
+    if cli is not None:
+        report["new_cli"] = {"target": cli.name, "package": cli.package, "unused_helpers": unused_helpers(seed, candidate)}
     write(destination / "report.json", report)
     return {"export": str(destination), "sharing": "private-local-only", "installed": False, "patches": patches}

@@ -22,6 +22,8 @@ _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _ALLOWED_KEYS = {"name", "entry", "source", "source_paths", "project", "repo", "include", "groups"}
 _TARGET_KEYS = {"name", "entry", "source", "source_paths", "include", "groups"}
+# The keys of one ``[[target]]`` table; a single-target file holds them at the top level beside the shared keys.
+TARGET_KEYS = frozenset(_TARGET_KEYS)
 
 
 def validate_name(name: str) -> None:
@@ -72,11 +74,7 @@ def defaults_path(skill_dir: Path) -> Path | None:
     return candidate
 
 
-def _read_table(path: Path) -> dict[str, object]:
-    try:
-        text = path.read_text()
-    except OSError as exc:
-        raise ConfigError(f"cannot read {path}: {exc}") from exc
+def _parse_table(path: Path, text: str) -> dict[str, object]:
     try:
         parsed: object = cast(object, tomllib.loads(text))
     except tomllib.TOMLDecodeError as exc:
@@ -86,10 +84,21 @@ def _read_table(path: Path) -> dict[str, object]:
     return cast(dict[str, object], parsed)
 
 
-def _merged_values(skill_dir: Path) -> tuple[Path, dict[str, object], dict[str, Path]]:
-    """The skill's ``wedge.toml`` over the root's shared defaults, with each key's file."""
+def _read_table(path: Path) -> dict[str, object]:
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        raise ConfigError(f"cannot read {path}: {exc}") from exc
+    return _parse_table(path, text)
+
+
+def _merged_values(skill_dir: Path, text: str | None = None) -> tuple[Path, dict[str, object], dict[str, Path]]:
+    """The skill's ``wedge.toml`` over the root's shared defaults, with each key's file.
+
+    ``text`` stands in for the content of the skill's own file. The shared defaults still come from disk.
+    """
     path = Path(skill_dir) / "wedge.toml"
-    own = _read_table(path)
+    own = _read_table(path) if text is None else _parse_table(path, text)
     values = dict(own)
     sources: dict[str, Path] = dict.fromkeys(own, path)
     shared = defaults_path(skill_dir)
@@ -132,7 +141,12 @@ def load_targets(skill_dir: Path) -> tuple[WedgeConfig, ...]:
     multi-target form moves them into each table; top-level keys other than
     ``name`` and ``entry`` are defaults that a table can override.
     """
-    path, values, sources = _merged_values(skill_dir)
+    return parse_targets(skill_dir, None)
+
+
+def parse_targets(skill_dir: Path, text: str | None) -> tuple[WedgeConfig, ...]:
+    """Like ``load_targets``, but ``text`` replaces the content of ``<skill_dir>/wedge.toml`` when it is not None."""
+    path, values, sources = _merged_values(skill_dir, text)
     raw_targets = values.pop("target", None)
     if raw_targets is None:
         return (_make_config(path, values, sources, multi=False),)

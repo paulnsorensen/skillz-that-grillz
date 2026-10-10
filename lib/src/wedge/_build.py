@@ -87,13 +87,15 @@ def _sorted_groups(groups: Sequence[str]) -> tuple[str, ...]:
     return tuple(sorted(set(groups)))
 
 
-def resolve_target(skill_dir: Path, config: WedgeConfig) -> BuildPaths:
+def resolve_target(skill_dir: Path, config: WedgeConfig, *, missing_ok: bool = False) -> BuildPaths:
     """Resolve and validate ``config``'s project, source, and includes against the real checkout.
+
+    With ``missing_ok``, the source and include paths may not exist. Such a target builds only from an overlay.
 
     Call this once per target. ``stage_sources`` then takes the result, so a
     caller that stages many candidate trees does not resolve the checkout again.
     """
-    return resolve_paths(skill_dir, config)
+    return resolve_paths(skill_dir, config, missing_ok=missing_ok)
 
 
 def _prepare(skill_dir: Path, config: WedgeConfig | None = None) -> _Prepared:
@@ -225,6 +227,8 @@ def _is_target_path(paths: BuildPaths, real: Path) -> bool:
     """Whether ``real`` lies under an include root, or under the source and its selectors."""
     if any(_under(root, real) for root in paths.includes):
         return True
+    if not paths.source.exists():
+        return _under(paths.source, real)
     if not paths.source.is_dir():
         return real == paths.source
     if not paths.source_paths:
@@ -472,6 +476,17 @@ def _import_name(path: Path) -> str:
     if not path.is_dir() and path.suffix in _IMPORTABLE_SUFFIXES:
         return path.name.split(".")[0]
     return path.name
+
+
+def layer_import_names(layer: SiteLayer) -> frozenset[str]:
+    """The top-level names that ``import`` finds in the populated ``layer``. List only; import nothing."""
+    return frozenset(
+        _import_name(entry)
+        for entry in layer.path.iterdir()
+        if entry.name != "__pycache__"
+        and not entry.name.endswith((".dist-info", ".data"))
+        and (entry.is_dir() or entry.suffix in _IMPORTABLE_SUFFIXES)
+    )
 
 
 def _check_free(site_dir: Path, entry: Path, installed: frozenset[str] = _NO_NAMES) -> None:
