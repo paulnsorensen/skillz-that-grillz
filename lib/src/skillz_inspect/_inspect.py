@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -100,7 +101,8 @@ def inspect(path: Path) -> dict[str, object]:
             continue
         target = unquote(parsed.path)
         destination = path.parent / target
-        if not destination.resolve().is_relative_to(path.parent.resolve()):
+        # Path.resolve raises RuntimeError on a symlink loop before Python 3.13; realpath does not on any version.
+        if not Path(os.path.realpath(destination)).is_relative_to(path.parent.resolve()):
             raise ValueError("link escapes package")
         if any(parent.is_symlink() for parent in (destination, *destination.parents)
                if parent.is_relative_to(path.parent)):
