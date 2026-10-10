@@ -249,13 +249,6 @@ def test_expand_files_module_with_a_nul_byte_is_a_syntax_rejection_with_the_laye
 
 # --- collisions ------------------------------------------------------------------------------------------------------
 
-def multi_seed(world: World, extra: str) -> dict[str, str]:
-    first = expand_files(world.skill, world.files(), VALUE)
-    seed = world.files() | first
-    seed["wedge.toml"] += extra
-    return seed
-
-
 def test_expand_files_name_equal_to_a_target_of_a_multi_target_file_is_a_name_collision(world: World) -> None:
     seed = world.files() | expand_files(world.skill, world.files(), VALUE)
     assert code_of(world, VALUE, seed=seed) == "new-cli-name-collision"
