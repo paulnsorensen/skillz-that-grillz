@@ -89,3 +89,8 @@
 
 - 2026-10-04 · 5f96f7f0ac775c0b · merged · decisions/skillz-autoimprove.md · Record the deferred Claude live-network verification gap from PR #118. All three frozen retrieval probes return the page at rank 1.
 - 2026-10-05 · skillz-wedge-offload · updated · decisions/wedge-skill-packaging.md · #151: /wedge moved into /skillz wedge; one offload procedure for wedge and improve; fromargs by default, PEP 723 `uv run --script` when not wedged; builder at skills/skillz/wedge/; ADR-009 nested-in-skill defaults rule. Reverses the 2026-10-01 skillz-wedge split.
+
+
+- 2026-10-10 · d18eff71e7d8b81a · new-page · research/behavioral-bdd-gherkin.md · Curated BDD altitude, candidate comparison, and regression evidence; no existing topic owner.
+- 2026-10-10 · d18eff71e7d8b81a · new-page · research/skill-behavior-specifications-for-evals.md · Curated upstream intent documents, evaluation methods, and schema differences; existing runner decisions remain unchanged.
+
