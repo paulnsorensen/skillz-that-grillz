@@ -1,6 +1,6 @@
 """One resumable autoimprove run: intake, one search, one holdout gate. `export` stays write-only.
 
-Phases: prepared, searched, gated, complete. `run.json` (schema 2) holds the checkpoint of each phase.
+Phases: prepared, searched, gated, complete. `run.json` (schema 3) holds the checkpoint of each phase.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._doctor import doctor
-from skillz_experiments._gate import case_deltas, verdict as gate_verdict
+from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, case_deltas, threshold, verdict as gate_verdict
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
@@ -253,9 +253,30 @@ def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object
             **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {})}
 
 
+def resolve_statistics(contract: Contract, given: Mapping[str, float]) -> Statistics:
+    """Return each threshold from the CLI flag, else the contract, else the built-in default."""
+    return Statistics(**{**DEFAULT_STATISTICS.data(), **(contract.statistics or {}), **given})
+
+
+def _statistics_flag(name: str) -> str:
+    return "--" + name.replace("_", "-")
+
+
+def _frozen_statistics(record: dict[str, object]) -> Statistics:
+    """Return the frozen thresholds. A map of the wrong shape is tampering.
+
+    This checks shape only: the record does not bind the values to the contract or to the CLI flags.
+    """
+    try:
+        return Statistics.parse(record.get("statistics"))
+    except ValueError:
+        raise Stop("run-record-tampered", "the recorded statistics are malformed; create a new run", {}) from None
+
+
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
-             options: ClaudeOptions, configuration: Configuration | None = None, isolation: str = "claude") -> None:
+             options: ClaudeOptions, configuration: Configuration | None = None, isolation: str = "claude",
+             statistics_given: Mapping[str, float] | None = None) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
     A fresh run with a built-in harness first runs the free host checks, so a host problem stops the run
@@ -271,6 +292,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
                    data | ({"doctor": report} if report else {}))
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)
+    resolved = resolve_statistics(contract, statistics_given or {})
     kind = _supported_kind(contract)
     judge = configuration.roles.get("judge") if configuration is not None else None
     judge_adapter = judge.adapter if judge is not None else adapter
@@ -290,7 +312,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
-                    "seed": split_seed, **({} if configuration is not None else {"claude_options": options.data()})})
+                    "seed": split_seed, "statistics": resolved.data(),
+                    **({} if configuration is not None else {"claude_options": options.data()})})
     freeze(out / "cases.json", cases, split_seed, expected)
     scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
@@ -305,7 +328,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
-                                                              **shown_options}) from None
+                                                     "statistics": resolved.data(), **shown_options}) from None
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
         "isolation": isolation, **({"claude_options": options.data()} if resolve_harness else {}),
@@ -313,19 +336,21 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
-        "estimate": shown, "engine_hash": _engine_hash(),
+        "estimate": shown, "engine_hash": _engine_hash(), "statistics": resolved.data(),
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
                    "reserve_seconds": budget.reserve_seconds, "approved": budget.approved},
         "outcomes": [], "started": time.time(), "started_monotonic": time.monotonic()})
+    return resolved
 
 
 @final
 class _Session:
     def __init__(self, out: Path, model: str, adapter: HarnessName, factory: Factory | None,
-                 supplied: Configuration | None, isolation: str = "claude") -> None:
+                 supplied: Configuration | None, isolation: str = "claude", *, statistics: Statistics) -> None:
         self.out = out
         self.lock = threading.RLock()
         self.record = open_record(out / "run.json")
+        self.statistics = statistics
         if _phase(self.record) not in _PHASES:
             raise Stop("run-record-tampered", "the recorded phase is unknown; create a new run", {})
         self.contract = parse(_field(self.record, "contract"), _text_field(self.record, "contract_source"))
@@ -662,7 +687,8 @@ class _Session:
                                     for name in self.seed.editable})
         if winner.identity == self.seed.identity:
             self.record["gate"] = {"verdict": "inconclusive", "delta": 0.0, "se": 0.0, "cases": len(holdout),
-                                   "repeats": repeats, "reason": "winner-equals-baseline"}
+                                   "repeats": repeats, "reason": "winner-equals-baseline",
+                                   "reasons": ["winner-equals-baseline"]}
         else:
             _ = self.budget.remaining()
             if any(item.get("arm") == "baseline" and item.get("status") == "candidate-contract-rejected"
@@ -687,9 +713,10 @@ class _Session:
                            {"next": "start a new run in a new directory"})
             with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
                 _ = list(pool.map(score, todo))
-            outcome = gate_verdict(case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner")))
+            outcome = gate_verdict(case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner")),
+                                   thresholds=self.statistics)
             self.record["gate"] = {"verdict": outcome.verdict, "delta": outcome.delta, "se": outcome.se,
-                                   "cases": outcome.cases, "repeats": repeats}
+                                   "cases": outcome.cases, "repeats": repeats, "reasons": list(outcome.reasons)}
         self.record["winner_hash"] = winner.identity
         self.record["phase"] = "gated"
         self.checkpoint()
@@ -790,9 +817,9 @@ _OPTION_FLAGS = (("--effort", "effort"), ("--sandbox-read", "sandbox_read"), ("-
 
 def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
                   seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object],
-                  isolation: str = "claude") -> None:
-    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, seed, or Claude option than
-    the first run.
+                  isolation: str) -> None:
+    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, seed, or Claude option
+    than the first run.
     """
     for flag, value, field in ("--model", model, "model"), ("--harness", adapter, "adapter"):
         if _text_field(record, field) != value:
@@ -810,12 +837,19 @@ def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, re
         raise _config_differs("the target skill directory")
 
 
+def _check_statistics(statistics_given: Mapping[str, float], frozen: Statistics) -> None:
+    """Stop when a resume, or a call on a completed run, names another statistics threshold than the first run."""
+    for name, value in statistics_given.items():
+        if value != getattr(frozen, name):
+            raise _config_differs(_statistics_flag(name))
+
+
 def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
         edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
         approve_cases: str | None = None, approve_budget: int | None = None,
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
-        isolation: str = "claude") -> dict[str, object]:
+        isolation: str = "claude", statistics: Mapping[str, float] | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
@@ -838,6 +872,15 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                          + "set them in the supplied configuration")
     requested = ClaudeOptions.parse(given)
     given = {field: getattr(requested, field) for field in given}
+    statistics_given: dict[str, float] = {}
+    for name, value in (statistics or {}).items():
+        if name not in Statistics.flags():
+            allowed = ", ".join(_statistics_flag(flag) for flag in Statistics.flags())
+            raise ValueError(f"unknown statistics flag: {name}; allowed: {allowed}")
+        checked = threshold(value)
+        if checked is None:
+            raise ValueError(f"{_statistics_flag(name)} must be a finite number of at least 0")
+        statistics_given[name] = checked
     if _inside(out, target):
         raise ValueError("--out must be outside the target skill directory")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -851,17 +894,20 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                        {"next": "wait for the other run to finish, then call run again"}) from None
         if path.exists():
             record = open_record(path)
+            frozen = _frozen_statistics(record)
             _refuse_terminated(record)
+            _check_statistics(statistics_given, frozen)
             if record.get("phase") == "complete":
                 return summary(record)
             _check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation)
         else:
-            _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed, approve_cases,
-                     approve_budget, resolve_harness=factory is None and configuration is None, options=requested,
-                     configuration=configuration, isolation=isolation)
+            frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,
+                              approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
+                              options=requested, configuration=configuration, isolation=isolation,
+                              statistics_given=statistics_given)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
-        session = _Session(out, model, adapter, factory, configuration, isolation)
+        session = _Session(out, model, adapter, factory, configuration, isolation, statistics=frozen)
         pending: BaseException | None = None
         try:
             try:

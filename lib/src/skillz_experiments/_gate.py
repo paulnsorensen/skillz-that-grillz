@@ -6,10 +6,80 @@ import math
 import random
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field, fields
+from typing import Literal, cast
 
 VerdictName = Literal["promote", "inconclusive", "reject"]
+
+
+def threshold(value: object) -> float | None:
+    """Return `value` as a float when it is a finite number of at least 0; else return None.
+
+    A bool, a non-number, an int too large for a float, a non-finite number, and a negative number give None.
+    """
+    if type(value) not in (int, float):
+        return None
+    try:
+        number = float(cast(float, value))
+    except OverflowError:
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number + 0.0  # turns -0.0 into 0.0 so both hash alike
+
+
+@dataclass(frozen=True)
+class Statistics:
+    """Resolved promotion thresholds. The defaults reproduce the built-in 2*SE rule.
+
+    These thresholds are floors: each one only tightens the rule.
+    The SE multiplier stays 2 and every floor is at least 0.
+    A field with `flag` metadata also has a CLI flag. `declared`, `parse`, and `data` check the shape of a map,
+    not its agreement with any run record.
+    """
+
+    min_gain: float = field(default=0.0, metadata={"flag": True})
+    min_lower_bound: float = field(default=0.0, metadata={"flag": True})
+
+    @classmethod
+    def names(cls) -> tuple[str, ...]:
+        return tuple(item.name for item in fields(cls))
+
+    @classmethod
+    def flags(cls) -> tuple[str, ...]:
+        return tuple(item.name for item in fields(cls) if item.metadata.get("flag"))
+
+    @classmethod
+    def declared(cls, value: object) -> dict[str, float]:
+        """Check a partial mapping of thresholds. Raise `ValueError` for a shape problem."""
+        if not isinstance(value, dict):
+            raise ValueError("statistics must be an object")
+        item = cast(dict[str, object], value)
+        unknown = sorted(set(item) - set(cls.names()))
+        if unknown:
+            raise ValueError(f"statistics has unknown fields: {', '.join(unknown)}; allowed: {', '.join(cls.names())}")
+        result: dict[str, float] = {}
+        for name, number in item.items():
+            checked = threshold(number)
+            if checked is None:
+                raise ValueError(f"statistics {name} must be a finite number of at least 0")
+            result[name] = checked
+        return result
+
+    @classmethod
+    def parse(cls, value: object) -> Statistics:
+        """Check a full mapping of thresholds: exactly the fields of this class. Raise `ValueError` otherwise."""
+        checked = cls.declared(value)
+        missing = sorted(set(cls.names()) - set(checked))
+        if missing:
+            raise ValueError(f"statistics lacks fields: {', '.join(missing)}")
+        return cls(**checked)
+
+    def data(self) -> dict[str, float]:
+        return {item.name: getattr(self, item.name) for item in fields(self)}
+
+
+DEFAULT_STATISTICS = Statistics()
 
 
 @dataclass(frozen=True)
@@ -18,6 +88,7 @@ class Verdict:
     delta: float
     se: float
     cases: int
+    reasons: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,8 +119,12 @@ def case_deltas(
     return deltas
 
 
-def verdict(deltas: Mapping[str, float] | Sequence[float]) -> Verdict:
-    """Promote when the mean case delta exceeds twice its standard error."""
+def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statistics = DEFAULT_STATISTICS) -> Verdict:
+    """Promote when the mean case delta exceeds twice its standard error and passes the floors.
+
+    The floors only tighten the rule: a `promote` that misses `min_gain` or `min_lower_bound` becomes
+    `inconclusive`, and `reasons` names each floor that failed.
+    """
     values = list(deltas.values()) if isinstance(deltas, Mapping) else list(deltas)
     count = len(values)
     if not all(math.isfinite(value) for value in values):
@@ -71,7 +146,15 @@ def verdict(deltas: Mapping[str, float] | Sequence[float]) -> Verdict:
         name = "reject"
     else:
         name = "inconclusive"
-    return Verdict(name, delta, se, count)
+    reasons: list[str] = []
+    if name == "promote":
+        if not delta >= thresholds.min_gain:
+            reasons.append("min-gain")
+        if not delta > 2 * se + thresholds.min_lower_bound:
+            reasons.append("lower-bound")
+        if reasons:
+            name = "inconclusive"
+    return Verdict(name, delta, se, count, tuple(reasons))
 
 
 def _scores(rng: random.Random, chances: Sequence[float], repeats: int) -> list[float]:

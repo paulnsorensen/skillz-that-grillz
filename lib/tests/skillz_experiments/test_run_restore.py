@@ -23,6 +23,7 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._claude import ClaudeCode, ClaudeOptions
 from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
+from skillz_experiments._gate import DEFAULT_STATISTICS
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, Role
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
@@ -378,7 +379,7 @@ def test_concurrent_case_evaluations_leave_a_valid_checkpoint_with_every_outcome
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, state = make_target(tmp_path), State()
     out = _prepared(tmp_path, target, write_draft, approvals)
-    session = _Session(out, MODEL, "claude", state.factory(), None)
+    session = _Session(out, MODEL, "claude", state.factory(), None, statistics=DEFAULT_STATISTICS)
     try:
         cases = session.cases * 4
         def evaluate(case: Case) -> dict[str, object]:
@@ -656,7 +657,7 @@ def test_a_live_resume_gives_the_recorded_claude_options_to_every_call(
     with pytest.raises(Stop):
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, effort="xhigh", sandbox_seconds=120)
     executable = _claude_on_path(tmp_path, monkeypatch)
-    session = _Session(out, MODEL, "claude", None, None)
+    session = _Session(out, MODEL, "claude", None, None, statistics=DEFAULT_STATISTICS)
     try:
         provider = cast(Harness, session.provider)
         _ = provider.transports["judge"].invoke("hello")

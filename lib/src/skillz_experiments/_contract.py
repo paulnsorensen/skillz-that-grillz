@@ -10,6 +10,7 @@ from typing import Literal, cast
 
 from skillz_experiments._cases import CodedError, digest, mapping, relative, string
 from skillz_experiments._evaluation import HELPER_FIXTURES
+from skillz_experiments._gate import Statistics
 
 LOCATION = "evals/autoimprove.json"
 GraderType = Literal["exact-json", "judge", "command", "hybrid", "audit"]
@@ -50,6 +51,7 @@ class Contract:
     helper: Helper | None = None
     editable: tuple[str, ...] = ()
     source: str = "skill"
+    statistics: Mapping[str, float] | None = None
 
     def grader(self, kind: str) -> Grader:
         if kind not in self.kinds:
@@ -85,6 +87,8 @@ class Contract:
         if self.helper is not None:
             document["helper"] = {"path": self.helper.path, "input": self.helper.input,
                                   "fixtures": list(self.helper.fixtures)}
+        if self.statistics:
+            document["statistics"] = dict(self.statistics)
         return document
 
     @property
@@ -168,13 +172,21 @@ def _helper(value: object) -> Helper:
                   relative(string(item.get("input", "fixture.md"), "helper input")), tuple(fixtures))
 
 
+def _statistics(value: object) -> dict[str, float]:
+    try:
+        return Statistics.declared(value)
+    except ValueError as error:
+        raise CodedError("contract-statistics-invalid", f"contract {error}") from None
+
+
 def parse(value: object, source: str) -> Contract:
     item = mapping(value)
     if item.get("status") == "draft":
         raise CodedError("contract-unapproved", "contract has status draft; approve it before a run")
     if item.get("status") != "approved":
         raise ValueError("contract status must be approved or draft")
-    _fields(item, {"schema_version", "status", "skill", "invocation", "kinds", "helper", "editable"}, "contract")
+    _fields(item, {"schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "statistics"},
+            "contract")
     if type(item.get("schema_version")) is not int or item["schema_version"] != 1:
         raise ValueError("contract needs schema_version 1")
     skill = string(item.get("skill"), "contract skill")
@@ -188,8 +200,9 @@ def parse(value: object, source: str) -> Contract:
         raise ValueError("contract editable must be a list")
     editable = tuple(relative(string(name, "editable path")) for name in cast(list[object], editable_raw))
     helper = _helper(item["helper"]) if "helper" in item else None
+    thresholds = _statistics(item["statistics"]) if "statistics" in item else None
     return Contract(skill, string(item.get("invocation"), "contract invocation"),
-                    {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source)
+                    {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source, thresholds)
 
 
 def load_contract(target: Path) -> Contract:

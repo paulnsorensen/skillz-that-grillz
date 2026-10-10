@@ -50,7 +50,8 @@ def run_command(*, target: Path, out: Path, model: str, harness: Harness = "clau
                 live: bool = False, edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
                 approve_cases: str | None = None, approve_budget: int | None = None,
                 effort: Effort | None = None, sandbox_read: list[Path] | None = None,
-                sandbox_seconds: int | None = None) -> dict[str, object]:
+                sandbox_seconds: int | None = None, min_gain: float | None = None,
+                min_lower_bound: float | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
     `--isolation nono` confines the whole Claude process with nono on Linux and needs ANTHROPIC_API_KEY on the host.
@@ -63,12 +64,18 @@ def run_command(*, target: Path, out: Path, model: str, harness: Harness = "clau
         Absolute host path that the runner's OS sandbox mounts read-only. Repeat for more paths.
     sandbox_seconds
         Time limit of one OS sandbox command, in seconds.
+    min_gain
+        Smallest mean holdout delta that can promote. At least 0. Overrides the contract value.
+    min_lower_bound
+        Margin that the delta must clear beyond 2·SE. At least 0. Overrides the contract value.
     """
+    flags = {"min_gain": min_gain, "min_lower_bound": min_lower_bound}
+    statistics = {name: value for name, value in flags.items() if value is not None}
     with _coded():
         return run_workflow(target, out, model, adapter=harness, live=live, edit=edit, repeats=repeats, seed=seed,
                             approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
                             sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
-                            sandbox_seconds=sandbox_seconds, isolation=isolation)
+                            sandbox_seconds=sandbox_seconds, isolation=isolation, statistics=statistics or None)
 
 
 @app.command(name="doctor")

@@ -25,7 +25,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._claude import CONFIG_PREFIX, CREDENTIALS, ClaudeCode, Inventory, settings
 from skillz_experiments._cli import main
-from skillz_experiments._gate import case_deltas, verdict
+from skillz_experiments._gate import DEFAULT_STATISTICS, case_deltas, verdict
 from skillz_experiments._harness import Configuration
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, PENDING_KINDS, DraftCase, case_hash, split_cases)
 from skillz_experiments._records import read, write
@@ -649,10 +649,10 @@ def test_removed_commands_with_any_arguments_exit_coded_and_name_run(
 
 # --- PA-9: old schema ------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("version", [1, "missing", "2", 3, 0, True, [2], {"v": 2}, None, -2])
+@pytest.mark.parametrize("version", [1, "missing", "3", 2, 4, 0, True, [3], {"v": 3}, None, -3])
 def test_a_run_record_with_a_foreign_schema_stops_coded_and_creates_no_provider(
         version: object, tmp_path: Path, make_target: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
-    """PA-9: only schema_version 2 opens; every other value stops with run-schema-old before any provider."""
+    """PA-9: only schema_version 3 opens; every other value, schema 2 included, stops with run-schema-old."""
     target, out = make_target(tmp_path), tmp_path / "run"
     out.mkdir(mode=0o700)
     record: dict[str, object] = {"phase": "prepared", "model": MODEL}
@@ -1040,7 +1040,7 @@ def test_an_oversized_proposal_scores_zero_with_a_rejected_feedback_entry(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     prep = prepare(tmp_path, make_target, write_draft, approvals)
-    session = _workflow._Session(prep.out, MODEL, "claude", Spy().factory, None)
+    session = _workflow._Session(prep.out, MODEL, "claude", Spy().factory, None, statistics=DEFAULT_STATISTICS)
     try:
         components = {name: "x" * 262145 for name in session.seed.editable}
         score, feedback = session._evaluate_example(components, next(iter(session._search_cases)))
