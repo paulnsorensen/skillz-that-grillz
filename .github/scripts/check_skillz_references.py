@@ -27,7 +27,7 @@ def find_nested(references: Path) -> list[str]:
         target.name: re.compile(rf"(?<![\w-]){re.escape(target.name)}(?![\w-])")
         for target in files
     }
-    findings = []
+    findings: list[str] = []
     for source in files:
         for number, line in enumerate(source.read_text().splitlines(), start=1):
             line = ENGINE_PATH.sub("", ENGINE_LINK.sub("", line))
@@ -45,7 +45,7 @@ def main(references: Path | None = None) -> int:
     else:
         print(f"error: references directory not found: {references}", file=sys.stderr)
         return 2
-    findings = []
+    findings: list[str] = []
     for directory in directories:
         label = directory.relative_to(ROOT) if directory.is_relative_to(ROOT) else directory
         findings.extend(f"{label}/{finding}" for finding in find_nested(directory))

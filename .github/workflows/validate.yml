@@ -62,16 +62,14 @@ jobs:
         # `just ci` is the single source of truth — the same gate runs locally.
         # Pin the tools it shells out to so CI matches a developer's machine:
         #   npm: markdownlint-cli2
-        #   pip: yamllint + pyyaml (validators)
+        #   pip: yamllint
         #   uv: pinned by the Install uv step; lib pytest from its uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
         #   release binary: duckdb CLI (the skillz engine test suite)
         run: |
           set -euo pipefail
           npm install -g markdownlint-cli2@0.22.1
-          pip install --no-cache-dir \
-            yamllint==1.35.1 \
-            pyyaml==6.0.2
+          pip install --no-cache-dir yamllint==1.35.1
           curl -fsSL https://github.com/google/yamlfmt/releases/download/v0.21.0/yamlfmt_0.21.0_Linux_x86_64.tar.gz \
             | sudo tar -xz -C /usr/local/bin yamlfmt
           curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \

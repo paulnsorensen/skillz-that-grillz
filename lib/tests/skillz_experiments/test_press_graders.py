@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import cast
 
+from typing_extensions import override
+
 import pytest
 
 from skillz_experiments._candidate import Candidate, make_workspace, stage_task
@@ -457,8 +459,6 @@ def test_audit_kind_with_unreviewed_labels_stops_before_any_invocation(
 @pytest.mark.parametrize("value", [None, 5, ["x"], {"echo": "hello"}])
 def test_exact_json_scores_zero_when_result_json_is_not_text_and_does_not_stop_the_run(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: object) -> None:
-    from typing import override
-
     class Typed(Task):
         @override
         def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,

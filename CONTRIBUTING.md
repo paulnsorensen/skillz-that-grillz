@@ -20,8 +20,9 @@ cd skillz-that-grillz
 just build   # runs all formatters, linters, validators, and test suites
 ```
 
-`just build` is the primary quality gate — it runs formatters, linters, validators,
-and test suites. It doesn’t install dependencies for you; see `justfile` for the required tools.
+`just build` runs formatters, root basedpyright, Vulture, validators, and test suites.
+It installs locked Python tooling into the root `.venv` through `uv run`.
+Install the other tools listed in `justfile` before running the gate.
 Install [`just`](https://github.com/casey/just) first if you don't have it (`brew install just` / `cargo install just`).
 
 ## Adding a skill
@@ -52,7 +53,7 @@ The essentials:
 This project has one canonical quality gate:
 
 ```sh
-just build   # autofix, then verify markdown/YAML/shell + run the test suites
+just build   # autofix, then verify formats, Python types/dead code, and tests
 just ci      # the same gate with no autofixes — exactly what CI runs
 ```
 
