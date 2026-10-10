@@ -55,7 +55,6 @@ name = "beta"
 entry = "beta:main"
 source = "../proj/beta"
 """
-MIB = 1024 * 1024
 
 
 @dataclass
