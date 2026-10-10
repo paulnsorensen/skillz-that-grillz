@@ -98,7 +98,9 @@ Map each coded stop to its next step:
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
 | `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |
 | `run-terminated` | `next`, `failure_code` | The run directory holds a stop from `isolation-failed` or `credential-changed`. Start a new run directory. |
-| `run-record-tampered` | Only `stop` and `message` | The budget in `run.json` differs from the plan that the frozen cases give, the `phase` is unknown, or the `statistics` are malformed. Start a new run directory. |
+| `run-record-tampered` | Only `stop` and `message` | The budget in `run.json` differs from the plan that the frozen cases give, the `phase` is unknown, or the `statistics` are malformed. A frozen file is changed or missing, a fixed file name is bad, an editable name is not a seed file, or the `layers` or `own_targets` record is malformed. Start a new run directory. |
+| `site-layer-drift` | `stop`, `message`, `next` | On resume, `uv.lock`, the dependency groups, or `wedge.toml` differ from the run record. A recorded layer that cannot be reused, or a recorded target that `wedge.toml` no longer lists, also causes it. Start a new run directory. |
+| `build-failed` | `stop`, `message`, `next` | At the holdout gate, the winner no longer builds. Start a new run directory. |
 
 These other codes arrive on stderr as `code`, with no data on stdout:
 
@@ -121,7 +123,17 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
 | `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
-| `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
+| `frozen-file-too-large` | A frozen file is over 16 MiB, or the frozen files together are over 64 MiB. The message names the file. | Remove the file from the skill, or shrink it, then run again. |
+| `target-not-built` | `wedge.toml` lists a target, and its `scripts/NAME.pyz` is missing, is a symlink, or is not a file. | Run `wedge bundle` for the skill, then run again. |
+| `wedge-config-invalid` | The `wedge.toml` of the skill is not a valid wedge config. The message gives the cause. | Fix `wedge.toml`, then run again. |
+| `editable-build-file` | The contract `editable` list names `wedge.toml`, `uv.lock`, or a `.pyz` file. | Remove the name from `editable`. |
+| `site-layer-failed` | The host cannot populate the site layer for `--edit prose+cli`. The cause is a missing `uv`, a missing network, or a dependency closure that `uv` refuses. | Install `uv`, restore the network, or use `--edit prose`. Then run again. |
+| `build-failed` | The host build of an own target fails. During the search, the candidate scores 0 and the feedback shows the reason. | Read the feedback. |
+| `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose`. Then run again. |
+| `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
+| `helper-frozen` | The contract helper names a frozen file. | Name an editable helper, or use `--edit prose`. |
+| `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
+| `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
 | `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
@@ -245,6 +257,61 @@ Never report a delta without its SE and case count.
 `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion rates of the gate. It makes no model call.
 The rates cover `promote` only. They do not cover `promote-cheaper`.
 
+## Wedge targets
+
+A skill can own wedge targets. Each target is a section of the `wedge.toml` in the skill root.
+Each target ships as `scripts/NAME.pyz`.
+The runner reads each own `.pyz` as frozen bytes. If a `.pyz` is missing, the run stops with `target-not-built`.
+
+### Frozen bytes
+
+A frozen file is a file that no proposal edits. The runner keeps its bytes as they are.
+A file is frozen when it is binary, holds a NUL byte, is not UTF-8, or is over 262144 bytes.
+A valid UTF-8 file with a NUL byte is frozen. This changes the identity of such a file from earlier runs, by intent.
+A `.pyz` file is never editable. A binary `.pyz` is frozen, including one the skill does not own.
+Frozen bytes do not count against the 1,000,000-character text limit.
+A frozen file may be up to 16 MiB. All frozen files together may be up to 64 MiB.
+A larger file stops the run with `frozen-file-too-large`.
+The candidate identity includes a digest of each frozen file.
+The run directory keeps the frozen files in `frozen/`. A changed frozen file stops a resume with `run-record-tampered`.
+
+### Editable sources
+
+Only `--edit prose+cli` edits sources. `--edit prose` keeps every own target frozen.
+The runner adds the sources of an own target in this order:
+
+1. The target whose `.pyz` the contract helper names.
+2. Each other target for which `SKILL.md` names `scripts/NAME.pyz`, in `wedge.toml` order.
+
+A target joins only while the text total stays within the 1,000,000-character limit.
+The first target that does not fit stays frozen, and so does every later target.
+A target also stays frozen when one source file is binary, is not UTF-8, or is over 262144 bytes.
+The files `wedge.toml`, `uv.lock`, and every `.pyz` are never editable.
+A contract helper path may name an own `.pyz`. The path then does not stop with `helper-file-missing`.
+A project outside the repository root keeps its targets frozen.
+A git-ignored first-party file freezes its target.
+A source that a frozen target or a nested skill target also builds from is never editable.
+A target left with no source is frozen.
+The editable wedge sources together may hold up to 100,000 characters.
+A source appears in the candidate as `@wedge/` plus its path relative to the repository root.
+The wedge overlay uses paths relative to the project. Do not mix the two forms.
+
+### Host rebuild
+
+A site layer is a directory of installed dependencies. The host builds each target over it.
+The dependency groups are the `groups` that `wedge.toml` names for a target.
+The run populates one site layer for each project and dependency group set of the editable targets.
+This is the only step that needs the network and `uv`. A missing `uv` stops the run with `site-layer-failed`.
+When a candidate changes a source, the host rebuilds that target before the candidate check.
+The build only copies and zips source. It never imports or runs candidate code.
+The new `.pyz` replaces the frozen bytes of that target for the candidate.
+A failed build rejects the candidate. It scores 0, and the feedback shows the reason `build-failed`.
+At the holdout gate, a winner that no longer builds stops the run with `build-failed`.
+The seed `.pyz` comes from a build of the seed sources, not from the file on disk.
+A rebuild stages first-party files that no proposal edits, such as a data `.pyz`, from the seed.
+A resume reopens the site layers. It stops with `site-layer-drift` when `uv.lock`, the dependency groups, or `wedge.toml` changed.
+It also stops with that code when a recorded layer cannot be reused or the recorded targets no longer match `wedge.toml`.
+
 ## Export
 
 Run `export` only after the run reports the phase `complete`.
@@ -254,8 +321,16 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export
 ```
 
 Export is write-only. It writes `candidate.patch` and a redacted `report.json` to a new directory.
-It never applies or installs the patch, and it never changes the target skill.
-Show the user the patch and the verdict. The user decides whether to apply it.
+Its result lists the written patch files under `patches`.
+It never applies or installs a patch, and it never changes the target skill.
+Show the user each patch and the verdict. The user decides whether to apply it.
+`candidate.patch` is a plain unified diff with paths relative to the skill directory.
+Apply it from the skill directory with `git apply` or `patch -p1`. Added and deleted skill files appear in it.
+When a candidate changes wedge sources, export also writes `wedge-sources.patch`.
+It has git headers and paths relative to the repository root. Apply it from the repository root with `git apply`.
+Only a changed wedge source must lie inside the repository root.
+A changed source path outside the repository root stops export with `export-path-escapes`.
+A skill-only change exports outside a repository.
 `doctor --harness claude` runs the free host checks without a run. Add `--isolation nono` to check the nono backend.
 `self-test --preflight-only --model MODEL` checks the harness without a run.
 Pass `--harness-config FILE` to check a custom command adapter. The harness reference that `SKILL.md` lists describes it.

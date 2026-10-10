@@ -1128,6 +1128,22 @@ def test_stage_sources_overlay_adds_files_under_the_roots(tmp_path: Path) -> Non
     assert not (project / "app/extra").exists(), "the checkout never gains the added file"
 
 
+@pytest.mark.ac("AC-6")
+def test_stage_sources_overlay_only_stages_just_the_overlay_files(tmp_path: Path) -> None:
+    project = (tmp_path / "proj").resolve()
+    _ = _put(project, "app/__init__.py", "A = 1\n")
+    _ = _put(project, "app/live_extra.py", "LIVE = True\n")
+    _ = _put(project, "lib/base.py", "B = 1\n")
+    paths = _paths(project, project / "app", (project / "lib",))
+    overlay = tmp_path / "overlay"
+    _ = _put(overlay, "app/__init__.py", "A = 2\n")
+
+    staged = stage_sources(paths, tmp_path / "staged", overlay, overlay_only=True)
+
+    assert (staged / "app/__init__.py").read_text() == "A = 2\n"
+    assert not (staged / "app/live_extra.py").exists(), "a live file outside the overlay is not staged"
+    assert not (staged / "lib/base.py").exists(), "an include file outside the overlay is not staged"
+
 @pytest.mark.ac("AC-4")
 def test_stage_sources_overlay_file_outside_every_root_is_rejected(tmp_path: Path) -> None:
     project = (tmp_path / "proj").resolve()

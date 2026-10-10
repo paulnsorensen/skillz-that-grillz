@@ -649,10 +649,10 @@ def test_removed_commands_with_any_arguments_exit_coded_and_name_run(
 
 # --- PA-9: old schema ------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("version", [1, "missing", "3", 2, 4, 0, True, [3], {"v": 3}, None, -3])
+@pytest.mark.parametrize("version", [1, "missing", "4", 2, 3, 5, 0, True, [4], {"v": 4}, None, -4])
 def test_a_run_record_with_a_foreign_schema_stops_coded_and_creates_no_provider(
         version: object, tmp_path: Path, make_target: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
-    """PA-9: only schema_version 3 opens; every other value, schema 2 included, stops with run-schema-old."""
+    """PA-9: only schema_version 4 opens; every other value, schema 3 included, stops with run-schema-old."""
     target, out = make_target(tmp_path), tmp_path / "run"
     out.mkdir(mode=0o700)
     record: dict[str, object] = {"phase": "prepared", "model": MODEL}

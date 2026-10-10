@@ -14,6 +14,11 @@ from wedge._fanout import Outcome
 from wedge._digest import content_sha256
 
 
+def bundle_path(skill_dir: Path, name: str) -> Path:
+    """Return the path of the bundle of the target `name` in `skill_dir`."""
+    return skill_dir / "scripts" / f"{name}.pyz"
+
+
 def bundle_many(
     skill_dirs: list[Path], *, jobs: int | None = None, check: bool = False
 ) -> list[Outcome[Path, BuildResult]]:
@@ -27,7 +32,7 @@ def bundle_many(
                 continue
             skill = Path(outcome.item).resolve()
             scripts = skill / "scripts"
-            target = scripts / f"{outcome.value.name}.pyz"
+            target = bundle_path(skill, outcome.value.name)
             if scripts.is_symlink():
                 checked.append(Outcome(outcome.item, error=f"scripts directory must not be symlink: {scripts}"))
                 continue

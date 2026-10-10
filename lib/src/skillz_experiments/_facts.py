@@ -300,8 +300,10 @@ def _internal(fields: dict[str, _Field]) -> tuple[int, str] | None:
     return next(((number, text) for number, text in metadata.block if INTERNAL.match(text)), None)
 
 
-def _root(package: Path) -> Path | None:
-    return next((path for path in (package, *package.parents) if (path / ".git").exists()), None)
+def repo_root(start: Path) -> Path | None:
+    """Return the nearest ancestor of `start` (or `start`) that holds `.git`, or None."""
+    here = start.resolve()
+    return next((path for path in (here, *here.parents) if (path / ".git").exists()), None)
 
 
 def audit_facts(directory: Path) -> dict[str, object]:
@@ -329,7 +331,7 @@ def audit_facts(directory: Path) -> dict[str, object]:
             _identity(context, fields, package.name)
             _policy(context, fields, package, user_only)
             _body(context, body, end + 1)
-            root = _root(package)
+            root = repo_root(package)
             prefix = package.relative_to(root).as_posix() + "/" if root else ""
             _references(context, package, body, end + 1, prefix)
             _scripts(context, package, body, end + 1, prefix)
