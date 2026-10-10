@@ -28,6 +28,44 @@ class DeadCodeTest(unittest.TestCase):
         result = _scan("from typing import TypedDict\nclass Data(TypedDict):\n    value: int\nData\n")
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
+    def test_subclass_of_local_typed_dict_is_live(self) -> None:
+        result = _scan(
+            "from typing import TypedDict\n" +
+            "class Base(TypedDict):\n    base: int\n" +
+            "class Child(Base):\n    child: int\n" +
+            "Child\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+    def test_subclass_of_ordinary_class_is_reported(self) -> None:
+        result = _scan(
+            "from typing import TypedDict\n" +
+            "class Base(TypedDict):\n    base: int\n" +
+            "class Plain: pass\n" +
+            "class Child(Plain):\n    stale: int\n" +
+            "Base; Child\n"
+        )
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("unused variable 'stale'", result.stdout)
+
+    def test_try_except_import_fallback_is_live(self) -> None:
+        result = _scan(
+            "try:\n    from typing import TypedDict\n" +
+            "except ImportError:\n    from typing_extensions import TypedDict\n" +
+            "class Data(TypedDict):\n    value: int\n" +
+            "Data\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+    def test_type_checking_import_is_live(self) -> None:
+        result = _scan(
+            "from typing import TYPE_CHECKING\n" +
+            "if TYPE_CHECKING:\n    from typing_extensions import TypedDict\n" +
+            "class Data(TypedDict):\n    value: int\n" +
+            "Data\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
     def test_same_named_ordinary_field_is_reported(self) -> None:
         result = _scan(
             "from typing import TypedDict\n" +

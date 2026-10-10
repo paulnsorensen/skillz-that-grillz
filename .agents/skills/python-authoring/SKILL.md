@@ -95,6 +95,7 @@ Done when every item in the completion check holds.
 - `just build` runs Vulture at 60% minimum confidence across authored Python, including tests and examples.
 - Treat findings as potential dead code. Trace dynamic callers before deletion.
 - Exempt only proven framework callbacks with narrow decorator or name rules. Do not add a broad whitelist or a baseline.
+- The repo gate (`.github/scripts/check_dead_code.py`) exempts the fields of all module-level `TypedDict` classes, including subclasses. This is a structural rule, not a name list. `Unpack` and `TypedDict` keys are read by string, so Vulture cannot see the reads. Function-local `TypedDict` classes are not exempt. Do not add global name ignores for field names.
 - Vulture exit 3 means unused code was found. Resolve each real finding before completion.
 
 ## Test and finish

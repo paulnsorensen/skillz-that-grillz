@@ -19,6 +19,8 @@ database is less than 1 hour old.
 Usage: python3 ingest.py [--force]
 """
 
+from __future__ import annotations
+
 import fcntl
 import json
 import os
@@ -29,7 +31,10 @@ import sys
 import time
 from collections.abc import Iterator
 from datetime import datetime, timedelta
-from typing import TypeAlias, cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from typing import TypeAlias
 
 _JsonValue: TypeAlias = "None | bool | int | float | str | list[_JsonValue] | dict[str, _JsonValue]"
 
@@ -165,11 +170,13 @@ def _codex_content_block_payloads(blocks: list[_JsonValue]) -> Iterator[dict[str
     texts: list[str] = []
     for block in blocks:
         if not isinstance(block, dict) or block.get("type") != "input_text":
-            return
+            continue
         block_text = block.get("text")
         if not isinstance(block_text, str):
             return
         texts.append(block_text)
+    if not texts:
+        return
     header = texts[0]
     if not re.fullmatch(
         r"Script completed\nWall time(?:\s*:\s*|\s+)[^\n]*\nOutput:\n",

@@ -1,14 +1,21 @@
-"""Run Vulture without treating live TypedDict declarations as dead variables."""
+"""Run Vulture without treating live TypedDict declarations as dead variables.
+
+The gate exempts fields of module-level TypedDict classes in the scanned paths.
+This includes subclasses of a module-level TypedDict. The rule is structural, not
+name-based. Unpack and TypedDict keys are read by string, so Vulture cannot see
+the reads. Nested (function-local) TypedDicts are not recognized. They fail closed
+and Vulture reports their fields.
+"""
 from __future__ import annotations
 
 import ast
 import sys
 import tokenize
 from pathlib import Path
+
 from vulture import Vulture
 from vulture.config import InputError, make_config
 from vulture.utils import ExitCode
-
 
 
 def _rebound_names(statement: ast.stmt) -> set[str]:
@@ -26,43 +33,70 @@ def _rebound_names(statement: ast.stmt) -> set[str]:
     return names
 
 
-def _typed_dict_fields(path: Path) -> set[tuple[int, str]]:
-    with tokenize.open(path) as source:
-        module = ast.parse(source.read(), filename=str(path))
-    aliases: dict[str, str] = {}
-    fields: set[tuple[int, str]] = set()
-    for statement in module.body:
+def _import_from(statement: ast.ImportFrom, aliases: dict[str, str]) -> None:
+    for imported in statement.names:
+        name = imported.asname or imported.name
+        if statement.module in {"typing", "typing_extensions"} and imported.name == "TypedDict":
+            aliases[name] = "class"
+        else:
+            _ = aliases.pop(name, None)
+
+
+def _import_module(statement: ast.Import, aliases: dict[str, str]) -> None:
+    for imported in statement.names:
+        name = imported.asname or imported.name.partition(".")[0]
+        if imported.name in {"typing", "typing_extensions"}:
+            aliases[name] = "module"
+        else:
+            _ = aliases.pop(name, None)
+
+
+def _is_typed_dict(statement: ast.ClassDef, aliases: dict[str, str]) -> bool:
+    return any(
+        isinstance(base, ast.Name) and aliases.get(base.id) == "class"
+        or isinstance(base, ast.Attribute) and base.attr == "TypedDict"
+        and isinstance(base.value, ast.Name) and aliases.get(base.value.id) == "module"
+        for base in statement.bases
+    )
+
+
+def _visit(
+    statements: list[ast.stmt], aliases: dict[str, str], fields: set[tuple[int, str]]
+) -> None:
+    for statement in statements:
         if isinstance(statement, ast.ImportFrom):
-            for imported in statement.names:
-                name = imported.asname or imported.name
-                if statement.module in {"typing", "typing_extensions"} and imported.name == "TypedDict":
-                    aliases[name] = "class"
-                else:
-                    _ = aliases.pop(name, None)
+            _import_from(statement, aliases)
         elif isinstance(statement, ast.Import):
-            for imported in statement.names:
-                name = imported.asname or imported.name.partition(".")[0]
-                if imported.name in {"typing", "typing_extensions"}:
-                    aliases[name] = "module"
-                else:
-                    _ = aliases.pop(name, None)
+            _import_module(statement, aliases)
         elif isinstance(statement, ast.ClassDef):
-            typed_dict = any(
-                isinstance(base, ast.Name) and aliases.get(base.id) == "class"
-                or isinstance(base, ast.Attribute) and base.attr == "TypedDict"
-                and isinstance(base.value, ast.Name) and aliases.get(base.value.id) == "module"
-                for base in statement.bases
-            )
-            if typed_dict:
+            if _is_typed_dict(statement, aliases):
                 fields.update(
                     (member.lineno, member.target.id)
                     for member in statement.body
                     if isinstance(member, ast.AnnAssign) and isinstance(member.target, ast.Name)
                 )
-            _ = aliases.pop(statement.name, None)
+                aliases[statement.name] = "class"
+            else:
+                _ = aliases.pop(statement.name, None)
+        elif isinstance(statement, ast.If):
+            _visit(statement.body + statement.orelse, aliases, fields)
+        elif isinstance(statement, ast.Try):
+            handlers = [item for handler in statement.handlers for item in handler.body]
+            _visit(
+                statement.body + handlers + statement.orelse + statement.finalbody,
+                aliases,
+                fields,
+            )
         else:
             for name in _rebound_names(statement):
                 _ = aliases.pop(name, None)
+
+
+def _typed_dict_fields(path: Path) -> set[tuple[int, str]]:
+    with tokenize.open(path) as source:
+        module = ast.parse(source.read(), filename=str(path))
+    fields: set[tuple[int, str]] = set()
+    _visit(module.body, {}, fields)
     return fields
 
 

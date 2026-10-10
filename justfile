@@ -1,7 +1,7 @@
 # The one command to run after every change.
 default: build
 
-# Canonical gate (default) — autofix lint, then verify markdown/yaml + tests.
+# Canonical gate (default) — autofix markdown/YAML, then verify markdown/YAML, type check, dead-code check, and tests.
 build: (_gate "fix")
 
 # CI gate — identical checks, NO autofix. A clean run here == a clean CI.
@@ -39,7 +39,7 @@ test:
     uv run --locked --all-groups python .github/scripts/test_check_skillz_references.py
     uv run --locked --all-groups python .github/scripts/check_skillz_references.py
     uv run --locked --all-groups python .github/scripts/test_check_dead_code.py
-    uv run --locked --all-groups python -B -m unittest discover -s skills/skillz/engine/tests -p 'test_*.py'
+    uv run --no-project --python 3.11 python -B -m unittest discover -s skills/skillz/engine/tests -p 'test_*.py'
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
     just test-fromargs
     uv run --locked --extra experiments --project lib pytest lib/tests/wedge lib/tests/skillz_experiments -q

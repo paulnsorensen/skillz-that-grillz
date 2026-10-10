@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -37,7 +38,7 @@ def _bash_db_path(env: dict[str, str], cwd: Path) -> str:
 
 def _python_db_path(env: dict[str, str], cwd: Path, engine: Path = ENGINE) -> str:
     result = subprocess.run(
-        ["python3", "-B", "-c",
+        [sys.executable, "-B", "-c",
          "import sys; sys.path.insert(0, sys.argv[1]); import ingest; print(ingest.DB_PATH)",
          str(engine / "scripts")],
         env=env, cwd=cwd, capture_output=True, text=True, check=True,
@@ -90,7 +91,7 @@ class DbPathParityTest(unittest.TestCase):
 def _normalize(adapter: str, path: Path, env: dict[str, str]) -> list[object]:
     """Run one ingest adapter in a child process and return its canonical rows."""
     result = subprocess.run(
-        ["python3", "-B", "-c",
+        [sys.executable, "-B", "-c",
          "import json, sys; sys.path.insert(0, sys.argv[1]); import ingest; "
          + "print(json.dumps(list(getattr(ingest, sys.argv[2])(sys.argv[3]))))",
          str(ENGINE / "scripts"), adapter, str(path)],
@@ -140,6 +141,24 @@ class MalformedRowTest(unittest.TestCase):
         assert isinstance(row, dict)
         self.assertEqual(cast(dict[str, object], row)["timestamp"], "2026-01-05T10:00:00Z")
 
+    def test_codex_error_flag_survives_a_non_text_content_block(self) -> None:
+        header = "Script completed\nWall time: 0.1 seconds\nOutput:\n"
+        output = [
+            {"type": "input_text", "text": header},
+            {"type": "input_text", "text": json.dumps({"status": "error"})},
+            {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+        ]
+        entry = {"type": "response_item", "payload": {
+            "type": "function_call_output", "call_id": "c1", "output": output}}
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rollout.jsonl"
+            _ = path.write_text(json.dumps(entry) + "\n")
+            rows = _normalize("codex_normalize", path, dict(os.environ))
+        self.assertEqual(len(rows), 1)
+        row = cast(dict[str, dict[str, list[dict[str, object]]]], rows[0])
+        self.assertEqual(row["message"]["content"][0]["is_error"], "true")
+
+
 class EngineSmokeTest(unittest.TestCase):
     @unittest.skipUnless(REQUIRE_DUCKDB or shutil.which("duckdb"), "DuckDB CLI unavailable")
     def test_ingest_query_and_cache(self):
@@ -180,7 +199,7 @@ class EngineSmokeTest(unittest.TestCase):
             )
             self.assertEqual(path.stdout.strip(), str(database))
             ingest = subprocess.run(
-                ["python3", str(ENGINE / "scripts" / "ingest.py")],
+                [sys.executable, str(ENGINE / "scripts" / "ingest.py")],
                 env=env, capture_output=True, text=True, check=True,
             )
             self.assertTrue(database.is_file(), ingest.stdout + ingest.stderr)
@@ -194,7 +213,7 @@ class EngineSmokeTest(unittest.TestCase):
             )
             self.assertRegex(query.stdout, r"\|\s*1\s*\|")
             cached = subprocess.run(
-                ["python3", str(ENGINE / "scripts" / "ingest.py")],
+                [sys.executable, str(ENGINE / "scripts" / "ingest.py")],
                 env=env, capture_output=True, text=True, check=True,
             )
             self.assertIn("Skipping ingestion", cached.stdout)
@@ -373,7 +392,7 @@ class PackTargetKindTest(unittest.TestCase):
             "CURSOR_HOME": str(root / "cursor"),
             "SESSIONS_DB": str(root / "sessions.duckdb"),
         }
-        _ = subprocess.run(["python3", "-B", str(ENGINE / "scripts" / "ingest.py")],
+        _ = subprocess.run([sys.executable, "-B", str(ENGINE / "scripts" / "ingest.py")],
                        env=env, capture_output=True, text=True, check=True)
         cls.database = root / "sessions.duckdb"
 
