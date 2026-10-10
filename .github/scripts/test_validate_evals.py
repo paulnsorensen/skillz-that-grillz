@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for validate_evals.py.
 
-The script ships an embedded `--self-test` (14 fixtures) that thoroughly
+The script ships an embedded `--self-test` (20 fixtures) that thoroughly
 covers `validate_file`'s accept/reject contract. These tests cover the seam
 the self-test does NOT reach: `main()`'s tree scan, glob discovery, the
 empty / missing cases, the aggregate exit code, and — as a standing
@@ -131,7 +131,7 @@ class SelfTestPassesTest(unittest.TestCase):
         with redirect_stdout(out), redirect_stderr(err):
             rc = validate_evals.self_test()
         self.assertEqual(rc, 0, err.getvalue())
-        self.assertIn("self-test: 14/14 passed", out.getvalue())
+        self.assertIn("self-test: 20/20 passed", out.getvalue())
 
 
 if __name__ == "__main__":
