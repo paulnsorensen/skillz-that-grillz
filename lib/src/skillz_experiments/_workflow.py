@@ -975,10 +975,13 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if path.exists():
             record = open_record(path)
             _refuse_terminated(record)
+            if record.get("phase") == "complete":
+                # A completed run summarises without reading its statistics unless a flag asks to compare them.
+                if statistics_given:
+                    _check_statistics(statistics_given, _frozen_statistics(record))
+                return summary(record)
             frozen = _frozen_statistics(record)
             _check_statistics(statistics_given, frozen)
-            if record.get("phase") == "complete":
-                return summary(record)
             _check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation)
         else:
             frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,
