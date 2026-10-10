@@ -1,6 +1,6 @@
 """One resumable autoimprove run: intake, one search, one holdout gate. `export` stays write-only.
 
-Phases: prepared, searched, gated, complete. `run.json` (schema 3) holds the checkpoint of each phase.
+Phases: prepared, searched, gated, complete. `run.json` (schema 4) holds the checkpoint of each phase.
 """
 from __future__ import annotations
 
@@ -10,24 +10,26 @@ import fcntl
 import json
 import math
 import os
+import re
 import stat
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TextIO, cast, final, get_args
 
 from skillz_experiments._audit import identity as judge_identity
-from skillz_experiments._candidate import Candidate, candidate_files
-from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
+from skillz_experiments._candidate import WEDGE_PREFIX, Candidate, candidate_files, load_frozen, store_frozen
+from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping, relative
 from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES, ClaudeOptions,
                                         resolve_read_roots)
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._doctor import doctor
 from skillz_experiments._evaluator import task_tokens
+from skillz_experiments._facts import repo_root
 from skillz_experiments._gate import (DEFAULT_STATISTICS, Statistics, Verdict, case_deltas, close,
                                       verdict as gate_verdict)
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
@@ -37,6 +39,8 @@ from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._runtime import (APPROVED_CALLS, APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted,
                                          BudgetUnapproved, Estimate, approve, estimate, gate_seconds)
 from skillz_experiments._search import Edit, REFLECTION_MINIBATCH, overshoot, search as pareto_search
+from skillz_experiments._wedge_targets import (BuildFailed, Rebuilder, TargetPlan, never_editable, plan_targets, reopen,
+                                               seal)
 
 DEFAULT_SEED = 20261006
 DEFAULT_REPEATS = 3
@@ -208,20 +212,42 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
                  Estimate(sized.calls, sized.seconds + total), sandbox_gate, total)
 
 
-def _editable(files: Mapping[str, str], contract: Contract, edit: Edit) -> list[str]:
-    """Return the editable names: Markdown for `prose`, plus helper scripts for `prose+cli`."""
-    base = list(contract.editable) or [name for name in files if name.endswith(".md") or name.startswith("scripts/")]
-    if contract.helper is not None and contract.helper.path not in files:
-        raise CodedError("helper-file-missing", f"the contract helper {contract.helper.path} is missing from the target")
+def _editable(files: Mapping[str, str], contract: Contract, edit: Edit, frozen: Collection[str] = (),
+              plan: TargetPlan | None = None) -> list[str]:
+    """Return the editable names: Markdown for `prose`, plus helper scripts and own wedge sources for `prose+cli`.
+
+    A frozen file (a `.pyz`, a binary, a large file) is never editable. A helper that names an own `.pyz`
+    resolves to its target, whose sources join through `plan`. Any other frozen helper stops the run.
+    """
+    helper = contract.helper.path if contract.helper is not None else None
+    never = [name for name in contract.editable if never_editable(name)]
+    if never:
+        raise CodedError("editable-build-file", f"the contract editable list names {', '.join(never)}; "
+                         + "wedge.toml, uv.lock, and .pyz files define or hold a build and are never editable")
+    pinned = [name for name in contract.editable if name in frozen]
+    if pinned:
+        raise CodedError("editable-frozen", f"the contract editable list names {', '.join(pinned)}; each is a frozen file "
+                         + "(binary, not UTF-8, or over the text limit), so no proposal can edit it")
+    if helper is not None and helper not in files and (plan is None or plan.helper_target(contract) is None):
+        if helper in frozen:
+            raise CodedError("helper-frozen", f"the contract helper {helper} is a frozen file (binary, not UTF-8, "
+                             + "or over the text limit) and not the .pyz of an own wedge target, so no proposal can edit it")
+        raise CodedError("helper-file-missing", f"the contract helper {helper} is missing from the target")
+    base = list(contract.editable) or [name for name in files if (name.endswith(".md") or name.startswith("scripts/"))
+                                       and not name.startswith(WEDGE_PREFIX) and not never_editable(name)]
     names = sorted(name for name in base if name.endswith(".md"))
     if not names:
         raise CodedError("prompt-components-missing", "search needs editable Markdown")
     if edit == "prose+cli":
         code = {name for name in base if not name.endswith(".md")}
-        if contract.helper is not None:
-            code.add(contract.helper.path)
+        if helper is not None and helper in files:
+            code.add(helper)
+        if plan is not None:
+            code |= set(plan.sources)
         if not code:
-            raise CodedError("helper-missing", "prose+cli needs a helper script to edit; add one under scripts/")
+            reasons: Mapping[str, str] = plan.reasons if plan is not None else {}
+            frozen_why = "".join(f"; {name} is frozen because {why}" for name, why in reasons.items())
+            raise CodedError("helper-missing", "prose+cli needs a helper script to edit; add one under scripts/" + frozen_why)
         names += sorted(code)
     absent = [name for name in names if name not in files]
     if absent:
@@ -325,7 +351,9 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
     per_evaluation = max(contract.calls(case.kind) for case in scored)
     skeleton = Candidate.capture(target, [], contract)
-    seed_candidate = Candidate(skeleton.files, tuple(_editable(skeleton.files, contract, edit)), contract)
+    wedge = plan_targets(target, skeleton.files, contract, edit)
+    files, frozen = skeleton.files | wedge.sources, skeleton.frozen | wedge.frozen
+    seed_candidate = Candidate(files, tuple(_editable(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
     plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats,
                  _command_seconds(contract, scored, _sizing_options(configuration, options)))
     shown = _estimate(plan, repeats, count["holdout"])
@@ -335,12 +363,15 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
                                                      "statistics": resolved.data(), **shown_options}) from None
+    seed_candidate, owned = seal(wedge, seed_candidate, target, out / "site")
+    seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
         "isolation": isolation, **({"claude_options": options.data()} if resolve_harness else {}),
         "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
+        "seed_frozen": seed_frozen, "own_targets": owned,
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
         "estimate": shown, "engine_hash": _engine_hash(), "statistics": resolved.data(),
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
@@ -367,7 +398,8 @@ class _Session:
         editable = _field(self.record, "editable")
         if not isinstance(editable, list) or not all(isinstance(name, str) for name in cast(list[object], editable)):
             raise ValueError("run record field editable must be a list of text")
-        self.seed = Candidate(candidate_files(_field(self.record, "seed")), tuple(cast(list[str], editable)), self.contract)
+        self.seed = Candidate(candidate_files(_field(self.record, "seed")), tuple(cast(list[str], editable)), self.contract,
+                              frozen=self._seed_frozen())
         self.edit: Edit = cast(Edit, _text_field(self.record, "edit"))
         self.outcomes = _outcomes(self.record)
         options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
@@ -380,6 +412,26 @@ class _Session:
                                     else cast(Factory, factory)(model, self.budget, self.checkpoint))
         self._fault: CodedError | None = None
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
+        self.rebuilder = self._open_rebuilder()
+
+    def _seed_frozen(self) -> dict[str, bytes]:
+        """Load the frozen seed files from the run directory. A missing or changed file is tampering."""
+        try:
+            return load_frozen(mapping(_field(self.record, "seed_frozen")), self.out / "frozen")
+        except CodedError as error:
+            raise Stop(error.code, str(error), {}) from None
+
+    def _open_rebuilder(self) -> Rebuilder | None:
+        """Reopen the site layers of the editable own targets. Return None when no target has editable sources."""
+        try:
+            return reopen(Path(_text_field(self.record, "target_root")), mapping(_field(self.record, "own_targets")),
+                          self.seed, self.out / "site")
+        except CodedError as error:
+            raise Stop(error.code, str(error), {"next": "start a new run in a new directory"}) from None
+
+    def _built(self, candidate: Candidate) -> Candidate:
+        """Return `candidate` with the host-built `.pyz` of each own target that its sources changed."""
+        return candidate if self.rebuilder is None else self.rebuilder.apply(candidate)
 
     @property
     def phase(self) -> str:
@@ -505,9 +557,12 @@ class _Session:
         if case is None:
             raise ValueError("holdout must not enter optimization")
         try:
-            candidate = self.seed.changed(components)
+            candidate = self._built(self.seed.changed(components))
         except ValueError as error:
-            return 0.0, {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
+            rejected: dict[str, object] = {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
+            if isinstance(error, CodedError):
+                rejected["reason"] = error.code
+            return 0.0, rejected
         try:
             result = self.evaluate_case(candidate, case, "search")
         except CodedError:
@@ -748,8 +803,11 @@ class _Session:
         """Score baseline and winner on the unseen holdout, `repeats` times per case, then record the verdict."""
         holdout = self.cases_for("holdout")
         repeats = _int_field(self.record, "repeats")
-        winner = self.seed.changed({name: candidate_files(_field(self.record, "winner"))[name]
-                                    for name in self.seed.editable})
+        try:
+            winner = self._built(self.seed.changed({name: candidate_files(_field(self.record, "winner"))[name]
+                                                    for name in self.seed.editable}))
+        except BuildFailed as error:
+            raise Stop("build-failed", str(error), {"next": "the winner no longer builds; start a new run in a new directory"}) from None
         families = {case.identifier: case.family for case in holdout}
         if winner.identity == self.seed.identity:
             tie = gate_verdict({case.identifier: 0.0 for case in holdout}, thresholds=self.statistics, families=families)
@@ -1037,6 +1095,51 @@ def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def _repo_path(rest: str, repo: Path | None) -> str:
+    """Return `rest` when it names a path inside the repository root. Else raise `export-path-escapes`."""
+    try:
+        _ = relative(rest)
+        inside = repo is not None and (repo / rest).resolve().is_relative_to(repo)
+    except ValueError:
+        inside = False
+    if not inside:
+        raise CodedError("export-path-escapes", f"the wedge source {rest} is not a path inside the repository root; "
+                         + "no patch was written")
+    return rest
+
+
+def _lines(text: str | None) -> list[str]:
+    """Split `text` after each line feed and nowhere else, so that `git apply` reproduces it exactly."""
+    return re.findall(r"[^\n]*\n|[^\n]+", text or "")
+
+
+def _patch_lines(name: str, old: str | None, new: str | None, *, git: bool) -> list[str]:
+    """Return the diff of one file, with paths `a/NAME` and `b/NAME` and `/dev/null` for an added or deleted file.
+
+    With `git`, an added or deleted file also gets git headers, so an empty one survives `git apply` from the repository root.
+    Without it the diff is plain: `patch -p1` and `git apply` read the paths from the current directory.
+    """
+    head: list[str] = []
+    if git and (old is None or new is None):
+        head = [f"diff --git a/{name} b/{name}\n", "new file mode 100644\n" if old is None else "deleted file mode 100644\n"]
+    body = list(difflib.unified_diff(_lines(old), _lines(new),
+                                     fromfile="/dev/null" if old is None else "a/" + name,
+                                     tofile="/dev/null" if new is None else "b/" + name))
+    return head + body
+
+
+def _patch_text(lines: list[str]) -> str:
+    """Join the patch `lines`. Add the standard no-newline marker after a last line that lacks a line feed."""
+    return "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
+
+
+def _private_file(path: Path, text: str) -> None:
+    """Create the new file `path` with mode 0600 and write `text` to it. Fail when `path` exists."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        _ = stream.write(text)
+
+
 def export(out: Path, destination: Path) -> dict[str, object]:
     """Write the winner as a private patch and a redacted report. Never apply it."""
     record = open_record(out / "run.json")
@@ -1050,19 +1153,28 @@ def export(out: Path, destination: Path) -> dict[str, object]:
             raise ValueError("judge differs from the frozen record; create a new run")
     if not os.path.lexists(destination) and _inside(destination, Path(_text_field(record, "target_root"))):
         raise CodedError("export-into-target", "the export destination must be outside the target skill directory")
-    seed, candidate = candidate_files(_field(record, "seed")), candidate_files(_field(record, "winner"))
-    lines: list[str] = []
-    for name in seed:
-        if seed[name] != candidate[name]:
-            lines.extend(difflib.unified_diff(seed[name].splitlines(keepends=True),
-                                              candidate[name].splitlines(keepends=True),
-                                              fromfile="a/" + name, tofile="b/" + name))
-    patch = "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
+    repo = repo_root(Path(_text_field(record, "target_root")))
+    first, last = mapping(_field(record, "seed")), mapping(_field(record, "winner"))
+    repo_names = {name: _repo_path(name.removeprefix(WEDGE_PREFIX), repo) for name in sorted(first.keys() | last.keys())
+                  if name.startswith(WEDGE_PREFIX) and first.get(name) != last.get(name)}
+    seed, candidate = candidate_files(first), candidate_files(last)
+    skill_lines: list[str] = []
+    wedge_lines: list[str] = []
+    for name in sorted(seed.keys() | candidate.keys()):
+        old, new = seed.get(name), candidate.get(name)
+        if old == new:
+            continue
+        if name.startswith(WEDGE_PREFIX):
+            wedge_lines.extend(_patch_lines(repo_names[name], old, new, git=True))
+        else:
+            skill_lines.extend(_patch_lines(name, old, new, git=False))
     destination.mkdir(mode=0o700)
-    descriptor = os.open(destination / "candidate.patch", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        _ = stream.write(patch)
+    patches = ["candidate.patch"]
+    _private_file(destination / "candidate.patch", _patch_text(skill_lines))
+    if wedge_lines:
+        _private_file(destination / "wedge-sources.patch", _patch_text(wedge_lines))
+        patches.append("wedge-sources.patch")
     report = summary(record) | {"sharing": "private-local-only",
                                 "outcomes": [_export_outcome(item) for item in _outcomes(record)], "cost_usd": None}
     write(destination / "report.json", report)
-    return {"export": str(destination), "sharing": "private-local-only", "installed": False}
+    return {"export": str(destination), "sharing": "private-local-only", "installed": False, "patches": patches}
