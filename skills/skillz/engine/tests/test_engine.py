@@ -146,22 +146,27 @@ class MalformedRowTest(unittest.TestCase):
         assert isinstance(row, dict)
         self.assertEqual(cast(dict[str, object], row)["timestamp"], "2026-01-05T10:00:00Z")
 
-    def test_codex_error_flag_survives_a_non_text_content_block(self) -> None:
+    def test_codex_error_flag_survives_a_later_unusable_block(self) -> None:
         header = "Script completed\nWall time: 0.1 seconds\nOutput:\n"
-        output = [
-            {"type": "input_text", "text": header},
-            {"type": "input_text", "text": json.dumps({"status": "error"})},
-            {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
-        ]
-        entry = {"type": "response_item", "payload": {
-            "type": "function_call_output", "call_id": "c1", "output": output}}
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "rollout.jsonl"
-            _ = path.write_text(json.dumps(entry) + "\n")
-            rows = _normalize("codex_normalize", path, dict(os.environ))
-        self.assertEqual(len(rows), 1)
-        row = cast(dict[str, dict[str, list[dict[str, object]]]], rows[0])
-        self.assertEqual(row["message"]["content"][0]["is_error"], "true")
+        trailers: dict[str, dict[str, object]] = {
+            "non-text block": {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+            "null text": {"type": "input_text", "text": None},
+        }
+        for name, trailer in trailers.items():
+            output = [
+                {"type": "input_text", "text": header},
+                {"type": "input_text", "text": json.dumps({"status": "error"})},
+                trailer,
+            ]
+            entry = {"type": "response_item", "payload": {
+                "type": "function_call_output", "call_id": "c1", "output": output}}
+            with self.subTest(trailer=name), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "rollout.jsonl"
+                _ = path.write_text(json.dumps(entry) + "\n")
+                rows = _normalize("codex_normalize", path, dict(os.environ))
+                self.assertEqual(len(rows), 1)
+                row = cast(dict[str, dict[str, list[dict[str, object]]]], rows[0])
+                self.assertEqual(row["message"]["content"][0]["is_error"], "true")
 
 
 def _discovered(env: dict[str, str], cwd: Path) -> list[list[str]]:

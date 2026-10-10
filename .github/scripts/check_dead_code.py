@@ -4,7 +4,8 @@ The gate exempts fields of module-level TypedDict classes in the scanned paths.
 This includes subclasses of a module-level TypedDict. The rule is structural, not
 name-based. Unpack and TypedDict keys are read by string, so Vulture cannot see
 the reads. Nested (function-local) TypedDicts are not recognized. They fail closed
-and Vulture reports their fields.
+and Vulture reports their fields. A conditional alias counts only when every path
+binds it to TypedDict; an `if TYPE_CHECKING:` body counts as the static path.
 """
 from __future__ import annotations
 
@@ -20,16 +21,23 @@ from vulture.utils import ExitCode
 
 def _rebound_names(statement: ast.stmt) -> set[str]:
     names: set[str] = set()
-    for node in ast.walk(statement):
+    pending: list[ast.AST] = [statement]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            # A nested scope binds its own name. Its body rebinds module names only through `global`.
+            names.add(node.name)
+            names.update(name for inner in ast.walk(node) if isinstance(inner, ast.Global) for name in inner.names)
+            pending.extend(child for child in ast.iter_child_nodes(node) if child not in node.body)
+            continue
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names.add(node.id)
         elif isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
             if isinstance(node.value, ast.Name):
                 names.add(node.value.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
         elif isinstance(node, ast.alias):
             names.add(node.asname or node.name.partition(".")[0])
+        pending.extend(ast.iter_child_nodes(node))
     return names
 
 
@@ -79,17 +87,56 @@ def _visit(
             else:
                 _ = aliases.pop(statement.name, None)
         elif isinstance(statement, ast.If):
-            _visit(statement.body + statement.orelse, aliases, fields)
+            # Static analysis takes the `if TYPE_CHECKING:` body; other conditions keep only common aliases.
+            branches = [statement.body] if _is_type_checking(statement.test) else [statement.body, statement.orelse]
+            _merge_into(aliases, [_branch(branch, aliases, fields) for branch in branches])
         elif isinstance(statement, ast.Try):
-            handlers = [item for handler in statement.handlers for item in handler.body]
-            _visit(
-                statement.body + handlers + statement.orelse + statement.finalbody,
-                aliases,
-                fields,
-            )
+            _visit_try(statement, aliases, fields)
         else:
             for name in _rebound_names(statement):
                 _ = aliases.pop(name, None)
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    return (
+        isinstance(test, ast.Name) and test.id == "TYPE_CHECKING"
+        or isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _branch(
+    statements: list[ast.stmt], aliases: dict[str, str], fields: set[tuple[int, str]]
+) -> dict[str, str]:
+    state = dict(aliases)
+    _visit(statements, state, fields)
+    return state
+
+
+def _merge_into(aliases: dict[str, str], states: list[dict[str, str]]) -> None:
+    """Keep an alias only when every possible path binds it the same way."""
+    first, *rest = states
+    merged = {name: kind for name, kind in first.items() if all(state.get(name) == kind for state in rest)}
+    aliases.clear()
+    aliases.update(merged)
+
+
+def _visit_try(statement: ast.Try, aliases: dict[str, str], fields: set[tuple[int, str]]) -> None:
+    # A handler can start after any prefix of the try body.
+    state = dict(aliases)
+    prefixes = [dict(state)]
+    for item in statement.body:
+        _visit([item], state, fields)
+        prefixes.append(dict(state))
+    entry = dict(aliases)
+    _merge_into(entry, prefixes)
+    ends = [_branch(statement.orelse, state, fields)]
+    for handler in statement.handlers:
+        handled = dict(entry)
+        if handler.name:
+            _ = handled.pop(handler.name, None)
+        ends.append(_branch(handler.body, handled, fields))
+    _merge_into(aliases, ends)
+    _visit(statement.finalbody, aliases, fields)
 
 
 def _typed_dict_fields(path: Path) -> set[tuple[int, str]]:

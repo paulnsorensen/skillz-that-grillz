@@ -48,7 +48,7 @@ These records explain the design of `fromargs`, an independent Python distributi
 
 **Static-analysis constraint:** `_AppKwargs` fields remain live because `Unpack` forwards their string-keyed values to Cyclopts. Vulture cannot see string-keyed reads. The repo Vulture gate exempts the fields of every module-level `TypedDict` class, including subclasses of a module-level `TypedDict`. The rule is structural, not name-based: the gate matches by source file, annotation line, and field name.[^typed-dict-gate] Function-local `TypedDict` classes are not recognized, so Vulture reports their fields. Global field-name ignores can hide unrelated unused values. Keep the structural filter instead.
 
-[^typed-dict-gate]: lib/fromargs/src/fromargs/_app.py:32-69,102-109; .github/scripts/check_dead_code.py:36-100,117-127
+[^typed-dict-gate]: lib/fromargs/src/fromargs/_app.py:32-69,102-109; .github/scripts/check_dead_code.py:44-147,164-174
 
 ### ADR-006: Publish fromargs to PyPI from `fromargs-v*` tags  [status: accepted]
 

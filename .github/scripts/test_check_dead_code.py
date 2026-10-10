@@ -121,6 +121,35 @@ class DeadCodeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 3)
         self.assertIn("unused variable 'stale'", result.stdout)
 
+    def test_branch_specific_alias_is_not_exempt(self) -> None:
+        for source in (
+            "import sys\nif sys.argv:\n    TD = object\nelse:\n    from typing import TypedDict as TD\n",
+            "try:\n    TD = object\nexcept ImportError:\n    from typing import TypedDict as TD\n",
+        ):
+            with self.subTest(source=source):
+                result = _scan(source + "class Fake(TD):\n    stale: int\nFake\n")
+                self.assertEqual(result.returncode, 3)
+                self.assertIn("unused variable 'stale'", result.stdout)
+
+    def test_function_local_rebinding_keeps_module_alias(self) -> None:
+        result = _scan(
+            "from typing import TypedDict as TD\n" +
+            "def helper() -> object:\n    TD = object\n    return TD\n" +
+            "class Data(TD):\n    value: int\n" +
+            "helper; Data\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+    def test_global_rebinding_in_function_is_not_exempt(self) -> None:
+        result = _scan(
+            "from typing import TypedDict as TD\n" +
+            "def helper() -> None:\n    global TD\n    TD = object\n" +
+            "class Fake(TD):\n    stale: int\n" +
+            "helper; Fake\n"
+        )
+        self.assertEqual(result.returncode, 3)
+        self.assertIn("unused variable 'stale'", result.stdout)
+
     def test_real_dead_code_fails(self) -> None:
         result = _scan("def unused() -> None: pass\n")
         self.assertEqual(result.returncode, 3)

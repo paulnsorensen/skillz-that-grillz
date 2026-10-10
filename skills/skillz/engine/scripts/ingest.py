@@ -175,7 +175,7 @@ def _codex_content_block_payloads(blocks: list[_JsonValue]) -> Iterator[dict[str
             continue
         block_text = block.get("text")
         if not isinstance(block_text, str):
-            return
+            continue
         texts.append(block_text)
     if not texts:
         return
