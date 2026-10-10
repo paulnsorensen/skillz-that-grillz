@@ -19,6 +19,8 @@ database is less than 1 hour old.
 Usage: python3 ingest.py [--force]
 """
 
+from __future__ import annotations
+
 import fcntl
 import json
 import os
@@ -27,10 +29,17 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from typing import TypeAlias
+
+_JsonValue: TypeAlias = "None | bool | int | float | str | list[_JsonValue] | dict[str, _JsonValue]"
 
 
-def _configured_path(name, default):
+def _configured_path(name: str, default: str) -> str:
     # SESSIONS_DB matches db-path.sh: a set value gets no `~` expansion, and a
     # relative value joins to cwd. The adapter log roots use the same rule by
     # choice. Only the built-in default expands `~` to HOME.
@@ -38,7 +47,7 @@ def _configured_path(name, default):
     return os.path.abspath(value)
 
 
-def _xdg_cache_home():
+def _xdg_cache_home() -> str:
     # The XDG Base Directory spec requires ignoring a relative value.
     # Matches db-path.sh: no `~` expansion; only an absolute value counts.
     value = os.environ.get("XDG_CACHE_HOME")
@@ -47,7 +56,7 @@ def _xdg_cache_home():
     return os.path.abspath(os.path.expanduser("~/.cache"))
 
 
-def _sql_quote(path):
+def _sql_quote(path: str) -> str:
     """Escape a filesystem path for embedding as a single-quoted SQL literal."""
     return path.replace("'", "''")
 
@@ -102,29 +111,29 @@ RAW_COLUMNS = {
 # --------------------------------------------------------------------------
 
 
-def _iter_jsonl(path):
+def _iter_jsonl(path: str) -> Iterator[_JsonValue]:
     with open(path, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
             try:
-                yield json.loads(line)
+                yield cast(_JsonValue, json.loads(line))
             except json.JSONDecodeError:
                 continue
 
 
-def claude_discover():
+def claude_discover() -> list[str]:
     root = os.path.join(_configured_path("CLAUDE_CONFIG_DIR", "~/.claude"), "projects")
     if not os.path.isdir(root):
         return []
-    out = []
+    out: list[str] = []
     for dirpath, _dirs, files in os.walk(root):
         out.extend(os.path.join(dirpath, f) for f in files if f.endswith(".jsonl"))
     return out
 
 
-def claude_normalize(path):
+def claude_normalize(path: str) -> Iterator[dict[str, _JsonValue]]:
     """Claude logs are already in the canonical envelope; just tag them."""
     for entry in _iter_jsonl(path):
         if not isinstance(entry, dict):
@@ -133,17 +142,17 @@ def claude_normalize(path):
         yield entry
 
 
-def codex_discover():
+def codex_discover() -> list[str]:
     root = os.path.join(_configured_path("CODEX_HOME", "~/.codex"), "sessions")
     if not os.path.isdir(root):
         return []
-    out = []
+    out: list[str] = []
     for dirpath, _dirs, files in os.walk(root):
         out.extend(os.path.join(dirpath, f) for f in files if f.endswith(".jsonl"))
     return out
 
 
-def _codex_payload_is_error(payload):
+def _codex_payload_is_error(payload: _JsonValue) -> bool:
     if not isinstance(payload, dict):
         return False
     status = payload.get("status")
@@ -157,30 +166,35 @@ def _codex_payload_is_error(payload):
     return isinstance(code, int) and not isinstance(code, bool) and code != 0
 
 
-def _codex_content_block_payloads(blocks):
-    if not blocks or any(
-        not isinstance(block, dict)
-        or block.get("type") != "input_text"
-        or not isinstance(block.get("text"), str)
-        for block in blocks
-    ):
+def _codex_content_block_payloads(blocks: list[_JsonValue]) -> Iterator[dict[str, _JsonValue]]:
+    if not blocks:
         return
-    header = blocks[0]["text"]
+    texts: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "input_text":
+            continue
+        block_text = block.get("text")
+        if not isinstance(block_text, str):
+            continue
+        texts.append(block_text)
+    if not texts:
+        return
+    header = texts[0]
     if not re.fullmatch(
         r"Script completed\nWall time(?:\s*:\s*|\s+)[^\n]*\nOutput:\n",
         header,
     ):
         return
-    for block in blocks[1:]:
+    for block_text in texts[1:]:
         try:
-            payload = json.loads(block["text"].strip())
+            payload = cast(_JsonValue, json.loads(block_text.strip()))
         except ValueError:
             continue
         if isinstance(payload, dict):
             yield payload
 
 
-def _codex_structured_payloads(out):
+def _codex_structured_payloads(out: _JsonValue) -> Iterator[dict[str, _JsonValue]]:
     if isinstance(out, dict):
         yield out
         return
@@ -191,7 +205,7 @@ def _codex_structured_payloads(out):
         return
     text = out.strip()
     try:
-        parsed = json.loads(text)
+        parsed = cast(_JsonValue, json.loads(text))
     except ValueError:
         parsed = None
     if isinstance(parsed, dict):
@@ -216,7 +230,7 @@ def _codex_structured_payloads(out):
         if position == len(text):
             return
         try:
-            parsed, end = decoder.raw_decode(text, position)
+            parsed, end = cast(tuple[_JsonValue, int], decoder.raw_decode(text, position))
         except ValueError:
             return
         if isinstance(parsed, dict):
@@ -226,7 +240,7 @@ def _codex_structured_payloads(out):
         position = end
 
 
-def _codex_output_is_error(out):
+def _codex_output_is_error(out: _JsonValue) -> str:
     """Detect structured or legacy failure signals in a Codex tool output."""
     if any(
         _codex_payload_is_error(payload) for payload in _codex_structured_payloads(out)
@@ -239,7 +253,7 @@ def _codex_output_is_error(out):
     return "false"
 
 
-def _codex_command(name, parsed, raw_input):
+def _codex_command(name: _JsonValue, parsed: _JsonValue, raw_input: _JsonValue) -> str | None:
     """The executed command string for codex shell-ish tools, or None.
 
     Mirrors claude's ``input.command`` so ``tool_uses.bash_cmd`` populates:
@@ -264,7 +278,7 @@ def _codex_command(name, parsed, raw_input):
     return None
 
 
-def codex_normalize(path):
+def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     """Codex rollout JSONL -> canonical envelope.
 
     session_meta carries id + cwd; a response_item/function_call becomes an
@@ -296,8 +310,8 @@ def codex_normalize(path):
         if ptype in ("function_call", "custom_tool_call"):
             raw_input = payload.get("arguments") or payload.get("input")
             try:
-                parsed = (
-                    json.loads(raw_input) if isinstance(raw_input, str) else raw_input
+                parsed: _JsonValue = (
+                    cast(_JsonValue, json.loads(raw_input)) if isinstance(raw_input, str) else raw_input
                 )
             except (json.JSONDecodeError, TypeError):
                 parsed = {"raw": raw_input}
@@ -348,11 +362,11 @@ def codex_normalize(path):
             }
 
 
-def _pi_family_discover(config_dir):
+def _pi_family_discover(config_dir: str) -> list[str]:
     root = os.path.expanduser(config_dir)
     if not os.path.isdir(root):
         return []
-    out = []
+    out: list[str] = []
     for dirpath, _dirs, files in os.walk(root):
         out.extend(os.path.join(dirpath, f) for f in files if f.endswith(".jsonl"))
     return out
@@ -365,18 +379,25 @@ _PI_FAMILY_STOP_REASONS = {
 }
 
 
-def _pi_family_turn_meta(msg):
+def _pi_family_turn_meta(msg: dict[str, _JsonValue]) -> dict[str, _JsonValue]:
     """Map Pi-family turn metadata to canonical Claude field names."""
-    usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else {}
+    usage = msg.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
     snapshot = msg.get("contextSnapshot")
-    snapshot = snapshot if isinstance(snapshot, dict) else {}
+    if not isinstance(snapshot, dict):
+        snapshot = {}
     stop = msg.get("stopReason")
+    if isinstance(stop, str):
+        stop = _PI_FAMILY_STOP_REASONS.get(stop, stop)
+    elif isinstance(stop, (list, dict)):
+        stop = None
     model = msg.get("model")
     if model and msg.get("provider"):
         model = f"{msg['provider']}/{model}"
-    meta = {
+    meta: dict[str, _JsonValue] = {
         "model": model,
-        "stop_reason": _PI_FAMILY_STOP_REASONS.get(stop, stop),
+        "stop_reason": stop,
         "error_message": msg.get("errorMessage"),
         "usage": {
             "input_tokens": usage.get("input"),
@@ -390,15 +411,15 @@ def _pi_family_turn_meta(msg):
     return {key: value for key, value in meta.items() if value is not None}
 
 
-def omp_discover():
+def omp_discover() -> list[str]:
     return _pi_family_discover("~/.omp/agent/sessions")
 
 
-def pi_discover():
+def pi_discover() -> list[str]:
     return _pi_family_discover("~/.pi/agent/sessions")
 
 
-def _pi_family_normalize(path, harness):
+def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]:
     """Pi-family session JSONL -> canonical envelope.
 
     The ``session`` header entry carries id + cwd, threaded onto every row.
@@ -426,19 +447,21 @@ def _pi_family_normalize(path, harness):
         ts = entry.get("timestamp")
         role = msg.get("role")
         if role == "assistant":
-            blocks = []
-            for block in msg.get("content") or []:
+            blocks: list[dict[str, _JsonValue]] = []
+            content = msg.get("content")
+            for block in content if isinstance(content, list) else []:
                 if not isinstance(block, dict):
                     continue
                 if block.get("type") == "toolCall":
                     args = block.get("arguments")
                     if isinstance(args, str):
                         try:
-                            args = json.loads(args)
+                            args = cast(_JsonValue, json.loads(args))
                         except json.JSONDecodeError:
                             args = {"raw": args}
                     if not isinstance(args, dict):
                         args = {"raw": args}
+                    args = cast(dict[str, _JsonValue], args)
                     blocks.append(
                         {
                             "type": "tool_use",
@@ -458,11 +481,14 @@ def _pi_family_normalize(path, harness):
                 "message": {"content": blocks, **_pi_family_turn_meta(msg)},
             }
         elif role == "toolResult":
-            text = "\n".join(
-                b.get("text", "")
-                for b in msg.get("content") or []
-                if isinstance(b, dict) and b.get("type") == "text"
-            )
+            content = msg.get("content")
+            parts: list[str] = []
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    block_text = block.get("text", "")
+                    if isinstance(block_text, str):
+                        parts.append(block_text)
+            text = "\n".join(parts)
             yield {
                 "harness": harness,
                 "type": "user",
@@ -491,19 +517,19 @@ def _pi_family_normalize(path, harness):
             }
 
 
-def omp_normalize(path):
+def omp_normalize(path: str) -> Iterator[dict[str, object]]:
     return _pi_family_normalize(path, "omp")
 
 
-def pi_normalize(path):
+def pi_normalize(path: str) -> Iterator[dict[str, object]]:
     return _pi_family_normalize(path, "pi")
 
 
-def cursor_discover():
+def cursor_discover() -> list[str]:
     root = os.path.join(_configured_path("CURSOR_HOME", "~/.cursor"), "projects")
     if not os.path.isdir(root):
         return []
-    out = []
+    out: list[str] = []
     for dirpath, _dirs, files in os.walk(root):
         if "agent-transcripts" not in dirpath.split(os.sep):
             continue
@@ -516,7 +542,7 @@ _CURSOR_TIMESTAMP_RE = re.compile(
 )
 
 
-def _cursor_parse_timestamp(text):
+def _cursor_parse_timestamp(text: str) -> str | None:
     """Parse a <timestamp>Weekday, Mon D, YYYY, H:MM AM (UTC±N)</timestamp> tag to ISO-8601 UTC."""
     m = _CURSOR_TIMESTAMP_RE.search(text)
     if not m:
@@ -532,11 +558,11 @@ def _cursor_parse_timestamp(text):
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _cursor_session_id(path):
+def _cursor_session_id(path: str) -> str:
     return os.path.splitext(os.path.basename(path))[0]
 
 
-def _cursor_resolve_slug(slug, fs_root="/"):
+def _cursor_resolve_slug(slug: str, fs_root: str = "/") -> str:
     """Decode a dash-encoded absolute path, preferring the longest existing dir.
 
     Cursor project slugs replace path separators with dashes
@@ -553,23 +579,22 @@ def _cursor_resolve_slug(slug, fs_root="/"):
     i = 0
     while i < len(parts):
         matched = None
-        next_i = None
+        j = i
         for j in range(len(parts), i, -1):
             candidate = "-".join(parts[i:j])
             trial = f"{prefix}/{candidate}" if prefix else f"/{candidate}"
             if os.path.isdir(trial):
                 matched = trial
-                next_i = j
                 break
         if matched is None:
             rest = "/".join(parts[i:])
             return f"{prefix}/{rest}" if prefix else f"/{rest}"
         prefix = matched
-        i = next_i
+        i = j
     return prefix or "/"
 
 
-def _cursor_project_cwd(path):
+def _cursor_project_cwd(path: str) -> str:
     """Decode the project-slug directory into a cwd via filesystem resolve."""
     root = os.path.join(_configured_path("CURSOR_HOME", "~/.cursor"), "projects")
     rel = os.path.relpath(path, root)
@@ -577,7 +602,7 @@ def _cursor_project_cwd(path):
     return _cursor_resolve_slug(slug)
 
 
-def _cursor_lineage(path):
+def _cursor_lineage(path: str) -> tuple[bool, str | None]:
     """Return (is_sidechain, parent_uuid) from an agent-transcripts path."""
     parts = os.path.normpath(path).split(os.sep)
     try:
@@ -589,7 +614,7 @@ def _cursor_lineage(path):
     return False, None
 
 
-def _cursor_remap_mcp(name, tool_input):
+def _cursor_remap_mcp(name: _JsonValue, tool_input: dict[str, _JsonValue]) -> _JsonValue:
     if name != "CallMcpTool":
         return name
     server = tool_input.get("server")
@@ -599,7 +624,7 @@ def _cursor_remap_mcp(name, tool_input):
     return name
 
 
-def _cursor_stop_reason(entry):
+def _cursor_stop_reason(entry: dict[str, _JsonValue]) -> _JsonValue:
     status = entry.get("status")
     err = entry.get("error")
     if status == "error" and isinstance(err, str) and "abort" in err.lower():
@@ -607,7 +632,7 @@ def _cursor_stop_reason(entry):
     return status
 
 
-def cursor_normalize(path):
+def cursor_normalize(path: str) -> Iterator[dict[str, object]]:
     """Cursor agent-transcript JSONL -> canonical envelope.
 
     One file per transcript (session id = the uuid filename); subagent
@@ -650,13 +675,16 @@ def cursor_normalize(path):
         if role == "user":
             for block in blocks:
                 if isinstance(block, dict) and block.get("type") == "text":
-                    ts = _cursor_parse_timestamp(block.get("text") or "")
+                    block_text = block.get("text") or ""
+                    if not isinstance(block_text, str):
+                        continue
+                    ts = _cursor_parse_timestamp(block_text)
                     if ts:
                         timestamp = ts
             continue
         if role != "assistant":
             continue
-        out_blocks = []
+        out_blocks: list[dict[str, _JsonValue]] = []
         for block_idx, block in enumerate(blocks):
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
@@ -686,19 +714,10 @@ def cursor_normalize(path):
             }
 
 
-def copilot_discover():
+def copilot_discover() -> list[str]:
     # GitHub Copilot CLI persists no local session transcript we can find
     # (~/.copilot holds skills/ + mcp-config.json only). See harness-coverage.md.
     return []
-
-
-def _ms_to_iso(ms):
-    if not ms:
-        return None
-    try:
-        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(ms) / 1000))
-    except (ValueError, TypeError, OSError):
-        return None
 
 
 ADAPTERS = [
@@ -716,14 +735,14 @@ ADAPTERS = [
 # --------------------------------------------------------------------------
 
 
-def db_is_fresh():
+def db_is_fresh() -> bool:
     if not os.path.exists(DB_PATH):
         return False
     age = time.time() - os.path.getmtime(DB_PATH)
     return age < TTL_SECONDS
 
 
-def run_sql(sql, db_path=None, readonly=False):
+def run_sql(sql: str, db_path: str | None = None, readonly: bool = False) -> None:
     limit = os.environ.get("SESSIONS_DUCKDB_MEMORY_LIMIT") or "8GB"
     argv = ["duckdb", "-init", "/dev/null"]
     if readonly:
@@ -749,7 +768,7 @@ def run_sql(sql, db_path=None, readonly=False):
         print(result.stdout.strip())
 
 
-def stage_harnesses():
+def stage_harnesses() -> list[str]:
     """Run every adapter; write canonical rows to per-harness staging JSONL.
 
     Returns the list of harness names that produced at least one row. Adapters
@@ -759,7 +778,7 @@ def stage_harnesses():
         shutil.rmtree(STAGE_DIR)
     os.makedirs(STAGE_DIR, exist_ok=True)
 
-    loaded = []
+    loaded: list[str] = []
     for name, discover, normalize in ADAPTERS:
         sources = discover()
         if not sources or normalize is None:
@@ -770,7 +789,7 @@ def stage_harnesses():
         with open(out_path, "w", encoding="utf-8") as out:
             for src in sources:
                 for entry in normalize(src):
-                    out.write(json.dumps(entry) + "\n")
+                    _ = out.write(json.dumps(entry) + "\n")
                     count += 1
         if count:
             loaded.append(name)
@@ -781,11 +800,11 @@ def stage_harnesses():
     return loaded
 
 
-def columns_struct():
+def columns_struct() -> str:
     return "{" + ", ".join(f"{k}: '{v}'" for k, v in RAW_COLUMNS.items()) + "}"
 
 
-def _do_ingest_and_swap():
+def _do_ingest_and_swap() -> float:
     print("Discovering + normalizing harness sessions...")
     loaded = stage_harnesses()
     if not loaded:
@@ -1026,8 +1045,8 @@ def _do_ingest_and_swap():
     return time.time() - t0
 
 
-def main():
-    os.umask(0o077)
+def main() -> None:
+    _ = os.umask(0o077)
     force = "--force" in sys.argv
 
     if not shutil.which("duckdb"):

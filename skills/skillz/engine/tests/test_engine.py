@@ -5,16 +5,29 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar, TypeAlias, cast
+
+if TYPE_CHECKING:
+    from typing_extensions import override
+else:
+    # The engine ships with the skill and runs on bare Python 3.11, which lacks typing.override.
+    def override(method):
+        return method
+
+_RowValue: TypeAlias = str | int | float | bool | None
+_Row: TypeAlias = dict[str, _RowValue]
 
 ENGINE = Path(__file__).resolve().parents[1]
 REQUIRE_DUCKDB = os.environ.get("REQUIRE_DUCKDB") == "1"
 
 
-def _bash_db_path(env, cwd):
+def _bash_db_path(env: dict[str, str], cwd: Path) -> str:
     result = subprocess.run(
         ["bash", "-c", 'source "$1"; sessions_db_path', "_",
          str(ENGINE / "scripts" / "db-path.sh")],
@@ -23,25 +36,25 @@ def _bash_db_path(env, cwd):
     return result.stdout.strip()
 
 
-def _ingest_eval(expr, env, cwd, *argv, engine=ENGINE):
+def _ingest_eval(expr: str, env: dict[str, str], cwd: Path, *argv: str, engine: Path = ENGINE) -> str:
     """Import ingest in a fresh interpreter and print one expression."""
     result = subprocess.run(
-        ["python3", "-B", "-c",
+        [sys.executable, "-B", "-c",
          "import json, sys; sys.path.insert(0, sys.argv[1]); import ingest; "
-         f"print({expr})", str(engine / "scripts"), *argv],
+         + f"print({expr})", str(engine / "scripts"), *argv],
         env=env, cwd=cwd, capture_output=True, text=True, check=True,
     )
     return result.stdout.strip()
 
 
-def _python_db_path(env, cwd, engine=ENGINE):
+def _python_db_path(env: dict[str, str], cwd: Path, engine: Path = ENGINE) -> str:
     return _ingest_eval("ingest.DB_PATH", env, cwd, engine=engine)
 
 
 class DbPathParityTest(unittest.TestCase):
     """Bash and Python must resolve the same database path — no DuckDB needed."""
 
-    CASES = {
+    CASES: ClassVar[dict[str, Callable[[Path], dict[str, str]]]] = {
         "sessions_db_absolute": lambda root: {"SESSIONS_DB": str(root / "abs.duckdb")},
         "sessions_db_relative": lambda root: {"SESSIONS_DB": "rel.duckdb"},
         "sessions_db_tilde": lambda root: {"SESSIONS_DB": "~/x.duckdb"},
@@ -57,8 +70,8 @@ class DbPathParityTest(unittest.TestCase):
             engine = shutil.copytree(ENGINE, root / "engine",
                                      ignore=shutil.ignore_patterns("__pycache__"))
             env = os.environ.copy()
-            env.pop("PYTHONDONTWRITEBYTECODE", None)
-            env.pop("PYTHONPYCACHEPREFIX", None)
+            _ = env.pop("PYTHONDONTWRITEBYTECODE", None)
+            _ = env.pop("PYTHONPYCACHEPREFIX", None)
             env["SESSIONS_DB"] = str(root / "sessions.duckdb")
             self.assertEqual(_python_db_path(env, root, engine), env["SESSIONS_DB"])
             self.assertEqual(list(engine.rglob("__pycache__")), [])
@@ -72,39 +85,116 @@ class DbPathParityTest(unittest.TestCase):
                 home.mkdir()
                 cwd.mkdir()
                 env = os.environ | {"HOME": str(home)}
-                env.pop("SESSIONS_DB", None)
-                env.pop("XDG_CACHE_HOME", None)
+                _ = env.pop("SESSIONS_DB", None)
+                _ = env.pop("XDG_CACHE_HOME", None)
                 env |= make_overrides(root)
                 bash_path = _bash_db_path(env, cwd)
                 python_path = _python_db_path(env, cwd)
                 self.assertEqual(bash_path, python_path)
 
 
-def _discovered(env, cwd):
-    return json.loads(_ingest_eval(
+def _normalize(adapter: str, path: Path, env: dict[str, str]) -> list[object]:
+    """Run one ingest adapter in a child process and return its canonical rows."""
+    result = subprocess.run(
+        [sys.executable, "-B", "-c",
+         "import json, sys; sys.path.insert(0, sys.argv[1]); import ingest; "
+         + "print(json.dumps(list(getattr(ingest, sys.argv[2])(sys.argv[3]))))",
+         str(ENGINE / "scripts"), adapter, str(path)],
+        env=env, capture_output=True, text=True, check=True,
+    )
+    return cast(list[object], json.loads(result.stdout))
+
+
+class MalformedRowTest(unittest.TestCase):
+    """A malformed log field is dropped instead of stopping the ingest. No DuckDB needed."""
+
+    def test_pi_rows_keep_their_valid_parts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.jsonl"
+            entries = [
+                {"type": "session", "id": "s1", "cwd": "/work"},
+                {"type": "message", "message": {"role": "assistant", "content": 5, "stopReason": ["x"]}},
+                {"type": "message", "message": {"role": "toolResult", "toolCallId": "c1", "content": [
+                    {"type": "text", "text": 7}, {"type": "text", "text": "ok"}]}},
+            ]
+            _ = path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+            rows = _normalize("pi_normalize", path, dict(os.environ))
+        envelope = {"harness": "pi", "timestamp": None, "sessionId": "s1", "cwd": "/work"}
+        usage = {"input_tokens": None, "output_tokens": None, "cache_read_input_tokens": None}
+        self.assertEqual(rows, [
+            envelope | {"type": "assistant", "message": {"content": [], "usage": usage}},
+            envelope | {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": "ok", "is_error": "false"}]}},
+        ])
+
+    def test_cursor_user_text_that_is_not_a_string_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "cursor"
+            transcripts = root / "projects" / "sample" / "agent-transcripts"
+            transcripts.mkdir(parents=True)
+            path = transcripts / "t1.jsonl"
+            stamp = "<timestamp>Monday, Jan 5, 2026, 10:00 AM (UTC+0)</timestamp> go"
+            entries = [
+                {"role": "user", "message": {"content": [
+                    {"type": "text", "text": 9}, {"type": "text", "text": stamp}]}},
+                {"type": "turn_ended", "status": "completed"},
+            ]
+            _ = path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+            rows = _normalize("cursor_normalize", path, os.environ | {"CURSOR_HOME": str(root)})
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        assert isinstance(row, dict)
+        self.assertEqual(cast(dict[str, object], row)["timestamp"], "2026-01-05T10:00:00Z")
+
+    def test_codex_error_flag_survives_a_later_unusable_block(self) -> None:
+        header = "Script completed\nWall time: 0.1 seconds\nOutput:\n"
+        trailers: dict[str, dict[str, object]] = {
+            "non-text block": {"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+            "null text": {"type": "input_text", "text": None},
+        }
+        for name, trailer in trailers.items():
+            output = [
+                {"type": "input_text", "text": header},
+                {"type": "input_text", "text": json.dumps({"status": "error"})},
+                trailer,
+            ]
+            entry = {"type": "response_item", "payload": {
+                "type": "function_call_output", "call_id": "c1", "output": output}}
+            with self.subTest(trailer=name), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "rollout.jsonl"
+                _ = path.write_text(json.dumps(entry) + "\n")
+                rows = _normalize("codex_normalize", path, dict(os.environ))
+                self.assertEqual(len(rows), 1)
+                row = cast(dict[str, dict[str, list[dict[str, object]]]], rows[0])
+                self.assertEqual(row["message"]["content"][0]["is_error"], "true")
+
+
+def _discovered(env: dict[str, str], cwd: Path) -> list[list[str]]:
+    return cast(list[list[str]], json.loads(_ingest_eval(
         "json.dumps([ingest.claude_discover(), ingest.codex_discover(), "
-        "ingest.cursor_discover()])", env, cwd))
+        + "ingest.cursor_discover()])", env, cwd)))
 
 
 class AdapterDefaultPathTest(unittest.TestCase):
     """Adapter defaults resolve under HOME from any cwd — no DuckDB needed."""
 
-    NAMES = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME")
+    NAMES: ClassVar[tuple[str, ...]] = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME")
 
-    def setUp(self):
+    def _sandbox(self) -> tuple[Path, Path, dict[str, str]]:
+        """Return a fresh HOME, a separate cwd, and an env without adapter overrides."""
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         # Resolve symlinks (macOS /var -> /private/var): os.getcwd() in the
         # child returns the real path, so a relative value resolves there.
         root = Path(directory.name).resolve()
-        self.home = root / "home"
-        self.cwd = root / "cwd"
-        self.cwd.mkdir()
-        self.env = os.environ | {"HOME": str(self.home)}
+        home, cwd = root / "home", root / "cwd"
+        cwd.mkdir()
+        env = os.environ | {"HOME": str(home)}
         for name in self.NAMES:
-            self.env.pop(name, None)
+            _ = env.pop(name, None)
+        return home, cwd, env
 
-    def _layout(self, base):
+    def _layout(self, base: Path) -> list[list[str]]:
         logs = [
             base / ".claude" / "projects" / "p" / "s.jsonl",
             base / ".codex" / "sessions" / "s.jsonl",
@@ -112,34 +202,36 @@ class AdapterDefaultPathTest(unittest.TestCase):
         ]
         for log in logs:
             log.parent.mkdir(parents=True)
-            log.write_text("{}\n")
+            _ = log.write_text("{}\n")
         return [[str(log)] for log in logs]
 
-    def test_unset_defaults_expand_home_outside_home(self):
-        expected = self._layout(self.home)
-        self.assertEqual(_discovered(self.env, self.cwd), expected)
+    def test_unset_defaults_expand_home_outside_home(self) -> None:
+        home, cwd, env = self._sandbox()
+        expected = self._layout(home)
+        self.assertEqual(_discovered(env, cwd), expected)
 
-    def test_configured_tilde_value_stays_literal(self):
-        self._layout(self.home)
-        literal = self._layout(self.cwd / "~")
-        env = self.env | {
+    def test_configured_tilde_value_stays_literal(self) -> None:
+        home, cwd, env = self._sandbox()
+        _ = self._layout(home)
+        literal = self._layout(cwd / "~")
+        env |= {
             "CLAUDE_CONFIG_DIR": "~/.claude",
             "CODEX_HOME": "~/.codex",
             "CURSOR_HOME": "~/.cursor",
         }
-        self.assertEqual(_discovered(env, self.cwd), literal)
+        self.assertEqual(_discovered(env, cwd), literal)
 
-    def test_empty_value_uses_the_home_default(self):
+    def test_empty_value_uses_the_home_default(self) -> None:
         # db-path.sh treats an empty variable as unset (`-n`). Ingest does the same.
-        expected = self._layout(self.home)
-        env = self.env | {name: "" for name in self.NAMES}
-        self.assertEqual(_discovered(env, self.cwd), expected)
+        home, cwd, env = self._sandbox()
+        expected = self._layout(home)
+        env |= {name: "" for name in self.NAMES}
+        self.assertEqual(_discovered(env, cwd), expected)
 
-    def test_cursor_project_slug_resolves_under_home_default(self):
-        log = self.home / ".cursor" / "projects" / "tmp" / "agent-transcripts" / "s.jsonl"
-        decoded = _ingest_eval(
-            "ingest._cursor_project_cwd(sys.argv[2])",
-            self.env, self.cwd, str(log))
+    def test_cursor_project_slug_resolves_under_home_default(self) -> None:
+        home, cwd, env = self._sandbox()
+        log = home / ".cursor" / "projects" / "tmp" / "agent-transcripts" / "s.jsonl"
+        decoded = _ingest_eval("ingest._cursor_project_cwd(sys.argv[2])", env, cwd, str(log))
         self.assertEqual(decoded, "/tmp")
 
 
@@ -166,7 +258,7 @@ class EngineSmokeTest(unittest.TestCase):
                     }],
                 },
             }
-            (logs / "session.jsonl").write_text(json.dumps(entry) + "\n")
+            _ = (logs / "session.jsonl").write_text(json.dumps(entry) + "\n")
             env = os.environ | {
                 "HOME": str(root),
                 "CLAUDE_CONFIG_DIR": str(root / "claude"),
@@ -174,7 +266,7 @@ class EngineSmokeTest(unittest.TestCase):
                 "CURSOR_HOME": str(root / "cursor"),
                 "XDG_CACHE_HOME": str(root / "cache"),
             }
-            env.pop("SESSIONS_DB", None)
+            _ = env.pop("SESSIONS_DB", None)
             database = root / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
             path = subprocess.run(
                 ["bash", "-c", 'source "$1"; sessions_db_path', "_",
@@ -183,7 +275,7 @@ class EngineSmokeTest(unittest.TestCase):
             )
             self.assertEqual(path.stdout.strip(), str(database))
             ingest = subprocess.run(
-                ["python3", str(ENGINE / "scripts" / "ingest.py")],
+                [sys.executable, str(ENGINE / "scripts" / "ingest.py")],
                 env=env, capture_output=True, text=True, check=True,
             )
             self.assertTrue(database.is_file(), ingest.stdout + ingest.stderr)
@@ -197,7 +289,7 @@ class EngineSmokeTest(unittest.TestCase):
             )
             self.assertRegex(query.stdout, r"\|\s*1\s*\|")
             cached = subprocess.run(
-                ["python3", str(ENGINE / "scripts" / "ingest.py")],
+                [sys.executable, str(ENGINE / "scripts" / "ingest.py")],
                 env=env, capture_output=True, text=True, check=True,
             )
             self.assertIn("Skipping ingestion", cached.stdout)
@@ -220,7 +312,7 @@ class EngineSmokeTest(unittest.TestCase):
                     "CURSOR_HOME": str(root / "cursor"),
                     "XDG_CACHE_HOME": str(root / "cache"),
                 }
-                env.pop("SESSIONS_DB", None)
+                _ = env.pop("SESSIONS_DB", None)
                 query = subprocess.run(
                     ["bash", str(ENGINE / "scripts" / "query.sh"), "sql", "SELECT 1"],
                     env=env, capture_output=True, text=True,
@@ -241,22 +333,22 @@ PACK_NAMES = ("skill-usage.md", "agent-orchestration.md", "drift-regression.md")
 SQL_BLOCK = re.compile(r"```sql\n(.*?)```", re.S)
 
 
-def _start_tables():
+def _start_tables() -> dict[str, tuple[str, str]]:
     """Read the kind-to-table mapping from its single source, the conventions file."""
-    rows = re.findall(r"^- `(\w+)`: `(\w+)`, `(\w+)`$", CONVENTIONS.read_text(), re.M)
-    return {kind: (table, column) for kind, table, column in rows}
+    matches = re.finditer(r"^- `(\w+)`: `(\w+)`, `(\w+)`$", CONVENTIONS.read_text(), re.M)
+    return {match.group(1): (match.group(2), match.group(3)) for match in matches}
 
 
 START = _start_tables()
 
 
-def _pack_sql(pack, kind, target):
+def _pack_sql(pack: str, kind: str, target: str) -> list[str]:
     table, column = START[kind]
     return [
-        block.replace("{START_TABLE}", table)
+        match.group(1).replace("{START_TABLE}", table)
         .replace("{NAME_COLUMN}", column)
         .replace("{TARGET}", target)
-        for block in SQL_BLOCK.findall((PACKS / pack).read_text())
+        for match in SQL_BLOCK.finditer((PACKS / pack).read_text())
     ]
 
 
@@ -274,7 +366,7 @@ class PackStaticTest(unittest.TestCase):
 
     def test_every_pack_query_starts_from_the_start_table(self):
         for pack in PACK_NAMES:
-            blocks = SQL_BLOCK.findall((PACKS / pack).read_text())
+            blocks = [match.group(1) for match in SQL_BLOCK.finditer((PACKS / pack).read_text())]
             self.assertTrue(blocks, pack)
             for block in blocks:
                 with self.subTest(pack=pack, sql=block[:60]):
@@ -296,18 +388,22 @@ class PackStaticTest(unittest.TestCase):
 class PackTargetKindTest(unittest.TestCase):
     """Each pack starts from the table that matches the target kind."""
 
+    directory: ClassVar[tempfile.TemporaryDirectory[str]]
+    database: ClassVar[Path]
+
     @classmethod
-    def setUpClass(cls):
+    @override
+    def setUpClass(cls) -> None:
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
         logs = root / "claude" / "projects" / "sample"
         logs.mkdir(parents=True)
         base = datetime.now(timezone.utc) - timedelta(days=3)
 
-        def stamp(minutes):
+        def stamp(minutes: int) -> str:
             return (base + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        def use(minutes, call_id, name, tool_input):
+        def use(minutes: int, call_id: str, name: str, tool_input: dict[str, str]) -> dict[str, object]:
             return {
                 "type": "assistant", "timestamp": stamp(minutes),
                 "sessionId": "fixture-session", "cwd": str(root / "project"),
@@ -316,8 +412,8 @@ class PackTargetKindTest(unittest.TestCase):
                 }]},
             }
 
-        def result(minutes, call_id, content, is_error=False):
-            block = {"type": "tool_result", "tool_use_id": call_id, "content": content}
+        def result(minutes: int, call_id: str, content: str, is_error: bool = False) -> dict[str, object]:
+            block: dict[str, _RowValue] = {"type": "tool_result", "tool_use_id": call_id, "content": content}
             if is_error:
                 block["is_error"] = True
             return {
@@ -339,17 +435,17 @@ class PackTargetKindTest(unittest.TestCase):
             use(30, "read-out", "Read", {"file_path": "b"}),
             result(30, "read-out", "fine"),
         ]
-        (logs / "session.jsonl").write_text("".join(json.dumps(e) + "\n" for e in entries))
+        _ = (logs / "session.jsonl").write_text("".join(json.dumps(e) + "\n" for e in entries))
 
         # Cursor logs carry minute-resolution timestamps: one user turn stamps
         # the spawn, the Read, and the second spawn with the same time.
         transcripts = root / "cursor" / "projects" / "sample" / "agent-transcripts"
         transcripts.mkdir(parents=True)
 
-        def turn(role, content):
+        def turn(role: str, content: list[dict[str, object]]) -> dict[str, object]:
             return {"role": role, "message": {"content": content}}
 
-        def call(name, tool_input):
+        def call(name: str, tool_input: dict[str, str]) -> dict[str, object]:
             return turn("assistant", [{"type": "tool_use", "name": name, "input": tool_input}])
 
         user = turn("user", [{"type": "text", "text":
@@ -360,9 +456,9 @@ class PackTargetKindTest(unittest.TestCase):
             call("Read", {"file_path": "a"}),
             call("Task", {"subagent_type": "helper", "description": "help"}),
         ]
-        (transcripts / "cursor-shared.jsonl").write_text(
+        _ = (transcripts / "cursor-shared.jsonl").write_text(
             "".join(json.dumps(e) + "\n" for e in shared))
-        (transcripts / "cursor-readonly.jsonl").write_text(
+        _ = (transcripts / "cursor-readonly.jsonl").write_text(
             "".join(json.dumps(e) + "\n" for e in (user, call("Read", {"file_path": "c"}))))
 
         env = os.environ | {
@@ -372,35 +468,54 @@ class PackTargetKindTest(unittest.TestCase):
             "CURSOR_HOME": str(root / "cursor"),
             "SESSIONS_DB": str(root / "sessions.duckdb"),
         }
-        subprocess.run(["python3", "-B", str(ENGINE / "scripts" / "ingest.py")],
+        _ = subprocess.run([sys.executable, "-B", str(ENGINE / "scripts" / "ingest.py")],
                        env=env, capture_output=True, text=True, check=True)
         cls.database = root / "sessions.duckdb"
 
     @classmethod
-    def tearDownClass(cls):
+    @override
+    def tearDownClass(cls) -> None:
         cls.directory.cleanup()
 
-    def _run(self, sql):
+    def _run(self, sql: str) -> list[_Row]:
         result = subprocess.run(
             ["duckdb", "-readonly", str(self.database), "-json", "-c", sql],
             capture_output=True, text=True, check=True,
         )
-        return json.loads(result.stdout) if result.stdout.strip() else []
+        if not result.stdout.strip():
+            return []
+        rows = cast(object, json.loads(result.stdout))
+        assert isinstance(rows, list)
+        checked: list[_Row] = []
+        for raw_row in cast(list[object], rows):
+            assert isinstance(raw_row, dict)
+            row = cast(dict[object, object], raw_row)
+            assert all(
+                isinstance(key, str)
+                and isinstance(value, (str, int, float, bool, type(None)))
+                for key, value in row.items()
+            )
+            checked.append(cast(_Row, row))
+        return checked
 
-    def _pack(self, pack, kind, target):
+    def _pack(self, pack: str, kind: str, target: str) -> list[list[_Row]]:
         return [self._run(sql) for sql in _pack_sql(pack, kind, target)]
 
     def test_agent_target_reports_usage_trend_and_decay(self):
         coverage, total, weekly, projects, peers = self._pack("skill-usage.md", "agent", "reviewer")
         self.assertEqual({row["harness"] for row in coverage}, {"claude", "cursor"})
         self.assertEqual(total[0]["total_invocations"], 1)
-        self.assertEqual(sum(row["invocations"] for row in weekly), 1)
+        assert all(isinstance(row["invocations"], int) for row in weekly)
+        self.assertEqual(sum(cast(int, row["invocations"]) for row in weekly), 1)
         self.assertEqual(len(projects), 1)
         self.assertEqual((peers[0]["target_rank"], peers[0]["population"]), (1, 3))
         _, decay, trend, signatures = self._pack("drift-regression.md", "agent", "reviewer")
-        self.assertEqual(int(decay[0]["recent_4w"]), 1)
-        self.assertEqual(sum(row["calls"] for row in trend), 2)
-        self.assertEqual(sum(round(row["error_pct"] * row["calls"] / 100) for row in trend), 1)
+        recent = decay[0]["recent_4w"]
+        assert isinstance(recent, (str, int, float))
+        self.assertEqual(int(recent), 1)
+        assert all(isinstance(row["calls"], int) and isinstance(row["error_pct"], (int, float)) for row in trend)
+        self.assertEqual(sum(cast(int, row["calls"]) for row in trend), 2)
+        self.assertEqual(sum(round(cast(float, row["error_pct"]) * cast(int, row["calls"]) / 100) for row in trend), 1)
         self.assertEqual([(row["error"], row["occurrences"]) for row in signatures],
                          [("boom", 1)])
 
@@ -449,4 +564,4 @@ class PackTargetKindTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main()
+    _ = unittest.main()

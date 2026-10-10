@@ -5,7 +5,9 @@ import subprocess
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast, final, override
+from typing import cast, final
+
+from typing_extensions import override
 
 import pytest
 

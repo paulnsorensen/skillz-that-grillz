@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -131,16 +132,17 @@ def validate_frontmatter(path: Path) -> list[str]:
         return [f"{path}: missing or malformed YAML frontmatter (expected leading --- ... ---)"]
 
     try:
-        fm = yaml.safe_load(match.group(1))
+        fm = cast(object, yaml.safe_load(match.group(1)))
     except yaml.YAMLError as exc:
         return [f"{path}: invalid YAML frontmatter: {exc}"]
 
     if not isinstance(fm, dict):
         return [f"{path}: frontmatter must be a YAML mapping"]
 
+    mapping = cast(dict[object, object], fm)
     errors: list[str] = []
-    name = fm.get("name")
-    description = fm.get("description")
+    name = mapping.get("name")
+    description = mapping.get("description")
 
     if not name:
         errors.append(f"{path}: missing required key 'name'")
@@ -149,8 +151,7 @@ def validate_frontmatter(path: Path) -> list[str]:
     else:
         if not NAME_RE.match(name):
             errors.append(
-                f"{path}: name '{name}' is not kebab-case "
-                f"(1-64 chars, lowercase a-z 0-9, no leading/trailing/consecutive hyphens)"
+                f"{path}: name '{name}' is not kebab-case (1-64 chars, lowercase a-z 0-9, no leading/trailing/consecutive hyphens)"
             )
         if name != path.parent.name:
             errors.append(
@@ -163,13 +164,12 @@ def validate_frontmatter(path: Path) -> list[str]:
         errors.append(f"{path}: 'description' must be a non-empty string")
     elif len(description) > DESCRIPTION_MAX_LEN:
         errors.append(
-            f"{path}: 'description' is {len(description)} characters; "
-            f"max is {DESCRIPTION_MAX_LEN} (Codex limit)"
+            f"{path}: 'description' is {len(description)} characters; max is {DESCRIPTION_MAX_LEN} (Codex limit)"
         )
 
-    extra = set(fm) - ALLOWED_KEYS
+    extra = set(mapping) - ALLOWED_KEYS
     if extra:
-        errors.append(f"{path}: disallowed frontmatter keys: {sorted(extra)}")
+        errors.append(f"{path}: disallowed frontmatter keys: {sorted(extra, key=str)}")
 
     return errors
 
@@ -205,8 +205,7 @@ def validate_body(path: Path) -> list[str]:
         for pattern, label in HARNESS_COUPLED_PATTERNS:
             if pattern.search(line):
                 errors.append(
-                    f"{path}: body uses {label} outside a Claude-Code-scoped "
-                    f"section — skill bodies must be harness-neutral"
+                    f"{path}: body uses {label} outside a Claude-Code-scoped section — skill bodies must be harness-neutral"
                 )
     return errors
 
