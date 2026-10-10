@@ -26,6 +26,7 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
 - **Decision:** Select on validation. Score baseline and winner on a holdout that no selection or reflection step saw, with 3 repeats per case. Promote only when the case-clustered paired mean delta exceeds 2*SE. When SE is 0, promote only when every case delta is positive. "Measurably beats" skill-creator means a lower false-promotion rate at equal budget, with sealed-test accuracy no worse.
 - **Alternatives:** A paired bootstrap interval (same power, slightly permissive at 6 cases). Mean delta above 0. The skill-creator rule.
 - **Consequences:** Small runs often report `inconclusive`. This record replaces the bootstrap in skillz-repeat-statistics curd B.
+  Amended 2026-10-09: `min_token_saving` adds `promote-cheaper`, a separate opt-in verdict. It needs a mean delta of at least 0 and claims no gain. The 2*SE rule for `promote` stays.
 
 ### ADR-003: Run one multi-iteration GEPA search with Pareto parent selection  [status: accepted]
 
@@ -50,4 +51,4 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
   On resume, the elapsed time is the larger of the wall-clock span and the monotonic span. After a reboot, the monotonic span is negative, so the wall-clock span applies. Time in system suspend counts against the deadline.
   The wall clock can step back by up to 5 seconds. A larger step back stops the resume with `clock-skew`.
 
-_Source: Mold session 2026-10-06 · Updated: 2026-10-07 (ADR-001 credential and macOS memory rules, ADR-005 gate time reservation and resume clock)_
+_Source: Mold session 2026-10-06 · Updated: 2026-10-09 (ADR-001 credential and macOS memory rules, ADR-002 promote-cheaper amendment, ADR-005 gate time reservation and resume clock)_

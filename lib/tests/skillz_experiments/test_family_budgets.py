@@ -143,7 +143,8 @@ def test_defaults_keep_every_verdict_and_the_pinned_simulation() -> None:
 
 def test_the_frozen_map_holds_both_keys_and_round_trips() -> None:
     base = Statistics()
-    assert base.data() == {"min_gain": 0.0, "min_lower_bound": 0.0, "family_budget": None, "family_budgets": {}}
+    assert base.data() == {"min_gain": 0.0, "min_lower_bound": 0.0, "family_budget": None, "family_budgets": {},
+                           "max_token_increase_per_gain": None, "min_token_saving": None}
     full = Statistics(family_budget=0.25, family_budgets={"b": 1.0, "a": 2.0})
     assert Statistics.parse(cast(object, json.loads(json.dumps(full.data())))) == full
     assert list(cast(dict[str, float], full.data()["family_budgets"])) == ["a", "b"]
@@ -156,7 +157,8 @@ def test_a_record_without_the_family_keys_is_refused() -> None:
 
 
 def test_the_flag_registry_lists_the_scalar_flag_but_not_the_map() -> None:
-    assert Statistics.flags() == ("min_gain", "min_lower_bound", "family_budget")
+    assert Statistics.flags() == ("min_gain", "min_lower_bound", "family_budget", "max_token_increase_per_gain",
+                                  "min_token_saving")
     assert "family_budgets" in Statistics.names()
 
 
