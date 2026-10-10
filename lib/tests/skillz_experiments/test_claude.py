@@ -53,9 +53,9 @@ pytestmark = pytest.mark.usefixtures("host_login")
 @pytest.fixture
 def sandbox_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stand in for the OS sandbox probe, which has its own tests, so the live-call steps run on any host."""
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, argv, seconds
-        return 0, "isolation-ok\n"
+        return 0, "isolation-ok\n", ""
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
 
 
@@ -340,7 +340,7 @@ def test_a_slow_sandbox_command_returns_124_but_budget_exhaustion_still_raises(
     workspace = make_workspace(tmp_path / "workspace")
     slow = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=options)
     try:
-        assert slow.sandbox(workspace, ["/usr/bin/true"]) == (124, "")
+        assert slow.sandbox(workspace, ["/usr/bin/true"]) == (124, "", "")
     finally:
         slow.close()
     short = ClaudeCode("m", Budget(10, 2, 0), lambda: None, tmp_path / "bin/claude", options=options)
@@ -491,10 +491,10 @@ def test_preflight_runs_the_isolation_probe_through_the_sandbox(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[list[str]] = []
 
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, seconds
         seen.append(argv)
-        return 1, ""
+        return 1, "", ""
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
@@ -766,8 +766,8 @@ def test_sandbox_hides_host_files_and_returns_output(tmp_path: Path) -> None:
     workspace = make_workspace(tmp_path / "workspace")
     try:
         transport = cast(Sandbox, cast(object, session.transports["task"]))
-        code, stdout = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "print('inside')"])
-        denied, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", f"open({str(sealed)!r}).read()"])
+        code, stdout, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "print('inside')"])
+        denied, _, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", f"open({str(sealed)!r}).read()"])
     finally:
         session.close()
     assert (code, stdout.strip()) == (0, "inside")
@@ -780,8 +780,8 @@ def test_sandbox_keeps_the_candidate_directory_read_only(tmp_path: Path) -> None
     workspace = make_workspace(tmp_path / "workspace")
     try:
         transport = cast(Sandbox, cast(object, session.transports["task"]))
-        denied, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "open('.agents/probe', 'w').write('x')"])
-        allowed, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "open('probe', 'w').write('x')"])
+        denied, _, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "open('.agents/probe', 'w').write('x')"])
+        allowed, _, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "open('probe', 'w').write('x')"])
     finally:
         session.close()
     assert (denied != 0, allowed) == (True, 0)
@@ -857,7 +857,7 @@ def test_a_bubblewrap_command_reads_a_read_root_and_serves_itself_on_loopback(
               "peer=server.accept()[0];client.sendall(b'ping')\n"
               "print(peer.recv(4).decode())\n")
     try:
-        code, output = adapter.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/python3", "-c", script])
+        code, output, _ = adapter.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/python3", "-c", script])
     finally:
         adapter.close()
     assert (code, output.strip()) == (0, "ping")
@@ -908,16 +908,42 @@ def test_nested_helper_fixture_runs_through_claude_adapter(tmp_path: Path, monke
     candidate = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: echo\n---\n",
                            "scripts/echo.py": "print(1)\n"}, ("SKILL.md", "scripts/echo.py"), contract)
 
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, seconds
         assert argv[-1] == "fixtures/nested/input.md"
         assert (workspace / argv[-1]).read_text() == "hi"
-        return 0, '{"ok": true}'
+        return 0, '{"ok": true}', ""
 
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     adapter = harness(tmp_path, fake_claude(tmp_path))
     try:
         assert adapter.transports["task"].check_candidate(candidate)
+    finally:
+        adapter.close()
+
+
+def _failing_helper_candidate() -> Candidate:
+    contract = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill",
+                      "invocation": "$echo-skill run", "kinds": {"echo": {"grader": "exact-json"}},
+                      "helper": {"path": "scripts/echo.py", "input": "input.md",
+                                 "fixtures": [{"input": "hi", "returncode": 3, "output": None,
+                                               "error": {"error": "echo: bad", "exit_code": 3}}]}}, "skill")
+    return Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: echo\n---\n",
+                      "scripts/echo.py": "print(1)\n"}, ("SKILL.md", "scripts/echo.py"), contract)
+
+
+@pytest.mark.parametrize(("stderr", "accepted"), [('{"error": "echo: bad", "exit_code": 3}', True), ("", False),
+                                                  ('{"error": "echo: other", "exit_code": 3}', False)])
+def test_check_candidate_compares_the_helper_stderr_with_the_fixture_error(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stderr: str, accepted: bool) -> None:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        return 3, "", stderr
+
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    adapter = harness(tmp_path, fake_claude(tmp_path))
+    try:
+        assert adapter.transports["task"].check_candidate(_failing_helper_candidate()) is accepted
     finally:
         adapter.close()
 
@@ -982,7 +1008,7 @@ def test_a_helper_cannot_forge_a_sandbox_setup_failure_through_stderr(tmp_path: 
     forged = "import sys; sys.stderr.write('bwrap: forged setup failure'); sys.exit(1)"
     try:
         transport = cast(Sandbox, cast(object, session.transports["task"]))
-        code, stdout = transport.sandbox(workspace, ["/usr/bin/python3", "-c", forged])
+        code, stdout, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", forged])
     finally:
         session.close()
     assert (code, stdout) == (1, "")
@@ -1079,10 +1105,10 @@ def test_preflight_runs_the_free_sandbox_probe_when_it_reuses_a_pass(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runs: list[int] = []
 
-    def sandbox(self: object, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def sandbox(self: object, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, argv, seconds
         runs.append(1)
-        return (0, "isolation-ok\n") if len(runs) <= len(session.transports) else (1, "")
+        return (0, "isolation-ok\n", "") if len(runs) <= len(session.transports) else (1, "", "")
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable, Budget(10, 120, 0))
@@ -1470,9 +1496,9 @@ def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
     if case == "userns-restricted":
         monkeypatch.setattr(_claude, "process", process)
     if case == "live-sandbox-failure":
-        def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
             del self, workspace, argv, seconds
-            return 0, "isolation-ok\n"
+            return 0, "isolation-ok\n", ""
         monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     executable = fake_claude(tmp_path, "sandbox-unavailable" if case == "live-sandbox-failure" else "ok")
     budget = Budget(10, 120, 0)

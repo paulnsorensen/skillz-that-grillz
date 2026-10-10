@@ -93,7 +93,7 @@ Map each coded stop to its next step:
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `doctor` (the host checks) | Write the case draft, then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
-| `baseline-contract-rejected` | `next` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
+| `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
 | `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |
@@ -480,16 +480,16 @@ A candidate can memorize training content. Therefore, every export remains priva
 Review it before sharing. The runner never applies or installs a patch.
 
 
-## Frozen inspection helper contract
+## Inspection helper contract
 
-Run `python3 scripts/inspect_skill.py PATH`.
-The helper uses only the standard library.
+Run `python3 -I scripts/inspect-skill.pyz PATH`.
+The `.pyz` is the `inspect-skill` target of `wedge.toml`. Its source is the `lib/src/skillz_inspect` package, a fromargs CLI.
 Its input is a UTF-8 file of at most 262144 bytes.
 It requires opening and closing frontmatter delimiters.
 
-Success returns exit zero and one JSON object:
+Success returns exit zero and one JSON object on stdout. Only the parsed JSON is guaranteed; the helper prints it indented.
 
-- `schema_version`: `3`.
+- `schema_version`: `4`.
 - `frontmatter_keys`: sorted unique, unindented lexical keys.
 - `body_line_count`: lines after the closing frontmatter delimiter.
 - `local_link_targets`: sorted local inline Markdown link paths.
@@ -501,7 +501,18 @@ The helper measures fence indent from list-item content, as CommonMark does.
 The helper reports facts. It does not parse full YAML or compute task fitness.
 It ignores external links and fragment-only links.
 It rejects package escapes and symlinks without reading linked contents.
-Failure returns exit two with `schema_version` and a descriptive `error`.
+Failure returns exit three and an empty stdout.
+The last non-empty stderr line is a fromargs error: `{"error": "inspect: <reason>", "exit_code": 3}`.
+A missing argument returns exit two.
+
+Each helper fixture expects output `schema_version` `4`.
+A fixture declares `input`, `returncode`, and `output`, and may declare `error`.
+A `null` output means an empty stdout. An `error` object must equal the JSON on the last non-empty stderr line.
+A fixture without `error` leaves stderr unchecked.
+The runner checks the sandbox setup on stderr first, apart from the fixtures.
+Sandbox transports return the exit code, stdout, and stderr of each fixture command.
+Under bubblewrap, the command writes its stderr to a file in a host temporary directory outside the workspace. The runner reads that file and removes the directory.
+Only bubblewrap itself writes to the process stderr, so the command cannot forge a setup failure.
 
 Independent positive and negative contract checks run inside the selected adapter's tool sandbox.
 Candidate helper code never executes on the host outside that boundary.
@@ -513,7 +524,7 @@ The output schema describes response shape only. It never includes the expected 
 
 Run `python3 scripts/skillz-experiment.pyz audit-facts DIRECTORY`.
 The command reports the fixed rubric checks for one skill directory. It reports facts and never grades.
-The `inspect_skill.py` output above does not change, and the command does not repeat its sentence checks.
+The `inspect-skill.pyz` output above does not change, and the command does not repeat its sentence checks.
 
 Success returns exit zero and one JSON object:
 
@@ -606,7 +617,7 @@ The `wedge` graders require that `brief.md` is the only written file.
 The offline tests run without a model.
 They stage each case and apply a recorded golden output or a seeded-bad output.
 They snapshot the workspace and grade it, so the tested path is the live path.
-The `add` and `improve` tests also run `audit-facts` and `inspect_skill.py` on the same trees.
+The `add` and `improve` tests also run `audit-facts` and `inspect-skill.pyz` on the same trees.
 The tests pin the mode steps that each fixture depends on, so an edited step fails the matching test.
 
 To add a case, follow these steps:

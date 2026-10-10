@@ -59,7 +59,7 @@ Use the installed `scripts/skillz-experiment.pyz`. Do not require a source check
 Read the target. Read a linked reference only when its stated trigger matches the run.
 A full-package audit may explicitly read every file in the target package.
 For a skill directory, run `python3 <this-skill-directory>/scripts/skillz-experiment.pyz audit-facts <skill-directory>` before applying the rubric.
-Also run `python3 <this-skill-directory>/scripts/inspect_skill.py <target>` for the prose facts.
+Also run `python3 -I <this-skill-directory>/scripts/inspect-skill.pyz <target>` for the prose facts.
 Use both JSON outputs as objective package facts, not a fitness score. An agent file has no package, so skip `audit-facts`.
 Read `references/experiments.md § Audit facts contract` for the check ids and statuses.
 Report a helper error without treating it as a successful audit.
@@ -84,7 +84,7 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | **Invocation** | `description` = trigger conditions, front-loaded, third person → «workflow summary», «summary description» | Trigger phrases + "Do NOT use for"; no internal workflow; skills take length from `description.length`, agent files stay at ≤1024 chars by hand; first sentence carries the trigger. `references/description-optimization.md`. |
 | **Portability** | Spec-core frontmatter plus additive Claude fields; user-only policy on every host → «Claude-only assumption», «sidecar missing», «`$ARGUMENTS` dependence» | Cite failed `audit-facts` checks for keys, sidecar pairing, and argument, skill-directory, or file-mention syntax. Judge by hand: args are parsed from the text after the skill name; skills are cross-referenced by `/name`; dispatch and GitHub ops name the contract before host syntax. Full matrix: `references/harness-layout.md`. |
 | **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Cite failed `audit-facts` checks for the token budget, nested references, orphans, and missing read triggers. Judge by hand: relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
-| **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect_skill.py` `long_sentences` facts (sentences over 25 words). Cite `advisory_sentences` (21 to 25 words) only for procedural steps. Report passive voice and multi-instruction sentences as findings. |
+| **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect-skill.pyz` `long_sentences` facts (sentences over 25 words). Cite `advisory_sentences` (21 to 25 words) only for procedural steps. Report passive voice and multi-instruction sentences as findings. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
 | **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; `scripts.invocation-line` covers the invocation line; judge whether each bundled script has an output contract. Fix with `references/offload.md`. |
@@ -109,7 +109,7 @@ The kernel is `references/calibration.md`; the defaults:
 
 `add` step 5 and `improve` step 5 run this check.
 
-1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <target file>` on the `SKILL.md` or agent file.
+1. Run `python3 -I <this-skill-directory>/scripts/inspect-skill.pyz <target file>` on the `SKILL.md` or agent file.
 2. Rewrite every sentence in `long_sentences` (over 25 words).
    Rewrite each `advisory_sentences` entry (21 to 25 words) that is a procedural step.
 3. For a changed reference file, apply both limits by hand: 25 words, or 20 words for a procedural step.

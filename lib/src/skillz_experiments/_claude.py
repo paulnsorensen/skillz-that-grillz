@@ -20,7 +20,7 @@ from typing import Literal, cast, final, get_args
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, relative, string
 from skillz_experiments._contract import resolve
-from skillz_experiments._evaluation import fixture_result, usage
+from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._evaluator import answer_schema
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments import _nono
@@ -43,6 +43,9 @@ CREDENTIAL_LIMIT = 1_000_000
 TERMINAL_CODES = frozenset({"isolation-failed", "credential-changed"})
 NOTICE_CODES = frozenset({"credential-rotated", "credential-refreshed"})
 SANDBOX_HELPERS = ("socat",)
+SANDBOX_CAPTURE = "/run/skillz-capture"
+SANDBOX_STDERR = "stderr"
+SANDBOX_STDERR_LIMIT = 100_000
 # Agents that Claude Code lists without any user file. The `--tools` list leaves no way to run them.
 BUILTIN_AGENTS = frozenset({"general-purpose", "Explore", "Plan", "statusline-setup", "output-style-setup",
                             "claude-code-guide"})
@@ -838,27 +841,73 @@ def seatbelt_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
 
 
 def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str],
-                 read_roots: tuple[str, ...] = ()) -> list[str]:
+                 read_roots: tuple[str, ...] = (), capture: Path | None = None) -> list[str]:
     """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No external network.
     Host access is read-only and limited to the system runtime and the extra read roots.
 
     Under bubblewrap, the command gets its own network namespace.
     It can reach a server that it starts on loopback, but not the host loopback.
 
-    Under bubblewrap, a shell discards the command's standard error before the command starts. Only
-    bubblewrap can then write to the process standard error, so a message that starts with `bwrap:` is
-    a setup failure that the command cannot forge.
+    Under bubblewrap with `capture`, the host directory `capture` is bound at `/run/skillz-capture`, outside the
+    workspace, and a shell sends the command's standard error to a file there before the command starts.
+    `sandbox` reads it. Only bubblewrap can then write to the process standard error,
+    so a message that starts with `bwrap:` is a setup failure that the command cannot forge.
     """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
         return [tool, "-p", seatbelt_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
+    mount = ["--bind", str(capture), SANDBOX_CAPTURE] if capture is not None else []
+    shell = ['/bin/sh', '-c', 'exec "$@" 2>"$0"', f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [
+        '/bin/sh', '-c', 'exec "$@" 2>/dev/null', 'sh']
     return [tool, "--unshare-all", "--die-with-parent", "--clearenv",
             "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",
             "--symlink", "usr/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev",
             *[part for root in read_roots for part in ("--ro-bind", root, root)],
-            "--bind", path, path, "--ro-bind", f"{path}/.agents", f"{path}/.agents", "--chdir", path,
-            "/bin/sh", "-c", 'exec "$@" 2>/dev/null', "sh", "/usr/bin/env", "-i", *assignments, *argv]
+            "--bind", path, path, "--ro-bind", f"{path}/.agents", f"{path}/.agents", *mount, "--chdir", path,
+            *shell, "/usr/bin/env", "-i", *assignments, *argv]
+
+
+def _remove_tree(path: Path) -> None:
+    """Remove a directory tree, including a subdirectory that the helper made unreadable. Never raises."""
+    try:
+        path.chmod(0o700)
+        with os.scandir(path) as entries:
+            children = list(entries)
+        for child in children:
+            if child.is_dir(follow_symlinks=False):
+                _remove_tree(Path(child.path))
+            else:
+                os.unlink(child.path)
+        path.rmdir()
+    except OSError:
+        pass
+
+
+def _take_stderr(capture: Path) -> str:
+    """Read the command's standard error file. A link, a special file, or a missing file reads as empty. Never raises."""
+    try:
+        descriptor = os.open(capture / SANDBOX_STDERR, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return ""
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            os.close(descriptor)
+            return ""
+    except OSError:
+        os.close(descriptor)
+        return ""
+    try:
+        handle = os.fdopen(descriptor, "rb")
+    except OSError:
+        os.close(descriptor)
+        return ""
+    try:
+        with handle:
+            data = handle.read(SANDBOX_STDERR_LIMIT)
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="replace")
 
 
 def _answer(final: dict[str, object]) -> dict[str, object]:
@@ -884,6 +933,8 @@ def _probe_skill(workspace: Path, name: str) -> None:
 
 @final
 class ClaudeCode:
+    rejection: str | None = None
+
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
                  out: Path | None = None, login: ClaudeLogin | None = None, isolation: str = "claude",
                  options: ClaudeOptions | None = None) -> None:
@@ -1080,7 +1131,7 @@ class ClaudeCode:
                 raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
         with listening() as port:
             script = probe(workspace, sealed, Path(__file__).resolve(), port)
-            code, output = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
+            code, output, _stderr = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
                                         max(SANDBOX_SECONDS, self.options.sandbox_seconds))
         if code != 0 or output.strip() != "isolation-ok":
             raise _preflight_leak("sandbox probe failed")
@@ -1256,8 +1307,10 @@ class ClaudeCode:
             return {"answer": _answer(final), "events": trace, "usage": usage(trace), "workspace": str(workspace),
                     "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
 
-    def sandbox(self, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def sandbox(self, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         """Run `argv` in the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. Fail closed without it.
+
+        Return the exit code, the standard output, and the standard error.
 
         A command that exceeds `seconds` (default `options.sandbox_seconds`) returns code 124. Budget exhaustion still raises.
         """
@@ -1271,18 +1324,25 @@ class ClaudeCode:
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
         limit = self.options.sandbox_seconds if seconds is None else seconds
         timeout = min(limit, self.budget.remaining())
+        capture = (Path(tempfile.mkdtemp(prefix="skillz-capture-")) if system == "linux" else None)
         try:
-            result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots), cwd=workspace,
-                             timeout=timeout, environment={"PATH": "/usr/bin:/bin"})
-        except BudgetExhausted:
-            if timeout < limit:
-                raise
-            return 124, ""
-        if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
-            raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", _sandbox_fix(result.stderr))
-        return result.returncode, result.stdout
+            try:
+                result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots,
+                                              capture), cwd=workspace, timeout=timeout,
+                                 environment={"PATH": "/usr/bin:/bin"})
+            except BudgetExhausted:
+                if timeout < limit:
+                    raise
+                return 124, "", ""
+            if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
+                raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", _sandbox_fix(result.stderr))
+            return result.returncode, result.stdout, result.stderr if capture is None else _take_stderr(capture)
+        finally:
+            if capture is not None:
+                _remove_tree(capture)
 
     def check_candidate(self, candidate: Candidate) -> bool:
+        self.rejection = None
         self.check_name(candidate)
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
@@ -1292,14 +1352,5 @@ class ClaudeCode:
             skill_file = root / "SKILL.md"
             if not skill_file.is_file() or not _declares(skill_file.read_text(), rules.skill):
                 return False
-            helper = rules.helper
-            if helper is None:
-                return True
-            for fixture in helper.fixtures:
-                (workspace / helper.input).parent.mkdir(parents=True, exist_ok=True)
-                _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
-                code, stdout = self.sandbox(workspace, [
-                    "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
-                if not fixture_result(fixture, code, stdout):
-                    return False
-        return True
+            self.rejection = helper_failure(self, workspace, rules)
+            return self.rejection is None

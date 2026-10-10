@@ -1,4 +1,4 @@
-"""Press attacks on `inspect_skill.py` long_sentences and advisory_sentences (AC-16) through the subprocess seam."""
+"""Press attacks on the built `inspect-skill.pyz` long_sentences and advisory_sentences (AC-16) through the subprocess seam."""
 from __future__ import annotations
 
 import json
@@ -9,23 +9,26 @@ from typing import cast
 
 import pytest
 
-SCRIPT = Path(__file__).parents[3] / "skills/skillz/scripts/inspect_skill.py"
+SCRIPT = Path(__file__).parents[3] / "skills/skillz/scripts/inspect-skill.pyz"
 LONG = " ".join(f"word{i}" for i in range(30)) + "."
 TWENTY = " ".join(f"w{i}" for i in range(20)) + "."
 TWENTY_ONE = " ".join(f"w{i}" for i in range(21)) + "."
 
 
 def inspect(tmp_path: Path, body: str, raw: bytes | None = None, timeout: float | None = None) -> tuple[int, dict[str, object]]:
+    """Return the exit code and the JSON document: stdout on success, the stderr error line on failure."""
     path = tmp_path / "SKILL.md"
     _ = path.write_bytes(raw if raw is not None else f"---\nname: x\ndescription: y\n---\n{body}".encode())
     run = subprocess.run([sys.executable, "-I", str(SCRIPT), str(path)], capture_output=True, text=True, check=False,
                          timeout=timeout)
-    return run.returncode, cast(dict[str, object], json.loads(run.stdout))
+    if run.returncode != 0:
+        assert run.stdout == ""
+    return run.returncode, cast(dict[str, object], json.loads(run.stdout if run.returncode == 0 else run.stderr))
 
 
 def report_of(tmp_path: Path, body: str) -> dict[str, object]:
     code, report = inspect(tmp_path, body)
-    assert code == 0 and report["schema_version"] == 3
+    assert code == 0 and report["schema_version"] == 4
     return report
 
 
@@ -125,23 +128,23 @@ def test_closing_fence_with_an_info_string_does_not_close(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("raw", [b"", b"no frontmatter\n", b"---\nname: x\n", b"---\n\xff\xfe\n---\nbody\n"])
-def test_hostile_input_exits_two_with_a_json_error(tmp_path: Path, raw: bytes) -> None:
+def test_hostile_input_exits_three_with_a_json_error_on_stderr(tmp_path: Path, raw: bytes) -> None:
     code, report = inspect(tmp_path, "", raw=raw)
-    assert code == 2 and "error" in report
+    assert code == 3 and report["exit_code"] == 3 and str(report["error"]).startswith("inspect: ")
 
 
-def test_oversized_input_exits_two(tmp_path: Path) -> None:
+def test_oversized_input_exits_three(tmp_path: Path) -> None:
     code, report = inspect(tmp_path, "", raw=b"---\nname: x\n---\n" + b"a " * 140000)
-    assert code == 2 and "error" in report
+    assert code == 3 and "error" in report
 
 
-def test_symlink_input_exits_two(tmp_path: Path) -> None:
+def test_symlink_input_exits_three(tmp_path: Path) -> None:
     target = tmp_path / "real.md"
     _ = target.write_text("---\nname: x\n---\nbody\n")
     link = tmp_path / "link.md"
     link.symlink_to(target)
     run = subprocess.run([sys.executable, "-I", str(SCRIPT), str(link)], capture_output=True, text=True, check=False)
-    assert run.returncode == 2 and "error" in json.loads(run.stdout)
+    assert run.returncode == 3 and run.stdout == "" and "error" in json.loads(run.stderr)
 
 
 def test_pathological_markdown_finishes_quickly(tmp_path: Path) -> None:

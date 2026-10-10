@@ -80,10 +80,10 @@ def probes(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     """Replace the OS sandbox probe with a recorder that passes, so live-call steps run on any host."""
     seen: list[list[str]] = []
 
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, seconds
         seen.append(argv)
-        return 0, "isolation-ok\n"
+        return 0, "isolation-ok\n", ""
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     return seen
 
@@ -286,11 +286,12 @@ def test_invoke_answer_is_empty_when_the_result_text_is_deeply_nested_json(tmp_p
     assert result["answer"] == {}
 
 
-@pytest.mark.parametrize("result", [(1, ""), (0, ""), (0, "isolation-ok extra"),
-                                    (0, "ISOLATION-OK"), (2, "isolation-ok"), (-9, "isolation-ok")])
+@pytest.mark.parametrize("result", [(1, "", ""), (0, "", ""), (0, "isolation-ok extra", ""),
+                                    (0, "ISOLATION-OK", ""), (2, "isolation-ok", ""),
+                                    (-9, "isolation-ok", "")])
 def test_preflight_stops_before_any_live_call_when_the_sandbox_probe_does_not_pass_exactly(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: tuple[int, str]) -> None:
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, result: tuple[int, str, str]) -> None:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, argv, seconds
         return result
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
@@ -586,9 +587,9 @@ def test_reuse_with_a_failing_sandbox_probe_stops_and_makes_no_live_call(
     recorded = recorded_pass(tmp_path, executable)
     logged = len(calls(executable))
 
-    def broken(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def broken(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, argv, seconds
-        return 1, ""
+        return 1, "", ""
     monkeypatch.setattr(ClaudeCode, "sandbox", broken)
     session = harness(tmp_path, executable)
     try:

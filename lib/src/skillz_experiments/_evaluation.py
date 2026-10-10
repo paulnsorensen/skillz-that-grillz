@@ -3,19 +3,18 @@ from __future__ import annotations
 import json
 import shlex
 from collections.abc import Mapping
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+from typing import cast
 
 from skillz_experiments._cases import loads_untrusted, mapping
+from skillz_experiments._contract import Contract
+from skillz_experiments._graders import Sandbox
 
 
 def grade(answer: str, expected: object, *, loaded: bool, helper_executed: bool) -> float:
     if not loaded or not helper_executed:
         return 0.0
-    try:
-        result = loads_untrusted(answer)
-        return float(json.dumps(result, sort_keys=True) == json.dumps(expected, sort_keys=True))
-    except ValueError:
-        return 0.0
+    return float(_same_json(answer, expected))
 
 
 def usage(events: list[dict[str, object]]) -> dict[str, int | None]:
@@ -70,25 +69,49 @@ def _command_matches(command: str, filename: str, workspace: str | None, skill: 
             and (input_path is None or arguments[1] in _paths(input_path, workspace)))
 
 
-HELPER_FIXTURES: tuple[dict[str, object], ...] = (
-    {"input": "---\nname: contract\ndescription: Inspect\n---\n# Body\n[Guide](references/guide.md)\n",
-     "returncode": 0,
-     "output": {"schema_version": 3, "advisory_sentences": [], "frontmatter_keys": ["description", "name"],
-                "body_line_count": 2,
-                "local_link_targets": ["references/guide.md"], "long_sentences": []}},
-    {"input": "---\nname: contract\n---\n[Escape](../secret)\n", "returncode": 2,
-     "output": {"schema_version": 3, "error": "link escapes package"}},
-)
-
-
-def fixture_result(fixture: Mapping[str, object], returncode: int, stdout: str) -> bool:
-    """Check helper output against one declared fixture: exit code and exact JSON."""
+def _same_json(text: str, expected: object) -> bool:
     try:
-        answer = loads_untrusted(stdout)
+        answer = loads_untrusted(text)
     except ValueError:
         return False
-    return (returncode == fixture["returncode"] and type(returncode) is int
-            and json.dumps(answer, sort_keys=True) == json.dumps(fixture["output"], sort_keys=True))
+    return json.dumps(answer, sort_keys=True) == json.dumps(expected, sort_keys=True)
+
+
+def fixture_failure(fixture: Mapping[str, object], returncode: int, stdout: str, stderr: str) -> str | None:
+    """Check helper output against one declared fixture. Return the name of the failing stream, or None.
+
+    The streams are `returncode`, `stdout`, and `stderr`. A `null` output means an empty stdout. A fixture with
+    an `error` key also needs exactly that JSON on the last nonempty stderr line, so earlier transport
+    warnings do not matter. A fixture without it leaves stderr unchecked.
+    """
+    if type(returncode) is not int or returncode != fixture["returncode"]:
+        return "returncode"
+    expected = fixture["output"]
+    if expected is None:
+        if stdout:
+            return "stdout"
+    elif not _same_json(stdout, expected):
+        return "stdout"
+    if "error" not in fixture:
+        return None
+    lines = [line for line in stderr.splitlines() if line.strip()]
+    return None if lines and _same_json(lines[-1], fixture["error"]) else "stderr"
+
+
+def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> str | None:
+    """Run each declared helper fixture in the sandbox. Return the first failure, or None when all pass."""
+    helper = rules.helper
+    if helper is None:
+        return None
+    for index, fixture in enumerate(helper.fixtures):
+        (workspace / helper.input).parent.mkdir(parents=True, exist_ok=True)
+        _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
+        code, stdout, stderr = sandbox.sandbox(workspace, [
+            "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
+        stream = fixture_failure(fixture, code, stdout, stderr)
+        if stream is not None:
+            return f"helper fixture {index} fails on {stream}"
+    return None
 
 
 def _paths(relative: str, workspace: str | None) -> set[str]:

@@ -6,22 +6,28 @@ import sys
 from pathlib import Path
 from typing import cast
 
-HELPER = Path(__file__).resolve().parents[3] / "skills/skillz/scripts/inspect_skill.py"
+HELPER = Path(__file__).resolve().parents[3] / "skills/skillz/scripts/inspect-skill.pyz"
 
 
 def test_helper_reports_facts_and_rejects_escape(tmp_path: Path) -> None:
     target = tmp_path / "SKILL.md"
     _ = target.write_text("---\nname: example\ndescription: Example\n---\n# Body\n[Guide](references/guide.md)\n")
-    run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(target)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == {
-        "schema_version": 3, "frontmatter_keys": ["description", "name"], "advisory_sentences": [],
+        "schema_version": 4, "frontmatter_keys": ["description", "name"], "advisory_sentences": [],
         "body_line_count": 2, "local_link_targets": ["references/guide.md"], "long_sentences": [],
     }
     _ = target.write_text("---\nname: example\n---\n[Private](../secret)\n")
-    run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
-    assert run.returncode == 2
-    assert json.loads(run.stdout)["error"] == "link escapes package"
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(target)], capture_output=True, text=True)
+    assert run.returncode == 3 and run.stdout == ""
+    assert json.loads(run.stderr)["error"] == "inspect: link escapes package"
+
+
+def test_helper_without_a_path_exits_two_with_a_json_error() -> None:
+    run = subprocess.run([sys.executable, "-I", str(HELPER)], capture_output=True, text=True)
+    assert run.returncode == 2 and run.stdout == ""
+    assert json.loads(run.stderr)["exit_code"] == 2
 
 
 def test_helper_reports_two_sentence_tiers(tmp_path: Path) -> None:
@@ -33,15 +39,16 @@ def test_helper_reports_two_sentence_tiers(tmp_path: Path) -> None:
              "Quoted \"" + long + "\" text.", "- " + " ".join(["item"] * 21) + ".", "", "| " + long + " |"]
     target = tmp_path / "SKILL.md"
     _ = target.write_text("\n".join(lines) + "\n")
-    run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(target)], capture_output=True, text=True)
     assert run.returncode == 0, run.stderr
     result = cast(dict[str, object], json.loads(run.stdout))
-    assert result["schema_version"] == 3
+    assert result["schema_version"] == 4
     assert result["long_sentences"] == [{"line": 7, "words": 30}]
     assert result["advisory_sentences"] == [{"line": 10, "words": 23}, {"line": 19, "words": 21}]
     _ = target.write_text("---\nname: x\n---\n[Private](../secret)\n")
-    run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
-    assert json.loads(run.stdout) == {"schema_version": 3, "error": "link escapes package"}
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(target)], capture_output=True, text=True)
+    assert (run.returncode, run.stdout) == (3, "")
+    assert json.loads(run.stderr) == {"error": "inspect: link escapes package", "exit_code": 3}
 
 
 def test_helper_tiers_split_at_twenty_and_twenty_five_words(tmp_path: Path) -> None:
@@ -50,7 +57,7 @@ def test_helper_tiers_split_at_twenty_and_twenty_five_words(tmp_path: Path) -> N
         lines += [" ".join(["word"] * count) + ".", ""]
     target = tmp_path / "SKILL.md"
     _ = target.write_text("\n".join(lines) + "\n")
-    run = subprocess.run([sys.executable, str(HELPER), str(target)], capture_output=True, text=True)
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(target)], capture_output=True, text=True)
     result = cast(dict[str, object], json.loads(run.stdout))
     assert result["advisory_sentences"] == [{"line": 6, "words": 23}, {"line": 8, "words": 25}]
     assert result["long_sentences"] == [{"line": 10, "words": 26}]
@@ -69,23 +76,24 @@ def test_helper_accepts_host_alias_but_rejects_package_symlinks(tmp_path: Path) 
     alias = tmp_path / "host-alias"
     alias.symlink_to(host, target_is_directory=True)
     supplied = alias / "skill/SKILL.md"
-    run = subprocess.run([sys.executable, str(HELPER), str(supplied)], capture_output=True, text=True)
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(supplied)], capture_output=True, text=True)
     assert run.returncode == 0, run.stdout
     guide.unlink()
     guide.symlink_to(target)
-    run = subprocess.run([sys.executable, str(HELPER), str(supplied)], capture_output=True, text=True)
-    assert run.returncode == 2
-    assert json.loads(run.stdout)["error"] == "package must not contain symlinks"
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(supplied)], capture_output=True, text=True)
+    assert run.returncode == 3 and run.stdout == ""
+    assert json.loads(run.stderr)["error"] == "inspect: package must not contain symlinks"
     guide.unlink()
     references.rmdir()
     internal = package / "internal-guides"
     internal.mkdir()
     _ = (internal / "guide.md").write_text("Guide")
     references.symlink_to(internal, target_is_directory=True)
-    run = subprocess.run([sys.executable, str(HELPER), str(supplied)], capture_output=True, text=True)
-    assert run.returncode == 2
-    assert json.loads(run.stdout)["error"] == "package must not contain symlinks"
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(supplied)], capture_output=True, text=True)
+    assert run.returncode == 3 and run.stdout == ""
+    assert json.loads(run.stderr)["error"] == "inspect: package must not contain symlinks"
     direct = package / "linked.md"
     direct.symlink_to(target)
-    run = subprocess.run([sys.executable, str(HELPER), str(direct)], capture_output=True, text=True)
-    assert run.returncode == 2
+    run = subprocess.run([sys.executable, "-I", str(HELPER), str(direct)], capture_output=True, text=True)
+    assert run.returncode == 3
+    assert run.stdout == ""

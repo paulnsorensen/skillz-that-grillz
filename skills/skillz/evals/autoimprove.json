@@ -16,14 +16,14 @@
     }
   },
   "helper": {
-    "path": "scripts/inspect_skill.py",
+    "path": "scripts/inspect-skill.pyz",
     "input": "fixture.md",
     "fixtures": [
       {
         "input": "---\nname: contract\ndescription: Inspect\n---\n# Body\n[Guide](references/guide.md)\n",
         "returncode": 0,
         "output": {
-          "schema_version": 3,
+          "schema_version": 4,
           "advisory_sentences": [],
           "frontmatter_keys": [
             "description",
@@ -38,10 +38,11 @@
       },
       {
         "input": "---\nname: contract\n---\n[Escape](../secret)\n",
-        "returncode": 2,
-        "output": {
-          "schema_version": 3,
-          "error": "link escapes package"
+        "returncode": 3,
+        "output": null,
+        "error": {
+          "error": "inspect: link escapes package",
+          "exit_code": 3
         }
       }
     ]

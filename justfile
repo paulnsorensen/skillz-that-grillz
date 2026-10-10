@@ -42,7 +42,7 @@ test:
     uv run --no-project --python 3.11 python -B -m unittest discover -s skills/skillz/engine/tests -p 'test_*.py'
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
     just test-fromargs
-    uv run --locked --extra experiments --project lib pytest lib/tests/wedge lib/tests/skillz_experiments -q
+    uv run --locked --extra experiments --project lib pytest lib/tests/wedge lib/tests/skillz_experiments lib/tests/skillz_inspect -q
     uv run --locked --project lib wedge check --root lib/examples/skills --root lib/examples/consumer/skills
     uv run --locked --project lib wedge bundle skills/skillz skills/skillz/wedge --check
 

@@ -241,9 +241,9 @@ def nono_sandbox_passes(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         pytest.skip("abstract Unix sockets exist only on Linux")
     directory = Path(tempfile.mkdtemp(prefix="skz", dir="/tmp"))
     monkeypatch.setattr(tempfile, "tempdir", str(directory))
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, argv, seconds
-        return 0, "isolation-ok\n"
+        return 0, "isolation-ok\n", ""
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     yield
     shutil.rmtree(directory, ignore_errors=True)
