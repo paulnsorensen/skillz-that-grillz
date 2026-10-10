@@ -34,8 +34,8 @@ def inspection(request: dict[str, object], workspace: Path) -> tuple[dict[str, o
     name = str(request["skill_name"])
     skill = workspace / ".agents/skills" / name
     commands = [["cat", f".agents/skills/{name}/SKILL.md"]]
-    if (skill / "scripts/inspect_skill.py").is_file():
-        commands.append(["/usr/bin/python3", "-I", f".agents/skills/{name}/scripts/inspect_skill.py", "fixture.md"])
+    if (skill / "scripts/inspect-skill.pyz").is_file():
+        commands.append(["/usr/bin/python3", "-I", f".agents/skills/{name}/scripts/inspect-skill.pyz", "fixture.md"])
     results = [execute(argv, workspace) for argv in commands]
     trace: list[dict[str, object]] = [{"argv": argv, "exit_code": result.returncode}
                                       for argv, result in zip(commands, results)]

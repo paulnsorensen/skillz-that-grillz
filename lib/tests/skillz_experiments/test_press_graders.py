@@ -78,14 +78,14 @@ class Task:
                 "usage": TOKENS.copy(), "workspace": "/TASK", "latency_seconds": 0.1,
                 "output_files": self.output}
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         self.argvs.append(argv)
         self.workspaces.append({str(path.relative_to(workspace)): path.read_text()
                                 for path in sorted(workspace.rglob("*")) if path.is_file()})
         if self.stdout is not None:
-            return self.code, self.stdout
+            return self.code, self.stdout, ""
         run = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=20, check=False)
-        return run.returncode, run.stdout
+        return run.returncode, run.stdout, run.stderr
 
 
 class Judge:
@@ -403,7 +403,7 @@ def test_hybrid_gate_score_below_one_still_passes_the_gate_and_the_judge_score_w
 def test_hybrid_sandbox_failure_propagates_and_never_reaches_the_judge(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class Broken(Task):
-        def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:  # pyright: ignore[reportImplicitOverride]
+        def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:  # pyright: ignore[reportImplicitOverride]
             del workspace, argv
             raise RuntimeError("bwrap is unavailable; no unsafe fallback")
 

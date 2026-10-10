@@ -42,7 +42,7 @@ requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/wedge", "src/skillz_experiments"]
+packages = ["src/wedge", "src/skillz_experiments", "src/skillz_inspect"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
@@ -56,6 +56,6 @@ exclude = [
 fromargs = { path = "fromargs", editable = true }
 
 [tool.pytest.ini_options]
-testpaths = ["tests/wedge", "tests/skillz_experiments"]
+testpaths = ["tests/wedge", "tests/skillz_experiments", "tests/skillz_inspect"]
 markers = ["ac(id): ties a test to an acceptance-criterion ID"]
 addopts = "--strict-markers"

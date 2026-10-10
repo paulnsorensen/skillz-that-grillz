@@ -254,6 +254,10 @@ Only `PATH`, `HOME`, `TMPDIR`, `LANG`, and `LC_CTYPE` may reach tools.
 The task workspace must remain writable.
 The staged `.agents` tree must remain read-only.
 Candidate helper contract checks use this same operation.
+The checks compare `returncode`, `stdout`, and `stderr` with the fixtures.
+Return the real `stderr` from the transport.
+The checks compare only the last non-empty `stderr` line with the `error` of a fixture.
+A command adapter must return the real command `stderr`, not an empty placeholder.
 
 ### Discovery
 
@@ -292,7 +296,7 @@ Return the structured answer and actual completed tool executions:
   "answer": {"result_json": "{}", "load_marker": "candidate-marker"},
   "trace": [
     {"argv": ["cat", ".agents/skills/skillz/SKILL.md"], "exit_code": 0},
-    {"argv": ["python3", "-I", ".agents/skills/skillz/scripts/inspect_skill.py", "fixture.md"], "exit_code": 0}
+    {"argv": ["python3", "-I", ".agents/skills/skillz/scripts/inspect-skill.pyz", "fixture.md"], "exit_code": 0}
   ],
   "usage": {"input_tokens": 100, "cached_input_tokens": null, "output_tokens": 20}
 }

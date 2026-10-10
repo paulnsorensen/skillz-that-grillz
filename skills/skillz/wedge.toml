@@ -1,7 +1,15 @@
+project = "../.."
+repo = "paulnsorensen/skillz-that-grillz"
+
+[[target]]
 name = "skillz-experiment"
 entry = "skillz_experiments._cli:main"
 source = "../../lib/src/skillz_experiments"
-project = "../.."
 include = ["../../lib/fromargs/src/fromargs", "../../lib/src/wedge"]
 groups = ["experiments", "wedge"]
-repo = "paulnsorensen/skillz-that-grillz"
+
+[[target]]
+name = "inspect-skill"
+entry = "skillz_inspect:main"
+source = "../../lib/src/skillz_inspect"
+include = ["../../lib/fromargs/src/fromargs"]

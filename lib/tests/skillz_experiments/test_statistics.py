@@ -19,7 +19,7 @@ from skillz_experiments._runtime import Budget
 from skillz_experiments._workflow import Stop, export, resolve_statistics, run
 
 MODEL = "local-test"
-LEGACY_IDENTITY = "911fc7bbdaf308d1e15d25fdde28d63c3b85509e3e3c42ba37eb49cb42aff7b6"
+LEGACY_IDENTITY = "f97f7476933403cbc6180cf3dc3cb54ca9d9eb63a7cf37bae92dd6aa9612b2e8"
 ContractDocument = dict[str, object]
 
 pytestmark = pytest.mark.usefixtures("host_login")

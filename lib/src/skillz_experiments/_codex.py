@@ -13,7 +13,7 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import Case, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._discovery import discover
-from skillz_experiments._evaluation import fixture_result, usage
+from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._evaluator import answer_schema, evaluate
 from skillz_experiments._isolation import listening, probe
 from skillz_experiments._runtime import Budget, process
@@ -47,6 +47,8 @@ def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> li
 
 @final
 class Codex:
+    rejection: str | None = None
+
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
         executable = shutil.which("codex")
         if executable is None:
@@ -142,7 +144,7 @@ class Codex:
         command = [str(self.executable), "app-server", *configuration(workspace, self.executable, [])]
         return discover(command, workspace, self._environment(workspace), min(30, self.budget.remaining()), skill)
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
                 "TMPDIR=" + str(workspace / "tmp"), "LANG=C.UTF-8"]
         command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
@@ -150,26 +152,18 @@ class Codex:
                    "/usr/bin/env", "-i", *safe, *argv]
         result = process(command, cwd=workspace, timeout=min(20, self.budget.remaining()),
                          environment=self._environment(workspace))
-        return result.returncode, result.stdout
+        return result.returncode, result.stdout, result.stderr
 
     def check_candidate(self, candidate: Candidate) -> bool:
+        self.rejection = None
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory))
             rules = resolve(candidate.contract)
             candidate.materialize(workspace / ".agents/skills" / rules.skill)
             if not self._discover(workspace, rules.skill):
                 return False
-            helper = rules.helper
-            if helper is None:
-                return True
-            for fixture in helper.fixtures:
-                (workspace / helper.input).parent.mkdir(parents=True, exist_ok=True)
-                _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
-                returncode, stdout = self.sandbox(workspace, [
-                    "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
-                if not fixture_result(fixture, returncode, stdout):
-                    return False
-        return True
+            self.rejection = helper_failure(self, workspace, rules)
+            return self.rejection is None
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         return evaluate(self, self, candidate, case, holdout=holdout)

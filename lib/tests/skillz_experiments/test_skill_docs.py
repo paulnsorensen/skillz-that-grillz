@@ -49,7 +49,7 @@ def _routing(text: str) -> str:
 def test_audit_lens_has_prose_row_citing_long_sentences(limits: tuple[int, int]) -> None:
     advisory, maximum = limits
     row = next(r for r in _table(SKILL.read_text(), "Lens") if r[0].startswith("**Prose (ASD-STE100)"))
-    assert "inspect_skill.py" in row[2]
+    assert "inspect-skill.pyz" in row[2]
     assert "long_sentences" in row[2]
     assert f"over {maximum} words" in row[2] and f"({advisory + 1} to {maximum} words)" in row[2]
     assert "Report passive voice and multi-instruction sentences as findings." in row[2]
@@ -75,7 +75,7 @@ def test_shared_prose_check_names_inspector_limit_and_references(limits: tuple[i
     assert match is not None
     items = _steps(match[0])
     assert len(items) == 3
-    assert "inspect_skill.py" in items[0] and "SKILL.md" in items[0]
+    assert "inspect-skill.pyz" in items[0] and "SKILL.md" in items[0]
     assert f"over {maximum} words" in items[1]
     assert f"`advisory_sentences` entry ({advisory + 1} to {maximum} words)" in items[1]
     assert "procedural step" in items[1]

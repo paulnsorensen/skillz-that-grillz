@@ -257,6 +257,11 @@ class Harness:
         self._unchanged()
         return self.transports["task"].check_candidate(candidate)
 
+    @property
+    def rejection(self) -> str | None:
+        """Return why the last `check_candidate` call failed, when the task transport says so."""
+        return cast(str | None, getattr(self.transports["task"], "rejection", None))
+
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self._unchanged()
         return evaluate(self.transports["task"], self.transports["judge"], candidate, case, holdout=holdout)

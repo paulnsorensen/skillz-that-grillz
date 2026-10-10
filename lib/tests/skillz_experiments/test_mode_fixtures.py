@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import importlib.util
+import importlib
 import json
 import os
 import re
@@ -78,14 +78,14 @@ class Sandbox:
     def __init__(self) -> None:
         self.cwds: list[Path] = []
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         self.cwds.append(workspace)
         command = [sys.executable, *argv[1:]] if argv[0] == "python3" else argv
         env = {**os.environ, **{name: UNROUTABLE for name in ("http_proxy", "https_proxy", "all_proxy",
                                                               "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")}}
         env["no_proxy"] = env["NO_PROXY"] = ""
         run = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=30, check=False, env=env)
-        return run.returncode, run.stdout
+        return run.returncode, run.stdout, run.stderr
 
 
 def live(case: Case, written: Mapping[str, str | None]) -> Tree:
@@ -235,8 +235,8 @@ def _defects(tmp_path: Path, case: Case, output: Tree, skill: str) -> list[str]:
         _ = target.write_text(text, encoding="utf-8")
     facts = cast(list[dict[str, object]], audit_facts(root / "skills" / skill)["checks"])
     found = {str(check["id"]) for check in facts if check["status"] == "fail"}
-    run = subprocess.run([sys.executable, str(SKILL_DIR / "scripts/inspect_skill.py"), str(root / "skills" / skill / "SKILL.md")],
-                         capture_output=True, text=True, check=True)
+    run = subprocess.run([sys.executable, "-I", str(SKILL_DIR / "scripts/inspect-skill.pyz"),
+                          str(root / "skills" / skill / "SKILL.md")], capture_output=True, text=True, check=True)
     if mapping(cast(object, json.loads(run.stdout)))["long_sentences"]:
         found.add("long-sentence")
     return sorted(found)
@@ -295,11 +295,7 @@ def _grader_longest(source: str) -> object:
 
 
 def _inspector() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("inspect_skill", SKILL_DIR / "scripts/inspect_skill.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("skillz_inspect._inspect")
 
 
 @pytest.mark.parametrize("kind", ["add", "improve"])
