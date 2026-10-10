@@ -7,9 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import cast, final, override
+from typing import cast, final
 
 import pytest
+from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
@@ -393,6 +394,7 @@ def test_a_field_check_in_metadata_is_the_only_edit_a_range_flag_needs() -> None
         with pytest.raises(ValueError, match="ratio must be a number above 0 and below 1"):
             _ = _Ranged.declared({"ratio": bad})
     assert _Ranged.parse(_Ranged().data() | {"ratio": 0.25}).data()["ratio"] == 0.25
+    assert _Ranged(ratio=0.25).data()["ratio"] == _Ranged(ratio=0.25).ratio
 
 
 def test_run_checks_each_flag_through_the_field_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

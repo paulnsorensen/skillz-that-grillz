@@ -63,8 +63,12 @@ def prompt(case: Case, findings: tuple[Finding, ...]) -> str:
     if not isinstance(case.expected, Audit):
         raise ValueError("audit labels missing")
     return RUBRIC + "\nUNTRUSTED DATA (JSON):\n" + json.dumps({
-        "files": case.files, "labels": asdict(case.expected)["labels"],
-        "findings": [asdict(finding) for finding in findings]})
+        "files": case.files,
+        "labels": [{"id": label.id, "severity": label.severity, "explanation": label.explanation,
+                    "evidence": [asdict(item) for item in label.evidence]} for label in case.expected.labels],
+        "findings": [{"description": finding.description, "severity": finding.severity,
+                      "correction": finding.correction, "citation": asdict(finding.citation)}
+                     for finding in findings]})
 
 
 def _matches(value: object, findings: tuple[Finding, ...], expected: Audit) -> list[tuple[int, str, bool]]:

@@ -41,9 +41,11 @@ def test_scalar_prints_as_json() -> None:
 
 
 def test_dataclass_serializes_via_asdict() -> None:
-    out, _ = _run(Point(1, 2))
+    point = Point(1, 2)
+    out, _ = _run(point)
 
     assert json.loads(out) == {"x": 1, "y": 2}
+    assert (point.x, point.y) == (1, 2)
 
 
 def test_dict_dumps_as_json() -> None:

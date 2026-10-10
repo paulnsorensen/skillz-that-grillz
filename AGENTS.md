@@ -8,9 +8,9 @@ This project has ONE canonical verification command. ALWAYS run it after changin
 code, and treat a non-zero exit as a hard stop — fix the reported failures before
 doing anything else.
 
-- `just build` — autofix (markdown + YAML format), then verify markdown/YAML
-  and run the skill validators, fromargs/wedge suites, and wedge check. Run
-  after every change.
+- `just build` — autofix markdown and YAML, then verify formats, run root
+  basedpyright and Vulture checks, skill validators, fromargs/wedge suites,
+  and wedge check. Run after every change.
 - `just ci` — the same gate with NO autofixes; this is what CI runs.
 
 ```bash
