@@ -10,7 +10,7 @@ from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import Literal, cast
 
-VerdictName = Literal["promote", "inconclusive", "reject"]
+VerdictName = Literal["promote", "promote-cheaper", "inconclusive", "reject"]
 
 
 def threshold(value: object) -> float | None:
@@ -27,6 +27,12 @@ def threshold(value: object) -> float | None:
     if not math.isfinite(number) or number < 0:
         return None
     return number + 0.0  # turns -0.0 into 0.0 so both hash alike
+
+
+def _saving(value: object) -> float | None:
+    """Return `value` as a float when it lies strictly between 0 and 1; else return None."""
+    number = threshold(value)
+    return number if number is not None and 0 < number < 1 else None
 
 
 def _budget_map(name: str, value: object) -> dict[str, float]:
@@ -48,10 +54,13 @@ def _budget_map(name: str, value: object) -> dict[str, float]:
 class Statistics:
     """Resolved promotion thresholds. The defaults reproduce the built-in 2*SE rule.
 
-    Each threshold only tightens the rule. The SE multiplier stays 2. `min_gain` and `min_lower_bound` are floors
-    of at least 0.
+    Every field except `min_token_saving` only tightens the rule. `min_token_saving` also adds `promote-cheaper`.
+    That verdict needs no observed loss and claims no gain. The SE multiplier stays 2. `min_gain` and
+    `min_lower_bound` are floors of at least 0.
     A field with `flag` metadata also has a CLI flag. A field with `nullable` metadata may be None, which
     turns its rule off. A field with `map` metadata holds a name-to-number map and is contract-only.
+    `max_token_increase_per_gain` and `min_token_saving` set the token rule, which is off while both are None.
+    `min_token_saving` is a saving share strictly between 0 and 1.
     A field with `check` metadata sets its own value check: a function that returns the checked float or None.
     The default check is `threshold`. The `rule` metadata then names the accepted values in the error message.
     `declared`, `parse`, and `data` check the shape of a map, not its agreement with any run record.
@@ -62,9 +71,17 @@ class Statistics:
     family_budget: float | None = field(default=None, metadata={"flag": True, "nullable": True})
     family_budgets: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}), hash=False,
                                                 metadata={"map": True})
+    max_token_increase_per_gain: float | None = field(default=None, metadata={"flag": True, "nullable": True})
+    min_token_saving: float | None = field(default=None, metadata={
+        "flag": True, "nullable": True, "check": _saving, "rule": "null or a number above 0 and below 1"})
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "family_budgets", MappingProxyType(dict(sorted(self.family_budgets.items()))))
+
+    @property
+    def token_rule(self) -> bool:
+        """Whether a token field is set, which turns the token rule on."""
+        return self.max_token_increase_per_gain is not None or self.min_token_saving is not None
 
     @classmethod
     def names(cls) -> tuple[str, ...]:
@@ -127,11 +144,14 @@ class Verdict:
     cases: int
     reasons: tuple[str, ...] = ()
     skipped_families: tuple[str, ...] = ()
+    token_delta: float | None = None
+    token_se: float | None = None
 
     def data(self) -> dict[str, object]:
         """Return the gate keys of the run record, with each tuple as a list."""
         return {"verdict": self.verdict, "delta": self.delta, "se": self.se, "cases": self.cases,
-                "reasons": list(self.reasons), "skipped_families": list(self.skipped_families)}
+                "reasons": list(self.reasons), "skipped_families": list(self.skipped_families),
+                "token_delta": self.token_delta, "token_se": self.token_se}
 
 
 @dataclass(frozen=True)
@@ -190,8 +210,56 @@ def _family_rule(deltas: Mapping[str, float], families: Mapping[str, str] | None
     return breached, tuple(skipped)
 
 
+def _token_change(tokens: Mapping[str, tuple[float | None, float | None]]) -> tuple[float, float] | None:
+    """Return the mean and the SE across cases of `mean(winner)/mean(baseline) - 1`, or None when usage is unknown.
+
+    A case is unknown when either mean is missing or not finite, when its baseline mean is not above 0, or when
+    its winner mean is negative. One unknown case makes the whole change unknown.
+    The SE is the sample standard deviation of the case changes over the square root of the case count.
+    One case gives an SE of 0.
+    """
+    changes: list[float] = []
+    for baseline, winner in tokens.values():
+        if baseline is None or winner is None or not math.isfinite(baseline) or not math.isfinite(winner):
+            return None
+        if baseline <= 0 or winner < 0:
+            return None
+        change = winner / baseline - 1
+        if not math.isfinite(change):
+            return None
+        changes.append(change)
+    if not changes:
+        return None
+    try:
+        se = statistics.stdev(changes) / math.sqrt(len(changes)) if len(changes) > 1 else 0.0
+        mean = statistics.fmean(changes)
+    except OverflowError:
+        return None
+    return (mean, se) if math.isfinite(mean) and math.isfinite(se) else None
+
+
+def close(first: float, second: float) -> bool:
+    """Return whether two floats are equal within a relative 1e-9 or an absolute 1e-12.
+
+    Only the token threshold checks and the workflow ties use this. The score rule, the floors, and the family
+    rule compare exactly, as ADR-002 and the pinned false-promotion rates require.
+    """
+    return math.isclose(first, second, rel_tol=1e-9, abs_tol=1e-12)
+
+
+def _exceeds(value: float, limit: float) -> bool:
+    """Return whether `value` is above `limit` and not close to it."""
+    return value > limit and not close(value, limit)
+
+
+def _reaches(value: float, limit: float) -> bool:
+    """Return whether `value` is at least `limit` or close to it."""
+    return value >= limit or close(value, limit)
+
+
 def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statistics = DEFAULT_STATISTICS,
-            families: Mapping[str, str] | None = None) -> Verdict:
+            families: Mapping[str, str] | None = None,
+            tokens: Mapping[str, tuple[float | None, float | None]] | None = None) -> Verdict:
     """Promote when the mean case delta exceeds twice its standard error and passes the floors.
 
     The floors only tighten the rule: a `promote` that misses `min_gain` or `min_lower_bound` becomes
@@ -200,17 +268,35 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     A family whose mean delta plus twice its standard error is below the negative budget turns any verdict
     into `reject`, and `reasons` gets `family-regression:<name>`.
     `skipped_families` lists each family that the rule skipped, on every path.
+    `tokens` maps each case id to its (baseline, winner) mean task tokens; it needs deltas keyed by the same case ids.
+    The token rule runs only when `max_token_increase_per_gain` or `min_token_saving` is set. It runs after the
+    floors and before the families:
+    a score `promote` whose mean token change exceeds `max_token_increase_per_gain * delta` becomes `reject`
+    with reason `token-cost`;
+    a score `inconclusive` (the delta is inside the band, from -2*se to 2*se) becomes `promote-cheaper` when
+    `min_token_saving` is set, the delta is at least 0, the tokens drop by more than twice the token SE, and the
+    drop is at least `min_token_saving`. The floors do not gate `promote-cheaper`.
+    Unknown usage turns a `promote` into `inconclusive` with reason `unknown-usage`. It adds the same reason to
+    a band result when `min_token_saving` is set. An active token rule with no `tokens` is unknown usage.
+    `token_delta` and `token_se` report the change while the rule runs and the usage is known.
     """
     if families is not None and not isinstance(deltas, Mapping):
         raise ValueError("families need deltas keyed by case id")
+    if tokens is not None and (not isinstance(deltas, Mapping) or tokens.keys() != deltas.keys()):
+        raise ValueError("tokens need deltas keyed by the same case ids")
     values = list(deltas.values()) if isinstance(deltas, Mapping) else list(deltas)
     count = len(values)
     breached, skipped = _family_rule(deltas if isinstance(deltas, Mapping) else {}, families, thresholds)
+    limit, saving = thresholds.max_token_increase_per_gain, thresholds.min_token_saving
+    active = thresholds.token_rule
+    change = _token_change(tokens) if active and tokens is not None else None
+    token_delta, token_se = change if change is not None else (None, None)
     if not all(math.isfinite(value) for value in values):
-        return Verdict("inconclusive", math.nan, math.nan, count, skipped_families=skipped)
+        return Verdict("inconclusive", math.nan, math.nan, count, skipped_families=skipped,
+                       token_delta=token_delta, token_se=token_se)
     if count < 2:
         return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, 0.0, count,
-                       skipped_families=skipped)
+                       skipped_families=skipped, token_delta=token_delta, token_se=token_se)
     delta = statistics.fmean(values)
     se = statistics.stdev(values) / math.sqrt(count)
     if se == 0:
@@ -226,6 +312,7 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
         name = "reject"
     else:
         name = "inconclusive"
+    in_band = name == "inconclusive"
     reasons: list[str] = []
     if name == "promote":
         if not delta >= thresholds.min_gain:
@@ -234,10 +321,23 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
             reasons.append("lower-bound")
         if reasons:
             name = "inconclusive"
+    if active:
+        if name == "promote" and change is None:
+            name = "inconclusive"
+            reasons.append("unknown-usage")
+        elif (name == "promote" and limit is not None and token_delta is not None
+              and _exceeds(token_delta, limit * delta)):
+            name = "reject"
+            reasons.append("token-cost")
+        elif in_band and saving is not None:
+            if token_delta is None or token_se is None:
+                reasons.append("unknown-usage")
+            elif delta >= 0 and _exceeds(-token_delta, 2 * token_se) and _reaches(-token_delta, saving):
+                name = "promote-cheaper"
     if breached:
         name = "reject"
         reasons.extend(f"family-regression:{family}" for family in breached)
-    return Verdict(name, delta, se, count, tuple(reasons), skipped)
+    return Verdict(name, delta, se, count, tuple(reasons), skipped, token_delta, token_se)
 
 
 def _scores(rng: random.Random, chances: Sequence[float], repeats: int) -> list[float]:

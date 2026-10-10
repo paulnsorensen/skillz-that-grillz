@@ -40,7 +40,7 @@ Do not treat this as a published `/skillz` mode.
    Put the expected findings in `expected`. The shipped contract judges them with its `task` rubric.
    Never skip the case or budget approval.
    When the user declines a question, skip this step and report the skip.
-   Apply the patch only on a `promote` verdict and the user's approval. Then run the step 5 audit again.
+   Apply the patch only on a `promote` or `promote-cheaper` verdict and the user's approval. Then run the step 5 audit again.
 7. This repository has no deploy step. Do not install or sync the result to any installed copy.
 8. Run `just build` and fix any failure.
 
@@ -51,6 +51,6 @@ Report the research delta, applied fixes, rejected claims, the autoimprove verdi
 ## What this skill never does
 
 - It never runs `npx` or `skills add` against the working copy.
-- It never applies an autoimprove patch without a `promote` verdict and the user's approval.
+- It never applies an autoimprove patch without a `promote` or `promote-cheaper` verdict and the user's approval.
 - It does not upgrade GEPA, `skillz-experiment.pyz`, the analytics engine snapshot, Python dependencies, `skills/skillz/wedge/scripts/wedge.pyz`, or releases.
 - It does not sync the result to other harnesses. That is out of scope for this skill.

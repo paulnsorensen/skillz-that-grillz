@@ -27,7 +27,9 @@ from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._doctor import doctor
-from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, Verdict, case_deltas, verdict as gate_verdict
+from skillz_experiments._evaluator import task_tokens
+from skillz_experiments._gate import (DEFAULT_STATISTICS, Statistics, Verdict, case_deltas, close,
+                                      verdict as gate_verdict)
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
@@ -524,32 +526,72 @@ class _Session:
             feedback["grader_scores"] = result["scores"]
         return score, feedback
 
+    def _validation_outcomes(self) -> list[dict[str, object]]:
+        """Return the outcomes of search candidates on validation cases."""
+        return [item for item in self.outcomes if item.get("arm") == "search" and item.get("split") == "validation"
+                and "search_candidate" in item]
+
     def _validation_means(self, validation: list[str]) -> dict[str, float]:
         """Return the mean score of each search candidate that has a score on every validation case."""
         scores: dict[str, dict[str, float]] = {}
-        for item in self.outcomes:
-            if item.get("arm") == "search" and item.get("split") == "validation" and "search_candidate" in item:
-                scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
-        return {identity: sum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
+        for item in self._validation_outcomes():
+            scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
+        return {identity: math.fsum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
                 if set(by_case) == set(validation)}
 
+    def _validation_tokens(self, validation: list[str], identities: tuple[str, ...]) -> dict[str, float | None]:
+        """Return the mean task tokens of each listed candidate that has an outcome on every validation case.
+
+        A candidate with a missing count on any case maps to None.
+        """
+        counts: dict[str, dict[str, int | None]] = {}
+        for item in self._validation_outcomes():
+            if item["search_candidate"] in identities:
+                counts.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = task_tokens(item)
+        return {identity: _mean_tokens(list(by_case.values())) for identity, by_case in counts.items()
+                if set(by_case) == set(validation)}
+
+    def _tied_cheaper(self, validation: list[str], challenger: str, incumbent: str) -> bool:
+        """Return whether a token field is set and the challenger has known, lower mean validation task tokens."""
+        if not self.statistics.token_rule:
+            return False
+        tokens = self._validation_tokens(validation, (challenger, incumbent))
+        new, old = tokens.get(challenger), tokens.get(incumbent)
+        return new is not None and old is not None and new < old
+
+    def _beats(self, validation: list[str], mean: float, other: float, challenger: str, incumbent: str) -> bool:
+        """Return whether `mean` is above `other`, or ties it and the challenger is cheaper."""
+        if close(mean, other):
+            return self._tied_cheaper(validation, challenger, incumbent)
+        return mean > other
+
     def _keep_if_best(self, candidate: Candidate, case: Case) -> None:
-        """Record the files of the best non-seed candidate when it completes the validation set. The record stays small."""
+        """Record the files of the best non-seed candidate when it completes the validation set. The record stays small.
+
+        A mean tie goes to lower mean task tokens while a token field is set.
+        """
         if case.split != "validation" or candidate.identity == self.seed.identity:
             return
         with self.lock:
             validation = [item.identifier for item in self.cases_for("validation")]
             mean = self._validation_means(validation).get(candidate.identity)
             kept = self.record.get("best_validated")
-            if mean is not None and (not isinstance(kept, dict) or mean > _number_field(cast(dict[str, object], kept), "mean")):
-                self.record["best_validated"] = {"identity": candidate.identity, "mean": mean,
-                                                 "files": {name: candidate.files[name] for name in self.seed.editable}}
-                self.checkpoint()
+            if mean is None:
+                return
+            if isinstance(kept, dict):
+                kept_record = cast(dict[str, object], kept)
+                kept_mean = _number_field(kept_record, "mean")
+                if not self._beats(validation, mean, kept_mean, candidate.identity, _text_field(kept_record, "identity")):
+                    return
+            self.record["best_validated"] = {"identity": candidate.identity, "mean": mean,
+                                             "files": {name: candidate.files[name] for name in self.seed.editable}}
+            self.checkpoint()
 
     def _propose(self, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
                  components: list[str]) -> dict[str, str]:
         self._raise_fault()
-        prompt, schema = _reflection_request(self.edit, candidate, feedback, components)
+        prompt, schema = _reflection_request(self.edit, candidate, feedback, components,
+                                            cheaper=self.statistics.token_rule)
         try:
             result = self.provider.invoke(prompt, schema=schema)
         except CodedError as error:
@@ -664,24 +706,43 @@ class _Session:
         self.checkpoint()
 
     def _best_validated(self, validation: list[str]) -> Candidate:
-        """Return the recorded candidate with the best validation mean. The seed wins ties."""
+        """Return the recorded candidate with the best validation mean.
+
+        The seed wins ties, unless a token field is set and the candidate has fewer mean validation task tokens.
+        """
         means = self._validation_means(validation)
         kept = self.record.get("best_validated")
         if not isinstance(kept, dict):
             return self.seed
         kept = cast(dict[str, object], kept)
         identity = _text_field(kept, "identity")
-        if identity in means and means[identity] > means.get(self.seed.identity, -1.0):
-            return self.seed.changed(candidate_files(kept.get("files")))
+        if identity in means:
+            seed_mean = means.get(self.seed.identity, -1.0)
+            if self._beats(validation, means[identity], seed_mean, identity, self.seed.identity):
+                return self.seed.changed(candidate_files(kept.get("files")))
         return self.seed
+
+    def _holdout_outcomes(self) -> list[dict[str, object]]:
+        """Return the holdout outcomes of the baseline and the winner."""
+        return [item for item in self.outcomes if item.get("split") == "holdout"
+                and item.get("arm") in ("baseline", "winner")]
 
     def _holdout_scores(self, arm: str) -> dict[str, list[float]]:
         scores: dict[str, list[tuple[int, float]]] = {}
-        for item in self.outcomes:
-            if item.get("split") == "holdout" and item.get("arm") == arm:
+        for item in self._holdout_outcomes():
+            if item["arm"] == arm:
                 scores.setdefault(cast(str, item["case_id"]), []).append(
                     (cast(int, item["repeat"]), _unit_score(item["score"])))
         return {case_id: [score for _, score in sorted(pairs)] for case_id, pairs in scores.items()}
+
+    def _holdout_tokens(self) -> dict[str, tuple[float | None, float | None]]:
+        """Return each holdout case's mean task tokens per arm over its repeats. A missing count makes the mean None."""
+        counts: dict[str, dict[str, list[int | None]]] = {}
+        for item in self._holdout_outcomes():
+            counts.setdefault(cast(str, item["case_id"]), {"baseline": [], "winner": []})[
+                cast(str, item["arm"])].append(task_tokens(item))
+        return {case_id: (_mean_tokens(arms["baseline"]), _mean_tokens(arms["winner"]))
+                for case_id, arms in counts.items()}
 
     def gate(self) -> None:
         """Score baseline and winner on the unseen holdout, `repeats` times per case, then record the verdict."""
@@ -718,8 +779,9 @@ class _Session:
                            {"next": "start a new run in a new directory"})
             with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
                 _ = list(pool.map(score, todo))
-            outcome = gate_verdict(case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner")),
-                                   thresholds=self.statistics, families=families)
+            deltas = case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner"))
+            outcome = gate_verdict(deltas, thresholds=self.statistics, families=families,
+                                   tokens=self._holdout_tokens() if self.statistics.token_rule else None)
             self.record["gate"] = {**outcome.data(), "repeats": repeats}
         self.record["winner_hash"] = winner.identity
         self.record["phase"] = "gated"
@@ -730,6 +792,17 @@ class _Session:
         self.checkpoint()
 
 
+def _mean_tokens(counts: Sequence[int | None]) -> float | None:
+    """Return the mean of `counts`, or None when it is empty, lacks a count, or overflows a float."""
+    known = [count for count in counts if count is not None]
+    if not counts or len(known) != len(counts):
+        return None
+    try:
+        return math.fsum(known) / len(known)
+    except OverflowError:
+        return None
+
+
 _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
              "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
              "and at most 25 words per descriptive sentence. ")
@@ -737,7 +810,7 @@ _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified T
 
 def _reflection_request(edit: Edit, candidate: dict[str, str],
                         feedback: Mapping[str, Sequence[Mapping[str, object]]],
-                        components: list[str]) -> tuple[str, dict[str, object]]:
+                        components: list[str], *, cheaper: bool = False) -> tuple[str, dict[str, object]]:
     schema: dict[str, object] = {"type": "object",
         "properties": {key: {"type": "string"} for key in components},
         "required": components, "additionalProperties": False}
@@ -746,8 +819,10 @@ def _reflection_request(edit: Edit, candidate: dict[str, str],
                        + "Keep each script's command-line contract and output format. ")
     else:
         instruction = "Improve only the supplied skill text components. Preserve the helper CLI contract. "
-    head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions.\n"
-    return head + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
+    head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions."
+    if cheaper:
+        head += " Prefer fewer tokens when correctness is equal."
+    return head + "\n" + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
 
 _PHASES = ("prepared", "searched", "gated", "complete")
