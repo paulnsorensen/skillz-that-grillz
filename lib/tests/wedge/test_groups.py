@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
 import wedge._build as wedge_build
+from wedge._config import WedgeConfig
 
 FIXTURE_NAME = "cheese-cave"
 
@@ -32,33 +34,30 @@ def test_build_many_exports_each_skills_groups_and_splits_sites(
     )
 
     export_calls: list[tuple[str, ...]] = []
-    populated_sites: list[wedge_build.SiteInputs] = []
+    populated_groups: list[tuple[str, ...]] = []
 
-    def _fake_export(_project: Path, groups: tuple[str, ...] = ()) -> str:
+    def _fake_export(_project: Path, groups: Sequence[str] = ()) -> str:
         export_calls.append(tuple(groups))
         return ""
 
-    def _fake_populate(site: wedge_build.SiteInputs, site_dir: Path) -> None:
-        populated_sites.append(site)
-        _ = _fake_export(site.project, site.groups)
-        site_dir.mkdir()
+    def _fake_populate(project: Path, groups: Sequence[str], dest: Path) -> wedge_build.SiteLayer:
+        populated_groups.append(tuple(groups))
+        _ = _fake_export(project, groups)
+        dest.mkdir()
+        return wedge_build.SiteLayer(dest, "fake", tuple(sorted(set(groups))), project)
 
-    def _fake_shiv(
-        prepared: wedge_build._Prepared,  # pyright: ignore[reportPrivateUsage]
-        _site_dir: Path,
-        out_dir: Path,
-    ) -> wedge_build.BuildResult:
-        out_path = out_dir / f"{prepared.config.name}.pyz"
+    def _fake_build(
+        _layer: wedge_build.SiteLayer, _sources: Path, target: WedgeConfig, out_dir: Path
+    ) -> tuple[str, Path]:
+        out_path = out_dir / f"{target.name}.pyz"
         _ = out_path.write_bytes(b"fake")
-        return wedge_build.BuildResult(
-            name=prepared.config.name, key=prepared.key, content_sha256="deadbeef", path=out_path
-        )
+        return "deadbeef", out_path
 
-    monkeypatch.setattr(wedge_build, "_populate_site", _fake_populate)
-    monkeypatch.setattr(wedge_build, "_shiv_skill", _fake_shiv)
+    monkeypatch.setattr(wedge_build, "populate_site_layer", _fake_populate)
+    monkeypatch.setattr(wedge_build, "_build_from_layer", _fake_build)
 
     outcomes = wedge_build.build_many([skill_a, skill_b], tmp_path / "out")
 
     assert all(o.error is None for o in outcomes), [o.error for o in outcomes]
-    assert len(populated_sites) == 2
+    assert len(populated_groups) == 2
     assert sorted(export_calls) == [(), ("extra",)]
