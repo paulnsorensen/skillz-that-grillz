@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 dependencies = ["fromargs>=0.2.0,<0.3"]
 
 [dependency-groups]
+dev = ["basedpyright==1.40.1", "pytest>=8", "pyyaml==6.0.2", "types-PyYAML==6.0.12.20260906", "typing-extensions==4.16.0", "vulture==2.16"]
 experiments = ["gepa==0.1.4"]
 # skills/skillz/wedge bundles the wedge CLI. Keep this pin equal to lib/pyproject.toml:
 # shiv writes its version into every archive it builds.
@@ -15,3 +16,28 @@ package = false
 
 [tool.uv.sources]
 fromargs = { path = "lib/fromargs" }
+
+[tool.basedpyright]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+include = ["lib", "skills"]
+exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache"]
+extraPaths = ["lib/src", "lib/fromargs/src", "lib/fromargs/examples"]
+typeCheckingMode = "recommended"
+failOnWarnings = true
+
+[[tool.basedpyright.executionEnvironments]]
+root = "lib/fromargs"
+extraPaths = ["lib/fromargs/src", "lib/fromargs/examples"]
+
+[tool.vulture]
+paths = [".github/scripts", "lib", "skills"]
+exclude = ["*/.venv/*", "*/__pycache__/*", "*/.pytest_cache/*"]
+min_confidence = 60
+ignore_decorators = [
+  "@app.command", "@app.default", "@crate.command", "@group.command", "@nested.command",
+  "@nested.default", "@wheels.command", "@target.command",
+  "@pytest.fixture", "@override",
+]
+ignore_names = ["pytestmark", "pytest_collection_modifyitems"]

@@ -198,7 +198,7 @@ def test_a_resumed_search_spends_at_most_the_remaining_share(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     allowances: list[int] = []
-    real = workflow.pareto_search  # pyright: ignore[reportPrivateImportUsage]
+    real = workflow.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
 
     def spy(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
         allowances.append(cast(int, kwargs["metric_calls"]))
@@ -318,7 +318,7 @@ def test_a_coded_reflection_failure_stops_the_search_instead_of_skipping_the_pro
 def test_a_lasting_reflection_fault_on_the_last_iteration_still_stops_the_run(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
-    real = workflow.pareto_search  # pyright: ignore[reportPrivateImportUsage]
+    real = workflow.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
 
     def tiny(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
         return real(*args, **{**kwargs, "metric_calls": len(cast(list[object], args[3])) + 2})  # pyright: ignore[reportAny]

@@ -61,9 +61,6 @@ def find(checks: Checks, check: str, path: str | None = None, named: str | None 
     return hits[0]
 
 
-def line_of(text: str, needle: str) -> int:
-    return next(number for number, line in enumerate(text.splitlines(), 1) if needle in line)
-
 
 def test_passing_package_has_no_failed_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     checks = run(make(tmp_path), capsys)
