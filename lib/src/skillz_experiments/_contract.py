@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Literal, cast
 
 from skillz_experiments._cases import CodedError, digest, mapping, relative, string
-from skillz_experiments._evaluation import HELPER_FIXTURES
 from skillz_experiments._gate import Statistics
 
 LOCATION = "evals/autoimprove.json"
@@ -96,9 +95,19 @@ class Contract:
         return digest(self.data())
 
 
+HELPER_FIXTURES: tuple[dict[str, object], ...] = (
+    {"input": "---\nname: contract\ndescription: Inspect\n---\n# Body\n[Guide](references/guide.md)\n",
+     "returncode": 0,
+     "output": {"schema_version": 4, "advisory_sentences": [], "frontmatter_keys": ["description", "name"],
+                "body_line_count": 2,
+                "local_link_targets": ["references/guide.md"], "long_sentences": []}},
+    {"input": "---\nname: contract\n---\n[Escape](../secret)\n", "returncode": 3, "output": None,
+     "error": {"error": "inspect: link escapes package", "exit_code": 3}},
+)
+
 _LEGACY_SKILLZ = Contract(
     "skillz", "$skillz audit", {"inspection": Grader("exact-json"), "audit": Grader("audit")},
-    Helper("scripts/inspect_skill.py", "fixture.md", HELPER_FIXTURES), (), "legacy")
+    Helper("scripts/inspect-skill.pyz", "fixture.md", HELPER_FIXTURES), (), "legacy")
 
 
 def resolve(contract: Contract | None) -> Contract:
@@ -164,8 +173,13 @@ def _helper(value: object) -> Helper:
         raise ValueError("helper fixtures must be a list")
     for entry in cast(list[object], raw):
         fixture = mapping(entry)
-        if set(fixture) != {"input", "returncode", "output"} or type(fixture["returncode"]) is not int:
-            raise ValueError("helper fixture needs input, integer returncode, and output")
+        required = {"input", "returncode", "output"}
+        if not required <= set(fixture) <= required | {"error"} or type(fixture["returncode"]) is not int:
+            raise ValueError("helper fixture needs input, integer returncode, and output, and may add error")
+        if "error" in fixture and not isinstance(fixture["error"], dict):
+            raise ValueError("helper fixture error must be an object")
+        if fixture["output"] is None and fixture["returncode"] != 0 and "error" not in fixture:
+            raise ValueError("helper fixture with null output and a nonzero returncode needs an error object")
         _ = string(fixture["input"], "helper fixture input")
         fixtures.append(fixture)
     return Helper(relative(string(item.get("path"), "helper path")),

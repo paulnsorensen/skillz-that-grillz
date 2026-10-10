@@ -68,11 +68,11 @@ class Sandbox(Protocol):
     """Optional transport capability that the command grader needs.
 
     Run `argv` with `workspace` as the working directory, with the same isolation as a task run.
-    Return the exit code and the standard output. A transport that grades command kinds also puts
+    Return the exit code, the standard output, and the standard error. A transport that grades command kinds also puts
     `output_files` in its `invoke` result: a map of relative path to text for the task workspace.
     """
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]: ...
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]: ...
 
 
 @runtime_checkable
@@ -135,7 +135,7 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     """
     require_sandbox(task)
     with _grading_workspace(case, files, "command") as workspace:
-        code, stdout = cast(Sandbox, task).sandbox(workspace, list(argv))
+        code, stdout, _stderr = cast(Sandbox, task).sandbox(workspace, list(argv))
     return _command_score(code, stdout)
 
 
@@ -148,7 +148,7 @@ def capture(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     require_sandbox(task)
     with _grading_workspace(case, files, "capture") as workspace:
         (workspace / CAPTURE_DIRECTORY).mkdir()
-        code, _stdout = cast(Sandbox, task).sandbox(workspace, list(argv))
+        code, _stdout, _stderr = cast(Sandbox, task).sandbox(workspace, list(argv))
         if code != 0:
             raise CaptureFailed(f"the capture argv exits with code {code}")
         return _captured(workspace / CAPTURE_DIRECTORY)

@@ -76,7 +76,7 @@ def task_answer(findings: list[dict[str, object]]) -> dict[str, object]:
             "events": [{"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0,
                         "command": command}} for command in
                        ["cat .agents/skills/skillz/SKILL.md",
-                        "python3 -I .agents/skills/skillz/scripts/inspect_skill.py fixture.md"]],
+                        "python3 -I .agents/skills/skillz/scripts/inspect-skill.pyz fixture.md"]],
             "workspace": "/TASK", "usage": {"input_tokens": 10, "cached_input_tokens": 2, "output_tokens": 3},
             "latency_seconds": 1.0}
 

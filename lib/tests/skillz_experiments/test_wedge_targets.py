@@ -25,6 +25,7 @@ from skillz_experiments import _workflow
 from skillz_experiments._candidate import FROZEN_FILE_LIMIT, FROZEN_TOTAL_LIMIT, PACKAGE_LIMIT, Candidate, make_workspace
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract, load_contract
+from skillz_experiments._facts import repo_root
 from skillz_experiments._gate import DEFAULT_STATISTICS
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._harness import Configuration
@@ -388,10 +389,31 @@ def test_the_rebuilt_pyz_runs_in_the_production_sandbox(
     recorder.seen[0].materialize(root)
     try:
         transport = cast(Sandbox, cast(object, session.transports["task"]))
-        code, stdout = transport.sandbox(workspace, ["/usr/bin/python3", "-I", ".agents/skills/echo-skill/scripts/beta.pyz"])
+        code, stdout, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-I", ".agents/skills/echo-skill/scripts/beta.pyz"])
     finally:
         session.close()
     assert (code, stdout.strip()) == (0, "beta v2")
+
+REAL_SKILL = Path(__file__).resolve().parents[3] / "skills/skillz"
+
+
+def test_the_real_skill_plans_the_inspector_as_the_only_editable_target() -> None:
+    contract = load_contract(REAL_SKILL)
+    assert contract.helper is not None and contract.helper.path == "scripts/inspect-skill.pyz"
+    skeleton = Candidate.capture(REAL_SKILL, [], contract)
+    plan = plan_targets(REAL_SKILL, skeleton.files, contract, "prose+cli")
+    assert [target.name for target in plan.editable] == ["inspect-skill"]
+    assert {name.rsplit("/", 1)[-1] for name in plan.sources} >= {"__init__.py", "_cli.py", "_inspect.py"}
+    assert all(name.startswith("@wedge/lib/src/skillz_inspect/") for name in plan.sources)
+    assert sum(len(text) for text in plan.sources.values()) <= WEDGE_EDIT_LIMIT
+    fixed = {name for name in plan.frozen if name.startswith("@wedge/lib/fromargs/")}
+    assert fixed and not fixed & set(plan.sources)
+    assert {"scripts/skillz-experiment.pyz", "scripts/inspect-skill.pyz"} <= set(plan.frozen)
+    assert "skillz-experiment" in plan.reasons
+    names = _workflow._editable(skeleton.files | plan.sources, contract, "prose+cli", skeleton.frozen.keys(), plan)
+    assert set(plan.sources) <= set(names)
+    assert not any(name.startswith(("@wedge/lib/fromargs/", "@wedge/lib/src/skillz_experiments/")) for name in names)
+
 
 
 def test_a_broken_build_rejects_the_candidate_with_build_failed(
@@ -567,6 +589,8 @@ def test_export_refuses_a_wedge_path_outside_the_repo_root(
         _completed(out, {"@wedge/proj/link/x.py": "x = 1\n"})
     else:
         shutil.rmtree(world.repo / ".git")
+        if repo_root(world.repo) is not None:
+            pytest.skip("an ancestor of tmp_path holds .git, so the no-repo case cannot run on this host")
         _completed(out, {BETA: BETA_SOURCE.replace("v1", "v2")})
     destination = tmp_path / "export"
     with pytest.raises(CodedError) as caught:

@@ -11,7 +11,7 @@ from typing import cast, final
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
-from skillz_experiments._evaluation import fixture_result, usage
+from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._evaluator import answer_schema
 from skillz_experiments._isolation import listening, probe
 from skillz_experiments._runtime import Budget, process
@@ -83,6 +83,8 @@ def _validate_answer(value: object, schema: dict[str, object]) -> None:
 
 @final
 class Command:
+    rejection: str | None = None
+
     def __init__(self, command: tuple[str, ...], model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.command = command
         self.model = model
@@ -106,9 +108,9 @@ class Command:
     def _sandbox(self, workspace: Path, argv: list[str]) -> dict[str, object]:
         return self._request("sandbox", workspace, argv=argv)
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         result = self._sandbox(workspace, argv)
-        return cast(int, result["returncode"]), cast(str, result["stdout"])
+        return cast(int, result["returncode"]), cast(str, result["stdout"]), cast(str, result["stderr"])
 
     def _discover(self, workspace: Path, name: str) -> bool:
         skill = workspace / ".agents/skills" / name
@@ -141,23 +143,15 @@ class Command:
         return {"adapter": "command", "model": self.model, "isolation": "passed", "live_calls": 0}
 
     def check_candidate(self, candidate: Candidate) -> bool:
+        self.rejection = None
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             rules = resolve(candidate.contract)
             candidate.materialize(workspace / ".agents/skills" / rules.skill)
             if not self._discover(workspace, rules.skill):
                 return False
-            helper = rules.helper
-            if helper is None:
-                return True
-            for fixture in helper.fixtures:
-                (workspace / helper.input).parent.mkdir(parents=True, exist_ok=True)
-                _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
-                code, stdout = self.sandbox(workspace, [
-                    "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
-                if not fixture_result(fixture, code, stdout):
-                    return False
-        return True
+            self.rejection = helper_failure(self, workspace, rules)
+            return self.rejection is None
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

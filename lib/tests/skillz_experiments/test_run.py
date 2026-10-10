@@ -240,7 +240,7 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
 
 
 @pytest.mark.parametrize(("edit", "components"), [("prose", ["SKILL.md"]),
-                                                  ("prose+cli", ["SKILL.md", "scripts/inspect_skill.py"])])
+                                                  ("prose+cli", ["SKILL.md", "scripts/inspect-skill.pyz"])])
 def test_every_reflection_request_requires_ste_prose_and_carries_the_candidate(
         edit: str, components: list[str], limits: tuple[int, int]) -> None:
     advisory, maximum = limits

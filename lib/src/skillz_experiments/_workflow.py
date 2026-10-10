@@ -68,9 +68,10 @@ def _failed_outcome(case: Case, candidate: Candidate, error: Exception) -> dict[
             "status": "evaluation-failed", "failure": str(error), "search_candidate": candidate.identity}
 
 
-def _baseline_rejected() -> Stop:
+def _baseline_rejected(detail: str | None = None) -> Stop:
     return Stop("baseline-contract-rejected", "original candidate fails the frozen native/helper contract",
-                {"next": "fix the skill or its contract, then start a new run in a new directory"})
+                {"next": "fix the skill or its contract, then start a new run in a new directory"}
+                | cast(dict[str, object], {} if detail is None else {"detail": detail}))
 
 
 def _unit_score(value: object) -> float:
@@ -724,7 +725,7 @@ class _Session:
         """Stop before any search call when the seed fails the local candidate contract check."""
         check = cast(Callable[[Candidate], bool] | None, getattr(self.provider, "check_candidate", None))
         if check is not None and not check(self.seed):
-            raise _baseline_rejected()
+            raise _baseline_rejected(cast(str | None, getattr(self.provider, "rejection", None)))
 
     def search(self) -> None:
         """Run the one GEPA search over train and validation cases. Holdout cases never enter it."""

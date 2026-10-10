@@ -73,11 +73,11 @@ class FakeTask:
 class SandboxedTask(FakeTask):
     """A task transport that runs the grader command like a sandbox would."""
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         self.workspaces.append({str(path.relative_to(workspace)): path.read_text()
                                 for path in sorted(workspace.rglob("*")) if path.is_file()})
         run = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=20)
-        return run.returncode, run.stdout
+        return run.returncode, run.stdout, run.stderr
 
 
 class FakeJudge:
@@ -153,7 +153,8 @@ def test_contract_staging_prompt_uses_the_declared_invocation(tmp_path: Path, mo
     prompt = task.prompts[0]
     assert prompt.startswith("$echo-skill run\n")
     assert ".agents/skills/echo-skill/SKILL.md" in prompt
-    assert "skillz" not in prompt and "inspect_skill" not in prompt and "EXPECTED_SENTINEL" not in prompt
+    assert "skillz" not in prompt and "inspect_skill" not in prompt and "inspect-skill" not in prompt
+    assert "EXPECTED_SENTINEL" not in prompt
     assert result["score"] == 0.0 and result["loaded"] is True and result["helper_executed"] is True
 
 

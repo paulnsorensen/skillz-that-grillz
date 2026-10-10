@@ -38,9 +38,9 @@ test:
     python3 .github/scripts/check_skillz_references.py
     python3 -B -m unittest discover -s skills/skillz/engine/tests -p 'test_*.py'
     uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
-    uv run --locked --extra experiments --project lib basedpyright lib/src/wedge lib/tests/wedge lib/src/skillz_experiments lib/tests/skillz_experiments skills/skillz/scripts/inspect_skill.py
+    uv run --locked --extra experiments --project lib basedpyright lib/src/wedge lib/tests/wedge lib/src/skillz_experiments lib/tests/skillz_experiments lib/src/skillz_inspect lib/tests/skillz_inspect lib/tests/conftest.py
     just test-fromargs
-    uv run --locked --extra experiments --project lib pytest lib/tests/wedge lib/tests/skillz_experiments -q
+    uv run --locked --extra experiments --project lib pytest lib/tests/wedge lib/tests/skillz_experiments lib/tests/skillz_inspect -q
     uv run --locked --project lib wedge check --root lib/examples/skills --root lib/examples/consumer/skills
     uv run --locked --project lib wedge bundle skills/skillz skills/skillz/wedge --check
 
