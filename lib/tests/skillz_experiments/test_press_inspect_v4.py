@@ -30,7 +30,7 @@ from skillz_experiments._graders import Sandbox
 from skillz_experiments._harness import Configuration, Harness
 from skillz_experiments._runtime import Budget
 from skillz_experiments._runtime import process as run_process
-from skillz_experiments._wedge_targets import Rebuilder, plan_targets, reopen, seal
+from skillz_experiments._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
 
 ROOT = Path(__file__).resolve().parents[3]
 REAL_SKILL = ROOT / "skills/skillz"
@@ -616,7 +616,8 @@ def _rebuilder(tmp_path: Path) -> tuple[Rebuilder, Candidate]:
     skeleton = Candidate.capture(REAL_SKILL, [], contract)
     plan = plan_targets(REAL_SKILL, skeleton.files, contract, "prose+cli")
     seed = Candidate(skeleton.files | plan.sources, tuple(plan.sources), contract, frozen=skeleton.frozen | plan.frozen)
-    sealed, record = seal(plan, seed, REAL_SKILL, tmp_path / "site")
+    plan, layers = settle(plan, tmp_path / "site")
+    sealed, record = seal(plan, seed, REAL_SKILL, layers)
     rebuilder = reopen(REAL_SKILL, record, sealed, tmp_path / "site")
     assert rebuilder is not None
     return rebuilder, sealed
