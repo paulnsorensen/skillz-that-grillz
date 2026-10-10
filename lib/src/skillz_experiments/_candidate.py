@@ -22,7 +22,14 @@ FROZEN_TOTAL_LIMIT = 64 * 1024 * 1024
 # A candidate file under this prefix is wedge source from the repository, not a skill file.
 # The rest of the name is the path relative to the repository root. `materialize` never writes it.
 WEDGE_PREFIX = "@wedge/"
+# The editable component that proposes one new wedge target. It is not a skill file: `materialize` never writes it.
+NEW_CLI = "@new-cli"
 _RUNTIME_OWNED = {"home", "tmp", ".agents", "answer.json", "response-schema.json"}
+
+
+def is_skill_file(name: str) -> bool:
+    """Return whether the candidate file `name` is a file of the skill: not a wedge source and not the `@new-cli` component."""
+    return not name.startswith(WEDGE_PREFIX) and name != NEW_CLI
 
 
 def _megabytes(size: int) -> str:
@@ -122,8 +129,8 @@ class Candidate:
                 if any(part.startswith(".") for part in posix.split("/")):
                     raise CodedError("hidden-file", f"{posix} is a hidden file; remove it")
                 name = relative(posix)
-                if name.startswith(WEDGE_PREFIX):
-                    raise CodedError("reserved-name", f"{name} starts with {WEDGE_PREFIX}, which names wedge sources; rename the file")
+                if not is_skill_file(name):
+                    raise CodedError("reserved-name", f"{name} is reserved for wedge sources and the new-target component; rename the file")
                 if name in (LOCATION, *exclude):
                     continue
                 if path.stat().st_size > FROZEN_FILE_LIMIT:
@@ -156,7 +163,8 @@ class Candidate:
     def changed(self, components: dict[str, str]) -> Candidate:
         if set(components) != set(self.editable):
             raise ValueError("proposal components differ from the frozen set")
-        if any(len(text) > TEXT_FILE_LIMIT for text in components.values()):
+        # The new-target component has its own named size check.
+        if any(len(text) > TEXT_FILE_LIMIT for name, text in components.items() if name != NEW_CLI):
             raise ValueError("proposal exceeds component size limit")
         child = Candidate(self.files | components, self.editable, self.contract, self.script, self.frozen)
         child.__dict__["frozen_digests"] = self.frozen_digests
@@ -174,7 +182,7 @@ class Candidate:
 
     def materialize(self, root: Path) -> None:
         for name, content in self.files.items():
-            if name.startswith(WEDGE_PREFIX):
+            if not is_skill_file(name):
                 continue
             path = root / relative(name)
             path.parent.mkdir(parents=True, exist_ok=True)

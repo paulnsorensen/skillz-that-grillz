@@ -91,6 +91,10 @@ The layer key covers the wedge format version, the `uv.lock` digest, the groups,
 First-party source never enters the layer, and a build leaves the layer unchanged.
 The output matches a fresh `build` byte for byte.
 
+The skillz experiment runner also generates targets. Its `@new-cli` component appends one `[[target]]` table to the `wedge.toml` of a candidate.
+The generated table sets `groups = []` and builds from the site layer of the project with no groups.
+The experiments reference describes the component.
+
 Keep reusable source inside the packaged skill when possible.
 Ship source and manifest with the generated launcher and lock.
 In this default mode, the archive belongs in release assets, not version control.

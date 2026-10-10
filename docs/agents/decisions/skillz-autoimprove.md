@@ -14,6 +14,7 @@ That ADR supersedes the records about those commands and arms in this file. Thes
 - **Decision:** A contract names the skill, task kinds, invocation, optional helper, grader per kind, and editable files. It lives in `<skill>/evals/autoimprove.json` or in a `target` block of the case manifest; the manifest block wins. With neither, autoimprove asks the user to choose judge-only grading with a powerful model, or to find or draft a contract. A drafted contract carries `"status": "draft"` and `dataset` refuses it until the user approves it.
 - **Alternatives:** Inference from SKILL.md and `scripts/` with judge-only grading (no deterministic grade for rewrite skills). A manifest-only or skill-only location.
 - **Consequences:** Skills outside this repository work. Each target needs a contract, but autoimprove can draft one.
+- **Amendment 2026-10-10:** The helper is now `inspect-skill.pyz`, built from `lib/src/skillz_inspect`.
 
 ### ADR-002: Use exact-json, judge, command, and hybrid graders  [status: accepted]
 - **Context:** Rewrite skills such as bash-shortening produce changed files. Their truth is mostly output state. gskill grades by test pass or fail only.
@@ -27,6 +28,7 @@ That ADR supersedes the records about those commands and arms in this file. Thes
   Schema v3 moves `long_sentences` to sentences over 25 words and adds `advisory_sentences` for 21 to 25 words.
 - **Alternatives:** A judge-only lens. A separate STE script.
 - **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `lib/src/skillz_experiments/_evaluation.py`, `skills/skillz/evals/autoimprove.json`, and the `skills/skillz/references/experiments.md` example.
+- **Amendment 2026-10-10:** The inspector is now the fromargs package `lib/src/skillz_inspect`, built as `inspect-skill.pyz`, at schema 4.
 
 ### ADR-004: Run the Claude Code adapter in --restricted mode  [status: superseded in part by ADR-006; amended by skillz-pragmatic-autoimprove ADR-001]
 - **Context:** The Codex adapter isolates discovery, filesystem, and network. Claude Code documents `--restricted` for eval harnesses; `--bare` needs an API key.
@@ -50,11 +52,14 @@ Domain and proxy policy beyond these probes stays unverified. The preflight does
 The macOS path stays unverified live. A passed preflight does not prove macOS isolation.
 The manual macOS checklist is in `skills/skillz/references/experiment-harness.md`.
 
-### ADR-005: Make the wedge arm a hand-written stdlib script  [status: accepted]
+### ADR-005: Make the wedge arm a hand-written stdlib script  [status: superseded by skillz-pragmatic-autoimprove ADR-003; amended 2026-10-10 for wedge first-class]
 - **Context:** The user states that a wedge is a deterministic offload made by hand, and that Python is assumed installed. A real `/wedge` build needs `uv` and network access.
 - **Decision:** The `wedge` search mode adds one new `scripts/<name>.py` file plus its SKILL.md call site, seeded from `--brief PATH`. It runs as `python3 -I`. Selection ranks correctness first and tokens second.
 - **Alternatives:** A per-evaluation `.pyz` build. Optimizing the brief text only.
 - **Consequences:** No build in the loop. Packaging as a `.pyz` stays a separate, optional step.
+- **Amendment 2026-10-10 (wedge first-class, C4):** The stdlib-script rule no longer holds for Python helpers. fromargs is the default for an edit to a wedged Python source, and the `prose+cli` reflection prompt says so. The host builds an own target over a site layer. The `@new-cli` component adds a new fromargs target.
+  Two cases keep another helper. A non-Python helper keeps its language. A Python helper may be a stdlib `argparse` helper only when the skill has no `wedge.toml` that can build a fromargs target.
+  `audit-facts` reports own targets as editable or frozen, and it flags foreign `.pyz` bundles.
 
 ### ADR-006: Replace --restricted with project setting sources and a free skill inventory  [status: accepted]
 - **Context:** Issue #168. On Claude Code 2.1.289 and later, `--restricted` drops project skills, so the candidate never loads. `disableBundledSkills` keeps Claude Code's own commands and `@builtin` plugins in the init event, and account skills load with the login. Ubuntu's `bwrap-userns-restrict` profile blocks the nested user namespace of the Unix-socket filter, and the documented sysctl does not lift it.
@@ -68,4 +73,4 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** A runner-owned bwrap and Seatbelt outer sandbox with a Python proxy (more security code to maintain). Docker Sandboxes or microsandbox (need KVM). Anthropic sandbox-runtime (needs Node and has the same seccomp bug).
 - **Consequences:** The nono backend bills an API key, not the Claude login. A task command can call `api.anthropic.com` with the proxy token, but cannot read the key or reach another host. macOS stays unverified. A fresh run stops with `host-not-ready`, and a resume stops with `nono-unavailable`. A free local check with a stand-in Claude passed the full preflight under real nono on Ubuntu 26.04. No paid live run has exercised it yet. Under nono, `sandboxed=False` drops the `.claude` deny rule, and the workspace is read-write. A task can create `<workspace>/.claude/skills/*`.
 
-_Source: Mold session 2026-10-03, PR #118 Affinage review, and the issue #168 and #169 research · Updated: 2026-10-08_
+_Source: Mold session 2026-10-03, PR #118 Affinage review, and the issue #168 and #169 research · Updated: 2026-10-10 (ADR-005 amendment, inspector path)_

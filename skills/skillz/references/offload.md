@@ -49,6 +49,15 @@ A shell pipeline over existing binaries is also acceptable.
 Keep the same contract: one JSON document on stdout, and one JSON error line on stderr.
 Use exit status 2 for a usage error and 3 for a failed input contract.
 
+Inside an experiment run (`--edit prose+cli`), fromargs stays the default for each wedged Python source.
+Only two cases keep a different helper:
+
+- A non-Python helper, such as a shell script, keeps its language.
+- A Python helper may be a stdlib `argparse` helper only when the skill has no `wedge.toml` that can build a fromargs target.
+
+The `@new-cli` component is the in-run way to add a fromargs target.
+The experiments reference describes `@new-cli`.
+
 ## 4. Deliver
 
 Wedge the CLI when all of these conditions are true:

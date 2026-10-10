@@ -22,10 +22,10 @@ import wedge._build as wedge_build
 from wedge._build import build_many
 
 from skillz_experiments import _workflow
-from skillz_experiments._candidate import FROZEN_FILE_LIMIT, FROZEN_TOTAL_LIMIT, PACKAGE_LIMIT, Candidate, make_workspace
+from skillz_experiments._candidate import NEW_CLI, FROZEN_FILE_LIMIT, FROZEN_TOTAL_LIMIT, PACKAGE_LIMIT, Candidate, make_workspace
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract, load_contract
-from skillz_experiments._facts import repo_root
+from skillz_experiments._cases import repo_root
 from skillz_experiments._gate import DEFAULT_STATISTICS
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._harness import Configuration
@@ -410,8 +410,9 @@ def test_the_real_skill_plans_the_inspector_as_the_only_editable_target() -> Non
     assert fixed and not fixed & set(plan.sources)
     assert {"scripts/skillz-experiment.pyz", "scripts/inspect-skill.pyz"} <= set(plan.frozen)
     assert "skillz-experiment" in plan.reasons
-    names = _workflow._editable(skeleton.files | plan.sources, contract, "prose+cli", skeleton.frozen.keys(), plan)
-    assert set(plan.sources) <= set(names)
+    assert plan.capable is not None
+    names = _workflow._editable(skeleton.files | plan.sources | {NEW_CLI: ""}, contract, "prose+cli", skeleton.frozen.keys(), plan)
+    assert set(plan.sources) | {NEW_CLI} <= set(names)
     assert not any(name.startswith(("@wedge/lib/fromargs/", "@wedge/lib/src/skillz_experiments/")) for name in names)
 
 
