@@ -193,7 +193,7 @@ def test_build_rejects_local_source_over_installed_dependency(
         )
     _ = config.write_text(text)
 
-    with pytest.raises(ConfigError, match="would overwrite installed path"):
+    with pytest.raises(ConfigError, match="shadows installed"):
         _ = build(skill, tmp_path / "out")
 
 
@@ -207,7 +207,7 @@ def test_copy_source_rejects_existing_file_without_overwriting(tmp_path: Path) -
     _ = destination.write_text("installed\n")
 
     copy_source = cast(Callable[[Path, Path], None], getattr(wedge_build, "_copy_source"))
-    with pytest.raises(ConfigError, match="would overwrite installed path"):
+    with pytest.raises(ConfigError, match="build source 'source.py' collides with another source 'source.py'"):
         copy_source(source, site_dir)
 
     assert destination.read_text() == "installed\n"
@@ -236,12 +236,13 @@ def test_build_source_paths_preserve_namespace_and_exclude_unselected(
 
 
 @pytest.mark.ac("AC-W2")
-def test_source_selections_do_not_share_sites(
+def test_source_selections_stage_different_trees(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
     import wedge._build as wedge_build
-    first = wedge_build._prepare(skill)  # pyright: ignore[reportPrivateUsage]
+    from wedge._config import load_config
+    first = wedge_build.stage_sources(wedge_build.resolve_target(skill, load_config(skill)), tmp_path / "one")
     config = skill / "wedge.toml"
     _ = config.write_text(config.read_text().replace(
         'source = "../../../fromargs/examples/cheese_cave.py"',
@@ -250,5 +251,9 @@ def test_source_selections_do_not_share_sites(
         'include = ["../../../fromargs/src/fromargs"]',
         'source_paths = ["__init__.py"]',
     ))
-    second = wedge_build._prepare(skill)  # pyright: ignore[reportPrivateUsage]
-    assert first.site != second.site
+    second = wedge_build.stage_sources(wedge_build.resolve_target(skill, load_config(skill)), tmp_path / "two")
+    assert sorted(p.name for p in first.iterdir()) == ["cheese_cave.py", "fromargs"]
+    assert [p.relative_to(second).as_posix() for p in sorted(second.rglob("*"))] == [
+        "fromargs",
+        "fromargs/__init__.py",
+    ]

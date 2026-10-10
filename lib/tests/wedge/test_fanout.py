@@ -11,6 +11,7 @@ import json
 import shutil
 import subprocess
 import threading
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable
 
@@ -143,13 +144,13 @@ def test_skills_over_one_project_share_one_site_directory(
     consumer = copy_consumer(tmp_path / "consumer")
     _ = _second_skill(consumer)
     populated: list[Path] = []
-    original = wedge_build._populate_site  # pyright: ignore[reportPrivateUsage]
+    original = wedge_build.populate_site_layer
 
-    def counting(site: wedge_build.SiteInputs, site_dir: Path) -> None:
-        populated.append(site_dir)
-        original(site, site_dir)
+    def counting(project: Path, groups: Sequence[str], dest: Path) -> wedge_build.SiteLayer:
+        populated.append(dest)
+        return original(project, groups, dest)
 
-    monkeypatch.setattr(wedge_build, "_populate_site", counting)
+    monkeypatch.setattr(wedge_build, "populate_site_layer", counting)
 
     outcomes = build_many([consumer / SKILLS / "hello", consumer / SKILLS / "goodbye"], tmp_path / "dist")
 
@@ -165,10 +166,10 @@ def test_a_site_that_cannot_be_populated_fails_each_skill_that_shares_it(
     consumer = copy_consumer(tmp_path / "consumer")
     _ = _second_skill(consumer)
 
-    def failing(_site: wedge_build.SiteInputs, _site_dir: Path) -> None:
+    def failing(_project: Path, _groups: Sequence[str], _dest: Path) -> wedge_build.SiteLayer:
         raise subprocess.CalledProcessError(1, ["uv", "pip", "install"], stderr="index unreachable\n")
 
-    monkeypatch.setattr(wedge_build, "_populate_site", failing)
+    monkeypatch.setattr(wedge_build, "populate_site_layer", failing)
 
     outcomes = build_many([consumer / SKILLS / "hello", consumer / SKILLS / "goodbye"], tmp_path / "dist")
 
@@ -188,7 +189,7 @@ def test_two_skills_with_one_name_both_fail_and_the_rest_build(
 
     outcomes = build_many([consumer / SKILLS / "hello", twin, other], tmp_path / "dist")
 
-    assert [o.error for o in outcomes[:2]] == ["duplicate skill name 'hello'"] * 2
+    assert [o.error for o in outcomes[:2]] == ["duplicate target name 'hello'"] * 2
     assert outcomes[2].error is None and outcomes[2].value is not None
     assert sorted(p.name for p in (tmp_path / "dist").iterdir()) == [outcomes[2].value.path.name]
 

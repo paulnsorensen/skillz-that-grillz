@@ -20,7 +20,7 @@ from typing import cast
 from pathlib import Path
 
 from wedge._build import BuildResult, build_many
-from wedge._config import ConfigError, WedgeConfig, load_config
+from wedge._config import ConfigError, WedgeConfig, load_config, load_targets, multi_target_message
 from wedge._fanout import Outcome
 from wedge._key import FORMAT_VERSION, compute_key
 from wedge._launcher import LAUNCHER_SOURCE
@@ -93,10 +93,30 @@ def _write_lock(skill_dir: Path, result: BuildResult) -> LockData:
 
 
 def lock_many(skill_dirs: Sequence[Path], *, jobs: int | None = None) -> list[Outcome[Path, LockData]]:
-    """Build every skill (sharing site directories), then write each lock and launcher."""
+    """Build every skill (sharing site layers), then write each lock and launcher.
+
+    A skill with ``[[target]]`` tables fails once, before any build starts.
+    """
+    rejected: dict[Path, Outcome[Path, LockData]] = {}
+    buildable: list[Path] = []
+    for raw_skill_dir in skill_dirs:
+        skill_dir = Path(raw_skill_dir)
+        try:
+            multi = load_targets(skill_dir)[0].multi
+        except (ConfigError, OSError):
+            multi = False  # build_many reports the invalid configuration
+        if multi:
+            rejected[skill_dir] = Outcome(skill_dir, error=multi_target_message(skill_dir))
+        else:
+            buildable.append(skill_dir)
     outcomes: list[Outcome[Path, LockData]] = []
     with tempfile.TemporaryDirectory(prefix="wedge-lock-") as tmp:
-        for built in build_many(skill_dirs, Path(tmp), jobs=jobs):
+        built_by_dir = iter(build_many(buildable, Path(tmp), jobs=jobs) if buildable else [])
+        for raw_skill_dir in skill_dirs:
+            if Path(raw_skill_dir) in rejected:
+                outcomes.append(rejected[Path(raw_skill_dir)])
+                continue
+            built = next(built_by_dir)
             if built.error is not None or built.value is None:
                 outcomes.append(Outcome(built.item, error=built.error))
                 continue
