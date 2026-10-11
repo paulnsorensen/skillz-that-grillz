@@ -28,13 +28,11 @@ from skillz_experiments._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics, Verdict, case_deltas, close
 from skillz_experiments.gate import verdict as gate_verdict
 from skillz_experiments.harness import (
-    TERMINAL_CODES as _TERMINAL_CODES,
-)
-from skillz_experiments.harness import (
     ClaudeOptions,
     Configuration,
     EnvironmentDiffers,
     Harness,
+    stop_kind,
 )
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
@@ -426,8 +424,8 @@ class Session:
             held = self._fault
             if held is None:
                 replace = True
-            elif error.code in _TERMINAL_CODES:
-                replace = held.code not in _TERMINAL_CODES
+            elif stop_kind(error.code) == "terminal":
+                replace = stop_kind(held.code) != "terminal"
             else:
                 replace = isinstance(held, BudgetExhausted) and not isinstance(error, BudgetExhausted)
             if replace:
@@ -457,7 +455,7 @@ class Session:
             _ = self.record.pop("failure_code", None)
         else:
             self.record["failure_code"] = code
-        if code in _TERMINAL_CODES:
+        if stop_kind(code) == "terminal":
             _ = self.record.pop("preflight", None)
         self.checkpoint()
 

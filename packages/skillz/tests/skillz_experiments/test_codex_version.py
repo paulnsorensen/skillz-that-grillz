@@ -9,7 +9,8 @@ from pathlib import Path
 import pytest
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments.harness import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, Configuration, Harness, _codex
+from skillz_experiments.harness import Configuration, Harness, _codex
+from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN
 from skillz_experiments.harness._codex import Codex, supported
 from skillz_experiments._budget import Budget
 

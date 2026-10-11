@@ -32,14 +32,12 @@ from skillz_experiments._seed import check_coverage, seed_cases
 from skillz_experiments._wedge_targets import plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
-    TERMINAL_CODES as _TERMINAL_CODES,
-)
-from skillz_experiments.harness import (
     BUILTIN_ADAPTERS,
     ClaudeOptions,
     Configuration,
     EnvironmentDiffers,
     host_report,
+    stop_kind,
 )
 from skillz_experiments.run._export import summary
 from skillz_experiments.run._plan import editable_files, plan_estimate, size_plan, supported_kind
@@ -165,7 +163,7 @@ def _close(session: Session, pending: BaseException | None) -> None:
     except CodedError as error:
         detail = {"code": error.code, "message": str(error)}
         with session.lock:
-            terminal = error.code in _TERMINAL_CODES and session.record.get("failure_code") not in _TERMINAL_CODES
+            terminal = stop_kind(error.code) == "terminal" and stop_kind(session.record.get("failure_code")) != "terminal"
             if pending is not None:
                 session.record["close_failure"] = detail
                 if terminal:

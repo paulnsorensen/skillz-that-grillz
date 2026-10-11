@@ -227,7 +227,15 @@ def test_every_adapter_is_a_transport() -> None:
 
 def test_the_barrels_export_exactly_the_contract_names() -> None:
     assert set(harness_barrel.__all__) == {
-        "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "HarnessName", "Transport",
-        "SUBSCRIPTION_LOGIN", "API_KEY", "UNVERIFIED_CREDENTIAL", "MISSING_CREDENTIAL", "doctor", "host_report", "Check",
-        "ClaudeOptions", "Effort", "NOTICE_CODES", "TERMINAL_CODES", "NONO_REMOVED", "command_profile"}
+        "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "Transport", "doctor", "host_report",
+        "ClaudeOptions", "Effort", "NONO_REMOVED", "command_profile", "stop_kind"}
     assert set(wrapper_barrel.__all__) == {"respond", "Runtime", "IMAGE"}
+
+
+@pytest.mark.parametrize(("code", "kind"), [
+    ("isolation-failed", "terminal"), ("credential-changed", "terminal"),
+    ("credential-rotated", "notice"), ("credential-refreshed", "notice"),
+    ("budget-exhausted", None), (None, None),
+])
+def test_stop_kind_classifies_claude_stop_codes(code: str | None, kind: str | None) -> None:
+    assert harness_barrel.stop_kind(code) == kind

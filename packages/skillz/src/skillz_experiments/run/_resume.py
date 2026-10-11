@@ -12,8 +12,7 @@ from typing import TextIO
 from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments._contract import Contract
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics
-from skillz_experiments.harness import NONO_REMOVED, ClaudeOptions
-from skillz_experiments.harness import TERMINAL_CODES as _TERMINAL_CODES
+from skillz_experiments.harness import NONO_REMOVED, ClaudeOptions, stop_kind
 from skillz_experiments.run._session import HarnessName, text_field
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit
@@ -59,7 +58,7 @@ def require_private(out: Path) -> None:
 def refuse_terminated(record: dict[str, object]) -> None:
     """Stop when the run record has a terminal code."""
     stopped = record.get("failure_code")
-    if stopped in _TERMINAL_CODES:
+    if stop_kind(stopped) == "terminal":
         raise Stop("run-terminated", f"the run stopped with {stopped}; start a new run directory",
                    {"next": "start a new run in a new directory", "failure_code": stopped})
 

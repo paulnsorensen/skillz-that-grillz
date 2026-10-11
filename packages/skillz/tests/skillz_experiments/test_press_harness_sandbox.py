@@ -17,7 +17,8 @@ from skillz_experiments import _cli
 from skillz_experiments.run import _run, _session
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
-from skillz_experiments.harness import MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, Configuration, _doctor
+from skillz_experiments.harness import Configuration, _doctor
+from skillz_experiments.harness._check import MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN
 from skillz_experiments.harness._codex import Codex, supported
 from skillz_experiments.wrapper import _gemini
 from skillz_experiments._records import read, write

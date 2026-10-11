@@ -16,7 +16,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
 from skillz_experiments.run import Stop, export as export_run, run as run_workflow
-from skillz_experiments.harness import NOTICE_CODES, Configuration, Effort, doctor
+from skillz_experiments.harness import Configuration, Effort, doctor, stop_kind
 from skillz_experiments.wrapper import IMAGE as GEMINI_IMAGE, Runtime, respond as gemini_respond
 
 Harness = Literal["claude", "codex"]
@@ -174,7 +174,7 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
             try:
                 adapter.close()
             except CodedError as error:
-                if error.code not in NOTICE_CODES:
+                if stop_kind(error.code) != "notice":
                     raise
                 warning = str(error)
         return result if warning is None else result | {"close_warning": warning}
