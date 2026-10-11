@@ -2,7 +2,7 @@
 
 These records explain the design of `/skillz autoimprove`, which generalizes the skillz experiment runner at `packages/wedge/src/skillz_experiments/`.
 The approved spec is `specs/skillz-autoimprove.md` in the durable cheese corpus.
-The user settled each decision in a Mold session on 2026-10-03.
+The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10.
 
 ## Records
 
@@ -73,4 +73,24 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** A runner-owned bwrap and Seatbelt outer sandbox with a Python proxy (more security code to maintain). Docker Sandboxes or microsandbox (need KVM). Anthropic sandbox-runtime (needs Node and has the same seccomp bug).
 - **Consequences:** The nono backend bills an API key, not the Claude login. A task command can call `api.anthropic.com` with the proxy token, but cannot read the key or reach another host. macOS stays unverified. A fresh run stops with `host-not-ready`, and a resume stops with `nono-unavailable`. A free local check with a stand-in Claude passed the full preflight under real nono on Ubuntu 26.04. No paid live run has exercised it yet. Under nono, `sandboxed=False` drops the `.claude` deny rule, and the workspace is read-write. A task can create `<workspace>/.claude/skills/*`.
 
-_Source: Mold session 2026-10-03, PR #118 Affinage review, and the issue #168 and #169 research · Updated: 2026-10-10 (ADR-005 amendment, inspector path)_
+### ADR-008: Score journeys as an autoimprove case kind  [status: accepted]
+- **Context:** The skills /culture, /mold, and /cook ask the user questions across several turns. The runner was one-shot, so it could not score them.
+- **Decision:** A journey is a case kind that search and the holdout gate score. A simulator role plays the user and answers from a hidden brief. The `journey` grader gates on the trace, then judges the transcript.
+- **Alternatives:** A measure-only journey command. A format-only journey with an external runner. No journeys.
+- **Consequences:** One live stream-json process runs each journey and keeps `--no-session-persistence`. The simulator never sees `expected` or the rubric. Codex journeys are deferred, and Codex raises `journey-unsupported`. Simulator tokens are not task tokens: `task_usage` holds only the agent usage, and `simulator_usage` records the simulator share, so the skillz-pragmatic-autoimprove token rule never charges them.
+
+### ADR-009: Declare the task tool surface in the contract  [status: accepted]
+- **Context:** A journey skill needs more than `Bash,Read,Skill`. It can call MCP servers, agents, and companion skills.
+- **Decision:** The contract `surface` block declares `tools`, an MCP config, agents whose frontmatter `name` equals the file stem, and read-only companion skills. The live preflight accepts only the declared names.
+  - **Read-only files:** A file that the seed MCP config runs is read-only, because the config starts it on the host; a contract that names it in `editable` or as the helper stops with `contract-surface`. The check matches file names in the seed config text, so it is best-effort. It does not see a file reached through `cwd` and a bare name, or through an import.
+  - **Own wedge targets:** An own wedge target whose `.pyz` the seed MCP config names stays frozen and gives search no sources. A `@new-cli` proposal whose `.pyz` the config names is rejected with `contract-surface`.
+- **Alternatives:** Keep `Bash,Read,Skill` only. Load the host's real configuration, which breaks ADR-006 and ADR-007. Replace each server with a stub.
+- **Consequences:** The surface joins the environment reuse key and the preflight. An MCP server can need sandbox paths that the profile denies. Under `--isolation claude`, MCP stdio servers run as children of Claude Code, outside the Bash sandbox. Under nono, they run inside the nono profile. The MCP config is not editable, because it holds host-run commands. Agents are not editable either, because an edit can add frontmatter keys such as `mcpServers` or `permissionMode`.
+
+### ADR-010: Give journey runs a separate budget  [status: accepted]
+- **Context:** A journey with 8 turns costs about 17 calls. A gate of 6 cases with 3 repeats needs about 612 calls.
+- **Decision:** A run with a journey case shows a separate journey budget line and asks for approval once. The ceiling is 1000 calls and 28800 seconds. The plan charges 30 seconds for each call, so the seconds cap binds first, at about 960 calls. This amends skillz-pragmatic-autoimprove ADR-005 for those runs.
+- **Alternatives:** Journeys only in the gate. A fit inside 200 calls and 7200 seconds with 4 turns and 1 repeat, which weakens ADR-002. Higher global caps.
+- **Consequences:** Journey runs take hours. The plan sizes the holdout gate from the sum of its case costs. It sizes each search call at the mean case cost. A mixed manifest then does not pay the journey cost for every case. Anthropic usage terms still limit volume.
+
+_Source: Mold session 2026-10-03, Mold session 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-11 (ADR-005 amendment, inspector path; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets)_

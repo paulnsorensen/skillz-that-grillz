@@ -111,7 +111,7 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
                                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     """Drive `main(["run", ...])` through its three stops to `complete`. Only the harness `create` step is faked."""
     def create(_self: Configuration, _model: str, budget: Budget, checkpoint: Callable[[], None],
-               _out: Path | None = None) -> _Provider:
+               _out: Path | None = None, *_surface: object) -> _Provider:
         return _Provider(budget, checkpoint)
 
     monkeypatch.setattr(Configuration, "create", create)

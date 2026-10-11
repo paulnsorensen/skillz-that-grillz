@@ -9,11 +9,12 @@ from typing import cast
 import pytest
 
 from skillz_experiments._candidate import Candidate, make_workspace, stage_task
-from skillz_experiments._cases import CodedError, load_cases, mapping
+from skillz_experiments._cases import Case, CodedError, Journey, digest, load_cases, mapping
 from skillz_experiments._cli import main
 from skillz_experiments._codex import Codex
-from skillz_experiments._contract import parse
+from skillz_experiments._contract import Surface, parse
 from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._workflow import _editable  # pyright: ignore[reportPrivateUsage]
 
 ECHO = Path(__file__).parent / "fixtures/echo-skill"
 
@@ -131,6 +132,18 @@ def test_contract_staging_uses_the_declared_skill_name(tmp_path: Path, capsys: p
     assert not (workspace / ".agents/skills/skillz").exists()
 
 
+def test_journey_brief_not_staged_into_the_workspace(tmp_path: Path) -> None:
+    sentinel = "BRIEF-SENTINEL-7f3a"
+    case = Case("j-1", "f", "train", "Start the interview", {"input.txt": "hello\n"}, {"answer": "1"}, "skill", True,
+                kind="journey", journey=Journey(f"You want {sentinel}.", 3, ("REQ-1",)))
+    candidate = Candidate({"SKILL.md": "seed"}, ("SKILL.md",))
+    workspace = make_workspace(tmp_path / "workspace")
+    stage_task(workspace, candidate, case)
+    staged = [path for path in workspace.rglob("*") if path.is_file()]
+    assert (workspace / "input.txt").is_file() and staged
+    assert all(sentinel not in path.read_text() for path in staged)
+
+
 def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     contract = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
                       "kinds": {"echo": {"grader": "exact-json"}},
@@ -236,3 +249,124 @@ def test_candidate_rejects_a_package_over_the_size_bound_on_every_construction_p
     seed = Candidate({"SKILL.md": "seed", "references/a.md": "x" * 850_000}, ("SKILL.md",))
     with pytest.raises(ValueError, match="size limit"):
         _ = seed.changed({"SKILL.md": "y" * 200_000})
+
+
+def surface_contract(surface: object = None, **extra: object) -> dict[str, object]:
+    document: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": "echo-skill",
+                                   "invocation": "$echo-skill run", "kinds": {"echo": {"grader": "exact-json"}}} | extra
+    if surface is not None:
+        document["surface"] = surface
+    return document
+
+
+def test_contract_surface_parses_every_declared_field() -> None:
+    contract = parse(surface_contract({"tools": ["WebFetch", "mcp__docs__search"], "mcp_config": "mcp/docs.json",
+                                       "agents": ["agents/reviewer.md"], "companions": ["skills/helper-skill"]}), "skill")
+    assert contract.surface == Surface(("WebFetch", "mcp__docs__search"), "mcp/docs.json", ("agents/reviewer.md",),
+                                       ("skills/helper-skill",))
+    assert contract.in_companion("skills/helper-skill/SKILL.md") and not contract.in_companion("skills/helper-skill-2/a.md")
+
+
+@pytest.mark.parametrize(("surface", "message"), [
+    ({"tool": ["Bash"]}, "unknown fields: tool"),
+    ({"companions": ["../other"]}, "relative, non-hidden"),
+    ({"companions": ["/abs/skill"]}, "relative, non-hidden"),
+    ({"agents": [".hidden/a.md"]}, "relative, non-hidden"),
+    ({"mcp_config": "mcp.yaml"}, "must end with .json"),
+    ({"agents": ["agents/a.txt"]}, "must end with .md"),
+    ({}, "must declare"),
+    ({"tools": []}, "must declare"),
+    ({"tools": "Bash"}, "tools must be a list"),
+    ({"tools": ["Bash", "Bash"]}, "unique names"),
+    ({"tools": ["bad name"]}, "unique names"),
+    ({"agents": ["a/x.md", "b/x.md"]}, "unique file names"),
+    ({"companions": ["a/x", "b/x"]}, "unique directory names"),
+    ({"companions": ["a", "a/b"]}, "inside another companion"),
+    ("tools", "must be an object"),
+])
+def test_contract_surface_rejects_a_malformed_block(surface: object, message: str) -> None:
+    with pytest.raises(CodedError, match=message) as caught:
+        _ = parse(surface_contract(surface), "skill")
+    assert caught.value.code == "contract-surface"
+
+
+@pytest.mark.parametrize(("surface", "editable", "message"), [
+    ({"agents": ["agents/reviewer.md"]}, ["SKILL.md", "agents/reviewer.md"], "agents are read-only"),
+    ({"mcp_config": "mcp/docs.json"}, ["SKILL.md", "mcp/docs.json"], "host-run commands"),
+    ({"companions": ["skills/helper"]}, ["SKILL.md", "skills/helper/SKILL.md"], "companions are read-only"),
+], ids=["agent", "mcp-config", "companion"])
+def test_contract_surface_rejects_an_editable_surface_file(surface: dict[str, object], editable: list[str],
+                                                           message: str) -> None:
+    with pytest.raises(CodedError, match=message) as caught:
+        _ = parse(surface_contract(surface, editable=editable), "skill")
+    assert caught.value.code == "contract-surface"
+
+
+def test_contract_surface_unset_keeps_the_old_data_and_identity() -> None:
+    contract = parse(surface_contract(), "skill")
+    assert contract.surface is None and "surface" not in contract.data()
+    plain = digest(contract.data())
+    assert contract.identity == plain
+    declared = parse(surface_contract({"tools": ["WebFetch"]}), "skill")
+    assert declared.identity != plain
+
+
+def test_contract_surface_round_trips_through_data() -> None:
+    contract = parse(surface_contract({"tools": ["WebFetch"], "mcp_config": "m.json", "agents": ["a.md"],
+                                       "companions": ["c"]}), "skill")
+    again = parse(contract.data(), "skill")
+    assert again == contract and again.identity == contract.identity
+
+
+def test_contract_surface_default_editable_set_excludes_companion_files() -> None:
+    contract = parse(surface_contract({"companions": ["skills/helper"]}), "skill")
+    files = {"SKILL.md": "a", "references/r.md": "b", "skills/helper/SKILL.md": "c", "skills/helper/scripts/x.py": "d"}
+    assert _editable(files, contract, "prose") == ["SKILL.md", "references/r.md"]
+
+
+def test_contract_surface_default_editable_set_excludes_agents_and_the_mcp_config() -> None:
+    contract = parse(surface_contract({"mcp_config": "scripts/mcp.json", "agents": ["agents/reviewer.md"]}), "skill")
+    files = {"SKILL.md": "a", "agents/reviewer.md": "b", "scripts/mcp.json": "{}", "scripts/run.py": "c"}
+    assert _editable(files, contract, "prose+cli") == ["SKILL.md", "scripts/run.py"]
+    plain = parse(surface_contract(), "skill")
+    assert _editable(files, plain, "prose+cli") == ["SKILL.md", "agents/reviewer.md", "scripts/mcp.json", "scripts/run.py"]
+
+
+def test_contract_surface_helper_path_inside_a_companion_is_read_only() -> None:
+    document = surface_contract({"companions": ["skills/helper"]}, helper={"path": "skills/helper/scripts/x.py"})
+    with pytest.raises(CodedError, match="companions are read-only") as caught:
+        _ = parse(document, "skill")
+    assert caught.value.code == "contract-surface"
+    with pytest.raises(CodedError, match="agents are read-only"):
+        _ = parse(surface_contract({"agents": ["agents/r.md"]}, helper={"path": "agents/r.md"}), "skill")
+
+
+MCP_RUNS_SERVER = '{"mcpServers": {"docs": {"command": "python3", "args": [".agents/skills/echo-skill/scripts/server.py"]}}}'
+
+
+def test_contract_surface_files_the_mcp_config_runs_are_read_only_under_prose_cli() -> None:
+    files = {"SKILL.md": "a", "mcp/docs.json": MCP_RUNS_SERVER, "scripts/server.py": "s", "scripts/run.py": "c"}
+    contract = parse(surface_contract({"mcp_config": "mcp/docs.json"}), "skill")
+    assert contract.read_only("scripts/server.py", MCP_RUNS_SERVER) and not contract.read_only("scripts/run.py", MCP_RUNS_SERVER)
+    assert _editable(files, contract, "prose+cli") == ["SKILL.md", "scripts/run.py"]
+    explicit = parse(surface_contract({"mcp_config": "mcp/docs.json"}, editable=["SKILL.md", "scripts/server.py", "scripts/run.py"]),
+                     "skill")
+    with pytest.raises(CodedError, match="scripts/server.py") as caught:
+        _ = _editable(files, explicit, "prose+cli")
+    assert caught.value.code == "contract-surface"
+    helped = parse(surface_contract({"mcp_config": "mcp/docs.json"}, helper={"path": "scripts/server.py"}), "skill")
+    with pytest.raises(CodedError, match="scripts/server.py") as caught:
+        _ = _editable(files, helped, "prose+cli")
+    assert caught.value.code == "contract-surface"
+    plain = parse(surface_contract(), "skill")
+    assert _editable(files, plain, "prose+cli") == ["SKILL.md", "scripts/run.py", "scripts/server.py"]
+
+
+@pytest.mark.parametrize("kinds", [
+    {"journey": {"grader": "judge", "rubric": "r"}},
+    {"conversation": {"grader": "journey", "argv": ["x"], "rubric": "r"}},
+], ids=["journey-kind-other-grader", "journey-grader-other-kind"])
+def test_contract_ties_the_journey_kind_to_the_journey_grader(kinds: dict[str, object]) -> None:
+    with pytest.raises(CodedError, match="go together") as caught:
+        _ = parse(surface_contract(kinds=kinds), "skill")
+    assert caught.value.code == "contract-kinds"

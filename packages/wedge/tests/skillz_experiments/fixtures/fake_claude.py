@@ -26,7 +26,7 @@ PLUGIN_SKILL = "plug:tool"
 
 
 def emit(event: dict[str, object]) -> None:
-    print(json.dumps(event))
+    print(json.dumps(event), flush=True)
 
 
 def _inside(path: str, roots: list[str]) -> bool:
@@ -253,11 +253,82 @@ def config_entries() -> dict[str, str]:
     return {path.name: os.readlink(path) if path.is_symlink() else "file" for path in directory.iterdir()}
 
 
+def staged_modes() -> dict[str, str]:
+    """Return the octal mode of every path under the project's `.claude` directory."""
+    project = next((root for root in (Path.cwd(), Path.cwd().parent) if (root / ".claude").is_dir()), None)
+    if project is None:
+        return {}
+    return {str(path.relative_to(project)): oct(path.stat().st_mode & 0o777) for path in sorted((project / ".claude").rglob("*"))}
+
+
+def stream(script: Path, argv: list[str], mode: str) -> int:
+    """Answer a journey: read one user message per stdin line and answer each with an init, an assistant, and a result.
+
+    The argv goes to `<script>.log` once (with an empty prompt), and each user message to `<script>.journey.log`.
+    `journey-init-changes` adds a skill to the init event of turn 2.
+    `journey-exit-before-result` exits on the first message without a result. `journey-writes` writes `notes.txt`.
+    `journey-culture` writes `culture.md`. `journey-culture-bad` also writes the source file `app.py` with a Write call.
+    `journey-mold` declares the MCP server `docs` and the agent `reviewer`. It calls `mcp__docs__search` and the Skill `helper-skill`.
+    """
+    settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
+    with script.with_name(script.name + ".log").open("a") as log:
+        _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": "",
+                                  "environment": dict(os.environ), "config_entries": config_entries(),
+                                  "captured": {}, "staged": staged_modes(), "mcp_config": None}) + "\n")
+    config = cast(dict[str, object], json.loads(settings or "{}"))
+    markers = sorted(Path.cwd().glob(".agents/skills/*/EXPERIMENT_MARKER"))
+    for turn, line in enumerate(sys.stdin, 1):
+        text = cast(str, json.loads(line)["message"]["content"])
+        with script.with_name(script.name + ".journey.log").open("a") as log:
+            _ = log.write(json.dumps({"turn": turn, "message": text, "line": json.loads(line)}) + "\n")
+        if mode == "journey-exit-before-result":
+            return 1
+        skills = listed_skills(mode, config) + list(BUILTIN_SKILLS)
+        if mode == "journey-init-changes" and turn == 2:
+            skills.append("intruder-skill")
+        mold = mode == "journey-mold"
+        emit({"type": "system", "subtype": "init", "skills": skills, "tools": ["Bash", "Read", "Skill"],
+              "plugins": list(BUILTIN_PLUGINS),
+              "mcp_servers": [{"name": "docs", "status": "connected"}] if mold else [],
+              "agents": ["general-purpose", "Explore", *(["reviewer"] if mold else [])]})
+        if mold and turn == 1:
+            emit({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "m1", "name": "mcp__docs__search", "input": {"query": "molds"}}]}})
+            emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "m1", "is_error": False,
+                  "content": "result"}]}})
+            emit({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "m2", "name": "Skill", "input": {"skill": "helper-skill"}}]}})
+            emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "m2", "is_error": False,
+                  "content": "loaded"}]}})
+        if mode.startswith("journey-culture"):
+            _ = Path("culture.md").write_text(f"# Culture notes\n\nturn {turn}\n")
+        if mode == "journey-culture-bad" and turn == 1:
+            _ = Path("app.py").write_text("print('hello')\n")
+            emit({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": "w1", "name": "Write", "input": {"file_path": "app.py", "content": "print('hello')\n"}}]}})
+            emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "w1", "is_error": False,
+                  "content": "written"}]}})
+        if turn == 1 and markers:
+            skill = markers[0].parent.name
+            emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash",
+                  "input": {"command": f"cat .agents/skills/{skill}/SKILL.md"}}]}})
+            emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": False,
+                  "content": markers[0].read_text()}]}})
+        if mode == "journey-writes":
+            _ = Path("notes.txt").write_text(f"turn {turn}\n")
+        answer = f"agent-{turn}"
+        emit({"type": "assistant", "message": {"content": [{"type": "text", "text": answer}]}})
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": answer, "usage": USAGE})
+    return 0
+
+
 def main() -> int:
     script = Path(__file__).resolve()
     mode_file = script.with_name(script.name + ".mode")
     mode = mode_file.read_text().strip() if mode_file.is_file() else "ok"
     argv = sys.argv[1:]
+    if "--input-format" in argv and "--model" in argv:
+        return stream(script, argv, mode)
     prompt = sys.stdin.read()
     settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
     captured: dict[str, str | None] = {}
@@ -267,7 +338,8 @@ def main() -> int:
     with script.with_name(script.name + (".inventory.log" if listing else ".log")).open("a") as log:
         _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,
                                   "environment": dict(os.environ), "config_entries": config_entries(),
-                                  "captured": captured}) + "\n")
+                                  "captured": captured, "staged": staged_modes(),
+                                  "mcp_config": Path(argv[argv.index("--mcp-config") + 1]).read_text() if "--mcp-config" in argv else None}) + "\n")
     config = cast(dict[str, object], json.loads(settings or "{}"))
     if listing:
         return inventory(mode, config)
@@ -296,6 +368,12 @@ def main() -> int:
             init["mcp_servers"] = [{"name": "user-server", "status": "connected"}]
         if mode == "foreign-agent":
             init["agents"] = ["general-purpose", "user-agent"]
+        if mode == "surface-mcp":
+            init["mcp_servers"] = [{"name": "docs", "status": "connected"}]
+        if mode == "surface-agent":
+            init["agents"] = ["general-purpose", "Explore", "reviewer"]
+        if mode == "surface-skill":
+            skills.append("helper-skill")
         emit(init)
     if mode == "auth-fail":
         emit({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key - Please run /login",
@@ -311,6 +389,8 @@ def main() -> int:
     structured: dict[str, object]
     if "score_percent" in properties:
         structured = {"score_percent": 80}
+    elif "reply" in properties:
+        structured = {"reply": "Weekly reports.", "done": True}
     else:
         structured = {"result_json": "{}", "load_marker": marker.read_text() if marker.is_file() else ""}
     emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash",

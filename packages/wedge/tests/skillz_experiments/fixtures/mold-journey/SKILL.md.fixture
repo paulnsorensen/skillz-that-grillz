@@ -1,0 +1,8 @@
+---
+name: mold
+description: Shape a request into a mold with the docs server and the helper skill.
+---
+# Mold
+
+Search the docs server for related molds.
+Load the `helper-skill` companion before you write the mold.

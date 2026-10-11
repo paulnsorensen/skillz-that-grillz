@@ -64,12 +64,13 @@ def require() -> str:
 
 
 def profile(*, config_dir: Path, project: Path, executable: Path, settings_file: Path,
-            variables: list[str]) -> dict[str, object]:
+            variables: list[str], mcp_file: Path | None = None) -> dict[str, object]:
     """Build the nono profile for one Claude process. The working directory (the workspace) is the only write grant
     besides the config directory. `project` holds the staged `.claude` and `.agents` trees, which stay read-only.
 
     The profile grants a recursive read of the executable's directory. Stop with `nono-unavailable` when that
     directory is `$HOME`, `/`, or an ancestor of `project`, because the grant would then expose the host or the run.
+    `mcp_file` is the staged MCP config of a contract surface; the profile reads it only when the surface declares one.
     """
     wide = executable.parent
     if wide in (Path("/"), Path.home().resolve()) or project.resolve().is_relative_to(wide):
@@ -82,7 +83,7 @@ def profile(*, config_dir: Path, project: Path, executable: Path, settings_file:
         "workdir": {"access": "readwrite"},
         "filesystem": {"allow": [str(config_dir)],
                        "read": [str(project / ".claude"), str(project / ".agents"), str(executable.parent)],
-                       "read_file": [str(settings_file)]},
+                       "read_file": [str(settings_file), *([] if mcp_file is None else [str(mcp_file)])]},
         "network": {"allow_domain": [MODEL_HOST], "credentials": ["anthropic"]},
         "linux": {"af_unix_mediation": "pathname"},
         "environment": {"allow_vars": variables},

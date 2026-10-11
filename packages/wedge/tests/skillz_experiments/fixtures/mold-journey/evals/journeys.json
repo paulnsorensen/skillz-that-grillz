@@ -1,0 +1,14 @@
+[
+  {
+    "id": "mold-1",
+    "family": "shape",
+    "kind": "journey",
+    "request": "/mold Shape a mold for weekly reports.",
+    "brief": "You want a mold for weekly status reports. Answer one question at a time and stay brief.",
+    "max_turns": 2,
+    "requirements": ["MOLD-1"],
+    "files": {"notes.txt": "Report notes.\n"},
+    "expected": {"forks": ["report audience"]},
+    "source": "skill"
+  }
+]
