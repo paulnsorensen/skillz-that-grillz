@@ -16,13 +16,14 @@ Each entry in `evals` (a JSON object):
 - `prompt`: non-empty string.
 - `expected_output`: non-empty string.
 - `files`: list.
+- `family` (optional): non-empty string.
 - `assertions` (optional): list of non-empty strings, as in the
   agentskills.io shape.
 - `expected_skill` (optional): non-empty string, or null for a case that
   must not load the skill (NVIDIA SkillEvaluator's routing field).
 - Any other entry key is allowed and ignored.
 
-`id` values must be unique within a file. Extra keys are tolerated so a
+`id` and `name` values must each be unique within a file. Extra keys are tolerated so a
 skill can carry richer per-eval metadata without forking the contract.
 
 Pass `--self-test` to run the embedded accept/reject fixtures instead of
@@ -74,6 +75,7 @@ def validate_file(path: Path) -> list[str]:
 
     entries = cast(list[object], evals)
     seen_ids: set[int] = set()
+    seen_names: set[str] = set()
     for i, entry in enumerate(entries):
         loc = f"{path}: evals[{i}]"
         if not isinstance(entry, dict):
@@ -105,6 +107,16 @@ def validate_file(path: Path) -> list[str]:
         expected_skill = item.get("expected_skill")
         if expected_skill is not None and (not isinstance(expected_skill, str) or not expected_skill.strip()):
             errors.append(f"{loc}: 'expected_skill' must be a non-empty string or null")
+
+        if "family" in item:
+            family = item["family"]
+            if not isinstance(family, str) or not family.strip():
+                errors.append(f"{loc}: 'family' must be a non-empty string")
+        name = item.get("name")
+        if isinstance(name, str):
+            if name in seen_names:
+                errors.append(f"{loc}: duplicate name {name!r}")
+            seen_names.add(name)
 
         entry_id = item.get("id")
         if isinstance(entry_id, int) and not isinstance(entry_id, bool):
@@ -163,6 +175,14 @@ _SELF_TEST_CASES: list[tuple[str, object, bool]] = [
     ("files not a list", {"skill_name": "s", "evals": [_canonical_entry(files={})]}, True),
     ("id not an int", {"skill_name": "s", "evals": [_canonical_entry(id="0")]}, True),
     ("bool id rejected", {"skill_name": "s", "evals": [_canonical_entry(id=True)]}, True),
+    ("family kept", {"skill_name": "s", "evals": [_canonical_entry(family="billing")]}, False),
+    ("empty family", {"skill_name": "s", "evals": [_canonical_entry(family=" ")]}, True),
+    ("non-string family", {"skill_name": "s", "evals": [_canonical_entry(family=3)]}, True),
+    (
+        "duplicate name",
+        {"skill_name": "s", "evals": [_canonical_entry(id=1), _canonical_entry(id=2)]},
+        True,
+    ),
     (
         "duplicate id",
         {"skill_name": "s", "evals": [_canonical_entry(id=1), _canonical_entry(id=1, name="b")]},

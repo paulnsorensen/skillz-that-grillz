@@ -90,7 +90,7 @@ Map each coded stop to its next step:
 | Code | Data on stdout | Next step |
 |---|---|---|
 | `host-not-ready` | `ok`, `harness`, `isolation`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
-| `cases-missing` | `draft` (path), `facts` (skill name, description, files), `doctor` (the host checks) | Write the case draft, then run again. |
+| `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_cases` (only when `evals/evals.json` exists), `doctor` (the host checks) | Write the case draft. Start from `seed_cases` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
@@ -114,6 +114,8 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. | For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, run with `--isolation nono` or report the Claude Code version; no unsafe fallback exists. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
 | `nono-unavailable` | `--isolation nono` cannot run. The message names each unmet requirement and its fix. | Apply each fix, or use `--isolation claude`. |
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
+| `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, then run again. |
+| `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. In a journey, the stop also covers a skill inventory change between turns. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
@@ -172,16 +174,19 @@ Lower `--repeats` or the number of holdout cases in the draft, then run again.
 Read the `facts` from the `cases-missing` stop, then the skill files that it lists.
 Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
 
-When `<skill>/evals/evals.json` exists, start the draft from it.
-Map each entry to one case with `source: skill`.
-Use the entry `name` as the case `id`, and the `prompt` as the `request`.
-Set the case `family` by the `family` rule below, not from the entry `name`.
+When `<skill>/evals/evals.json` exists, the stop holds `seed_cases`. Start the draft from it.
+`seed_cases` is a list of cases, one for each entry, in file order. The runner maps them and does not write the draft.
+Each seed case has `source: skill`, the entry `name` as `id`, and the `prompt` as `request`.
 An entry with `expected_skill: null` is a `near-miss` case.
 An entry with no `assertions` is a `trigger` case. Every other entry is a `task` case.
-For a `task` case, read each listed fixture into `files`, keyed by its listed path.
-When the entry lists no fixture, draft the starting fixture that the request needs.
-Set `expected` to an object with the entry's `expected_output` and `assertions`.
-Then add cases until the draft meets the minimums below.
+A `task` case holds the fixtures in `files`, keyed by their listed paths, and an `expected` object.
+Each fixture path starts with `evals/files/`.
+When the entry lists no fixture, `files` is empty. Draft the starting fixture that the request needs.
+A seed case has a `family` only when the entry has a nonempty-text `family` key. Otherwise set the `family` by the rule below.
+Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged. You can extend `files`, `expected`, and `family`.
+When the draft drops a seed case or changes its `id`, `kind`, or `request`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from `evals/evals.json`.
+Then add cases until the draft meets the minimums below. Journeys stay hand-authored.
+A skill with no `evals/evals.json` has no `seed_cases`. Draft every case from the `facts`.
 
 Each case has these fields:
 
