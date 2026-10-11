@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast, final
@@ -14,6 +14,7 @@ from skillz_experiments._claude import (ISOLATIONS, NOTICE_CODES, OPTION_FIELDS,
                                         ClaudeOptions)
 from skillz_experiments._codex import Codex, VERSION
 from skillz_experiments._command import Command
+from skillz_experiments._contract import Surface
 from skillz_experiments._evaluator import Transport, evaluate
 from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget
@@ -68,10 +69,11 @@ class Role:
                       | ({"options": options} if options else {}))
 
     def create(self, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None,
-               login: ClaudeLogin | None = None) -> Transport:
+               login: ClaudeLogin | None = None, surface: Surface | None = None,
+               files: Mapping[str, str] | None = None) -> Transport:
         if self.adapter == "claude":
             return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out, login, self.isolation,
-                              self.options)
+                              self.options, surface, files)
         return (Codex(self.model, budget, checkpoint) if self.adapter == "codex"
                 else Command(self.command, self.model, budget, checkpoint))
 
@@ -129,17 +131,21 @@ class Configuration:
         if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
             raise ValueError("unsupported harness configuration version")
         overrides = mapping(document.get("roles", {}))
-        if set(overrides) - {"task", "reflection", "judge"}:
+        if set(overrides) - {"task", "reflection", "judge", "simulator"}:
             raise ValueError("unknown harness role")
         defaults = {key: value for key, value in document.items() if key not in {"schema_version", "roles"}}
         root = path.resolve().parent if path is not None else Path.cwd()
         roles = {name: _role(defaults | mapping(overrides.get(name, {})), model, root)
                  for name in ("task", "reflection", "judge")}
+        if "simulator" in overrides:
+            roles["simulator"] = _role(defaults | mapping(overrides["simulator"]), model, root)
         return cls(roles, path.resolve() if path is not None else None)
 
     @classmethod
     def single(cls, adapter: str, model: str, isolation: str = "claude", options: ClaudeOptions | None = None) -> Configuration:
         """Return a configuration that runs every role on one headless harness: `claude` or `codex`.
+
+        The simulator role is absent: a journey case then uses the judge role as its simulator.
 
         `isolation` is `claude` (Claude Code's own sandbox) or `nono`, which only the `claude` harness supports.
         `options` apply to every role, and only the `claude` harness takes them.
@@ -162,9 +168,10 @@ class Configuration:
         return {name: {"adapter": role.adapter, "model": role.model, "fingerprint": role.fingerprint()}
                 for name, role in self.roles.items()}
 
-    def create(self, model: str, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None) -> Harness:
+    def create(self, model: str, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None,
+               surface: Surface | None = None, files: Mapping[str, str] | None = None) -> Harness:
         _ = model
-        return Harness(self, budget, checkpoint, out)
+        return Harness(self, budget, checkpoint, out, surface, files)
 
 
 def _severity(error: Exception) -> int:
@@ -175,15 +182,18 @@ def _severity(error: Exception) -> int:
 @final
 class Harness:
     def __init__(self, configuration: Configuration, budget: Budget, checkpoint: Callable[[], None],
-                 out: Path | None = None) -> None:
+                 out: Path | None = None, surface: Surface | None = None, files: Mapping[str, str] | None = None) -> None:
+        """`surface` and `files` (the seed candidate files) reach the task role only; only a Claude task role can take them."""
+        if surface is not None and configuration.roles["task"].adapter != "claude":
+            raise CodedError("contract-surface-unsupported", "the contract declares a surface, and only the claude "
+                             + "harness can run it; run with --harness claude")
         self.configuration = configuration
         self.identity = configuration.identity()
         self.transports: dict[str, Transport] = {}
         self.login: ClaudeLogin | None = None
         try:
             for name, role in configuration.roles.items():
-                transport = (role.create(budget, checkpoint, out) if self.login is None
-                             else role.create(budget, checkpoint, out, self.login))
+                transport = role.create(budget, checkpoint, out, self.login, surface if name == "task" else None, files)
                 self.transports[name] = transport
                 if self.login is None and isinstance(transport, ClaudeCode):
                     self.login, transport.owns_login = transport.login, False
@@ -259,7 +269,8 @@ class Harness:
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self._unchanged()
-        return evaluate(self.transports["task"], self.transports["judge"], candidate, case, holdout=holdout)
+        return evaluate(self.transports["task"], self.transports["judge"], candidate, case, holdout=holdout,
+                        simulator=self.transports.get("simulator"))
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

@@ -1,0 +1,14 @@
+[
+  {
+    "id": "culture-1",
+    "family": "interview",
+    "kind": "journey",
+    "request": "/culture Help me write down how my team works.",
+    "brief": "You lead a team of five. You review every change in pairs and ship on Fridays. Answer one question at a time and stay brief.",
+    "max_turns": 3,
+    "requirements": ["CULT-1", "CULT-2"],
+    "files": {"notes.txt": "Team notes.\n"},
+    "expected": {"forks": ["review habits", "release day"]},
+    "source": "skill"
+  }
+]

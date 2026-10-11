@@ -124,8 +124,9 @@ class FakeViewer(FakeJudge):
 def harness(monkeypatch: pytest.MonkeyPatch, task: FakeTask, judge: FakeJudge) -> Harness:
     transports = {"task": task, "judge": judge, "reflection": judge}
 
-    def create(self: Role, budget: Budget, checkpoint: object, out: Path | None = None) -> FakeTask | FakeJudge:
-        del checkpoint, out
+    def create(self: Role, budget: Budget, checkpoint: object, out: Path | None = None,
+               *login_surface_files: object) -> FakeTask | FakeJudge:
+        del checkpoint, out, login_surface_files
         transport = transports[self.adapter]
         transport.budget = budget
         return transport
@@ -503,3 +504,88 @@ def test_capture_and_pillars_round_trip_and_leave_other_contracts_unchanged() ->
 def test_a_fixture_under_capture_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="runtime-owned"):
         _ = case_and_candidate(tmp_path, "look", capture_contract(), files={"capture/page.png": "x"})
+
+
+JOURNEY_GATE = ("import json,pathlib\n"
+                "lines = pathlib.Path('trace/events.jsonl').read_text().splitlines()\n"
+                "seen = any(json.loads(line).get('type') == 'assistant' for line in lines)\n"
+                "print(json.dumps({'score': 1 if seen else 0}))")
+JOURNEY_BRIEF = "BRIEF_SENTINEL: wants a short plan."
+
+
+class JourneyTask(SandboxedTask):
+    """A task transport with the optional Conversant capability. It never calls the simulator."""
+
+    def converse(self, request: str, candidate: Candidate, case: Case, holdout: bool,
+                 simulate: object) -> dict[str, object]:
+        del case, simulate
+        result = self.invoke(request, candidate, holdout=holdout)
+        extra: dict[str, object] = {
+            "transcript": [{"role": "user", "text": "hi"}, {"role": "assistant", "text": "TRANSCRIPT_SENTINEL"}],
+            "raw_events": [{"type": "system"}, {"type": "assistant", "message": {"content": []}}]}
+        return result | extra
+
+
+def journey_contract(script: str) -> Contract:
+    return parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
+                  "kinds": {"journey": {"grader": "journey", "argv": [sys.executable, "-I", "-c", script],
+                                        "rubric": RUBRIC}}}, "skill")
+
+
+def journey_case(tmp_path: Path, rules: Contract) -> tuple[Case, Candidate]:
+    item = {"id": "one", "family": "one", "split": "train", "kind": "journey", "request": "Plan the work.",
+            "brief": JOURNEY_BRIEF, "files": {"input.txt": "hello\n"}, "expected": {"secret": "EXPECTED_SENTINEL"},
+            "provenance": "test", "provider_approved": True}
+    path = tmp_path / "cases.json"
+    _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
+    return load_cases(path, rules.grader_types())[0], Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=rules)
+
+
+def test_journey_grader_gate_pass_calls_the_judge_with_the_brief_and_the_transcript(tmp_path: Path,
+                                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = journey_contract(JOURNEY_GATE)
+    case, candidate = journey_case(tmp_path, rules)
+    task, judge = JourneyTask(), FakeJudge(70)
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case)
+    assert result["score"] == 0.7 and result["scores"] == {"command": 1.0, "judge": 0.7}
+    assert len(judge.prompts) == 1
+    prompt = judge.prompts[0]
+    data = cast(dict[str, object], json.loads(prompt.split("UNTRUSTED DATA (JSON):\n", 1)[1]))
+    assert data["brief"] == JOURNEY_BRIEF and data["request"] == "Plan the work."
+    assert data["transcript"] == [{"role": "user", "text": "hi"}, {"role": "assistant", "text": "TRANSCRIPT_SENTINEL"}]
+    assert data["output_files"] == {"result.txt": "rewritten\n"} and data["reference"] == {"secret": "EXPECTED_SENTINEL"}
+    assert RUBRIC in prompt
+    assert "raw_events" not in result and result["transcript"] == data["transcript"]
+
+
+def test_journey_grader_gate_fail_skips_the_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = journey_contract('import json;print(json.dumps({"score": 0}))')
+    case, candidate = journey_case(tmp_path, rules)
+    judge = FakeJudge(70)
+    result = harness(monkeypatch, JourneyTask(), judge).evaluate(candidate, case)
+    assert judge.prompts == []
+    assert result["score"] == 0 and result["status"] == "gate-failed" and result["scores"] == {"command": 0.0, "judge": None}
+
+
+def test_journey_grader_gate_workspace_holds_fixtures_output_and_the_event_trace(tmp_path: Path,
+                                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = journey_contract(JOURNEY_GATE)
+    case, candidate = journey_case(tmp_path, rules)
+    task = JourneyTask()
+    _ = harness(monkeypatch, task, FakeJudge(70)).evaluate(candidate, case)
+    workspace = task.workspaces[0]
+    assert workspace["input.txt"] == "hello\n" and workspace["output/result.txt"] == "rewritten\n"
+    events = [json.loads(line) for line in workspace["trace/events.jsonl"].splitlines()]
+    assert events == [{"type": "system"}, {"type": "assistant", "message": {"content": []}}]
+    assert not any("BRIEF_SENTINEL" in text or "EXPECTED_SENTINEL" in text for text in workspace.values())
+
+
+def test_journey_case_on_a_transport_without_conversant_raises_journey_unsupported(tmp_path: Path,
+                                                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments._cases import CodedError
+
+    rules = journey_contract(JOURNEY_GATE)
+    case, candidate = journey_case(tmp_path, rules)
+    with pytest.raises(CodedError) as caught:
+        _ = harness(monkeypatch, SandboxedTask(), FakeJudge(70)).evaluate(candidate, case)
+    assert caught.value.code == "journey-unsupported"

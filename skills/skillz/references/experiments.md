@@ -91,7 +91,7 @@ Map each coded stop to its next step:
 | `host-not-ready` | `ok`, `harness`, `isolation`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `doctor` (the host checks) | Write the case draft, then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed` | Ask question 2. Run again with `--approve-cases HASH`. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` in the command. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` in the command. |
 | `baseline-contract-rejected` | `next` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
@@ -110,10 +110,10 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
 | `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. | For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, run with `--isolation nono` or report the Claude Code version; no unsafe fallback exists. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
 | `nono-unavailable` | `--isolation nono` cannot run. The message names each unmet requirement and its fix. | Apply each fix, or use `--isolation claude`. |
-| `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill, so the init event cannot show that the candidate loaded. No model call ran. | Rename the skill for the run, then start a new run directory. |
+| `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
-| `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
+| `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. In a journey, the stop also covers a skill inventory change between turns. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
 | `harness-changed` | The harness executable or script differs from the frozen record. | Restore the frozen harness, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
@@ -124,7 +124,12 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
 | `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
-| `contract-kinds` | The skill contract has no `task` kind and more than one kind. | Read `The autoimprove contract` below. |
+| `contract-kinds` | The skill contract has no `task` kind and more than one kind, or the `journey` kind and the `journey` grader are not paired. | Read `The autoimprove contract` and `Journeys` below. |
+| `brief-missing` | A journey case has no nonempty `brief`. | Add the brief to the case, then run again. |
+| `contract-surface` | The contract `surface` block is malformed, or `editable` names the MCP config, an agent, or a companion file. An agent file also needs a frontmatter `name` equal to its file stem. A candidate also stops when it changes the MCP config text or an agent name. | Fix the surface or `editable` in the contract, or fix the agent name. Then run again. |
+| `contract-surface-missing` | A file that the `surface` block names is missing from the skill, or the MCP config is not a JSON object with an `mcpServers` object. | Restore the file or fix the contract, then run again. |
+| `contract-surface-unsupported` | The contract declares a `surface`, and the task role is not the Claude harness. | Run with `--harness claude`, or remove the `surface` block. |
+| `journey-unsupported` | A journey case needs a task transport that holds a conversation, and the transport cannot. | Run with `--harness claude`, or remove the journey cases. |
 | `contract-unapproved` | The skill contract has `status` `draft`. | Ask the user to approve the contract, then set `approved`. |
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
@@ -143,7 +148,8 @@ Two close codes are warnings, not stops. They never arrive on stderr as `code`:
 A run that completes shows the code in `close_warning` in the summary JSON on stdout, with the hint `no action needed`.
 A run that fails records the code in `close_failure` in `run.json` and in a note on the error. The run stays resumable.
 
-A `budget-unapproved` stop without `estimate` means the fixed cost exceeds 200 calls.
+A `budget-unapproved` stop without `estimate` means the fixed cost exceeds the cap.
+The cap is 200 calls and 7200 seconds, or 1000 calls and 28800 seconds for a run with a journey case.
 Lower `--repeats` or the number of holdout cases in the draft, then run again.
 
 ## Draft the cases
@@ -218,6 +224,7 @@ The contract has these fields:
 - `kinds`: a map of case kind to `{grader, argv?, rubric?, capture?, pillars?}`.
 - `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
 - `editable` (optional): relative paths that search can change.
+- `surface` (optional): the tool surface of the task role. See "Journeys".
 
 A run needs a contract with a `task` kind or with exactly one kind. Otherwise it stops with `contract-kinds`.
 It stops with `contract-unapproved` when `status` is `draft`.
@@ -248,6 +255,7 @@ Each kind in `kinds` names one grader:
 - `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100, unless the kind declares `pillars`.
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
 - `hybrid`: runs the `command` gate first. A failed gate scores 0, skips the judge, and records `scores.judge` as null.
+- `journey`: scores a multi-turn conversation. See "Journeys".
 - `audit`: scores findings against reviewed labels in `expected`. The `run` command does not support audit-graded kinds yet, and stops with `contract-audit-unsupported`.
 
 A `command` or `hybrid` grader needs a nonempty `argv`.
@@ -284,6 +292,62 @@ This covers a failed hybrid gate, a failed capture, a failed activation, and an 
 Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the judge.
 
 
+## Journeys
+
+A journey case tests a skill that asks the user questions across several turns.
+A simulator role plays the user. The task role runs one conversation per journey.
+
+A journey case has `kind: journey`. It also needs `files` and `expected`, like a task case.
+It has these extra fields:
+
+- `brief` (required): the user goal and the facts the simulator may share. Only the simulator sees it. The agent never sees it.
+- `max_turns` (optional): the turn limit. The default is 8.
+- `requirements` (optional): requirement IDs. The case hash covers them.
+
+A contract declares the tool surface in a `surface` block. Every field is optional:
+
+- `tools`: extra tool names for the task role.
+- `mcp_config`: a `.json` file with the MCP servers.
+- `agents`: `.md` files. The frontmatter `name` of each file must equal the file stem.
+- `companions`: skill directories that the runner stages read-only. Search never edits them.
+
+Search never edits an agent file or the MCP config either. The contract cannot list them in `editable`.
+
+Paths are relative to the skill root.
+Only the Claude task role supports a surface. Other roles stop with `contract-surface-unsupported`.
+The live preflight accepts only the declared names. It stops with `preflight-leak` on any other name.
+The surface joins the environment reuse key.
+Under `--isolation claude`, MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
+Under `--isolation nono`, they run inside the nono profile.
+The MCP config holds commands that the host runs, so search never edits it.
+
+The kind named `journey` takes the `journey` grader, and no other kind does. Any other pairing stops with `contract-kinds`.
+
+The `journey` grader runs a command gate first.
+The gate sees the case fixtures at the root, the agent files under `output/`, and the raw events in `trace/events.jsonl`.
+A gate score of 0 or less skips the judge and records `gate-failed`.
+Otherwise the judge sees the request, the brief, the transcript, the output files, and the reference.
+
+The `simulator` role answers from the brief with `{reply, done}`.
+It uses the judge role unless the harness configuration sets it.
+It never sees `expected` or the rubric.
+
+A journey case costs `max_turns * 2 + 1` calls for each evaluation.
+The plan sizes the holdout gate from the sum of its case costs. It sizes each search call at the mean cost of the train and validation cases.
+It sizes each holdout retry at the costliest holdout case.
+The reserve therefore covers one failed attempt of any case.
+A file that the seed MCP config runs is read-only.
+The run stops with `contract-surface` when `editable` or the helper names such a file.
+The default editable set leaves it out.
+The check matches each file name in the config text, so it is best-effort.
+It does not see a file that the config reaches through `cwd` and a bare name, or through an import.
+Keep server scripts in a companion, or out of the skill.
+A manifest that mixes task and journey cases pays for each journey case only once, not for every case.
+A run with any journey case shows a separate journey estimate line, with `calls`, `seconds`, `ceiling_calls`, and `ceiling_seconds`.
+The runner asks for approval once. It stops with `budget-exhausted` at 1000 calls or 28800 seconds.
+The plan charges 30 seconds for each call. The seconds cap therefore binds first, at about 960 calls.
+A run without a journey case keeps the limits of 200 calls and 7200 seconds.
+
 ## Isolation and records
 
 The built-in Codex adapter gives Codex an isolated home and an isolated configuration directory.
@@ -302,6 +366,7 @@ The runner rejects failed probes or missing discovery before inference.
 
 The preflight, the search, the reflection calls, and the holdout gate share one persisted call budget.
 Approval sets the limit: up to 200 calls and 7200 seconds. At most two model calls run at once.
+A run with a journey case uses the larger journey limit. See "Journeys".
 The deadline spans the whole run, including pauses between `run` commands.
 Process-group cancellation enforces the deadline. The runner does not retry automatically.
 Changed frozen inputs require a new run directory.

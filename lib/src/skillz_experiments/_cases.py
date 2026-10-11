@@ -125,6 +125,40 @@ def audit_labels(value: object, files: dict[str, str]) -> Audit:
 
 
 @dataclass(frozen=True)
+class Journey:
+    brief: str
+    max_turns: int = 8
+    requirements: tuple[str, ...] = ()
+
+    def data(self) -> dict[str, object]:
+        item: dict[str, object] = {"brief": self.brief, "max_turns": self.max_turns}
+        if self.requirements:
+            item["requirements"] = list(self.requirements)
+        return item
+
+
+JOURNEY_FIELDS = {"brief", "max_turns", "requirements"}
+
+
+def journey_of(item: dict[str, object], kind: str) -> Journey | None:
+    """Return the journey fields of a `journey` case, else None. Journey fields on another kind are an error."""
+    if kind != "journey":
+        if JOURNEY_FIELDS & set(item):
+            raise ValueError(f"{', '.join(sorted(JOURNEY_FIELDS & set(item)))} only belong to a journey case")
+        return None
+    brief = item.get("brief")
+    if not isinstance(brief, str) or not brief.strip():
+        raise CodedError("brief-missing", f"journey case {item.get('id')!r} needs a nonempty brief")
+    turns = item.get("max_turns", 8)
+    if type(turns) is not int or turns < 1:
+        raise ValueError("max_turns must be a positive integer")
+    requirements = item.get("requirements", [])
+    if not isinstance(requirements, list):
+        raise ValueError("requirements must be a list of text")
+    return Journey(brief, turns, tuple(string(entry, "requirement") for entry in cast(list[object], requirements)))
+
+
+@dataclass(frozen=True)
 class Case:
     identifier: str
     family: str
@@ -137,6 +171,7 @@ class Case:
     visibility: Visibility = "private"
     kind: Kind = "inspection"
     labels_reviewed: bool = False
+    journey: Journey | None = None
 
     @property
     def eligible(self) -> bool:
@@ -181,7 +216,7 @@ def _case(value: object, kinds: Mapping[str, str]) -> Case:
         string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split),
         request, files, expected,
         string(item.get("provenance"), "provenance"), item.get("provider_approved") is True,
-        cast(Visibility, visibility), kind, reviewed,
+        cast(Visibility, visibility), kind, reviewed, journey_of(item, kind),
     )
 
 

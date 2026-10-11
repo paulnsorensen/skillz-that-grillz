@@ -73,7 +73,7 @@ def test_approve_refuses_an_estimate_with_no_calls() -> None:
 )
 def test_estimate_refuses_counts_that_lower_the_total(sizes: dict[str, int]) -> None:
     with pytest.raises(ValueError, match="nonnegative counts"):
-        _ = estimate(**sizes)
+        _ = estimate(**sizes, journey=False)
 
 
 def test_process_runs_at_most_two_children_at_once(tmp_path: Path) -> None:

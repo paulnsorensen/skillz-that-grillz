@@ -41,7 +41,7 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
 - **Alternatives:** Hand-written cases only. Agent drafts without session mining.
 - **Consequences:** Session mining waits on issue #132 and #108 item 4.
 
-### ADR-005: Show a preflight estimate and ask once before a larger run  [status: accepted]
+### ADR-005: Show a preflight estimate and ask once before a larger run  [status: accepted; amended by skillz-autoimprove ADR-010]
 
 - **Context:** A strict gate with repeats needs about 120 to 180 calls. The hard cap is 40 calls. Anthropic's terms assume ordinary, individual use of Claude Code.
 - **Decision:** Show estimated calls and seconds before any model call and ask once. Permit up to 200 calls and 7200 seconds after approval. Run at most 2 model calls at once. Reserve the holdout gate's calls and its estimated time: the search stops when only the reserved time is left.
@@ -50,4 +50,4 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
   On resume, the elapsed time is the larger of the wall-clock span and the monotonic span. After a reboot, the monotonic span is negative, so the wall-clock span applies. Time in system suspend counts against the deadline.
   The wall clock can step back by up to 5 seconds. A larger step back stops the resume with `clock-skew`.
 
-_Source: Mold session 2026-10-06 · Updated: 2026-10-07 (ADR-001 credential and macOS memory rules, ADR-005 gate time reservation and resume clock)_
+_Source: Mold session 2026-10-06 · Updated: 2026-10-10 (ADR-001 credential and macOS memory rules, ADR-005 gate time reservation and resume clock, ADR-005 amended by skillz-autoimprove ADR-010)_

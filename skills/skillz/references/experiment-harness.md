@@ -183,6 +183,30 @@ Manual macOS checklist:
 3. Record the macOS version and the Claude Code version in the ADR.
 4. Remove the "unverified" lines only after a recorded pass.
 
+## The Claude converse loop
+
+A journey case runs one live process: `claude -p --input-format stream-json --output-format stream-json --no-session-persistence`.
+The runner sends the request first.
+After each `result` event, the runner sends one simulator reply.
+The loop stops when the simulator answers `done`, at `max_turns`, or when the process exits.
+
+The workspace and the config directory last for the whole journey. The runner removes both after the journey.
+The `system` init event of each turn must list the same inventory as the first turn. A difference stops the run with `isolation-failed`.
+
+A live probe on 2026-10-10 (Claude Code 2.1.296) showed per-turn `result.usage`, and the runner sums it.
+
+The trace layout puts the raw stream events in `trace/events.jsonl`.
+The journey grader gate reads that file.
+
+The runner stages each companion skill under `.claude/skills` and each agent file under `.claude/agents`.
+The runner passes the declared MCP file with `--mcp-config` and grants the permission `mcp__<server>` for each server.
+The sandbox profile can deny paths that an MCP server needs.
+Under `--isolation claude`, MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
+Under `--isolation nono`, they run inside the nono profile.
+
+Codex and command transports raise `journey-unsupported`.
+A declared surface raises `contract-surface-unsupported` first.
+
 ## The nono backend
 
 `--isolation nono` runs each Claude process inside nono on Linux. Claude Code's own sandbox is off.

@@ -14,19 +14,19 @@ import tempfile
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal, cast, final, get_args
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, relative, string
-from skillz_experiments._contract import resolve
+from skillz_experiments._contract import Surface, resolve
 from skillz_experiments._evaluation import fixture_result, usage
-from skillz_experiments._evaluator import answer_schema
+from skillz_experiments._evaluator import Reply, Transcript, answer_schema
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments import _nono
 from skillz_experiments._isolation import listening, probe, watched, watched_abstract, watched_unix
 from skillz_experiments._records import write_bytes
-from skillz_experiments._runtime import Budget, BudgetExhausted, process
+from skillz_experiments._runtime import Budget, BudgetExhausted, live, process
 
 TOOLS = "Bash,Read,Skill"
 PROBE_PREFIX = "skillz-probe-"
@@ -61,6 +61,7 @@ LIVE_TOOLS = ("/usr/bin/python3", "/usr/bin/curl")
 INVENTORY_REQUEST = json.dumps({"type": "control_request", "request_id": "skillz-inventory",
                                 "request": {"subtype": "initialize"}}) + "\n"
 INVENTORY_SECONDS = 60
+MCP_FILE = "mcp.json"
 
 
 PERMISSION_DENY_ROOTS = ("/home", "/root", "/Users", "/mnt", "/media", "/opt", "/srv", "/workspaces", "/data")
@@ -461,6 +462,55 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
 
 
 @dataclass(frozen=True)
+class Declared:
+    """The names that a contract surface lets Claude Code load: companion skills, agents, and MCP servers."""
+    skills: frozenset[str] = frozenset()
+    agents: frozenset[str] = frozenset()
+    servers: frozenset[str] = frozenset()
+
+
+def _frontmatter_name(text: str) -> str | None:
+    """Return the `name:` value of the leading frontmatter block, or None when the block or the field is absent."""
+    lines = text.splitlines()
+    if not lines or lines[0] != "---" or "---" not in lines[1:]:
+        return None
+    for line in lines[1:lines.index("---", 1)]:
+        key, _, value = line.partition(":")
+        if key == "name":
+            return value.strip().strip("\"'").strip() or None
+    return None
+
+
+def declared_names(surface: Surface | None, files: Mapping[str, str] | None) -> Declared:
+    """Name what `surface` declares. Stop with `contract-surface-missing` when a declared file is not in `files`.
+
+    A companion is named by its directory, an agent by its file stem, and an MCP server by a key of `mcpServers`.
+    An agent file must carry a frontmatter `name:` equal to its file stem, or the run stops with `contract-surface`.
+    """
+    if surface is None:
+        return Declared()
+    found = files or {}
+    missing = [path for path in (*surface.agents, *([] if surface.mcp_config is None else [surface.mcp_config]))
+               if path not in found]
+    missing += [f"{path}/SKILL.md" for path in surface.companions if f"{path}/SKILL.md" not in found]
+    if missing:
+        raise CodedError("contract-surface-missing", f"the contract surface names files that the skill lacks: {', '.join(missing)}")
+    for path in surface.agents:
+        stem = PurePosixPath(path).stem
+        if _frontmatter_name(found[path]) != stem:
+            raise CodedError("contract-surface", f"contract surface agent {path} needs a frontmatter name equal to its file name {stem!r}")
+    servers: frozenset[str] = frozenset()
+    if surface.mcp_config is not None:
+        try:
+            servers = frozenset(mapping(mapping(loads_untrusted(found[surface.mcp_config])).get("mcpServers", {})))
+        except ValueError:
+            raise CodedError("contract-surface-missing", f"the MCP config {surface.mcp_config} is not a JSON object "
+                             + "with an `mcpServers` object") from None
+    return Declared(frozenset(PurePosixPath(path).name for path in surface.companions),
+                    frozenset(PurePosixPath(path).stem for path in surface.agents), servers)
+
+
+@dataclass(frozen=True)
 class Inventory:
     """The command names that Claude Code lists to an SDK client.
 
@@ -549,17 +599,21 @@ def _plugins(event: dict[str, object]) -> list[str]:
     return names
 
 
-def _leak(events: list[dict[str, object]], skills: list[str], builtin: Collection[str] = ()) -> str | None:
+def _leak(events: list[dict[str, object]], skills: list[str], builtin: Collection[str] = (),
+          declared: Declared | None = None) -> str | None:
     """Name the entry in an init event that the transport does not configure, or return None.
 
-    The transport configures only the candidate skill. It loads no plugin and no MCP server.
+    The transport configures only the candidate skill and what the contract surface `declared`. It loads no plugin.
     Claude Code's own commands and built-in plugins ship with the executable, so they do not count.
     """
+    declared = declared or Declared()
     for event in (event for event in events if event.get("type") == "system" and event.get("subtype") == "init"):
-        found = {"skill": [name for name in _entries(event, "skills") if name not in skills and name not in builtin],
+        found = {"skill": [name for name in _entries(event, "skills")
+                           if name not in skills and name not in builtin and name not in declared.skills],
                  "plugin": _plugins(event),
-                 "agent": [name for name in _entries(event, "agents") if name not in BUILTIN_AGENTS],
-                 "MCP server": _entries(event, "mcp_servers")}
+                 "agent": [name for name in _entries(event, "agents")
+                           if name not in BUILTIN_AGENTS and name not in declared.agents],
+                 "MCP server": [name for name in _entries(event, "mcp_servers") if name not in declared.servers]}
         for kind, names in found.items():
             if names:
                 return f"foreign {kind} in init event: {sorted(names)}"
@@ -567,10 +621,11 @@ def _leak(events: list[dict[str, object]], skills: list[str], builtin: Collectio
 
 
 def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skills: list[str],
-             builtin: Collection[str] = (), *, nono_fix: bool = False) -> str | None:
+             builtin: Collection[str] = (), *, nono_fix: bool = False, allowed: Collection[str] = ()) -> str | None:
     """Name the isolation failure that a probe run shows, or return None when the run is isolated.
 
     Raise SandboxUnavailable when the Bash sandbox cannot start. With `nono_fix`, its fix also offers nono.
+    `allowed` names the contract surface skills that may load without being required.
     """
     final = _final(events)
     errored = returncode != 0 or (final is not None and final.get("is_error") is True)
@@ -581,7 +636,7 @@ def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skil
                                  f"{fix}; {NONO_HINT}" if nono_fix else fix)
     if errored and any(word in detail for word in ("login", "api key", "authenticat", "unauthorized", "401", "oauth")):
         return AUTH_FAILED
-    loaded = _loaded_skills(events, builtin)
+    loaded = _loaded_skills(events, [*builtin, *allowed])
     if loaded is None:
         return "no init event" if returncode == 0 else f"execution failed (exit {returncode})"
     if set(loaded) - set(skills):
@@ -591,6 +646,15 @@ def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skil
     if errored or final is None:
         return f"execution failed (exit {returncode})"
     return None
+
+
+_NO_INIT = "has no init event, so the skill list is unknown; the invocation counts against the budget"
+
+
+def _not_loaded(workspace: Path, started: float, trace: list[dict[str, object]]) -> dict[str, object]:
+    """Return the result of a run in which Claude Code never registered the candidate: an empty answer and no events."""
+    return {"answer": {"result_json": "", "load_marker": ""}, "events": [], "usage": usage(trace), "workspace": str(workspace),
+            "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
 
 
 def _trace(events: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -872,6 +936,41 @@ def _answer(final: dict[str, object]) -> dict[str, object]:
         return {}
 
 
+def _user_line(text: str) -> str:
+    return json.dumps({"type": "user", "message": {"role": "user", "content": text}})
+
+
+def _is_result(line: str) -> bool:
+    try:
+        return mapping(loads_untrusted(line)).get("type") == "result"
+    except ValueError:
+        return False
+
+
+def _init_inventory(event: dict[str, object]) -> tuple[list[str], ...]:
+    return (sorted(_entries(event, "skills")), sorted(_entries(event, "tools")), sorted(_entries(event, "agents")),
+            sorted(_entries(event, "mcp_servers")), sorted(_plugins(event)))
+
+
+def _assistant_text(events: list[dict[str, object]]) -> str:
+    texts: list[str] = []
+    for event in events:
+        message = event.get("message")
+        content = cast(dict[str, object], message).get("content") if event.get("type") == "assistant" and isinstance(message, dict) else None
+        for block in cast(list[object], content) if isinstance(content, list) else []:
+            if isinstance(block, dict) and cast(dict[str, object], block).get("type") == "text":
+                text = cast(dict[str, object], block).get("text")
+                if isinstance(text, str):
+                    texts.append(text)
+    final = _final(events)
+    return "\n".join(texts) or (str(final.get("result", "")) if final else "")
+
+
+def _marker_seen(events: list[dict[str, object]], identity: str) -> bool:
+    """Return True when a tool result shows the candidate marker, so the agent read EXPERIMENT_MARKER."""
+    return any(event.get("type") == "user" and identity in json.dumps(event) for event in events)
+
+
 def _probe_name() -> str:
     return f"{PROBE_PREFIX}{secrets.token_hex(8)}"
 
@@ -886,10 +985,17 @@ def _probe_skill(workspace: Path, name: str) -> None:
 class ClaudeCode:
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
                  out: Path | None = None, login: ClaudeLogin | None = None, isolation: str = "claude",
-                 options: ClaudeOptions | None = None) -> None:
-        """`isolation` is `claude` (Claude Code's own Bash sandbox) or `nono` (nono confines the whole process)."""
+                 options: ClaudeOptions | None = None, surface: Surface | None = None,
+                 files: Mapping[str, str] | None = None) -> None:
+        """`isolation` is `claude` (Claude Code's own Bash sandbox) or `nono` (nono confines the whole process).
+
+        `surface` is the contract's extra tool surface, and `files` are the skill files that it names.
+        """
         if isolation not in ISOLATIONS:
             raise ValueError("isolation must be claude or nono")
+        self.surface = surface
+        self.declared = declared_names(surface, files)
+        self.mcp_seed = (files or {}).get(surface.mcp_config) if surface is not None and surface.mcp_config is not None else None
         self.isolation = isolation
         self.nono = _nono.require() if isolation == "nono" else None
         self.out = out
@@ -929,8 +1035,13 @@ class ClaudeCode:
         return f"export a valid {_nono.CREDENTIAL}" if self.nono is not None else LOGIN_HINT
 
     def _floor(self, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
-        return settings(workspace, self.out, overrides=overrides, unix_sockets=self.unix_sockets(),
-                        sandboxed=self.nono is None)
+        floor = settings(workspace, self.out, overrides=overrides, unix_sockets=self.unix_sockets(),
+                         sandboxed=self.nono is None)
+        if self.declared.servers:
+            permissions = cast(dict[str, object], floor["permissions"])
+            floor["permissions"] = permissions | {"allow": [*cast(list[str], permissions["allow"]),
+                                                            *(f"mcp__{name}" for name in sorted(self.declared.servers))]}
+        return floor
 
     def _config(self, workspace: Path) -> Path:
         """Return the Claude config directory of one process. Under nono, each process gets a fresh, empty directory
@@ -952,17 +1063,36 @@ class ClaudeCode:
         """
         return (workspace.parent if self.nono is not None else workspace) / ".agents"
 
-    def _stage(self, workspace: Path) -> None:
+    def _stage(self, workspace: Path, candidate: Candidate | None = None) -> None:
         """Copy the staged skills to the project skill directory that Claude Code loads from.
 
         Under nono, `.agents` moves beside the workspace, and a workspace symlink keeps the relative paths that the
         task prompt and the activation check use. A write through the symlink reaches the read-only tree and fails.
+        A contract surface adds the candidate's agents to `.claude/agents` and its companions to `.claude/skills`;
+        companion files and directories are read-only.
         """
         if self.nono is not None:
             _ = shutil.move(workspace / ".agents", self.agents_dir(workspace))
             (workspace / ".agents").symlink_to(Path("..") / ".agents")
         project = self.agents_dir(workspace).parent
         _ = shutil.copytree(project / ".agents/skills", project / ".claude/skills")
+        if self.surface is None or candidate is None:
+            return
+        for path in self.surface.agents:
+            agent = project / ".claude/agents" / PurePosixPath(path).name
+            agent.parent.mkdir(parents=True, exist_ok=True)
+            _ = agent.write_text(candidate.files[path], encoding="utf-8")
+        for root in self.surface.companions:
+            target = project / ".claude/skills" / PurePosixPath(root).name
+            for name, text in candidate.files.items():
+                if name.startswith(root + "/"):
+                    file = target / name.removeprefix(root + "/")
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    _ = file.write_text(text, encoding="utf-8")
+                    file.chmod(0o444)
+            for directory in sorted((path for path in target.rglob("*") if path.is_dir()), reverse=True):
+                directory.chmod(0o555)
+            target.chmod(0o555)
 
     def _launch(self, workspace: Path, argv: list[str], settings_path: Path) -> tuple[list[str], dict[str, str]]:
         """Return the command and environment that start `argv`. Under nono, nono starts Claude Code with a profile
@@ -981,26 +1111,50 @@ class ClaudeCode:
 
     def _profile(self, config_dir: Path, project: Path, settings_file: Path, environment: dict[str, str]) -> dict[str, object]:
         """Build the nono profile for `_launch` and `environment_key`, so the preflight key follows the real sandbox."""
+        mcp = project / MCP_FILE if self.surface is not None and self.surface.mcp_config is not None else None
         return _nono.profile(config_dir=config_dir, project=project, executable=self.executable.resolve(),
-                             settings_file=settings_file, variables=sorted(environment))
+                             settings_file=settings_file, variables=sorted(environment), mcp_file=mcp)
 
-    def _base(self, settings_path: Path) -> list[str]:
+    def _tools(self) -> str:
+        """Return the `--tools` value: the base tools, then each surface tool that is not already there."""
+        base = TOOLS.split(",")
+        return ",".join([*base, *(tool for tool in (self.surface.tools if self.surface else ()) if tool not in base)])
+
+    def _base(self, settings_path: Path, mcp_path: Path | None = None) -> list[str]:
         return [str(self.executable), "-p", "--setting-sources", SETTING_SOURCES, "--no-session-persistence",
-                "--tools", TOOLS, "--strict-mcp-config", "--settings", str(settings_path),
-                "--output-format", "stream-json", "--verbose"]
+                "--tools", self._tools(), "--strict-mcp-config",
+                *([] if mcp_path is None else ["--mcp-config", str(mcp_path)]),
+                "--settings", str(settings_path), "--output-format", "stream-json", "--verbose"]
 
-    def _command(self, settings_path: Path, schema: dict[str, object] | None) -> list[str]:
-        command = [*self._base(settings_path), "--model", self.model,
+    def _command(self, settings_path: Path, schema: dict[str, object] | None, mcp_path: Path | None = None) -> list[str]:
+        command = [*self._base(settings_path, mcp_path), "--model", self.model,
                    *(["--effort", self.options.effort] if self.options.effort is not None else [])]
         return command + (["--json-schema", json.dumps(schema)] if schema is not None else [])
 
-    def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float,
-             expected: list[str]) -> tuple[int, str, list[dict[str, object]]]:
+    def _start(self, workspace: Path, schema: dict[str, object] | None, expected: list[str],
+               candidate: Candidate | None = None, *, stream: bool = False) -> tuple[list[str], dict[str, str]]:
+        """Stage the workspace and return the command and environment. `stream` adds the stream-json input format."""
         _check_ancestors(workspace)
-        self._stage(workspace)
+        if candidate is not None and declared_names(self.surface, candidate.files) != self.declared:
+            raise CodedError("contract-surface", "the candidate files declare different agents, servers, or companions "
+                             + "than the seed files; the contract surface is fixed for the run")
+        if (candidate is not None and self.surface is not None and self.surface.mcp_config is not None
+                and candidate.files[self.surface.mcp_config] != self.mcp_seed):
+            raise CodedError("contract-surface", f"the candidate changes the MCP config {self.surface.mcp_config}; "
+                             + "its server commands run on the host, so the seed text is fixed for the run")
+        self._stage(workspace, candidate)
         settings_path = workspace.parent / "settings.json"
         _ = settings_path.write_text(json.dumps(self._floor(workspace, self.inventory().foreign - set(expected))))
-        command, environment = self._launch(workspace, self._command(settings_path, schema), settings_path)
+        mcp_path = None
+        if self.surface is not None and self.surface.mcp_config is not None and candidate is not None:
+            mcp_path = workspace.parent / MCP_FILE
+            _ = mcp_path.write_text(candidate.files[self.surface.mcp_config], encoding="utf-8")
+        argv = self._command(settings_path, schema, mcp_path) + (["--input-format", "stream-json"] if stream else [])
+        return self._launch(workspace, argv, settings_path)
+
+    def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float,
+             expected: list[str], candidate: Candidate | None = None) -> tuple[int, str, list[dict[str, object]]]:
+        command, environment = self._start(workspace, schema, expected, candidate)
         result = process(command, cwd=workspace, timeout=timeout, environment=environment, input_text=prompt)
         return result.returncode, result.stderr, _events(result.stdout)
 
@@ -1070,9 +1224,11 @@ class ClaudeCode:
             isolation |= {"nono": self.nono, "nono_sha256": hashlib.sha256(Path(self.nono).read_bytes()).hexdigest(),
                           "landlock_abi": _nono.landlock_abi(), "profile": self._profile(
                               Path("/CONFIG"), Path("/PROJECT"), Path("/PROJECT/settings.json"), environment)}
+        surface: dict[str, object] = {} if self.surface is None else {
+            "surface": self.surface.data() | {"servers": sorted(self.declared.servers)}}
         return digest({"settings": self._floor(Path("/TASK"), ()), "environment": environment, "tools": TOOLS,
                        "skill": PROBE_PREFIX, "platform": sys.platform, "network_probe": NETWORK_PROBE, "read_probe": READ_PROBE,
-                       "setting_sources": SETTING_SOURCES} | isolation)
+                       "setting_sources": SETTING_SOURCES} | isolation | surface)
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
         for name, found, fix in host_tools(self.isolation):
@@ -1160,10 +1316,10 @@ class ClaudeCode:
             raise NetworkIsolationFailed(LISTENER_REACHED)
         if socket_open:
             raise NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
-        leak = _leak(events, [name], builtin)
+        leak = _leak(events, [name], builtin, self.declared)
         if leak is not None:
             raise _preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
-        reason = _failure(returncode, stderr, events, [name], builtin, nono_fix=self._nono_fix())
+        reason = _failure(returncode, stderr, events, [name], builtin, nono_fix=self._nono_fix(), allowed=self.declared.skills)
         if reason == AUTH_FAILED:
             raise _login_failed(self._login_fix())
         network = _network_failure(events, port, network_token)
@@ -1193,7 +1349,11 @@ class ClaudeCode:
         only, so it could not show whether the candidate or the other entry loaded. No model call runs.
         """
         inventory = self.inventory()
-        if candidate.skill in inventory.builtin | inventory.foreign:
+        taken = inventory.builtin | inventory.foreign
+        if self.declared.skills & taken:
+            raise CodedError("candidate-name-taken", f"the contract companion skills {sorted(self.declared.skills & taken)} "
+                             + "match a Claude Code command or another loaded skill; rename them for the run")
+        if candidate.skill in taken:
             raise CodedError("candidate-name-taken", f"the candidate skill name {candidate.skill!r} matches a Claude Code "
                              + "command or another loaded skill, so the init event cannot show that the candidate "
                              + "loaded; rename the skill for the run")
@@ -1232,29 +1392,107 @@ class ClaudeCode:
             self.checkpoint()
             started = time.monotonic()
             returncode, stderr, events = self._run(workspace, prompt, schema or answer_schema(), self.budget.remaining(),
-                                                   expected)
-            final = _final(events)
-            failed = bool(returncode) or final is None or final.get("is_error") is True
-            loaded = _loaded_skills(events, builtin)
-            if loaded is None and not failed:
-                raise CodedError("isolation-failed", "Claude Code isolation fails: the stream has no init event, "
-                                 + "so the skill list is unknown; the invocation counts against the budget")
-            if loaded is not None:
-                if set(loaded) - set(expected):
-                    raise CodedError("isolation-failed", f"Claude Code isolation fails: skills in init event {loaded}, "
-                                     + f"expected {expected}; the invocation counts against the budget")
-                if candidate is not None and not loaded and not failed:
-                    trace = _trace(events) + _token_events(cast(dict[str, object], final))
-                    return {"answer": {"result_json": "", "load_marker": ""}, "events": [], "usage": usage(trace),
-                            "workspace": str(workspace), "latency_seconds": time.monotonic() - started,
-                            "output_files": snapshot_outputs(workspace)}
-            if failed or final is None:
-                reason = (_failure(returncode, stderr, events, expected, builtin, nono_fix=self._nono_fix())
-                          or "missing-final-response")
-                raise RuntimeError(f"Claude Code fails: {reason} (exit {returncode}); the invocation counts against the budget")
+                                                   expected, candidate)
+            final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
             trace = _trace(events) + _token_events(final)
+            if unloaded:
+                return _not_loaded(workspace, started, trace)
             return {"answer": _answer(final), "events": trace, "usage": usage(trace), "workspace": str(workspace),
                     "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
+
+    def converse(self, request: str, candidate: Candidate, case: Case, holdout: bool,
+                 simulate: Callable[[Transcript], Reply]) -> dict[str, object]:
+        """Run a journey on one live process. Send `request`, then each simulator reply after a `result` event.
+
+        Stop when the simulator is done, at `max_turns`, or when the process exits. Each agent turn claims one call.
+        Stop after turn 1 when its init event lacks the candidate, and return the not-loaded result.
+        A later init event that lists other skills or tools than the first one stops the case with `isolation-failed`.
+        The workspace and config directory live for the whole journey.
+        """
+        if case.journey is None:
+            raise ValueError("converse needs a journey case")
+        self._check_memory()
+        builtin = self.inventory().builtin
+        self.check_name(candidate)
+        expected = [candidate.skill]
+        events: list[dict[str, object]] = []
+        transcript: Transcript = []
+        first: tuple[list[str], ...] | None = None
+        with tempfile.TemporaryDirectory(prefix="skillz-journey-") as directory:
+            workspace = make_workspace(Path(directory) / "workspace")
+            stage_task(workspace, candidate, case)
+            command, environment = self._start(workspace, None, expected, candidate, stream=True)
+            started = time.monotonic()
+            message, shown = request, case.request
+            closed = False
+            with live(command, cwd=workspace, environment=environment) as child:
+                for turn in range(case.journey.max_turns):
+                    self.budget.claim(holdout=holdout)
+                    self.checkpoint()
+                    lines, ended = child.turn(_user_line(message), self.budget.remaining(), _is_result)
+                    fresh = _events("".join(lines))
+                    events += fresh
+                    for init in (event for event in fresh if event.get("type") == "system" and event.get("subtype") == "init"):
+                        if first is None:
+                            first = _init_inventory(init)
+                        elif _init_inventory(init) != first:
+                            raise CodedError("isolation-failed", "Claude Code isolation fails: the skill, tool, agent, MCP server, or plugin inventory "
+                                             + f"changed in turn {turn + 1}; the invocation counts against the budget")
+                    if any(event.get("type") == "result" and event.get("is_error") is True for event in fresh):
+                        raise RuntimeError(f"Claude Code fails: turn {turn + 1} reports an error result; "
+                                           + "the invocation counts against the budget")
+                    if not ended:
+                        break
+                    if first is None:
+                        raise CodedError("isolation-failed", "Claude Code isolation fails: turn 1 " + _NO_INIT)
+                    transcript += [{"role": "user", "text": shown}, {"role": "assistant", "text": _assistant_text(fresh)}]
+                    if turn == 0 and not [name for name in cast(list[str], _loaded_skills(fresh, builtin))
+                                          if name not in self.declared.skills]:
+                        closed = True
+                        break
+                    if turn + 1 >= case.journey.max_turns:
+                        closed = True
+                        break
+                    reply = simulate(transcript)
+                    if reply.done:
+                        closed = True
+                        break
+                    message = shown = reply.reply
+                returncode = child.close()
+                stderr = child.stderr
+            _, unloaded = self._verdict(events, not closed, returncode, stderr, expected, builtin)
+            results = [event for event in events if event.get("type") == "result"]
+            trace = _trace(events) + [token for result in results for token in _token_events(result)]
+            if unloaded:
+                return _not_loaded(workspace, started, trace) | {"transcript": transcript, "raw_events": events}
+            marker = candidate.identity if _marker_seen(events, candidate.identity) else ""
+            return {"answer": {"result_json": transcript[-1]["text"], "load_marker": marker}, "events": trace,
+                    "usage": usage(trace), "workspace": str(workspace), "latency_seconds": time.monotonic() - started,
+                    "output_files": snapshot_outputs(workspace), "transcript": transcript, "raw_events": events}
+
+    def _verdict(self, events: list[dict[str, object]], crashed: bool, returncode: int, stderr: str, expected: list[str],
+                 builtin: Collection[str]) -> tuple[dict[str, object], bool]:
+        """Judge the finished stream. Return the final result and whether Claude Code never registered the candidate.
+
+        Raise when the isolation check fails or when the run failed: a crash, an error result, or no result.
+        """
+        final = _final(events)
+        failed = crashed or final is None or final.get("is_error") is True
+        loaded = _loaded_skills(events, builtin)
+        if loaded is None and not failed:
+            raise CodedError("isolation-failed", "Claude Code isolation fails: the stream " + _NO_INIT)
+        unloaded = False
+        if loaded is not None:
+            loaded = [name for name in loaded if name not in self.declared.skills]
+            if set(loaded) - set(expected):
+                raise CodedError("isolation-failed", f"Claude Code isolation fails: skills in init event {loaded}, "
+                                 + f"expected {expected}; the invocation counts against the budget")
+            unloaded = bool(expected) and not loaded and not failed
+        if failed or final is None:
+            reason = (_failure(returncode, stderr, events, expected, builtin, nono_fix=self._nono_fix(),
+                               allowed=self.declared.skills) or "missing-final-response")
+            raise RuntimeError(f"Claude Code fails: {reason} (exit {returncode}); the invocation counts against the budget")
+        return final, unloaded
 
     def sandbox(self, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
         """Run `argv` in the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. Fail closed without it.
