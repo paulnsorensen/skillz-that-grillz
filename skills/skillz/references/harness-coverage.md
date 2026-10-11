@@ -90,8 +90,9 @@ timestamp, title}`) supplies sessionId + cwd for every row. `message` entries:
   so `bash_cmd` extracts from `input.command`); `text`/`thinking` blocks pass
   through;
 - role `toolResult` → a user `tool_result` block, joined on `toolCallId`;
-- role `user` passes through. A user row with at least one text block reaches
-  `user_turns`; a string-content user row (an omp steering message) does not;
+- role `user` passes through with its `attribution`, if present. A user row
+  with string content or at least one text block reaches `user_turns`, unless
+  its `attribution` is `agent` (the agent wrote it, for example a steering message);
 - assistant `model`, `usage`, `duration`, `ttft`, `contextSnapshot.promptTokens`,
   `stopReason`, and `errorMessage` map to Claude key names and feed
   `model_turns`. `stopReason` `error` and `aborted` also land in `stop_events`.

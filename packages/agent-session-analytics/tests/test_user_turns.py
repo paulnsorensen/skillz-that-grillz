@@ -34,11 +34,14 @@ def _codex_prompt(second: int, text: str) -> dict[str, object]:
     return _codex(second, "event_msg", {"type": "item_completed", "item": item})
 
 
-def _pi(second: int, role: str, content: object) -> dict[str, object]:
+def _pi(second: int, role: str, content: object, attribution: str | None = None) -> dict[str, object]:
+    message: dict[str, object] = {"role": role, "content": content}
+    if attribution is not None:
+        message["attribution"] = attribution
     return {
         "type": "message",
         "timestamp": f"2026-01-01T00:02:{second:02d}.000Z",
-        "message": {"role": role, "content": content},
+        "message": message,
     }
 
 
@@ -88,7 +91,7 @@ def _seed(sandbox: Sandbox) -> None:
             _pi(2, "assistant", [{"type": "toolCall", "id": "k1", "name": "bash", "arguments": "{}"}]),
             _pi(3, "toolResult", [_text("tool output")]),
             _pi(4, "assistant", [_text("omp answer")]),
-            _pi(5, "user", "steering string"),
+            _pi(5, "user", "steering string", attribution="agent"),
             _pi(6, "user", [_text("omp second")]),
         ],
     )
@@ -160,3 +163,38 @@ def test_interrupt_events_come_from_claude_markers_and_codex_interrupted_aborts(
 def test_schema_version_two_is_stamped(sandbox: Sandbox) -> None:
     _seed(sandbox)
     assert sandbox.query("SELECT version FROM schema_info") == [{"version": 2}]
+
+
+@needs_duckdb
+def test_pi_family_skips_agent_attributed_rows(sandbox: Sandbox) -> None:
+    _ = sandbox.write_log(
+        ".omp/agent/sessions/-w/o2.jsonl",
+        [
+            {"type": "session", "id": "o2", "cwd": "/w"},
+            _pi(1, "user", [_text("agent list")], attribution="agent"),
+            _pi(2, "user", "agent string", attribution="agent"),
+            _pi(3, "user", [_text("user list")], attribution="user"),
+        ],
+    )
+    assert sandbox.run("ingest", "--force").returncode == 0
+    rows = sandbox.query("SELECT harness, text FROM user_turns ORDER BY turn_index")
+    assert rows == [{"harness": "omp", "text": "user list"}]
+
+
+@needs_duckdb
+def test_pi_family_counts_plain_string_content_as_a_prompt(sandbox: Sandbox) -> None:
+    _ = sandbox.write_log(
+        ".omp/agent/sessions/-w/o3.jsonl",
+        [
+            {"type": "session", "id": "o3", "cwd": "/w"},
+            _pi(1, "user", "string with attribution", attribution="user"),
+            _pi(2, "user", "string without attribution"),
+            _pi(3, "user", [{"type": "image"}]),
+        ],
+    )
+    assert sandbox.run("ingest", "--force").returncode == 0
+    rows = sandbox.query("SELECT harness, turn_index, text FROM user_turns ORDER BY turn_index")
+    assert rows == [
+        {"harness": "omp", "turn_index": 0, "text": "string with attribution"},
+        {"harness": "omp", "turn_index": 1, "text": "string without attribution"},
+    ]

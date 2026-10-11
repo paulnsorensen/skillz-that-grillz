@@ -213,6 +213,19 @@ def _claude_prompt(entry: Entry) -> str | None:
     return text
 
 
+def _pi_prompt(entry: Entry) -> str | None:
+    """Return the text of a real omp or pi prompt, or None for any other user entry.
+
+    The agent writes rows with `attribution` 'agent', so they are not prompts.
+    A prompt has string content or at least one text block.
+    """
+    message = _message(entry)
+    if not message or message.get("attribution") == "agent":
+        return None
+    content = message.get("content")
+    return content if isinstance(content, str) else _joined(_texts(entry))
+
+
 def _user_turns(harness: str, source: str) -> Emitter:
     """One row per real user prompt, with the last assistant text before it.
 
@@ -246,7 +259,12 @@ def _user_turns(harness: str, source: str) -> Emitter:
             return
         if entry.get("type") != "user":
             return
-        text = _claude_prompt(entry) if harness == "claude" else _joined(_texts(entry))
+        if harness == "claude":
+            text = _claude_prompt(entry)
+        elif harness == "codex":
+            text = _joined(_texts(entry))
+        else:
+            text = _pi_prompt(entry)
         if text is None:
             return
         ordinal += 1

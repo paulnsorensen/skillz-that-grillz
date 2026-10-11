@@ -135,7 +135,7 @@ The table holds the full prompt text. The database file is private to the user (
 
 A real Claude prompt is a `user` entry that is not `isMeta`, `isCompactSummary`, or `isSidechain`.
 It has string content or a text block, and its text does not start with `<` or `[Request interrupted`.
-A real omp or pi prompt is a `user` row with at least one text block. Codex prompts come from `item_completed` `UserMessage` events.
+A real omp or pi prompt is a `user` row with string content or at least one text block, and its `attribution` is not `agent`. Codex prompts come from `item_completed` `UserMessage` events.
 
 ## `interrupt_events`
 

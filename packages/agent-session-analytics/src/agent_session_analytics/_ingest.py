@@ -544,7 +544,8 @@ def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]
     ``message`` entries: assistant ``toolCall`` blocks become tool_use blocks
     (other blocks pass through); role ``toolResult`` becomes a user tool_result
     block joined on ``toolCallId``, with the msg-level ``isError`` boolean as
-    the error flag; role ``user`` passes through. Tool names (``bash``, ``read``,
+    the error flag; role ``user`` passes through with its ``attribution``, if
+    present. Tool names (``bash``, ``read``,
     ``mcp__<server>_<tool>``) are kept verbatim.
     """
     session_id = None
@@ -625,13 +626,17 @@ def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]
                 },
             }
         elif role == "user":
+            attribution = msg.get("attribution")
             yield {
                 "harness": harness,
                 "type": "user",
                 "timestamp": ts,
                 "sessionId": session_id,
                 "cwd": cwd,
-                "message": {"content": msg.get("content")},
+                "message": {
+                    "content": msg.get("content"),
+                    **({"attribution": attribution} if attribution is not None else {}),
+                },
             }
 
 

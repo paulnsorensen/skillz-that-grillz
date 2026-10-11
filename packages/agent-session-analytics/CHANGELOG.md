@@ -19,6 +19,7 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 - Every DuckDB run now sets `memory_limit` (default `4GB`, was `8GB`), `threads` (default `4`), `preserve_insertion_order=false`, and a 20GB spill cap.
 - The schema version is now 2, so ingest rebuilds a version 1 database.
 - The Codex adapter keeps `item_completed` `UserMessage` prompts, `task_complete`, and `turn_aborted` events as `raw_entries` rows. Codex `sessions.entry_count` counts them.
+- The omp and pi adapters keep the `attribution` of a user row in `raw_entries.message`. A row with `attribution` `agent` is not a real prompt.
 
 ### Added
 
