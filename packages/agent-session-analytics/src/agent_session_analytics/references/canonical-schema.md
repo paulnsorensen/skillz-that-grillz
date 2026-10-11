@@ -135,7 +135,7 @@ The table holds the full prompt text. The database file is private to the user (
 
 A real Claude prompt is a `user` entry that is not `isMeta`, `isCompactSummary`, or `isSidechain`.
 It has string content or a text block, and its text is not blank and does not start with `<` or `[Request interrupted`.
-A real omp or pi prompt is a `user` row with non-blank string content or text blocks, and its `attribution` is not `agent`. Codex prompts come from `item_completed` `UserMessage` events with non-blank text. A Codex sub-agent rollout (non-null `parentSessionId`) gives no rows: the parent agent writes its prompts.
+A real omp or pi prompt is a `user` row with non-blank string content or text blocks, and its `attribution` is not `agent`. Codex prompts come from `item_completed` `UserMessage` events with non-blank text. A Codex rollout whose `session_meta.source` has a `subagent` value (`raw_entries.isSidechain` true) gives no rows: an agent writes its prompts. This covers `thread_spawn` children and `other` or `review` runs, such as `guardian`, that name no parent.
 
 ## `interrupt_events`
 

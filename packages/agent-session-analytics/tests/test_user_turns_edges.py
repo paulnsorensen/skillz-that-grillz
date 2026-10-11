@@ -5,6 +5,8 @@ Every prompt text is synthetic.
 
 from __future__ import annotations
 
+import pytest
+
 from .conftest import Sandbox, needs_duckdb
 
 
@@ -112,8 +114,18 @@ def test_codex_abort_without_task_complete_resets_the_prior_answer(sandbox: Sand
 
 
 @needs_duckdb
-def test_codex_subagent_rollouts_give_no_user_turns_or_interrupts(sandbox: Sandbox) -> None:
-    spawn = {"subagent": {"thread_spawn": {"parent_thread_id": "cp"}}}
+@pytest.mark.parametrize(
+    ("subagent", "parent"),
+    [
+        ({"thread_spawn": {"parent_thread_id": "cp"}}, "cp"),
+        ({"other": "guardian"}, None),
+        ("review", None),
+    ],
+    ids=["thread_spawn", "guardian", "review"],
+)
+def test_codex_subagent_rollouts_give_no_user_turns_or_interrupts(
+    sandbox: Sandbox, subagent: object, parent: str | None
+) -> None:
     _ = sandbox.write_log(
         "codex/sessions/2026/02/01/rollout-parent.jsonl",
         [
@@ -125,8 +137,8 @@ def test_codex_subagent_rollouts_give_no_user_turns_or_interrupts(sandbox: Sandb
     _ = sandbox.write_log(
         "codex/sessions/2026/02/01/rollout-child.jsonl",
         [
-            _codex(3, {"id": "cc", "cwd": "/c", "source": spawn}, kind="session_meta"),
-            _codex_user(4, [_text("written by the parent agent")]),
+            _codex(3, {"id": "cc", "cwd": "/c", "source": {"subagent": subagent}}, kind="session_meta"),
+            _codex_user(4, [_text("written by an agent")]),
             _codex(5, {"type": "task_complete", "last_agent_message": "child answer"}),
             _codex(6, {"type": "turn_aborted", "reason": "interrupted"}),
         ],
@@ -136,7 +148,7 @@ def test_codex_subagent_rollouts_give_no_user_turns_or_interrupts(sandbox: Sandb
     assert sandbox.query("SELECT sessionId FROM interrupt_events") == [{"sessionId": "cp"}]
     # The sub-agent session itself stays in sessions.
     assert sandbox.query("SELECT parent_session_id FROM sessions WHERE sessionId = 'cc'") == [
-        {"parent_session_id": "cp"}
+        {"parent_session_id": parent}
     ]
 
 

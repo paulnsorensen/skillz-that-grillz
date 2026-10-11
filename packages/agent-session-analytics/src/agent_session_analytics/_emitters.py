@@ -273,8 +273,8 @@ def _pi_prompt(entry: Entry) -> str | None:
 
 
 def _is_codex_subagent(harness: str, entry: Entry) -> bool:
-    """Return True for an entry of a Codex sub-agent rollout: the parent agent writes its prompts."""
-    return harness == "codex" and entry.get("parentSessionId") is not None
+    """Return True for an entry of an agent-run Codex rollout: an agent writes its prompts."""
+    return harness == "codex" and entry.get("isSidechain") is True
 
 
 def _user_turns(harness: str, source: str) -> Emitter:

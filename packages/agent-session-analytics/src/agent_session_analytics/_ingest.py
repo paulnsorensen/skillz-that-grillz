@@ -299,6 +299,16 @@ def _codex_parent_session(payload: dict[str, _JsonValue]) -> str | None:
     return parent if isinstance(parent, str) and parent else None
 
 
+def _codex_is_subagent(payload: dict[str, _JsonValue]) -> bool:
+    """Return True when session_meta marks an agent-run rollout.
+
+    Any ``source.subagent`` value counts: ``thread_spawn`` children, and
+    ``other`` (for example ``guardian``) or ``review`` runs that name no parent.
+    """
+    source = payload.get("source")
+    return isinstance(source, dict) and "subagent" in source
+
+
 def _codex_event(payload: dict[str, _JsonValue]) -> dict[str, _JsonValue] | None:
     """Map one non-token ``event_msg`` payload to canonical fields, or None to drop it.
 
@@ -349,7 +359,10 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     token row before any id falls back to the file path, so ids stay unique.
     ``session_meta.cli_version`` stamps ``version`` on every entry. A
     sub-agent rollout names its parent in the first ``session_meta``; that id
-    stamps ``parentSessionId`` on every entry. Each non-duplicate
+    stamps ``parentSessionId`` on every entry. Any ``source.subagent`` value
+    stamps ``isSidechain`` true on every entry, as Cursor does for sub-agent
+    files, so agent-run rollouts without a parent id stay identifiable. Each
+    non-duplicate
     ``token_count`` event with a ``last_token_usage`` becomes one
     ``token_usage`` entry (unique ``message.id``, empty content). Only
     model_turns reads it, as one row; no other table sees it. User prompts,
@@ -358,6 +371,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     """
     session_id = None
     parent_session_id = None
+    is_subagent = False
     cwd = None
     cli_version = None
     model = None
@@ -372,6 +386,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
         if etype == "session_meta" and isinstance(payload, dict):
             if session_id is None:
                 parent_session_id = _codex_parent_session(payload)
+                is_subagent = _codex_is_subagent(payload)
             session_id = session_id or payload.get("id")
             cwd = cwd or payload.get("cwd")
             cli_version = cli_version or payload.get("cli_version") or None
@@ -395,6 +410,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 "timestamp": ts,
                 "sessionId": session_id,
                 "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
                 "version": cli_version,
                 "cwd": cwd,
                 "message": {
@@ -413,6 +429,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                     "timestamp": ts,
                     "sessionId": session_id,
                     "parentSessionId": parent_session_id,
+                    "isSidechain": is_subagent,
                     "version": cli_version,
                     "cwd": cwd,
                     **event,
@@ -441,6 +458,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 "timestamp": ts,
                 "sessionId": session_id,
                 "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
                 "version": cli_version,
                 "cwd": cwd,
                 "message": {
@@ -465,6 +483,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 "timestamp": ts,
                 "sessionId": session_id,
                 "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
                 "version": cli_version,
                 "cwd": cwd,
                 "message": {
