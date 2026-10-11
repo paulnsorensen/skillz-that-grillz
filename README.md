@@ -10,7 +10,7 @@
 > _Skill-authoring and skill-packaging toolbelt: skillz, wedge, fromargs, and the wedge GitHub Action._
 
 This repository publishes one Agent Skill, `skillz`. It also hosts two Python
-libraries under `lib/` — `wedge` (packages a skill CLI as a content-addressed
+libraries in a uv workspace under `packages/` — `wedge` (packages a skill CLI as a content-addressed
 `.pyz`) and `fromargs` (the CLI library wedge builds on) — plus the public
 [`actions/wedge`](actions/wedge/README.md) GitHub Action that runs `wedge` in
 a consumer repository.
@@ -79,8 +79,8 @@ published) that only applies to work on this repository, mirrored at
 
 ## wedge
 
-`wedge` (`lib/src/wedge/`) shivs a `fromargs` CLI into a skill as a
-content-addressed `.pyz`. See [`lib/README.md`](lib/README.md) for the CLI
+`wedge` (`packages/wedge/src/wedge/`) shivs a `fromargs` CLI into a skill as a
+content-addressed `.pyz`. See [`packages/wedge/README.md`](packages/wedge/README.md) for the CLI
 and [`docs/agents/decisions/wedge-skill-packaging.md`](docs/agents/decisions/wedge-skill-packaging.md)
 for the design decisions.
 
@@ -99,8 +99,8 @@ check locks on pull requests and to publish assets after a merge:
 
 ## fromargs
 
-`fromargs` (`lib/fromargs/`) is the CLI argument-parsing library `wedge`
-builds its CLI on. See [`lib/fromargs/README.md`](lib/fromargs/README.md).
+`fromargs` (`packages/fromargs/`) is the CLI argument-parsing library `wedge`
+builds its CLI on. See [`packages/fromargs/README.md`](packages/fromargs/README.md).
 
 ## Development
 

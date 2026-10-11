@@ -33,7 +33,7 @@ The [pragmatic autoimprove decisions](../decisions/skillz-pragmatic-autoimprove.
 
 The `dataset`, `baseline`, `search`, and `evaluate` commands are removed and exit with `command-removed`.
 
-Run `uv run --project lib --extra experiments skillz-experiment --help` from the repository root.
+Run `uv run --project packages/wedge --extra experiments skillz-experiment --help` from the repository root.
 The skill's `references/experiments.md` documents exact commands and the case draft shape.
 Normal skill installation does not require GEPA.
 
@@ -133,18 +133,18 @@ These items remain future work:
 Session-based personalization needs real approved cases and a task-specific evaluator.
 Do not describe the public self-test as a real-session benchmark.
 
-[^implementation]: `lib/src/skillz_experiments/_cli.py:38-127`; `skills/skillz/SKILL.md:33-46`; `skills/skillz/references/experiments.md:1-371`.
-[^search]: `lib/src/skillz_experiments/_search.py:29-65`.
-[^cases]: `lib/src/skillz_experiments/_cases.py:44-58,128-211`; `_records.py:41-69`.
-[^candidate]: `lib/src/skillz_experiments/_candidate.py:52-113`; `_records.py:41-69`.
-[^evaluator]: `lib/src/skillz_experiments/_evaluation.py:11-83`; `_evaluator.py:38-71`; `lib/src/skillz_inspect` (built as `skills/skillz/scripts/inspect-skill.pyz`).
-[^runtime]: `lib/src/skillz_experiments/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
-[^workflow]: `lib/src/skillz_experiments/_workflow.py:101-292,365-417`; `_runtime.py:16-45`.
-[^export]: `lib/src/skillz_experiments/_workflow.py:437-471`.
-[^contract]: `lib/src/skillz_experiments/_contract.py:34-92,139-175`; `skills/skillz/references/experiments.md:167-200`; `skills/skillz/evals/autoimprove.json`.
-[^graders]: `lib/src/skillz_experiments/_graders.py:60-115`; `_evaluator.py:38-130`.
-[^claude]: `lib/src/skillz_experiments/_claude.py:259-282`; `_harness.py:19,76-82`.
-[^harness]: `lib/src/skillz_experiments/_harness.py:83-86`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
+[^implementation]: `packages/wedge/src/skillz_experiments/_cli.py:38-127`; `skills/skillz/SKILL.md:33-46`; `skills/skillz/references/experiments.md:1-371`.
+[^search]: `packages/wedge/src/skillz_experiments/_search.py:29-65`.
+[^cases]: `packages/wedge/src/skillz_experiments/_cases.py:44-58,128-211`; `_records.py:41-69`.
+[^candidate]: `packages/wedge/src/skillz_experiments/_candidate.py:52-113`; `_records.py:41-69`.
+[^evaluator]: `packages/wedge/src/skillz_experiments/_evaluation.py:11-83`; `_evaluator.py:38-71`; `packages/wedge/src/skillz_inspect` (built as `skills/skillz/scripts/inspect-skill.pyz`).
+[^runtime]: `packages/wedge/src/skillz_experiments/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
+[^workflow]: `packages/wedge/src/skillz_experiments/_workflow.py:101-292,365-417`; `_runtime.py:16-45`.
+[^export]: `packages/wedge/src/skillz_experiments/_workflow.py:437-471`.
+[^contract]: `packages/wedge/src/skillz_experiments/_contract.py:34-92,139-175`; `skills/skillz/references/experiments.md:167-200`; `skills/skillz/evals/autoimprove.json`.
+[^graders]: `packages/wedge/src/skillz_experiments/_graders.py:60-115`; `_evaluator.py:38-130`.
+[^claude]: `packages/wedge/src/skillz_experiments/_claude.py:259-282`; `_harness.py:19,76-82`.
+[^harness]: `packages/wedge/src/skillz_experiments/_harness.py:83-86`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
 [^isolation]: `docs/agents/decisions/skillz-autoimprove.md:33-39`; `skills/skillz/references/experiment-harness.md:68-92`.
 
 _Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-05 · Supersedes: proposal-only status and unresolved first-harness choice_

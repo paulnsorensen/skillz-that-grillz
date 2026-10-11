@@ -17,8 +17,8 @@ The action has two commands:
   and uploads assets that are missing. It skips an asset that is already
   present only when the fresh build and the asset both match the lock.
 
-The action runs `wedge` from its own checkout (the `lib/` project beside this
-directory). When you pin the action to a commit SHA, you also pin `wedge`. A
+The action runs `wedge` from its own checkout (the `packages/wedge/` project in
+this repository). When you pin the action to a commit SHA, you also pin `wedge`. A
 repository can pin `wedge` in a uv project of its own instead (step 3
 below). It then runs the same commands with `uv run --locked --project
 tools/wedge wedge …` in its workflows. One pin serves both local runs and CI.
@@ -59,7 +59,7 @@ tools/wedge wedge …` in its workflows. One pin serves both local runs and CI.
    name = "wedge-tool"
    version = "0"
    requires-python = ">=3.11"
-   dependencies = ["skillz-that-grillz @ git+https://github.com/paulnsorensen/skillz-that-grillz@<sha>#subdirectory=lib"]
+   dependencies = ["skillz-that-grillz @ git+https://github.com/paulnsorensen/skillz-that-grillz@<sha>#subdirectory=packages/wedge"]
    ```
 
    Keep it out of the skill project's own lock: `wedge` resolves `fromargs`
@@ -79,9 +79,9 @@ tools/wedge wedge …` in its workflows. One pin serves both local runs and CI.
    groups. Use the same `<sha>` that
    your workflows pin. A different `wedge` version can compute a different
    key. A project without uv can run the same command through
-   `uvx --from 'skillz-that-grillz @ git+…@<sha>#subdirectory=lib' wedge`.
+   `uvx --from 'skillz-that-grillz @ git+…@<sha>#subdirectory=packages/wedge' wedge`.
 
-The [consumer example](../../lib/examples/consumer/) shows this skill
+The [consumer example](../../packages/wedge/examples/consumer/) shows this skill
 directory layout.
 
 ## Workflows
