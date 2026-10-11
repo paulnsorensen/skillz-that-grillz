@@ -290,8 +290,10 @@ Small runs often report `inconclusive`. That result is honest: the data cannot s
 Report the verdict as it is. Never promote an `inconclusive` winner by hand.
 Apply a winner only after a `promote` or `promote-cheaper` verdict.
 Never report a delta without its SE and case count.
-`python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion rates of the gate. It makes no model call.
-The rates cover `promote` only. They do not cover `promote-cheaper`.
+`python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion counts and rates of the gate. It makes no model call.
+The keys `false_promotions_2se` and `false_promotions_one_holdout` are integer counts; each rate is its count divided by `trials`.
+The counts cover `promote` only. They do not cover `promote-cheaper`.
+The `skillz-pytest` job fails when `false_promotions_2se` rises above the threshold in `packages/skillz/ratchets.json`.
 
 ## Wedge targets
 

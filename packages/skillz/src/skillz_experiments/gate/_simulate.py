@@ -2,23 +2,26 @@ from __future__ import annotations
 
 import random
 import statistics
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from skillz_experiments.gate._rules import verdict
+from skillz_experiments.gate._rules import Verdict, verdict
 
 
 @dataclass(frozen=True)
 class Simulation:
-    """False-promotion rates under no true effect.
+    """False-promotion rates and counts under no true effect.
 
     With at least 2 cases, the split gate spends no more calls than the one-holdout rule.
+    Each rate equals its count divided by `trials`.
     """
 
     trials: int
     cases: int
     rate_2se: float
     rate_one_holdout: float
+    false_promotions_2se: int
+    false_promotions_one_holdout: int
 
 
 def _scores(rng: random.Random, chances: Sequence[float], repeats: int) -> list[float]:
@@ -30,7 +33,8 @@ def _chances(rng: random.Random, base: Sequence[float], spread: float) -> list[f
     return [min(1.0, max(0.0, rng.gauss(chance, spread))) for chance in base]
 
 
-def _trial(rng: random.Random, cases: int, repeats: int, candidates: int) -> tuple[bool, bool]:
+def _trial(rng: random.Random, cases: int, repeats: int, candidates: int,
+           rule: Callable[[list[float]], Verdict]) -> tuple[bool, bool]:
     """Run one null trial; return whether each gate falsely promotes."""
     arms = candidates + 1
     validation = max(1, (arms - 2) * cases // arms)
@@ -45,7 +49,7 @@ def _trial(rng: random.Random, cases: int, repeats: int, candidates: int) -> tup
     base, tries = world(cases)
     base_scores = _scores(rng, base, repeats)
     win_scores = _scores(rng, tries[best], repeats)
-    split = verdict([w - b for w, b in zip(win_scores, base_scores)]).verdict == "promote"
+    split = rule([w - b for w, b in zip(win_scores, base_scores)]).verdict == "promote"
 
     base, tries = world(cases)
     base_scores = _scores(rng, base, repeats)
@@ -60,6 +64,8 @@ def simulate(
     cases: int = 10,
     repeats: int = 3,
     candidates: int = 5,
+    *,
+    rule: Callable[[list[float]], Verdict] = verdict,
 ) -> Simulation:
     """Estimate false-promotion rates when no candidate has a true effect.
 
@@ -73,6 +79,7 @@ def simulate(
     (candidates + 1) * cases * repeats, so the comparison favors the one-holdout
     rule. The gate cannot promote with fewer than 2 cases, so a smaller holdout
     reports a false rate of zero without a test.
+    `rule` replaces the split gate's verdict function; tests inject a weakened gate with it.
     Raise `ValueError` when `trials < 1`, `cases < 2`, `repeats < 1`, or `candidates < 2`.
     """
     if trials < 1:
@@ -86,7 +93,7 @@ def simulate(
     rng = random.Random(seed)
     split = single = 0
     for _ in range(trials):
-        won_split, won_single = _trial(rng, cases, repeats, candidates)
+        won_split, won_single = _trial(rng, cases, repeats, candidates, rule)
         split += won_split
         single += won_single
-    return Simulation(trials, cases, split / trials, single / trials)
+    return Simulation(trials, cases, split / trials, single / trials, split, single)
