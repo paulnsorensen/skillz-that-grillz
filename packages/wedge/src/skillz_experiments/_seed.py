@@ -94,7 +94,7 @@ def _fixture(target: Path, path: str, cache: dict[str, str]) -> str:
         if not relative(path).startswith(FIXTURES):
             raise ValueError(f"{path} must be under {FIXTURES}")
         cache[path] = read_text(target, path, READ_LIMIT)
-        if sum(len(text) for text in cache.values()) > SEED_LIMIT:
+        if sum(len(text.encode("utf-8")) for text in cache.values()) > SEED_LIMIT:
             raise ValueError(f"the seed is too large; its fixtures pass {SEED_LIMIT} bytes")
     return cache[path]
 

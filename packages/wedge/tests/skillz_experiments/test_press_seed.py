@@ -375,3 +375,23 @@ def test_one_entry_with_many_distinct_fixtures_stops_reading_at_the_seed_bound(
     monkeypatch.setattr(_seed, "read_text", spy)
     assert "seed is too large" in str(_unreadable(target, tmp_path))
     assert len([name for name in reads if name != "evals/evals.json"]) <= 11
+
+
+def test_the_fixture_bound_counts_utf8_bytes_not_characters(
+        tmp_path: Path, make_target: Maker, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A three-byte character counts three bytes, so multibyte fixtures stop reading at the same byte bound."""
+    target = make_target(tmp_path)
+    (target / "evals/files").mkdir()
+    paths = [f"evals/files/f{index}.md" for index in range(40)]
+    for path in paths:
+        _ = (target / path).write_text("€" * (SEED_LIMIT // 30), encoding="utf-8")
+    _evals(target, [_entry("wide", assertions=["a"], files=paths)])
+    reads: list[str] = []
+
+    def spy(root: Path, name: str, limit: int) -> str:
+        reads.append(name)
+        return _cases.read_text(root, name, limit)
+
+    monkeypatch.setattr(_seed, "read_text", spy)
+    assert "seed is too large" in str(_unreadable(target, tmp_path))
+    assert len([name for name in reads if name != "evals/evals.json"]) <= 11
