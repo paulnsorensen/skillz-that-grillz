@@ -5,10 +5,13 @@ Each recipe uses the `command` adapter. The harness reference describes the prot
 Facts come from vendor documentation read on 2026-10-11. Flags change between releases.
 Check each flag with `--help` before you rely on it.
 
-## Gemini CLI (tested reference wrapper)
+## Gemini CLI (reference wrapper, not verified live)
 
 The runner bundle ships a wrapper: `skillz-experiment harness-wrapper gemini`.
 It reads one protocol request on stdin and writes one response on stdout.
+Fake-harness tests cover the wrapper, but no live Gemini CLI run has checked it (AC-16).
+Before you rely on it, run `self-test --preflight-only` with this recipe on a host that has Gemini CLI, a Google login, and a sandbox runtime.
+The sandbox probe checks the wrapper's own container or Seatbelt profile, not the Gemini CLI sandbox that `infer` uses.
 
 Create a private configuration file outside the skill:
 
