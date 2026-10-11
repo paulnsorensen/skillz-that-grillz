@@ -28,11 +28,12 @@ def _end(child: subprocess.Popen[str]) -> None:
         _ = child.communicate(timeout=TERM_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
         pass
-    try:
-        os.killpg(child.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-    _ = child.communicate()
+    finally:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        _ = child.communicate()
 
 
 def process(command: list[str], *, cwd: Path, timeout: float,

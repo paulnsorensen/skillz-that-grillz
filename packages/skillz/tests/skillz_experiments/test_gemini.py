@@ -83,6 +83,7 @@ SUBPROCESS_WRAPPER = pytest.mark.skipif(
     sys.platform == "darwin", reason="the wrapper subprocess sees the real platform and picks sandbox-exec, not docker")
 
 
+@SUBPROCESS_WRAPPER
 def test_wrapper_passes_the_runner_sandbox_probe_and_discovery(tmp_path: Path) -> None:
     directory = fake_bin(tmp_path)
     config = configured(tmp_path, directory)
@@ -434,6 +435,93 @@ def test_macos_profile_denies_agents_writes_after_every_allow(tmp_path: Path, mo
     assert text.startswith("(version 1)\n(deny default)") and '(subpath (param "TARGET_DIR"))' in text
     assert text.rstrip().splitlines()[-1] == f'(deny file-write* (subpath "{root.resolve() / ".agents"}"))'
     assert (root / ".gemini/sandbox-macos-skillz.sb").stat().st_mode & 0o077 == 0
+
+
+def test_macos_profile_denies_sibling_temp_reads_before_it_allows_this_trials_directories(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _ = (directory / "sandbox-exec").write_text(f"#!{sys.executable}\n")
+    (directory / "sandbox-exec").chmod(0o700)
+    _ = infer(directory, root)
+    text = (root.resolve() / ".gemini/sandbox-macos-skillz.sb").read_text()
+    broad = text.index('(allow file-read*\n    (literal "/")')
+    deny = text.index('(deny file-read*\n    (subpath "/private/var/folders")\n    (subpath "/private/tmp")')
+    allow = text.index('(allow file-read*\n    (subpath (param "TARGET_DIR"))\n    (subpath (param "TMP_DIR"))')
+    credentials = text.index('(deny file-read*\n    (literal (string-append (param "HOME_DIR") "/.gemini/oauth_creds.json"))')
+    assert broad < deny < allow < credentials
+    assert '(subpath (param "CACHE_DIR"))' in text[allow:credentials]
+
+
+@pytest.mark.parametrize("entry", ["settings.json", "GEMINI.md", "extensions"])
+@pytest.mark.parametrize("operation", ["infer", "discover"])
+def test_a_workspace_gemini_entry_is_refused_before_gemini_runs(tmp_path: Path, operation: str, entry: str) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    (root / ".gemini").mkdir()
+    if entry == "extensions":
+        (root / ".gemini" / entry).mkdir()
+    else:
+        _ = (root / ".gemini" / entry).write_text('{"context": {"includeDirectories": ["/"]}}')
+    with pytest.raises(ValueError, match=f"workspace must not contain .gemini/{entry}"):
+        if operation == "infer":
+            _ = infer(directory, root)
+        else:
+            _ = respond(request("discover", root, skill_name="present", skill_path=str(root / ".agents/skills/present")),
+                        bin_dir=directory)
+    assert not (directory / "gemini.log").exists()
+
+
+def test_a_workspace_gemini_symlink_is_refused_before_gemini_runs(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    (tmp_path / "elsewhere").mkdir()
+    (root / ".gemini").symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(ValueError, match="workspace must not contain .gemini"):
+        _ = infer(directory, root)
+    assert not (directory / "gemini.log").exists()
+
+
+def test_the_wrapper_owned_macos_profile_does_not_block_a_repeated_infer(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    _ = (directory / "sandbox-exec").write_text(f"#!{sys.executable}\n")
+    (directory / "sandbox-exec").chmod(0o700)
+    _ = infer(directory, root)
+    _ = infer(directory, root)
+
+
+def failing_docker(directory: Path) -> None:
+    """Replace the fake `docker` with one that hangs on `run` and fails on `ps` and `kill`."""
+    _ = (directory / "docker").write_text("\n".join([
+        f"#!{sys.executable}", "import sys,time",
+        "if sys.argv[1] in ('ps', 'kill'):", "    sys.stderr.write('daemon is wedged')", "    sys.exit(1)",
+        "time.sleep(60)", ""]))
+
+
+def test_a_failed_container_kill_is_reported_on_a_sandbox_timeout(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    directory = fake_bin(tmp_path)
+    failing_docker(directory)
+    monkeypatch.setitem(_gemini.TIMEOUTS, "sandbox", 1)
+    with pytest.raises(RuntimeError, match=r"timed out after 1 s; container cleanup failed for skillz-.*docker kill skillz-") as raised:
+        _ = respond(request("sandbox", workspace(tmp_path), argv=["true"]), bin_dir=directory)
+    assert "exits 1: daemon is wedged" in str(raised.value) and "may still be running" in str(raised.value)
+    assert "container cleanup failed" in capsys.readouterr().err
+
+
+def test_a_failed_container_listing_is_reported_on_an_infer_timeout(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    directory = fake_bin(tmp_path)
+    failing_docker(directory)
+    _ = (directory / "gemini.mode").write_text("hang")
+    monkeypatch.setitem(_gemini.TIMEOUTS, "infer", 1)
+    with pytest.raises(RuntimeError, match=r"container cleanup failed for label=skillz-run=.*docker ps exits 1"):
+        _ = infer(directory, workspace(tmp_path))
+    assert "may still be running" in capsys.readouterr().err
 
 
 def test_infer_gives_gemini_a_private_temp_directory(tmp_path: Path) -> None:

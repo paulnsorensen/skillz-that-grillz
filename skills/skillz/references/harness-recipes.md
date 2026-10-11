@@ -72,7 +72,7 @@ The probe does not run `infer`. Gemini CLI starts the `infer` sandbox itself, an
 - `SANDBOX_FLAGS` carries `--cap-drop ALL`, `--security-opt no-new-privileges`, `--pids-limit 256`, `--memory 2g`, and a `--label` that the wrapper uses to find the container.
 - `SANDBOX_MOUNTS` mounts `.agents` read-only.
 - `DOCKER_CONFIG` is passed so the container runtime finds its configuration.
-- `TMPDIR` names a private temporary directory for each call. Gemini gives its sandbox write access to the temporary directory, so other trials under `/tmp` stay out of reach. Check this mount with `docker inspect` during the AC-16 run.
+- `TMPDIR` names a private temporary directory for each call. Gemini gives its sandbox write access to the temporary directory, so other trials under `/tmp` stay out of reach in the container. On macOS the Seatbelt profile denies reads below `/private/var/folders` and `/private/tmp`. It then allows reads of the workspace, the private temporary directory, the cache directory, and the call's HOME. Check the container mount with `docker inspect` during the AC-16 run.
 - On macOS, `SEATBELT_PROFILE` selects the custom profile `.gemini/sandbox-macos-skillz.sb`. It copies upstream `strict-open` and adds a write deny for `.agents`. This is unverified on a live host.
 
 The wrapper cannot enforce these restrictions:

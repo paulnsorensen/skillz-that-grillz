@@ -35,6 +35,7 @@ LIMITS = ["--pids-limit", "256", "--memory", "2g"]
 LABEL = "skillz-run"
 CREDENTIALS = ("oauth_creds.json",)
 SEATBELT_PROFILE = "skillz"
+PROFILE_FILE = f"sandbox-macos-{SEATBELT_PROFILE}.sb"
 TIMEOUTS = {"sandbox": 300, "discover": 60, "infer": 900}
 CONTAINER_GRACE = 10
 STOP_BUDGET = 6
@@ -110,19 +111,24 @@ def _interrupted(signum: int, _frame: FrameType | None) -> NoReturn:
     raise SystemExit(128 + signum)
 
 
-def _abandon(process: subprocess.Popen[str], stop: Callable[[], None] | None) -> None:
-    """Kill the process group, then ask the container runtime to stop the container that the group started."""
+def _abandon(process: subprocess.Popen[str], stop: Callable[[], str] | None) -> str:
+    """Kill the process group, then ask the container runtime to stop the container that the group started.
+
+    Return a note when the cleanup may have left a container running. The note also goes to stderr.
+    """
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
     _ = process.communicate()
-    if stop is not None:
-        stop()
+    note = stop() if stop is not None else ""
+    if note:
+        print(note, file=sys.stderr, flush=True)
+    return note
 
 
 def _run(command: list[str], workspace: Path, env: dict[str, str], *, timeout: float, stdin: str | None = None,
-         stop: Callable[[], None] | None = None) -> subprocess.CompletedProcess[str]:
+         stop: Callable[[], str] | None = None) -> subprocess.CompletedProcess[str]:
     """Run one command with a deadline. A timeout, SIGTERM, or interrupt kills the group and calls `stop`."""
     try:
         previous = signal.signal(signal.SIGTERM, _interrupted)
@@ -134,10 +140,10 @@ def _run(command: list[str], workspace: Path, env: dict[str, str], *, timeout: f
     try:
         stdout, stderr = process.communicate(stdin, timeout=timeout)
     except subprocess.TimeoutExpired:
-        _abandon(process, stop)
-        raise RuntimeError(f"{Path(command[0]).name} timed out after {timeout:g} s") from None
+        note = _abandon(process, stop)
+        raise RuntimeError(f"{Path(command[0]).name} timed out after {timeout:g} s" + (f"; {note}" if note else "")) from None
     except BaseException:
-        _abandon(process, stop)
+        _ = _abandon(process, stop)
         raise
     finally:
         if previous is not None:
@@ -145,12 +151,14 @@ def _run(command: list[str], workspace: Path, env: dict[str, str], *, timeout: f
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def _stopper(executable: str, env: dict[str, str], *selector: str) -> Callable[[], None]:
+def _stopper(executable: str, env: dict[str, str], *selector: str) -> Callable[[], str]:
     """Return a callback that kills containers. `("kill", NAME)` kills one name; `("ps", FILTER)` kills a label match.
 
     All docker calls share one deadline of `STOP_BUDGET` seconds, so the callback ends before the runner's SIGKILL.
+    The callback returns an empty string when every call worked. Otherwise it returns a note that names the failure.
     """
-    def stop() -> None:
+    def stop() -> str:
+        problems: list[str] = []
         deadline = time.monotonic() + STOP_BUDGET
 
         def call(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -160,11 +168,20 @@ def _stopper(executable: str, env: dict[str, str], *selector: str) -> Callable[[
             if selector[0] == "kill":
                 ids = [selector[1]]
             else:
-                ids = call("ps", "-q", "--filter", selector[1]).stdout.split()
+                listing = call("ps", "-q", "--filter", selector[1])
+                if listing.returncode:
+                    problems.append(f"docker ps exits {listing.returncode}: {_tail(listing.stderr)}")
+                ids = listing.stdout.split()
             for identifier in ids:
-                _ = call("kill", identifier)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+                killed = call("kill", identifier)
+                if killed.returncode:
+                    problems.append(f"docker kill {identifier} exits {killed.returncode}: {_tail(killed.stderr)}")
+        except (OSError, subprocess.TimeoutExpired) as error:
+            problems.append(f"{type(error).__name__}: {error}")
+        if not problems:
+            return ""
+        return (f"container cleanup failed for {selector[1]} ({'; '.join(problems)}); a container may still be running: "
+                f"run `{Path(executable).name} ps` and kill it")
     return stop
 
 
@@ -177,15 +194,22 @@ def _environment(executable: str, bin_dir: Path | None, home: Path | None = None
 
 
 def _stop_dotenv_search(root: Path) -> None:
-    """Refuse a workspace that holds its own dotenv file, then write an empty one in the runner directory.
+    """Refuse a workspace that holds its own dotenv file or `.gemini` content, then write an empty dotenv file in the
+    runner directory. Workspace `.gemini` settings can widen the sandbox, so only the wrapper's own profile may exist.
 
     Gemini loads only the first dotenv file that it finds at or above its working directory. A file in the workspace or in
     its `.gemini` directory (even a symlink) would load before the guard and could carry credentials. The guard stops the
     search before a shared directory such as `/tmp`, where any local user can write a dotenv file.
     """
-    for local in (root / DOTENV, root / ".gemini" / DOTENV):
-        if os.path.lexists(local):
-            raise ValueError(f"workspace must not contain {local.relative_to(root)}; Gemini CLI would load it")
+    if os.path.lexists(root / DOTENV):
+        raise ValueError(f"workspace must not contain {DOTENV}; Gemini CLI would load it")
+    directory = root / ".gemini"
+    if os.path.lexists(directory):
+        if directory.is_symlink() or not directory.is_dir():
+            raise ValueError("workspace must not contain .gemini; Gemini CLI would load its settings")
+        for entry in directory.iterdir():
+            if entry.name != PROFILE_FILE:
+                raise ValueError(f"workspace must not contain .gemini/{entry.name}; Gemini CLI would load it")
     guard = root.parent / DOTENV
     guard.unlink(missing_ok=True)
     _ = guard.write_text("")
@@ -343,7 +367,7 @@ def _restrictions(kind: str, root: Path, label: str) -> dict[str, str]:
         if directory.is_symlink():
             raise ValueError("workspace .gemini must not be a symlink")
         directory.mkdir(exist_ok=True)
-        profile = directory / f"sandbox-macos-{SEATBELT_PROFILE}.sb"
+        profile = directory / PROFILE_FILE
         profile.unlink(missing_ok=True)
         _ = profile.write_text(seatbelt_profile(str(root / ".agents")))
         profile.chmod(0o600)
