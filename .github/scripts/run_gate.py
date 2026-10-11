@@ -110,12 +110,15 @@ def _stop_children() -> None:
 def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
     root = ["uv", "run", "--locked", "--no-sync", "--all-groups"]
     wedge = ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge"]
+    skillz = ["uv", "run", "--locked", "--no-sync", "--project", "packages/skillz"]
     fromargs = ["uv", "run", "--locked", "--no-sync", "--project", "packages/fromargs"]
     return [
-        ("wedge-pytest", wedge + ["pytest", "packages/wedge/tests/wedge", "packages/wedge/tests/skillz_experiments",
-                            "packages/wedge/tests/skillz_inspect", "-q", "-n", str(test_workers),
+        ("wedge-pytest", wedge + ["pytest", "packages/wedge/tests", "-q", "-n", str(test_workers),
                             "--dist", "worksteal", "--basetemp", str(cache_root / "l"),
                             "-o", f"cache_dir={cache_root / 'lc'}"]),
+        ("skillz-pytest", skillz + ["pytest", "packages/skillz/tests", "-q", "-n", str(test_workers),
+                              "--dist", "worksteal", "--basetemp", str(cache_root / "s"),
+                              "-o", f"cache_dir={cache_root / 'sc'}"]),
         ("fromargs-pytest", fromargs + ["pytest", "packages/fromargs/tests", "-q", "-n", str(test_workers),
                                       "--dist", "worksteal", "--basetemp", str(cache_root / "f"),
                                       "-o", f"cache_dir={cache_root / 'fc'}"]),

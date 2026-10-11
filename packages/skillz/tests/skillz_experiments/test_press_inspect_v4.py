@@ -1,7 +1,7 @@
 """Press attacks on the helper fixture contract v4 and the three-value sandbox.
 
 The attacks go through `fixture_failure`, the built `inspect-skill.pyz`, the Claude, Codex, and Command adapters,
-and the wedge rebuild of the real skill. The inspector-only tests live in `packages/wedge/tests/skillz_inspect/`.
+and the wedge rebuild of the real skill. The inspector-only tests live in `packages/skillz/tests/skillz_inspect/`.
 """
 from __future__ import annotations
 
@@ -648,8 +648,8 @@ def _passes_fixtures(pyz: bytes, tmp_path: Path) -> list[bool]:
     return results
 
 
-INSPECT_SOURCE = "@wedge/packages/wedge/src/skillz_inspect/_inspect.py"
-CLI_SOURCE = "@wedge/packages/wedge/src/skillz_inspect/_cli.py"
+INSPECT_SOURCE = "@wedge/packages/skillz/src/skillz_inspect/_inspect.py"
+CLI_SOURCE = "@wedge/packages/skillz/src/skillz_inspect/_cli.py"
 
 
 def _edited(seed: Candidate, name: str, old: str, new: str) -> Candidate:

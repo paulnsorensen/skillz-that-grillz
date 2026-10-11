@@ -10,7 +10,7 @@ reviews:
   poem: false
   in_progress_fortune: false
   path_instructions:
-    - path: "packages/wedge/src/skillz_experiments/**"
+    - path: "packages/skillz/src/skillz_experiments/**"
       instructions: >-
         Read the contract model and the reference docs before you claim the
         meaning of a contract field. Check which fixture a test uses before

@@ -636,7 +636,7 @@ Review it before sharing. The runner never applies or installs a patch.
 ## Inspection helper contract
 
 Run `python3 -I scripts/inspect-skill.pyz PATH`.
-The `.pyz` is the `inspect-skill` target of `wedge.toml`. Its source is the `packages/wedge/src/skillz_inspect` package, a fromargs CLI.
+The `.pyz` is the `inspect-skill` target of `wedge.toml`. Its source is the `packages/skillz/src/skillz_inspect` package, a fromargs CLI.
 Its input is a UTF-8 file of at most 262144 bytes.
 It requires opening and closing frontmatter delimiters.
 

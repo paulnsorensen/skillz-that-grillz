@@ -93,17 +93,18 @@ class GateRunnerTest(unittest.TestCase):
             ])
             readers = events[3:]
             self.assertFalse(any(event.startswith("uv sync") for event in readers))
-            self.assertTrue(any("packages/wedge/tests/wedge" in event for event in readers))
+            self.assertTrue(any("packages/wedge/tests" in event for event in readers))
+            self.assertTrue(any("packages/skillz/tests" in event for event in readers))
             self.assertTrue(any("packages/fromargs/tests" in event for event in readers))
             self.assertTrue(any("wedge bundle" in event for event in readers))
             self.assertTrue(all("--no-sync" in event for event in readers if event.startswith("uv run") and "--no-project" not in event))
             pytest_events = [event for event in readers if " pytest " in event]
-            self.assertEqual(len(pytest_events), 2)
+            self.assertEqual(len(pytest_events), 3)
             self.assertTrue(all(" -n 3 " in event for event in pytest_events))
             caches = [Path(event.split("cache_dir=")[1]) for event in pytest_events]
             bases = [Path(event.split("--basetemp ")[1].split()[0]) for event in pytest_events]
-            self.assertEqual(len(set(caches)), 2)
-            self.assertEqual(len(set(bases)), 2)
+            self.assertEqual(len(set(caches)), 3)
+            self.assertEqual(len(set(bases)), 3)
             self.assertTrue(all(cache.is_absolute() and base.is_absolute() for cache, base in zip(caches, bases)))
             self.assertTrue(all(str(base).startswith("/tmp/") for base in bases))
             socket = bases[0].resolve() / "popen-gw0" / "test_a_sandbox_read_root_that_0" / "h" / "inner" / "s"

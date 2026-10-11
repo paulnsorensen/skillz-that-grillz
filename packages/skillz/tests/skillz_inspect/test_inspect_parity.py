@@ -267,7 +267,7 @@ def test_inspect_matches_the_old_inspector_on_three_hundred_generated_documents(
 # --- the built archive is not stale -----------------------------------------------------------------------------
 
 def test_the_built_pyz_holds_exactly_the_current_package_and_fromargs_sources() -> None:
-    pairs = {"site-packages/skillz_inspect": ROOT / "packages/wedge/src/skillz_inspect",
+    pairs = {"site-packages/skillz_inspect": ROOT / "packages/skillz/src/skillz_inspect",
              "site-packages/fromargs": ROOT / "packages/fromargs/src/fromargs"}
     with ZipFile(PYZ) as archive:
         names = set(archive.namelist())

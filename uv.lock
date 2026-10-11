@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 [manifest]
 members = [
     "fromargs",
+    "skillz",
     "skillz-experiment-bundle",
     "skillz-that-grillz",
 ]
@@ -311,6 +312,44 @@ wheels = [
 ]
 
 [[package]]
+name = "skillz"
+version = "0.0.0"
+source = { editable = "packages/skillz" }
+dependencies = [
+    { name = "fromargs" },
+    { name = "skillz-that-grillz" },
+]
+
+[package.optional-dependencies]
+experiments = [
+    { name = "gepa" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "basedpyright" },
+    { name = "pytest" },
+    { name = "pytest-xdist" },
+    { name = "typing-extensions" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fromargs", editable = "packages/fromargs" },
+    { name = "gepa", marker = "extra == 'experiments'", specifier = "==0.1.4" },
+    { name = "skillz-that-grillz", editable = "packages/wedge" },
+]
+provides-extras = ["experiments"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = "==1.40.1" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-xdist", specifier = ">=3" },
+    { name = "typing-extensions", specifier = "==4.16.0" },
+]
+
+[[package]]
 name = "skillz-experiment-bundle"
 version = "0.0.0"
 source = { virtual = "." }
@@ -358,11 +397,6 @@ dependencies = [
     { name = "shiv" },
 ]
 
-[package.optional-dependencies]
-experiments = [
-    { name = "gepa" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
@@ -374,10 +408,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fromargs", editable = "packages/fromargs" },
-    { name = "gepa", marker = "extra == 'experiments'", specifier = "==0.1.4" },
     { name = "shiv", specifier = "==1.0.8" },
 ]
-provides-extras = ["experiments"]
 
 [package.metadata.requires-dev]
 dev = [

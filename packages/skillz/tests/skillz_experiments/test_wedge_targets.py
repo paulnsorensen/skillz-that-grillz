@@ -404,7 +404,7 @@ def test_the_real_skill_plans_the_inspector_as_the_only_editable_target() -> Non
     plan = plan_targets(REAL_SKILL, skeleton.files, contract, "prose+cli")
     assert [target.name for target in plan.editable] == ["inspect-skill"]
     assert {name.rsplit("/", 1)[-1] for name in plan.sources} >= {"__init__.py", "_cli.py", "_inspect.py"}
-    assert all(name.startswith("@wedge/packages/wedge/src/skillz_inspect/") for name in plan.sources)
+    assert all(name.startswith("@wedge/packages/skillz/src/skillz_inspect/") for name in plan.sources)
     assert sum(len(text) for text in plan.sources.values()) <= WEDGE_EDIT_LIMIT
     fixed = {name for name in plan.frozen if name.startswith("@wedge/packages/fromargs/")}
     assert fixed and not fixed & set(plan.sources)
@@ -413,7 +413,7 @@ def test_the_real_skill_plans_the_inspector_as_the_only_editable_target() -> Non
     assert plan.capable is not None
     names = _workflow._editable(skeleton.files | plan.sources | {NEW_CLI: ""}, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert set(plan.sources) | {NEW_CLI} <= set(names)
-    assert not any(name.startswith(("@wedge/packages/fromargs/", "@wedge/packages/wedge/src/skillz_experiments/")) for name in names)
+    assert not any(name.startswith(("@wedge/packages/fromargs/", "@wedge/packages/skillz/src/skillz_experiments/")) for name in names)
 
 
 

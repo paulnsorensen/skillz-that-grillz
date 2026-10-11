@@ -79,7 +79,7 @@ def harness(tmp_path: Path, executable: Path, budget: Budget | None = None) -> H
 
 def echo_candidate(tmp_path: Path) -> Candidate:
     target = tmp_path / "echo-skill"
-    _ = shutil.copytree(ROOT / "packages/wedge/tests/skillz_experiments/fixtures/echo-skill", target)
+    _ = shutil.copytree(ROOT / "packages/skillz/tests/skillz_experiments/fixtures/echo-skill", target)
     _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
     return Candidate.capture(target, ["SKILL.md"], load_contract(target))
 
