@@ -561,7 +561,7 @@ def test_candidate_patch_applies_with_patch_p1_outside_a_repo(
     destination = _exported(world, tmp_path, write_draft, approvals)
     plain = tmp_path / "plain"
     _ = shutil.copytree(world.skill, plain)
-    applied = subprocess.run(["patch", "-p1", "-i", str(destination / "candidate.patch")], cwd=plain,
+    applied = subprocess.run(["patch", "-p1", "-E", "-i", str(destination / "candidate.patch")], cwd=plain,
                              capture_output=True, text=True)
     assert applied.returncode == 0, applied.stdout + applied.stderr
     assert (plain / "references/added.md").read_text() == "new file\n"
