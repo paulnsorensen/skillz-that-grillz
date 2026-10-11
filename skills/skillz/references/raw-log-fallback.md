@@ -1,15 +1,20 @@
 # Raw-log Usage fallback
 
-Use only when the DuckDB CLI is unavailable during `audit`, or during `improve` when it runs the `audit` steps.
+Use only when DuckDB is unavailable (exit 3) during `audit`, or during `improve` when it runs the `audit` steps.
 This path is slower and sampled. It does not reproduce the analytics packs.
 
 1. Use the shared protocol's **Read and classify** result to set target kind
-   (`skill` or `agent`) and exact target name. Ask: "DuckDB is unavailable.
-   Skip Usage, or run a slower sampled raw-log scan for this `{kind}` with up
-   to three low-cost read-only subagents?" Do not dispatch until the user
-   chooses the scan. If the user skips or the host has no subagents, omit
-   Usage and continue the audit.
-2. Read `engine/references/harness-coverage.md` for the supported local roots.
+   (`skill` or `agent`) and exact target name. Ask one question: "DuckDB is
+   unavailable. What now?" Offer three choices:
+   1. Install DuckDB, then rerun. Show the install options from the exit-3
+      message of the CLI.
+   2. Approve a sampled scan of this `{kind}` by up to three cheap read-only
+      models, such as Haiku or luna.
+   3. Skip Usage.
+
+   Never dispatch the scan without consent. If the user skips or the host has
+   no subagents, omit Usage and continue the audit.
+2. Read the harness-coverage reference that `SKILL.md` lists, for the supported local roots.
    Select at most three accessible harness roots. Prefer Claude for explicit
    `Skill` or `Agent` events and Cursor for `Task` agent events. Choose other
    roots only when they have recent logs. Do not read log bodies in the parent.

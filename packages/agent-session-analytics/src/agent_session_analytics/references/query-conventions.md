@@ -1,0 +1,91 @@
+# Query & Pack-Authoring Conventions
+
+Conventions every analytics **pack** relies on. A pack is a skill-owned file at
+`skills/<skill>/references/<domain>.md` describing one analytics domain. One
+fresh read-only pack context runs exactly one pack, reading the *queries* from
+the pack and the *schema* from the schema reference of this package.
+
+## Pack file shape
+
+```
+# Pack: <domain>
+# target_param: {TARGET}   — the placeholder queries substitute
+# target_kind: skill or agent, from the dispatch prompt
+# start table: {START_TABLE} and {NAME_COLUMN}, set from target_kind (see Substitution)
+# harness: <how the pack uses the harness filter>
+# queries: ordered list of {name, sql}   — sql references the canonical schema
+# output_format: a markdown template the digest fills
+
+## 1. <query name>
+```sql
+SELECT ... FROM tool_uses WHERE ... ;
+```
+
+...
+
+## Output Format
+
+```
+<markdown template — what the ~2 KB digest looks like>
+```
+
+```
+
+Keep a pack to ~4-6 queries. The digest the agent returns must fit ~2 KB.
+
+## Harness filtering
+
+Every spawn carries a `harness=<all|claude|codex|omp|pi|cursor|copilot>`
+parameter. In pack SQL:
+
+- `harness='all'` → omit the harness predicate (aggregate every reachable source).
+- a specific harness → add `WHERE harness = '<name>'` (or `AND harness = ...`).
+
+State in the pack header which mode it expects. Domains that depend on
+claude-only fields (`stop_hooks`, `permission_denials`, `skill_invocations`)
+should say so and degrade to "insufficient signal" on other harnesses rather
+than report zero as if it were meaningful. `agent_spawns` includes Claude
+`Agent` and Cursor `Task`.
+
+## Substitution
+
+Queries use the placeholders that `target_param` and the pack header name
+(e.g. `{TARGET}`, `{START_TABLE}`, `{NAME_COLUMN}`). The caller substitutes the
+literal values before running. Quote the target as a string literal in SQL
+(`WHERE {NAME_COLUMN} = '{TARGET}'`).
+
+A pack that serves both skills and agents takes `target_kind` from the dispatch
+prompt. It sets `{START_TABLE}` and `{NAME_COLUMN}` from this mapping:
+
+- `skill`: `skill_invocations`, `skill_name`
+- `agent`: `agent_spawns`, `agent_type`
+
+## Empty results
+
+If a query returns `[]`, note "no data" for that section and continue — never
+block on one empty result. A pack that returns all-empty should say
+"insufficient signal", not invent findings.
+
+## Running queries
+
+A pack context queries the supplied `database` input. It never runs `ingest`
+or `db-path`. Run each query with the DuckDB CLI:
+
+```bash
+duckdb -init /dev/null -readonly <database> -json -c "SQL"
+```
+
+The `-init /dev/null` flag skips `~/.duckdbrc`. The `-readonly` flag blocks
+writes. The `-json` flag gives machine-readable output.
+
+## Signal-quality honesty
+
+Three domains are known low/medium-signal and must degrade gracefully:
+
+- `token-economics` — token/cost fields are usually absent from logs.
+- `routing-accuracy` — no intent ground-truth exists; correlational at best.
+- `knowledge-gaps` — medium-signal inference.
+
+Record the caveat in the pack and emit "insufficient signal" rather than
+fabricate a confident finding. This pairs with the confidence axis of the calling
+skill's calibration reference (`<don't know>` is never surfaced).

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Ingest multi-harness coding-agent session logs into one DuckDB database.
 
 Each harness has a *normalizing adapter* that discovers its native session
@@ -14,9 +13,7 @@ is skipped non-fatally. "Done" is full coverage of what is reachable, not
 parsing the unparseable.
 
 Engine: DuckDB CLI — no Python duckdb module required. Skips ingestion if the
-database is less than 1 hour old.
-
-Usage: python3 ingest.py [--force]
+database is less than 1 hour old and carries the current schema version.
 """
 
 from __future__ import annotations
@@ -26,12 +23,25 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import time
 from collections.abc import Iterator
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
+
+from agent_session_analytics._db import (
+    DB_DIR,
+    DB_PATH,
+    DB_TMP_PATH,
+    SCHEMA_VERSION,
+    STAGE_DIR,
+    IngestError,
+    configured_path,
+    db_is_fresh,
+    query_rows,
+    require_duckdb,
+    run_sql,
+)
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -39,39 +49,9 @@ if TYPE_CHECKING:
 _JsonValue: TypeAlias = "None | bool | int | float | str | list[_JsonValue] | dict[str, _JsonValue]"
 
 
-def _configured_path(name: str, default: str) -> str:
-    # SESSIONS_DB matches db-path.sh: a set value gets no `~` expansion, and a
-    # relative value joins to cwd. The adapter log roots use the same rule by
-    # choice. Only the built-in default expands `~` to HOME.
-    value = os.environ.get(name) or os.path.expanduser(default)
-    return os.path.abspath(value)
-
-
-def _xdg_cache_home() -> str:
-    # The XDG Base Directory spec requires ignoring a relative value.
-    # Matches db-path.sh: no `~` expansion; only an absolute value counts.
-    value = os.environ.get("XDG_CACHE_HOME")
-    if value and value.startswith("/"):
-        return os.path.abspath(value)
-    return os.path.abspath(os.path.expanduser("~/.cache"))
-
-
 def _sql_quote(path: str) -> str:
     """Escape a filesystem path for embedding as a single-quoted SQL literal."""
     return path.replace("'", "''")
-
-
-DEFAULT_DB_DIR = os.path.join(_xdg_cache_home(), "dotfiles", "session-analytics")
-DB_PATH = _configured_path(
-    "SESSIONS_DB", os.path.join(DEFAULT_DB_DIR, "sessions.duckdb")
-)
-DB_DIR = os.path.dirname(DB_PATH)
-DB_TMP_PATH = f"{DB_PATH}.tmp"
-# Derived from the database file name, not DB_DIR, so a SESSIONS_DB pointed
-# into an existing directory never aliases (and rmtree's) that directory's
-# own "stage" subdir.
-STAGE_DIR = f"{DB_PATH}.stage"
-TTL_SECONDS = 3600  # 1 hour
 
 # Canonical raw-entry columns the flattening SQL reads. Adapters emit a subset;
 # read_json(union_by_name) fills the rest with NULL.
@@ -98,6 +78,7 @@ RAW_COLUMNS = {
     "isSidechain": "BOOLEAN",
     "userType": "VARCHAR",
     "filename": "VARCHAR",
+    "parentSessionId": "VARCHAR",
 }
 
 
@@ -124,7 +105,7 @@ def _iter_jsonl(path: str) -> Iterator[_JsonValue]:
 
 
 def claude_discover() -> list[str]:
-    root = os.path.join(_configured_path("CLAUDE_CONFIG_DIR", "~/.claude"), "projects")
+    root = os.path.join(configured_path("CLAUDE_CONFIG_DIR", "~/.claude"), "projects")
     if not os.path.isdir(root):
         return []
     out: list[str] = []
@@ -143,7 +124,7 @@ def claude_normalize(path: str) -> Iterator[dict[str, _JsonValue]]:
 
 
 def codex_discover() -> list[str]:
-    root = os.path.join(_configured_path("CODEX_HOME", "~/.codex"), "sessions")
+    root = os.path.join(configured_path("CODEX_HOME", "~/.codex"), "sessions")
     if not os.path.isdir(root):
         return []
     out: list[str] = []
@@ -278,6 +259,46 @@ def _codex_command(name: _JsonValue, parsed: _JsonValue, raw_input: _JsonValue) 
     return None
 
 
+def _codex_token_usage(
+    payload: dict[str, _JsonValue], last_total: _JsonValue
+) -> tuple[dict[str, _JsonValue] | None, _JsonValue]:
+    """Map a token_count payload to (Claude-style usage, total_token_usage).
+
+    Returns usage None when last_token_usage is null or when total_token_usage
+    repeats the previous event (Codex re-emits it). The returned total is the
+    latest total seen on any token_count event, with or without usage.
+    """
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return None, last_total
+    total = info.get("total_token_usage")
+    new_total = last_total if total is None else total
+    last = info.get("last_token_usage")
+    if not isinstance(last, dict):
+        return None, new_total
+    if total is not None and total == last_total:
+        return None, new_total
+    usage: dict[str, _JsonValue] = {
+        "input_tokens": last.get("input_tokens"),
+        "output_tokens": last.get("output_tokens"),
+        "cache_read_input_tokens": last.get("cached_input_tokens"),
+    }
+    return usage, new_total
+
+
+def _codex_parent_session(payload: dict[str, _JsonValue]) -> str | None:
+    """Parent thread id of a sub-agent rollout, or None.
+
+    A sub-agent session_meta carries ``source.subagent.thread_spawn``; other
+    sessions carry a plain string or no ``source``.
+    """
+    source = payload.get("source")
+    subagent = source.get("subagent") if isinstance(source, dict) else None
+    spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+    parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+    return parent if isinstance(parent, str) and parent else None
+
+
 def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     """Codex rollout JSONL -> canonical envelope.
 
@@ -288,9 +309,23 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     custom tools) are kept verbatim, and ``input.command`` is normalized to the
     executed command string for shell-ish tools so ``bash_cmd`` extracts.
     ``tool_search_output`` items have no matching call item and are dropped.
+    A forked rollout holds two ``session_meta`` records (own id first, parent
+    second); the first id, ``cwd``, and ``cli_version`` describe the file. A
+    token row before any id falls back to the file path, so ids stay unique.
+    ``session_meta.cli_version`` stamps ``version`` on every entry. A
+    sub-agent rollout names its parent in the first ``session_meta``; that id
+    stamps ``parentSessionId`` on every entry. Each non-duplicate
+    ``token_count`` event with a ``last_token_usage`` becomes one
+    ``token_usage`` entry (unique ``message.id``, empty content). Only
+    model_turns reads it, as one row; no other table sees it.
     """
     session_id = None
+    parent_session_id = None
     cwd = None
+    cli_version = None
+    model = None
+    last_total = None
+    token_turns = 0
     for entry in _iter_jsonl(path):
         if not isinstance(entry, dict):
             continue
@@ -298,11 +333,40 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
         payload = entry.get("payload")
         etype = entry.get("type")
         if etype == "session_meta" and isinstance(payload, dict):
-            session_id = payload.get("id") or session_id
-            cwd = payload.get("cwd") or cwd
+            if session_id is None:
+                parent_session_id = _codex_parent_session(payload)
+            session_id = session_id or payload.get("id")
+            cwd = cwd or payload.get("cwd")
+            cli_version = cli_version or payload.get("cli_version") or None
             continue
         if etype == "turn_context" and isinstance(payload, dict):
             cwd = payload.get("cwd") or cwd
+            model = payload.get("model") or model
+            continue
+        if (
+            etype == "event_msg"
+            and isinstance(payload, dict)
+            and payload.get("type") == "token_count"
+        ):
+            usage, last_total = _codex_token_usage(payload, last_total)
+            if usage is None:
+                continue
+            token_turns += 1
+            yield {
+                "harness": "codex",
+                "type": "token_usage",
+                "timestamp": ts,
+                "sessionId": session_id,
+                "parentSessionId": parent_session_id,
+                "version": cli_version,
+                "cwd": cwd,
+                "message": {
+                    "id": f"codex-tokens:{session_id or path}:{token_turns}",
+                    "model": model or "unknown",
+                    "content": [],
+                    "usage": usage,
+                },
+            }
             continue
         if etype != "response_item" or not isinstance(payload, dict):
             continue
@@ -326,6 +390,8 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 "type": "assistant",
                 "timestamp": ts,
                 "sessionId": session_id,
+                "parentSessionId": parent_session_id,
+                "version": cli_version,
                 "cwd": cwd,
                 "message": {
                     "content": [
@@ -348,6 +414,8 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 "type": "user",
                 "timestamp": ts,
                 "sessionId": session_id,
+                "parentSessionId": parent_session_id,
+                "version": cli_version,
                 "cwd": cwd,
                 "message": {
                     "content": [
@@ -526,7 +594,7 @@ def pi_normalize(path: str) -> Iterator[dict[str, object]]:
 
 
 def cursor_discover() -> list[str]:
-    root = os.path.join(_configured_path("CURSOR_HOME", "~/.cursor"), "projects")
+    root = os.path.join(configured_path("CURSOR_HOME", "~/.cursor"), "projects")
     if not os.path.isdir(root):
         return []
     out: list[str] = []
@@ -549,9 +617,9 @@ def _cursor_parse_timestamp(text: str) -> str | None:
         return None
     dt_str, offset = m.groups()
     try:
-        # Naive parse is intentional: the UTC offset is applied manually on
-        # the next line, so a %z-aware parse would double-count it.
-        dt = datetime.strptime(dt_str, "%b %d, %Y, %I:%M %p")  # noqa: DTZ007
+        # The UTC offset is applied manually below, so parse a wall-clock time
+        # and tag it UTC; a %z-aware parse would double-count the offset.
+        dt = datetime.strptime(dt_str, "%b %d, %Y, %I:%M %p").replace(tzinfo=UTC)
     except ValueError:
         return None
     dt -= timedelta(hours=int(offset))
@@ -596,7 +664,7 @@ def _cursor_resolve_slug(slug: str, fs_root: str = "/") -> str:
 
 def _cursor_project_cwd(path: str) -> str:
     """Decode the project-slug directory into a cwd via filesystem resolve."""
-    root = os.path.join(_configured_path("CURSOR_HOME", "~/.cursor"), "projects")
+    root = os.path.join(configured_path("CURSOR_HOME", "~/.cursor"), "projects")
     rel = os.path.relpath(path, root)
     slug = rel.split(os.sep, 1)[0]
     return _cursor_resolve_slug(slug)
@@ -735,37 +803,8 @@ ADAPTERS = [
 # --------------------------------------------------------------------------
 
 
-def db_is_fresh() -> bool:
-    if not os.path.exists(DB_PATH):
-        return False
-    age = time.time() - os.path.getmtime(DB_PATH)
-    return age < TTL_SECONDS
-
-
-def run_sql(sql: str, db_path: str | None = None, readonly: bool = False) -> None:
-    limit = os.environ.get("SESSIONS_DUCKDB_MEMORY_LIMIT") or "8GB"
-    argv = ["duckdb", "-init", "/dev/null"]
-    if readonly:
-        argv.append("-readonly")
-    argv += [
-        db_path or DB_TMP_PATH,
-        "-cmd",
-        f"SET memory_limit='{limit}'",
-        "-c",
-        sql,
-    ]
-    result = subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        timeout=600,
-        check=False,
-    )
-    if result.returncode != 0:
-        print(f"ERROR: {result.stderr[:500]}", file=sys.stderr)
-        sys.exit(1)
-    if result.stdout.strip():
-        print(result.stdout.strip())
+def _log(message: str) -> None:
+    print(message, file=sys.stderr)
 
 
 def stage_harnesses() -> list[str]:
@@ -782,7 +821,7 @@ def stage_harnesses() -> list[str]:
     for name, discover, normalize in ADAPTERS:
         sources = discover()
         if not sources or normalize is None:
-            print(f"  {name}: no accessible logs — skipped")
+            _log(f"  {name}: no accessible logs — skipped")
             continue
         out_path = os.path.join(STAGE_DIR, f"{name}.jsonl")
         count = 0
@@ -793,10 +832,10 @@ def stage_harnesses() -> list[str]:
                     count += 1
         if count:
             loaded.append(name)
-            print(f"  {name}: {count} canonical entries")
+            _log(f"  {name}: {count} canonical entries")
         else:
             os.remove(out_path)
-            print(f"  {name}: no accessible logs — skipped")
+            _log(f"  {name}: no accessible logs — skipped")
     return loaded
 
 
@@ -805,25 +844,17 @@ def columns_struct() -> str:
 
 
 def _do_ingest_and_swap() -> float:
-    print("Discovering + normalizing harness sessions...")
+    _log("Discovering + normalizing harness sessions...")
     loaded = stage_harnesses()
     if not loaded:
-        print(
-            "No accessible sessions from any harness. Nothing to ingest.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        raise IngestError("No accessible sessions from any harness. Nothing to ingest.")
 
     if os.path.exists(DB_TMP_PATH):
         if os.path.isdir(DB_TMP_PATH):
-            print(
-                f"ERROR: {DB_TMP_PATH} is a directory, expected a file.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            raise IngestError(f"{DB_TMP_PATH} is a directory, expected a file.")
         os.remove(DB_TMP_PATH)
 
-    print("Loading canonical rows into DuckDB...")
+    _log("Loading canonical rows into DuckDB...")
     t0 = time.time()
     stage_glob = os.path.join(STAGE_DIR, "*.jsonl")
 
@@ -839,12 +870,9 @@ def _do_ingest_and_swap() -> float:
             columns={columns_struct()}
         );
     """)
-    run_sql(
-        "SELECT harness, count(*) AS rows FROM raw_entries GROUP BY harness ORDER BY harness;"
-    )
 
     # Step 2: tool_uses (flattened from assistant content blocks).
-    print("  Creating tool_uses...")
+    _log("  Creating tool_uses...")
     run_sql("""
         CREATE TABLE tool_uses AS
         WITH content_blocks AS (
@@ -882,7 +910,7 @@ def _do_ingest_and_swap() -> float:
     # to explicit 'false' rather than a NULL every string compare treats as
     # success silently. is_error_explicit preserves whether the source block
     # carried the flag, so coverage stays measurable (issue #704).
-    print("  Creating tool_results...")
+    _log("  Creating tool_results...")
     run_sql("""
         CREATE TABLE tool_results AS
         WITH content_blocks AS (
@@ -906,7 +934,7 @@ def _do_ingest_and_swap() -> float:
     """)
 
     # Step 4: stop_events.
-    print("  Creating stop_events...")
+    _log("  Creating stop_events...")
     run_sql("""
         CREATE TABLE stop_events AS
         SELECT
@@ -926,7 +954,11 @@ def _do_ingest_and_swap() -> float:
     # usage takes one value. omp and other harnesses carry no `message.id` and
     # keep one row per entry. TRY_CAST keeps one malformed metric from
     # aborting the whole ingest. Latency and prompt_tokens are omp-only.
-    print("  Creating model_turns...")
+    # Codex token rows carry no content, so tool_calls stays NULL (not measured).
+    # context_tokens is the prompt size the model read: Claude's input_tokens
+    # excludes cache reads and creation, so they are added; Codex's
+    # input_tokens already includes cached tokens.
+    _log("  Creating model_turns...")
     run_sql("""
         CREATE TABLE model_turns AS
         WITH fragments AS (
@@ -934,11 +966,12 @@ def _do_ingest_and_swap() -> float:
                 harness, sessionId, cwd, timestamp, message,
                 coalesce(json_extract_string(message, '$.id'),
                          'row:' || row_number() OVER ()) AS turn_key,
+                CASE WHEN harness = 'codex' THEN NULL ELSE
                 (SELECT count(*)
                    FROM unnest(json_extract(json_extract(message, '$.content'), '$[*]')) AS c(block)
-                  WHERE json_extract_string(block, '$.type') = 'tool_use') AS tool_calls
+                  WHERE json_extract_string(block, '$.type') = 'tool_use') END AS tool_calls
             FROM raw_entries
-            WHERE type = 'assistant'
+            WHERE type IN ('assistant', 'token_usage')
               AND message IS NOT NULL
               AND json_extract_string(message, '$.model') IS NOT NULL
         )
@@ -951,6 +984,14 @@ def _do_ingest_and_swap() -> float:
             max(TRY_CAST(json_extract(message, '$.usage.output_tokens') AS BIGINT)) AS output_tokens,
             max(TRY_CAST(json_extract(message, '$.usage.cache_read_input_tokens') AS BIGINT))
                 AS cache_read_tokens,
+            max(TRY_CAST(json_extract(message, '$.usage.cache_creation_input_tokens') AS BIGINT))
+                AS cache_creation_tokens,
+            CASE WHEN harness = 'claude'
+                THEN max(TRY_CAST(json_extract(message, '$.usage.input_tokens') AS BIGINT))
+                    + coalesce(max(TRY_CAST(json_extract(message, '$.usage.cache_read_input_tokens') AS BIGINT)), 0)
+                    + coalesce(max(TRY_CAST(json_extract(message, '$.usage.cache_creation_input_tokens') AS BIGINT)), 0)
+                ELSE max(TRY_CAST(json_extract(message, '$.usage.input_tokens') AS BIGINT))
+            END AS context_tokens,
             max(TRY_CAST(json_extract(message, '$.prompt_tokens') AS BIGINT)) AS prompt_tokens,
             max(TRY_CAST(json_extract(message, '$.duration_ms') AS DOUBLE)) AS duration_ms,
             max(TRY_CAST(json_extract(message, '$.ttft_ms') AS DOUBLE)) AS ttft_ms,
@@ -961,7 +1002,7 @@ def _do_ingest_and_swap() -> float:
     """)
 
     # Step 5: agent_spawns.
-    print("  Creating agent_spawns...")
+    _log("  Creating agent_spawns...")
     run_sql("""
         CREATE TABLE agent_spawns AS
         SELECT
@@ -976,7 +1017,7 @@ def _do_ingest_and_swap() -> float:
     """)
 
     # Step 6: skill_invocations.
-    print("  Creating skill_invocations...")
+    _log("  Creating skill_invocations...")
     run_sql("""
         CREATE TABLE skill_invocations AS
         SELECT
@@ -987,14 +1028,14 @@ def _do_ingest_and_swap() -> float:
     """)
 
     # Step 7: mcp_calls.
-    print("  Creating mcp_calls...")
+    _log("  Creating mcp_calls...")
     run_sql("""
         CREATE TABLE mcp_calls AS
         SELECT * FROM tool_uses WHERE tool_name LIKE 'mcp__%';
     """)
 
     # Step 8: sessions summary.
-    print("  Creating sessions...")
+    _log("  Creating sessions...")
     run_sql("""
         CREATE TABLE sessions AS
         SELECT
@@ -1003,7 +1044,9 @@ def _do_ingest_and_swap() -> float:
             max(timestamp) AS last_seen,
             cwd AS project,
             gitBranch AS branch,
-            count(*) AS entry_count
+            arg_max(version, timestamp) FILTER (WHERE version IS NOT NULL) AS version,
+            max(parentSessionId) AS parent_session_id,
+            count(*) FILTER (WHERE type IS DISTINCT FROM 'token_usage') AS entry_count
         FROM raw_entries
         WHERE sessionId IS NOT NULL
           AND timestamp IS NOT NULL
@@ -1011,7 +1054,7 @@ def _do_ingest_and_swap() -> float:
     """)
 
     # Step 9: stop_hooks (claude-only fields, harness threaded through).
-    print("  Creating stop_hooks...")
+    _log("  Creating stop_hooks...")
     run_sql("""
         CREATE TABLE stop_hooks AS
         SELECT
@@ -1022,7 +1065,7 @@ def _do_ingest_and_swap() -> float:
     """)
 
     # Step 10: permission_denials.
-    print("  Creating permission_denials...")
+    _log("  Creating permission_denials...")
     run_sql("""
         CREATE TABLE permission_denials AS
         SELECT harness, content, sessionId, timestamp
@@ -1032,7 +1075,7 @@ def _do_ingest_and_swap() -> float:
            OR content LIKE '%The user doesn''t want to proceed%';
     """)
 
-    print("  Creating indexes...")
+    _log("  Creating indexes...")
     run_sql("""
         CREATE INDEX idx_tool_uses_name ON tool_uses(tool_name);
         CREATE INDEX idx_tool_uses_session ON tool_uses(sessionId);
@@ -1041,47 +1084,18 @@ def _do_ingest_and_swap() -> float:
         CREATE INDEX idx_sessions_id ON sessions(sessionId);
     """)
 
+    run_sql(
+        f"""
+        CREATE TABLE schema_info AS SELECT {SCHEMA_VERSION} AS version;
+    """
+    )
+
     os.replace(DB_TMP_PATH, DB_PATH)
     return time.time() - t0
 
 
-def main() -> None:
-    _ = os.umask(0o077)
-    force = "--force" in sys.argv
-
-    if not shutil.which("duckdb"):
-        print(
-            "DuckDB CLI not found — install duckdb or use the raw-log fallback.",
-            file=sys.stderr,
-        )
-        sys.exit(3)
-
-    if db_is_fresh() and not force:
-        age_min = (time.time() - os.path.getmtime(DB_PATH)) / 60
-        print(f"Database is {age_min:.0f}m old (TTL=60m). Skipping ingestion.")
-        print("Use --force to re-ingest.")
-        return
-
-    os.makedirs(DB_DIR, exist_ok=True)
-
-    lock_path = f"{DB_PATH}.lock"
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-    if db_is_fresh() and not force:
-        age_min = (time.time() - os.path.getmtime(DB_PATH)) / 60
-        print(f"Database is {age_min:.0f}m old (TTL=60m). Skipping ingestion.")
-        print("Use --force to re-ingest.")
-        return
-
-    try:
-        elapsed = _do_ingest_and_swap()
-    finally:
-        shutil.rmtree(STAGE_DIR, ignore_errors=True)
-
-    print(f"\nIngestion complete in {elapsed:.1f}s")
-
-    run_sql(
+def _summary() -> dict[str, object]:
+    counts = query_rows(
         """
         SELECT
             (SELECT count(*) FROM tool_uses) AS tool_uses,
@@ -1092,17 +1106,13 @@ def main() -> None:
             (SELECT count(*) FROM mcp_calls) AS mcp_calls,
             (SELECT count(*) FROM sessions) AS sessions,
             (SELECT count(*) FROM permission_denials) AS permission_denials;
-    """,
-        db_path=DB_PATH,
-        readonly=True,
+    """
     )
-
-    # Coverage stanza (issue #704): measurement quality per harness, so
-    # consumers can see how much of the call volume has joined results and how
-    # many error flags were explicit in the source vs backfilled. A low
-    # joined_pct means per-tool error rates for that harness are floors.
-    print("\nCoverage (per harness):")
-    run_sql(
+    # Coverage (issue #704): measurement quality per harness, so consumers can
+    # see how much of the call volume has joined results and how many error
+    # flags were explicit in the source vs backfilled. A low results_joined_pct
+    # means per-tool error rates for that harness are floors.
+    coverage = query_rows(
         """
         WITH result_ids AS (SELECT DISTINCT tool_use_id FROM tool_results)
         SELECT
@@ -1119,11 +1129,62 @@ def main() -> None:
         LEFT JOIN result_ids r ON u.tool_use_id = r.tool_use_id
         GROUP BY u.harness
         ORDER BY u.harness;
-    """,
-        db_path=DB_PATH,
-        readonly=True,
+    """
     )
+    return {"counts": counts[0] if counts else {}, "coverage": coverage}
 
 
-if __name__ == "__main__":
-    main()
+def build_database(*, force: bool = False) -> float | None:
+    """Build or refresh the database; return the build seconds, or None when it is cached.
+
+    A database that is newer than the TTL and carries the current schema
+    version is left alone unless ``force`` is set. An `IngestError` reports
+    every expected failure, including a failed directory, lock, or stage step.
+    """
+    _ = os.umask(0o077)
+    require_duckdb()
+
+    if not force and db_is_fresh():
+        return None
+
+    try:
+        os.makedirs(DB_DIR, exist_ok=True)
+        lock_fd = os.open(f"{DB_PATH}.lock", os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            # A waiting run checks freshness again: the lock holder may have just rebuilt.
+            if not force and db_is_fresh():
+                return None
+            try:
+                return _do_ingest_and_swap()
+            finally:
+                shutil.rmtree(STAGE_DIR, ignore_errors=True)
+        finally:
+            os.close(lock_fd)
+    except OSError as error:
+        raise IngestError(f"Cannot build the session database: {error}") from error
+
+
+def ingest(force: bool = False) -> dict[str, object]:
+    """Build or refresh the database; return a JSON-ready summary."""
+    elapsed = build_database(force=force)
+    if elapsed is None:
+        return _cached()
+    return {
+        "status": "ingested",
+        "database": DB_PATH,
+        "schema_version": SCHEMA_VERSION,
+        "elapsed_seconds": round(elapsed, 1),
+        **_summary(),
+    }
+
+
+def _cached() -> dict[str, object]:
+    age_minutes = (time.time() - os.path.getmtime(DB_PATH)) / 60
+    return {
+        "status": "cached",
+        "database": DB_PATH,
+        "schema_version": SCHEMA_VERSION,
+        "age_minutes": round(age_minutes),
+        "note": "database is newer than the one-hour cache; pass --force to re-ingest",
+    }

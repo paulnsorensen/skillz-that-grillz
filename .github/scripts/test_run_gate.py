@@ -96,15 +96,16 @@ class GateRunnerTest(unittest.TestCase):
             self.assertTrue(any("packages/wedge/tests" in event for event in readers))
             self.assertTrue(any("packages/skillz/tests" in event for event in readers))
             self.assertTrue(any("packages/fromargs/tests" in event for event in readers))
+            self.assertTrue(any("packages/agent-session-analytics/tests" in event for event in readers))
             self.assertTrue(any("wedge bundle" in event for event in readers))
             self.assertTrue(all("--no-sync" in event for event in readers if event.startswith("uv run") and "--no-project" not in event))
             pytest_events = [event for event in readers if " pytest " in event]
-            self.assertEqual(len(pytest_events), 3)
+            self.assertEqual(len(pytest_events), 4)
             self.assertTrue(all(" -n 3 " in event for event in pytest_events))
             caches = [Path(event.split("cache_dir=")[1]) for event in pytest_events]
             bases = [Path(event.split("--basetemp ")[1].split()[0]) for event in pytest_events]
-            self.assertEqual(len(set(caches)), 3)
-            self.assertEqual(len(set(bases)), 3)
+            self.assertEqual(len(set(caches)), 4)
+            self.assertEqual(len(set(bases)), 4)
             self.assertTrue(all(cache.is_absolute() and base.is_absolute() for cache, base in zip(caches, bases)))
             self.assertTrue(all(str(base).startswith("/tmp/") for base in bases))
             socket = bases[0].resolve() / "popen-gw0" / "test_a_sandbox_read_root_that_0" / "h" / "inner" / "s"
@@ -126,6 +127,17 @@ class GateRunnerTest(unittest.TestCase):
             self.assertNotEqual(base, cache)
             self.assertFalse(base.exists())
             self.assertFalse(cache.exists())
+
+    def test_standalone_agent_session_analytics_keeps_python_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self._fake_env(root)
+            result = subprocess.run([sys.executable, str(RUNNER), "agent-session-analytics", "3.11"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            event = (root / "events").read_text().strip()
+            self.assertIn("--project packages/agent-session-analytics pytest packages/agent-session-analytics/tests", event)
+            self.assertIn("--python 3.11", event)
 
     def test_invalid_worker_count_fails_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

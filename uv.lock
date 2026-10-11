@@ -4,10 +4,36 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
+    "agent-session-analytics",
     "fromargs",
     "skillz",
     "skillz-experiment-bundle",
     "skillz-that-grillz",
+]
+
+[[package]]
+name = "agent-session-analytics"
+version = "0.1.0"
+source = { editable = "packages/agent-session-analytics" }
+dependencies = [
+    { name = "fromargs" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "basedpyright" },
+    { name = "pytest" },
+    { name = "pytest-xdist" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "fromargs", editable = "packages/fromargs" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = "==1.40.1" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-xdist", specifier = ">=3" },
 ]
 
 [[package]]

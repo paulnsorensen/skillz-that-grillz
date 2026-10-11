@@ -3,8 +3,7 @@
 
 The one-level-deep rule (progressive-disclosure.md) forbids a reference that
 sends the reader to another reference. This check catches Markdown links and
-bare or backtick mentions of a sibling reference file name. Mentions of
-`engine/references/` files are allowed: the engine is an internal data tree.
+bare or backtick mentions of a sibling reference file name.
 """
 
 import re
@@ -12,8 +11,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ENGINE_LINK = re.compile(r"\]\([^)]*engine/references/[^)]*\)")
-ENGINE_PATH = re.compile(r"[\w./-]*engine/references/[\w./-]*\.md")
 
 
 def reference_dirs(root: Path = ROOT) -> list[Path]:
@@ -30,7 +27,6 @@ def find_nested(references: Path) -> list[str]:
     findings: list[str] = []
     for source in files:
         for number, line in enumerate(source.read_text().splitlines(), start=1):
-            line = ENGINE_PATH.sub("", ENGINE_LINK.sub("", line))
             for name, pattern in patterns.items():
                 if name != source.name and pattern.search(line):
                     findings.append(f"{source.name}:{number}: names {name}")

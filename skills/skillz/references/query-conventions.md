@@ -3,7 +3,7 @@
 Conventions every analytics **pack** relies on. A pack is a skill-owned file at
 `skills/<skill>/references/<domain>.md` describing one analytics domain. One
 fresh read-only pack context runs exactly one pack, reading the *queries* from
-the pack and the *schema* from `canonical-schema.md` (in this data layer).
+the pack and the *schema* from the schema reference of this package.
 
 ## Pack file shape
 
@@ -68,15 +68,15 @@ block on one empty result. A pack that returns all-empty should say
 
 ## Running queries
 
-Resolve the database with `engine/scripts/db-path.sh` and its
-`sessions_db_path` function. Then run each query through the CLI:
+A pack context queries the supplied `database` input. It never runs `ingest`
+or `db-path`. Run each query with the DuckDB CLI:
 
 ```bash
-duckdb -readonly "<abs-database>" -json -c "SQL"
+duckdb -init /dev/null -readonly <database> -json -c "SQL"
 ```
 
-Ensure the database exists first with `python3 <abs-ingest>`. The one-hour
-TTL skips a fresh database. `-json` gives machine-readable output.
+The `-init /dev/null` flag skips `~/.duckdbrc`. The `-readonly` flag blocks
+writes. The `-json` flag gives machine-readable output.
 
 ## Signal-quality honesty
 
@@ -87,5 +87,5 @@ Three domains are known low/medium-signal and must degrade gracefully:
 - `knowledge-gaps` — medium-signal inference.
 
 Record the caveat in the pack and emit "insufficient signal" rather than
-fabricate a confident finding. This pairs with the confidence axis in
-`../../references/calibration.md` (`<don't know>` is never surfaced).
+fabricate a confident finding. This pairs with the confidence axis of the calling
+skill's calibration reference (`<don't know>` is never surfaced).

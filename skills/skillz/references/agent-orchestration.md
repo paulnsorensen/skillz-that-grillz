@@ -3,14 +3,14 @@
 - target_param: `{TARGET}` (the skill or agent type whose orchestration we audit)
 - target_kind: `skill` or `agent`, from the dispatch prompt
 - start table: set `{START_TABLE}` and `{NAME_COLUMN}` from `target_kind`, as the
-  Substitution section of `engine/references/query-conventions.md` defines
+  Substitution section of the `conventions` input defines
 - harness: `harness='all'` (`agent_spawns` / `mcp_calls` are claude-dominant — note that)
 - owner: skillz
 
 Report tools, agents, and MCP calls inside each 10-minute post-invocation window.
 These events are temporally correlated. The window does not prove causation or concurrency.
-Run in one fresh read-only context. Schema: `engine/references/canonical-schema.md`
-in this `skillz` skill. Replace each placeholder before you run a query.
+Run in one fresh read-only context. Schema: the `schema` input.
+Replace each placeholder before you run a query.
 
 For an `agent` target, a window starts at each spawn of that agent in the session.
 The spawned agent's own tool calls carry no join key. Claude sidechain events share the

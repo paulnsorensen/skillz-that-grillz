@@ -38,8 +38,7 @@ Run against the target's `references/` and repo-wide. Splitting into
 1. **Nested references (one-level-deep rule).** A reference that links to or
    names another reference violates *best-practices* ("keep references one
    level deep"; the stated failure is a partial `head -100` read missing the
-   tail). Hoist the read trigger into SKILL.md. Links into `engine/references/`
-   are allowed: the engine is an internal data tree, not a reading chain.
+   tail). Hoist the read trigger into SKILL.md.
    Scan each reference for its sibling references' basenames, as links, bare
    names, or backticks:
 
