@@ -29,7 +29,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
-from session_analytics._db import (
+from agent_session_analytics._db import (
     DB_DIR,
     DB_PATH,
     DB_TMP_PATH,

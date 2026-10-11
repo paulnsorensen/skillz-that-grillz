@@ -4,11 +4,36 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
+    "agent-session-analytics",
     "fromargs",
-    "session-analytics",
     "skillz",
     "skillz-experiment-bundle",
     "skillz-that-grillz",
+]
+
+[[package]]
+name = "agent-session-analytics"
+version = "0.1.0"
+source = { editable = "packages/agent-session-analytics" }
+dependencies = [
+    { name = "fromargs" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "basedpyright" },
+    { name = "pytest" },
+    { name = "pytest-xdist" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "fromargs", editable = "packages/fromargs" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = "==1.40.1" },
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-xdist", specifier = ">=3" },
 ]
 
 [[package]]
@@ -287,31 +312,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/cf/0e/faf7c7e36630561e3e9611730c47510cd972dd5fde8f95941ff78f76accd/rich_rst-2.2.0.tar.gz", hash = "sha256:b1e6a67f8f694a6f36035624bf73e2b1a0a4be13edaf3ba5e654d9758b61073a", size = 326270, upload-time = "2026-09-27T19:12:42.163Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/4e/716b42bf066e180c1235783b46f095a5d871d05dca7006d2295aac29c491/rich_rst-2.2.0-py3-none-any.whl", hash = "sha256:1ea1c43813dc4a8d86475fce27ffb74e0ada3d4656c9f8130ba2a59868055fe9", size = 279274, upload-time = "2026-09-27T19:12:40.548Z" },
-]
-
-[[package]]
-name = "session-analytics"
-version = "0.1.0"
-source = { editable = "packages/session-analytics" }
-dependencies = [
-    { name = "fromargs" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "basedpyright" },
-    { name = "pytest" },
-    { name = "pytest-xdist" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "fromargs", editable = "packages/fromargs" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "basedpyright", specifier = "==1.40.1" },
-    { name = "pytest", specifier = ">=8" },
-    { name = "pytest-xdist", specifier = ">=3" },
 ]
 
 [[package]]

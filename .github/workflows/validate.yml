@@ -65,7 +65,7 @@ jobs:
         #   pip: yamllint
         #   uv: pinned by the Install uv step; workspace pytest from the root uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
-        #   release binary: duckdb CLI (the session-analytics and analytics-pack tests)
+        #   release binary: duckdb CLI (the agent-session-analytics and analytics-pack tests)
         run: |
           set -euo pipefail
           npm install -g markdownlint-cli2@0.22.1
@@ -102,8 +102,8 @@ jobs:
       - name: Run fromargs tests
         run: just test-fromargs ${{ matrix.python }}
 
-  session-analytics-tests:
-    name: session-analytics tests (py${{ matrix.python }})
+  agent-session-analytics-tests:
+    name: agent-session-analytics tests (py${{ matrix.python }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -127,10 +127,10 @@ jobs:
             -o /tmp/duckdb_cli.zip
           sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
 
-      - name: Run session-analytics tests
+      - name: Run agent-session-analytics tests
         env:
           REQUIRE_DUCKDB: "1"
-        run: just test-session-analytics ${{ matrix.python }}
+        run: just test-agent-session-analytics ${{ matrix.python }}
 
   pr-title:
     name: conventional commits pr title

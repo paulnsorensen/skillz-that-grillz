@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from typing import cast
 
-from session_analytics import _ingest as ingest
+from agent_session_analytics import _ingest as ingest
 
 from .conftest import Sandbox, needs_duckdb
 

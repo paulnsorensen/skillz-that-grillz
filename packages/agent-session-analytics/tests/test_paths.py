@@ -24,7 +24,7 @@ def eval_ingest(expr: str, env: dict[str, str], cwd: Path, *argv: str) -> str:
             sys.executable,
             "-B",
             "-c",
-            "import json, sys; from session_analytics import _db, _ingest; " + f"print({expr})",
+            "import json, sys; from agent_session_analytics import _db, _ingest; " + f"print({expr})",
             *argv,
         ],
         env=env,

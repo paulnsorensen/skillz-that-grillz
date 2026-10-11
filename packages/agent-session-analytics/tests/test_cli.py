@@ -1,4 +1,4 @@
-"""Acceptance tests for the `session-analytics` CLI: exit codes, cache, lock, and schema."""
+"""Acceptance tests for the `agent-session-analytics` CLI: exit codes, cache, lock, and schema."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from session_analytics import _db
+from agent_session_analytics import _db
 
 from .conftest import Sandbox, claude_skill_entry, needs_duckdb
 
@@ -183,7 +183,7 @@ def test_sql_auto_ingests_an_absent_old_or_wrong_version_default_database(
 def test_sql_refresh_does_not_run_the_ingest_summary(sandbox: Sandbox) -> None:
     _seed_claude(sandbox)
     script = (
-        "import json; from session_analytics import _ingest, _query\n"
+        "import json; from agent_session_analytics import _ingest, _query\n"
         + "def boom():\n    raise RuntimeError('summary ran')\n"
         + "_ingest._summary = boom\n"
         + "print(json.dumps(_query.run_query('SELECT 1 AS x')))"
@@ -339,7 +339,7 @@ def _wait_until_blocked(process: subprocess.Popen[str], lock_path: Path) -> None
 
 def _start_ingest(sandbox: Sandbox) -> subprocess.Popen[str]:
     return subprocess.Popen(
-        [sys.executable, "-m", "session_analytics", "ingest"],
+        [sys.executable, "-m", "agent_session_analytics", "ingest"],
         env=sandbox.env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -466,7 +466,7 @@ def test_schema_command_returns_the_packaged_reference(sandbox: Sandbox) -> None
     packaged = (
         Path(__file__).resolve().parents[1]
         / "src"
-        / "session_analytics"
+        / "agent_session_analytics"
         / "references"
         / "canonical-schema.md"
     )

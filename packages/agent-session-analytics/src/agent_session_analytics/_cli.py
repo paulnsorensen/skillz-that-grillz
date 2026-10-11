@@ -1,4 +1,4 @@
-"""The `session-analytics` command line: JSON in, JSON out."""
+"""The `agent-session-analytics` command line: JSON in, JSON out."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from importlib import resources
 
 import fromargs
 
-from session_analytics._db import DB_PATH, DatabaseError
-from session_analytics._ingest import ingest as run_ingest
-from session_analytics._query import run_query
+from agent_session_analytics._db import DB_PATH, DatabaseError
+from agent_session_analytics._ingest import ingest as run_ingest
+from agent_session_analytics._query import run_query
 
 app = fromargs.App(
-    "session-analytics",
+    "agent-session-analytics",
     help="Ingest coding-agent session logs into DuckDB and query them read-only.",
 )
 
@@ -49,7 +49,7 @@ def sql(query: str) -> list[dict[str, object]]:
 @app.command
 def schema() -> dict[str, str]:
     """Print the canonical schema reference that ships with the package."""
-    reference = resources.files("session_analytics").joinpath("references", SCHEMA_REFERENCE)
+    reference = resources.files("agent_session_analytics").joinpath("references", SCHEMA_REFERENCE)
     return {"reference": SCHEMA_REFERENCE, "content": reference.read_text(encoding="utf-8")}
 
 

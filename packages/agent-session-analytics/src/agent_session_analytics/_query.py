@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from session_analytics._db import (
+from agent_session_analytics._db import (
     DB_PATH,
     SCHEMA_VERSION,
     DatabaseError,
@@ -15,7 +15,7 @@ from session_analytics._db import (
     query_rows,
     require_duckdb,
 )
-from session_analytics._ingest import build_database
+from agent_session_analytics._ingest import build_database
 
 
 def _refresh_default_database() -> None:
@@ -45,11 +45,11 @@ def run_query(query: str) -> list[dict[str, object]]:
     require_duckdb()
     if os.environ.get("SESSIONS_DB"):
         if not os.path.exists(DB_PATH):
-            raise IngestError(f"No session database at {DB_PATH}; run `session-analytics ingest`.")
+            raise IngestError(f"No session database at {DB_PATH}; run `agent-session-analytics ingest`.")
         if not db_is_stamped():
             raise IngestError(
                 f"The database at {DB_PATH} is not at schema version "
-                + f"{SCHEMA_VERSION}; run `session-analytics ingest --force`."
+                + f"{SCHEMA_VERSION}; run `agent-session-analytics ingest --force`."
             )
     else:
         _refresh_default_database()

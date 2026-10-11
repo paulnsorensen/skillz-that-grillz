@@ -34,7 +34,7 @@ class Sandbox:
     ) -> subprocess.CompletedProcess[str]:
         env = self.env | (extra_env or {})
         return subprocess.run(
-            [sys.executable, "-m", "session_analytics", *args],
+            [sys.executable, "-m", "agent_session_analytics", *args],
             env=env,
             cwd=self.root,
             capture_output=True,

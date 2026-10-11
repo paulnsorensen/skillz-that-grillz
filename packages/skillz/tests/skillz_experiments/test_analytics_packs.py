@@ -1,4 +1,4 @@
-"""The analytics packs: static text rules, and their SQL run against the built session-analytics bundle."""
+"""The analytics packs: static text rules, and their SQL run against the built agent-session-analytics bundle."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import pytest
 SKILL_DIR = Path(__file__).resolve().parents[4] / "skills/skillz"
 PACKS = SKILL_DIR / "references"
 CONVENTIONS = PACKS / "query-conventions.md"
-BUNDLE = SKILL_DIR / "scripts" / "session-analytics.pyz"
+BUNDLE = SKILL_DIR / "scripts" / "agent-session-analytics.pyz"
 PACK_NAMES = ("skill-usage.md", "agent-orchestration.md", "drift-regression.md")
 SQL_BLOCK = re.compile(r"```sql\n(.*?)```", re.S)
 

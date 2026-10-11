@@ -1,6 +1,6 @@
-# session-analytics
+# agent-session-analytics
 
-`session-analytics` ingests the session logs of coding agents into one DuckDB
+`agent-session-analytics` ingests the session logs of coding agents into one DuckDB
 database. It then answers SQL queries that cannot write or run commands. It
 supports the Claude Code, Codex, Cursor, OMP, and pi harnesses.
 
@@ -10,9 +10,9 @@ writes its own SQL against the schema.
 ## Install
 
 ```bash
-uv tool install session-analytics
+uv tool install agent-session-analytics
 # or
-pip install session-analytics
+pip install agent-session-analytics
 ```
 
 The only runtime dependency is `fromargs`. The package calls the `duckdb`
@@ -42,9 +42,9 @@ on stderr: `{"error": <message>, "exit_code": <n>}`.
 | `schema` | The canonical schema reference. |
 
 ```bash
-session-analytics ingest
-session-analytics db-path | jq -r .path
-session-analytics sql "SELECT harness, count(*) AS sessions FROM sessions GROUP BY harness"
+agent-session-analytics ingest
+agent-session-analytics db-path | jq -r .path
+agent-session-analytics sql "SELECT harness, count(*) AS sessions FROM sessions GROUP BY harness"
 ```
 
 `sql` opens the database read-only and runs in DuckDB safe mode. Safe mode
@@ -92,8 +92,8 @@ schema.
 
 ## References
 
-These files ship as package data in `session_analytics/references/`:
+These files ship as package data in `agent_session_analytics/references/`:
 
-- `canonical-schema.md` — tables and columns. `session-analytics schema` prints it.
+- `canonical-schema.md` — tables and columns. `agent-session-analytics schema` prints it.
 - `harness-coverage.md` — what each harness log provides.
 - `query-conventions.md` — rules for writing queries.

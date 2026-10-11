@@ -3,7 +3,7 @@
 Contents: [Coverage status](#coverage-status), [Per-harness format notes](#per-harness-format-notes), [Signal-quality caveats](#signal-quality-caveats).
 
 Which coding-agent harnesses the analytics layer ingests, where their session
-logs live, and how each is parsed. `session-analytics ingest` runs one **normalizing adapter**
+logs live, and how each is parsed. `agent-session-analytics ingest` runs one **normalizing adapter**
 per harness; every adapter is discovery-gated and best-effort. A harness with no
 accessible logs is recorded here and skipped non-fatally — full coverage of what
 is reachable, not parsing the unparseable.
@@ -175,7 +175,7 @@ e.g. token/cost data is absent from most logs (`token-economics` degrades to
 entries, so `stop_hooks` / `permission_denials` are effectively claude-only.
 Packs must degrade gracefully rather than fabricate.
 
-`session-analytics ingest` returns a per-harness **coverage** list after every rebuild. It has two fields.
+`agent-session-analytics ingest` returns a per-harness **coverage** list after every rebuild. It has two fields.
 `results_joined_pct` counts tool calls with a joined result. A low value means per-tool error rates for that harness are floors, not estimates.
 `explicit_error_flag_pct` counts results whose error flag came from the source rather than the `'false'` backfill.
 Read it before quoting cross-harness error-rate comparisons.

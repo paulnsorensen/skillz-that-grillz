@@ -22,7 +22,7 @@ include = ["../../packages/fromargs/src/fromargs"]
 groups = ["wedge"]
 
 [[target]]
-name = "session-analytics"
-entry = "session_analytics:main"
-source = "../../packages/session-analytics/src/session_analytics"
+name = "agent-session-analytics"
+entry = "agent_session_analytics:main"
+source = "../../packages/agent-session-analytics/src/agent_session_analytics"
 include = ["../../packages/fromargs/src/fromargs"]

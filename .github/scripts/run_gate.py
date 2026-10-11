@@ -14,7 +14,7 @@ Job = tuple[str, list[str]]
 ROOT = Path(__file__).resolve().parents[2]
 _ACTIVE: dict[subprocess.Popen[bytes], tuple[str, BinaryIO]] = {}
 _cancelled = False
-PACKAGE_MODES = frozenset({"fromargs", "session-analytics"})
+PACKAGE_MODES = frozenset({"fromargs", "agent-session-analytics"})
 
 
 def _check_cancelled() -> None:
@@ -113,7 +113,7 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
     wedge = ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge"]
     skillz = ["uv", "run", "--locked", "--no-sync", "--project", "packages/skillz"]
     fromargs = ["uv", "run", "--locked", "--no-sync", "--project", "packages/fromargs"]
-    analytics = ["uv", "run", "--locked", "--no-sync", "--project", "packages/session-analytics"]
+    analytics = ["uv", "run", "--locked", "--no-sync", "--project", "packages/agent-session-analytics"]
     return [
         ("wedge-pytest", wedge + ["pytest", "packages/wedge/tests", "-q", "-n", str(test_workers),
                             "--dist", "worksteal", "--basetemp", str(cache_root / "l"),
@@ -131,7 +131,7 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("reference-check", root + ["python", ".github/scripts/check_skillz_references.py"]),
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
-        ("session-analytics-pytest", analytics + ["pytest", "packages/session-analytics/tests", "-q", "-n", str(test_workers),
+        ("agent-session-analytics-pytest", analytics + ["pytest", "packages/agent-session-analytics/tests", "-q", "-n", str(test_workers),
                                                 "--dist", "worksteal", "--basetemp", str(cache_root / "a"),
                                                 "-o", f"cache_dir={cache_root / 'ac'}"]),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
@@ -188,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args or args[0] not in {"fix", "check", "test", *PACKAGE_MODES} or (
         args[0] not in PACKAGE_MODES and len(args) != 1
     ) or len(args) > 2:
-        print("usage: run_gate.py fix|check|test|fromargs|session-analytics [python]", file=sys.stderr)
+        print("usage: run_gate.py fix|check|test|fromargs|agent-session-analytics [python]", file=sys.stderr)
         return 2
     try:
         workers, test_workers = _workers("GATE_JOBS"), _workers("TEST_WORKERS")

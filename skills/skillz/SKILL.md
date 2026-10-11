@@ -42,7 +42,7 @@ Ask for a target when the mode requires one.
 | `wedge <path>` | none | a `SKILL.md` | no | the target skill: each selected CLI, its delivery files, its call site, and any dependency write | an offload brief, then one CLI per selected candidate, each in its own directory when wedged, or with a stated reason |
 | `autoimprove <path>` | `experiment` | a skill directory; no contract or manifest | cases that the user approves; agent-drafted session cases when analytics exists | isolated run directory | a holdout gate verdict and a private candidate patch |
 
-`audit` never modifies the target. The Usage ceremony of `audit` and `improve` runs `scripts/session-analytics.pyz ingest`, which creates or refreshes the analytics cache.
+`audit` never modifies the target. The Usage ceremony of `audit` and `improve` runs `scripts/agent-session-analytics.pyz ingest`, which creates or refreshes the analytics cache.
 `references/analytics-ceremony.md` has the details. Skip Usage and the raw-log fallback write no cache.
 
 For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
@@ -257,7 +257,7 @@ N findings were `<don't know>` or trivial (not shown).
 Read on demand:
 
 - `references/harness-layout.md` — Portability lens fires or `add` (global or repo-local); the frontmatter matrix, rules, template, evals, sidecar, and sources.
-- `references/analytics-ceremony.md` — `audit`, or `improve` without a reusable audit; use `scripts/session-analytics.pyz` for best-effort per-pack analytics.
+- `references/analytics-ceremony.md` — `audit`, or `improve` without a reusable audit; use `scripts/agent-session-analytics.pyz` for best-effort per-pack analytics.
 - `references/raw-log-fallback.md` — DuckDB is absent; the user installs it, opts into a sampled, read-only Usage scan, or skips.
 - `references/anti-patterns.md` — a finding needs the expanded failure mode.
 - `references/offload.md` — when `wedge` runs, or when `improve` implements an approved offload; the shared procedure.
@@ -270,7 +270,7 @@ Read on demand:
 - `references/decision-frameworks.md` — Prompt quality flags rigid rules on a judgment task.
 - `references/hooks-catalog.md` — a finding needs 100%-of-the-time enforcement, or Invocation recommends a forced-evaluation hook (§1).
 - `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs. For the analytics ceremony, pass each pack path and the target kind to its pack context. Read a pack only when the host has no sub-agents.
-- `scripts/session-analytics.pyz` — the analytics CLI: `ingest`, `db-path`, `sql`, and `schema`.
+- `scripts/agent-session-analytics.pyz` — the analytics CLI: `ingest`, `db-path`, `sql`, and `schema`.
 - `references/canonical-schema.md` — the pack input `schema`; read it when you write or check pack SQL.
 - `references/query-conventions.md` — the pack input `conventions`; read it when you write a pack or run its queries.
 - `references/harness-coverage.md` — the pack input `coverage`; read it before cross-harness comparisons and in the raw-log fallback.

@@ -5,16 +5,16 @@ last_verified: 2026-10-11
 confidence: high
 sources:
   - skills/skillz/references/analytics-ceremony.md
-  - packages/session-analytics/src/session_analytics/_ingest.py
+  - packages/agent-session-analytics/src/agent_session_analytics/_ingest.py
   - dotfiles@6ce36879:skills/session-analytics/
 ---
 # skillz analytics engine decisions
 
-The analytics engine is the `session-analytics` package in
-`packages/session-analytics/`. This repository is the only owner of the schema.
+The analytics engine is the `agent-session-analytics` package in
+`packages/agent-session-analytics/`. This repository is the only owner of the schema.
 The package ships to PyPI. `skillz` also bundles it as
-`skills/skillz/scripts/session-analytics.pyz`, built by `wedge` from the
-`session-analytics` target in `skills/skillz/wedge.toml`.
+`skills/skillz/scripts/agent-session-analytics.pyz`, built by `wedge` from the
+`agent-session-analytics` target in `skills/skillz/wedge.toml`.
 
 The package merges two engines. One is the engine that `skillz` bundled from
 `dotfiles` commit `f6f0cbf5`. The other is the `dotfiles` engine at commit

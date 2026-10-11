@@ -1,6 +1,6 @@
 # Analytics ceremony (`audit` and `improve`)
 
-Empirical usage data is best-effort. This skill bundles `scripts/session-analytics.pyz`;
+Empirical usage data is best-effort. This skill bundles `scripts/agent-session-analytics.pyz`;
 it does not need an installed `session-analytics` skill. The CLI shares that
 skill's database path and one-hour freshness window. It requires Python 3, the
 `duckdb` CLI, readable local session logs, and a writable database directory.
@@ -13,14 +13,14 @@ run read-only.
 
 1. Resolve this installed `skillz` directory from its loaded `SKILL.md` path.
 2. Resolve the database path with
-   `python3 <abs-skillz>/scripts/session-analytics.pyz db-path`. The command
+   `python3 <abs-skillz>/scripts/agent-session-analytics.pyz db-path`. The command
    prints `{"path": "<abs path>"}`. Use the `path` field as `<abs-database>`.
    `SESSIONS_DB` overrides it. Otherwise, an absolute `XDG_CACHE_HOME` selects
    `<cache>/dotfiles/session-analytics/sessions.duckdb`; a relative or unset
    value uses `~/.cache/dotfiles/session-analytics/sessions.duckdb`. A relative
    `SESSIONS_DB` resolves against the current directory. Ingest also writes the
    transient `<db>.tmp` and `<db>.stage`, and a persistent `<db>.lock`.
-3. Run `python3 <abs-skillz>/scripts/session-analytics.pyz ingest` before
+3. Run `python3 <abs-skillz>/scripts/agent-session-analytics.pyz ingest` before
    querying. A database inside the freshness window makes ingest a no-op.
    Exit 3 means DuckDB is missing: stop this ceremony. Exit 4 means ingestion
    failed or timed out: omit Usage. The `sql` command also refreshes an old or
@@ -30,7 +30,7 @@ run read-only.
    input; the runner applies no defaults. Each context returns one ~2 KB digest.
    Do not collapse the packs into one all-domains run. Claude Code `Agent`,
    Codex `spawn_agent`, and OMP `task` are example hosts. Without sub-agents,
-   run each pack's SQL with `python3 <abs-skillz>/scripts/session-analytics.pyz sql "<sql>"`
+   run each pack's SQL with `python3 <abs-skillz>/scripts/agent-session-analytics.pyz sql "<sql>"`
    and keep only the digest. Exit 5 means DuckDB rejects the query.
 
    ```text

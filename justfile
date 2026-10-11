@@ -33,9 +33,9 @@ lint-py-dead-code:
 test-fromargs python="":
     python3 .github/scripts/run_gate.py fromargs {{python}}
 
-# Run session-analytics' pytest suite, optionally pinned to one Python version.
-test-session-analytics python="":
-    python3 .github/scripts/run_gate.py session-analytics {{python}}
+# Run agent-session-analytics' pytest suite, optionally pinned to one Python version.
+test-agent-session-analytics python="":
+    python3 .github/scripts/run_gate.py agent-session-analytics {{python}}
 
 # Mutation-test the fromargs acceptance suite (not part of build/ci).
 mutate-fromargs:
@@ -56,17 +56,17 @@ fromargs-release-notes $version:
     fi
     printf '%s\n' "$notes"
 
-# Print the CHANGELOG section for one session-analytics version; fail when it is missing or empty.
+# Print the CHANGELOG section for one agent-session-analytics version; fail when it is missing or empty.
 [script("bash")]
-session-analytics-release-notes $version:
+agent-session-analytics-release-notes $version:
     set -euo pipefail
     notes=$(awk -v v="$version" '
         index($0, "## [" v "]") == 1 { on = 1; next }
         on && /^(## |\[[^]]+\]: )/ { exit }
         on { print }
-    ' packages/session-analytics/CHANGELOG.md | sed '/./,$!d')
+    ' packages/agent-session-analytics/CHANGELOG.md | sed '/./,$!d')
     if [ -z "${notes//[[:space:]]/}" ]; then
-        echo "error: packages/session-analytics/CHANGELOG.md has no section for $version" >&2
+        echo "error: packages/agent-session-analytics/CHANGELOG.md has no section for $version" >&2
         exit 1
     fi
     printf '%s\n' "$notes"

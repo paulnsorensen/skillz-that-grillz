@@ -96,7 +96,7 @@ class GateRunnerTest(unittest.TestCase):
             self.assertTrue(any("packages/wedge/tests" in event for event in readers))
             self.assertTrue(any("packages/skillz/tests" in event for event in readers))
             self.assertTrue(any("packages/fromargs/tests" in event for event in readers))
-            self.assertTrue(any("packages/session-analytics/tests" in event for event in readers))
+            self.assertTrue(any("packages/agent-session-analytics/tests" in event for event in readers))
             self.assertTrue(any("wedge bundle" in event for event in readers))
             self.assertTrue(all("--no-sync" in event for event in readers if event.startswith("uv run") and "--no-project" not in event))
             pytest_events = [event for event in readers if " pytest " in event]
@@ -128,15 +128,15 @@ class GateRunnerTest(unittest.TestCase):
             self.assertFalse(base.exists())
             self.assertFalse(cache.exists())
 
-    def test_standalone_session_analytics_keeps_python_pin(self) -> None:
+    def test_standalone_agent_session_analytics_keeps_python_pin(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = self._fake_env(root)
-            result = subprocess.run([sys.executable, str(RUNNER), "session-analytics", "3.11"], env=env,
+            result = subprocess.run([sys.executable, str(RUNNER), "agent-session-analytics", "3.11"], env=env,
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             event = (root / "events").read_text().strip()
-            self.assertIn("--project packages/session-analytics pytest packages/session-analytics/tests", event)
+            self.assertIn("--project packages/agent-session-analytics pytest packages/agent-session-analytics/tests", event)
             self.assertIn("--python 3.11", event)
 
     def test_invalid_worker_count_fails_before_work(self) -> None:
