@@ -48,6 +48,7 @@ def _bwrap_works() -> bool:
 
 needs_bwrap = pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is unavailable")
 linux_only = pytest.mark.skipif(sys.platform == "darwin", reason="macOS uses the real config directory")
+darwin_only = pytest.mark.skipif(sys.platform != "darwin", reason="only macOS uses the real config directory")
 pytestmark = pytest.mark.usefixtures("host_login")
 
 
@@ -1197,6 +1198,31 @@ def test_close_deletes_the_config_dir(tmp_path: Path) -> None:
     adapter.close()
     assert not directory.exists()
     adapter.close()
+
+
+@darwin_only
+def test_macos_uses_the_host_config_dir_and_links_no_login(tmp_path: Path, host_login: Path) -> None:
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    try:
+        assert adapter.config_dir == host_login.parent
+        assert adapter.login.credential is None
+        assert not os.path.islink(host_login)
+        assert not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
+    finally:
+        adapter.close()
+
+
+@darwin_only
+def test_macos_takes_the_config_dir_from_the_environment_and_close_keeps_it(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    other = tmp_path / "other-config"
+    other.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(other))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    assert adapter.config_dir == other
+    adapter.close()
+    adapter.close()
+    assert other.is_dir()
 
 
 def _login(token: str = "a", **extra: str) -> str:
