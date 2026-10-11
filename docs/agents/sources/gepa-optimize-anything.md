@@ -32,7 +32,7 @@ Pin and test the selected version before integration. This article is not an exh
 GEPA's [Frequently Asked Questions](./gepa-faq.md) states that brevity needs an explicit objective.
 It also describes example memorization and output-contract drift.
 Thus a lower token count is not evidence of better task performance.[^5]
-The [feature proposal](../ideas/session-driven-skill-optimization.md) now has a bounded [local implementation](../../../packages/skillz/src/skillz_experiments/_workflow.py).
+The [feature proposal](../ideas/session-driven-skill-optimization.md) now has a bounded [local implementation](../../../packages/skillz/src/skillz_experiments/run/_run.py).
 [Bundled self-tests](../../../packages/skillz/tests/skillz_experiments/test_bundle.py) exercise real GEPA, fixed evaluation, and paired holdouts.
 These tests do not establish statistical improvement or validate this source's examples.
 

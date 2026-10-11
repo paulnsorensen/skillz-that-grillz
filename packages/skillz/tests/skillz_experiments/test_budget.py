@@ -11,7 +11,7 @@ from typing_extensions import override
 import pytest
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._runtime import (
+from skillz_experiments._budget import (
     MAX_CONCURRENT_CALLS,
     SECONDS_PER_CALL,
     Budget,
@@ -21,8 +21,8 @@ from skillz_experiments._runtime import (
     approve,
     estimate,
     gate_seconds,
-    process,
 )
+from skillz_experiments._runtime import process
 
 CHILD = ("import sys,time,pathlib; d=pathlib.Path(sys.argv[1]); n=sys.argv[2]; "
          + "(d/(n+'.start')).write_text(str(time.time())); time.sleep(0.3); "

@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from skillz_experiments._gate import case_deltas, simulate, verdict
+from skillz_experiments.gate import case_deltas, simulate, verdict
 
 
 def test_case_deltas_average_repeats_per_case() -> None:

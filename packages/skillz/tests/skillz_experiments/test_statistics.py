@@ -13,10 +13,12 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import _LEGACY_SKILLZ, parse  # pyright: ignore[reportPrivateUsage]
-from skillz_experiments._gate import Simulation, Statistics, simulate, verdict
+from skillz_experiments.gate._simulate import Simulation
+from skillz_experiments.gate import Statistics, simulate, verdict
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import Stop, export, resolve_statistics, run
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, export, run
+from skillz_experiments.run._resume import resolve_statistics
 
 MODEL = "local-test"
 LEGACY_IDENTITY = "f97f7476933403cbc6180cf3dc3cb54ca9d9eb63a7cf37bae92dd6aa9612b2e8"

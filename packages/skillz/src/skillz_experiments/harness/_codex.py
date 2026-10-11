@@ -13,16 +13,33 @@ from typing import cast, final
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
-from skillz_experiments._discovery import discover
+from skillz_experiments.harness._discovery import discover
 from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._evaluator import answer_schema, evaluate
-from skillz_experiments._isolation import listening, probe
-from skillz_experiments._runtime import Budget, process
+from skillz_experiments.harness._isolation import listening, probe
+from skillz_experiments._budget import Budget
+from skillz_experiments._runtime import process
 
 MINIMUM_VERSION = "codex-cli 0.154.0"
 MODEL_REJECTIONS = frozenset({"unsupported-model-or-feature", "model-unavailable"})
 MESSAGE_LIMIT = 300
-_VERSION_PATTERN = re.compile(r"codex-cli (\d+)\.(\d+)\.(\d+)")
+_FAILURE_REASONS = (
+    ("unexpected argument", "unsupported-cli-argument"),
+    ("error loading", "invalid-configuration"),
+    ("error parsing", "invalid-configuration"),
+    ("unauthorized", "authentication-unavailable"),
+    ("401", "authentication-unavailable"),
+    ("login", "authentication-unavailable"),
+    ("model_not_found", "model-unavailable"),
+    ("not supported", "unsupported-model-or-feature"),
+    ("429", "rate-limited"),
+    ("rate limit", "rate-limited"),
+    ("stream disconnected", "provider-connection-failed"),
+    ("connection", "provider-connection-failed"),
+    ("sandbox", "sandbox-failure"),
+)
+_REJECTION_PATTERNS = tuple(pattern for pattern, reason in _FAILURE_REASONS if reason in MODEL_REJECTIONS)
+_VERSION_PATTERN = re.compile(r"codex-cli (\d+)\.(\d+)\.(\d+)", re.ASCII)
 
 
 def supported_version(text: str) -> str:
@@ -30,7 +47,8 @@ def supported_version(text: str) -> str:
     found = _VERSION_PATTERN.fullmatch(text.strip())
     minimum = cast(re.Match[str], _VERSION_PATTERN.fullmatch(MINIMUM_VERSION))
     if found is None or tuple(map(int, found.groups())) < tuple(map(int, minimum.groups())):
-        raise RuntimeError("unsupported Codex version; expected " + MINIMUM_VERSION + " or newer")
+        raise RuntimeError("unsupported Codex version; expected " + MINIMUM_VERSION + " or newer; found "
+                           + repr(text.strip()[:80]))
     return text.strip()
 
 
@@ -138,8 +156,8 @@ class Codex:
             if result.returncode or not output.is_file() or output.is_symlink() or output.stat().st_size > 1_000_000:
                 evidence = failure_details(result.returncode, result.stderr, events)
                 if evidence["reason"] in MODEL_REJECTIONS:
-                    raise CodedError("model-unsupported", f"Codex rejected model {self.model!r}: "
-                                     + _first_message(result.stderr, events)[:MESSAGE_LIMIT])
+                    raise CodedError("model-unsupported", f"Codex rejected the model {self.model!r} or a feature: "
+                                     + _rejection_message(result.stderr, events)[:MESSAGE_LIMIT])
                 descriptor, filename = tempfile.mkstemp(prefix="skillz-execution-failure-", suffix=".json")
                 with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                     json.dump(evidence, stream, sort_keys=True)
@@ -194,13 +212,13 @@ def _events(stdout: str) -> list[dict[str, object]]:
     return events
 
 
-def _first_message(stderr: str, events: list[dict[str, object]]) -> str:
+def _rejection_message(stderr: str, events: list[dict[str, object]]) -> str:
     for event in events:
         if event.get("type") not in {"error", "turn.failed"}:
             continue
         error = event.get("error")
         message = mapping(cast(object, error)).get("message") if isinstance(error, dict) else event.get("message")
-        if isinstance(message, str) and message:
+        if isinstance(message, str) and any(pattern in message.lower() for pattern in _REJECTION_PATTERNS):
             return message
     return stderr.strip()
 
@@ -215,21 +233,6 @@ def failure_details(returncode: int, stderr: str, events: list[dict[str, object]
         if isinstance(message, str):
             messages.append(message[:2048])
     detail = "\n".join(messages[:5]).lower()
-    reasons = (
-        ("unexpected argument", "unsupported-cli-argument"),
-        ("error loading", "invalid-configuration"),
-        ("error parsing", "invalid-configuration"),
-        ("unauthorized", "authentication-unavailable"),
-        ("401", "authentication-unavailable"),
-        ("login", "authentication-unavailable"),
-        ("model_not_found", "model-unavailable"),
-        ("not supported", "unsupported-model-or-feature"),
-        ("429", "rate-limited"),
-        ("rate limit", "rate-limited"),
-        ("stream disconnected", "provider-connection-failed"),
-        ("connection", "provider-connection-failed"),
-        ("sandbox", "sandbox-failure"),
-    )
-    reason = next((reason for pattern, reason in reasons if pattern in detail),
+    reason = next((reason for pattern, reason in _FAILURE_REASONS if pattern in detail),
                   "missing-final-response" if returncode == 0 else "execution-failed")
     return {"schema_version": 1, "returncode": returncode, "reason": reason, "usage": usage(events)}

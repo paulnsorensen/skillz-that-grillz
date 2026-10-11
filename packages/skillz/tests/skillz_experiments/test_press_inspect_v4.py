@@ -18,17 +18,17 @@ from typing import cast, final
 
 import pytest
 
-import skillz_experiments._claude as claude_module
+from skillz_experiments.harness._claude import _constants, _sandbox, _transport
 import skillz_experiments._evaluation as evaluation_module
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError
-from skillz_experiments._codex import Codex
-from skillz_experiments._command import Command
+from skillz_experiments.harness._codex import Codex
+from skillz_experiments.harness._command import Command
 from skillz_experiments._contract import HELPER_FIXTURES, load_contract, resolve
 from skillz_experiments._evaluation import fixture_failure, helper_failure
 from skillz_experiments._graders import Sandbox
-from skillz_experiments._harness import Configuration, Harness
-from skillz_experiments._runtime import Budget
+from skillz_experiments.harness._harness import Configuration, Harness
+from skillz_experiments._budget import Budget
 from skillz_experiments._runtime import process as run_process
 from skillz_experiments._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
 
@@ -204,7 +204,7 @@ def stub_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[tu
         return subprocess.CompletedProcess(command, code, stdout, stderr)
 
     monkeypatch.setattr(Codex, "_discover", discover)
-    monkeypatch.setattr("skillz_experiments._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
     return adapter
 
 
@@ -234,7 +234,7 @@ def test_codex_sandbox_returns_the_real_stderr_as_the_third_value(tmp_path: Path
     def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 3, "out", "err\n")
 
-    monkeypatch.setattr("skillz_experiments._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
     assert adapter.sandbox(tmp_path, ["x"]) == (3, "out", "err\n")
 
 
@@ -395,7 +395,7 @@ def test_claude_sandbox_on_macos_returns_the_sandbox_exec_stderr_unchanged(
         return f"/usr/bin/{name}"
 
     monkeypatch.setattr(shutil, "which", which)
-    monkeypatch.setattr(claude_module, "process", process)
+    monkeypatch.setattr(_transport, "process", process)
     try:
         result = cast(Sandbox, cast(object, claude.transports["task"])).sandbox(make_workspace(tmp_path / "w"), ["x"])
     finally:
@@ -469,7 +469,7 @@ def test_claude_check_candidate_does_not_crash_when_the_helper_replaces_the_capt
 
 def test_bubblewrap_argv_binds_a_host_capture_directory_outside_the_workspace() -> None:
     capture = Path("/host/capture")
-    argv = claude_module.sandbox_argv("linux", "/usr/bin/bwrap", Path("/w/workspace"), ["/usr/bin/true"], {}, (), capture)
+    argv = _sandbox.sandbox_argv("linux", "/usr/bin/bwrap", Path("/w/workspace"), ["/usr/bin/true"], {}, (), capture)
     index = argv.index("/host/capture")
     assert argv[index - 1:index + 2] == ["--bind", "/host/capture", "/run/skillz-capture"]
     shell = argv.index("/bin/sh")
@@ -479,16 +479,16 @@ def test_bubblewrap_argv_binds_a_host_capture_directory_outside_the_workspace() 
 
 
 def test_bubblewrap_argv_without_a_capture_directory_sends_stderr_to_the_null_device() -> None:
-    argv = claude_module.sandbox_argv("linux", "/usr/bin/bwrap", Path("/w/workspace"), ["/usr/bin/true"], {})
+    argv = _sandbox.sandbox_argv("linux", "/usr/bin/bwrap", Path("/w/workspace"), ["/usr/bin/true"], {})
     shell = argv.index("/bin/sh")
     assert argv[shell + 1:shell + 3] == ["-c", 'exec "$@" 2>/dev/null'] and argv[shell + 4] == "/usr/bin/env"
     assert "/run/skillz-capture" not in argv
 
 
 def test_the_capture_reader_returns_a_regular_file_and_nothing_else(tmp_path: Path) -> None:
-    take = claude_module._take_stderr  # pyright: ignore[reportPrivateUsage]
-    name = claude_module.SANDBOX_STDERR
-    limit = claude_module.SANDBOX_STDERR_LIMIT
+    take = _transport._take_stderr  # pyright: ignore[reportPrivateUsage]
+    name = _constants.SANDBOX_STDERR
+    limit = _transport.SANDBOX_STDERR_LIMIT
     assert take(tmp_path) == ""
     _ = (tmp_path / name).write_text("hello")
     assert take(tmp_path) == "hello"
@@ -508,8 +508,8 @@ def test_the_capture_reader_returns_a_regular_file_and_nothing_else(tmp_path: Pa
 
 @pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc/self/fd")
 def test_the_capture_reader_leaks_no_descriptor_for_a_directory(tmp_path: Path) -> None:
-    take = claude_module._take_stderr  # pyright: ignore[reportPrivateUsage]
-    (tmp_path / claude_module.SANDBOX_STDERR).mkdir()
+    take = _transport._take_stderr  # pyright: ignore[reportPrivateUsage]
+    (tmp_path / _constants.SANDBOX_STDERR).mkdir()
     before = len(os.listdir("/proc/self/fd"))
     for _ in range(50):
         assert take(tmp_path) == ""
@@ -532,7 +532,7 @@ def test_the_sandbox_removes_its_capture_directory_even_when_setup_fails(
         locked.chmod(0)
         return subprocess.CompletedProcess(command, 3, "", "bwrap: setting up uid map: Permission denied")
 
-    monkeypatch.setattr(claude_module, "process", process)
+    monkeypatch.setattr(_transport, "process", process)
     monkeypatch.setattr(tempfile, "mkdtemp", mkdtemp)
     monkeypatch.setattr(sys, "platform", "linux")
     def which(name: str) -> str:
@@ -564,7 +564,7 @@ def test_claude_sandbox_setup_failure_never_reaches_fixture_result(monkeypatch: 
     def spy(*args: object, **kwargs: object) -> None:
         seen.append((args, kwargs))
 
-    monkeypatch.setattr(claude_module, "process", process)
+    monkeypatch.setattr(_transport, "process", process)
     monkeypatch.setattr(evaluation_module, "fixture_failure", spy)
     monkeypatch.setattr(sys, "platform", "linux")
     def which(name: str) -> str | None:

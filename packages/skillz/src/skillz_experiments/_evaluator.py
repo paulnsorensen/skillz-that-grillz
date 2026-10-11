@@ -11,7 +11,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
 from skillz_experiments._contract import Contract, resolve
 from skillz_experiments._evaluation import executed, grade, usage
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
 
 
 class Transport(Protocol):

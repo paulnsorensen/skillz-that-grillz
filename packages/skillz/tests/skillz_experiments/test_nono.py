@@ -12,14 +12,17 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _claude, _nono
+from skillz_experiments.harness import _nono
+from skillz_experiments.harness._claude import _constants
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed
-from skillz_experiments._doctor import doctor
-from skillz_experiments._harness import Configuration
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import run
+from skillz_experiments.harness._claude._transport import ClaudeCode
+from skillz_experiments.harness._claude._options import ClaudeOptions
+from skillz_experiments.harness._claude._sandbox import NetworkIsolationFailed
+from skillz_experiments.harness._doctor import doctor
+from skillz_experiments.harness._harness import Configuration
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import run
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 NONO = '''#!/usr/bin/env python3
@@ -163,7 +166,7 @@ def test_a_nono_role_needs_no_claude_login(tmp_path: Path, nono_bin: Path, host_
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), isolation="nono")
     try:
         assert transport.credential is None
-        assert not list(Path(tempfile.gettempdir()).glob(f"{_claude.CONFIG_PREFIX}*"))
+        assert not list(Path(tempfile.gettempdir()).glob(f"{_constants.CONFIG_PREFIX}*"))
     finally:
         transport.close()
 

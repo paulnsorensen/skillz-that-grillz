@@ -16,10 +16,11 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import parse
-from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
+from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import Stop, export, resolve_statistics, run
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, export, run
+from skillz_experiments.run._resume import resolve_statistics
 
 MODEL = "local-test"
 
@@ -398,7 +399,7 @@ def test_a_field_check_in_metadata_is_the_only_edit_a_range_flag_needs() -> None
 
 
 def test_run_checks_each_flag_through_the_field_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("skillz_experiments._workflow.Statistics", _Ranged)
+    monkeypatch.setattr("skillz_experiments.run._run.Statistics", _Ranged)
     with pytest.raises(ValueError, match="--ratio must be a number above 0 and below 1"):
         _ = run(tmp_path, tmp_path / "run", MODEL, statistics={"ratio": 1.0})
 

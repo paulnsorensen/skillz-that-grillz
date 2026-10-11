@@ -17,16 +17,14 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import parse
 from skillz_experiments._evaluator import task_tokens
-from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
+from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import (
-    Stop,
-    _reflection_request,  # pyright: ignore[reportPrivateUsage] -- unit test of the private prompt builder
-    _Session,  # pyright: ignore[reportPrivateUsage] -- tests build a bare session
-    export,
-    resolve_statistics,
-    run,
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, export, run
+from skillz_experiments.run._resume import resolve_statistics
+from skillz_experiments.run._session import (
+    _reflection_request as reflection_request,  # pyright: ignore[reportPrivateUsage]
+    Session,
 )
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -271,9 +269,9 @@ def _cases_for(_split: str) -> list[SimpleNamespace]:
 
 
 def _session(statistics: Statistics, outcomes: list[dict[str, object]], kept: dict[str, object] | None = None,
-             ) -> _Session:
+             ) -> Session:
     """Return a `_Session` with only the attributes that the tie-break reads."""
-    session = object.__new__(_Session)
+    session = object.__new__(Session)
     attributes: dict[str, object] = {
         "lock": threading.RLock(), "statistics": statistics, "outcomes": outcomes,
         "record": {} if kept is None else {"best_validated": kept},
@@ -361,10 +359,10 @@ TODAY_PROSE = ("Improve only the supplied skill text components. Preserve the he
 
 def test_the_reflection_prompt_is_unchanged_without_a_token_field_and_gains_one_sentence_with_one() -> None:
     body = json.dumps({"candidate": {"SKILL.md": "x"}, "feedback": {}}, default=str)
-    plain, schema = _reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    plain, schema = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
     assert plain == TODAY_PROSE + body
-    assert _reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], cheaper=False) == (plain, schema)
-    cheaper, same_schema = _reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], cheaper=True)
+    assert reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], cheaper=False) == (plain, schema)
+    cheaper, same_schema = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], cheaper=True)
     assert cheaper == TODAY_PROSE.replace("permissions.\n", "permissions." + SENTENCE + "\n") + body
     assert same_schema == schema
 

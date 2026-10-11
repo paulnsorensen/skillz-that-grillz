@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from skillz_experiments._runtime import BudgetExhausted, process
+from skillz_experiments._budget import BudgetExhausted
+from skillz_experiments._runtime import process
 
 
 def test_deadline_kills_process_group(tmp_path: Path) -> None:
@@ -43,7 +44,7 @@ def test_candidate_forbidden_change(tmp_path: Path) -> None:
     assert candidate.changed({"SKILL.md": "new"}).files["oracle.json"] == "sealed"
 
 def test_profile_denies_host_and_cleans_tool_environment(tmp_path: Path) -> None:
-    from skillz_experiments._codex import configuration
+    from skillz_experiments.harness._codex import configuration
 
     arguments = configuration(tmp_path, Path("/usr/bin/codex"), [])
     joined = " ".join(arguments)
@@ -55,7 +56,7 @@ def test_profile_denies_host_and_cleans_tool_environment(tmp_path: Path) -> None
     assert "--sandbox" not in arguments
 
 def test_startup_failure_evidence_is_actionable_without_private_text() -> None:
-    from skillz_experiments._codex import failure_details
+    from skillz_experiments.harness._codex import failure_details
 
     evidence = failure_details(2, "error: unexpected argument '-P' found PRIVATE_PROMPT_SENTINEL", [])
     assert evidence["returncode"] == 2
@@ -65,7 +66,7 @@ def test_startup_failure_evidence_is_actionable_without_private_text() -> None:
 
 
 def _run_probe(tmp_path: Path, port: int, prefix: str = "") -> subprocess.CompletedProcess[str]:
-    from skillz_experiments._isolation import probe
+    from skillz_experiments.harness._isolation import probe
 
     script = probe(tmp_path, tmp_path / "absent-sealed", tmp_path / "absent-engine", port)
     return subprocess.run([sys.executable, "-c", prefix + script], cwd=tmp_path, capture_output=True, text=True,
@@ -73,7 +74,7 @@ def _run_probe(tmp_path: Path, port: int, prefix: str = "") -> subprocess.Comple
 
 
 def test_network_probe_fails_when_the_host_loopback_listener_is_reachable(tmp_path: Path) -> None:
-    from skillz_experiments._isolation import listening
+    from skillz_experiments.harness._isolation import listening
 
     with listening() as port:
         result = _run_probe(tmp_path, port)
@@ -93,7 +94,7 @@ def _client(port: int, payload: bytes | None, *, reset: bool = False) -> None:
 
 
 def test_watched_listener_is_true_when_a_client_sends_the_token() -> None:
-    from skillz_experiments._isolation import watched
+    from skillz_experiments.harness._isolation import watched
 
     with watched() as (port, connected):
         _client(port, b"GET /tok HTTP/1.1\r\n\r\n")
@@ -101,7 +102,7 @@ def test_watched_listener_is_true_when_a_client_sends_the_token() -> None:
 
 
 def test_watched_listener_ignores_a_foreign_request() -> None:
-    from skillz_experiments._isolation import watched
+    from skillz_experiments.harness._isolation import watched
 
     with watched() as (port, connected):
         _client(port, b"GET / HTTP/1.1\r\nUser-Agent: Go-http-client/1.1\r\n\r\n")
@@ -111,14 +112,14 @@ def test_watched_listener_ignores_a_foreign_request() -> None:
 def test_watched_listener_ignores_a_silent_client() -> None:
     import socket
 
-    from skillz_experiments._isolation import watched
+    from skillz_experiments.harness._isolation import watched
 
     with watched() as (port, connected), socket.create_connection(("127.0.0.1", port)):
         assert connected("tok") is False
 
 
 def test_watched_listener_is_true_when_a_client_resets_the_connection() -> None:
-    from skillz_experiments._isolation import watched
+    from skillz_experiments.harness._isolation import watched
 
     with watched() as (port, connected):
         _client(port, None, reset=True)
@@ -140,7 +141,7 @@ def _routed(outcome: str) -> str:
 
 
 def test_network_probe_passes_when_the_connection_or_the_socket_is_refused(tmp_path: Path) -> None:
-    from skillz_experiments._isolation import listening
+    from skillz_experiments.harness._isolation import listening
 
     with listening() as port:
         pass
@@ -153,7 +154,7 @@ def test_network_probe_passes_when_the_connection_or_the_socket_is_refused(tmp_p
 
 @pytest.mark.parametrize("outcome", ["connected", "timeout"])
 def test_network_probe_fails_when_a_namespace_has_its_own_loopback_but_routed_egress(tmp_path: Path, outcome: str) -> None:
-    from skillz_experiments._isolation import listening
+    from skillz_experiments.harness._isolation import listening
 
     with listening() as port:
         pass
@@ -163,7 +164,7 @@ def test_network_probe_fails_when_a_namespace_has_its_own_loopback_but_routed_eg
 
 
 def test_network_probe_checks_the_route_with_a_udp_connect_and_never_a_tcp_syn(tmp_path: Path) -> None:
-    from skillz_experiments._isolation import listening
+    from skillz_experiments.harness._isolation import listening
 
     with listening() as port:
         pass

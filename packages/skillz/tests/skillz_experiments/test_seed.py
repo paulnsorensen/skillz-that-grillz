@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._workflow import Stop, run
+from skillz_experiments.run import Stop, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
 

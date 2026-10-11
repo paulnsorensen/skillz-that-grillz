@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _harness
+from skillz_experiments.harness import _harness
 from skillz_experiments._cases import Case, CodedError, Journey, load_cases
 from skillz_experiments._intake import (
     DRAFT_NAME, approval_question, case_hash, freeze, intake_contract, load_draft, skill_facts, split_cases,
