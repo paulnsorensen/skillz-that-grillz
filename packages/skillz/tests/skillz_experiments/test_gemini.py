@@ -313,6 +313,7 @@ def test_a_termination_signal_kills_the_named_container(tmp_path: Path) -> None:
     assert wrapper.stdin is not None
     _ = wrapper.stdin.write(request("sandbox", root, argv=["true"]))
     wrapper.stdin.close()
+    wrapper.stdin = None
     deadline = time.monotonic() + 20
     while not (directory / "docker.log").exists() and time.monotonic() < deadline:
         time.sleep(0.05)
