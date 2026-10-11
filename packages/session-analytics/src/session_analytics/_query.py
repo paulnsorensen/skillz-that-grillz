@@ -4,26 +4,27 @@ from __future__ import annotations
 
 import os
 
-from session_analytics._ingest import (
+from session_analytics._db import (
     DB_PATH,
-    EXIT_QUERY,
     SCHEMA_VERSION,
+    DatabaseError,
     IngestError,
+    QueryError,
     db_is_fresh,
     db_is_stamped,
     query_rows,
     require_duckdb,
 )
-from session_analytics._ingest import ingest as run_ingest
+from session_analytics._ingest import build_database
 
 
 def _refresh_default_database() -> None:
-    """Ingest an old, absent, or wrong-version default database before the query."""
+    """Rebuild an old, absent, or wrong-version default database before the query."""
     if db_is_fresh():
         return
     try:
-        _ = run_ingest()
-    except IngestError as error:
+        _ = build_database()
+    except DatabaseError as error:
         outcome = (
             "refusing to query stale data"
             if os.path.exists(DB_PATH)
@@ -54,5 +55,5 @@ def run_query(query: str) -> list[dict[str, object]]:
         _refresh_default_database()
     try:
         return query_rows(query)
-    except IngestError as error:
-        raise IngestError(str(error), exit_code=EXIT_QUERY) from error
+    except DatabaseError as error:
+        raise QueryError(str(error)) from error

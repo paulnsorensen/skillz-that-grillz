@@ -65,7 +65,7 @@ jobs:
         #   pip: yamllint
         #   uv: pinned by the Install uv step; workspace pytest from the root uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
-        #   release binary: duckdb CLI (the skillz engine test suite)
+        #   release binary: duckdb CLI (the session-analytics and analytics-pack tests)
         run: |
           set -euo pipefail
           npm install -g markdownlint-cli2@0.22.1
@@ -101,6 +101,36 @@ jobs:
 
       - name: Run fromargs tests
         run: just test-fromargs ${{ matrix.python }}
+
+  session-analytics-tests:
+    name: session-analytics tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Install DuckDB CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
+            -o /tmp/duckdb_cli.zip
+          sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
+
+      - name: Run session-analytics tests
+        env:
+          REQUIRE_DUCKDB: "1"
+        run: just test-session-analytics ${{ matrix.python }}
 
   pr-title:
     name: conventional commits pr title

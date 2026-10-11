@@ -33,6 +33,10 @@ lint-py-dead-code:
 test-fromargs python="":
     python3 .github/scripts/run_gate.py fromargs {{python}}
 
+# Run session-analytics' pytest suite, optionally pinned to one Python version.
+test-session-analytics python="":
+    python3 .github/scripts/run_gate.py session-analytics {{python}}
+
 # Mutation-test the fromargs acceptance suite (not part of build/ci).
 mutate-fromargs:
     uv run --locked --project packages/fromargs python packages/fromargs/tests/e2e/mutate.py

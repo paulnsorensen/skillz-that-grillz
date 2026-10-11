@@ -18,7 +18,7 @@ Push a `session-analytics-v<version>` tag after the release commit merges.
 ### Added
 
 - The `session-analytics` console script with four JSON commands: `ingest`, `db-path`, `sql`, and `schema`.
-- A schema version stamped in the database. `ingest` rebuilds a database whose version differs, even inside the one-hour cache window.
+- A schema version stamped in the database. `ingest` rebuilds a database whose version differs, even inside the one-hour freshness window.
 - The engine moves out of the `skillz` skill and merges the dotfiles `session-analytics` engine at dotfiles commit `6ce36879`.
 - Codex `token_usage` rows reach `model_turns`. They do not count in `sessions.entry_count`.
 - The columns `model_turns.cache_creation_tokens`, `model_turns.context_tokens`, `sessions.version`, and `sessions.parent_session_id`.

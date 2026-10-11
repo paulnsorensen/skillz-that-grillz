@@ -1,5 +1,7 @@
 # Canonical Schema
 
+Contents: [tool_uses](#tool_uses), [tool_results](#tool_results), [stop_events](#stop_events), [model_turns](#model_turns), [agent_spawns](#agent_spawns), [skill_invocations](#skill_invocations), [mcp_calls](#mcp_calls), [sessions](#sessions), [stop_hooks](#stop_hooks), [permission_denials](#permission_denials), [raw_entries](#raw_entries), [schema_info](#schema_info), [Type gotchas](#type-gotchas).
+
 The shape every harness adapter normalizes into and every analytics pack queries
 against. `session-analytics ingest` loads one canonical row shape (the Claude envelope plus a
 `harness` tag) into `${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/session-analytics/sessions.duckdb` by default, then flattens it into
@@ -127,7 +129,7 @@ lack a field you need.
 
 One row with one integer column, `version`. It holds the schema version of the
 database. `session-analytics ingest` rebuilds a database whose version differs
-from the package version, even inside the one-hour cache window.
+from the package version, even inside the one-hour freshness window.
 
 ## Type gotchas
 

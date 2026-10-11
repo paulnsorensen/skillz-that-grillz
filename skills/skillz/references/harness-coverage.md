@@ -1,5 +1,7 @@
 # Harness Coverage
 
+Contents: [Coverage status](#coverage-status), [Per-harness format notes](#per-harness-format-notes), [Signal-quality caveats](#signal-quality-caveats).
+
 Which coding-agent harnesses the analytics layer ingests, where their session
 logs live, and how each is parsed. `session-analytics ingest` runs one **normalizing adapter**
 per harness; every adapter is discovery-gated and best-effort. A harness with no
@@ -177,4 +179,4 @@ Packs must degrade gracefully rather than fabricate.
 `results_joined_pct` counts tool calls with a joined result. A low value means per-tool error rates for that harness are floors, not estimates.
 `explicit_error_flag_pct` counts results whose error flag came from the source rather than the `'false'` backfill.
 Read it before quoting cross-harness error-rate comparisons.
-An empty latency report or zero errors is not evidence of speed or no failures. Unsupported native events and missing result joins can produce both outcomes. Inspect native Codex JSONL read-only before making either claim.
+An empty `model_turns` result or zero errors is not evidence of speed or no failures. Unsupported native events and missing result joins can produce both outcomes. Inspect native Codex JSONL read-only before making either claim.

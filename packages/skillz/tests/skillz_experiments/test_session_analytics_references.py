@@ -1,4 +1,4 @@
-"""The package references and the skillz copies stay byte-identical."""
+"""The session-analytics package references and the skillz copies stay byte-identical."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = Path(__file__).resolve().parents[4]
 PACKAGED = REPO / "packages" / "session-analytics" / "src" / "session_analytics" / "references"
 SKILL = REPO / "skills" / "skillz" / "references"
 NAMES = ("canonical-schema.md", "harness-coverage.md", "query-conventions.md")

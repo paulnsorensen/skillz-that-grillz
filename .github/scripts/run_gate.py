@@ -14,6 +14,7 @@ Job = tuple[str, list[str]]
 ROOT = Path(__file__).resolve().parents[2]
 _ACTIVE: dict[subprocess.Popen[bytes], tuple[str, BinaryIO]] = {}
 _cancelled = False
+PACKAGE_MODES = frozenset({"fromargs", "session-analytics"})
 
 
 def _check_cancelled() -> None:
@@ -184,10 +185,10 @@ def _interrupted(_signum: int, _frame: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if not args or args[0] not in {"fix", "check", "test", "fromargs"} or (
-        args[0] != "fromargs" and len(args) != 1
+    if not args or args[0] not in {"fix", "check", "test", *PACKAGE_MODES} or (
+        args[0] not in PACKAGE_MODES and len(args) != 1
     ) or len(args) > 2:
-        print("usage: run_gate.py fix|check|test|fromargs [python]", file=sys.stderr)
+        print("usage: run_gate.py fix|check|test|fromargs|session-analytics [python]", file=sys.stderr)
         return 2
     try:
         workers, test_workers = _workers("GATE_JOBS"), _workers("TEST_WORKERS")
@@ -202,15 +203,16 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory(prefix="sg-", dir="/tmp") as directory:
             temp_root = Path(directory)
             try:
-                if args[0] == "fromargs":
+                if args[0] in PACKAGE_MODES:
+                    package = args[0]
                     command = ["uv", "run", "--locked"]
                     if len(args) == 2 and args[1]:
                         command += ["--python", args[1]]
-                    command += ["--project", "packages/fromargs", "pytest", "packages/fromargs/tests",
+                    command += ["--project", f"packages/{package}", "pytest", f"packages/{package}/tests",
                                 "-q", "-n", str(test_workers), "--dist", "worksteal",
                                 "--basetemp", str(temp_root / "f"),
                                 "-o", f"cache_dir={temp_root / 'fc'}"]
-                    return 0 if run_step("fromargs-pytest", command) else 1
+                    return 0 if run_step(f"{package}-pytest", command) else 1
                 if args[0] == "test":
                     if not _prepare():
                         return 1

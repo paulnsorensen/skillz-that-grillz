@@ -18,16 +18,16 @@ The package ships to PyPI. `skillz` also bundles it as
 
 The package merges two engines. One is the engine that `skillz` bundled from
 `dotfiles` commit `f6f0cbf5`. The other is the `dotfiles` engine at commit
-`6ce36879`. The fork point is now `6ce36879`. Every local delta below is kept.
+`6ce36879`. The fork point is now `6ce36879`. The package keeps every local delta below.
 
 `dotfiles` consumes the latest PyPI release, unpinned. It decorates the package
 with its own reports and docs. The package ships engine primitives only: `ingest`,
 `db-path`, `sql`, and `schema`. It has no canned reports.
 
 The package keeps the shared `dotfiles/session-analytics/sessions.duckdb` cache
-path, the `SESSIONS_DB` override, and the one-hour ingestion cache. The database
+path, the `SESSIONS_DB` override, and the one-hour freshness window. The database
 stores a schema version in the one-row `schema_info` table. A database with
-another version is stale. `ingest` rebuilds it inside the cache window.
+another version is stale. `ingest` rebuilds it inside the freshness window.
 
 The Usage lens needs the DuckDB CLI and readable session logs. The package does
 not need the Python DuckDB module. It never downloads DuckDB.
@@ -35,8 +35,8 @@ not need the Python DuckDB module. It never downloads DuckDB.
 Exit codes:
 
 - 3: the DuckDB CLI is missing. The message names four install commands.
-- 4: ingest failed, the database is missing, or the schema version differs.
-- 5: the query was rejected.
+- 4: ingest failed or timed out, the database is missing, or the schema version differs.
+- 5: DuckDB rejects or times out the query.
 
 When DuckDB is absent, `skillz` asks one question with three choices. The user
 can install DuckDB. The user can approve a slower, sampled raw-log scan by cheap
@@ -64,6 +64,6 @@ The package carries these local fixes. They are not in the `dotfiles` engine.
 - The adapter log-root variables follow the `SESSIONS_DB` rule by choice.
 - The built-in log-root defaults (`~/.claude`, `~/.codex`, `~/.cursor`) expand `~` to `HOME`.
 - Ingest stops when `DB_TMP_PATH` is a directory and does not delete it.
-
-The `-init /dev/null` flag makes ingest ignore `~/.duckdbrc`. Both engines
-had this flag. It was never a local-only delta.
+- Ingest passes `-init /dev/null`, so it ignores `~/.duckdbrc`. Only the upstream `query.sh` had this flag.
+- Ingest adds an `anchor_id` column to `agent_spawns` and `skill_invocations`. The `dotfiles` `ingest.py` lacks it.
+- `sql` runs in DuckDB safe mode, which rejects shell commands, file writes, and outside file reads.

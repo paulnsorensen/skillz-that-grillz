@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 
 def normalize(adapter: str, path: Path, env: dict[str, str]) -> list[object]:
     """Run one ingest adapter in a child process and return its canonical rows."""
@@ -81,6 +83,31 @@ def test_cursor_user_text_that_is_not_a_string_is_skipped(tmp_path: Path) -> Non
     row = cast(dict[str, object], rows[0])
     assert row["timestamp"] == "2026-01-05T10:00:00Z"
 
+
+@pytest.mark.parametrize(
+    ("stamp", "expected"),
+    [
+        ("Monday, Jan 5, 2026, 10:00 AM (UTC+0)", "2026-01-05T10:00:00Z"),
+        ("Monday, Jan 5, 2026, 10:00 AM (UTC-7)", "2026-01-05T17:00:00Z"),
+        ("Monday, Jan 5, 2026, 10:00 AM (UTC+5)", "2026-01-05T05:00:00Z"),
+        ("Monday, Jan 5, 2026, 1:30 AM (UTC+5)", "2026-01-04T20:30:00Z"),
+    ],
+)
+def test_cursor_timestamp_applies_the_utc_offset(tmp_path: Path, stamp: str, expected: str) -> None:
+    root = tmp_path / "cursor"
+    transcripts = root / "projects" / "sample" / "agent-transcripts"
+    transcripts.mkdir(parents=True)
+    path = transcripts / "t1.jsonl"
+    text = f"<timestamp>{stamp}</timestamp> go"
+    entries = [
+        {"role": "user", "message": {"content": [{"type": "text", "text": text}]}},
+        {"type": "turn_ended", "status": "completed"},
+    ]
+    _ = path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
+    rows = normalize("cursor_normalize", path, os.environ | {"CURSOR_HOME": str(root)})
+    assert len(rows) == 1
+    row = cast(dict[str, object], rows[0])
+    assert row["timestamp"] == expected
 
 def test_codex_error_flag_survives_a_later_unusable_block(tmp_path: Path) -> None:
     header = "Script completed\nWall time: 0.1 seconds\nOutput:\n"

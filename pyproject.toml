@@ -46,4 +46,4 @@ ignore_decorators = [
   "@nested.default", "@wheels.command", "@target.command",
   "@pytest.fixture", "@override",
 ]
-ignore_names = ["pytestmark", "pytest_collection_modifyitems", "Test*"]
+ignore_names = ["pytestmark", "pytest_collection_modifyitems"]

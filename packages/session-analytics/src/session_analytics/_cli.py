@@ -6,7 +6,7 @@ from importlib import resources
 
 import fromargs
 
-from session_analytics._ingest import DB_PATH, IngestError
+from session_analytics._db import DB_PATH, DatabaseError
 from session_analytics._ingest import ingest as run_ingest
 from session_analytics._query import run_query
 
@@ -18,7 +18,7 @@ app = fromargs.App(
 SCHEMA_REFERENCE = "canonical-schema.md"
 
 
-def _cli_error(error: IngestError) -> fromargs.CliError:
+def _cli_error(error: DatabaseError) -> fromargs.CliError:
     return fromargs.CliError(str(error), exit_code=error.exit_code)
 
 
@@ -27,7 +27,7 @@ def ingest(*, force: bool = False) -> dict[str, object]:
     """Build or refresh the session database. A database under one hour old keeps its data."""
     try:
         return run_ingest(force=force)
-    except IngestError as error:
+    except DatabaseError as error:
         raise _cli_error(error) from error
 
 
@@ -42,7 +42,7 @@ def sql(query: str) -> list[dict[str, object]]:
     """Run one read-only query and return its rows. The default database ingests itself when stale."""
     try:
         return run_query(query)
-    except IngestError as error:
+    except DatabaseError as error:
         raise _cli_error(error) from error
 
 

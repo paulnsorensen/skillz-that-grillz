@@ -1,8 +1,8 @@
 # session-analytics
 
 `session-analytics` ingests the session logs of coding agents into one DuckDB
-database. It then answers read-only SQL queries. It supports the Claude Code,
-Codex, Cursor, OMP, and pi harnesses.
+database. It then answers SQL queries that cannot write or run commands. It
+supports the Claude Code, Codex, Cursor, OMP, and pi harnesses.
 
 The package ships engine primitives only. It has no canned reports. A caller
 writes its own SQL against the schema.
@@ -36,18 +36,27 @@ on stderr: `{"error": <message>, "exit_code": <n>}`.
 
 | Command | Result |
 |---|---|
-| `ingest [--force]` | Build or refresh the database. A database under one hour old with the current schema version keeps its data. |
-| `db-path` | The resolved database path. |
-| `sql <query>` | The rows of one read-only query. |
+| `ingest [--force]` | Build or refresh the database. A database inside the one-hour freshness window with the current schema version keeps its data. |
+| `db-path` | The resolved database path, as `{"path": "<abs path>"}`. |
+| `sql <query>` | The rows of one query in DuckDB safe mode. |
 | `schema` | The canonical schema reference. |
 
-```console
-$ session-analytics ingest
-$ session-analytics sql "SELECT harness, count(*) AS sessions FROM sessions GROUP BY harness"
+```bash
+session-analytics ingest
+session-analytics db-path | jq -r .path
+session-analytics sql "SELECT harness, count(*) AS sessions FROM sessions GROUP BY harness"
 ```
+
+`sql` opens the database read-only and runs in DuckDB safe mode. Safe mode
+rejects shell commands, file writes, and reads of files outside the database.
+A rejected query exits 5.
 
 `sql` ingests an old or absent default database first. It does not ingest a
 `SESSIONS_DB` override. It never queries stale data after a failed ingest.
+
+A consumer that queries the database directly runs
+`duckdb -init /dev/null -readonly <database> -json -c "<sql>"`, where
+`<database>` is the `path` field of `db-path`.
 
 ## Exit codes
 
@@ -56,8 +65,8 @@ $ session-analytics sql "SELECT harness, count(*) AS sessions FROM sessions GROU
 | 0 | Success |
 | 2 | Bad input |
 | 3 | The `duckdb` command is missing |
-| 4 | Ingest failed, or the database is missing or has another schema version |
-| 5 | DuckDB rejected the query |
+| 4 | Ingest failed or timed out, or the database is missing, unreadable, or has another schema version |
+| 5 | DuckDB rejects the query, or the query times out |
 
 ## Database path
 
@@ -77,7 +86,7 @@ Ingest writes the transient `<db>.tmp` and `<db>.stage`, and a persistent
 
 The database holds a one-row `schema_info` table with an integer `version`.
 The package version of that integer is `SCHEMA_VERSION`. `ingest` rebuilds a
-database whose stored version differs, even inside the cache window. `sql`
+database whose stored version differs, even inside the freshness window. `sql`
 treats a mismatch like a stale database. Only this repository changes the
 schema.
 

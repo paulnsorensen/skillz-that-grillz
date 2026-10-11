@@ -55,8 +55,17 @@ jobs:
           just session-analytics-release-notes "${GITHUB_REF_NAME#session-analytics-v}" > notes/release-notes.md
           cat notes/release-notes.md
 
+      - name: Install DuckDB CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
+            -o /tmp/duckdb_cli.zip
+          sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
+
       - name: Run session-analytics tests
-        run: uv run --locked --project packages/session-analytics pytest packages/session-analytics/tests -q
+        env:
+          REQUIRE_DUCKDB: "1"
+        run: just test-session-analytics
 
       - name: Build session-analytics
         run: uv build --package session-analytics --no-sources --out-dir dist

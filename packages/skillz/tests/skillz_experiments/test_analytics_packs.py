@@ -262,3 +262,26 @@ def test_harness_without_start_events_is_absent_from_coverage(database: Path) ->
     for kind in START:
         coverage = _run(database, _pack_sql("skill-usage.md", kind, "x")[0])
         assert {row["harness"] for row in coverage} == expected[kind], kind
+
+
+def test_bundle_db_path_uses_the_xdg_cache_default_and_schema_ships_the_reference(
+    tmp_path: Path,
+) -> None:
+    env = {k: v for k, v in os.environ.items() if k != "SESSIONS_DB"}
+    env |= {"HOME": str(tmp_path), "XDG_CACHE_HOME": str(tmp_path / "cache")}
+
+    def run(command: str) -> dict[str, str]:
+        result = subprocess.run(
+            [sys.executable, "-B", str(BUNDLE), command],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return cast(dict[str, str], json.loads(result.stdout))
+
+    expected = tmp_path / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
+    assert run("db-path") == {"path": str(expected)}
+    schema = run("schema")
+    assert schema["reference"] == "canonical-schema.md"
+    assert "schema_info" in schema["content"]

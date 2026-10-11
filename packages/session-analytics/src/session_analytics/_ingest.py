@@ -23,12 +23,25 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
+
+from session_analytics._db import (
+    DB_DIR,
+    DB_PATH,
+    DB_TMP_PATH,
+    SCHEMA_VERSION,
+    STAGE_DIR,
+    IngestError,
+    configured_path,
+    db_is_fresh,
+    query_rows,
+    require_duckdb,
+    run_sql,
+)
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -36,54 +49,9 @@ if TYPE_CHECKING:
 _JsonValue: TypeAlias = "None | bool | int | float | str | list[_JsonValue] | dict[str, _JsonValue]"
 
 
-def _configured_path(name: str, default: str) -> str:
-    # SESSIONS_DB: a set value gets no `~` expansion, and a
-    # relative value joins to cwd. The adapter log roots use the same rule by
-    # choice. Only the built-in default expands `~` to HOME.
-    value = os.environ.get(name) or os.path.expanduser(default)
-    return os.path.abspath(value)
-
-
-def _xdg_cache_home() -> str:
-    # The XDG Base Directory spec requires ignoring a relative value.
-    # No `~` expansion; only an absolute value counts.
-    value = os.environ.get("XDG_CACHE_HOME")
-    if value and value.startswith("/"):
-        return os.path.abspath(value)
-    return os.path.abspath(os.path.expanduser("~/.cache"))
-
-
 def _sql_quote(path: str) -> str:
     """Escape a filesystem path for embedding as a single-quoted SQL literal."""
     return path.replace("'", "''")
-
-
-DEFAULT_DB_DIR = os.path.join(_xdg_cache_home(), "dotfiles", "session-analytics")
-DB_PATH = _configured_path(
-    "SESSIONS_DB", os.path.join(DEFAULT_DB_DIR, "sessions.duckdb")
-)
-DB_DIR = os.path.dirname(DB_PATH)
-DB_TMP_PATH = f"{DB_PATH}.tmp"
-# Derived from the database file name, not DB_DIR, so a SESSIONS_DB pointed
-# into an existing directory never aliases (and rmtree's) that directory's
-# own "stage" subdir.
-STAGE_DIR = f"{DB_PATH}.stage"
-TTL_SECONDS = 3600  # 1 hour
-
-# The schema version is an integer stamped in the one-row `schema_info` table.
-# Raise it on every change to a table or column; a database with another
-# version is stale, so ingest rebuilds it even inside the cache window.
-SCHEMA_VERSION = 1
-
-EXIT_NO_DUCKDB = 3
-EXIT_INGEST = 4
-EXIT_QUERY = 5
-
-DUCKDB_MISSING = (
-    "DuckDB CLI not found. Install it with one of: "
-    "`uv tool install duckdb-cli`, `brew install duckdb`, `mise use -g duckdb`, "
-    "or `curl https://install.duckdb.org | sh`. Nothing is downloaded automatically."
-)
 
 # Canonical raw-entry columns the flattening SQL reads. Adapters emit a subset;
 # read_json(union_by_name) fills the rest with NULL.
@@ -137,7 +105,7 @@ def _iter_jsonl(path: str) -> Iterator[_JsonValue]:
 
 
 def claude_discover() -> list[str]:
-    root = os.path.join(_configured_path("CLAUDE_CONFIG_DIR", "~/.claude"), "projects")
+    root = os.path.join(configured_path("CLAUDE_CONFIG_DIR", "~/.claude"), "projects")
     if not os.path.isdir(root):
         return []
     out: list[str] = []
@@ -156,7 +124,7 @@ def claude_normalize(path: str) -> Iterator[dict[str, _JsonValue]]:
 
 
 def codex_discover() -> list[str]:
-    root = os.path.join(_configured_path("CODEX_HOME", "~/.codex"), "sessions")
+    root = os.path.join(configured_path("CODEX_HOME", "~/.codex"), "sessions")
     if not os.path.isdir(root):
         return []
     out: list[str] = []
@@ -626,7 +594,7 @@ def pi_normalize(path: str) -> Iterator[dict[str, object]]:
 
 
 def cursor_discover() -> list[str]:
-    root = os.path.join(_configured_path("CURSOR_HOME", "~/.cursor"), "projects")
+    root = os.path.join(configured_path("CURSOR_HOME", "~/.cursor"), "projects")
     if not os.path.isdir(root):
         return []
     out: list[str] = []
@@ -696,7 +664,7 @@ def _cursor_resolve_slug(slug: str, fs_root: str = "/") -> str:
 
 def _cursor_project_cwd(path: str) -> str:
     """Decode the project-slug directory into a cwd via filesystem resolve."""
-    root = os.path.join(_configured_path("CURSOR_HOME", "~/.cursor"), "projects")
+    root = os.path.join(configured_path("CURSOR_HOME", "~/.cursor"), "projects")
     rel = os.path.relpath(path, root)
     slug = rel.split(os.sep, 1)[0]
     return _cursor_resolve_slug(slug)
@@ -835,88 +803,8 @@ ADAPTERS = [
 # --------------------------------------------------------------------------
 
 
-class IngestError(Exception):
-    """An ingest or query step failed; ``exit_code`` is the CLI exit status."""
-
-    def __init__(self, message: str, *, exit_code: int = EXIT_INGEST) -> None:
-        super().__init__(message)
-        self.exit_code: int = exit_code
-
-
 def _log(message: str) -> None:
     print(message, file=sys.stderr)
-
-
-def require_duckdb() -> None:
-    if not shutil.which("duckdb"):
-        raise IngestError(DUCKDB_MISSING, exit_code=EXIT_NO_DUCKDB)
-
-
-def stored_schema_version() -> int | None:
-    """The schema version stamped in the database, or None when absent or unreadable."""
-    try:
-        rows = query_rows("SELECT version FROM schema_info", db_path=DB_PATH)
-    except IngestError:
-        return None
-    version = rows[0]["version"] if rows else None
-    return version if isinstance(version, int) else None
-
-
-def db_is_stamped() -> bool:
-    return os.path.exists(DB_PATH) and stored_schema_version() == SCHEMA_VERSION
-
-
-def db_is_fresh() -> bool:
-    if not os.path.exists(DB_PATH):
-        return False
-    age = time.time() - os.path.getmtime(DB_PATH)
-    return age < TTL_SECONDS and stored_schema_version() == SCHEMA_VERSION
-
-
-def run_sql(sql: str) -> None:
-    _ = _duckdb(sql)
-
-
-def _duckdb(
-    sql: str, db_path: str | None = None, readonly: bool = False, as_json: bool = False
-) -> str:
-    limit = os.environ.get("SESSIONS_DUCKDB_MEMORY_LIMIT") or "8GB"
-    argv = ["duckdb", "-init", "/dev/null"]
-    if readonly or as_json:
-        argv.append("-readonly")
-    if as_json:
-        argv.append("-json")
-    argv += [
-        db_path or DB_TMP_PATH,
-        "-cmd",
-        f"SET memory_limit='{limit}'",
-        "-c",
-        sql,
-    ]
-    result = subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        timeout=600,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise IngestError(f"DuckDB failed: {result.stderr[:500].strip()}")
-    return result.stdout.strip()
-
-
-def query_rows(sql: str, db_path: str | None = None) -> list[dict[str, object]]:
-    """Run one read-only query and return its rows."""
-    output = _duckdb(sql, db_path=db_path or DB_PATH, as_json=True)
-    if not output:
-        return []
-    try:
-        rows = cast(_JsonValue, json.loads(output))
-    except json.JSONDecodeError as error:
-        raise IngestError(f"DuckDB returned unreadable output: {error}") from error
-    if not isinstance(rows, list):
-        raise IngestError("DuckDB returned a non-list result")
-    return [dict(row) for row in rows if isinstance(row, dict)]
 
 
 def stage_harnesses() -> list[str]:
@@ -1246,34 +1134,42 @@ def _summary() -> dict[str, object]:
     return {"counts": counts[0] if counts else {}, "coverage": coverage}
 
 
-def ingest(force: bool = False) -> dict[str, object]:
-    """Build or refresh the database; return a JSON-ready summary.
+def build_database(*, force: bool = False) -> float | None:
+    """Build or refresh the database; return the build seconds, or None when it is cached.
 
     A database that is newer than the TTL and carries the current schema
     version is left alone unless ``force`` is set. An `IngestError` reports
-    every failure.
+    every expected failure, including a failed directory, lock, or stage step.
     """
     _ = os.umask(0o077)
     require_duckdb()
 
     if not force and db_is_fresh():
-        return _cached()
+        return None
 
-    os.makedirs(DB_DIR, exist_ok=True)
-
-    lock_fd = os.open(f"{DB_PATH}.lock", os.O_CREAT | os.O_RDWR)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        # A waiting run checks freshness again: the lock holder may have just rebuilt.
-        if not force and db_is_fresh():
-            return _cached()
+        os.makedirs(DB_DIR, exist_ok=True)
+        lock_fd = os.open(f"{DB_PATH}.lock", os.O_CREAT | os.O_RDWR)
         try:
-            elapsed = _do_ingest_and_swap()
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            # A waiting run checks freshness again: the lock holder may have just rebuilt.
+            if not force and db_is_fresh():
+                return None
+            try:
+                return _do_ingest_and_swap()
+            finally:
+                shutil.rmtree(STAGE_DIR, ignore_errors=True)
         finally:
-            shutil.rmtree(STAGE_DIR, ignore_errors=True)
-    finally:
-        os.close(lock_fd)
+            os.close(lock_fd)
+    except OSError as error:
+        raise IngestError(f"Cannot build the session database: {error}") from error
 
+
+def ingest(force: bool = False) -> dict[str, object]:
+    """Build or refresh the database; return a JSON-ready summary."""
+    elapsed = build_database(force=force)
+    if elapsed is None:
+        return _cached()
     return {
         "status": "ingested",
         "database": DB_PATH,

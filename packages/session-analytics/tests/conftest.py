@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -12,6 +13,10 @@ from typing import cast
 
 import pytest
 
+REQUIRE_DUCKDB = os.environ.get("REQUIRE_DUCKDB") == "1"
+needs_duckdb = pytest.mark.skipif(
+    not (REQUIRE_DUCKDB or shutil.which("duckdb")), reason="DuckDB CLI unavailable"
+)
 
 @dataclass
 class Sandbox:

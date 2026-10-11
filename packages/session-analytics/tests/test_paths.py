@@ -24,7 +24,7 @@ def eval_ingest(expr: str, env: dict[str, str], cwd: Path, *argv: str) -> str:
             sys.executable,
             "-B",
             "-c",
-            "import json, sys; from session_analytics import _ingest; " + f"print({expr})",
+            "import json, sys; from session_analytics import _db, _ingest; " + f"print({expr})",
             *argv,
         ],
         env=env,
@@ -76,7 +76,7 @@ def test_database_path_resolution(name: str, sandbox: Sandbox) -> None:
     cwd.mkdir()
     env = {k: v for k, v in os.environ.items() if k not in ("SESSIONS_DB", "XDG_CACHE_HOME")}
     env |= {"HOME": str(home)} | make_overrides(sandbox.root)
-    assert eval_ingest("_ingest.DB_PATH", env, cwd) == expected(sandbox.root)
+    assert eval_ingest("_db.DB_PATH", env, cwd) == expected(sandbox.root)
 
 
 def test_db_path_command_prints_the_default(sandbox: Sandbox) -> None:

@@ -128,6 +128,17 @@ class GateRunnerTest(unittest.TestCase):
             self.assertFalse(base.exists())
             self.assertFalse(cache.exists())
 
+    def test_standalone_session_analytics_keeps_python_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self._fake_env(root)
+            result = subprocess.run([sys.executable, str(RUNNER), "session-analytics", "3.11"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            event = (root / "events").read_text().strip()
+            self.assertIn("--project packages/session-analytics pytest packages/session-analytics/tests", event)
+            self.assertIn("--python 3.11", event)
+
     def test_invalid_worker_count_fails_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
