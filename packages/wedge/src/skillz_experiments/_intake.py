@@ -8,23 +8,25 @@ import os
 import random
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
-from skillz_experiments._cases import CodedError, Split, digest, loads_untrusted, string, text_map
+from skillz_experiments._cases import (
+    JOURNEY_FIELDS, CodedError, Journey, Split, digest, journey_of, loads_untrusted, string, text_map,
+)
 from skillz_experiments._contract import LOCATION, Contract, Grader, load_contract, parse
 from skillz_experiments._records import write
 
 DRAFT_NAME = "cases.draft.json"
-KINDS = ("trigger", "near-miss", "task")
+KINDS = ("trigger", "near-miss", "task", "journey")
 SOURCES = ("skill", "session")
 PENDING_KINDS = ("trigger", "near-miss")
 HOLDOUT_MINIMUM = 6
 REQUEST_PREVIEW = 80
 MINIMUM_FAMILIES = 3
 TASK_RUBRIC = "Grade the response against the reference answer in `expected`. Pass only when it meets the request."
-_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"}
+_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
 _REQUIRED = {"id", "family", "kind", "request", "source"}
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
 
@@ -38,6 +40,7 @@ class DraftCase:
     source: str
     files: dict[str, str]
     expected: object
+    journey: Journey | None = None
 
     @property
     def pending(self) -> bool:
@@ -46,7 +49,7 @@ class DraftCase:
 
 @dataclass(frozen=True)
 class IntakeCase(DraftCase):
-    split: Split
+    split: Split = field(kw_only=True)
 
     def data(self) -> dict[str, object]:
         item: dict[str, object] = {"id": self.identifier, "family": self.family, "split": self.split,
@@ -55,6 +58,8 @@ class IntakeCase(DraftCase):
             item["files"] = self.files
         if self.expected is not None:
             item["expected"] = self.expected
+        if self.journey is not None:
+            item.update(self.journey.data())
         return item
 
 
@@ -75,10 +80,13 @@ def _case(value: object, position: int) -> DraftCase:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}")
         files = text_map(item.get("files", {}))
         expected = item.get("expected")
-        if kind == "task" and (not files or expected is None):
-            raise ValueError("a task case needs files and an expected reference")
+        if kind in ("task", "journey") and (not files or expected is None):
+            raise ValueError(f"a {kind} case needs files and an expected reference")
         return DraftCase(string(item["id"], "id"), string(item["family"], "family"), cast(str, kind),
-                          string(item["request"], "request"), cast(str, source), files, expected)
+                          string(item["request"], "request"), cast(str, source), files, expected,
+                          journey_of(item, cast(str, kind)))
+    except CodedError as error:
+        raise CodedError(error.code, f"case {name}: {error}") from None
     except ValueError as error:
         raise ValueError(f"case {name}: {error}") from None
 
@@ -129,8 +137,8 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str = "task") -> li
             assigned[family] = "train" if index % 2 else "validation"
     for family in sorted({case.family for case in cases} - set(assigned)):
         assigned[family] = rng.choice(("train", "validation", "holdout"))
-    return [IntakeCase(c.identifier, c.family, c.kind if c.pending else kind, c.request, c.source, c.files,
-                       c.expected, assigned[c.family]) for c in cases]
+    return [IntakeCase(c.identifier, c.family, c.kind if c.pending or c.journey else kind, c.request, c.source,
+                       c.files, c.expected, c.journey, split=assigned[c.family]) for c in cases]
 
 
 def case_hash(cases: Sequence[IntakeCase], seed: int) -> str:

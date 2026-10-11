@@ -349,6 +349,19 @@ def test_a_failed_build_of_the_new_target_rejects_with_build_failed(
     assert score == 0.0 and feedback["reason"] == "build-failed" and "hello-cli" in str(feedback["rejected"])
 
 
+def test_a_new_target_whose_pyz_the_mcp_config_runs_is_rejected_as_a_contract_surface(
+        world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    contract = world.skill / "evals/autoimprove.json"
+    document = cast(dict[str, object], json.loads(contract.read_text()))
+    document["surface"] = {"mcp_config": "scripts/mcp.json"}
+    _ = contract.write_text(json.dumps(document))
+    _ = (world.skill / "scripts/mcp.json").write_text('{"mcpServers": {"hello": {"command": "scripts/hello-cli.pyz"}}}')
+    out = prepared(world, tmp_path, write_draft, approvals)
+    recorder = Recorder()
+    score, feedback = evaluate(out, recorder, VALUE)
+    assert score == 0.0 and recorder.seen == [] and feedback["reason"] == "contract-surface"
+
+
 def test_the_module_never_runs_on_the_host(
         world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
     out = prepared(world, tmp_path, write_draft, approvals)

@@ -21,7 +21,7 @@ from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError, digest
 from skillz_experiments._claude import (ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots, sandbox_argv,
                                         seatbelt_profile)
-from skillz_experiments._contract import load_contract, parse
+from skillz_experiments._contract import Surface, load_contract, parse
 from skillz_experiments._evaluator import Transport
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._harness import Configuration, Harness
@@ -1949,3 +1949,199 @@ def test_the_sandbox_fix_offers_nono_only_for_the_claude_isolation_on_linux(
         session.close()
     assert caught.value.code == "sandbox-unavailable" and "--isolation nono" in str(caught.value)
     assert "--isolation nono" not in _claude.USERNS_FIX
+
+
+SURFACE_SKILL = "---\nname: skillz\ndescription: x\n---\n"
+SURFACE_FILES = {
+    "SKILL.md": SURFACE_SKILL,
+    "mcp/docs.json": json.dumps({"mcpServers": {"docs": {"command": "docs-server"}}}),
+    "agents/reviewer.md": "---\nname: reviewer\ndescription: r\n---\n",
+    "skills/helper-skill/SKILL.md": "---\nname: helper-skill\ndescription: h\n---\n",
+    "skills/helper-skill/references/notes.md": "notes\n",
+}
+SURFACE = Surface(("WebFetch",), "mcp/docs.json", ("agents/reviewer.md",), ("skills/helper-skill",))
+
+
+def surface_harness(tmp_path: Path, executable: Path, surface: Surface | None, files: dict[str, str] | None = None,
+                    adapter: str = "claude") -> Harness:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": adapter, "command": [str(executable)]}))
+    return Configuration.load(config, "claude-test-model").create(
+        "claude-test-model", Budget(10, 120, 0), lambda: None, None, surface, SURFACE_FILES if files is None else files)
+
+
+def surface_candidate() -> Candidate:
+    return Candidate(dict(SURFACE_FILES), ("SKILL.md",))
+
+
+def surface_call(tmp_path: Path, surface: Surface | None) -> dict[str, object]:
+    tmp_path.mkdir(exist_ok=True)
+    executable = fake_claude(tmp_path)
+    session = surface_harness(tmp_path, executable, surface)
+    try:
+        _ = session.transports["task"].invoke("hello", surface_candidate())
+    finally:
+        session.close()
+    return calls(executable)[0]
+
+
+def test_contract_surface_tools_extend_the_tool_list_and_leave_it_alone_without_a_surface(tmp_path: Path) -> None:
+    argv = cast(list[str], surface_call(tmp_path, SURFACE)["argv"])
+    assert argv[argv.index("--tools") + 1] == "Bash,Read,Skill,WebFetch"
+    plain = cast(list[str], surface_call(tmp_path / "plain", None)["argv"])
+    assert plain[plain.index("--tools") + 1] == "Bash,Read,Skill"
+    assert "--mcp-config" not in plain and "--strict-mcp-config" in plain
+
+
+def test_contract_surface_mcp_config_is_passed_strictly_and_allowed(tmp_path: Path) -> None:
+    call = surface_call(tmp_path, SURFACE)
+    argv = cast(list[str], call["argv"])
+    assert "--strict-mcp-config" in argv
+    assert call["mcp_config"] == SURFACE_FILES["mcp/docs.json"]
+    assert Path(argv[argv.index("--mcp-config") + 1]).name == "mcp.json"
+    permissions = cast(dict[str, dict[str, list[str]]], json.loads(cast(str, call["settings"])))["permissions"]
+    assert "mcp__docs" in permissions["allow"]
+
+
+def test_contract_surface_agents_are_staged_under_the_project_agents_directory(tmp_path: Path) -> None:
+    staged = cast(dict[str, str], surface_call(tmp_path, SURFACE)["staged"])
+    assert ".claude/agents/reviewer.md" in staged
+    plain = cast(dict[str, str], surface_call(tmp_path / "plain", None)["staged"])
+    assert not any(name.startswith(".claude/agents") for name in plain)
+
+
+def test_contract_surface_companions_are_read_only_and_pass_the_init_check(tmp_path: Path) -> None:
+    call = surface_call(tmp_path, SURFACE)
+    staged = cast(dict[str, str], call["staged"])
+    assert staged[".claude/skills/helper-skill"] == "0o555"
+    assert staged[".claude/skills/helper-skill/references"] == "0o555"
+    assert staged[".claude/skills/helper-skill/SKILL.md"] == "0o444"
+    assert staged[".claude/skills/helper-skill/references/notes.md"] == "0o444"
+    assert not list(Path(tempfile.gettempdir()).glob("skillz-task-*"))
+
+
+def test_contract_surface_companions_stage_their_frozen_files_with_the_exec_bit_on_a_pyz(tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    executable = fake_claude(tmp_path)
+    session = surface_harness(tmp_path, executable, SURFACE)
+    frozen = {"skills/helper-skill/scripts/tool.pyz": b"PK\x03\x04", "skills/helper-skill/data.bin": b"\xff\x00"}
+    try:
+        _ = session.transports["task"].invoke("hello", Candidate(dict(SURFACE_FILES), ("SKILL.md",), frozen=frozen))
+    finally:
+        session.close()
+    staged = cast(dict[str, str], calls(executable)[0]["staged"])
+    assert staged[".claude/skills/helper-skill/scripts/tool.pyz"] == "0o555"
+    assert staged[".claude/skills/helper-skill/data.bin"] == "0o444"
+    assert staged[".claude/skills/helper-skill/scripts"] == "0o555"
+
+
+def test_contract_surface_reuse_key_follows_the_surface(tmp_path: Path) -> None:
+    keys: list[str] = []
+    for index, surface in enumerate([None, SURFACE, Surface(("WebSearch",), SURFACE.mcp_config, SURFACE.agents,
+                                                          SURFACE.companions)]):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        session = surface_harness(directory, fake_claude(directory), surface)
+        try:
+            keys.append(cast(ClaudeCode, session.transports["task"]).environment_key())
+        finally:
+            session.close()
+    assert len(set(keys)) == 3
+
+
+@pytest.mark.parametrize("missing", ["mcp/docs.json", "agents/reviewer.md", "skills/helper-skill/SKILL.md"])
+def test_contract_surface_missing_file_stops_before_any_call(tmp_path: Path, missing: str) -> None:
+    executable = fake_claude(tmp_path)
+    files = {name: text for name, text in SURFACE_FILES.items() if name != missing}
+    with pytest.raises(CodedError, match="names files that the skill lacks") as caught:
+        _ = surface_harness(tmp_path, executable, SURFACE, files)
+    assert caught.value.code == "contract-surface-missing"
+    assert not executable.with_name("claude.log").exists()
+
+
+@pytest.mark.parametrize("agent", ["---\nname: other\ndescription: r\n---\n", "---\ndescription: r\n---\n",
+                                   "no frontmatter\n"], ids=["mismatch", "missing-name", "no-frontmatter"])
+def test_contract_surface_agent_name_must_equal_its_file_stem(tmp_path: Path, agent: str) -> None:
+    executable = fake_claude(tmp_path)
+    files = SURFACE_FILES | {"agents/reviewer.md": agent}
+    with pytest.raises(CodedError, match="frontmatter name equal to its file name") as caught:
+        _ = surface_harness(tmp_path, executable, SURFACE, files)
+    assert caught.value.code == "contract-surface"
+    assert not executable.with_name("claude.log").exists()
+
+
+def test_contract_surface_candidate_names_rechecked(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    session = surface_harness(tmp_path, executable, SURFACE)
+    drifted = Candidate(SURFACE_FILES | {"agents/reviewer.md": "---\nname: other\ndescription: r\n---\n"}, ("SKILL.md",))
+    try:
+        with pytest.raises(CodedError, match="frontmatter name equal to its file name") as caught:
+            _ = session.transports["task"].invoke("hello", drifted)
+        renamed = Candidate(SURFACE_FILES | {"mcp/docs.json": json.dumps({"mcpServers": {"evil": {"command": "x"}}})},
+                            ("SKILL.md",))
+        with pytest.raises(CodedError, match="different agents, servers, or companions") as swapped:
+            _ = session.transports["task"].invoke("hello", renamed)
+    finally:
+        session.close()
+    assert caught.value.code == "contract-surface" and swapped.value.code == "contract-surface"
+
+
+def test_contract_surface_candidate_mcp_config_text_is_fixed(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    session = surface_harness(tmp_path, executable, SURFACE)
+    config = SURFACE.mcp_config or ""
+    edited = Candidate(SURFACE_FILES | {config: SURFACE_FILES[config].rstrip() + "\n\n"}, ("SKILL.md",))
+    try:
+        with pytest.raises(CodedError, match="changes the MCP config") as caught:
+            _ = session.transports["task"].invoke("hello", edited)
+    finally:
+        session.close()
+    assert caught.value.code == "contract-surface"
+
+
+def test_contract_surface_unsupported_for_a_non_claude_task_role(tmp_path: Path) -> None:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "codex"}))
+    with pytest.raises(CodedError, match="only the claude harness") as caught:
+        _ = Configuration.load(config, "m").create("m", Budget(10, 120, 0), lambda: None, None, SURFACE, SURFACE_FILES)
+    assert caught.value.code == "contract-surface-unsupported"
+
+
+@pytest.mark.parametrize("mode", ["surface-mcp", "surface-agent", "surface-skill"])
+def test_contract_surface_declared_server_agent_or_skill_passes_the_preflight(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, mode: str) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    surface = Surface((), "mcp/docs.json", ("agents/reviewer.md",), ("skills/helper-skill",))
+    executable = fake_claude(tmp_path, mode)
+    session = surface_harness(tmp_path, executable, surface)
+    try:
+        evidence = cast(ClaudeCode, session.transports["task"]).preflight()
+    finally:
+        session.close()
+    assert evidence["isolation"] == "passed"
+
+
+@pytest.mark.parametrize(("mode", "kind"), [("surface-mcp", "MCP server"), ("surface-agent", "agent"),
+                                            ("surface-skill", "skill"), ("foreign-mcp", "MCP server"),
+                                            ("foreign-agent", "agent")])
+def test_contract_surface_undeclared_name_stops_the_preflight(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, mode: str, kind: str) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    executable = fake_claude(tmp_path, mode)
+    session = surface_harness(tmp_path, executable, Surface(("WebFetch",)))
+    try:
+        with pytest.raises(CodedError, match=f"foreign {kind}") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"

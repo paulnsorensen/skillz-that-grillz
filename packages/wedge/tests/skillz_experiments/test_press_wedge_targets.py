@@ -357,6 +357,25 @@ def test_a_helper_that_names_a_foreign_pyz_stops_with_helper_frozen(world: World
     assert caught.value.code == "helper-frozen" and "scripts/foreign.pyz" in str(caught.value)
 
 
+def test_an_own_target_that_the_mcp_config_runs_stays_frozen_and_contributes_no_sources(world: World) -> None:
+    """The MCP config starts `alpha.pyz` on the host, so a proposal must not rewrite its sources (ADR-009)."""
+    _ = (world.skill / "scripts/mcp.json").write_text('{"mcpServers": {"a": {"command": "scripts/alpha.pyz"}}}')
+    document = cast(dict[str, object], json.loads((world.skill / "evals/autoimprove.json").read_text()))
+    document["surface"] = {"mcp_config": "scripts/mcp.json"}
+    _ = (world.skill / "evals/autoimprove.json").write_text(json.dumps(document))
+    world.mention("Run scripts/alpha.pyz and scripts/beta.pyz for the cheese.")
+    contract = load_contract(world.skill)
+    skeleton = Candidate.capture(world.skill, [], contract)
+    plan = plan_targets(world.skill, skeleton.files, contract, "prose+cli")
+    assert [target.name for target in plan.editable] == ["beta"]
+    assert ALPHA not in plan.sources and BETA in plan.sources
+    assert "MCP config runs scripts/alpha.pyz" in plan.reasons["alpha"]
+    assert "scripts/alpha.pyz" in plan.frozen
+    names = editable_names(skeleton.files | plan.sources, contract, skeleton.frozen.keys(), plan)
+    assert ALPHA not in names and BETA in names
+
+
+
 def test_a_name_that_only_looks_like_a_mention_does_not_make_a_target_editable(world: World) -> None:
     world.mention("See scripts/my-alpha.pyz and xalpha.pyz and alpha.py.")
     contract = world.contract("scripts/beta.pyz")

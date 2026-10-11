@@ -37,11 +37,12 @@ from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_qu
                                         load_draft, skill_facts, split_cases)
 from skillz_experiments._new_cli import expand_files, parse_value, prompt_rule, unused_helpers
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
-from skillz_experiments._runtime import (APPROVED_CALLS, APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted,
-                                         BudgetUnapproved, Estimate, approve, estimate, gate_seconds)
+from skillz_experiments._runtime import (JOURNEY_CALLS, JOURNEY_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted,
+                                         BudgetUnapproved, Estimate, approve, ceilings, estimate, gate_seconds,
+                                         seconds_cap_note)
 from skillz_experiments._search import Edit, REFLECTION_MINIBATCH, overshoot, search as pareto_search
-from skillz_experiments._wedge_targets import (Rebuilder, TargetPlan, never_editable, plan_targets, reopen, seal,
-                                               settle)
+from skillz_experiments._wedge_targets import (Rebuilder, TargetPlan, mcp_text, never_editable, plan_targets, reopen,
+                                               seal, settle)
 
 DEFAULT_SEED = 20261006
 DEFAULT_REPEATS = 3
@@ -155,7 +156,7 @@ def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeO
 
     A command or hybrid grader runs one sandbox. A `capture` argv runs one more. The result is 0 when no scored case runs one.
     """
-    runs = max((int(grader.type in ("command", "hybrid")) + int(bool(grader.capture))
+    runs = max((int(grader.type in ("command", "hybrid", "journey")) + int(bool(grader.capture))
                 for grader in (contract.grader(case.kind) for case in cases)), default=0)
     return runs * options.sandbox_seconds
 
@@ -168,7 +169,13 @@ def _sizing_options(configuration: Configuration | None, options: ClaudeOptions)
     return role.options if role.adapter == "claude" else ClaudeOptions()
 
 
-def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int, sandbox_seconds: int = 0) -> _Plan:
+def _case_calls(contract: Contract, case: Case) -> int:
+    """Return the worst-case invocation count of one evaluation of `case`. A journey case counts its `max_turns`."""
+    return contract.calls(case.kind, case.journey.max_turns if case.journey is not None else 1)
+
+
+def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int, sandbox_seconds: int = 0,
+          journey: bool = False, holdout_costs: Sequence[int] | None = None) -> _Plan:
     """Size the run. Shrink the search share to fit the cap; stop when the fixed cost alone exceeds it.
 
     `metric` counts metric calls: one search evaluation of one case. A metric call costs `per_evaluation` model calls.
@@ -178,29 +185,35 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     `sandbox_seconds` is the sandbox time of one evaluation: the limit times the sandbox runs of the costliest scored kind.
     The sandbox time of every evaluation adds to the estimate and to the gate reserve, shared across parallel calls.
     The search shrinks until both the call cap and the time cap hold, sandbox time included.
+    `journey` is True when a scored case is a journey. The run then gets the journey ceiling in place of the standard cap.
+    `holdout_costs` lists the model calls of each holdout case. The default is `per_evaluation` for each of `holdout` cases.
+    A retry costs the costliest holdout case, so the reserve covers one failed attempt of any case.
     """
+    max_calls, max_seconds = ceilings(journey)
+    costs = list(holdout_costs) if holdout_costs is not None else [per_evaluation] * holdout
     holdout_evaluations = 2 * holdout * repeats + 2 * HOLDOUT_RETRIES_PER_ARM
-    retry_calls = 2 * HOLDOUT_RETRIES_PER_ARM * per_evaluation
-    holdout_calls = 2 * holdout * repeats * per_evaluation + retry_calls
-    if PREFLIGHT_CALLS + holdout_calls > APPROVED_CALLS:
+    retry_calls = 2 * HOLDOUT_RETRIES_PER_ARM * (max(costs) if costs else per_evaluation)
+    holdout_pass = sum(costs)
+    holdout_calls = 2 * holdout_pass * repeats + retry_calls
+    if PREFLIGHT_CALLS + holdout_calls > max_calls:
         raise Stop("budget-unapproved", f"the preflight and the holdout gate alone need {PREFLIGHT_CALLS + holdout_calls} "
-                   + f"calls; the cap is {APPROVED_CALLS}; lower --repeats or the holdout size", {})
+                   + f"calls; the cap is {max_calls}{seconds_cap_note(journey)}; lower --repeats or the holdout size", {})
 
     def sandbox_total(metric: int) -> int:
         return math.ceil((metric + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
 
     def size(metric: int) -> Estimate:
-        return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=2 * holdout, calls_per_evaluation=per_evaluation,
+        return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=2 * holdout_pass, calls_per_evaluation=1,
                         repeats=repeats, search_calls=metric * per_evaluation, retry_calls=retry_calls,
-                        reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION))
+                        reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), journey=journey)
 
     def fits(metric: int) -> bool:
         sized = size(metric)
-        return sized.calls <= APPROVED_CALLS and sized.seconds + sandbox_total(metric) <= APPROVED_SECONDS
+        return sized.calls <= max_calls and sized.seconds + sandbox_total(metric) <= max_seconds
 
     if not fits(0):
         raise Stop("budget-unapproved", "the preflight, the holdout gate, and their sandbox time alone need "
-                   + f"{size(0).seconds + sandbox_total(0)} seconds; the cap is {APPROVED_SECONDS}; "
+                   + f"{size(0).seconds + sandbox_total(0)} seconds; the cap is {max_seconds}{seconds_cap_note(journey)}; "
                    + "lower --repeats, the holdout size, or --sandbox-seconds", {})
     metric = SEARCH_CASE_FACTOR * (train + validation)
     while metric > 0 and not fits(metric):
@@ -211,7 +224,21 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
     sized, total = size(metric), sandbox_total(metric)
     return _Plan(metric, math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls, retry_calls,
-                 Estimate(sized.calls, sized.seconds + total), sandbox_gate, total)
+                 Estimate(sized.calls, sized.seconds + total, journey), sandbox_gate, total)
+
+
+def _size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions) -> _Plan:
+    """Size the run from per-case call costs. `_prepare` and `_verify_budget` share this, so their estimates match.
+
+    The holdout reserve sums the holdout case costs. A search metric call costs the mean of the train and validation cases.
+    """
+    split = {name: [_case_calls(contract, case) for case in cases if case.split == name]
+             for name in cast(tuple[str, ...], get_args(Split))}
+    searched = split["train"] + split["validation"]
+    per_evaluation = max(1, math.ceil(sum(searched) / len(searched))) if searched else 1
+    return _plan(len(split["train"]), len(split["validation"]), len(split["holdout"]), per_evaluation, repeats,
+                 _command_seconds(contract, cases, options), journey=any(case.journey is not None for case in cases),
+                 holdout_costs=split["holdout"])
 
 
 def _editable(files: Mapping[str, str], contract: Contract, edit: Edit, frozen: Collection[str] = (),
@@ -235,8 +262,15 @@ def _editable(files: Mapping[str, str], contract: Contract, edit: Edit, frozen: 
             raise CodedError("helper-frozen", f"the contract helper {helper} is a frozen file (binary, not UTF-8, "
                              + "or over the text limit) and not the .pyz of an own wedge target, so no proposal can edit it")
         raise CodedError("helper-file-missing", f"the contract helper {helper} is missing from the target")
+    mcp = mcp_text(files, contract)
+    named = [*contract.editable, *([helper] if helper is not None else [])]
+    run = [name for name in named if contract.read_only(name, mcp)]
+    if run:
+        raise CodedError("contract-surface", "contract surface files the MCP config runs are read-only, so editable and "
+                         + f"the helper cannot hold {', '.join(run)}")
     base = list(contract.editable) or [name for name in files if (name.endswith(".md") or name.startswith("scripts/"))
-                                       and not name.startswith(WEDGE_PREFIX) and not never_editable(name)]
+                                       and not name.startswith(WEDGE_PREFIX) and not never_editable(name)
+                                       and not contract.read_only(name, mcp)]
     names = sorted(name for name in base if name.endswith(".md"))
     if not names:
         raise CodedError("prompt-components-missing", "search needs editable Markdown")
@@ -281,10 +315,13 @@ def _supported_kind(contract: Contract) -> str:
 
 def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object]:
     """Return the estimate that `run.json` records. `_prepare` writes it and `_verify_budget` rebuilds it."""
+    journey = ({"journey": {"calls": plan.sized.calls, "seconds": plan.sized.seconds,
+                            "ceiling_calls": JOURNEY_CALLS, "ceiling_seconds": JOURNEY_SECONDS}}
+               if plan.sized.journey else {})
     return {"calls": plan.sized.calls, "seconds": plan.sized.seconds, "search_calls": plan.metric_calls,
             "repeats": repeats, "holdout_cases": holdout_cases, "holdout_retry_calls": plan.retry_calls,
             "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls,
-            **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {})}
+            **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {}), **journey}
 
 
 def resolve_statistics(contract: Contract, given: Mapping[str, float]) -> Statistics:
@@ -355,14 +392,12 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     freeze(out / "cases.json", cases, split_seed, expected)
     scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
-    per_evaluation = max(contract.calls(case.kind) for case in scored)
     skeleton = Candidate.capture(target, [], contract)
     wedge = plan_targets(target, skeleton.files, contract, edit)
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
     seed_candidate = Candidate(files, tuple(_editable(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
-    plan = _plan(count["train"], count["validation"], count["holdout"], per_evaluation, repeats,
-                 _command_seconds(contract, scored, _sizing_options(configuration, options)))
+    plan = _size_plan(contract, scored, repeats, _sizing_options(configuration, options))
     shown = _estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
@@ -388,7 +423,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
         "estimate": shown, "engine_hash": _engine_hash(), "statistics": resolved.data(),
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
-                   "reserve_seconds": budget.reserve_seconds, "approved": budget.approved},
+                   "reserve_seconds": budget.reserve_seconds, "approved": budget.approved,
+                   **({"journey": True} if budget.journey else {})},
         "outcomes": [], "started": time.time(), "started_monotonic": time.monotonic()})
     return resolved
 
@@ -421,7 +457,8 @@ class _Session:
         self.sizing = _sizing_options(configuration, options)
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
-        self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out) if configuration is not None
+        self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
+                                                                  self.seed.files) if configuration is not None
                                     else cast(Factory, factory)(model, self.budget, self.checkpoint))
         self._fault: CodedError | None = None
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
@@ -498,15 +535,14 @@ class _Session:
         if seconds - elapsed <= 0:
             raise BudgetExhausted("global deadline exhausted")
         return Budget(_int_field(budget, "maximum"), seconds - elapsed, reserve=_int_field(budget, "reserve"),
-                      calls=_int_field(self.record, "calls"), approved=budget.get("approved") is True)
+                      calls=_int_field(self.record, "calls"), approved=budget.get("approved") is True,
+                      journey=budget.get("journey") is True)
 
     def _verify_budget(self, budget: dict[str, object]) -> None:
         """Stop when the recorded budget differs from the plan that the frozen cases, repeats, and edit give."""
         count = {split: sum(case.split == split for case in self.cases) for split in cast(tuple[str, ...], get_args(Split))}
         repeats = _int_field(self.record, "repeats")
-        plan = _plan(count["train"], count["validation"], count["holdout"],
-                     max(self.contract.calls(case.kind) for case in self.cases), repeats,
-                     _command_seconds(self.contract, self.cases, self.sizing))
+        plan = _size_plan(self.contract, self.cases, repeats, self.sizing)
         expected = _estimate(plan, repeats, count["holdout"])
         recorded = mapping(_field(self.record, "estimate"))
         maximum = max(plan.sized.calls, 1)
@@ -521,7 +557,8 @@ class _Session:
                 or differs(budget.get("maximum"), maximum)
                 or differs(budget.get("reserve"), min(plan.holdout_calls, maximum))
                 or differs(budget.get("reserve_seconds"), plan.reserve_seconds)
-                or not 0 < seconds <= APPROVED_SECONDS):
+                or (budget.get("journey") is True) != plan.sized.journey
+                or not 0 < seconds <= ceilings(plan.sized.journey)[1]):
             raise Stop("run-record-tampered", "the recorded budget differs from the plan of the frozen run; create a new run", {})
 
     def checkpoint(self) -> None:
@@ -843,7 +880,7 @@ class _Session:
                 if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
                     raise _baseline_rejected()
 
-            need = sum(self.contract.calls(case.kind) for _, case, _ in todo)
+            need = sum(_case_calls(self.contract, case) for _, case, _ in todo)
             if self.budget.maximum - self.budget.calls < need:
                 raise Stop("gate-budget-exhausted", f"the holdout gate needs {need} more calls; "
                            + f"{self.budget.maximum - self.budget.calls} remain in the approved budget",

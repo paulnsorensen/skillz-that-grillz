@@ -465,13 +465,20 @@ def _fit(stage: Sequence[OwnTarget], blocked: frozenset[str], text: int) -> list
     return chosen
 
 
+def mcp_text(files: Mapping[str, str], contract: Contract) -> str:
+    """Return the seed text of the contract's MCP config, or an empty string. A file that text names runs on the host."""
+    config = contract.surface.mcp_config if contract.surface is not None else None
+    return files.get(config, "") if config is not None else ""
+
+
 def plan_targets(skill_root: Path, files: Mapping[str, str], contract: Contract, edit: str) -> TargetPlan:
     """Choose the editable targets: the helper's target, then the targets that SKILL.md names.
 
     Only `prose+cli` edits sources. Targets join in order while the text total stays within `PACKAGE_LIMIT`
     and the wedge source total stays within `WEDGE_EDIT_LIMIT`. The first target that does not fit, and every
     later one, stays frozen built bytes. A source that a frozen target or a nested skill target also builds
-    from is never editable, and a target left with no source is frozen. The plan records why each target is frozen.
+    from is never editable, and a target left with no source is frozen. A target whose `.pyz` the MCP config runs
+    stays frozen too (ADR-009). The plan records why each target is frozen.
     """
     targets = own_targets(skill_root)
     if edit != "prose+cli":
@@ -479,14 +486,19 @@ def plan_targets(skill_root: Path, files: Mapping[str, str], contract: Contract,
     if not targets:
         return TargetPlan()
     guide = files.get("SKILL.md", "")
+    mcp = mcp_text(files, contract)
+    runs = {target.name for target in targets if contract.read_only(target.pyz, mcp)}
     helper = TargetPlan(targets).helper_target(contract)
     named = [target for target in targets if target is not helper and _named(target, guide)]
-    offered = {target.name for target in ([helper] if helper is not None else []) + named}
-    stage = [target for target in ([helper] if helper is not None else []) + named if target.sources is not None]
+    offered = {target.name for target in ([helper] if helper is not None else []) + named} - runs
+    stage = [target for target in ([helper] if helper is not None else []) + named
+             if target.sources is not None and target.name not in runs]
     nested = _nested_names(skill_root.resolve(), targets[0].repo)
     chosen = _choose(targets, stage, nested, sum(len(source) for source in files.values()))
     kept = {target.name for target in chosen}
-    reasons = {target.name: _frozen_reason(target, offered) for target in targets if target.name not in kept}
+    reasons = {target.name: (f"the MCP config runs scripts/{target.name}.pyz on the host, so it is read-only"
+                             if target.name in runs else _frozen_reason(target, offered))
+               for target in targets if target.name not in kept}
     return TargetPlan(targets, tuple(chosen), reasons, _capability(skill_root, targets, files))
 
 
@@ -684,6 +696,9 @@ class Rebuilder:
                 continue
             built[target.pyz] = self._build(target, candidate, self.names[target.name], self.fixed.get(target.name, ()))
         for spec in self._generated(candidate):
+            if self.seed.contract is not None and self.seed.contract.read_only(spec.pyz, mcp_text(self.seed.files, self.seed.contract)):
+                raise CodedError("contract-surface", f"the new target builds {spec.pyz}, which the MCP config runs on the host, "
+                                 + "so it is read-only")
             root = self._root()
             names = sorted(name for name in candidate.files
                            if is_skill_file(name) and (root / name).is_relative_to(spec.paths.source))

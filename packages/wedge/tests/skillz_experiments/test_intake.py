@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from skillz_experiments import _harness
-from skillz_experiments._cases import CodedError, load_cases
+from skillz_experiments._cases import Case, CodedError, Journey, load_cases
 from skillz_experiments._intake import (
     DRAFT_NAME, approval_question, case_hash, freeze, intake_contract, load_draft, skill_facts, split_cases,
 )
@@ -179,3 +179,66 @@ def test_grading_kind_is_covered_by_the_hash_and_written_per_case(tmp_path: Path
     freeze(out, custom, 1, case_hash(custom, 1))
     assert {case.kind for case in load_cases(out, {"echo": "judge"})} == {"echo"}
     assert [path.name for path in tmp_path.iterdir() if path.suffix == ".tmp"] == []
+
+
+def journey_draft(**extra: object) -> list[dict[str, object]]:
+    cases = draft()
+    cases.append({"id": "j-1", "family": "f2", "kind": "journey", "request": "Start the interview",
+                  "files": {"input.txt": "hello\n"}, "expected": {"answer": "2"}, "source": "skill",
+                  "brief": "You want a quiz app.", **extra})
+    return cases
+
+
+def frozen_journey(tmp_path: Path, **extra: object) -> tuple[list[object], str]:
+    cases = split_cases(load_draft(write_draft(tmp_path, journey_draft(**extra))), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    return cast(list[object], load_cases(out, {"task": "judge", "journey": "judge"})), case_hash(cases, 7)
+
+
+def test_journey_case_loads_with_default_max_turns_and_frozen_fields(tmp_path: Path) -> None:
+    loaded, _ = frozen_journey(tmp_path)
+    case = next(c for c in cast(list[Case], loaded) if c.identifier == "j-1")
+    assert case.kind == "journey" and case.eligible
+    assert case.journey == Journey("You want a quiz app.", 8, ())
+    assert all(c.journey is None for c in cast(list[Case], loaded) if c.identifier != "j-1")
+
+
+def test_journey_case_keeps_max_turns_and_requirements_in_the_hash(tmp_path: Path) -> None:
+    loaded, first = frozen_journey(tmp_path, max_turns=3, requirements=["REQ-1"])
+    case = next(c for c in cast(list[Case], loaded) if c.identifier == "j-1")
+    assert case.journey == Journey("You want a quiz app.", 3, ("REQ-1",))
+    other = tmp_path / "other"
+    other.mkdir()
+    assert frozen_journey(other, max_turns=3, requirements=["REQ-2"])[1] != first
+    assert frozen_journey(other, max_turns=4, requirements=["REQ-1"])[1] != first
+
+
+def test_journey_case_leaves_existing_case_hashes_unchanged(tmp_path: Path) -> None:
+    plain = split_cases(load_draft(write_draft(tmp_path, draft())), 7)
+    assert all("brief" not in case.data() and "max_turns" not in case.data() for case in plain)
+
+
+@pytest.mark.parametrize("brief", [None, "", "   ", 5])
+def test_journey_case_without_a_nonempty_brief_is_rejected(tmp_path: Path, brief: object) -> None:
+    cases = journey_draft()
+    if brief is None:
+        del cases[-1]["brief"]
+    else:
+        cases[-1]["brief"] = brief
+    with pytest.raises(CodedError) as caught:
+        _ = load_draft(write_draft(tmp_path, cases))
+    assert caught.value.code == "brief-missing" and "j-1" in str(caught.value)
+
+
+@pytest.mark.parametrize("extra", [{"max_turns": 0}, {"max_turns": True}, {"requirements": "REQ-1"}, {"requirements": [""]}])
+def test_journey_case_rejects_bad_optional_fields(tmp_path: Path, extra: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="j-1"):
+        _ = load_draft(write_draft(tmp_path, journey_draft(**extra)))
+
+
+def test_journey_case_fields_on_a_task_case_are_rejected(tmp_path: Path) -> None:
+    cases = draft()
+    cases[0]["brief"] = "secret"
+    with pytest.raises(ValueError, match="only belong to a journey case"):
+        _ = load_draft(write_draft(tmp_path, cases))
