@@ -13,6 +13,17 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 
 ## [Unreleased]
 
+### Changed
+
+- Ingest builds `tool_uses`, `tool_results`, `stop_events`, and `model_turns` from narrow rows that the staging pass pre-flattens. DuckDB no longer runs `json_extract` over `raw_entries.message`. The `raw_entries` step runs on one thread. Peak memory of an ingest step drops from 11.1 GB to 2.6 GB on a 1 M-row log set. Tables, columns, and types stay the same.
+- Every DuckDB run now sets `memory_limit` (default `4GB`, was `8GB`), `threads` (default `4`), `preserve_insertion_order=false`, and a 20GB spill cap.
+
+### Added
+
+- `SESSIONS_DUCKDB_THREADS` sets the DuckDB thread count.
+- DuckDB spills to the `<db>.spill` directory.
+- A query-hygiene rule in `query-conventions.md`.
+
 ## [0.1.0] - 2026-10-11
 
 ### Added
