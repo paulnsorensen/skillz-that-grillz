@@ -112,6 +112,7 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
     wedge = ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge"]
     skillz = ["uv", "run", "--locked", "--no-sync", "--project", "packages/skillz"]
     fromargs = ["uv", "run", "--locked", "--no-sync", "--project", "packages/fromargs"]
+    analytics = ["uv", "run", "--locked", "--no-sync", "--project", "packages/session-analytics"]
     return [
         ("wedge-pytest", wedge + ["pytest", "packages/wedge/tests", "-q", "-n", str(test_workers),
                             "--dist", "worksteal", "--basetemp", str(cache_root / "l"),
@@ -129,8 +130,9 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("reference-check", root + ["python", ".github/scripts/check_skillz_references.py"]),
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
-        ("engine-tests", ["uv", "run", "--no-project", "--python", "3.11", "python", "-B",
-                          "-m", "unittest", "discover", "-s", "skills/skillz/engine/tests", "-p", "test_*.py"]),
+        ("session-analytics-pytest", analytics + ["pytest", "packages/session-analytics/tests", "-q", "-n", str(test_workers),
+                                                "--dist", "worksteal", "--basetemp", str(cache_root / "a"),
+                                                "-o", f"cache_dir={cache_root / 'ac'}"]),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
         ("wedge-check", wedge + ["wedge", "check", "--root", "packages/wedge/examples/skills",
                               "--root", "packages/wedge/examples/consumer/skills"]),

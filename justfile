@@ -52,6 +52,21 @@ fromargs-release-notes $version:
     fi
     printf '%s\n' "$notes"
 
+# Print the CHANGELOG section for one session-analytics version; fail when it is missing or empty.
+[script("bash")]
+session-analytics-release-notes $version:
+    set -euo pipefail
+    notes=$(awk -v v="$version" '
+        index($0, "## [" v "]") == 1 { on = 1; next }
+        on && /^(## |\[[^]]+\]: )/ { exit }
+        on { print }
+    ' packages/session-analytics/CHANGELOG.md | sed '/./,$!d')
+    if [ -z "${notes//[[:space:]]/}" ]; then
+        echo "error: packages/session-analytics/CHANGELOG.md has no section for $version" >&2
+        exit 1
+    fi
+    printf '%s\n' "$notes"
+
 # Fix markdown formatting issues
 lint-md-fix:
     markdownlint-cli2 --fix "*.md"

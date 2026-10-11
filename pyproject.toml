@@ -29,7 +29,7 @@ venvPath = "."
 venv = ".venv"
 include = ["packages", "skills"]
 exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache"]
-extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/fromargs/src", "packages/fromargs/examples"]
+extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/session-analytics/src", "packages/fromargs/src", "packages/fromargs/examples"]
 typeCheckingMode = "recommended"
 failOnWarnings = true
 
@@ -46,4 +46,4 @@ ignore_decorators = [
   "@nested.default", "@wheels.command", "@target.command",
   "@pytest.fixture", "@override",
 ]
-ignore_names = ["pytestmark", "pytest_collection_modifyitems"]
+ignore_names = ["pytestmark", "pytest_collection_modifyitems", "Test*"]
