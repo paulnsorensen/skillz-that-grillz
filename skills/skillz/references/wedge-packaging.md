@@ -20,7 +20,7 @@ The runtime requires Python 3.11 or later.
 An installed launcher does not require uv or a project environment.
 
 Do not add unrelated dependencies to a shared project to make packaging pass.
-Do not change the `lib/fromargs` closure of the skillz-that-grillz repository.
+Do not change the `packages/fromargs` closure of the skillz-that-grillz repository.
 When the layout or a dependency is not supported, ship the CLI unpackaged and state the reason.
 Installing the wedge command alone does not create the required project.
 
@@ -171,6 +171,6 @@ The skillz-that-grillz repository already has that workflow.
 
 ## Sources
 
-The [wedge implementation](https://github.com/paulnsorensen/skillz-that-grillz/tree/main/lib/src/wedge) defines the supported builder and launcher.
+The [wedge implementation](https://github.com/paulnsorensen/skillz-that-grillz/tree/main/packages/wedge/src/wedge) defines the supported builder and launcher.
 The [Agent Skills specification](https://agentskills.io/specification) defines portable skill resources and progressive loading.
 The [Anthropic engineering guide](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) explains bundled executable code for repeatable work.

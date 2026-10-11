@@ -80,7 +80,7 @@ Done when every item in the completion check holds.
 
 ## Type-check with basedpyright
 
-- Run `just build` after a Python change. Its root basedpyright check covers authored Python in `.github/scripts`, `lib`, and `skills`.
+- Run `just build` after a Python change. Its root basedpyright check covers authored Python in `.github/scripts`, `packages`, and `skills`.
 - Root configuration in `pyproject.toml` uses Python 3.11, the root `.venv`, and execution environments for local packages.
 - Keep `typeCheckingMode = "recommended"` and `failOnWarnings = true`. Fix all errors and warnings without a baseline.
 - Preserve the independent fromargs type check and its package configuration.

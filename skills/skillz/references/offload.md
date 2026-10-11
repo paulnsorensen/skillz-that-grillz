@@ -94,7 +94,7 @@ The reasons are: no uv project, no committed `uv.lock`, no `uv` on `PATH`, froma
 
 Do not silently copy shared libraries or change shared dependencies.
 Do not claim that installing wedge creates the required project.
-In this repository, do not change the `lib/fromargs` closure to make packaging pass.
+In this repository, do not change the `packages/fromargs` closure to make packaging pass.
 
 ### Prove the delivered CLI
 
