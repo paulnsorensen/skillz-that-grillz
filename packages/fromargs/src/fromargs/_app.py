@@ -156,7 +156,8 @@ class App:
 
         ``limit`` truncates a sequence result to its first ``limit`` items
         unless ``--full`` is passed; it must not be negative. ``obj`` must
-        not declare a CLI option named ``--json`` or ``--full``.
+        not declare a CLI option named ``--json`` or ``--full``. Raises
+        ``ValueError`` when the command name is already registered.
         """
         if obj is None:
 
@@ -167,7 +168,10 @@ class App:
         _reject_inert(kwargs)
         _check_limit(limit)
         before = set(self._cyclopts)
-        _ = self._cyclopts.command(obj, name=name, help=help, **kwargs)
+        try:
+            _ = self._cyclopts.command(obj, name=name, help=help, **kwargs)
+        except cyclopts.CommandCollisionError as exc:
+            raise ValueError(str(exc)) from exc
         registered = sorted(set(self._cyclopts) - before)
         sub_app = self._cyclopts[registered[0]]
         try:
@@ -236,12 +240,18 @@ class App:
         return obj
 
     def group(self, name: str, *, help: str | None = None, **cyclopts_kwargs: Unpack[_AppKwargs]) -> App:
-        """Return a nested command group registered under this app."""
+        """Return a nested command group registered under this app.
+
+        Raises ``ValueError`` when ``name`` is already registered.
+        """
         _reject_inert(cyclopts_kwargs)
         sub = cyclopts.App(name=name, help=help, **cyclopts_kwargs)
         if cyclopts_kwargs.get("default_command") is not None:
             _reject_reserved(sub, (*self._ancestors, self._cyclopts))
-        _ = self._cyclopts.command(sub)
+        try:
+            _ = self._cyclopts.command(sub)
+        except cyclopts.CommandCollisionError as exc:
+            raise ValueError(str(exc)) from exc
         return App._wrap(sub, self._limits, (*self._ancestors, self._cyclopts))
 
     def run(self, argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> int:
