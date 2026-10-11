@@ -34,6 +34,19 @@ pytestmark = pytest.mark.usefixtures("host_login")
 TOKENS = {"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}
 
 
+def _bwrap_works() -> bool:
+    tool = shutil.which("bwrap")
+    if tool is None:
+        return False
+    probe = subprocess.run([tool, "--unshare-all", "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin",
+                            "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+                            "/usr/bin/python3", "-c", "pass"], capture_output=True, check=False)
+    return probe.returncode == 0
+
+
+needs_bwrap = pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is unavailable")
+
+
 def stage(name: str, destination: Path) -> Path:
     """Copy a journey fixture. A `.fixture` suffix keeps the skill validators off the staged files."""
     source = FIXTURES / name
@@ -432,8 +445,12 @@ def test_a_single_turn_only_plan_sizes_like_the_flat_per_evaluation_plan(tmp_pat
     assert _size_plan(contract, cases, 3, ClaudeOptions()) == _plan(6, 6, 6, 1, 3)
 
 
+@needs_bwrap
 def test_a_mold_journey_run_launches_the_task_with_the_surface_and_stages_the_companion(tmp_path: Path) -> None:
-    """Drive `run` with the real `Configuration` and the stub `claude`, so a dropped surface or seed file shows in the argv."""
+    """Drive `run` with the real `Configuration` and the stub `claude`, so a dropped surface or seed file shows in the argv.
+
+    The live preflight sends its isolation probe through the real OS sandbox, so the test needs a working `bwrap`.
+    """
     target, out = stage("mold-journey", tmp_path / "target"), tmp_path / "run"
     brief = cast(list[dict[str, object]], json.loads((target / "evals/journeys.json").read_text()))[0]
     drafted = [brief | {"id": f"m{family}-{index}", "family": f"f{family}", "request": f"/mold shape {family}-{index}"}
