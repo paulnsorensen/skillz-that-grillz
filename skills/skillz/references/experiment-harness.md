@@ -4,7 +4,8 @@ Read this reference when the user selects the `claude` adapter, runs their own c
 `run --harness` accepts `claude`, `codex`, or `command`.
 `run --harness-config PATH` loads a role file. `run --harness command --command ARGV...` builds a one-role command configuration for all three roles.
 `self-test --preflight-only --harness-config` checks the same configuration without a run.
-Under `run`, the judge uses `--model`.
+Under `run`, the judge uses `--judge-model`, else `--model`.
+`--judge-model` applies only to `--harness claude` or `codex`. A role file or a command sets the judge model itself.
 
 ## Select a command
 

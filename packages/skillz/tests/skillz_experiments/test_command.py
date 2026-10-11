@@ -6,11 +6,12 @@ import shutil
 import subprocess
 from pathlib import Path
 from collections.abc import Callable
-from typing import cast
+from typing import TYPE_CHECKING, NoReturn, cast
 
 import pytest
 
 from skillz_experiments._candidate import Candidate
+from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import load_contract, parse
 from skillz_experiments.harness import Configuration, has_claude_sandbox
@@ -19,6 +20,9 @@ from skillz_experiments.harness._roles import adapter_class
 from skillz_experiments.run import run
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget, BudgetExhausted
+
+if TYPE_CHECKING:
+    from .conftest import JudgedRun
 
 
 def test_unsandboxed_wrapper_runs_probe_and_never_infers(tmp_path: Path) -> None:
@@ -164,6 +168,98 @@ def test_selected_judge_model_reaches_the_judge_calls_of_an_intake_run(tmp_path:
     assert record["judge_model"] == "judge-model"
     inferred = {str(item["model"]) for item in requests(log) if item["operation"] == "infer"}
     assert "task-model" in inferred and ("judge-model" in inferred) == (mode == "normal")
+
+
+def models_by_schema(log: Path) -> dict[str, set[str]]:
+    """Group the models of the `infer` requests by the role that makes them.
+
+    A reply with `score_percent` is a judge call, a reply with `result_json` or `matches` is a task call,
+    and any other reply schema is a reflection call.
+    """
+    groups: dict[str, set[str]] = {"judge": set(), "task": set(), "reflection": set()}
+    for item in requests(log):
+        if item["operation"] == "infer":
+            required = cast(list[str], cast(dict[str, object], item["response_schema"])["required"])
+            role = ("judge" if "score_percent" in required else
+                    "task" if {"result_json", "matches"} & set(required) else "reflection")
+            groups[role].add(str(item["model"]))
+    return groups
+
+
+@pytest.mark.parametrize(("flag", "judge"), [("judge-model", "judge-model"), (None, "task-model"), ("task-model", "task-model")])
+def test_judge_model_routes_the_judge_calls_and_only_those(judged: JudgedRun, flag: str | None, judge: str) -> None:
+    result = judged.start(judge_model=flag)
+    record = read(judged.out / "run.json")
+    roles = cast(dict[str, dict[str, str]], record["harness"])
+    assert result["phase"] == "complete"
+    assert models_by_schema(judged.log) == {"judge": {judge}, "task": {"task-model"}, "reflection": set()}
+    assert {name: role["model"] for name, role in roles.items()} == {
+        "task": "task-model", "reflection": "task-model", "judge": judge}
+    assert (record["judge_model"], record["judge_model_flag"]) == (judge, flag)
+
+
+def test_reflection_calls_stay_on_the_task_model(judged: JudgedRun) -> None:
+    _ = judged.settings.write_text(json.dumps({"mode": "low-score", "log": str(judged.log)}))
+    _ = judged.start(judge_model="judge-model")
+    assert models_by_schema(judged.log) == {
+        "judge": {"judge-model"}, "task": {"task-model"}, "reflection": {"task-model"}}
+
+
+def test_judge_model_leaves_the_harness_identity_alone_when_it_equals_the_task_model() -> None:
+    single = Configuration.single("codex", "task-model")
+    assert Configuration.split("codex", "task-model", None).identity() == single.identity()
+    assert Configuration.split("codex", "task-model", "task-model").identity() == single.identity()
+    split = Configuration.split("codex", "task-model", "judge-model")
+    assert {name: role.model for name, role in split.roles.items()} == {
+        "task": "task-model", "reflection": "task-model", "judge": "judge-model"}
+    assert {role.adapter for role in split.roles.values()} == {"codex"}
+    assert "simulator" not in split.roles
+
+
+@pytest.mark.parametrize(("first", "resume", "differs"), [
+    ("judge-model", "other-model", True), ("judge-model", "task-model", True), (None, "judge-model", True),
+    ("judge-model", None, False), ("judge-model", "judge-model", False), (None, "task-model", False)])
+def test_resume_judge_model_must_match_the_first_run(
+        judged: JudgedRun, first: str | None, resume: str | None, differs: bool) -> None:
+    with pytest.raises(CodedError) as stopped:
+        _ = judged.start(live=False, judge_model=first)
+    assert stopped.value.code == "live-required"
+    if differs:
+        with pytest.raises(CodedError, match="--judge-model") as refused:
+            _ = judged.start(judge_model=resume)
+        assert refused.value.code == "run-config-differs" and not judged.log.exists()
+        return
+    assert judged.start(judge_model=resume)["phase"] == "complete"
+    kept = first or "task-model"
+    assert models_by_schema(judged.log) == {"judge": {kept}, "task": {"task-model"}, "reflection": set()}
+    assert read(judged.out / "run.json")["judge_model"] == kept
+
+
+def test_judge_model_flag_reaches_run_through_the_command_line(
+        judged: JudgedRun, capsys: pytest.CaptureFixture[str]) -> None:
+    base = ["run", "--target", str(judged.target), "--out", str(judged.out), "--model", "task-model",
+            "--approve-cases", judged.case_hash, "--approve-budget", str(judged.calls)]
+    assert main([*base, "--judge-model", "judge-model"]) == 1
+    assert json.loads(capsys.readouterr().err)["code"] == "live-required"
+    assert main([*base, "--judge-model", "other-model", "--live"]) == 1
+    error = cast(dict[str, str], json.loads(capsys.readouterr().err))
+    assert error["code"] == "run-config-differs" and "--judge-model" in error["error"]
+    assert main([*base, "--live"]) == 0
+    assert read(judged.out / "run.json")["judge_model"] == "judge-model"
+
+
+def _no_provider(_model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> NoReturn:
+    raise AssertionError("the refusal comes before any provider is built")
+
+
+@pytest.mark.parametrize("supplied", ["configuration", "factory"])
+def test_judge_model_is_refused_with_a_supplied_configuration_or_factory(
+        tmp_path: Path, supplied: str, make_target: Callable[..., Path]) -> None:
+    config, _, _ = configured(tmp_path)
+    with pytest.raises(ValueError, match="--judge-model applies only"):
+        _ = run(make_target(tmp_path), tmp_path / "run", "m", judge_model="j",
+                configuration=Configuration.load(config, "m") if supplied == "configuration" else None,
+                factory=_no_provider if supplied == "factory" else None)
 
 
 @pytest.mark.parametrize("inside", ["configuration", "script"])

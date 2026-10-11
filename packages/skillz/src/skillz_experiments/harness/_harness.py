@@ -70,6 +70,19 @@ class Configuration:
                           model, Path.cwd())
         return cls({name: role for name in ROLES})
 
+    @classmethod
+    def split(cls, adapter: str, model: str, judge_model: str | None,
+              options: ClaudeOptions | None = None) -> Configuration:
+        """Return `single(...)`, with the judge role on `judge_model` when it names another model than `model`.
+
+        The task and reflection roles keep `model`. Every role uses the same adapter.
+        """
+        configuration = cls.single(adapter, model, options)
+        if judge_model is None or judge_model == model:
+            return configuration
+        judge = cls.single(adapter, judge_model, options).roles["judge"]
+        return cls(configuration.roles | {"judge": judge})
+
     def check_boundary(self, target: Path) -> None:
         paths = [Path(argument) for role in self.roles.values() for argument in command_paths(role.command)]
         if self.source is not None:

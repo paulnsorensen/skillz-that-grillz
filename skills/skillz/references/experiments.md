@@ -50,6 +50,11 @@ A model call needs `--live`; without it the run stops with `live-required`. The 
 `--harness` accepts `claude`, `codex`, or `command`. The built-in harnesses launch only headless `claude -p` or `codex exec`.
 To run your own command, pass `--harness-config PATH` or `--harness command --command EXECUTABLE --command ARG ...`. Write an argument that starts with `-` as `--command=VALUE`.
 `--harness-config` cannot combine with `--harness` or `--command`; `--command` needs `--harness command`, and `--harness command` needs `--command`. Each misuse stops with the code `usage` before any work.
+`--judge-model MODEL` sets the model of the judge calls on the same harness. Task and reflection calls use `--model`.
+Without the flag, the judge uses `--model`. Prefer a judge from another model family or tier that the same harness can run.
+The first run records the flag. A resume that omits it keeps the recorded judge model.
+The judge role also plays the simulator of a journey case, so the flag moves that simulation to the judge model too.
+`--judge-model` cannot combine with `--harness-config` or `--harness command`; set the judge model in the role file or the command.
 The `doctor` host checks skip a command role. The runner sends its sandbox probe before any task call.
 The `claude` harness reuses the Claude login. The `codex` harness reuses the ChatGPT login and needs Codex CLI 0.154.0 or newer.
 The runner records the observed `codex --version` string as `codex_version` in `run.json`.
@@ -133,7 +138,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--judge-model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `frozen-file-too-large` | A frozen file is over 16 MiB, or the frozen files together are over 64 MiB. The message names the file. | Remove the file from the skill, or shrink it, then run again. |
 | `target-not-built` | `wedge.toml` lists a target, and its `scripts/NAME.pyz` is missing, is a symlink, or is not a file. | Run `wedge bundle` for the skill, then run again. |
@@ -501,7 +506,8 @@ When the skill has none, ask the user to choose one path.
 
 1. Choose judge-only grading. No flag selects it.
    Draft a contract that maps each kind to the `judge` grader with a `rubric`.
-   Under `run`, the judge uses the `--model` value, so pass a powerful model there.
+   Under `run`, the judge uses `--judge-model`, else `--model`.
+   Pass a powerful model to the flag that the judge uses.
    Show the user the rubric.
 2. Use a contract. Find an existing contract, or draft one with the user.
 

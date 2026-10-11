@@ -111,6 +111,14 @@ def text_field(record: dict[str, object], key: str) -> str:
     return value
 
 
+def judge_flag(record: dict[str, object]) -> str | None:
+    """Return the frozen `--judge-model` value, or None when the first run passed none."""
+    value = record.get("judge_model_flag")
+    if value is not None and not isinstance(value, str):
+        raise ValueError("run record field judge_model_flag must be text or null")
+    return value
+
+
 def _number_field(record: dict[str, object], key: str) -> float:
     value = field(record, key)
     if type(value) not in (int, float):
@@ -156,7 +164,7 @@ class Session:
         self.outcomes = record_outcomes(self.record)
         options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
         configuration = supplied if supplied is not None else (
-            Configuration.single(adapter, model, options) if factory is None else None)
+            Configuration.split(adapter, model, judge_flag(self.record), options) if factory is None else None)
         self.sizing = options if configuration is None else configuration.sizing_options()
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()

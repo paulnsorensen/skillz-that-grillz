@@ -13,7 +13,7 @@ from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments._contract import Contract
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics
 from skillz_experiments.harness import CONFIGURED_SELECTIONS, NONO_REMOVED, ClaudeOptions, stop_kind
-from skillz_experiments.run._session import HarnessName, text_field
+from skillz_experiments.run._session import HarnessName, judge_flag, text_field
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit
 
@@ -81,12 +81,15 @@ def refuse_nono(record: dict[str, object]) -> None:
 
 def check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
                   seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object],
-                  configured: bool) -> None:
-    """Stop when a resume names another model, adapter, target, edit, repeats, seed, or Claude option
-    than the first run. A run that froze a harness configuration resumes only with a configuration.
+                  configured: bool, judge_model: str | None) -> None:
+    """Stop when a resume names another model, judge model, adapter, target, edit, repeats, seed, or Claude option
+    than the first run. A resume that omits `judge_model` keeps the recorded judge model.
+    A run that froze a harness configuration resumes only with a configuration.
     """
     if text_field(record, "model") != model:
         raise _config_differs("--model")
+    if judge_model is not None and judge_model != (judge_flag(record) or text_field(record, "model")):
+        raise _config_differs("--judge-model")
     recorded_adapter = text_field(record, "adapter")
     if recorded_adapter in CONFIGURED_SELECTIONS and "harness" not in record:
         raise CodedError("run-record-tampered", "the run record lacks its frozen harness identity; create a new run")

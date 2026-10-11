@@ -68,7 +68,7 @@ def infer(request: dict[str, object], mode: str, workspace: Path) -> dict[str, o
     if "result_json" in fields:
         answer, trace = inspection(request, workspace)
     elif "score_percent" in fields:
-        answer = {"score_percent": 100}
+        answer = {"score_percent": 0 if mode == "low-score" else 100}
     elif "matches" in fields:
         assert not list((workspace / ".agents/skills").iterdir())
         answer = {"matches": []}
