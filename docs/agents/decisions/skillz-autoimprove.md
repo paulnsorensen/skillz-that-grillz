@@ -14,6 +14,7 @@ That ADR supersedes the records about those commands and arms in this file. Thes
 - **Decision:** A contract names the skill, task kinds, invocation, optional helper, grader per kind, and editable files. It lives in `<skill>/evals/autoimprove.json` or in a `target` block of the case manifest; the manifest block wins. With neither, autoimprove asks the user to choose judge-only grading with a powerful model, or to find or draft a contract. A drafted contract carries `"status": "draft"` and `dataset` refuses it until the user approves it.
 - **Alternatives:** Inference from SKILL.md and `scripts/` with judge-only grading (no deterministic grade for rewrite skills). A manifest-only or skill-only location.
 - **Consequences:** Skills outside this repository work. Each target needs a contract, but autoimprove can draft one.
+- **Amendment 2026-10-10:** The helper is now `inspect-skill.pyz`, built from `lib/src/skillz_inspect`.
 
 ### ADR-002: Use exact-json, judge, command, and hybrid graders  [status: accepted]
 - **Context:** Rewrite skills such as bash-shortening produce changed files. Their truth is mostly output state. gskill grades by test pass or fail only.
@@ -27,6 +28,7 @@ That ADR supersedes the records about those commands and arms in this file. Thes
   Schema v3 moves `long_sentences` to sentences over 25 words and adds `advisory_sentences` for 21 to 25 words.
 - **Alternatives:** A judge-only lens. A separate STE script.
 - **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `lib/src/skillz_experiments/_evaluation.py`, `skills/skillz/evals/autoimprove.json`, and the `skills/skillz/references/experiments.md` example.
+- **Amendment 2026-10-10:** The inspector is now the fromargs package `lib/src/skillz_inspect`, built as `inspect-skill.pyz`, at schema 4.
 
 ### ADR-004: Run the Claude Code adapter in --restricted mode  [status: superseded in part by ADR-006; amended by skillz-pragmatic-autoimprove ADR-001]
 - **Context:** The Codex adapter isolates discovery, filesystem, and network. Claude Code documents `--restricted` for eval harnesses; `--bare` needs an API key.
@@ -50,11 +52,14 @@ Domain and proxy policy beyond these probes stays unverified. The preflight does
 The macOS path stays unverified live. A passed preflight does not prove macOS isolation.
 The manual macOS checklist is in `skills/skillz/references/experiment-harness.md`.
 
-### ADR-005: Make the wedge arm a hand-written stdlib script  [status: accepted]
+### ADR-005: Make the wedge arm a hand-written stdlib script  [status: superseded by skillz-pragmatic-autoimprove ADR-003; amended 2026-10-10 for wedge first-class]
 - **Context:** The user states that a wedge is a deterministic offload made by hand, and that Python is assumed installed. A real `/wedge` build needs `uv` and network access.
 - **Decision:** The `wedge` search mode adds one new `scripts/<name>.py` file plus its SKILL.md call site, seeded from `--brief PATH`. It runs as `python3 -I`. Selection ranks correctness first and tokens second.
 - **Alternatives:** A per-evaluation `.pyz` build. Optimizing the brief text only.
 - **Consequences:** No build in the loop. Packaging as a `.pyz` stays a separate, optional step.
+- **Amendment 2026-10-10 (wedge first-class, C4):** The stdlib-script rule no longer holds for Python helpers. fromargs is the default for an edit to a wedged Python source, and the `prose+cli` reflection prompt says so. The host builds an own target over a site layer. The `@new-cli` component adds a new fromargs target.
+  Two cases keep another helper. A non-Python helper keeps its language. A Python helper may be a stdlib `argparse` helper only when the skill has no `wedge.toml` that can build a fromargs target.
+  `audit-facts` reports own targets as editable or frozen, and it flags foreign `.pyz` bundles.
 
 ### ADR-006: Replace --restricted with project setting sources and a free skill inventory  [status: accepted]
 - **Context:** Issue #168. On Claude Code 2.1.289 and later, `--restricted` drops project skills, so the candidate never loads. `disableBundledSkills` keeps Claude Code's own commands and `@builtin` plugins in the init event, and account skills load with the login. Ubuntu's `bwrap-userns-restrict` profile blocks the nested user namespace of the Unix-socket filter, and the documented sysctl does not lift it.
@@ -72,12 +77,13 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Context:** The skills /culture, /mold, and /cook ask the user questions across several turns. The runner was one-shot, so it could not score them.
 - **Decision:** A journey is a case kind that search and the holdout gate score. A simulator role plays the user and answers from a hidden brief. The `journey` grader gates on the trace, then judges the transcript.
 - **Alternatives:** A measure-only journey command. A format-only journey with an external runner. No journeys.
-- **Consequences:** One live stream-json process runs each journey and keeps `--no-session-persistence`. The simulator never sees `expected` or the rubric. Codex journeys are deferred, and Codex raises `journey-unsupported`.
+- **Consequences:** One live stream-json process runs each journey and keeps `--no-session-persistence`. The simulator never sees `expected` or the rubric. Codex journeys are deferred, and Codex raises `journey-unsupported`. Simulator tokens are not task tokens: `task_usage` holds only the agent usage, and `simulator_usage` records the simulator share, so the skillz-pragmatic-autoimprove token rule never charges them.
 
 ### ADR-009: Declare the task tool surface in the contract  [status: accepted]
 - **Context:** A journey skill needs more than `Bash,Read,Skill`. It can call MCP servers, agents, and companion skills.
 - **Decision:** The contract `surface` block declares `tools`, an MCP config, agents whose frontmatter `name` equals the file stem, and read-only companion skills. The live preflight accepts only the declared names.
   - **Read-only files:** A file that the seed MCP config runs is read-only, because the config starts it on the host; a contract that names it in `editable` or as the helper stops with `contract-surface`. The check matches file names in the seed config text, so it is best-effort. It does not see a file reached through `cwd` and a bare name, or through an import.
+  - **Own wedge targets:** An own wedge target whose `.pyz` the seed MCP config names stays frozen and gives search no sources. A `@new-cli` proposal whose `.pyz` the config names is rejected with `contract-surface`.
 - **Alternatives:** Keep `Bash,Read,Skill` only. Load the host's real configuration, which breaks ADR-006 and ADR-007. Replace each server with a stub.
 - **Consequences:** The surface joins the environment reuse key and the preflight. An MCP server can need sandbox paths that the profile denies. Under `--isolation claude`, MCP stdio servers run as children of Claude Code, outside the Bash sandbox. Under nono, they run inside the nono profile. The MCP config is not editable, because it holds host-run commands. Agents are not editable either, because an edit can add frontmatter keys such as `mcpServers` or `permissionMode`.
 
@@ -87,4 +93,4 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** Journeys only in the gate. A fit inside 200 calls and 7200 seconds with 4 turns and 1 repeat, which weakens ADR-002. Higher global caps.
 - **Consequences:** Journey runs take hours. The plan sizes the holdout gate from the sum of its case costs. It sizes each search call at the mean case cost. A mixed manifest then does not pay the journey cost for every case. Anthropic usage terms still limit volume.
 
-_Source: Mold session 2026-10-03, Mold session 2026-10-10, PR #118 Affinage review, and the issue #168 and #169 research · Updated: 2026-10-10_
+_Source: Mold session 2026-10-03, Mold session 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-11 (ADR-005 amendment, inspector path; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets)_

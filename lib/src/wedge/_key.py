@@ -35,7 +35,7 @@ class BuildPaths:
         return self.project / "uv.lock"
 
 
-def _inside_project(project: Path, raw: str, base: Path, key: str) -> Path:
+def _inside_project(project: Path, raw: str, base: Path, key: str, *, must_exist: bool = True) -> Path:
     candidate = base / raw
     common = Path(os.path.commonpath((str(base.resolve()), str(project.resolve()))))
     cursor: Path = candidate
@@ -48,7 +48,7 @@ def _inside_project(project: Path, raw: str, base: Path, key: str) -> Path:
     resolved = candidate.resolve()
     if resolved != project and project not in resolved.parents:
         raise ConfigError(f"{key} {raw!r} must resolve inside the project {project}")
-    if not resolved.exists():
+    if must_exist and not resolved.exists():
         raise ConfigError(f"{key} {raw!r} does not exist: {resolved}")
     return resolved
 
@@ -69,22 +69,24 @@ def _selected_path(source: Path, selector: str) -> Path:
     return resolved
 
 
-def resolve_paths(skill_dir: Path, config: WedgeConfig) -> BuildPaths:
+def resolve_paths(skill_dir: Path, config: WedgeConfig, *, missing_ok: bool = False) -> BuildPaths:
+    """Resolve ``config`` against the checkout. With ``missing_ok``, the source, include, and source_paths entries need not exist."""
     skill_dir = Path(skill_dir).resolve()
     project = (skill_dir / config.project).resolve()
     for required in ("pyproject.toml", "uv.lock"):
         if not (project / required).is_file():
             raise ConfigError(f"project {config.project!r} ({project}) has no {required}")
-    source = _inside_project(project, config.source, skill_dir, "source")
-    includes = tuple(_inside_project(project, item, skill_dir, "include") for item in config.include)
+    source = _inside_project(project, config.source, skill_dir, "source", must_exist=not missing_ok)
+    includes = tuple(_inside_project(project, item, skill_dir, "include", must_exist=not missing_ok) for item in config.include)
     if config.source_paths:
-        if not source.is_dir():
+        if not missing_ok and not source.is_dir():
             raise ConfigError("source_paths requires a source directory")
         for selector in config.source_paths:
             selector_path = Path(selector)
             if selector_path.is_absolute() or ".." in selector_path.parts or not selector_path.parts:
                 raise ConfigError(f"source_paths path must be relative and inside source: {selector!r}")
-            _ = _selected_path(source, selector)
+            if not missing_ok:
+                _ = _selected_path(source, selector)
     names = [path.name for path in (source, *includes)]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
@@ -121,16 +123,17 @@ def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def first_party_files(paths: BuildPaths) -> list[Path]:
+    """Every file the build copies from the checkout: the include trees, then the selected source."""
+    return [
+        *(file for root in paths.includes for file in _iter_files(root)),
+        *selected_files(paths.source, paths.source_paths),
+    ]
+
+
 def compute_key(skill_dir: Path, config: WedgeConfig) -> str:
     paths = resolve_paths(skill_dir, config)
-    inputs = {
-        (file.relative_to(paths.project).as_posix(), _digest(file))
-        for root in (*paths.includes,)
-        for file in _iter_files(root)
-    } | {
-        (file.relative_to(paths.project).as_posix(), _digest(file))
-        for file in selected_files(paths.source, paths.source_paths)
-    }
+    inputs = {(file.relative_to(paths.project).as_posix(), _digest(file)) for file in first_party_files(paths)}
     document: dict[str, object] = {
         "format_version": FORMAT_VERSION,
         "target_python": TARGET_PYTHON,
@@ -141,5 +144,9 @@ def compute_key(skill_dir: Path, config: WedgeConfig) -> str:
     # Only when present, so a skill without shared defaults keeps its key.
     if paths.defaults_file is not None:
         document["defaults"] = _digest(paths.defaults_file)
+    # Only for [[target]] tables: targets share one file digest, so the name
+    # separates their keys. A single-target key keeps its shape and value.
+    if config.multi:
+        document["target"] = config.name
     canonical = json.dumps(document, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

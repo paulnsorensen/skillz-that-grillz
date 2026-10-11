@@ -13,6 +13,12 @@ Visibility = Literal["public", "private"]
 LEGACY_KINDS = {"inspection": "exact-json", "audit": "audit"}
 
 
+def repo_root(start: Path) -> Path | None:
+    """Return the nearest ancestor of `start` (or `start`) that holds `.git`, or None."""
+    here = start.resolve()
+    return next((path for path in (here, *here.parents) if (path / ".git").exists()), None)
+
+
 class CodedError(ValueError):
     """A coded validation failure or run stop that carries a stable machine-readable code."""
 

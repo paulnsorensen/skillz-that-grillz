@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import importlib.util
+import importlib
 import json
 import os
 import re
@@ -78,14 +78,14 @@ class Sandbox:
     def __init__(self) -> None:
         self.cwds: list[Path] = []
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         self.cwds.append(workspace)
         command = [sys.executable, *argv[1:]] if argv[0] == "python3" else argv
         env = {**os.environ, **{name: UNROUTABLE for name in ("http_proxy", "https_proxy", "all_proxy",
                                                               "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")}}
         env["no_proxy"] = env["NO_PROXY"] = ""
         run = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=30, check=False, env=env)
-        return run.returncode, run.stdout
+        return run.returncode, run.stdout, run.stderr
 
 
 def live(case: Case, written: Mapping[str, str | None]) -> Tree:
@@ -235,8 +235,8 @@ def _defects(tmp_path: Path, case: Case, output: Tree, skill: str) -> list[str]:
         _ = target.write_text(text, encoding="utf-8")
     facts = cast(list[dict[str, object]], audit_facts(root / "skills" / skill)["checks"])
     found = {str(check["id"]) for check in facts if check["status"] == "fail"}
-    run = subprocess.run([sys.executable, str(SKILL_DIR / "scripts/inspect_skill.py"), str(root / "skills" / skill / "SKILL.md")],
-                         capture_output=True, text=True, check=True)
+    run = subprocess.run([sys.executable, "-I", str(SKILL_DIR / "scripts/inspect-skill.pyz"),
+                          str(root / "skills" / skill / "SKILL.md")], capture_output=True, text=True, check=True)
     if mapping(cast(object, json.loads(run.stdout)))["long_sentences"]:
         found.add("long-sentence")
     return sorted(found)
@@ -295,11 +295,7 @@ def _grader_longest(source: str) -> object:
 
 
 def _inspector() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("inspect_skill", SKILL_DIR / "scripts/inspect_skill.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("skillz_inspect._inspect")
 
 
 @pytest.mark.parametrize("kind", ["add", "improve"])
@@ -485,6 +481,9 @@ OFFLOAD = SKILL_DIR / "references/offload.md"
 EXPERIMENTS = SKILL_DIR / "references/experiments.md"
 ADD_NAME = ("1. Confirm the name: kebab-case, ≤64 chars, directory name equals `name:`, "
             "and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`.")
+ADD_EVALS = ("Add one trigger case for each trigger phrase and one near-miss case for each anti-trigger. "
+             "Draft at least three task cases from the purpose and the Flow. "
+             "Give each task case `assertions` that a grader can check in the output.")
 IMPROVE_AUDIT = (
     "1. Get a current audit of the target. "
     "Reuse an audit report from this conversation when its target and content id match. Name the reused report. "
@@ -509,6 +508,8 @@ STEPS: list[tuple[str, Path, str | None, str]] = [
     ("add", SKILL, "Mode: add", ADD_NAME),
     ("add", SKILL, "Mode: add", "Add `agents/openai.yaml` when the skill is user-only."),
     ("add", SKILL, "Mode: add", "Register the skill in its repo's index"),
+    ("add", SKILL, "Mode: add", "4. Write `evals/evals.json` from `references/harness-layout.md § Evals`."),
+    ("add", SKILL, "Mode: add", ADD_EVALS),
     ("add", SKILL, "Mode: add", "The inspector reports an empty `long_sentences` list."),
     ("improve", SKILL, "Mode: improve", IMPROVE_AUDIT),
     ("improve", SKILL, "Mode: improve", IMPROVE_SHOW),
@@ -553,6 +554,7 @@ def test_mode_steps_keep_the_invariant_that_the_fixture_depends_on(mode: str, pa
 
 MUTATIONS = [
     ("add", "Mode: add", ADD_NAME, ", and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`", ""),
+    ("add", "Mode: add", ADD_EVALS, "Draft at least three task cases", "Draft a task case"),
     ("improve", "Mode: improve", IMPROVE_SHOW, "before the first edit, ", "after the edits, "),
     ("improve", "Mode: improve", IMPROVE_AUDIT, "Otherwise run `audit` steps 1-3.", "Otherwise run the shared protocol."),
     ("improve", "What this skill never does", IMPROVE_NEVER, " never edits before the user answers its approval question, and it", ""),

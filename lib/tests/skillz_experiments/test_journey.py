@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, load_cases
 from skillz_experiments._claude import ClaudeCode
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript
+from skillz_experiments._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript, task_tokens
 from skillz_experiments._harness import Configuration, Harness, Role
 from skillz_experiments._runtime import Budget
 
@@ -186,9 +187,9 @@ class Talker:
         del candidate
         return True
 
-    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str]:
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         del workspace, argv
-        return 0, '{"score": 1}'
+        return 0, '{"score": 1}', ""
 
     def converse(self, request: str, candidate: Candidate, case: Case, holdout: bool,
                  simulate: Callable[[Transcript], Reply]) -> dict[str, object]:
@@ -225,3 +226,36 @@ def test_simulator_prompt_holds_the_brief_the_request_and_replies_but_never_expe
     assert "untrusted data" in prompt
     assert judge.prompts[1].count(RUBRIC) == 1 and BRIEF in judge.prompts[1]
     assert result["score"] == 0.6
+
+
+
+@pytest.mark.parametrize("sim_input", [10, None])
+def test_simulator_tokens_are_recorded_apart_and_never_charged_as_task_tokens(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sim_input: int | None) -> None:
+    class Simulating(Judge):
+        @override
+        def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+                   *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+            result = super().invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+            if schema == SIMULATOR_SCHEMA:
+                result["usage"] = TOKENS | {"input_tokens": sim_input}
+            return result
+
+    judge = Simulating([{"reply": "yes", "done": True}, {"score_percent": 60}])
+    task = Talker()
+    transports = {"task": task, "judge": judge, "reflection": judge}
+
+    def create(self: Role, budget: Budget, checkpoint: object, out: Path | None = None, *rest: object) -> Talker | Judge:
+        del checkpoint, out, rest
+        transports[self.adapter].budget = budget
+        return transports[self.adapter]
+
+    monkeypatch.setattr(Role, "create", create)
+    roles = {name: Role(name, "model", ("fake",), "fake-1") for name in ("task", "judge", "reflection")}
+    session = Harness(Configuration(roles), Budget(40, 2400, reserve=0), lambda: None)
+    case, candidate = journey_case(tmp_path, contract())
+    result = session.evaluate(candidate, case)
+    assert result["task_usage"] == TOKENS and task_tokens(result) == 12
+    assert result["simulator_usage"] == TOKENS | {"input_tokens": sim_input}
+    total = cast(dict[str, int | None], result["usage"])
+    assert total["input_tokens"] == (None if sim_input is None else 30) and total["output_tokens"] == 6

@@ -18,7 +18,7 @@ It needs no source checkout or runtime package installation.
 - **Approval**: the user's answer to one question. The runner binds each answer to a hash or to a call count.
 - **Budget**: the estimated calls and seconds. After approval, a run uses at most 200 calls and 7200 seconds.
   The search stops early enough to leave the holdout gate its estimated calls and time.
-- **Gate verdict**: `promote`, `inconclusive`, or `reject`. It compares baseline and winner on the holdout cases.
+- **Gate verdict**: `promote`, `promote-cheaper`, `inconclusive`, or `reject`. It compares baseline and winner on the holdout cases.
 - **Export**: the write-only step that saves the winner as a private patch and a redacted report.
 
 The optional custom contract is outside these seven concepts. A first run does not need it.
@@ -79,7 +79,8 @@ Parallel calls share it. The estimate and the holdout gate reserve include it.
 The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
 The stops that ask for approval echo the options as `claude_options`.
 These three options apply only to `--harness claude`. The first run records them.
-When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, or Claude option.
+`--min-gain N` and `--min-lower-bound N` set the floors of the gate. `--family-budget N` sets the regression budget of every family. `--max-token-increase-per-gain N` and `--min-token-saving N` set the token rule. Each value must be at least 0. `--min-token-saving` must also be above 0 and below 1. "Set promotion thresholds" describes them.
+When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, Claude option, or threshold flag.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
 Each stop prints one JSON object on stdout and a coded error on stderr.
@@ -90,14 +91,16 @@ Map each coded stop to its next step:
 |---|---|---|
 | `host-not-ready` | `ok`, `harness`, `isolation`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `doctor` (the host checks) | Write the case draft, then run again. |
-| `cases-unapproved` | `question`, `case_hash`, `seed` | Ask question 2. Run again with `--approve-cases HASH`. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` in the command. |
-| `baseline-contract-rejected` | `next` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
+| `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
+| `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
 | `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |
 | `run-terminated` | `next`, `failure_code` | The run directory holds a stop from `isolation-failed` or `credential-changed`. Start a new run directory. |
-| `run-record-tampered` | Only `stop` and `message` | The budget in `run.json` differs from the plan that the frozen cases give, or the `phase` is unknown. Start a new run directory. |
+| `run-record-tampered` | Only `stop` and `message` | The budget in `run.json` differs from the plan that the frozen cases give, the `phase` is unknown, or the `statistics` are malformed. A frozen file is changed or missing, a fixed file name is bad, an editable name is not a seed file, or the `layers` or `own_targets` record is malformed. Start a new run directory. |
+| `site-layer-drift` | `stop`, `message`, `next` | On resume, `uv.lock`, the dependency groups, or `wedge.toml` differ from the run record. A recorded layer that cannot be reused, or a recorded target that `wedge.toml` no longer lists, also causes it. Start a new run directory. |
+| `build-failed` | `stop`, `message`, `next` | At the holdout gate, the winner no longer builds. Start a new run directory. |
 
 These other codes arrive on stderr as `code`, with no data on stdout:
 
@@ -118,9 +121,19 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
-| `undecodable-file` | A target file is not UTF-8. The stop comes after case approval. | Convert the file to UTF-8 or remove it, then run again. |
+| `frozen-file-too-large` | A frozen file is over 16 MiB, or the frozen files together are over 64 MiB. The message names the file. | Remove the file from the skill, or shrink it, then run again. |
+| `target-not-built` | `wedge.toml` lists a target, and its `scripts/NAME.pyz` is missing, is a symlink, or is not a file. | Run `wedge bundle` for the skill, then run again. |
+| `wedge-config-invalid` | The `wedge.toml` of the skill is not a valid wedge config. The message gives the cause. | Fix `wedge.toml`, then run again. |
+| `editable-build-file` | The contract `editable` list names `wedge.toml`, `uv.lock`, or a `.pyz` file. | Remove the name from `editable`. |
+| `site-layer-failed` | The host cannot populate the site layer for `--edit prose+cli`. The cause is a missing `uv`, a missing network, or a dependency closure that `uv` refuses. | Install `uv`, restore the network, or use `--edit prose`. Then run again. |
+| `build-failed` | The host build of an own target fails. During the search, the candidate scores 0 and the feedback shows the reason. | Read the feedback. |
+| `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose`. Then run again. |
+| `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
+| `helper-frozen` | The contract helper names a frozen file. | Name an editable helper, or use `--edit prose`. |
+| `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
+| `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
 | `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
@@ -134,6 +147,8 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
 | `contract-capture-unsupported` | A kind declares `capture`, and the harness is not `claude`. | Run with `--harness claude`, or remove `capture`. |
+| `contract-statistics-invalid` | The `statistics` value is not an object. Or it holds an unknown field, a negative value, or a value that is not a finite number (such as a bool or a string). Or `family_budgets` is not an object of numbers, or has an empty or blank name. Or `min_token_saving` is not `null` or a number above 0 and below 1. | Fix the contract, then run again. |
+| `contract-family-unknown` | A `family_budgets` name matches no family in the case draft. The stop comes after the draft loads. | Fix the family name in the contract, or add the family to the draft. |
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
@@ -156,6 +171,17 @@ Lower `--repeats` or the number of holdout cases in the draft, then run again.
 
 Read the `facts` from the `cases-missing` stop, then the skill files that it lists.
 Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
+
+When `<skill>/evals/evals.json` exists, start the draft from it.
+Map each entry to one case with `source: skill`.
+Use the entry `name` as the case `id` and `family`, and the `prompt` as the `request`.
+An entry with `expected_skill: null` is a `near-miss` case.
+An entry with no `assertions` is a `trigger` case. Every other entry is a `task` case.
+For a `task` case, read each listed fixture into `files`, keyed by its listed path.
+When the entry lists no fixture, draft the starting fixture that the request needs.
+Set `expected` to an object with the entry's `expected_output` and `assertions`.
+Then add cases until the draft meets the minimums below.
+
 Each case has these fields:
 
 - `id`: a unique name.
@@ -183,15 +209,192 @@ The gate scores baseline and winner on holdout cases that no search step saw.
 It scores each case `--repeats` times and averages the repeats.
 It then takes the mean of the paired case deltas and its standard error (SE).
 
-- `promote`: the mean delta exceeds 2·SE. When the SE is 0, every case delta must be positive.
+- `promote`: the mean delta exceeds 2·SE and passes the floors. When the SE is 0, every case delta must be positive.
+- `promote-cheaper`: the mean delta is from 0 to 2·SE, and the task tokens drop by more than 2·`token_se` and by at least `min_token_saving`. See "The token rule".
 - `reject`: the mean delta falls below -2·SE.
 - `inconclusive`: any other result, or fewer than two holdout cases, or a winner equal to the baseline.
 
+The floors apply only to a result that would promote. That result needs `delta >= min_gain` and `delta > 2·SE + min_lower_bound`.
+When the SE is 0, the second test uses 2·SE = 0.
+A result that fails a floor becomes `inconclusive`. A floor never creates a `reject`.
+With both floors at 0, the verdict equals the built-in rule.
+
+The family rule runs after the floors. It uses the holdout cases, grouped by `family`.
+A family needs at least two holdout cases. For that family, the gate takes the mean delta and its SE (SE_f).
+The budget is the `family_budgets` value for that family, else `family_budget`. A family with no budget has no family rule.
+The family breaches when `mean + 2·SE_f` is below `-budget`. When SE_f is 0, the family breaches when `mean` is below `-budget`.
+A breach turns any verdict into `reject`. This also applies to `promote`. Each breach adds the reason `family-regression:<name>`, sorted by family name.
+The rule skips a family with fewer than two holdout cases, whatever its budget. `skipped_families` lists it, sorted by name. A skipped family never changes the verdict.
+The gate object always holds `skipped_families`. Without a budget, the verdict stays the same.
+
+### The token rule
+
+The token rule is off while `max_token_increase_per_gain` and `min_token_saving` are both `null`. Then no token rule runs. The verdict, the reasons, and the reflection prompt match a run without these fields.
+When a field is set, the rule runs after the floors and before the family rule.
+The task tokens of one holdout outcome are `input_tokens - cached_input_tokens + output_tokens`.
+Both adapters count the cached input inside `input_tokens`, so the charge covers only the uncached input and the output.
+A count that is missing, a bool, or negative makes the task tokens unknown. A `cached_input_tokens` value above `input_tokens` does the same.
+Judge usage and journey simulator usage never enter the charge. The outcomes keep all counts for the report, and a journey outcome records the simulator share in `simulator_usage`.
+For each case, the token change is `mean(winner task tokens) / mean(baseline task tokens) - 1`, with the mean over the repeats.
+The gate takes the mean of the case token changes (`token_delta`) and its SE (`token_se`).
+When every case token change is equal, `token_se` is 0 and `token_delta` is that change.
+Each token threshold treats two values as equal when they differ by a relative 1e-9 or an absolute 1e-12.
+The score rule, the floors, and the family rule compare exactly. ADR-002 and the pinned false-promotion rates require this.
+
+- `token-cost`: a `promote` becomes `reject` when `token_delta` exceeds `max_token_increase_per_gain * delta`. The reason is `token-cost`.
+- `promote-cheaper`: this needs `min_token_saving`. The score result must be `inconclusive` with a mean delta from 0 to 2·SE.
+  A mean delta below 0 never promotes cheaper. A result that a floor turned into `inconclusive` is outside the band.
+  `-token_delta` must exceed 2·`token_se` and must be at least `min_token_saving`.
+  The floors do not apply, because the verdict claims no gain.
+- `unknown-usage`: a holdout outcome has unknown task tokens, or a case has a baseline mean of 0.
+  An active rule with no task tokens at all gives the same result.
+  Then a `promote` becomes `inconclusive` with this reason.
+  A band result with `min_token_saving` set gets the same reason and stays `inconclusive`.
+
+A family breach still turns any verdict, including `promote-cheaper`, into `reject`.
+A `promote-cheaper` winner counts as a promotion. Export it as you would a `promote` winner. The user decides whether to apply it.
+With a token field set, the winner choice breaks a validation-mean tie in favor of fewer mean task tokens. This holds for the best candidate and for the seed.
+A candidate with unknown task tokens, or equal task tokens, keeps the usual winner. In a tie, that is the incumbent.
+The reflection prompt then also says: "Prefer fewer tokens when correctness is equal."
+
+The winner choice treats two validation means as equal when they differ by a relative 1e-9 or an absolute 1e-12.
+This holds in every run, with or without a token field.
+Without a token field, the seed wins a tie.
+
+### Reasons and reporting
+
+The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`.
+A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
+The summary and the export report show `reasons`, `skipped_families`, `token_delta`, and `token_se` in the `gate` object. The token fields are `null` while the token rule is off or the usage is unknown.
 The summary reports the delta, the SE, the case count, and the repeats.
 Small runs often report `inconclusive`. That result is honest: the data cannot separate the winner from noise.
 Report the verdict as it is. Never promote an `inconclusive` winner by hand.
+Apply a winner only after a `promote` or `promote-cheaper` verdict.
 Never report a delta without its SE and case count.
 `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion rates of the gate. It makes no model call.
+The rates cover `promote` only. They do not cover `promote-cheaper`.
+
+## Wedge targets
+
+A skill can own wedge targets. Each target is a section of the `wedge.toml` in the skill root.
+Each target ships as `scripts/NAME.pyz`.
+The runner reads each own `.pyz` as frozen bytes. If a `.pyz` is missing, the run stops with `target-not-built`.
+
+### Frozen bytes
+
+A frozen file is a file that no proposal edits. The runner keeps its bytes as they are.
+A file is frozen when it is binary, holds a NUL byte, is not UTF-8, or is over 262144 bytes.
+A valid UTF-8 file with a NUL byte is frozen. This changes the identity of such a file from earlier runs, by intent.
+A `.pyz` file is never editable. A binary `.pyz` is frozen, including one the skill does not own.
+Frozen bytes do not count against the 1,000,000-character text limit.
+A frozen file may be up to 16 MiB. All frozen files together may be up to 64 MiB.
+A larger file stops the run with `frozen-file-too-large`.
+The candidate identity includes a digest of each frozen file.
+The run directory keeps the frozen files in `frozen/`. A changed frozen file stops a resume with `run-record-tampered`.
+
+### Editable sources
+
+Only `--edit prose+cli` edits sources. `--edit prose` keeps every own target frozen.
+The runner adds the sources of an own target in this order:
+
+1. The target whose `.pyz` the contract helper names.
+2. Each other target for which `SKILL.md` names `scripts/NAME.pyz`, in `wedge.toml` order.
+
+A target joins only while the text total stays within the 1,000,000-character limit.
+The first target that does not fit stays frozen, and so does every later target.
+A target also stays frozen when one source file is binary, is not UTF-8, or is over 262144 bytes.
+The files `wedge.toml`, `uv.lock`, and every `.pyz` are never editable.
+A contract helper path may name an own `.pyz`. The path then does not stop with `helper-file-missing`.
+A project outside the repository root keeps its targets frozen.
+A git-ignored first-party file freezes its target.
+A source that a frozen target or a nested skill target also builds from is never editable.
+A target left with no source is frozen.
+The editable wedge sources together may hold up to 100,000 characters. This is the wedge edit limit.
+A source appears in the candidate as `@wedge/` plus its path relative to the repository root.
+The wedge overlay uses paths relative to the project. Do not mix the two forms.
+
+### Host rebuild
+
+A site layer is a directory of installed dependencies. The host builds each target over it.
+The dependency groups are the `groups` that `wedge.toml` names for a target.
+The run populates one site layer for each project and dependency group set of the editable targets.
+This is the only step that needs the network and `uv`. A missing `uv` stops the run with `site-layer-failed`.
+When a candidate changes a source, the host rebuilds that target before the candidate check.
+The build only copies and zips source. It never imports or runs candidate code.
+The new `.pyz` replaces the frozen bytes of that target for the candidate.
+A failed build rejects the candidate. It scores 0, and the feedback shows the reason `build-failed`.
+At the holdout gate, a winner that no longer builds stops the run with `build-failed`.
+The seed `.pyz` comes from a build of the seed sources, not from the file on disk.
+A rebuild stages first-party files that no proposal edits, such as a data `.pyz`, from the seed.
+A resume reopens the site layers. It stops with `site-layer-drift` when `uv.lock`, the dependency groups, or `wedge.toml` changed.
+It also stops with that code when a recorded layer cannot be reused or the recorded targets no longer match `wedge.toml`.
+
+### New target (`@new-cli`)
+
+Under `--edit prose+cli`, a proposal can add one new fromargs wedge target. The component is `@new-cli`. Its seed value is empty.
+The runner offers `@new-cli` only when all of these conditions hold:
+
+- The skill has a `wedge.toml`, and one of its targets includes the fromargs package.
+- The `wedge.toml` has no top-level `source_paths`.
+- The populated site layer for the project with no groups provides `cyclopts`. The fromargs include provides `fromargs`.
+- The skill directory lies inside that project, and the project lies inside the repository root.
+- Each first-party file of the fromargs include is at most 16 MiB.
+
+When one condition fails, the run has no `@new-cli` component.
+When no editable target uses the no-group layer and `uv` or the layer population fails, the run drops the component and continues.
+The run records the reason as `new_cli_dropped` in the own-targets record.
+
+The value is TOML with exactly two keys:
+
+```toml
+name = "count-words"
+module = """...Python source with a main function..."""
+```
+
+`name` matches `[a-z][a-z0-9-]{1,39}`. The package name is `name` with each hyphen changed to an underscore.
+`module` is Python source of at most 262144 characters. The whole value is at most 524288 characters.
+The host writes `module` to `src/<package>/__init__.py` in the skill and builds `scripts/<name>.pyz`.
+The host appends a `[[target]]` with `entry = "<package>:main"` and the same fromargs include to `wedge.toml`.
+A single-target `wedge.toml` becomes the multi-target form. The host drops its comments.
+The new target sets `groups = []`. It never takes the dependency groups of another target. The base dependencies provide `cyclopts`, and the fromargs include provides `fromargs`.
+The preparation step populates the site layer for the project with no groups. This step needs the network.
+The host reads `module` with `ast`. It never imports or runs the module.
+The module may import only the standard library, its own package, fromargs, and the site layer.
+The module must define a top-level `main` (a function or an assignment). The entry is `<package>:main`.
+The static check does not see dynamic imports (`__import__`, `importlib`). They fail only inside the sandbox.
+
+The host rejects a bad value. The candidate scores 0, and the feedback shows the code as `reason`:
+
+| Code | Cause |
+|---|---|
+| `new-cli-malformed` | The value is not valid TOML or nests too deeply. `module` is not a string. |
+| `new-cli-second-target` | The value holds a `[[target]]` table or a list of names. |
+| `new-cli-extra-key` | The value has a key besides `name` and `module`. |
+| `new-cli-missing-key` | The value lacks `name` or `module`. |
+| `new-cli-bad-name` | `name` is not a string, does not match the pattern, its package name is not an identifier, or it is a Python keyword. |
+| `new-cli-module-size` | The value or `module` is over its size limit, or `module` is empty. |
+| `new-cli-name-collision` | `name` matches an existing target. |
+| `new-cli-package-collision` | The package matches a source package, an include package, a standard library module, a top-level module of the site layer, or a skill path. |
+| `new-cli-undeclared-import` | `module` imports a package outside the allowed set. |
+| `new-cli-syntax` | `module` does not parse or nests too deeply. |
+| `new-cli-no-main` | `module` defines no top-level `main`. |
+| `new-cli-unavailable` | The skill cannot take a new target. |
+| `build-failed` | The host build of the new target fails. |
+
+The `report.json` of an export holds `new_cli` with `target`, `package`, and `unused_helpers`.
+An unused helper is a `scripts/*.py` path that the seed `SKILL.md` names and the winner `SKILL.md` does not name.
+The helper file stays in the skill. Ask the user whether to delete it.
+
+### Fromargs aim
+
+Under `--edit prose+cli`, the reflection prompt names fromargs as the default for edits to wedged Python sources.
+It cites the fromargs rules: one parser, JSON errors on stderr, and stdout only for results.
+A usage error exits with code 2. A failed input contract exits with code 3.
+A non-Python helper keeps its language.
+A Python helper may be a stdlib `argparse` helper only when the skill has no `wedge.toml` that can build a fromargs target.
+The prompt describes `@new-cli` only when the run offers it.
+The `prose` prompt does not change.
+Run `audit-facts` first to see the wedge state of the skill.
 
 ## Export
 
@@ -202,8 +405,16 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export
 ```
 
 Export is write-only. It writes `candidate.patch` and a redacted `report.json` to a new directory.
-It never applies or installs the patch, and it never changes the target skill.
-Show the user the patch and the verdict. The user decides whether to apply it.
+Its result lists the written patch files under `patches`.
+It never applies or installs a patch, and it never changes the target skill.
+Show the user each patch and the verdict. The user decides whether to apply it.
+`candidate.patch` is a plain unified diff with paths relative to the skill directory.
+Apply it from the skill directory with `git apply` or `patch -p1`. Added and deleted skill files appear in it.
+When a candidate changes wedge sources, export also writes `wedge-sources.patch`.
+It has git headers and paths relative to the repository root. Apply it from the repository root with `git apply`.
+Only a changed wedge source must lie inside the repository root.
+A changed source path outside the repository root stops export with `export-path-escapes`.
+A skill-only change exports outside a repository.
 `doctor --harness claude` runs the free host checks without a run. Add `--isolation nono` to check the nono backend.
 `self-test --preflight-only --model MODEL` checks the harness without a run.
 Pass `--harness-config FILE` to check a custom command adapter. The harness reference that `SKILL.md` lists describes it.
@@ -225,10 +436,41 @@ The contract has these fields:
 - `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
 - `editable` (optional): relative paths that search can change.
 - `surface` (optional): the tool surface of the task role. See "Journeys".
+- `statistics` (optional): promotion thresholds for the holdout gate. See "Set promotion thresholds".
 
 A run needs a contract with a `task` kind or with exactly one kind. Otherwise it stops with `contract-kinds`.
 It stops with `contract-unapproved` when `status` is `draft`.
 Unknown fields and malformed values stop the run.
+
+## Set promotion thresholds
+
+The `statistics` object in the contract tightens the `promote` rule. It never loosens it.
+Every field except `min_token_saving` only tightens the rule. Only `min_gain` and `min_lower_bound` are floors.
+`min_token_saving` adds the verdict `promote-cheaper`. That verdict needs no observed loss and claims no gain.
+A contract without it keeps its identity hash and the built-in rule.
+The object accepts these fields:
+
+- `min_gain`: the smallest mean holdout delta that can promote. The default is 0.
+- `min_lower_bound`: the margin that the delta must clear beyond 2·SE. The default is 0.
+- `family_budget`: the regression budget of every holdout family. The default is `null`, which turns the family rule off.
+- `family_budgets`: an object that maps a family name to its own budget. It overrides `family_budget` for that family. A flag cannot set it.
+- `max_token_increase_per_gain`: the largest token change that one unit of score gain can buy. The default is `null`, which turns this check off.
+- `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off.
+
+Each number is finite and at least 0. `family_budget`, `max_token_increase_per_gain`, and `min_token_saving` may also be `null`.
+`min_token_saving` must also be above 0 and below 1. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
+A `family_budgets` value that is not an object, or that has an empty or blank name, stops the run with the same code.
+Each name must match a family in the case draft, else the run stops with `contract-family-unknown`.
+The SE multiplier stays 2. A negative threshold would loosen the rule, so the runner refuses it.
+
+Each field resolves in this order: the CLI flag, then the contract, then the built-in default.
+The flags are `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, and `--min-token-saving`. A flag may set a value below the contract value.
+Every flag value except `--min-token-saving` must still be at least 0, so the gate stays at least as strict as the built-in rule.
+`--min-token-saving` adds `promote-cheaper`.
+The first run freezes the resolved values in `run.json`.
+The flags repeat on every call until `run.json` exists. The approval stops echo the resolved values as `statistics`.
+A flag that you drop after an approval stop changes the frozen values.
+A resume that passes a different value stops with `run-config-differs`. A resume that passes none keeps the frozen values.
 
 ## No contract
 
@@ -381,16 +623,16 @@ A candidate can memorize training content. Therefore, every export remains priva
 Review it before sharing. The runner never applies or installs a patch.
 
 
-## Frozen inspection helper contract
+## Inspection helper contract
 
-Run `python3 scripts/inspect_skill.py PATH`.
-The helper uses only the standard library.
+Run `python3 -I scripts/inspect-skill.pyz PATH`.
+The `.pyz` is the `inspect-skill` target of `wedge.toml`. Its source is the `lib/src/skillz_inspect` package, a fromargs CLI.
 Its input is a UTF-8 file of at most 262144 bytes.
 It requires opening and closing frontmatter delimiters.
 
-Success returns exit zero and one JSON object:
+Success returns exit zero and one JSON object on stdout. Only the parsed JSON is guaranteed; the helper prints it indented.
 
-- `schema_version`: `3`.
+- `schema_version`: `4`.
 - `frontmatter_keys`: sorted unique, unindented lexical keys.
 - `body_line_count`: lines after the closing frontmatter delimiter.
 - `local_link_targets`: sorted local inline Markdown link paths.
@@ -402,7 +644,18 @@ The helper measures fence indent from list-item content, as CommonMark does.
 The helper reports facts. It does not parse full YAML or compute task fitness.
 It ignores external links and fragment-only links.
 It rejects package escapes and symlinks without reading linked contents.
-Failure returns exit two with `schema_version` and a descriptive `error`.
+Failure returns exit three and an empty stdout.
+The last non-empty stderr line is a fromargs error: `{"error": "inspect: <reason>", "exit_code": 3}`.
+A missing argument returns exit two.
+
+Each helper fixture expects output `schema_version` `4`.
+A fixture declares `input`, `returncode`, and `output`, and may declare `error`.
+A `null` output means an empty stdout. An `error` object must equal the JSON on the last non-empty stderr line.
+A fixture without `error` leaves stderr unchecked.
+The runner checks the sandbox setup on stderr first, apart from the fixtures.
+Sandbox transports return the exit code, stdout, and stderr of each fixture command.
+Under bubblewrap, the command writes its stderr to a file in a host temporary directory outside the workspace. The runner reads that file and removes the directory.
+Only bubblewrap itself writes to the process stderr, so the command cannot forge a setup failure.
 
 Independent positive and negative contract checks run inside the selected adapter's tool sandbox.
 Candidate helper code never executes on the host outside that boundary.
@@ -414,7 +667,7 @@ The output schema describes response shape only. It never includes the expected 
 
 Run `python3 scripts/skillz-experiment.pyz audit-facts DIRECTORY`.
 The command reports the fixed rubric checks for one skill directory. It reports facts and never grades.
-The `inspect_skill.py` output above does not change, and the command does not repeat its sentence checks.
+The `inspect-skill.pyz` output above does not change, and the command does not repeat its sentence checks.
 
 Success returns exit zero and one JSON object:
 
@@ -452,11 +705,23 @@ The same input gives byte-identical output.
 | `registration.readme-row` | `registration` | the repository README `## Skills` table has no row for the skill |
 | `repo-local.internal-metadata` | `repo-local` | a repo-local skill lacks `metadata.internal: true` |
 | `repo-local.claude-symlink` | `repo-local` | `.claude/skills/<name>` is not a symlink that resolves to the skill |
+| `wedge.own-targets` | `wedge-first-class` | `wedge.toml` is not valid, or a source of an own target is unreadable; otherwise `pass` lists each own target as editable or frozen |
+| `wedge.foreign-binary` | `wedge-first-class` | a `.pyz` file is below the skill and no own target builds it; `path` names the file |
 
 A check that does not apply reports `not-applicable`. Examples are a model-invoked skill for the sidecar checks and a skill without references.
 Registration and repo-local checks also report `not-applicable` outside a repository.
+Wedge checks report `not-applicable` when the project has no `pyproject.toml` or `uv.lock`, such as an installed copy of the skill.
 The command finds the repository root by walking up for `.git`.
 A repo-local skill lives under `.agents/skills/` and needs no README row.
+The wedge checks read `wedge.toml` and the first-party sources. They build nothing and use no network.
+They run when the skill has a `wedge.toml` or holds a `.pyz` file. A `wedge.toml` that is not valid gives one failed `wedge.own-targets` check. An unreadable target source also fails it.
+A foreign `.pyz` bundle is a `.pyz` file below the skill that no own target builds.
+A `.pyz` that a lower `wedge.toml` builds is own when that directory has no sibling `SKILL.md`. A nested skill has one.
+The wedge edit limit counts characters with the same rule as the run planner.
+The check tests each own target alone, because a run's combined budget depends on the targets it offers.
+An own target is frozen for the planner reasons in `### Editable sources`. Examples are a source file over 262144 bytes and sources over the wedge edit limit.
+The `wedge.own-targets` detail marks each frozen target. This is not a failure.
+A `prose+cli` run cannot edit a frozen target. Use these checks to decide whether to wedge a skill before a run.
 A reference listed nowhere in `## References` reports `not-applicable` for `references.read-trigger`.
 A trigger clause is the text after the first dash or colon in the entry.
 The clause passes when it contains one of: when, whenever, if, once, until, while, before, after, only, fire, need, absent, select, flag, opt.
@@ -507,7 +772,7 @@ The `wedge` graders require that `brief.md` is the only written file.
 The offline tests run without a model.
 They stage each case and apply a recorded golden output or a seeded-bad output.
 They snapshot the workspace and grade it, so the tested path is the live path.
-The `add` and `improve` tests also run `audit-facts` and `inspect_skill.py` on the same trees.
+The `add` and `improve` tests also run `audit-facts` and `inspect-skill.pyz` on the same trees.
 The tests pin the mode steps that each fixture depends on, so an edited step fails the matching test.
 
 To add a case, follow these steps:

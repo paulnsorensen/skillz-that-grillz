@@ -36,7 +36,7 @@ paths = [".github/scripts", "lib", "skills"]
 exclude = ["*/.venv/*", "*/__pycache__/*", "*/.pytest_cache/*"]
 min_confidence = 60
 ignore_decorators = [
-  "@app.command", "@crate.command", "@group.command", "@nested.command",
+  "@app.command", "@app.default", "@crate.command", "@group.command", "@nested.command",
   "@nested.default", "@wheels.command", "@target.command",
   "@pytest.fixture", "@override",
 ]

@@ -59,7 +59,7 @@ Use the installed `scripts/skillz-experiment.pyz`. Do not require a source check
 Read the target. Read a linked reference only when its stated trigger matches the run.
 A full-package audit may explicitly read every file in the target package.
 For a skill directory, run `python3 <this-skill-directory>/scripts/skillz-experiment.pyz audit-facts <skill-directory>` before applying the rubric.
-Also run `python3 <this-skill-directory>/scripts/inspect_skill.py <target>` for the prose facts.
+Also run `python3 -I <this-skill-directory>/scripts/inspect-skill.pyz <target>` for the prose facts.
 Use both JSON outputs as objective package facts, not a fitness score. An agent file has no package, so skip `audit-facts`.
 Read `references/experiments.md § Audit facts contract` for the check ids and statuses.
 Report a helper error without treating it as a successful audit.
@@ -84,10 +84,10 @@ Read `references/anti-patterns.md` when a finding needs the expanded form.
 | **Invocation** | `description` = trigger conditions, front-loaded, third person → «workflow summary», «summary description» | Trigger phrases + "Do NOT use for"; no internal workflow; skills take length from `description.length`, agent files stay at ≤1024 chars by hand; first sentence carries the trigger. `references/description-optimization.md`. |
 | **Portability** | Spec-core frontmatter plus additive Claude fields; user-only policy on every host → «Claude-only assumption», «sidecar missing», «`$ARGUMENTS` dependence» | Cite failed `audit-facts` checks for keys, sidecar pairing, and argument, skill-directory, or file-mention syntax. Judge by hand: args are parsed from the text after the skill name; skills are cross-referenced by `/name`; dispatch and GitHub ops name the contract before host syntax. Full matrix: `references/harness-layout.md`. |
 | **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Cite failed `audit-facts` checks for the token budget, nested references, orphans, and missing read triggers. Judge by hand: relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
-| **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect_skill.py` `long_sentences` facts (sentences over 25 words). Cite `advisory_sentences` (21 to 25 words) only for procedural steps. Report passive voice and multi-instruction sentences as findings. |
+| **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect-skill.pyz` `long_sentences` facts (sentences over 25 words). Cite `advisory_sentences` (21 to 25 words) only for procedural steps. Report passive voice and multi-instruction sentences as findings. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
-| **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; `scripts.invocation-line` covers the invocation line; judge whether each bundled script has an output contract. Fix with `references/offload.md`. |
+| **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; `scripts.invocation-line` covers the invocation line; `wedge.own-targets` and `wedge.foreign-binary` cover wedge state; judge whether each bundled script has an output contract. Fix with `references/offload.md`. |
 | **Tool scoping** | Read-only / write-scoped / focused; use host enforcement when available → «prose-only constraint» | Claude skills use `disallowed-tools` to remove tools for the current turn. Their `allowed-tools` grants permission without prompts; it is not a deny list. Claude agents use `disallowedTools`. Report actual enforcement per mode and mark prose-only limits as degraded. Do not disable writes for `improve`. |
 | **Context & fork** | Fork when output > ~500 lines or only a digest is needed → «monolithic output» | Fork matches size; a wrap-up signal exists; the `model-policy.*` checks cover `model:` + `effort:`. |
 | **Prompt quality** | Positive framing, why-over-what, one strong example, "What this never does" → «negation-heavy», «rules without reasons» | Judgment tasks use a scaffold, not always/never. `references/decision-frameworks.md`. |
@@ -107,9 +107,9 @@ The kernel is `references/calibration.md`; the defaults:
 
 ## Prose check
 
-`add` step 5 and `improve` step 5 run this check.
+`add` step 6 and `improve` step 5 run this check.
 
-1. Run `python3 <this-skill-directory>/scripts/inspect_skill.py <target file>` on the `SKILL.md` or agent file.
+1. Run `python3 -I <this-skill-directory>/scripts/inspect-skill.pyz <target file>` on the `SKILL.md` or agent file.
 2. Rewrite every sentence in `long_sentences` (over 25 words).
    Rewrite each `advisory_sentences` entry (21 to 25 words) that is a procedural step.
 3. For a changed reference file, apply both limits by hand: 25 words, or 20 words for a procedural step.
@@ -126,14 +126,19 @@ The helper rejects a file that has no frontmatter, so it cannot check a referenc
    Create a reference only for a block that some runs skip.
    Add `agents/openai.yaml` when the skill is user-only.
    Set `model` + `effort` only when the skill is model-invoked.
-4. Register the skill in its repo's index (`references/harness-layout.md § Registration`).
+4. Write `evals/evals.json` from `references/harness-layout.md § Evals`.
+   Add one trigger case for each trigger phrase and one near-miss case for each anti-trigger.
+   Draft at least three task cases from the purpose and the Flow.
+   Give each task case `assertions` that a grader can check in the output.
+5. Register the skill in its repo's index (`references/harness-layout.md § Registration`).
    A repo-local skill stays out of every global list; place it per `references/harness-layout.md § Repo-local skills`.
-5. Run the prose check on `SKILL.md` and on each changed reference before you report the mode as done.
-6. Run `improve` on the new file once. Skip Usage, because a new skill has no sessions.
+6. Run the prose check on `SKILL.md` and on each changed reference before you report the mode as done.
+7. Run `improve` on the new file once. Skip Usage, because a new skill has no sessions.
    Then run the repo's deploy step when one exists.
    Example deploy steps are a dotfiles sync, `npx skills add`, or a copy into the harness skills directory.
 
 Done means: the file exists and the repo index names it, or every repo-local host path resolves.
+`evals/evals.json` holds a case for each trigger phrase and anti-trigger, plus at least three task cases.
 The deploy step exits 0 when one exists. The Invocation lens passes.
 The inspector reports an empty `long_sentences` list.
 
@@ -251,7 +256,7 @@ N findings were `<don't know>` or trivial (not shown).
 
 Read on demand:
 
-- `references/harness-layout.md` — Portability lens fires or `add` (global or repo-local); the frontmatter matrix, rules, template, sidecar, and sources.
+- `references/harness-layout.md` — Portability lens fires or `add` (global or repo-local); the frontmatter matrix, rules, template, evals, sidecar, and sources.
 - `references/analytics-ceremony.md` — `audit`, or `improve` without a reusable audit; use the bundled engine for best-effort per-pack analytics.
 - `references/raw-log-fallback.md` — DuckDB is absent and the user opts into a sampled, read-only Usage scan.
 - `references/anti-patterns.md` — a finding needs the expanded failure mode.

@@ -266,16 +266,16 @@ def test_capture_rejects_a_dangling_symlink_with_a_value_error(tmp_path: Path) -
         _ = Candidate.capture(target, ["SKILL.md"])
 
 
-def test_run_with_a_non_utf8_file_reports_a_coded_error_not_a_traceback(
-        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_with_a_non_utf8_file_freezes_its_bytes_and_does_not_stop(tmp_path: Path) -> None:
     target = echo_skill(tmp_path)
     (target / "references").mkdir()
     _ = (target / "references/data.txt").write_bytes(b"\xff\xfe\x00")
-    code, error = run_intake(tmp_path, target, capsys)
-    assert code == 1 and error["code"] == "undecodable-file"
+    captured = Candidate.capture(target, ["SKILL.md"])
+    assert captured.frozen["references/data.txt"] == b"\xff\xfe\x00"
+    assert "references/data.txt" not in captured.files
 
 
-def test_run_with_a_non_utf8_file_outside_git_still_reports_a_coded_error(
+def test_a_non_utf8_file_outside_git_freezes_its_bytes(
         tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     target = echo_skill(tmp_path)
     _ = (target / "notes.dat").write_bytes(b"\x80abc")
@@ -285,8 +285,9 @@ def test_run_with_a_non_utf8_file_outside_git_still_reports_a_coded_error(
         _ = (harness_only / name).write_text("#!/bin/sh\nexit 0\n")
         (harness_only / name).chmod(0o755)
     monkeypatch.setenv("PATH", str(harness_only))
+    assert Candidate.capture(target, ["SKILL.md"]).frozen["notes.dat"] == b"\x80abc"
     code, error = run_intake(tmp_path, target, capsys)
-    assert code == 1 and error["code"] == "undecodable-file"
+    assert code == 1 and error.get("code") == "budget-unapproved", error
 
 
 @pytest.mark.parametrize("name", [".env", ".secret/key.txt", "a/.hidden"])
@@ -318,11 +319,11 @@ def test_capture_with_the_skill_root_itself_a_symlink_is_rejected(tmp_path: Path
         _ = Candidate.capture(link, ["SKILL.md"])
 
 
-def test_capture_with_an_oversized_file_is_a_value_error(tmp_path: Path) -> None:
+def test_capture_with_an_oversized_text_file_freezes_its_bytes(tmp_path: Path) -> None:
     target = echo_skill(tmp_path)
     _ = (target / "big.md").write_text("x" * 262145)
-    with pytest.raises(ValueError, match="size"):
-        _ = Candidate.capture(target, ["SKILL.md"])
+    captured = Candidate.capture(target, ["SKILL.md"])
+    assert captured.frozen["big.md"] == b"x" * 262145 and "big.md" not in captured.files
 
 
 def test_capture_with_a_file_that_is_a_fifo_does_not_hang(tmp_path: Path) -> None:

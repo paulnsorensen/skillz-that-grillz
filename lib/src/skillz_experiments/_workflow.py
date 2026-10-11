@@ -1,6 +1,6 @@
 """One resumable autoimprove run: intake, one search, one holdout gate. `export` stays write-only.
 
-Phases: prepared, searched, gated, complete. `run.json` (schema 2) holds the checkpoint of each phase.
+Phases: prepared, searched, gated, complete. `run.json` (schema 4) holds the checkpoint of each phase.
 """
 from __future__ import annotations
 
@@ -10,32 +10,39 @@ import fcntl
 import json
 import math
 import os
+import re
 import stat
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TextIO, cast, final, get_args
 
 from skillz_experiments._audit import identity as judge_identity
-from skillz_experiments._candidate import Candidate, candidate_files
-from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
+from skillz_experiments._candidate import (NEW_CLI, WEDGE_PREFIX, Candidate, candidate_files, is_skill_file, load_frozen,
+                                           store_frozen)
+from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping, relative, repo_root
 from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES, ClaudeOptions,
                                         resolve_read_roots)
 from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._doctor import doctor
-from skillz_experiments._gate import case_deltas, verdict as gate_verdict
+from skillz_experiments._evaluator import task_tokens
+from skillz_experiments._gate import (DEFAULT_STATISTICS, Statistics, Verdict, case_deltas, close,
+                                      verdict as gate_verdict)
 from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
+from skillz_experiments._new_cli import expand_files, parse_value, prompt_rule, unused_helpers
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._runtime import (JOURNEY_CALLS, JOURNEY_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted,
                                          BudgetUnapproved, Estimate, approve, ceilings, estimate, gate_seconds,
                                          seconds_cap_note)
 from skillz_experiments._search import Edit, REFLECTION_MINIBATCH, overshoot, search as pareto_search
+from skillz_experiments._wedge_targets import (Rebuilder, TargetPlan, mcp_text, never_editable, plan_targets, reopen,
+                                               seal, settle)
 
 DEFAULT_SEED = 20261006
 DEFAULT_REPEATS = 3
@@ -63,9 +70,10 @@ def _failed_outcome(case: Case, candidate: Candidate, error: Exception) -> dict[
             "status": "evaluation-failed", "failure": str(error), "search_candidate": candidate.identity}
 
 
-def _baseline_rejected() -> Stop:
+def _baseline_rejected(detail: str | None = None) -> Stop:
     return Stop("baseline-contract-rejected", "original candidate fails the frozen native/helper contract",
-                {"next": "fix the skill or its contract, then start a new run in a new directory"})
+                {"next": "fix the skill or its contract, then start a new run in a new directory"}
+                | cast(dict[str, object], {} if detail is None else {"detail": detail}))
 
 
 def _unit_score(value: object) -> float:
@@ -233,28 +241,53 @@ def _size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options:
                  holdout_costs=split["holdout"])
 
 
-def _editable(files: Mapping[str, str], contract: Contract, edit: Edit) -> list[str]:
-    """Return the editable names: Markdown for `prose`, plus helper scripts for `prose+cli`."""
-    mcp_config = contract.surface.mcp_config if contract.surface is not None else None
-    mcp_text = files.get(mcp_config, "") if mcp_config is not None else ""
-    named = [*contract.editable, *([contract.helper.path] if contract.helper is not None else [])]
-    run = [name for name in named if contract.read_only(name, mcp_text)]
+def _editable(files: Mapping[str, str], contract: Contract, edit: Edit, frozen: Collection[str] = (),
+              plan: TargetPlan | None = None) -> list[str]:
+    """Return the editable names: Markdown for `prose`, plus helper scripts and own wedge sources for `prose+cli`.
+
+    A frozen file (a `.pyz`, a binary, a large file) is never editable. A helper that names an own `.pyz`
+    resolves to its target, whose sources join through `plan`. Any other frozen helper stops the run.
+    """
+    helper = contract.helper.path if contract.helper is not None else None
+    never = [name for name in contract.editable if never_editable(name)]
+    if never:
+        raise CodedError("editable-build-file", f"the contract editable list names {', '.join(never)}; "
+                         + "wedge.toml, uv.lock, and .pyz files define or hold a build and are never editable")
+    pinned = [name for name in contract.editable if name in frozen]
+    if pinned:
+        raise CodedError("editable-frozen", f"the contract editable list names {', '.join(pinned)}; each is a frozen file "
+                         + "(binary, not UTF-8, or over the text limit), so no proposal can edit it")
+    if helper is not None and helper not in files and (plan is None or plan.helper_target(contract) is None):
+        if helper in frozen:
+            raise CodedError("helper-frozen", f"the contract helper {helper} is a frozen file (binary, not UTF-8, "
+                             + "or over the text limit) and not the .pyz of an own wedge target, so no proposal can edit it")
+        raise CodedError("helper-file-missing", f"the contract helper {helper} is missing from the target")
+    mcp = mcp_text(files, contract)
+    named = [*contract.editable, *([helper] if helper is not None else [])]
+    run = [name for name in named if contract.read_only(name, mcp)]
     if run:
         raise CodedError("contract-surface", "contract surface files the MCP config runs are read-only, so editable and "
                          + f"the helper cannot hold {', '.join(run)}")
     base = list(contract.editable) or [name for name in files if (name.endswith(".md") or name.startswith("scripts/"))
-                                       and not contract.read_only(name, mcp_text)]
-    if contract.helper is not None and contract.helper.path not in files:
-        raise CodedError("helper-file-missing", f"the contract helper {contract.helper.path} is missing from the target")
+                                       and not name.startswith(WEDGE_PREFIX) and not never_editable(name)
+                                       and not contract.read_only(name, mcp)]
     names = sorted(name for name in base if name.endswith(".md"))
     if not names:
         raise CodedError("prompt-components-missing", "search needs editable Markdown")
     if edit == "prose+cli":
         code = {name for name in base if not name.endswith(".md")}
-        if contract.helper is not None:
-            code.add(contract.helper.path)
+        if helper is not None and helper in files:
+            code.add(helper)
+        if plan is not None:
+            code |= set(plan.sources)
+            if plan.capable is not None:
+                code.add(NEW_CLI)
         if not code:
-            raise CodedError("helper-missing", "prose+cli needs a helper script to edit; add one under scripts/")
+            reasons: Mapping[str, str] = plan.reasons if plan is not None else {}
+            frozen_why = "".join(f"; {name} is frozen because {why}" for name, why in reasons.items())
+            if plan is not None and plan.dropped:
+                frozen_why += f"; @new-cli is unavailable because {plan.dropped}"
+            raise CodedError("helper-missing", "prose+cli needs a helper script to edit; add one under scripts/" + frozen_why)
         names += sorted(code)
     absent = [name for name in names if name not in files]
     if absent:
@@ -291,9 +324,30 @@ def _estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object
             **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {}), **journey}
 
 
+def resolve_statistics(contract: Contract, given: Mapping[str, float]) -> Statistics:
+    """Return each threshold from the CLI flag, else the contract, else the built-in default."""
+    return Statistics.parse({**DEFAULT_STATISTICS.data(), **(contract.statistics or {}), **given})
+
+
+def _statistics_flag(name: str) -> str:
+    return "--" + name.replace("_", "-")
+
+
+def _frozen_statistics(record: dict[str, object]) -> Statistics:
+    """Return the frozen thresholds. A map of the wrong shape is tampering.
+
+    This checks shape only: the record does not bind the values to the contract or to the CLI flags.
+    """
+    try:
+        return Statistics.parse(record.get("statistics"))
+    except ValueError:
+        raise Stop("run-record-tampered", "the recorded statistics are malformed; create a new run", {}) from None
+
+
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
-             options: ClaudeOptions, configuration: Configuration | None = None, isolation: str = "claude") -> None:
+             options: ClaudeOptions, configuration: Configuration | None = None, isolation: str = "claude",
+             statistics_given: Mapping[str, float] | None = None) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
     A fresh run with a built-in harness first runs the free host checks, so a host problem stops the run
@@ -309,6 +363,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
                    data | ({"doctor": report} if report else {}))
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)
+    resolved = resolve_statistics(contract, statistics_given or {})
     kind = _supported_kind(contract)
     judge = configuration.roles.get("judge") if configuration is not None else None
     judge_adapter = judge.adapter if judge is not None else adapter
@@ -316,6 +371,10 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
     cases = split_cases(load_draft(draft), split_seed, kind)
+    unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})
+    if unknown:
+        raise CodedError("contract-family-unknown", f"the contract family_budgets names no draft family: {', '.join(unknown)}; "
+                         + f"the draft families are {', '.join(sorted({case.family for case in cases}))}")
     held = sum(case.split == "holdout" and case.kind == kind for case in cases)
     if held < HOLDOUT_MINIMUM:
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
@@ -328,12 +387,16 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
-                    "seed": split_seed, **({} if configuration is not None else {"claude_options": options.data()})})
+                    "seed": split_seed, "statistics": resolved.data(),
+                    **({} if configuration is not None else {"claude_options": options.data()})})
     freeze(out / "cases.json", cases, split_seed, expected)
     scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
     skeleton = Candidate.capture(target, [], contract)
-    seed_candidate = Candidate(skeleton.files, tuple(_editable(skeleton.files, contract, edit)), contract)
+    wedge = plan_targets(target, skeleton.files, contract, edit)
+    files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
+    frozen = skeleton.frozen | wedge.frozen
+    seed_candidate = Candidate(files, tuple(_editable(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
     plan = _size_plan(contract, scored, repeats, _sizing_options(configuration, options))
     shown = _estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
@@ -341,28 +404,39 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
-                                                              **shown_options}) from None
+                                                     "statistics": resolved.data(), **shown_options}) from None
+    offered = wedge.capable is not None
+    wedge, layers = settle(wedge, out / "site")
+    if offered and wedge.capable is None:
+        files = skeleton.files | wedge.sources
+        frozen = skeleton.frozen | wedge.frozen
+        seed_candidate = Candidate(files, tuple(_editable(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
+    seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
+    seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
         "isolation": isolation, **({"claude_options": options.data()} if resolve_harness else {}),
         "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
+        "seed_frozen": seed_frozen, "own_targets": owned,
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
-        "estimate": shown, "engine_hash": _engine_hash(),
+        "estimate": shown, "engine_hash": _engine_hash(), "statistics": resolved.data(),
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
                    "reserve_seconds": budget.reserve_seconds, "approved": budget.approved,
                    **({"journey": True} if budget.journey else {})},
         "outcomes": [], "started": time.time(), "started_monotonic": time.monotonic()})
+    return resolved
 
 
 @final
 class _Session:
     def __init__(self, out: Path, model: str, adapter: HarnessName, factory: Factory | None,
-                 supplied: Configuration | None, isolation: str = "claude") -> None:
+                 supplied: Configuration | None, isolation: str = "claude", *, statistics: Statistics) -> None:
         self.out = out
         self.lock = threading.RLock()
         self.record = open_record(out / "run.json")
+        self.statistics = statistics
         if _phase(self.record) not in _PHASES:
             raise Stop("run-record-tampered", "the recorded phase is unknown; create a new run", {})
         self.contract = parse(_field(self.record, "contract"), _text_field(self.record, "contract_source"))
@@ -373,7 +447,8 @@ class _Session:
         editable = _field(self.record, "editable")
         if not isinstance(editable, list) or not all(isinstance(name, str) for name in cast(list[object], editable)):
             raise ValueError("run record field editable must be a list of text")
-        self.seed = Candidate(candidate_files(_field(self.record, "seed")), tuple(cast(list[str], editable)), self.contract)
+        self.seed = Candidate(candidate_files(_field(self.record, "seed")), tuple(cast(list[str], editable)), self.contract,
+                              frozen=self._seed_frozen())
         self.edit: Edit = cast(Edit, _text_field(self.record, "edit"))
         self.outcomes = _outcomes(self.record)
         options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
@@ -387,6 +462,26 @@ class _Session:
                                     else cast(Factory, factory)(model, self.budget, self.checkpoint))
         self._fault: CodedError | None = None
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
+        self.rebuilder = self._open_rebuilder()
+
+    def _seed_frozen(self) -> dict[str, bytes]:
+        """Load the frozen seed files from the run directory. A missing or changed file is tampering."""
+        try:
+            return load_frozen(mapping(_field(self.record, "seed_frozen")), self.out / "frozen")
+        except CodedError as error:
+            raise Stop(error.code, str(error), {}) from None
+
+    def _open_rebuilder(self) -> Rebuilder | None:
+        """Reopen the site layers of the editable own targets. Return None when no target has editable sources."""
+        try:
+            return reopen(Path(_text_field(self.record, "target_root")), mapping(_field(self.record, "own_targets")),
+                          self.seed, self.out / "site")
+        except CodedError as error:
+            raise Stop(error.code, str(error), {"next": "start a new run in a new directory"}) from None
+
+    def _built(self, candidate: Candidate) -> Candidate:
+        """Return `candidate` with the host-built `.pyz` of each own target that its sources changed."""
+        return candidate if self.rebuilder is None else self.rebuilder.apply(candidate)
 
     @property
     def phase(self) -> str:
@@ -512,9 +607,12 @@ class _Session:
         if case is None:
             raise ValueError("holdout must not enter optimization")
         try:
-            candidate = self.seed.changed(components)
+            candidate = self._built(self.seed.changed(components))
         except ValueError as error:
-            return 0.0, {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
+            rejected: dict[str, object] = {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
+            if isinstance(error, CodedError):
+                rejected["reason"] = error.code
+            return 0.0, rejected
         try:
             result = self.evaluate_case(candidate, case, "search")
         except CodedError:
@@ -533,32 +631,72 @@ class _Session:
             feedback["grader_scores"] = result["scores"]
         return score, feedback
 
+    def _validation_outcomes(self) -> list[dict[str, object]]:
+        """Return the outcomes of search candidates on validation cases."""
+        return [item for item in self.outcomes if item.get("arm") == "search" and item.get("split") == "validation"
+                and "search_candidate" in item]
+
     def _validation_means(self, validation: list[str]) -> dict[str, float]:
         """Return the mean score of each search candidate that has a score on every validation case."""
         scores: dict[str, dict[str, float]] = {}
-        for item in self.outcomes:
-            if item.get("arm") == "search" and item.get("split") == "validation" and "search_candidate" in item:
-                scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
-        return {identity: sum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
+        for item in self._validation_outcomes():
+            scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
+        return {identity: math.fsum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
                 if set(by_case) == set(validation)}
 
+    def _validation_tokens(self, validation: list[str], identities: tuple[str, ...]) -> dict[str, float | None]:
+        """Return the mean task tokens of each listed candidate that has an outcome on every validation case.
+
+        A candidate with a missing count on any case maps to None.
+        """
+        counts: dict[str, dict[str, int | None]] = {}
+        for item in self._validation_outcomes():
+            if item["search_candidate"] in identities:
+                counts.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = task_tokens(item)
+        return {identity: _mean_tokens(list(by_case.values())) for identity, by_case in counts.items()
+                if set(by_case) == set(validation)}
+
+    def _tied_cheaper(self, validation: list[str], challenger: str, incumbent: str) -> bool:
+        """Return whether a token field is set and the challenger has known, lower mean validation task tokens."""
+        if not self.statistics.token_rule:
+            return False
+        tokens = self._validation_tokens(validation, (challenger, incumbent))
+        new, old = tokens.get(challenger), tokens.get(incumbent)
+        return new is not None and old is not None and new < old
+
+    def _beats(self, validation: list[str], mean: float, other: float, challenger: str, incumbent: str) -> bool:
+        """Return whether `mean` is above `other`, or ties it and the challenger is cheaper."""
+        if close(mean, other):
+            return self._tied_cheaper(validation, challenger, incumbent)
+        return mean > other
+
     def _keep_if_best(self, candidate: Candidate, case: Case) -> None:
-        """Record the files of the best non-seed candidate when it completes the validation set. The record stays small."""
+        """Record the files of the best non-seed candidate when it completes the validation set. The record stays small.
+
+        A mean tie goes to lower mean task tokens while a token field is set.
+        """
         if case.split != "validation" or candidate.identity == self.seed.identity:
             return
         with self.lock:
             validation = [item.identifier for item in self.cases_for("validation")]
             mean = self._validation_means(validation).get(candidate.identity)
             kept = self.record.get("best_validated")
-            if mean is not None and (not isinstance(kept, dict) or mean > _number_field(cast(dict[str, object], kept), "mean")):
-                self.record["best_validated"] = {"identity": candidate.identity, "mean": mean,
-                                                 "files": {name: candidate.files[name] for name in self.seed.editable}}
-                self.checkpoint()
+            if mean is None:
+                return
+            if isinstance(kept, dict):
+                kept_record = cast(dict[str, object], kept)
+                kept_mean = _number_field(kept_record, "mean")
+                if not self._beats(validation, mean, kept_mean, candidate.identity, _text_field(kept_record, "identity")):
+                    return
+            self.record["best_validated"] = {"identity": candidate.identity, "mean": mean,
+                                             "files": {name: candidate.files[name] for name in self.seed.editable}}
+            self.checkpoint()
 
     def _propose(self, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
                  components: list[str]) -> dict[str, str]:
         self._raise_fault()
-        prompt, schema = _reflection_request(self.edit, candidate, feedback, components)
+        prompt, schema = _reflection_request(self.edit, candidate, feedback, components,
+                                            cheaper=self.statistics.token_rule)
         try:
             result = self.provider.invoke(prompt, schema=schema)
         except CodedError as error:
@@ -636,7 +774,7 @@ class _Session:
         """Stop before any search call when the seed fails the local candidate contract check."""
         check = cast(Callable[[Candidate], bool] | None, getattr(self.provider, "check_candidate", None))
         if check is not None and not check(self.seed):
-            raise _baseline_rejected()
+            raise _baseline_rejected(cast(str | None, getattr(self.provider, "rejection", None)))
 
     def search(self) -> None:
         """Run the one GEPA search over train and validation cases. Holdout cases never enter it."""
@@ -673,34 +811,58 @@ class _Session:
         self.checkpoint()
 
     def _best_validated(self, validation: list[str]) -> Candidate:
-        """Return the recorded candidate with the best validation mean. The seed wins ties."""
+        """Return the recorded candidate with the best validation mean.
+
+        The seed wins ties, unless a token field is set and the candidate has fewer mean validation task tokens.
+        """
         means = self._validation_means(validation)
         kept = self.record.get("best_validated")
         if not isinstance(kept, dict):
             return self.seed
         kept = cast(dict[str, object], kept)
         identity = _text_field(kept, "identity")
-        if identity in means and means[identity] > means.get(self.seed.identity, -1.0):
-            return self.seed.changed(candidate_files(kept.get("files")))
+        if identity in means:
+            seed_mean = means.get(self.seed.identity, -1.0)
+            if self._beats(validation, means[identity], seed_mean, identity, self.seed.identity):
+                return self.seed.changed(candidate_files(kept.get("files")))
         return self.seed
+
+    def _holdout_outcomes(self) -> list[dict[str, object]]:
+        """Return the holdout outcomes of the baseline and the winner."""
+        return [item for item in self.outcomes if item.get("split") == "holdout"
+                and item.get("arm") in ("baseline", "winner")]
 
     def _holdout_scores(self, arm: str) -> dict[str, list[float]]:
         scores: dict[str, list[tuple[int, float]]] = {}
-        for item in self.outcomes:
-            if item.get("split") == "holdout" and item.get("arm") == arm:
+        for item in self._holdout_outcomes():
+            if item["arm"] == arm:
                 scores.setdefault(cast(str, item["case_id"]), []).append(
                     (cast(int, item["repeat"]), _unit_score(item["score"])))
         return {case_id: [score for _, score in sorted(pairs)] for case_id, pairs in scores.items()}
+
+    def _holdout_tokens(self) -> dict[str, tuple[float | None, float | None]]:
+        """Return each holdout case's mean task tokens per arm over its repeats. A missing count makes the mean None."""
+        counts: dict[str, dict[str, list[int | None]]] = {}
+        for item in self._holdout_outcomes():
+            counts.setdefault(cast(str, item["case_id"]), {"baseline": [], "winner": []})[
+                cast(str, item["arm"])].append(task_tokens(item))
+        return {case_id: (_mean_tokens(arms["baseline"]), _mean_tokens(arms["winner"]))
+                for case_id, arms in counts.items()}
 
     def gate(self) -> None:
         """Score baseline and winner on the unseen holdout, `repeats` times per case, then record the verdict."""
         holdout = self.cases_for("holdout")
         repeats = _int_field(self.record, "repeats")
-        winner = self.seed.changed({name: candidate_files(_field(self.record, "winner"))[name]
-                                    for name in self.seed.editable})
+        try:
+            winner = self._built(self.seed.changed({name: candidate_files(_field(self.record, "winner"))[name]
+                                                    for name in self.seed.editable}))
+        except CodedError as error:
+            raise Stop("build-failed", str(error), {"next": "the winner no longer builds; start a new run in a new directory"}) from None
+        families = {case.identifier: case.family for case in holdout}
         if winner.identity == self.seed.identity:
-            self.record["gate"] = {"verdict": "inconclusive", "delta": 0.0, "se": 0.0, "cases": len(holdout),
-                                   "repeats": repeats, "reason": "winner-equals-baseline"}
+            tie = gate_verdict({case.identifier: 0.0 for case in holdout}, thresholds=self.statistics, families=families)
+            outcome = Verdict("inconclusive", 0.0, 0.0, tie.cases, ("winner-equals-baseline",), tie.skipped_families)
+            self.record["gate"] = {**outcome.data(), "repeats": repeats, "reason": "winner-equals-baseline"}
         else:
             _ = self.budget.remaining()
             if any(item.get("arm") == "baseline" and item.get("status") == "candidate-contract-rejected"
@@ -725,9 +887,10 @@ class _Session:
                            {"next": "start a new run in a new directory"})
             with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
                 _ = list(pool.map(score, todo))
-            outcome = gate_verdict(case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner")))
-            self.record["gate"] = {"verdict": outcome.verdict, "delta": outcome.delta, "se": outcome.se,
-                                   "cases": outcome.cases, "repeats": repeats}
+            deltas = case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner"))
+            outcome = gate_verdict(deltas, thresholds=self.statistics, families=families,
+                                   tokens=self._holdout_tokens() if self.statistics.token_rule else None)
+            self.record["gate"] = {**outcome.data(), "repeats": repeats}
         self.record["winner_hash"] = winner.identity
         self.record["phase"] = "gated"
         self.checkpoint()
@@ -737,24 +900,49 @@ class _Session:
         self.checkpoint()
 
 
+def _mean_tokens(counts: Sequence[int | None]) -> float | None:
+    """Return the mean of `counts`, or None when it is empty, lacks a count, or overflows a float."""
+    known = [count for count in counts if count is not None]
+    if not counts or len(known) != len(counts):
+        return None
+    try:
+        return math.fsum(known) / len(known)
+    except OverflowError:
+        return None
+
+
 _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
              "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
              "and at most 25 words per descriptive sentence. ")
 
 
+_FROMARGS_RULE = ("The fromargs package is the default for a wedged Python source. "
+                  "Use one parser. "
+                  "Print JSON errors on stderr. "
+                  "Exit with code 2 for a usage error and code 3 for a failed input contract. "
+                  "Print only results on stdout. "
+                  "A non-Python helper keeps its language. "
+                  "A Python helper may use a stdlib `argparse` helper only when the skill has no wedge.toml "
+                  "that can build a fromargs target. ")
+
+
 def _reflection_request(edit: Edit, candidate: dict[str, str],
                         feedback: Mapping[str, Sequence[Mapping[str, object]]],
-                        components: list[str]) -> tuple[str, dict[str, object]]:
+                        components: list[str], *, cheaper: bool = False) -> tuple[str, dict[str, object]]:
     schema: dict[str, object] = {"type": "object",
         "properties": {key: {"type": "string"} for key in components},
         "required": components, "additionalProperties": False}
     if edit == "prose+cli":
         instruction = ("Improve the supplied skill text and helper script components. "
-                       + "Keep each script's command-line contract and output format. ")
+                       + "Keep each script's command-line contract and output format. " + _FROMARGS_RULE)
+        if NEW_CLI in components:
+            instruction += prompt_rule()
     else:
         instruction = "Improve only the supplied skill text components. Preserve the helper CLI contract. "
-    head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions.\n"
-    return head + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
+    head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions."
+    if cheaper:
+        head += " Prefer fewer tokens when correctness is equal."
+    return head + "\n" + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
 
 _PHASES = ("prepared", "searched", "gated", "complete")
@@ -828,9 +1016,9 @@ _OPTION_FLAGS = (("--effort", "effort"), ("--sandbox-read", "sandbox_read"), ("-
 
 def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
                   seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object],
-                  isolation: str = "claude") -> None:
-    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, seed, or Claude option than
-    the first run.
+                  isolation: str) -> None:
+    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, seed, or Claude option
+    than the first run.
     """
     for flag, value, field in ("--model", model, "model"), ("--harness", adapter, "adapter"):
         if _text_field(record, field) != value:
@@ -848,12 +1036,19 @@ def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, re
         raise _config_differs("the target skill directory")
 
 
+def _check_statistics(statistics_given: Mapping[str, float], frozen: Statistics) -> None:
+    """Stop when a resume, or a call on a completed run, names another statistics threshold than the first run."""
+    for name, value in statistics_given.items():
+        if value != getattr(frozen, name):
+            raise _config_differs(_statistics_flag(name))
+
+
 def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
         edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
         approve_cases: str | None = None, approve_budget: int | None = None,
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
-        isolation: str = "claude") -> dict[str, object]:
+        isolation: str = "claude", statistics: Mapping[str, float] | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
@@ -876,6 +1071,16 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                          + "set them in the supplied configuration")
     requested = ClaudeOptions.parse(given)
     given = {field: getattr(requested, field) for field in given}
+    statistics_given: dict[str, float] = {}
+    for name, value in (statistics or {}).items():
+        if name not in Statistics.flags():
+            allowed = ", ".join(_statistics_flag(flag) for flag in Statistics.flags())
+            raise ValueError(f"unknown statistics flag: {name}; allowed: {allowed}")
+        try:
+            checked = Statistics.declared({name: value})[name]
+        except ValueError as error:
+            raise ValueError(f"{_statistics_flag(name)} {str(error).removeprefix(f'statistics {name} ')}") from None
+        statistics_given[name] = cast(float, checked)
     if _inside(out, target):
         raise ValueError("--out must be outside the target skill directory")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -891,15 +1096,21 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             record = open_record(path)
             _refuse_terminated(record)
             if record.get("phase") == "complete":
+                # A completed run summarises without reading its statistics unless a flag asks to compare them.
+                if statistics_given:
+                    _check_statistics(statistics_given, _frozen_statistics(record))
                 return summary(record)
+            frozen = _frozen_statistics(record)
+            _check_statistics(statistics_given, frozen)
             _check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation)
         else:
-            _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed, approve_cases,
-                     approve_budget, resolve_harness=factory is None and configuration is None, options=requested,
-                     configuration=configuration, isolation=isolation)
+            frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,
+                              approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
+                              options=requested, configuration=configuration, isolation=isolation,
+                              statistics_given=statistics_given)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
-        session = _Session(out, model, adapter, factory, configuration, isolation)
+        session = _Session(out, model, adapter, factory, configuration, isolation, statistics=frozen)
         pending: BaseException | None = None
         try:
             try:
@@ -953,6 +1164,51 @@ def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def _repo_path(rest: str, repo: Path | None) -> str:
+    """Return `rest` when it names a path inside the repository root. Else raise `export-path-escapes`."""
+    try:
+        _ = relative(rest)
+        inside = repo is not None and (repo / rest).resolve().is_relative_to(repo)
+    except ValueError:
+        inside = False
+    if not inside:
+        raise CodedError("export-path-escapes", f"the wedge source {rest} is not a path inside the repository root; "
+                         + "no patch was written")
+    return rest
+
+
+def _lines(text: str | None) -> list[str]:
+    """Split `text` after each line feed and nowhere else, so that `git apply` reproduces it exactly."""
+    return re.findall(r"[^\n]*\n|[^\n]+", text or "")
+
+
+def _patch_lines(name: str, old: str | None, new: str | None, *, git: bool) -> list[str]:
+    """Return the diff of one file, with paths `a/NAME` and `b/NAME` and `/dev/null` for an added or deleted file.
+
+    With `git`, an added or deleted file also gets git headers, so an empty one survives `git apply` from the repository root.
+    Without it the diff is plain: `patch -p1` and `git apply` read the paths from the current directory.
+    """
+    head: list[str] = []
+    if git and (old is None or new is None):
+        head = [f"diff --git a/{name} b/{name}\n", "new file mode 100644\n" if old is None else "deleted file mode 100644\n"]
+    body = list(difflib.unified_diff(_lines(old), _lines(new),
+                                     fromfile="/dev/null" if old is None else "a/" + name,
+                                     tofile="/dev/null" if new is None else "b/" + name))
+    return head + body
+
+
+def _patch_text(lines: list[str]) -> str:
+    """Join the patch `lines`. Add the standard no-newline marker after a last line that lacks a line feed."""
+    return "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
+
+
+def _private_file(path: Path, text: str) -> None:
+    """Create the new file `path` with mode 0600 and write `text` to it. Fail when `path` exists."""
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        _ = stream.write(text)
+
+
 def export(out: Path, destination: Path) -> dict[str, object]:
     """Write the winner as a private patch and a redacted report. Never apply it."""
     record = open_record(out / "run.json")
@@ -966,19 +1222,35 @@ def export(out: Path, destination: Path) -> dict[str, object]:
             raise ValueError("judge differs from the frozen record; create a new run")
     if not os.path.lexists(destination) and _inside(destination, Path(_text_field(record, "target_root"))):
         raise CodedError("export-into-target", "the export destination must be outside the target skill directory")
-    seed, candidate = candidate_files(_field(record, "seed")), candidate_files(_field(record, "winner"))
-    lines: list[str] = []
-    for name in seed:
-        if seed[name] != candidate[name]:
-            lines.extend(difflib.unified_diff(seed[name].splitlines(keepends=True),
-                                              candidate[name].splitlines(keepends=True),
-                                              fromfile="a/" + name, tofile="b/" + name))
-    patch = "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
+    repo = repo_root(Path(_text_field(record, "target_root")))
+    first, last = mapping(_field(record, "seed")), mapping(_field(record, "winner"))
+    repo_names = {name: _repo_path(name.removeprefix(WEDGE_PREFIX), repo) for name in sorted(first.keys() | last.keys())
+                  if name.startswith(WEDGE_PREFIX) and first.get(name) != last.get(name)}
+    seed, candidate = dict(candidate_files(first)), dict(candidate_files(last))
+    _ = seed.pop(NEW_CLI, None)
+    value = candidate.pop(NEW_CLI, "")
+    cli = parse_value(value) if value.strip() else None
+    if cli is not None:
+        candidate |= expand_files(Path(_text_field(record, "target_root")), seed, cli)
+    skill_lines: list[str] = []
+    wedge_lines: list[str] = []
+    for name in sorted(seed.keys() | candidate.keys()):
+        old, new = seed.get(name), candidate.get(name)
+        if old == new:
+            continue
+        if is_skill_file(name):
+            skill_lines.extend(_patch_lines(name, old, new, git=False))
+        else:
+            wedge_lines.extend(_patch_lines(repo_names[name], old, new, git=True))
     destination.mkdir(mode=0o700)
-    descriptor = os.open(destination / "candidate.patch", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        _ = stream.write(patch)
+    patches = ["candidate.patch"]
+    _private_file(destination / "candidate.patch", _patch_text(skill_lines))
+    if wedge_lines:
+        _private_file(destination / "wedge-sources.patch", _patch_text(wedge_lines))
+        patches.append("wedge-sources.patch")
     report = summary(record) | {"sharing": "private-local-only",
                                 "outcomes": [_export_outcome(item) for item in _outcomes(record)], "cost_usd": None}
+    if cli is not None:
+        report["new_cli"] = {"target": cli.name, "package": cli.package, "unused_helpers": unused_helpers(seed, candidate)}
     write(destination / "report.json", report)
-    return {"export": str(destination), "sharing": "private-local-only", "installed": False}
+    return {"export": str(destination), "sharing": "private-local-only", "installed": False, "patches": patches}

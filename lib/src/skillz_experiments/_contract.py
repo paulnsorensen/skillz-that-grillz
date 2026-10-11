@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
 from skillz_experiments._cases import CodedError, digest, mapping, relative, string
-from skillz_experiments._evaluation import HELPER_FIXTURES
+from skillz_experiments._gate import Statistics
 
 LOCATION = "evals/autoimprove.json"
 GraderType = Literal["exact-json", "judge", "command", "hybrid", "audit", "journey"]
@@ -78,6 +78,7 @@ class Contract:
     editable: tuple[str, ...] = ()
     source: str = "skill"
     surface: Surface | None = None
+    statistics: Mapping[str, object] | None = None
 
     def in_companion(self, name: str) -> bool:
         """Return True when `name` is a companion directory or a file under one."""
@@ -136,6 +137,8 @@ class Contract:
                                   "fixtures": list(self.helper.fixtures)}
         if self.surface is not None:
             document["surface"] = self.surface.data()
+        if self.statistics:
+            document["statistics"] = dict(self.statistics)
         return document
 
     @property
@@ -143,9 +146,19 @@ class Contract:
         return digest(self.data())
 
 
+HELPER_FIXTURES: tuple[dict[str, object], ...] = (
+    {"input": "---\nname: contract\ndescription: Inspect\n---\n# Body\n[Guide](references/guide.md)\n",
+     "returncode": 0,
+     "output": {"schema_version": 4, "advisory_sentences": [], "frontmatter_keys": ["description", "name"],
+                "body_line_count": 2,
+                "local_link_targets": ["references/guide.md"], "long_sentences": []}},
+    {"input": "---\nname: contract\n---\n[Escape](../secret)\n", "returncode": 3, "output": None,
+     "error": {"error": "inspect: link escapes package", "exit_code": 3}},
+)
+
 _LEGACY_SKILLZ = Contract(
     "skillz", "$skillz audit", {"inspection": Grader("exact-json"), "audit": Grader("audit")},
-    Helper("scripts/inspect_skill.py", "fixture.md", HELPER_FIXTURES), (), "legacy")
+    Helper("scripts/inspect-skill.pyz", "fixture.md", HELPER_FIXTURES), (), "legacy")
 
 
 def resolve(contract: Contract | None) -> Contract:
@@ -211,12 +224,24 @@ def _helper(value: object) -> Helper:
         raise ValueError("helper fixtures must be a list")
     for entry in cast(list[object], raw):
         fixture = mapping(entry)
-        if set(fixture) != {"input", "returncode", "output"} or type(fixture["returncode"]) is not int:
-            raise ValueError("helper fixture needs input, integer returncode, and output")
+        required = {"input", "returncode", "output"}
+        if not required <= set(fixture) <= required | {"error"} or type(fixture["returncode"]) is not int:
+            raise ValueError("helper fixture needs input, integer returncode, and output, and may add error")
+        if "error" in fixture and not isinstance(fixture["error"], dict):
+            raise ValueError("helper fixture error must be an object")
+        if fixture["output"] is None and fixture["returncode"] != 0 and "error" not in fixture:
+            raise ValueError("helper fixture with null output and a nonzero returncode needs an error object")
         _ = string(fixture["input"], "helper fixture input")
         fixtures.append(fixture)
     return Helper(relative(string(item.get("path"), "helper path")),
                   relative(string(item.get("input", "fixture.md"), "helper input")), tuple(fixtures))
+
+
+def _statistics(value: object) -> dict[str, object]:
+    try:
+        return Statistics.declared(value)
+    except ValueError as error:
+        raise CodedError("contract-statistics-invalid", f"contract {error}") from None
 
 
 def _surface_error(message: str) -> CodedError:
@@ -279,7 +304,7 @@ def parse(value: object, source: str) -> Contract:
         raise CodedError("contract-unapproved", "contract has status draft; approve it before a run")
     if item.get("status") != "approved":
         raise ValueError("contract status must be approved or draft")
-    _fields(item, {"schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface"}, "contract")
+    _fields(item, {"schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface", "statistics"}, "contract")
     if type(item.get("schema_version")) is not int or item["schema_version"] != 1:
         raise ValueError("contract needs schema_version 1")
     skill = string(item.get("skill"), "contract skill")
@@ -294,8 +319,10 @@ def parse(value: object, source: str) -> Contract:
     editable = tuple(relative(string(name, "editable path")) for name in cast(list[object], editable_raw))
     helper = _helper(item["helper"]) if "helper" in item else None
     surface = _surface(item["surface"]) if "surface" in item else None
+    thresholds = _statistics(item["statistics"]) if "statistics" in item else None
     contract = Contract(skill, string(item.get("invocation"), "contract invocation"),
-                        {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source, surface)
+                        {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source, surface,
+                        thresholds)
     for kind, grader in contract.kinds.items():
         if (kind == "journey") != (grader.type == "journey"):
             raise CodedError("contract-kinds", f"kind {kind} and the journey grader go together: the kind named "

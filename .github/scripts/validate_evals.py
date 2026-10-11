@@ -16,11 +16,14 @@ Each entry in `evals` (a JSON object):
 - `prompt`: non-empty string.
 - `expected_output`: non-empty string.
 - `files`: list.
-- Any other entry key (e.g. `assertions`) is allowed and ignored.
+- `assertions` (optional): list of non-empty strings, as in the
+  agentskills.io shape.
+- `expected_skill` (optional): non-empty string, or null for a case that
+  must not load the skill (NVIDIA SkillEvaluator's routing field).
+- Any other entry key is allowed and ignored.
 
 `id` values must be unique within a file. Extra keys are tolerated so a
-skill can carry richer per-eval metadata (ralphify-spec's `assertions`)
-without forking the contract.
+skill can carry richer per-eval metadata without forking the contract.
 
 Pass `--self-test` to run the embedded accept/reject fixtures instead of
 scanning the tree.
@@ -94,6 +97,15 @@ def validate_file(path: Path) -> list[str]:
             if field in NON_EMPTY_STRING_FIELDS and isinstance(value, str) and not value.strip():
                 errors.append(f"{loc}: '{field}' must be a non-empty string")
 
+        assertions = item.get("assertions", [])
+        if not isinstance(assertions, list) or not all(
+            isinstance(a, str) and a.strip() for a in cast(list[object], assertions)
+        ):
+            errors.append(f"{loc}: 'assertions' must be a list of non-empty strings")
+        expected_skill = item.get("expected_skill")
+        if expected_skill is not None and (not isinstance(expected_skill, str) or not expected_skill.strip()):
+            errors.append(f"{loc}: 'expected_skill' must be a non-empty string or null")
+
         entry_id = item.get("id")
         if isinstance(entry_id, int) and not isinstance(entry_id, bool):
             if entry_id in seen_ids:
@@ -116,14 +128,26 @@ def _canonical_entry(**overrides: object) -> dict[str, object]:
 _SELF_TEST_CASES: list[tuple[str, object, bool]] = [
     ("canonical evals shape", {"skill_name": "s", "evals": [_canonical_entry()]}, False),
     (
-        "extras tolerated (ralphify notes + assertions)",
+        "extras tolerated (notes + unknown entry key)",
+        {"skill_name": "s", "notes": "n", "evals": [_canonical_entry(extra={"k": "v"})]},
+        False,
+    ),
+    (
+        "agentskills.io assertions and routing fields",
         {
             "skill_name": "s",
-            "notes": "n",
-            "evals": [_canonical_entry(assertions=[{"id": "x", "text": "t"}])],
+            "evals": [
+                _canonical_entry(assertions=["The output names X"], expected_skill="s"),
+                _canonical_entry(id=1, name="near-miss", assertions=[], expected_skill=None),
+            ],
         },
         False,
     ),
+    ("assertions not a list", {"skill_name": "s", "evals": [_canonical_entry(assertions="x")]}, True),
+    ("blank assertion", {"skill_name": "s", "evals": [_canonical_entry(assertions=[" "])]}, True),
+    ("object assertion", {"skill_name": "s", "evals": [_canonical_entry(assertions=[{"text": "t"}])]}, True),
+    ("empty expected_skill", {"skill_name": "s", "evals": [_canonical_entry(expected_skill="")]}, True),
+    ("non-string expected_skill", {"skill_name": "s", "evals": [_canonical_entry(expected_skill=1)]}, True),
     ("old bare-array shape", [{"query": "q", "should_trigger": True}], True),
     ("missing skill_name", {"evals": [_canonical_entry()]}, True),
     ("empty skill_name", {"skill_name": "  ", "evals": [_canonical_entry()]}, True),

@@ -21,11 +21,25 @@ from typing import cast
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _ALLOWED_KEYS = {"name", "entry", "source", "source_paths", "project", "repo", "include", "groups"}
+_TARGET_KEYS = {"name", "entry", "source", "source_paths", "include", "groups"}
+# The keys of one ``[[target]]`` table; a single-target file holds them at the top level beside the shared keys.
+TARGET_KEYS = frozenset(_TARGET_KEYS)
+
+
+def validate_name(name: str) -> None:
+    """Raise ``ConfigError`` unless ``name`` is a safe filename component."""
+    if not _SAFE_NAME.fullmatch(name):
+        raise ConfigError(f"name must be a safe filename component: {name!r}")
 
 
 @dataclass(frozen=True)
 class WedgeConfig:
-    """One skill's ``wedge.toml``: what to build and where to publish it."""
+    """One build target: what to build and where to publish it.
+
+    A single-target ``wedge.toml`` yields one config. Each ``[[target]]`` table
+    yields one config with ``multi`` set. The constructor validates ``name`` and
+    ``repo``, so a config made in memory passes the same checks as a parsed one.
+    """
 
     name: str
     entry: str
@@ -35,6 +49,12 @@ class WedgeConfig:
     project: str = "."
     include: tuple[str, ...] = ()
     groups: tuple[str, ...] = ()
+    multi: bool = False
+
+    def __post_init__(self) -> None:
+        validate_name(self.name)
+        if not _REPO.fullmatch(self.repo):
+            raise ConfigError(f"'repo' must be 'owner/name', got {self.repo!r}")
 
 
 class ConfigError(Exception):
@@ -54,11 +74,7 @@ def defaults_path(skill_dir: Path) -> Path | None:
     return candidate
 
 
-def _read_table(path: Path) -> dict[str, object]:
-    try:
-        text = path.read_text()
-    except OSError as exc:
-        raise ConfigError(f"cannot read {path}: {exc}") from exc
+def _parse_table(path: Path, text: str) -> dict[str, object]:
     try:
         parsed: object = cast(object, tomllib.loads(text))
     except tomllib.TOMLDecodeError as exc:
@@ -68,28 +84,103 @@ def _read_table(path: Path) -> dict[str, object]:
     return cast(dict[str, object], parsed)
 
 
-def load_config(skill_dir: Path) -> WedgeConfig:
-    """Read and validate ``<skill_dir>/wedge.toml`` over the root's shared defaults.
+def _read_table(path: Path) -> dict[str, object]:
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        raise ConfigError(f"cannot read {path}: {exc}") from exc
+    return _parse_table(path, text)
 
-    A ``wedge.toml`` in the skill directory's parent supplies defaults for
-    every key except ``name`` and ``entry``; the skill's own file wins. Paths
-    in both files are relative to the skill directory.
+
+def _merged_values(skill_dir: Path, text: str | None = None) -> tuple[Path, dict[str, object], dict[str, Path]]:
+    """The skill's ``wedge.toml`` over the root's shared defaults, with each key's file.
+
+    ``text`` stands in for the content of the skill's own file. The shared defaults still come from disk.
     """
     path = Path(skill_dir) / "wedge.toml"
-    own = _read_table(path)
+    own = _read_table(path) if text is None else _parse_table(path, text)
     values = dict(own)
     sources: dict[str, Path] = dict.fromkeys(own, path)
     shared = defaults_path(skill_dir)
     if shared is not None:
         defaults = _read_table(shared)
-        owned = sorted({"name", "entry"} & set(defaults))
+        owned = sorted({"name", "entry", "target"} & set(defaults))
         if owned:
             raise ConfigError(f"{shared}: shared defaults must not set {', '.join(owned)}")
         for key in defaults:
             if key not in own:
                 sources[key] = shared
         values = {**defaults, **own}
+    return path, values, sources
 
+
+def multi_target_message(skill_dir: Path) -> str:
+    """The one error text for a command that cannot take ``[[target]]`` tables."""
+    return f"{Path(skill_dir) / 'wedge.toml'}: [[target]] tables work only with build and bundle"
+
+
+def load_config(skill_dir: Path) -> WedgeConfig:
+    """Read and validate a single-target ``<skill_dir>/wedge.toml`` over the root's defaults.
+
+    A ``wedge.toml`` in the skill directory's parent supplies defaults for
+    every key except ``name`` and ``entry``; the skill's own file wins. Paths
+    in both files are relative to the skill directory. A file with ``[[target]]``
+    tables belongs to ``load_targets``; ``lock``, ``check``, and release-mode
+    ``publish`` reject it here.
+    """
+    targets = load_targets(skill_dir)
+    if targets[0].multi:
+        raise ConfigError(multi_target_message(skill_dir))
+    return targets[0]
+
+
+def load_targets(skill_dir: Path) -> tuple[WedgeConfig, ...]:
+    """Every target of ``<skill_dir>/wedge.toml``: one, or one per ``[[target]]`` table.
+
+    The single-target form keeps ``name`` and ``entry`` at the top level. The
+    multi-target form moves them into each table; top-level keys other than
+    ``name`` and ``entry`` are defaults that a table can override.
+    """
+    return parse_targets(skill_dir, None)
+
+
+def parse_targets(skill_dir: Path, text: str | None) -> tuple[WedgeConfig, ...]:
+    """Like ``load_targets``, but ``text`` replaces the content of ``<skill_dir>/wedge.toml`` when it is not None."""
+    path, values, sources = _merged_values(skill_dir, text)
+    raw_targets = values.pop("target", None)
+    if raw_targets is None:
+        return (_make_config(path, values, sources, multi=False),)
+    mixed = sorted({"name", "entry"} & set(values))
+    if mixed:
+        raise ConfigError(f"{path}: top-level {', '.join(mixed)} cannot combine with [[target]] tables")
+    if not isinstance(raw_targets, list) or not raw_targets:
+        raise ConfigError(f"{path}: 'target' must be a non-empty list of tables")
+    configs: list[WedgeConfig] = []
+    for index, raw in enumerate(cast(list[object], raw_targets), start=1):
+        if not isinstance(raw, dict):
+            raise ConfigError(f"{path}: each [[target]] must be a table")
+        table = cast(dict[str, object], raw)
+        label_name = table.get("name")
+        label = f"[[target]] #{index}" + (f" ({label_name})" if isinstance(label_name, str) else "")
+        try:
+            bad = sorted(set(table) - _TARGET_KEYS)
+            if bad:
+                raise ConfigError(f"{path}: unknown key {bad[0]!r} in [[target]]")
+            configs.append(
+                _make_config(path, {**values, **table}, {**sources, **dict.fromkeys(table, path)}, multi=True)
+            )
+        except ConfigError as exc:
+            raise ConfigError(f"{label}: {exc}") from exc
+    names = [config.name for config in configs]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ConfigError(f"{path}: duplicate target names {duplicates}")
+    return tuple(configs)
+
+
+def _make_config(
+    path: Path, values: dict[str, object], sources: dict[str, Path], *, multi: bool
+) -> WedgeConfig:
     unknown = sorted(set(values) - _ALLOWED_KEYS)
     if unknown:
         bad_key = unknown[0]
@@ -108,10 +199,7 @@ def load_config(skill_dir: Path) -> WedgeConfig:
     source = text_key("source")
     project = text_key("project", ".")
     repo = text_key("repo")
-    if not _SAFE_NAME.fullmatch(name):
-        raise ConfigError(f"{path}: name must be a safe filename component")
-    if not _REPO.fullmatch(repo):
-        raise ConfigError(f"{path}: 'repo' must be 'owner/name', got {repo!r}")
+
     def list_key(key: str) -> tuple[str, ...]:
         raw = values.get(key, [])
         if not isinstance(raw, list):
@@ -133,13 +221,17 @@ def load_config(skill_dir: Path) -> WedgeConfig:
         source = sources.get("groups", path)
         raise ConfigError(f"{source}: 'groups' must not include 'dev'; move the CLI dependencies to another group")
 
-    return WedgeConfig(
-        name=name,
-        entry=entry,
-        source=source,
-        source_paths=source_paths,
-        repo=repo,
-        project=project,
-        include=list_key("include"),
-        groups=groups,
-    )
+    try:
+        return WedgeConfig(
+            name=name,
+            entry=entry,
+            source=source,
+            source_paths=source_paths,
+            repo=repo,
+            project=project,
+            include=list_key("include"),
+            groups=groups,
+            multi=multi,
+        )
+    except ConfigError as exc:
+        raise ConfigError(f"{path}: {exc}") from exc

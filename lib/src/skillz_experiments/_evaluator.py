@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Protocol, cast, runtime_checkable
 
 from skillz_experiments import _audit, _graders
@@ -131,8 +132,6 @@ def evaluate(task: Transport, judge_transport: Transport, candidate: Candidate, 
                    "candidate_hash": candidate.identity, "case_hash": digest(case.identifier)})
     if journey is not None:
         result["transcript"] = journey["transcript"]
-        for used in spent:
-            result["usage"] = _audit.combined_usage(mapping(result["usage"]), used)
     if grader.type == "exact-json":
         answer_text = answer.get("result_json")
         if not isinstance(answer_text, str):
@@ -141,9 +140,39 @@ def evaluate(task: Transport, judge_transport: Transport, candidate: Candidate, 
         result["score"] = grade(answer_text, case.expected, loaded=loaded, helper_executed=helper)
         return result
     result.update({"task_usage": result.get("usage"), "judge_usage": None})
+    simulated: dict[str, object] | None = None
+    if journey is not None:
+        simulated = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
+        for used in spent:
+            simulated = dict(_audit.combined_usage(simulated, used))
+        result["simulator_usage"] = simulated
     if grader.type == "audit":
-        return _evaluate_audit(judge_transport, case, result, answer, holdout=holdout)
-    return _evaluate_scored(task, judge_transport, rules, case, result, answer, files, holdout=holdout, journey=journey)
+        scored = _evaluate_audit(judge_transport, case, result, answer, holdout=holdout)
+    else:
+        scored = _evaluate_scored(task, judge_transport, rules, case, result, answer, files, holdout=holdout, journey=journey)
+    if simulated is not None:
+        scored["usage"] = _audit.combined_usage(mapping(scored["usage"]), simulated)
+    return scored
+
+
+def task_tokens(item: Mapping[str, object]) -> int | None:
+    """Return the uncached task tokens of one outcome: `input_tokens - cached_input_tokens + output_tokens`.
+
+    Both adapters report `input_tokens` with the cached input inside it: the Claude adapter adds cache creation
+    and cache reads, and the Codex CLI counts cached input in `input_tokens`. The result is None when a count is
+    missing, a bool, or negative, or when `cached_input_tokens` is above `input_tokens`.
+    A judged outcome keeps its task share in `task_usage`; an outcome without that key has no judge, so `usage`
+    is its task usage. Judge usage never enters the charge.
+    """
+    usage = item["task_usage"] if "task_usage" in item else item.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    counts = cast(dict[str, object], usage)
+    total, cached, output = (counts.get(name) for name in ("input_tokens", "cached_input_tokens", "output_tokens"))
+    if (type(total) is int and type(cached) is int and type(output) is int
+            and 0 <= cached <= total and output >= 0):
+        return total - cached + output
+    return None
 
 
 def _activation(result: dict[str, object], candidate: Candidate, rules: Contract) -> tuple[dict[str, object], bool, bool]:
@@ -227,7 +256,6 @@ def answer_schema() -> dict[str, object]:
     return {"type": "object", "properties": {
         "result_json": {"type": "string"}, "load_marker": {"type": "string"}},
         "required": ["result_json", "load_marker"], "additionalProperties": False}
-
 
 def _judge_data(case: Case, journey: dict[str, object] | None) -> dict[str, object] | None:
     if journey is None or case.journey is None:

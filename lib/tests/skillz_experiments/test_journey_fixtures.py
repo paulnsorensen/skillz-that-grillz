@@ -88,10 +88,10 @@ class Judge:
 @pytest.fixture
 def local_sandbox(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run the command gate as a plain child in the grading workspace, so the real gate script runs on the real trace."""
-    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str]:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, seconds
         done = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=30, check=False)
-        return done.returncode, done.stdout
+        return done.returncode, done.stdout, done.stderr
 
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
 
