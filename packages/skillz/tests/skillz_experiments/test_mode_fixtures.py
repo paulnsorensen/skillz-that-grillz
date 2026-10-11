@@ -179,7 +179,7 @@ def test_the_live_snapshot_holds_the_staged_files_and_an_untouched_workspace_sco
 
 
 def test_self_update_case_stays_out_of_the_published_tree() -> None:
-    assert SELF_UPDATE.is_relative_to(ROOT / "packages/wedge/tests") and not SELF_UPDATE.is_relative_to(SKILL_DIR)
+    assert SELF_UPDATE.is_relative_to(ROOT / "packages/skillz/tests") and not SELF_UPDATE.is_relative_to(SKILL_DIR)
     assert {case.kind for case in SELF_UPDATE_CASES.values()} == {"self-update"}
     assert "self-update" not in _rules(PUBLISHED).kinds
 

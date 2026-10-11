@@ -74,6 +74,6 @@ A still-live descendant fails after the observation deadline.[^9]
 [^7]: packages/wedge/pyproject.toml:37-38; packages/fromargs/pyproject.toml:28-29; uv.lock; packages/wedge/src/wedge/_key.py:134-152; packages/wedge/examples/skills/cheese-cave/scripts/cheese-cave.wedge.json.
 
 [^8]: [Linux CI run 38102417849](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/38102417849); .context/parallelism/linux-ci-failure.log. The local log is gitignored.
-[^9]: packages/wedge/tests/skillz_experiments/test_runtime.py:14-32; .context/parallelism/implementation-contract.md:55-64. The user approves the test-only correction and CI rerun.
+[^9]: packages/skillz/tests/skillz_experiments/test_runtime.py:14-32; .context/parallelism/implementation-contract.md:55-64. The user approves the test-only correction and CI rerun.
 
 _Source: Approved parallel-build contract, workspace rebase, local verification, and Linux CI finding · Updated: 2026-10-10 · Supersedes: immediate descendant-state observation_

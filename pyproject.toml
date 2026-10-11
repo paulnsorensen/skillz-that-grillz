@@ -29,7 +29,7 @@ venvPath = "."
 venv = ".venv"
 include = ["packages", "skills"]
 exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache"]
-extraPaths = ["packages/wedge/src", "packages/fromargs/src", "packages/fromargs/examples"]
+extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/fromargs/src", "packages/fromargs/examples"]
 typeCheckingMode = "recommended"
 failOnWarnings = true
 
