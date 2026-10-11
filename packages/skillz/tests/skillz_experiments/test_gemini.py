@@ -79,6 +79,10 @@ def infer(directory: Path, root: Path, **options: object) -> dict[str, object]:
     return respond(request("infer", root, prompt="p\nq", response_schema=SCHEMA), bin_dir=directory, **options)  # pyright: ignore[reportArgumentType]
 
 
+SUBPROCESS_WRAPPER = pytest.mark.skipif(
+    sys.platform == "darwin", reason="the wrapper subprocess sees the real platform and picks sandbox-exec, not docker")
+
+
 def test_wrapper_passes_the_runner_sandbox_probe_and_discovery(tmp_path: Path) -> None:
     directory = fake_bin(tmp_path)
     config = configured(tmp_path, directory)
@@ -96,17 +100,20 @@ def test_wrapper_passes_the_runner_sandbox_probe_and_discovery(tmp_path: Path) -
     assert calls and all(call == ["skills", "list"] for call in calls)
 
 
+@SUBPROCESS_WRAPPER
 def test_probe_fails_when_the_container_denies_nothing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     directory = fake_bin(tmp_path)
     script = directory / "docker"
     _ = script.write_text("\n".join([
-        f"#!{sys.executable}", "import subprocess,sys", "a=sys.argv[1:];c=a[a.index('/usr/bin/env')+6:]",
+        f"#!{sys.executable}", "import subprocess,sys",
+        f"a=sys.argv[1:];c=a[a.index('/usr/bin/env')+1+{len(_gemini.CONTAINER_ENV)}:]",
         "r=subprocess.run(c,cwd=a[a.index('-w')+1],text=True)", "sys.exit(r.returncode)", ""]))
     config = configured(tmp_path, directory)
     assert main(["self-test", "--model", "offline", "--preflight-only", "--harness-config", str(config)]) != 0
     assert "harness isolation preflight fails; no unsafe fallback" in capsys.readouterr().err
 
 
+@SUBPROCESS_WRAPPER
 def test_infer_runs_gemini_with_the_probe_restrictions_and_reports_usage(tmp_path: Path) -> None:
     directory = fake_bin(tmp_path)
     adapter = Configuration.load(configured(tmp_path, directory), "fake-model").create(
@@ -296,6 +303,7 @@ def test_an_infer_timeout_kills_the_labeled_container(tmp_path: Path, monkeypatc
     assert listing == ["ps", "-q", "--filter", f"label={label}"] and kill == ["kill", "container-one"]
 
 
+@SUBPROCESS_WRAPPER
 def test_a_termination_signal_kills_the_named_container(tmp_path: Path) -> None:
     directory = fake_bin(tmp_path)
     _ = (directory / "docker.mode").write_text("hang")
@@ -314,6 +322,7 @@ def test_a_termination_signal_kills_the_named_container(tmp_path: Path) -> None:
     assert kill == ["kill", run[run.index("--name") + 1]]
 
 
+@SUBPROCESS_WRAPPER
 def test_the_runner_deadline_runs_the_wrapper_stopper_before_it_kills_the_group(tmp_path: Path) -> None:
     from skillz_experiments._runtime import BudgetExhausted, process
 
@@ -459,6 +468,29 @@ def test_gemini_finds_an_empty_dotenv_before_a_shared_one(tmp_path: Path, operat
     assert found is not None and found.read_text() == ""
     assert found.parent == root.resolve().parent
 
+
+@pytest.mark.parametrize("operation", ["infer", "discover"])
+@pytest.mark.parametrize("local", ["." + "env", ".gemini/" + "." + "env"])
+@pytest.mark.parametrize("link", [False, True])
+def test_a_workspace_dotenv_file_is_refused_before_gemini_runs(
+        tmp_path: Path, operation: str, local: str, link: bool) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    planted = root / local
+    planted.parent.mkdir(exist_ok=True)
+    if link:
+        target = tmp_path / "elsewhere"
+        _ = target.write_text("GEMINI_API_KEY=planted")
+        planted.symlink_to(target)
+    else:
+        _ = planted.write_text("GEMINI_API_KEY=planted")
+    with pytest.raises(ValueError, match="workspace must not contain"):
+        if operation == "infer":
+            _ = infer(directory, root)
+        else:
+            _ = respond(request("discover", root, skill_name="present", skill_path=str(root / ".agents/skills/present")),
+                        bin_dir=directory)
+    assert not (directory / "gemini.log").exists()
 
 def test_macos_sandbox_runs_the_command_under_the_shared_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     directory = fake_bin(tmp_path)

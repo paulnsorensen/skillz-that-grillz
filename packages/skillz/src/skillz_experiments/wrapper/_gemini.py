@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -36,6 +37,8 @@ CREDENTIALS = ("oauth_creds.json",)
 SEATBELT_PROFILE = "skillz"
 TIMEOUTS = {"sandbox": 300, "discover": 60, "infer": 900}
 CONTAINER_GRACE = 10
+STOP_BUDGET = 6
+DOTENV = "." + "env"
 PROMPT_FLAG = "Follow the request on standard input."
 EXIT_LINE = re.compile(r"^Exit Code: (.*)$", re.MULTILINE)
 SECRETISH = re.compile(r"\S*://\S*|\S*(?:key|token|secret|password|auth)\S*", re.IGNORECASE)
@@ -143,17 +146,23 @@ def _run(command: list[str], workspace: Path, env: dict[str, str], *, timeout: f
 
 
 def _stopper(executable: str, env: dict[str, str], *selector: str) -> Callable[[], None]:
-    """Return a callback that kills containers. `("kill", NAME)` kills one name; `("ps", FILTER)` kills a label match."""
+    """Return a callback that kills containers. `("kill", NAME)` kills one name; `("ps", FILTER)` kills a label match.
+
+    All docker calls share one deadline of `STOP_BUDGET` seconds, so the callback ends before the runner's SIGKILL.
+    """
     def stop() -> None:
+        deadline = time.monotonic() + STOP_BUDGET
+
+        def call(*arguments: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run([executable, *arguments], env=env, text=True, capture_output=True,
+                                  timeout=max(deadline - time.monotonic(), 0.1), check=False)
         try:
             if selector[0] == "kill":
                 ids = [selector[1]]
             else:
-                listing = subprocess.run([executable, "ps", "-q", "--filter", selector[1]], env=env, text=True,
-                                         capture_output=True, timeout=20, check=False)
-                ids = listing.stdout.split()
+                ids = call("ps", "-q", "--filter", selector[1]).stdout.split()
             for identifier in ids:
-                _ = subprocess.run([executable, "kill", identifier], env=env, capture_output=True, timeout=20, check=False)
+                _ = call("kill", identifier)
         except (OSError, subprocess.TimeoutExpired):
             pass
     return stop
@@ -168,12 +177,16 @@ def _environment(executable: str, bin_dir: Path | None, home: Path | None = None
 
 
 def _stop_dotenv_search(root: Path) -> None:
-    """Write an empty `.env` in the runner directory that holds the workspace.
+    """Refuse a workspace that holds its own dotenv file, then write an empty one in the runner directory.
 
-    Gemini loads only the first `.env` that it finds at or above its working directory. The search then stops here
-    and never reaches a shared directory such as `/tmp`, where any local user can write a `.env`.
+    Gemini loads only the first dotenv file that it finds at or above its working directory. A file in the workspace or in
+    its `.gemini` directory (even a symlink) would load before the guard and could carry credentials. The guard stops the
+    search before a shared directory such as `/tmp`, where any local user can write a dotenv file.
     """
-    guard = root.parent / ".env"
+    for local in (root / DOTENV, root / ".gemini" / DOTENV):
+        if os.path.lexists(local):
+            raise ValueError(f"workspace must not contain {local.relative_to(root)}; Gemini CLI would load it")
+    guard = root.parent / DOTENV
     guard.unlink(missing_ok=True)
     _ = guard.write_text("")
 

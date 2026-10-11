@@ -1042,6 +1042,7 @@ class ClaudeCode:
         self.credential = self.login.credential
         self.config_dir = self.login.config_dir
         self._inventory: Inventory | None = None
+        self._unix_sockets: bool | None = None
 
     @property
     def credential_kind(self) -> str:
@@ -1064,7 +1065,9 @@ class ClaudeCode:
         The settings then skip that filter. The filesystem and domain rules stay on, and the live preflight
         probes a host Unix socket instead.
         """
-        return nested_userns_blocked()
+        if self._unix_sockets is None:
+            self._unix_sockets = nested_userns_blocked()
+        return self._unix_sockets
 
     def _floor(self, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
         floor = settings(workspace, self.out, overrides=overrides, unix_sockets=self.unix_sockets())

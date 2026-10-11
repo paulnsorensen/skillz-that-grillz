@@ -591,8 +591,9 @@ class _Session:
         if self.record["environment_hash"] != environment_hash:
             before = mapping(cast(dict[str, object], recorded)) if isinstance(recorded, dict) else {}
             changed = _differences(before.get("roles", before), preflight.get("roles", preflight))
+            evidence = "; ".join(changed[:6]) or "the environment hash only"
             raise EnvironmentDiffers("runtime environment differs from the frozen record; changed evidence: "
-                                     + "; ".join(changed[:6]) + "; restore the first-run environment and resume, "
+                                     + evidence + "; restore the first-run environment and resume, "
                                      + "or start a new run")
         self.record["preflight"] = preflight
         if isinstance(self.provider, Harness) and self.provider.codex_version is not None:

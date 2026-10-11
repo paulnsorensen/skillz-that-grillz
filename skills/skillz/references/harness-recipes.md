@@ -86,7 +86,8 @@ The tool-event mapping is also unverified until AC-16 runs. The wrapper reads th
 - `run_shell_command` becomes `sh -c COMMAND`.
 - `read_file` becomes `cat FILE_PATH`.
 - The exit code comes from the last `Exit Code: N` line of the shell output. Whether the stream-json `output` field carries that line is unverified.
-- A `tool_result` with status `success` and no such line gives exit code 0. Any other status gives exit code 1.
+- A shell `tool_result` with a numeric `Exit Code: N` line gives exit code N. If the status is not `success` and N is 0, the exit code is 1. A line that is not a number gives exit code 1.
+- A `tool_result` with status `success` and no such line gives exit code 0. With any other status and no such line, the exit code is 1.
 - A call without a result, a call of another tool, or an event of another shape adds nothing. With no usable event the trace is empty, and graders that need command traces score such runs as unloaded.
 
 The macOS Seatbelt path and the token field names are unverified on a live host.

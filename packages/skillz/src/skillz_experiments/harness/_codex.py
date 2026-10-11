@@ -55,9 +55,16 @@ def credential_kind(home: Path) -> str:
     if not isinstance(document, dict):
         return MISSING_CREDENTIAL
     fields = cast(dict[str, object], document)
-    if isinstance(fields.get("tokens"), dict) and fields["tokens"]:
+    has_tokens = isinstance(fields.get("tokens"), dict) and bool(fields["tokens"])
+    has_key = bool(fields.get("OPENAI_API_KEY"))
+    mode = fields.get("auth_mode")
+    if mode == "apikey":
+        return API_KEY if has_key else MISSING_CREDENTIAL
+    if mode == "chatgpt":
+        return SUBSCRIPTION_LOGIN if has_tokens else MISSING_CREDENTIAL
+    if has_tokens:
         return SUBSCRIPTION_LOGIN
-    return API_KEY if fields.get("OPENAI_API_KEY") else MISSING_CREDENTIAL
+    return API_KEY if has_key else MISSING_CREDENTIAL
 
 
 def _inline(values: dict[str, str]) -> str:

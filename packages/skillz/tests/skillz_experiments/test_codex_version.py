@@ -152,6 +152,9 @@ def test_another_version_changes_the_environment_hash_and_the_harness_reports_it
     ({"OPENAI_API_KEY": "sk-secret"}, API_KEY),
     ({"OPENAI_API_KEY": None, "tokens": {}}, MISSING_CREDENTIAL),
     ({}, MISSING_CREDENTIAL),
+    ({"auth_mode": "apikey", "OPENAI_API_KEY": "sk-secret", "tokens": {"id_token": "t"}}, API_KEY),
+    ({"auth_mode": "chatgpt", "OPENAI_API_KEY": "sk-secret", "tokens": {"id_token": "t"}}, SUBSCRIPTION_LOGIN),
+    ({"auth_mode": "apikey", "OPENAI_API_KEY": None, "tokens": {"id_token": "t"}}, MISSING_CREDENTIAL),
 ])
 def test_the_credential_kind_follows_the_field_names_of_auth_json(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, login: dict[str, object], kind: str) -> None:

@@ -65,7 +65,8 @@ def _witness(space):
     line = {{"nonce": nonce, "argv": list(sys.argv), "exit_code": code}}
     try:
         root = stub.resolve().parents[levels - 1]
-        descriptor = os.open(root / ledger_name, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+        descriptor = os.open(root / ledger_name, flags, 0o600)
         with os.fdopen(descriptor, "a") as ledger:
             ledger.write(json.dumps(line) + "\\n")
     except OSError:
@@ -90,18 +91,26 @@ def stage_witness(workspace: Path, skill: str, helper: str) -> Witness | None:
     """Replace the staged `helper` of `skill` with a witness stub. Return None when the helper is not a plain file.
 
     The real helper stays in the same directory under a dot name, so `__file__`-relative reads still work.
+    A file error while staging restores the helper and returns None. An error in the restore itself propagates.
     """
     path = workspace / ".agents/skills" / skill / helper
     if path.is_symlink() or not path.is_file():
         return None
     nonce = secrets.token_hex(16)
     real = path.with_name("." + path.name)
-    mode = path.stat().st_mode
-    _ = path.replace(real)
-    levels = len(path.relative_to(workspace).parts)
-    _ = path.write_text(_STUB.format(nonce=json.dumps(nonce), levels=levels, real=json.dumps(real.name),
-                                     ledger=json.dumps(LEDGER)), encoding="utf-8")
-    path.chmod(mode)
+    try:
+        mode = path.stat().st_mode
+        _ = path.replace(real)
+    except OSError:
+        return None
+    try:
+        levels = len(path.relative_to(workspace).parts)
+        _ = path.write_text(_STUB.format(nonce=json.dumps(nonce), levels=levels, real=json.dumps(real.name),
+                                         ledger=json.dumps(LEDGER)), encoding="utf-8")
+        path.chmod(mode)
+    except OSError:
+        _ = real.replace(path)
+        return None
     return Witness(nonce, workspace / LEDGER)
 
 

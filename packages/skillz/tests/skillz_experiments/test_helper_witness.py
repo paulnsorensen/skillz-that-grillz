@@ -112,6 +112,47 @@ def test_stage_skips_a_missing_helper(tmp_path: Path) -> None:
     assert stage_witness(workspace, SKILL, HELPER) is None
 
 
+def refuse(*_args: object, **_kwargs: object) -> None:
+    raise OSError(28, "no space left")
+
+
+def test_a_staging_error_restores_the_helper_and_stages_no_witness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = make_workspace(tmp_path / "workspace")
+    stage_task(workspace, candidate(), None)
+    path = workspace / ".agents/skills" / SKILL / HELPER
+    monkeypatch.setattr(Path, "chmod", refuse)
+    assert stage_witness(workspace, SKILL, HELPER) is None
+    assert path.read_text() == HELPER_SOURCE
+    assert not path.with_name("." + path.name).exists()
+
+
+def test_a_failed_restore_propagates_the_staging_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    workspace = make_workspace(tmp_path / "workspace")
+    stage_task(workspace, candidate(), None)
+    original = Path.replace
+    renames: list[Path] = []
+
+    def second_rename_fails(self: Path, target: Path) -> Path:
+        renames.append(self)
+        if len(renames) > 1:
+            raise OSError(5, "io error")
+        return original(self, target)
+    monkeypatch.setattr(Path, "chmod", refuse)
+    monkeypatch.setattr(Path, "replace", second_rename_fails)
+    with pytest.raises(OSError, match="io error"):
+        _ = stage_witness(workspace, SKILL, HELPER)
+
+
+def test_the_stub_does_not_follow_a_symlinked_ledger(tmp_path: Path) -> None:
+    workspace, _ = staged(tmp_path)
+    target = tmp_path / "elsewhere.txt"
+    _ = target.write_text("keep")
+    (workspace / LEDGER).symlink_to(target)
+    assert run_helper(workspace).returncode == 0
+    assert target.read_text() == "keep"
+
+
+
 def event(command: str, code: int = 0) -> dict[str, object]:
     return {"type": "item.completed", "item": {"type": "command_execution", "command": command, "exit_code": code}}
 
