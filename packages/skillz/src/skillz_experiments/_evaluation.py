@@ -46,25 +46,67 @@ def executed(events: list[dict[str, object]], filename: str, workspace: str | No
     return False
 
 
-def _command_matches(command: str, filename: str, workspace: str | None, skill: str,
-                     isolated: bool, input_path: str | None) -> bool:
+def witnessed_events(events: list[dict[str, object]], ledger: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return the trace events that a ledger line backs. A ledger line backs one event.
+
+    A line backs an event when the event runs `python`, then an optional `-I`, then the argv of the line,
+    and both have the same exit code.
+    """
+    unused = list(ledger)
+    kept: list[dict[str, object]] = []
+    for event in events:
+        if not isinstance(event.get("item"), dict):
+            continue
+        item = mapping(event["item"])
+        command = item.get("command")
+        parts = _words(command) if isinstance(command, str) else None
+        python = None if parts is None else _python_argv(parts)
+        if python is None:
+            continue
+        arguments = python[0]
+        code = item.get("exit_code")
+        for line in unused:
+            if line["argv"] == arguments and line["exit_code"] == code:
+                unused.remove(line)
+                kept.append(event)
+                break
+    return kept
+
+
+def _words(command: str) -> list[str] | None:
     try:
         parts = shlex.split(command)
         if len(parts) == 3 and PurePosixPath(parts[0]).name in {"sh", "bash", "zsh"} and parts[1] in {"-c", "-lc"}:
             parts = shlex.split(parts[2])
     except ValueError:
-        return False
+        return None
     if not parts or any(token in command for token in (";", "&&", "||", "|", ">", "<", "$", "`", "\n")):
+        return None
+    return parts
+
+
+def _python_argv(parts: list[str]) -> tuple[list[str], bool] | None:
+    """Return the arguments after a python name and an optional `-I`, and whether `-I` was present."""
+    if PurePosixPath(parts[0]).name not in {"python3", "python"}:
+        return None
+    flagged = parts[1:2] == ["-I"]
+    return (parts[2:] if flagged else parts[1:]), flagged
+
+
+def _command_matches(command: str, filename: str, workspace: str | None, skill: str,
+                     isolated: bool, input_path: str | None) -> bool:
+    parts = _words(command)
+    if parts is None:
         return False
     root = f".agents/skills/{skill}"
     if filename == "SKILL.md":
         return len(parts) == 2 and PurePosixPath(parts[0]).name == "cat" and parts[1] in _paths(f"{root}/SKILL.md", workspace)
-    arguments = parts[1:]
-    flagged = bool(arguments) and arguments[0] == "-I"
-    if flagged:
-        arguments = arguments[1:]
+    python = _python_argv(parts)
+    if python is None:
+        return False
+    arguments, flagged = python
     expected = 1 if input_path is None else 2
-    return (PurePosixPath(parts[0]).name in {"python3", "python"} and (flagged or not isolated)
+    return ((flagged or not isolated)
             and len(arguments) == expected and arguments[0] in _paths(f"{root}/{filename}", workspace)
             and (input_path is None or arguments[1] in _paths(input_path, workspace)))
 

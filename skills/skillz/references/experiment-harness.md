@@ -344,6 +344,25 @@ Trace entries report completed command executions, not model claims or planned c
 Never synthesize a successful load or helper event.
 The evaluator independently checks the marker and qualifying command traces.
 
+### Helper witness
+
+A command harness reports its own trace, so the trace alone does not prove that the helper ran.
+For each task `infer`, the runner replaces the candidate helper with a stub in the workspace.
+The real helper stays in the same directory under a dot name, so `__file__`-relative reads still work.
+The stub runs the real helper, keeps its exit code and output, and appends one line to a ledger at the workspace root.
+The line holds a per-call nonce, the stub argv, and the exit code. The ledger is not a task output.
+The runner grants helper credit only for a trace entry that a ledger line of the same call backs.
+The argv and the exit code must match. Without a matching line, the helper earns no credit. A judged, hybrid, or command kind then reports `activation-rejected`. An `exact-json` kind scores 0.
+The `contract` check stages no stub. The `claude` and `codex` adapters stage no stub and grade as before.
+The protocol stays at `schema_version` 1. The wrapper sees no change.
+
+The run record of each outcome gains `helper_witnessed`: `true` when a ledger line backs the helper run, `false` when it does not.
+The key is absent for `claude` and `codex` outcomes, and for a task that has no helper.
+The sandbox must let the helper write the ledger in the workspace root. If it does not, the helper earns no credit.
+
+The witness proves that a real execution of the helper took place.
+It does not stop a model that writes ledger lines on purpose. The model can read the stub and forge a line.
+
 Return `usage: null` when usage is unavailable.
 Individual counts can also be absent or null.
 Counts must be nonnegative integers when known.

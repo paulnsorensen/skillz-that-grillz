@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -44,6 +45,21 @@ if mode == "bad-answer":
 stats = {"total_tokens": 13, "input_tokens": 10, "output_tokens": 3, "cached": 2, "input": 8, "duration_ms": 5,
          "tool_calls": 3, "models": {"fake-pro": {"total_tokens": 13, "input_tokens": 10, "output_tokens": 3,
                                                     "cached": 2, "input": 8}}}
+witness: list[dict[str, object]] = []
+if mode in {"witness-real", "witness-forged"}:
+    # Report the helper the way a model does. "witness-forged" prints the tool events without running the helper.
+    skill = next(Path(".agents/skills").iterdir())
+    helper = f".agents/skills/{skill.name}/scripts/x.py"
+    answer = json.dumps({"load_marker": (skill / "EXPERIMENT_MARKER").read_text(), "result_json": '{"echo": "hello"}'})
+    code = 0
+    if mode == "witness-real":
+        code = subprocess.run([sys.executable, "-I", helper], capture_output=True).returncode
+    witness = [
+        {"type": "tool_use", "tool_name": "read_file", "tool_id": "w1", "parameters": {"file_path": f".agents/skills/{skill.name}/SKILL.md"}},
+        {"type": "tool_result", "tool_id": "w1", "status": "success", "output": "body"},
+        {"type": "tool_use", "tool_name": "run_shell_command", "tool_id": "w2", "parameters": {"command": f"python3 -I {helper}"}},
+        {"type": "tool_result", "tool_id": "w2", "status": "success", "output": f"Exit Code: {code}"},
+    ]
 half = len(answer) // 2
 tools = [
     {"type": "tool_use", "tool_name": "read_file", "tool_id": "t1", "parameters": {"file_path": ".agents/skills/demo/SKILL.md"}},
@@ -55,6 +71,8 @@ tools = [
     {"type": "tool_use", "tool_name": "run_shell_command", "tool_id": "t4", "parameters": {"command": "never finished"}},
     {"type": "tool_result", "tool_id": "unknown", "status": "success"},
 ]
+if witness:
+    tools = witness
 events: list[object] = [{"type": "init", "session_id": "s", "model": "fake-pro"}]
 events += [] if mode in {"no-tools", "malformed"} else tools
 events += [{"type": "message", "role": "assistant", "content": "```json\n" + answer[:half], "delta": True},
