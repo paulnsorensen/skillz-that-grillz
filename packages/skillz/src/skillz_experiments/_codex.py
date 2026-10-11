@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -10,7 +11,7 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, digest, loads_untrusted, mapping, string
+from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._discovery import discover
 from skillz_experiments._evaluation import helper_failure, usage
@@ -18,7 +19,19 @@ from skillz_experiments._evaluator import answer_schema, evaluate
 from skillz_experiments._isolation import listening, probe
 from skillz_experiments._runtime import Budget, process
 
-VERSION = "codex-cli 0.154.0"
+MINIMUM_VERSION = "codex-cli 0.154.0"
+MODEL_REJECTIONS = frozenset({"unsupported-model-or-feature", "model-unavailable"})
+MESSAGE_LIMIT = 300
+_VERSION_PATTERN = re.compile(r"codex-cli (\d+)\.(\d+)\.(\d+)")
+
+
+def supported_version(text: str) -> str:
+    """Return the installed version text when it is at least the minimum. Reject an older or unparseable version."""
+    found = _VERSION_PATTERN.fullmatch(text.strip())
+    minimum = cast(re.Match[str], _VERSION_PATTERN.fullmatch(MINIMUM_VERSION))
+    if found is None or tuple(map(int, found.groups())) < tuple(map(int, minimum.groups())):
+        raise RuntimeError("unsupported Codex version; expected " + MINIMUM_VERSION + " or newer")
+    return text.strip()
 
 
 def _inline(values: dict[str, str]) -> str:
@@ -74,8 +87,7 @@ class Codex:
     def preflight(self) -> dict[str, object]:
         version = process([str(self.executable), "--version"], cwd=Path("/tmp"), timeout=min(10, self.budget.remaining()),
                           environment={"PATH": "/usr/bin:/bin"})
-        if version.returncode or version.stdout.strip() != VERSION:
-            raise RuntimeError("unsupported Codex version; expected " + VERSION)
+        installed = supported_version("" if version.returncode else version.stdout)
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             root = Path(directory)
             workspace = root / "workspace"
@@ -104,7 +116,7 @@ class Codex:
             if parser.returncode:
                 evidence = failure_details(parser.returncode, parser.stderr, [])
                 raise RuntimeError(f"Codex execution options preflight fails: {evidence['reason']}")
-        return {"codex_version": VERSION, "model": self.model, "isolation": "passed",
+        return {"codex_version": installed, "model": self.model, "isolation": "passed",
                 "host_skill_discovery": "isolated-home", "live_calls": 0,
                 "environment_hash": digest(configuration(Path("/TASK"), self.executable, []))}
 
@@ -125,6 +137,9 @@ class Codex:
             events = _events(result.stdout)
             if result.returncode or not output.is_file() or output.is_symlink() or output.stat().st_size > 1_000_000:
                 evidence = failure_details(result.returncode, result.stderr, events)
+                if evidence["reason"] in MODEL_REJECTIONS:
+                    raise CodedError("model-unsupported", f"Codex rejected model {self.model!r}: "
+                                     + _first_message(result.stderr, events)[:MESSAGE_LIMIT])
                 descriptor, filename = tempfile.mkstemp(prefix="skillz-execution-failure-", suffix=".json")
                 with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
                     json.dump(evidence, stream, sort_keys=True)
@@ -177,6 +192,17 @@ def _events(stdout: str) -> list[dict[str, object]]:
         except ValueError:
             raise RuntimeError("invalid Codex JSON event stream") from None
     return events
+
+
+def _first_message(stderr: str, events: list[dict[str, object]]) -> str:
+    for event in events:
+        if event.get("type") not in {"error", "turn.failed"}:
+            continue
+        error = event.get("error")
+        message = mapping(cast(object, error)).get("message") if isinstance(error, dict) else event.get("message")
+        if isinstance(message, str) and message:
+            return message
+    return stderr.strip()
 
 
 def failure_details(returncode: int, stderr: str, events: list[dict[str, object]]) -> dict[str, object]:

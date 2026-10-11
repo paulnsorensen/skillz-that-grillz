@@ -26,7 +26,6 @@ from skillz_experiments._candidate import (NEW_CLI, WEDGE_PREFIX, Candidate, can
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping, relative, repo_root
 from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES, ClaudeOptions,
                                         resolve_read_roots)
-from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._doctor import doctor
 from skillz_experiments._evaluator import task_tokens
@@ -586,7 +585,10 @@ class _Session:
         self.record["preflight"] = preflight
         if isinstance(self.provider, Harness) and any(
                 role.adapter == "codex" for role in self.provider.configuration.roles.values()):
-            self.record["codex_version"] = VERSION
+            roles = mapping(preflight.get("roles", {}))
+            self.record["codex_version"] = next(
+                version for version in (mapping(item).get("codex_version") for item in roles.values())
+                if isinstance(version, str))
         self.checkpoint()
 
     def evaluate_case(self, candidate: Candidate, case: Case, arm: str, *, holdout: bool = False,

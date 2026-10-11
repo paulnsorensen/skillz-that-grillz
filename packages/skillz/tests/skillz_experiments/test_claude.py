@@ -454,6 +454,13 @@ def test_preflight_stops_on_isolation_failure_without_fallback(
     assert all("--restricted" not in cast(list[str], call["argv"]) for call in logged)
 
 
+def test_the_builtin_claude_agent_is_not_a_leak() -> None:
+    builtin: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["general-purpose", "claude"]}
+    foreign: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["claude", "my-agent"]}
+    assert _claude._leak([builtin], []) is None  # pyright: ignore[reportPrivateUsage]
+    assert "my-agent" in str(_claude._leak([foreign], []))  # pyright: ignore[reportPrivateUsage]
+
+
 def test_preflight_passes_when_only_the_probe_skill_loads(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
     executable = fake_claude(tmp_path)

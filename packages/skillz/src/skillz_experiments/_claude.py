@@ -48,7 +48,7 @@ SANDBOX_STDERR = "stderr"
 SANDBOX_STDERR_LIMIT = 100_000
 # Agents that Claude Code lists without any user file. The `--tools` list leaves no way to run them.
 BUILTIN_AGENTS = frozenset({"general-purpose", "Explore", "Plan", "statusline-setup", "output-style-setup",
-                            "claude-code-guide"})
+                            "claude-code-guide", "claude"})
 LOGIN_HINT = "run `claude` once and log in"
 INSTALL_BUBBLEWRAP = "install bubblewrap (for example `sudo apt install bubblewrap`)"
 INSTALL_SOCAT = "install socat (for example `sudo apt install socat`)"
