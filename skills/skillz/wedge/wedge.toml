@@ -1,7 +1,0 @@
-name = "wedge"
-entry = "wedge:main"
-source = "../../../packages/wedge/src/wedge"
-project = "../../.."
-include = ["../../../packages/fromargs/src/fromargs"]
-groups = ["wedge"]
-repo = "paulnsorensen/skillz-that-grillz"

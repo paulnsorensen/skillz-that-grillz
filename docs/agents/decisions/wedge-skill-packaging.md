@@ -76,7 +76,7 @@ These records explain the design of `wedge`, a packaging tool at `packages/wedge
 - **Context:** Some consumers copy a self-contained skill archive and cannot depend on a first-run download. They accept a committed binary in exchange for direct execution.
 - **Decision:** `wedge bundle` writes an executable `scripts/<name>.pyz` without a lock or launcher. It builds each skill, writes through a temporary file, and atomically replaces the target. `wedge bundle --check` rebuilds and compares the uncompressed-content digest, the canonical shebang, and executable permission without changing the committed archive.[^10] A corrupt DEFLATE stream is an invalid-bundle outcome for its skill; checking continues for later skills. Optional `source_paths` selects paths below `source`, preserves their archive paths, and joins the selection to the content key. An absent selection retains the full source tree.[^11]
 - **Alternatives:** Keep the release-asset launcher as the only delivery mode. Rejected for consumers that need a copied skill to run without a network fetch.
-- **Consequences:** Direct consumers commit the larger `.pyz` and run `wedge bundle --check` in CI. The legacy lock, launcher, and release-asset workflow remain available. The `wedge check` restriction on a `.pyz` beside a launcher still applies only to that legacy mode. `wedge publish` reports a skill with `scripts/<name>.pyz` and no lock as `skipped`, because no release asset exists for it; a missing lock without a bundle still fails. The repository's own `skillz` skill ships two direct bundles: `scripts/skillz-experiment.pyz` and the builder at `wedge/scripts/wedge.pyz`.
+- **Consequences:** Direct consumers commit the larger `.pyz` and run `wedge bundle --check` in CI. The legacy lock, launcher, and release-asset workflow remain available. The `wedge check` restriction on a `.pyz` beside a launcher still applies only to that legacy mode. `wedge publish` reports a skill with `scripts/<name>.pyz` and no lock as `skipped`, because no release asset exists for it; a missing lock without a bundle still fails. The repository's own `skillz` skill ships three direct bundles: `scripts/skillz-experiment.pyz`, `scripts/inspect-skill.pyz`, and the builder at `scripts/wedge.pyz`.
 
 _Source: PR #103, `packages/wedge/src/wedge/`, `packages/wedge/tests/wedge/test_cli.py`, and `packages/wedge/README.md` · Updated: 2026-09-27 · Supersedes: ADR-002's blanket ban on committed `.pyz` files for opt-in direct bundles_
 
@@ -116,8 +116,8 @@ The run never silently copies libraries or changes shared dependencies.
 It verifies source behavior and a relocated launcher with a hash-checked local archive.
 That local verification does not prove remote asset availability.[^13]
 
-The skill ships the builder as its own direct bundle, `skills/skillz/wedge/scripts/wedge.pyz`, built from `packages/wedge/src/wedge` with a `wedge` dependency group that pins shiv.[^15]
-The builder sits in a subdirectory because wedge reads one `wedge.toml` per skill directory, and `skills/skillz/wedge.toml` builds `skillz-experiment`.
+The skill ships the builder as its own direct bundle, `skills/skillz/scripts/wedge.pyz`, built from `packages/wedge/src/wedge` with a `wedge` dependency group that pins shiv.[^15]
+The builder is a third `[[target]]` in `skills/skillz/wedge.toml`, beside `skillz-experiment` and `inspect-skill`. It earlier sat in a nested `wedge/` directory, because wedge reads one `wedge.toml` per directory and predated `[[target]]` tables.
 A user who installs only the skill can then build without a wedge checkout or tool project; `uv` stays a host requirement because it is a native binary.
 Inside an archive, `sys.executable` is the host interpreter, so the builder runs `python -m shiv` with `PYTHONPATH` set to the directory that holds the imported shiv.
 CI consumers still pin wedge in a tool project (ADR-009).
@@ -136,7 +136,7 @@ _Source: the published teaching skill and the records above · Updated: 2026-10-
 
 [^12]: `skills/skillz/SKILL.md`; `skills/skillz/references/offload.md`
 [^13]: `skills/skillz/references/wedge-packaging.md`; `packages/wedge/tests/wedge/test_skill_template.py`
-[^15]: `skills/skillz/wedge/wedge.toml`; `pyproject.toml`; `packages/wedge/src/wedge/_build.py`; `packages/wedge/tests/wedge/test_bundled_cli.py`
+[^15]: `skills/skillz/wedge.toml`; `pyproject.toml`; `packages/wedge/src/wedge/_build.py`; `packages/wedge/tests/wedge/test_bundled_cli.py`
 [^16]: `packages/wedge/src/wedge/_config.py`; `packages/wedge/src/wedge/_key.py`; `packages/wedge/src/wedge/_build.py`; `packages/wedge/src/wedge/_bundle.py`; `packages/wedge/src/wedge/_lock.py`; `packages/wedge/src/wedge/_publish.py`; `packages/wedge/tests/wedge/test_targets.py`; `packages/wedge/tests/wedge/test_press_targets.py`
 
 [^1]: `packages/wedge/src/wedge/_key.py`

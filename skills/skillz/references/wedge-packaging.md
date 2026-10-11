@@ -11,7 +11,7 @@ The non-dev dependencies in that lock form the archive's closure.
 A dependency group named in `groups` joins that closure.
 A local package that is not on an index, such as fromargs, enters through `include`.
 
-Run the builder from `wedge/scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory; it carries wedge and its shiv dependency.
+Run the builder from `scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory; it carries wedge and its shiv dependency.
 The builder also invokes `uv`, so `uv` must be on `PATH`.
 Every dependency must be a pure-Python `py3-none-any` wheel without a platform marker.
 A compressed universal tag such as `py2.py3-none-any` also passes.
@@ -67,11 +67,11 @@ A parent directory that holds a `SKILL.md` is a skill, so it gives no shared def
 Wedge reads one `wedge.toml` per directory, so each extra CLI gets its own directory below the skill.
 Place each manifest at `<skill>/<cli>/wedge.toml`, with its source beside it.
 Add one `../` to `project` and to each `source` and `include` path.
-The `wedge/` directory of the `skillz` skill in this repository shows this layout.
 A nested CLI reads no shared defaults.
 
 A direct-mode manifest can instead hold several CLIs through `[[target]]` tables.
 Use either one directory per CLI or `[[target]]` tables; both layouts work.
+The root `skills/skillz/wedge.toml` in this repository shows the `[[target]]` layout.
 Each table sets `name`, `entry`, `source` or `source_paths`, `include`, and `groups`.
 Keys outside the tables, such as `project` and `repo`, act as defaults for every table.
 A table value replaces the default.
@@ -104,7 +104,7 @@ That mode commits `scripts/NAME.pyz` and uses no lock or launcher.
 
 ## Local verification
 
-Set `WEDGE` to `wedge/scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory.
+Set `WEDGE` to `scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory.
 Set `SKILL_DIR` to the absolute packaged skill directory.
 Set `OUT_DIR` to a temporary build-output directory.
 

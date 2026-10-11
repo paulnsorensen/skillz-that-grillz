@@ -262,7 +262,7 @@ Read on demand:
 - `references/anti-patterns.md` — a finding needs the expanded failure mode.
 - `references/offload.md` — when `wedge` runs, or when `improve` implements an approved offload; the shared procedure.
 - `references/fromargs.md` — when an offload writes a fromargs CLI.
-- `references/wedge-packaging.md` — before an offload wedges a CLI; the builder is `wedge/scripts/wedge.pyz`.
+- `references/wedge-packaging.md` — before an offload wedges a CLI; the builder is `scripts/wedge.pyz`.
 - `assets/records.py`, `assets/wedge.toml` — the CLI and manifest templates that an offload copies.
 - `evals/evals.json` — pressure scenarios; use them when you change the offload procedure.
 - `references/progressive-disclosure.md` — Information hierarchy fires.

@@ -24,10 +24,9 @@ def test_runtime_pyz_files_are_frozen_and_never_editable_and_a_symlink_is_reject
     scripts.mkdir()
     runtime = scripts / "skillz-experiment.pyz"
     _ = runtime.write_bytes(b"\xff" * 300000)
-    builder = tmp_path / "wedge" / "scripts" / "wedge.pyz"
-    builder.parent.mkdir(parents=True)
+    builder = scripts / "wedge.pyz"
     _ = builder.write_bytes(b"\xff" * 300000)
-    runtime_files = {"scripts/skillz-experiment.pyz", "wedge/scripts/wedge.pyz"}
+    runtime_files = {"scripts/skillz-experiment.pyz", "scripts/wedge.pyz"}
     first = Candidate.capture(tmp_path, ["SKILL.md"])
     assert first.files == {"SKILL.md": "seed"} and runtime_files <= first.frozen.keys()
     other = scripts / "other.pyz"

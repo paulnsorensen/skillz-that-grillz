@@ -134,7 +134,7 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
         ("wedge-check", wedge + ["wedge", "check", "--root", "packages/wedge/examples/skills",
                               "--root", "packages/wedge/examples/consumer/skills"]),
-        ("wedge-bundle", wedge + ["wedge", "bundle", "skills/skillz", "skills/skillz/wedge", "--check"]),
+        ("wedge-bundle", wedge + ["wedge", "bundle", "skills/skillz", "--check"]),
     ]
 
 
