@@ -286,8 +286,8 @@ class Session:
                                      + evidence + "; restore the first-run environment and resume, "
                                      + "or start a new run")
         self.record["preflight"] = preflight
-        if isinstance(self.provider, Harness) and self.provider.codex_version is not None:
-            self.record["codex_version"] = self.provider.codex_version
+        if isinstance(self.provider, Harness):
+            self.record |= self.provider.run_facts
         self.checkpoint()
 
     def evaluate_case(self, candidate: Candidate, case: Case, arm: str, *, holdout: bool = False,

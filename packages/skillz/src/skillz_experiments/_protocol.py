@@ -11,6 +11,8 @@ OPERATIONS = ("sandbox", "discover", "infer")
 RESPONSE_FIELDS = {"sandbox": frozenset({"returncode", "stdout", "stderr"}), "discover": frozenset({"skills"}),
                    "infer": frozenset({"answer", "trace", "usage"})}
 USAGE_KEYS = ("input_tokens", "cached_input_tokens", "output_tokens")
+LEDGER_KEY = "_ledger"
+"""The private key of a transport result that carries the helper ledger lines of one call."""
 
 
 def argv_strings(value: object) -> list[str] | None:

@@ -15,7 +15,7 @@ import pytest
 
 import skillz_experiments.harness as harness_barrel
 import skillz_experiments.wrapper as wrapper_barrel
-from skillz_experiments.harness import Transport
+from skillz_experiments.harness._transport import Transport
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._command import Command
@@ -227,8 +227,9 @@ def test_every_adapter_is_a_transport() -> None:
 
 def test_the_barrels_export_exactly_the_contract_names() -> None:
     assert set(harness_barrel.__all__) == {
-        "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "Transport", "doctor", "host_report",
-        "ClaudeOptions", "Effort", "NONO_REMOVED", "command_profile", "stop_kind"}
+        "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "CONFIGURED_SELECTIONS", "doctor",
+        "host_report", "ClaudeOptions", "Effort", "NONO_REMOVED", "check_selection", "command_profile",
+        "configured_selection", "has_claude_sandbox", "refuses_claude_options", "stop_kind"}
     assert set(wrapper_barrel.__all__) == {"respond", "Runtime", "IMAGE"}
 
 

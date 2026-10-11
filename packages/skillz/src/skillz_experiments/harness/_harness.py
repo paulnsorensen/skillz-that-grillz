@@ -14,8 +14,8 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, ClaudeLogin, ClaudeOptions,
                                               resolve_read_roots)
-from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, HarnessName, Role, adapter_class,
-                                               command_paths, parse_role)
+from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, Role, command_paths, has_claude_sandbox,
+                                               parse_role)
 from skillz_experiments.harness._transport import Transport
 
 
@@ -99,16 +99,9 @@ class Configuration:
         for role in self.roles.values():
             _ = resolve_read_roots(role.options.sandbox_read, out)
 
-    @staticmethod
-    def judge_captures(configuration: Configuration | None, adapter: HarnessName) -> bool:
-        """Return whether the judge can show capture files. Without a configuration, the run's `adapter` is the judge."""
-        judge = configuration.roles.get("judge") if configuration is not None else None
-        return adapter_class(judge.adapter if judge is not None else adapter).claude_sandbox
-
-    @staticmethod
-    def refuses_claude_options(adapter: HarnessName) -> bool:
-        """Return whether a run-level Claude option flag is an error for the built-in `adapter`."""
-        return adapter_class(adapter).refuses_claude_options
+    def judge_captures(self) -> bool:
+        """Return whether the judge role can show capture files to the judge."""
+        return has_claude_sandbox(self.roles["judge"].adapter)
 
     def create(self, model: str, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None,
                surface: Surface | None = None, files: Mapping[str, str] | None = None) -> Harness:
@@ -126,14 +119,14 @@ class Harness:
     def __init__(self, configuration: Configuration, budget: Budget, checkpoint: Callable[[], None],
                  out: Path | None = None, surface: Surface | None = None, files: Mapping[str, str] | None = None) -> None:
         """`surface` and `files` (the seed candidate files) reach the task role only; only a Claude task role can take them."""
-        if surface is not None and not adapter_class(configuration.roles["task"].adapter).claude_sandbox:
+        if surface is not None and not has_claude_sandbox(configuration.roles["task"].adapter):
             raise CodedError("contract-surface-unsupported", "the contract declares a surface, and only the claude "
                              + "harness can run it; run with --harness claude")
         self.configuration = configuration
         self.identity = configuration.identity()
         self.transports: dict[str, Transport] = {}
         self.login: ClaudeLogin | None = None
-        self.codex_version: str | None = None
+        self.run_facts: dict[str, object] = {}
         try:
             for name, role in configuration.roles.items():
                 transport = role.create(budget, checkpoint, out, self.login, surface if name == "task" else None, files)
@@ -156,7 +149,8 @@ class Harness:
         runtime environment differs from the frozen record. It fails before any live call, so it costs nothing.
         A reused role still runs the free sandbox probe. Codex and Command roles always run.
         The observed Codex version sits in the evidence, so another version changes the environment hash.
-        The caller compares that hash and stops with `environment-differs`. `codex_version` holds the observed version.
+        The caller compares that hash and stops with `environment-differs`. `run_facts` holds the facts that the
+        adapters add to the run record, such as the observed Codex version.
         """
         self._unchanged()
         keys = mapping(recorded.get("reuse_keys", {})) if recorded else {}
@@ -178,9 +172,8 @@ class Harness:
                 evidence[name] = kept
                 continue
             evidence[name] = adapter.preflight()
-        facts = [adapter.run_facts(mapping(evidence[name])) for name, adapter in self.transports.items()]
-        versions = [fact.get("codex_version") for fact in facts]
-        self.codex_version = next((version for version in versions if isinstance(version, str)), None)
+        self.run_facts = {key: value for name, adapter in self.transports.items()
+                          for key, value in adapter.run_facts(mapping(evidence[name])).items()}
         live = sum(cast(int, mapping(item).get("live_calls", 0)) for item in evidence.values())
         return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live, "reuse_keys": reuse_keys}
 

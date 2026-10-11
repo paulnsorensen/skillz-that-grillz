@@ -25,6 +25,35 @@ NONO_REMOVED = ("this run used the nono isolation backend, which the runner no l
                 "https://github.com/paulnsorensen/skillz-that-grillz/issues/211; start a new run in a new --out directory")
 
 
+COMMAND_SELECTION = "command"
+CONFIG_SELECTION = "config"
+CONFIGURED_SELECTIONS = frozenset({COMMAND_SELECTION, CONFIG_SELECTION})
+"""The run-level labels of a harness selection that carries a configuration instead of a built-in adapter name."""
+
+
+def configured_selection(harness: str | None) -> str:
+    """Return the run-level label of a configured selection: `command` for `--harness command`, else `config`."""
+    return COMMAND_SELECTION if harness == COMMAND_SELECTION else CONFIG_SELECTION
+
+
+def check_selection(adapter: str, configured: bool) -> None:
+    """Raise `ValueError` unless the run-level `adapter` label is legal for a run that has (or lacks) a configuration."""
+    if adapter not in (BUILTIN_ADAPTERS if not configured else (*BUILTIN_ADAPTERS, *CONFIGURED_SELECTIONS)):
+        raise ValueError("harness must be claude, codex, or command")
+    if adapter == COMMAND_SELECTION and not configured:
+        raise ValueError("--harness command requires a command configuration")
+
+
+def has_claude_sandbox(adapter: str) -> bool:
+    """Return whether `adapter` runs the Claude Code sandbox, so it can run a surface and show captures to a judge."""
+    return adapter_class(adapter).claude_sandbox
+
+
+def refuses_claude_options(adapter: str) -> bool:
+    """Return whether a run-level Claude option flag is an error for `adapter`."""
+    return adapter_class(adapter).refuses_claude_options
+
+
 def adapter_class(adapter: str) -> type[Transport]:
     """Return the class that serves `adapter`. Any name but `claude` and `codex` is a user command."""
     if adapter == "claude":

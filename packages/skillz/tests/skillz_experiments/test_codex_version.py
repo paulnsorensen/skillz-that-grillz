@@ -145,7 +145,7 @@ def test_another_version_changes_the_environment_hash_and_the_harness_reports_it
     finally:
         session.close()
     assert again["environment_hash"] != recorded["environment_hash"]
-    assert session.codex_version == "codex-cli 0.161.0"
+    assert session.run_facts["codex_version"] == "codex-cli 0.161.0"
 
 
 @pytest.mark.parametrize("login, kind", [

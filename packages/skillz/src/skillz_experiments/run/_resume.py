@@ -12,12 +12,11 @@ from typing import TextIO
 from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments._contract import Contract
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics
-from skillz_experiments.harness import NONO_REMOVED, ClaudeOptions, stop_kind
+from skillz_experiments.harness import CONFIGURED_SELECTIONS, NONO_REMOVED, ClaudeOptions, stop_kind
 from skillz_experiments.run._session import HarnessName, text_field
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit
 
-_CONFIGURED_ADAPTERS = frozenset({"command", "config"})
 _OPTION_FLAGS = (("--effort", "effort"), ("--sandbox-read", "sandbox_read"), ("--sandbox-seconds", "sandbox_seconds"))
 
 
@@ -89,10 +88,10 @@ def check_resume(record: dict[str, object], target: Path, edit: Edit | None, rep
     if text_field(record, "model") != model:
         raise _config_differs("--model")
     recorded_adapter = text_field(record, "adapter")
-    if recorded_adapter in _CONFIGURED_ADAPTERS and "harness" not in record:
+    if recorded_adapter in CONFIGURED_SELECTIONS and "harness" not in record:
         raise CodedError("run-record-tampered", "the run record lacks its frozen harness identity; create a new run")
-    lost_configuration = recorded_adapter in _CONFIGURED_ADAPTERS and not configured
-    crossed_configuration = recorded_adapter != adapter and bool({recorded_adapter, adapter} & _CONFIGURED_ADAPTERS)
+    lost_configuration = recorded_adapter in CONFIGURED_SELECTIONS and not configured
+    crossed_configuration = recorded_adapter != adapter and bool({recorded_adapter, adapter} & CONFIGURED_SELECTIONS)
     if lost_configuration or crossed_configuration:
         raise CodedError("harness-changed", "the harness selection differs from the frozen record; "
                          + "resume with the same --harness-config or --harness command --command, or create a new run")

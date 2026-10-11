@@ -12,9 +12,7 @@ from skillz_experiments._cases import Case, CodedError, digest, mapping, string
 from skillz_experiments._contract import Contract, resolve
 from skillz_experiments._evaluation import executed, grade, usage, witnessed_events
 from skillz_experiments._budget import Budget
-
-LEDGER_KEY = "_ledger"
-"""The private key of a transport result that carries the helper ledger lines of one call."""
+from skillz_experiments._protocol import LEDGER_KEY
 
 
 @dataclass(frozen=True)

@@ -24,7 +24,8 @@ from skillz_experiments._cases import CodedError, digest
 from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
 from skillz_experiments.harness._claude._sandbox import sandbox_argv
 from skillz_experiments._contract import Surface, load_contract, parse
-from skillz_experiments.harness import Configuration, Harness, Transport
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._transport import Transport
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments.harness._seatbelt import command_profile

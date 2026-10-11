@@ -32,11 +32,13 @@ from skillz_experiments._seed import check_coverage, seed_cases
 from skillz_experiments._wedge_targets import plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
-    BUILTIN_ADAPTERS,
     ClaudeOptions,
     Configuration,
     EnvironmentDiffers,
+    check_selection,
+    has_claude_sandbox,
     host_report,
+    refuses_claude_options,
     stop_kind,
 )
 from skillz_experiments.run._export import summary
@@ -87,7 +89,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     contract = intake_contract(target)
     resolved = resolve_statistics(contract, statistics_given or {})
     kind = supported_kind(contract)
-    if contract.kinds[kind].capture and not Configuration.judge_captures(configuration, adapter):
+    captures = configuration.judge_captures() if configuration is not None else has_claude_sandbox(adapter)
+    if contract.kinds[kind].capture and not captures:
         raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
     drafted = load_draft(draft)
@@ -177,6 +180,71 @@ def _close(session: Session, pending: BaseException | None) -> None:
             pending.add_note(f"closing the provider also failed with {error.code}: {error}")
 
 
+def _check_arguments(adapter: HarnessName, configuration: Configuration | None, factory: Factory | None,
+                     edit: Edit | None, repeats: int | None,
+                     values: Mapping[str, object]) -> tuple[ClaudeOptions, dict[str, object]]:
+    """Check the run arguments before any work. Return the requested Claude options and the fields that the caller gave."""
+    check_selection(adapter, configuration is not None)
+    if edit is not None and edit not in get_args(Edit):
+        raise ValueError("edit must be prose or prose+cli")
+    if repeats is not None and repeats < 1:
+        raise ValueError("repeats must be at least 1")
+    given = {field: value for field, value in values.items() if value is not None}
+    if given and refuses_claude_options(adapter):
+        raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
+    if given and (configuration is not None or factory is not None):
+        raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to the built-in harness; "
+                         + "set them in the supplied configuration")
+    requested = ClaudeOptions.parse(given)
+    return requested, {field: getattr(requested, field) for field in given}
+
+
+def _check_statistics_flags(statistics: Mapping[str, float] | None) -> dict[str, float]:
+    """Check each statistics flag of the caller and return the accepted values."""
+    accepted: dict[str, float] = {}
+    for name, value in (statistics or {}).items():
+        if name not in Statistics.flags():
+            allowed = ", ".join(statistics_flag(flag) for flag in Statistics.flags())
+            raise ValueError(f"unknown statistics flag: {name}; allowed: {allowed}")
+        try:
+            checked = Statistics.declared({name: value})[name]
+        except ValueError as error:
+            raise ValueError(f"{statistics_flag(name)} {str(error).removeprefix(f'statistics {name} ')}") from None
+        accepted[name] = cast(float, checked)
+    return accepted
+
+
+def _drive(session: Session) -> dict[str, object]:
+    """Run the remaining phases of `session`, close the provider, and return the run summary."""
+    pending: BaseException | None = None
+    try:
+        try:
+            if session.phase == "prepared":
+                session.check_name()
+            session.preflight()
+            if session.phase == "prepared":
+                session.check_seed()
+                session.search()
+            if session.phase == "searched":
+                session.gate()
+            if session.phase == "gated":
+                session.finish()
+        except EnvironmentDiffers:
+            raise
+        except (OSError, ValueError, RuntimeError, OverflowError) as error:
+            fault = session.authoritative(error)
+            session.record_failure(fault)
+            if fault is error:
+                raise
+            raise fault from error
+    except BaseException as error:
+        pending = error
+        raise
+    finally:
+        _close(session, pending)
+    return summary(session.record)
+
+
 def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
         edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
         approve_cases: str | None = None, approve_budget: int | None = None,
@@ -188,34 +256,11 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
     `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
     them. A resume uses the recorded options. A value that a resume passes must match the record.
     """
-    if adapter not in (BUILTIN_ADAPTERS if configuration is None else (*BUILTIN_ADAPTERS, "command", "config")):
-        raise ValueError("harness must be claude, codex, or command")
-    if adapter == "command" and configuration is None:
-        raise ValueError("--harness command requires a command configuration")
-    if edit is not None and edit not in get_args(Edit):
-        raise ValueError("edit must be prose or prose+cli")
-    if repeats is not None and repeats < 1:
-        raise ValueError("repeats must be at least 1")
-    values = {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
-              "sandbox_seconds": sandbox_seconds}
-    given = {field: value for field, value in values.items() if value is not None}
-    if given and Configuration.refuses_claude_options(adapter):
-        raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
-    if given and (configuration is not None or factory is not None):
-        raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to the built-in harness; "
-                         + "set them in the supplied configuration")
-    requested = ClaudeOptions.parse(given)
-    given = {field: getattr(requested, field) for field in given}
-    statistics_given: dict[str, float] = {}
-    for name, value in (statistics or {}).items():
-        if name not in Statistics.flags():
-            allowed = ", ".join(statistics_flag(flag) for flag in Statistics.flags())
-            raise ValueError(f"unknown statistics flag: {name}; allowed: {allowed}")
-        try:
-            checked = Statistics.declared({name: value})[name]
-        except ValueError as error:
-            raise ValueError(f"{statistics_flag(name)} {str(error).removeprefix(f'statistics {name} ')}") from None
-        statistics_given[name] = cast(float, checked)
+    requested, given = _check_arguments(
+        adapter, configuration, factory, edit, repeats,
+        {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
+         "sandbox_seconds": sandbox_seconds})
+    statistics_given = _check_statistics_flags(statistics)
     if is_inside(out, target):
         raise ValueError("--out must be outside the target skill directory")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -247,30 +292,4 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)
-        pending: BaseException | None = None
-        try:
-            try:
-                if session.phase == "prepared":
-                    session.check_name()
-                session.preflight()
-                if session.phase == "prepared":
-                    session.check_seed()
-                    session.search()
-                if session.phase == "searched":
-                    session.gate()
-                if session.phase == "gated":
-                    session.finish()
-            except EnvironmentDiffers:
-                raise
-            except (OSError, ValueError, RuntimeError, OverflowError) as error:
-                fault = session.authoritative(error)
-                session.record_failure(fault)
-                if fault is error:
-                    raise
-                raise fault from error
-        except BaseException as error:
-            pending = error
-            raise
-        finally:
-            _close(session, pending)
-        return summary(session.record)
+        return _drive(session)
