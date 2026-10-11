@@ -14,7 +14,7 @@ import secrets
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import cast, final
 
 from skillz_experiments._protocol import argv_strings
 
@@ -114,23 +114,39 @@ def stage_witness(workspace: Path, skill: str, helper: str) -> Witness | None:
     return Witness(nonce, workspace / LEDGER)
 
 
+@final
+class LedgerError(Exception):
+    """The ledger cannot be trusted as a full record. `cause` names why; `entries` holds the lines that still parse."""
+
+    def __init__(self, cause: str, entries: list[dict[str, object]]) -> None:
+        super().__init__(cause)
+        self.cause = cause
+        self.entries = entries
+
+
 def ledger_entries(witness: Witness) -> list[dict[str, object]]:
     """Read the ledger lines of this call. A malformed line or a line with another nonce does not count.
 
     The model can write the ledger, so the open does not follow a symlink or block on a FIFO. Only a regular file counts.
+    An absent ledger returns []: the helper did not run. Any other fault raises `LedgerError` with cause
+    `ledger-unreadable`, or `ledger-truncated` when the ledger exceeds `LEDGER_BYTES_LIMIT`.
     """
     try:
         descriptor = os.open(witness.ledger, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
+    except FileNotFoundError:
         return []
+    except OSError:
+        raise LedgerError("ledger-unreadable", []) from None
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            return []
-        text = os.read(descriptor, LEDGER_BYTES_LIMIT).decode("utf-8", errors="replace")
+            raise LedgerError("ledger-unreadable", [])
+        raw = os.read(descriptor, LEDGER_BYTES_LIMIT + 1)
     except OSError:
-        return []
+        raise LedgerError("ledger-unreadable", []) from None
     finally:
         os.close(descriptor)
+    truncated = len(raw) > LEDGER_BYTES_LIMIT
+    text = raw[:LEDGER_BYTES_LIMIT].decode("utf-8", errors="replace")
     found: list[dict[str, object]] = []
     for line in text.splitlines():
         try:
@@ -144,4 +160,6 @@ def ledger_entries(witness: Witness) -> list[dict[str, object]]:
         code = item.get("exit_code")
         if item.get("nonce") == witness.nonce and argv is not None and type(code) is int:
             found.append({"argv": argv, "exit_code": code})
+    if truncated:
+        raise LedgerError("ledger-truncated", found)
     return found

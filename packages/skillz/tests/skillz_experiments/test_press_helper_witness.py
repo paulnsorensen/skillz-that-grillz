@@ -22,7 +22,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._witness import (
-    LEDGER, LEDGER_BYTES_LIMIT, Witness, ledger_entries, stage_witness)
+    LEDGER, LEDGER_BYTES_LIMIT, LedgerError, Witness, ledger_entries, stage_witness)
 
 SKILL = "echo-skill"
 HELPER = "scripts/x.py"
@@ -180,23 +180,31 @@ def test_ledger_non_utf8_bytes_do_not_crash_or_credit(tmp_path: Path) -> None:
     assert ledger_entries(witness) == []
 
 
+def fault(witness: Witness) -> LedgerError:
+    with pytest.raises(LedgerError) as caught:
+        _ = ledger_entries(witness)
+    return caught.value
+
+
 def test_ledger_oversize_padding_hides_later_lines_but_never_credits(tmp_path: Path) -> None:
     witness = Witness("n", tmp_path / LEDGER)
     line = json.dumps({"nonce": "n", "argv": ["a"], "exit_code": 0})
     _ = witness.ledger.write_text("x" * (LEDGER_BYTES_LIMIT + 10) + "\n" + line + "\n")
-    assert ledger_entries(witness) == []
+    error = fault(witness)
+    assert error.cause == "ledger-truncated" and error.entries == []
 
 
 def test_ledger_truncated_final_line_is_dropped(tmp_path: Path) -> None:
     witness = Witness("n", tmp_path / LEDGER)
     line = json.dumps({"nonce": "n", "argv": ["a"], "exit_code": 0})
     _ = witness.ledger.write_text(line + "\n" + "y" * (LEDGER_BYTES_LIMIT - len(line) - 5) + line)
-    assert ledger_entries(witness) == [{"argv": ["a"], "exit_code": 0}]
+    error = fault(witness)
+    assert error.cause == "ledger-truncated" and error.entries == [{"argv": ["a"], "exit_code": 0}]
 
 
 def test_ledger_is_a_directory_or_unreadable(tmp_path: Path) -> None:
     (tmp_path / LEDGER).mkdir()
-    assert ledger_entries(Witness("n", tmp_path / LEDGER)) == []
+    assert fault(Witness("n", tmp_path / LEDGER)).cause == "ledger-unreadable"
 
 
 @pytest.mark.parametrize("argv", [None, "a", [1], [], [None], {"a": 1}])
@@ -307,14 +315,16 @@ def test_symlinked_helper_is_not_staged(tmp_path: Path) -> None:
 
 def test_a_fifo_ledger_does_not_block_and_earns_nothing(tmp_path: Path) -> None:
     os.mkfifo(tmp_path / LEDGER)
-    assert ledger_entries(Witness("n", tmp_path / LEDGER)) == []
+    error = fault(Witness("n", tmp_path / LEDGER))
+    assert error.cause == "ledger-unreadable" and error.entries == []
 
 
 def test_a_symlinked_ledger_is_not_read(tmp_path: Path) -> None:
     target = tmp_path / "elsewhere.jsonl"
     _ = target.write_text(json.dumps({"nonce": "n", "argv": ["a"], "exit_code": 0}) + "\n")
     (tmp_path / LEDGER).symlink_to(target)
-    assert ledger_entries(Witness("n", tmp_path / LEDGER)) == []
+    error = fault(Witness("n", tmp_path / LEDGER))
+    assert error.cause == "ledger-unreadable" and error.entries == []
 
 
 def test_an_unwritable_ledger_keeps_the_helper_exit_code_and_earns_nothing(tmp_path: Path) -> None:
@@ -322,7 +332,7 @@ def test_an_unwritable_ledger_keeps_the_helper_exit_code_and_earns_nothing(tmp_p
     (workspace / LEDGER).mkdir()
     got = run(workspace, INVOKED)
     assert got.returncode == 3 and got.stderr == ""
-    assert ledger_entries(witness) == []
+    assert fault(witness).cause == "ledger-unreadable"
 
 
 def test_a_zipapp_helper_runs_with_its_exit_code_output_and_ledger_credit(tmp_path: Path) -> None:
