@@ -9,15 +9,16 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar, cast, final
 
-from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
+from skillz_experiments._candidate import Candidate, helper_script, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments._evaluator import answer_schema
+from skillz_experiments._evaluator import LEDGER_KEY, answer_schema
 from skillz_experiments._protocol import RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._runtime import Budget, process
 from skillz_experiments.harness._check import Check
 from skillz_experiments.harness._isolation import listening, probe
+from skillz_experiments.harness._witness import Witness, ledger_entries, stage_witness
 from skillz_experiments.harness._check import UNVERIFIED_CREDENTIAL
 
 
@@ -224,8 +225,14 @@ class Command:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)
             skill: dict[str, object] = {}
+            witness: Witness | None = None
+            helper: str | None = None
             if candidate is not None:
                 skill = {"skill_name": candidate.skill, "skill_path": str(workspace / ".agents/skills" / candidate.skill)}
+                rules = resolve(candidate.contract)
+                helper = helper_script(candidate, rules)
+                if helper is not None:
+                    witness = stage_witness(workspace, candidate.skill, helper)
             self.budget.claim(holdout=holdout)
             self.checkpoint()
             started = time.monotonic()
@@ -233,5 +240,9 @@ class Command:
             answer = mapping(result["answer"])
             _validate_answer(answer, schema or answer_schema())
             events = _events(result)
-            return {"answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
-                    "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
+            outcome: dict[str, object] = {
+                "answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
+                "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
+            if helper is not None:
+                outcome[LEDGER_KEY] = [] if witness is None else ledger_entries(witness)
+            return outcome

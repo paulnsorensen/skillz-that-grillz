@@ -266,3 +266,8 @@ def snapshot_outputs(workspace: Path) -> dict[str, str]:
             break
         files["/".join(parts)] = text
     return files
+
+
+def helper_script(candidate: Candidate, rules: Contract) -> str | None:
+    """Return the helper path that earns credit: the candidate's own script, else the contract's."""
+    return candidate.script or (rules.helper.path if rules.helper is not None else None)

@@ -141,6 +141,14 @@ A wrapper for a harness without a model-free skill inventory answers `discover` 
 That answer proves the directory convention, not that the harness loaded the skill.
 The runner still detects loading through the marker and traces, so a harness that returns no trace scores as unloaded.
 
+A command harness reports its own trace, and the Gemini wrapper accepts any printed `{` line as a tool event.
+For that reason the runner adds a helper witness to every task `infer`. It stages a stub at the helper path and keeps the real helper beside it under a dot name.
+The stub runs the real helper, then appends one ledger line to the workspace root. The helper keeps its exit code and output. The line holds a per-call nonce, the argv, and the exit code.
+Helper credit needs a ledger line that matches the trace entry. A forged trace entry earns no credit. A judged, hybrid, or command kind then reports `activation-rejected`. An `exact-json` kind scores 0.
+The run record shows `helper_witnessed: true` or `false` for a command harness that has a helper. The key is absent for `claude` and `codex`.
+The witness proves a real execution. It does not stop a model that forges ledger lines on purpose.
+The Gemini sandbox must allow the helper to write the ledger in the workspace root. The runner has not verified this on a live host. If the write fails, the gate fails closed and the helper earns no credit.
+
 The Gemini `discover` answer comes from `gemini skills list` under a temporary home. It names every skill that Gemini lists, so the runner rejects an extra skill.
 The parse of that output is textual and unverified on a live host. A skill that Gemini loads from outside the listing, such as a built-in skill, stays invisible to the check.
 The default Gemini sandbox image is `ghcr.io/google/gemini-cli:latest`. The sandbox documentation names this image, but its name and contents are unverified on a live host.
