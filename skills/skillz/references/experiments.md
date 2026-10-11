@@ -407,7 +407,8 @@ Its result lists the written patch files under `patches`.
 It never applies or installs a patch, and it never changes the target skill.
 Show the user each patch and the verdict. The user decides whether to apply it.
 `candidate.patch` is a plain unified diff with paths relative to the skill directory.
-Apply it from the skill directory with `git apply` or `patch -p1`. Added and deleted skill files appear in it.
+Apply it from the skill directory with `git apply` or `patch -p1 -E`. Added and deleted skill files appear in it.
+The `-E` flag makes the macOS `patch` remove a deleted file instead of leaving it empty.
 When a candidate changes wedge sources, export also writes `wedge-sources.patch`.
 It has git headers and paths relative to the repository root. Apply it from the repository root with `git apply`.
 Only a changed wedge source must lie inside the repository root.
