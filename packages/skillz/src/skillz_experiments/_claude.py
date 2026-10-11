@@ -26,6 +26,7 @@ from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._isolation import listening, probe, watched, watched_abstract, watched_unix
 from skillz_experiments._records import write_bytes
 from skillz_experiments._runtime import Budget, BudgetExhausted, live, process
+from skillz_experiments._seatbelt import command_profile
 
 TOOLS = "Bash,Read,Skill"
 PROBE_PREFIX = "skillz-probe-"
@@ -68,7 +69,6 @@ RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/se
                 "/etc/ld.so.conf.d", "/etc/alternatives", "/etc/localtime", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf",
                 "/dev/null", "/dev/zero", "/dev/random", "/dev/urandom")
 MACOS_READ = ("/System", "/Library")
-SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 EFFORTS = get_args(Effort)
 # Host paths that hold sockets or runtime state. A read root must not equal, hold, or sit inside one.
@@ -887,23 +887,6 @@ def nested_userns_blocked() -> bool:
     return result.returncode != 0 and result.stderr.strip() in {"unshare", "map"}
 
 
-def seatbelt_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
-    """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
-
-    The profile allows no network. It allows reads of the system runtime, the extra read roots, and the
-    workspace, and writes to the workspace except `.agents`. Later rules win, so the `.agents` deny follows
-    the write allow.
-    """
-    path = str(workspace)
-    rules = ["(version 1)", "(deny default)", "(allow process-fork)", "(allow process-exec)",
-             "(allow signal (target self))", "(allow sysctl-read)", "(allow file-read-metadata)",
-             *[f'(allow file-read* (subpath "{root}"))' for root in (*SEATBELT_RUNTIME, *read_roots)],
-             '(allow file-read* (literal "/dev/null") (literal "/dev/urandom"))',
-             f'(allow file-read* (subpath "{path}"))', f'(allow file-write* (subpath "{path}"))',
-             f'(deny file-write* (subpath "{path}/.agents"))', '(allow file-write* (literal "/dev/null"))']
-    return "\n".join(rules) + "\n"
-
-
 def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str],
                  read_roots: tuple[str, ...] = (), capture: Path | None = None) -> list[str]:
     """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No external network.
@@ -919,7 +902,7 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
     """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
-        return [tool, "-p", seatbelt_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
+        return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
     mount = ["--bind", str(capture), SANDBOX_CAPTURE] if capture is not None else []
     shell = ['/bin/sh', '-c', 'exec "$@" 2>"$0"', f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [

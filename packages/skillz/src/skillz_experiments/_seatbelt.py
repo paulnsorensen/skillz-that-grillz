@@ -1,10 +1,17 @@
-"""Seatbelt profile for `infer` on macOS: a copy of Gemini CLI's `strict-open` profile plus a deny for `.agents`.
+"""macOS Seatbelt profiles: one for a sandboxed command, and one for Gemini CLI `infer`.
 
+`command_profile` confines one command to its workspace. The Claude adapter and the Gemini `sandbox` operation use it.
+
+The `infer` profile is a copy of Gemini CLI's `strict-open` profile plus a deny for `.agents`.
 Copied from upstream `packages/cli/src/utils/sandboxBuiltinProfiles.ts` (main branch, October 2026).
 Not run on a live macOS host. Gemini CLI fills the `TARGET_DIR`, `TMP_DIR`, `HOME_DIR`, `CACHE_DIR` and
 `INCLUDE_DIR_n` parameters. The last rule wins in Seatbelt, so the final deny overrides the workspace write rule.
 """
+from __future__ import annotations
 
+from pathlib import Path
+
+SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
 STRICT_OPEN = r"""(version 1)
 (deny default)
 (allow file-read*
@@ -184,3 +191,20 @@ STRICT_OPEN = r"""(version 1)
 def profile(agents: str) -> str:
     """Return the profile text with `file-write*` denied below the given `.agents` path."""
     return STRICT_OPEN + f'(deny file-write* (subpath "{agents}"))\n'
+
+
+def command_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
+    """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
+
+    The profile allows no network. It allows reads of the system runtime, the extra read roots, and the
+    workspace, and writes to the workspace except `.agents`. Later rules win, so the `.agents` deny follows
+    the write allow.
+    """
+    path = str(workspace)
+    rules = ["(version 1)", "(deny default)", "(allow process-fork)", "(allow process-exec)",
+             "(allow signal (target self))", "(allow sysctl-read)", "(allow file-read-metadata)",
+             *[f'(allow file-read* (subpath "{root}"))' for root in (*SEATBELT_RUNTIME, *read_roots)],
+             '(allow file-read* (literal "/dev/null") (literal "/dev/urandom"))',
+             f'(allow file-read* (subpath "{path}"))', f'(allow file-write* (subpath "{path}"))',
+             f'(deny file-write* (subpath "{path}/.agents"))', '(allow file-write* (literal "/dev/null"))']
+    return "\n".join(rules) + "\n"

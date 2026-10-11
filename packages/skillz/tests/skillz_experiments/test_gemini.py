@@ -14,6 +14,7 @@ from skillz_experiments import _gemini
 from skillz_experiments._cli import main
 from skillz_experiments._gemini import respond
 from skillz_experiments._harness import Configuration
+from skillz_experiments._seatbelt import command_profile
 from skillz_experiments._runtime import Budget
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -424,6 +425,55 @@ def test_macos_profile_denies_agents_writes_after_every_allow(tmp_path: Path, mo
     assert text.rstrip().splitlines()[-1] == f'(deny file-write* (subpath "{root.resolve() / ".agents"}"))'
     assert (root / ".gemini/sandbox-macos-skillz.sb").stat().st_mode & 0o077 == 0
 
+
+def test_infer_gives_gemini_a_private_temp_directory(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    _ = infer(directory, workspace(tmp_path))
+    call = logged(directory / "gemini.log")[-1]
+    scratch = Path(cast(dict[str, str], call["env"])["TMPDIR"])
+    assert call["tmp_is_dir"] is True and scratch.name.startswith("skillz-gemini-tmp-") and not scratch.exists()
+    assert scratch.parent != Path(str(call["home_dir"]))
+
+
+def first_dotenv(start: Path) -> Path | None:
+    """Return the `.env` that Gemini CLI loads: the first `.gemini/.env` or `.env` at or above `start`."""
+    for folder in (start, *start.parents):
+        for candidate in (folder / ".gemini/.env", folder / ".env"):
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+@pytest.mark.parametrize("operation", ["infer", "discover"])
+def test_gemini_finds_an_empty_dotenv_before_a_shared_one(tmp_path: Path, operation: str) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    _ = (tmp_path / ".env").write_text("GEMINI_API_KEY=planted\nGOOGLE_CLOUD_PROJECT=planted\n")
+    if operation == "infer":
+        _ = infer(directory, root)
+    else:
+        (root / ".agents/skills/present").mkdir()
+        _ = (root / ".agents/skills/present/SKILL.md").write_text("x")
+        _ = respond(request("discover", root, skill_name="present", skill_path=str(root / ".agents/skills/present")),
+                    bin_dir=directory)
+    found = first_dotenv(Path(str(logged(directory / "gemini.log")[-1]["cwd"])))
+    assert found is not None and found.read_text() == ""
+    assert found.parent == root.resolve().parent
+
+
+def test_macos_sandbox_runs_the_command_under_the_shared_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    log = tmp_path / "sandbox-exec.log"
+    _ = (directory / "sandbox-exec").write_text(
+        f"#!{sys.executable}\nimport json, sys\nopen({str(log)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
+    (directory / "sandbox-exec").chmod(0o700)
+    _ = respond(request("sandbox", root, argv=["true"]), bin_dir=directory)
+    argv = cast(list[str], json.loads(log.read_text()))
+    assert argv[:2] == ["-p", command_profile(root.resolve())]
+    assert argv[2:] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", f"HOME={root.resolve()}", f"TMPDIR={root.resolve()}",
+                        "true"]
 
 
 def test_a_host_fault_while_starting_gemini_is_a_runtime_error(tmp_path: Path) -> None:

@@ -24,7 +24,7 @@ from typing import Literal, NoReturn, cast
 
 from skillz_experiments._cases import loads_untrusted, mapping
 from skillz_experiments._protocol import OPERATIONS, USAGE_KEYS, VERSION, argv_strings
-from skillz_experiments._seatbelt import profile as seatbelt_profile
+from skillz_experiments._seatbelt import command_profile, profile as seatbelt_profile
 
 Runtime = Literal["docker", "podman", "runsc", "sandbox-exec"]
 IMAGE = "ghcr.io/google/gemini-cli:latest"
@@ -41,15 +41,6 @@ SECRETISH = re.compile(r"\S*://\S*|\S*(?:key|token|secret|password|auth)\S*", re
 DOTENV_GUARDED = ("GOOGLE_GEMINI_BASE_URL", "GOOGLE_VERTEX_BASE_URL", "GEMINI_SANDBOX_PROXY_COMMAND", "SANDBOX_ENV",
                   "SANDBOX_PORTS", "BUILD_SANDBOX", "SANDBOX_SET_UID_GID", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY",
                   "http_proxy")
-SEATBELT = """(version 1)
-(deny default)
-(allow process-exec)
-(allow process-fork)
-(allow sysctl-read)
-(allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/System") (subpath "/Library") (subpath "/dev"))
-(allow file-read* file-write* (subpath (param "WORKSPACE")))
-(deny file-write* (subpath (param "AGENTS")))
-"""
 INSTALL = {
     "docker": "install Docker Engine and start it (https://docs.docker.com/engine/install/)",
     "podman": "install Podman (https://podman.io/docs/installation)",
@@ -175,6 +166,17 @@ def _environment(executable: str, bin_dir: Path | None, home: Path | None = None
     return {**dict.fromkeys(DOTENV_GUARDED, ""), "PATH": path, "HOME": str(home or _home()), **extra}
 
 
+def _stop_dotenv_search(root: Path) -> None:
+    """Write an empty `.env` in the runner directory that holds the workspace.
+
+    Gemini loads only the first `.env` that it finds at or above its working directory. The search then stops here
+    and never reaches a shared directory such as `/tmp`, where any local user can write a `.env`.
+    """
+    guard = root.parent / ".env"
+    guard.unlink(missing_ok=True)
+    _ = guard.write_text("")
+
+
 @contextmanager
 def _login_home() -> Generator[Path]:
     """Yield a temporary HOME that links only the Gemini login files, so no user setting or skill loads."""
@@ -199,7 +201,7 @@ def _sandbox(request: dict[str, object], workspace: Path, runtime: str | None, i
     env = _environment(executable, bin_dir)
     stop = None
     if kind == "sandbox-exec":
-        launch = [executable, "-D", f"WORKSPACE={root}", "-D", f"AGENTS={agents}", "-p", SEATBELT,
+        launch = [executable, "-p", command_profile(root),
                   "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", f"HOME={root}", f"TMPDIR={root}", *command]
     else:
         name = f"skillz-{secrets.token_hex(6)}"
@@ -354,8 +356,9 @@ def _infer(request: dict[str, object], workspace: Path, runtime: str | None, ima
     if kind != "sandbox-exec":
         extra["GEMINI_SANDBOX_IMAGE"] = image
         extra["DOCKER_CONFIG"] = str(_home() / ".docker")
-    with _login_home() as home:
-        env = _environment(gemini, bin_dir, home, **extra)
+    # A private TMPDIR: Gemini gives its sandbox write access to `os.tmpdir()`, which is otherwise the shared /tmp.
+    with _login_home() as home, tempfile.TemporaryDirectory(prefix="skillz-gemini-tmp-") as scratch:
+        env = _environment(gemini, bin_dir, home, **extra, TMPDIR=scratch)
         stop = None if kind == "sandbox-exec" else _stopper(executable, env, "ps", f"label={label}")
         result = _run(command, workspace, env, timeout=TIMEOUTS["infer"], stdin=full, stop=stop)
     if result.returncode:
@@ -408,8 +411,10 @@ def respond(raw: str, *, bin_dir: Path | None = None, runtime: str | None = None
         if operation == "sandbox":
             body = _sandbox(asked, root, runtime, image, bin_dir)
         elif operation == "discover":
+            _stop_dotenv_search(root)
             body = _skill_listing(asked, root, bin_dir)
         else:
+            _stop_dotenv_search(root)
             body = _infer(asked, root, runtime, image, bin_dir)
     except OSError as error:
         raise RuntimeError(f"host fault while running {operation}: {error.strerror or error}") from None

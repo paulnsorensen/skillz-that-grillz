@@ -19,13 +19,13 @@ import pytest
 from skillz_experiments import _claude, _codex
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError, digest
-from skillz_experiments._claude import (ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots, sandbox_argv,
-                                        seatbelt_profile)
+from skillz_experiments._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots, sandbox_argv
 from skillz_experiments._contract import Surface, load_contract, parse
 from skillz_experiments._evaluator import Transport
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._harness import Configuration, Harness
 from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._seatbelt import command_profile
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 ROOT = Path(__file__).parents[4]
@@ -842,7 +842,7 @@ def test_bubblewrap_argv_mounts_each_read_root_read_only_at_its_own_path() -> No
 
 
 def test_seatbelt_profile_allows_reads_only_of_each_read_root() -> None:
-    lines = seatbelt_profile(Path("/w/workspace"), ("/opt/pw-browsers",)).splitlines()
+    lines = command_profile(Path("/w/workspace"), ("/opt/pw-browsers",)).splitlines()
     assert '(allow file-read* (subpath "/opt/pw-browsers"))' in lines
     assert not any("/opt/pw-browsers" in line for line in lines if "write" in line or "network" in line)
 
@@ -876,7 +876,7 @@ def test_a_bubblewrap_command_reads_a_read_root_and_serves_itself_on_loopback(
 
 
 def test_seatbelt_profile_denies_network_host_reads_and_candidate_writes() -> None:
-    profile = seatbelt_profile(Path("/w/workspace"))
+    profile = command_profile(Path("/w/workspace"))
     lines = profile.splitlines()
     assert lines[:2] == ["(version 1)", "(deny default)"]
     assert not any("network" in line and line.startswith("(allow") for line in lines)
@@ -892,7 +892,7 @@ def test_seatbelt_argv_runs_the_command_with_a_clean_environment() -> None:
     workspace = Path("/w/workspace")
     argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", workspace, ["/usr/bin/python3", "-c", "pass"],
                         {"PATH": "/usr/bin:/bin", "HOME": "/w/workspace/home"})
-    assert argv[:3] == ["/usr/bin/sandbox-exec", "-p", seatbelt_profile(workspace)]
+    assert argv[:3] == ["/usr/bin/sandbox-exec", "-p", command_profile(workspace)]
     assert argv[3:] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=/w/workspace/home",
                         "/usr/bin/python3", "-c", "pass"]
 

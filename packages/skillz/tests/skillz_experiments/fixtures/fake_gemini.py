@@ -15,11 +15,12 @@ home = Path(os.environ["HOME"])
 stdin = "" if args[:1] == ["skills"] else sys.stdin.read()
 entry = {
     "argv": args, "stdin": stdin, "cwd": os.getcwd(), "home_dir": str(home),
+    "tmp_is_dir": os.path.isdir(os.environ.get("TMPDIR", "")),
     "env": {name: os.environ.get(name) for name in
             ("GEMINI_SANDBOX", "GEMINI_SANDBOX_IMAGE", "SANDBOX_FLAGS", "SANDBOX_MOUNTS", "SEATBELT_PROFILE",
              "GOOGLE_GENAI_USE_GCA", "DOCKER_CONFIG", "GOOGLE_GEMINI_BASE_URL", "GOOGLE_VERTEX_BASE_URL",
              "GEMINI_SANDBOX_PROXY_COMMAND", "SANDBOX_ENV", "SANDBOX_PORTS", "BUILD_SANDBOX", "SANDBOX_SET_UID_GID",
-             "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")},
+             "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "TMPDIR")},
     "home": sorted(f"{path.relative_to(home)}{'@' if path.is_symlink() else ''}" for path in home.rglob("*")),
 }
 with here.with_name("gemini.log").open("a") as log:
