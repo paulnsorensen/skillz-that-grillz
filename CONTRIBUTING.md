@@ -57,7 +57,11 @@ just build   # autofix, then verify formats, Python types/dead code, and tests
 just ci      # the same gate with no autofixes — exactly what CI runs
 ```
 
-Please run `just build` and verify 0 failures before opening a PR.
+`just build` runs format fixes and prepares Python environments before parallel checks.
+Set `GATE_JOBS` to bound concurrent checks and `TEST_WORKERS` to bound each pytest suite.
+Both settings default to 4.
+
+Run `just build` and verify 0 failures before opening a PR.
 
 ## Submitting a pull request
 

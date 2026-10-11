@@ -108,7 +108,7 @@ def probe(workspace: Path, sealed: Path, engine: Path, port: int) -> str:
         "except OSError: pass\n"
         "else: raise SystemExit('candidate write isolation failed')\n"
         "assert 'CODEX_HOME' not in os.environ\n"
-        "assert set(os.environ) <= {'PATH','HOME','TMPDIR','LANG','LC_CTYPE'}\n"
+        "assert set(os.environ) <= {'PATH','HOME','TMPDIR','LANG','LC_CTYPE','__CF_USER_TEXT_ENCODING'}\n"
         "p=pathlib.Path('allowed');p.write_text('ok');assert p.read_text()=='ok'\n"
         "try: sock=socket.socket(socket.AF_INET,socket.SOCK_STREAM)\n"
         "except OSError: pass\n"

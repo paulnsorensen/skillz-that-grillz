@@ -62,6 +62,19 @@ def _bwrap_works() -> bool:
 needs_bwrap = pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is unavailable")
 
 
+def _system_python_runs_the_pyz() -> bool:
+    """The helper check runs `/usr/bin/python3`. On macOS, that is often the Xcode Python 3.9."""
+    if not Path("/usr/bin/python3").exists():
+        return False
+    probe = subprocess.run(["/usr/bin/python3", "-c", "import sys; sys.exit(sys.version_info < (3, 11))"],
+                           capture_output=True, check=False)
+    return probe.returncode == 0
+
+
+needs_system_python = pytest.mark.skipif(not _system_python_runs_the_pyz(),
+                                         reason="/usr/bin/python3 is missing or older than 3.11")
+
+
 def run_pyz(*args: str, env: Mapping[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, "-I", str(PYZ), *args], capture_output=True, encoding="utf-8",
                           errors="replace", check=False, env=None if env is None else dict(env))
@@ -274,6 +287,7 @@ def offline_session(config: Path) -> Harness:
     return Configuration.load(config, "offline").create("offline", Budget(10, 60, 0), lambda: None)
 
 
+@needs_system_python
 @pytest.mark.parametrize(("transform", "accepted"), [
     ("pass", True),
     ("stderr = ''", False),

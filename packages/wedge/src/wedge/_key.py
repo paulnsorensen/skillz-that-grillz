@@ -38,6 +38,11 @@ class BuildPaths:
 def _inside_project(project: Path, raw: str, base: Path, key: str, *, must_exist: bool = True) -> Path:
     candidate = base / raw
     common = Path(os.path.commonpath((str(base.resolve()), str(project.resolve()))))
+    lexical = Path(os.path.normpath(candidate))
+    if lexical != common and common not in lexical.parents:
+        # Only a symlink could lead back inside, and the walk would reject it. Report the escape first,
+        # because the walk would otherwise stop at a system symlink such as macOS `/etc`.
+        raise ConfigError(f"{key} {raw!r} must resolve inside the project {project}")
     cursor: Path = candidate
     while True:
         if cursor.is_symlink():
