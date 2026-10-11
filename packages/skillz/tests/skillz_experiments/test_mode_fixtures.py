@@ -30,7 +30,7 @@ from skillz_experiments import _graders
 from skillz_experiments._candidate import make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, load_cases, mapping
 from skillz_experiments._cli import main
-from skillz_experiments._codex import Codex
+from skillz_experiments.harness._codex import Codex
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._facts import audit_facts
 

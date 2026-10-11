@@ -24,7 +24,8 @@ from typing import Literal, NoReturn, cast
 
 from skillz_experiments._cases import loads_untrusted, mapping
 from skillz_experiments._protocol import OPERATIONS, USAGE_KEYS, VERSION, argv_strings
-from skillz_experiments._seatbelt import command_profile, profile as seatbelt_profile
+from skillz_experiments.harness import command_profile
+from skillz_experiments.wrapper._seatbelt import profile as seatbelt_profile
 
 Runtime = Literal["docker", "podman", "runsc", "sandbox-exec"]
 IMAGE = "ghcr.io/google/gemini-cli:latest"

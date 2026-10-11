@@ -18,16 +18,16 @@ from typing import cast, final
 
 import pytest
 
-import skillz_experiments._claude as claude_module
+import skillz_experiments.harness._claude as claude_module
 import skillz_experiments._evaluation as evaluation_module
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError
-from skillz_experiments._codex import Codex
-from skillz_experiments._command import Command
+from skillz_experiments.harness._codex import Codex
+from skillz_experiments.harness._command import Command
 from skillz_experiments._contract import HELPER_FIXTURES, load_contract, resolve
 from skillz_experiments._evaluation import fixture_failure, helper_failure
 from skillz_experiments._graders import Sandbox
-from skillz_experiments._harness import Configuration, Harness
+from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments._runtime import Budget
 from skillz_experiments._runtime import process as run_process
 from skillz_experiments._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
@@ -204,7 +204,7 @@ def stub_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[tu
         return subprocess.CompletedProcess(command, code, stdout, stderr)
 
     monkeypatch.setattr(Codex, "_discover", discover)
-    monkeypatch.setattr("skillz_experiments._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
     return adapter
 
 
@@ -234,7 +234,7 @@ def test_codex_sandbox_returns_the_real_stderr_as_the_third_value(tmp_path: Path
     def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 3, "out", "err\n")
 
-    monkeypatch.setattr("skillz_experiments._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
     assert adapter.sandbox(tmp_path, ["x"]) == (3, "out", "err\n")
 
 

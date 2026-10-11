@@ -18,10 +18,10 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, load_cases
-from skillz_experiments._claude import ClaudeCode
 from skillz_experiments._contract import Contract, Surface, parse
 from skillz_experiments._evaluator import Reply, Transcript, evaluate
-from skillz_experiments._harness import Configuration, Harness
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
 from skillz_experiments._runtime import Budget, BudgetExhausted
 
@@ -407,6 +407,11 @@ class Judge:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.answers: list[dict[str, object]] = answers
         self.prompts: list[str] = []
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
 
     def preflight(self) -> dict[str, object]:
         return {}

@@ -94,6 +94,15 @@ class _Provider:
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
 
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
+
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 

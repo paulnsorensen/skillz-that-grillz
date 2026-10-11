@@ -6,18 +6,20 @@ import re
 import shutil
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import cast, final
+from typing import ClassVar, cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._discovery import discover
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments._evaluator import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, answer_schema, evaluate
-from skillz_experiments._isolation import listening, probe
+from skillz_experiments._evaluator import answer_schema, evaluate
 from skillz_experiments._runtime import Budget, process
+from skillz_experiments.harness._check import Check, credential_row, failed
+from skillz_experiments.harness._isolation import listening, probe
+from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN
 
 MINIMUM_VERSION = (0, 154, 0)
 MINIMUM_TEXT = ".".join(map(str, MINIMUM_VERSION))
@@ -25,6 +27,7 @@ MINIMUM_TEXT = ".".join(map(str, MINIMUM_VERSION))
 CODEX_IDENTITY = "codex-cli 0.154.0"
 _MAX_DIGITS = 4000  # Python's default limit for int(): `sys.int_info.default_max_str_digits` (4300) stays above it.
 _AUTH_LIMIT = 1_000_000
+CODEX_FIX = f"install Codex {MINIMUM_TEXT} or newer and log in with `codex`, or run with `--harness claude`"
 _NUMBER = f"([0-9]{{1,{_MAX_DIGITS}}})"
 _VERSION_OUTPUT = re.compile(rf"codex-cli {_NUMBER}\.{_NUMBER}\.{_NUMBER}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?")
 
@@ -83,6 +86,8 @@ def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> li
 
 @final
 class Codex:
+    claude_sandbox: ClassVar[bool] = False
+    refuses_claude_options: ClassVar[bool] = True
     rejection: str | None = None
 
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
@@ -103,6 +108,23 @@ class Codex:
     @property
     def credential_kind(self) -> str:
         return credential_kind(self.host_home)
+
+    @classmethod
+    def host_checks(cls, executable: str | None = None) -> list[Check]:
+        """Check the Codex host with the same preflight that a run starts with. A Codex run takes no executable."""
+        del executable
+        try:
+            transport = Codex("doctor", Budget(1, 120, 0), lambda: None)
+        except (OSError, RuntimeError) as error:
+            return [failed("codex", error, CODEX_FIX), credential_row(credential_kind(host_home()))]
+        try:
+            _ = transport.preflight()
+        except (CodedError, OSError, RuntimeError) as error:
+            return [failed("codex-preflight", error, CODEX_FIX), credential_row(transport.credential_kind)]
+        finally:
+            transport.close()
+        return [Check("codex-preflight", "pass", "version, sandbox, and skill discovery checks passed"),
+                credential_row(transport.credential_kind)]
 
     def close(self) -> None:
         self.authentication_home.cleanup()
@@ -198,6 +220,27 @@ class Codex:
         result = process(command, cwd=workspace, timeout=min(20, self.budget.remaining()),
                          environment=self._environment(workspace))
         return result.returncode, result.stdout, result.stderr
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        """Codex keeps no live pass, so it has no reuse key."""
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        """Codex always runs its preflight."""
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        """Report the observed Codex version, when the preflight evidence holds one."""
+        version = evidence.get("codex_version")
+        return {"codex_version": version} if isinstance(version, str) else {}
+
+    def adopt_login(self) -> None:
+        """Codex shares no Claude login."""
+
+    def check_name(self, candidate: Candidate) -> None:
+        """Codex has no name collision to check."""
+        del candidate
 
     def check_candidate(self, candidate: Candidate) -> bool:
         self.rejection = None

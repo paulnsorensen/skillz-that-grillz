@@ -14,19 +14,20 @@ import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Literal, cast, final, get_args
+from typing import ClassVar, Literal, cast, final, get_args
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, relative, string
 from skillz_experiments._contract import Surface, resolve
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments._evaluator import (MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, UNVERIFIED_CREDENTIAL, Reply, Transcript,
-                                           answer_schema)
+from skillz_experiments._evaluator import Reply, Transcript, answer_schema
 from skillz_experiments._graders import CAPTURE_DIRECTORY
-from skillz_experiments._isolation import listening, probe, watched, watched_abstract, watched_unix
 from skillz_experiments._records import write_bytes
 from skillz_experiments._runtime import Budget, BudgetExhausted, live, process
-from skillz_experiments._seatbelt import command_profile
+from skillz_experiments.harness._seatbelt import command_profile
+from skillz_experiments.harness._check import Check, credential_row, failed
+from skillz_experiments.harness._isolation import listening, probe, watched, watched_abstract, watched_unix
+from skillz_experiments.harness._check import MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, UNVERIFIED_CREDENTIAL
 
 TOOLS = "Bash,Read,Skill"
 PROBE_PREFIX = "skillz-probe-"
@@ -1015,6 +1016,8 @@ def _probe_skill(workspace: Path, name: str) -> None:
 
 @final
 class ClaudeCode:
+    claude_sandbox: ClassVar[bool] = True
+    refuses_claude_options: ClassVar[bool] = False
     rejection: str | None = None
 
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
@@ -1044,6 +1047,11 @@ class ClaudeCode:
     def credential_kind(self) -> str:
         """Name the credential kind. A macOS Keychain login has no file, so the runner cannot verify it."""
         return SUBSCRIPTION_LOGIN if self.credential is not None else UNVERIFIED_CREDENTIAL
+
+    @classmethod
+    def host_checks(cls, executable: str | None = None) -> list[Check]:
+        """Check the Claude Code host: tools, login, sandbox, and skill inventory. `executable` names a configured role's."""
+        return [*_claude_checks(executable), Check("live-isolation", "needs-live", LIVE_PREFLIGHT)]
 
     def close(self) -> None:
         """Close the login when this role created it. The harness closes a login that it shares."""
@@ -1205,6 +1213,28 @@ class ClaudeCode:
         return digest({"settings": self._floor(Path("/TASK"), ()), "environment": environment, "tools": TOOLS,
                        "skill": PROBE_PREFIX, "platform": sys.platform, "network_probe": NETWORK_PROBE, "read_probe": READ_PROBE,
                        "setting_sources": SETTING_SOURCES, "isolation": "claude"} | surface)
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        """Return the key under which a live pass of this role stays valid: the role fingerprint and the environment key."""
+        return digest({"fingerprint": fingerprint, "environment": self.environment_key()})
+
+    def resume(self, kept: object) -> bool:
+        """Return whether the recorded pass `kept` holds. A held pass still runs the free sandbox probe."""
+        if not (isinstance(kept, dict) and cast(dict[str, object], kept).get("isolation") == "passed"):
+            return False
+        self.check_helper_sandbox()
+        _ = self.inventory()
+        return True
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        """Report no run-record fact for Claude Code."""
+        del evidence
+        return {}
+
+    def adopt_login(self) -> ClaudeLogin | None:
+        """Give the login of this role to the run, which then closes it once."""
+        self.owns_login = False
+        return self.login
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
         for name, found, fix in host_tools():
@@ -1515,3 +1545,98 @@ class ClaudeCode:
                 return False
             self.rejection = helper_failure(self, workspace, rules)
             return self.rejection is None
+
+
+APPARMOR_SYSCTL = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
+APPARMOR_BWRAP = Path("/etc/apparmor.d/bwrap-userns-restrict")
+PROBE_FIX = "; ".join((INSTALL_BUBBLEWRAP, INSTALL_SOCAT, USERNS_FIX))
+INVENTORY_FIX = "run `claude` once to see why its skill list fails, and remove any plugin or setting that blocks it"
+SETUP_FIX = "check that TMPDIR and HOME name writable directories, then run again"
+LIVE_PREFLIGHT = ("one model call after budget approval checks Bash reads, writes, and network inside the sandbox; "
+                  "a free check cannot prove them")
+
+
+def _version(executable: str) -> str:
+    try:
+        result = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=15, check=False,
+                                env={"PATH": "/usr/bin:/bin"})
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown version"
+    return result.stdout.strip() or "unknown version"
+
+
+def _apparmor() -> Check:
+    """Report the Ubuntu user-namespace restriction state. It explains the nested-namespace result; it never fails."""
+    try:
+        restricted = APPARMOR_SYSCTL.read_text().strip()
+    except OSError:
+        restricted = "absent"
+    profile = "installed" if APPARMOR_BWRAP.exists() else "absent"
+    return Check("apparmor", "info", f"kernel.apparmor_restrict_unprivileged_userns={restricted}; "
+                 + f"bwrap-userns-restrict profile {profile}. The profile strips capabilities from processes that bwrap "
+                 + "starts, whatever the sysctl says")
+
+
+def _tool_checks() -> list[Check]:
+    """Report each host tool row of `host_tools`, so one pass names every missing tool."""
+    return [Check(f"tool:{name}", "pass" if found else "fail", f"`{name}` found", None if found else fix)
+            for name, found, fix in host_tools()]
+
+
+def _probe_checks(transport: ClaudeCode, probe: bool) -> list[Check]:
+    """Report the helper sandbox probe and the skill inventory as separate rows. The inventory never waits on the probe."""
+    checks: list[Check] = []
+    if probe:
+        try:
+            transport.check_helper_sandbox()
+        except (CodedError, OSError, RuntimeError) as error:
+            checks.append(failed("sandbox-probe", error, PROBE_FIX))
+        else:
+            checks.append(Check("sandbox-probe", "pass", "the helper sandbox probe passed"))
+    try:
+        inventory = transport.inventory()
+    except (CodedError, OSError, RuntimeError) as error:
+        checks.append(failed("skill-inventory", error, INVENTORY_FIX))
+    else:
+        turned_off = f"; turned off {sorted(inventory.foreign)}" if inventory.foreign else ""
+        checks.append(Check("skill-inventory", "pass", f"only the probe skill loads besides {len(inventory.builtin)} "
+                            + f"Claude Code commands{turned_off}"))
+    return checks
+
+
+def _login_checks(executable: str, probe: bool) -> list[Check]:
+    try:
+        transport = ClaudeCode("doctor", Budget(1, 120, 0), lambda: None, Path(executable))
+    except CodedError as error:
+        return [failed("login", error, LOGIN_HINT), credential_row(MISSING_CREDENTIAL)]
+    except (OSError, RuntimeError) as error:
+        return [failed("claude-setup", error, SETUP_FIX), credential_row(login_credential_kind())]
+    checks = [Check("login", "pass", "Claude login found" if transport.credential else "macOS Keychain login"),
+              credential_row(transport.credential_kind)]
+    try:
+        if transport.unix_sockets():
+            checks.append(Check("nested-namespace", "info", "this host blocks a user namespace inside bwrap, so the runner "
+                                + "turns off Claude Code's Unix-socket filter (allowAllUnixSockets); file and domain rules "
+                                + "stay on, and the live preflight proves that a host Unix socket stays unreachable"))
+        checks += _probe_checks(transport, probe)
+    finally:
+        try:
+            transport.close()
+        except CodedError as error:
+            checks.append(Check("login-close", "info", str(error)) if error.code in NOTICE_CODES
+                          else failed("login-close", error, LOGIN_HINT))
+    return checks
+
+
+def _claude_checks(named: str | None = None) -> list[Check]:
+    """Check Claude Code. `named` is the executable of a configured role; the default is `claude` on PATH."""
+    executable = shutil.which(named or "claude")
+    if executable is None:
+        return [Check("claude", "fail", f"the `{named or 'claude'}` executable is not on PATH",
+                      "install Claude Code, then run `claude` once and log in"),
+                credential_row(login_credential_kind())]
+    tools = _tool_checks()
+    checks = [Check("claude", "pass", _version(executable)), *tools]
+    if sys.platform != "darwin":
+        checks.append(_apparmor())
+    return checks + _login_checks(executable, all(tool.status == "pass" for tool in tools))

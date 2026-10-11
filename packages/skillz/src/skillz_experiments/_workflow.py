@@ -24,14 +24,10 @@ from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._candidate import (NEW_CLI, WEDGE_PREFIX, Candidate, candidate_files, is_skill_file, load_frozen,
                                            store_frozen)
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping, relative, repo_root
-from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES, ClaudeOptions,
-                                        resolve_read_roots)
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._doctor import host_report
 from skillz_experiments._evaluator import task_tokens
 from skillz_experiments._gate import (DEFAULT_STATISTICS, Statistics, Verdict, case_deltas, close,
                                       verdict as gate_verdict)
-from skillz_experiments._harness import BUILTIN_ADAPTERS, NONO_REMOVED, Configuration, EnvironmentDiffers, Harness
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
 from skillz_experiments._new_cli import expand_files, parse_value, prompt_rule, unused_helpers
@@ -43,6 +39,9 @@ from skillz_experiments._search import Edit, REFLECTION_MINIBATCH, overshoot, se
 from skillz_experiments._seed import check_coverage, seed_cases
 from skillz_experiments._wedge_targets import (Rebuilder, TargetPlan, mcp_text, never_editable, plan_targets, reopen,
                                                seal, settle)
+from skillz_experiments.harness import (BUILTIN_ADAPTERS, NONO_REMOVED, NOTICE_CODES as _NOTICE_CODES,
+                                         TERMINAL_CODES as _TERMINAL_CODES, ClaudeOptions, Configuration,
+                                         EnvironmentDiffers, Harness, HarnessName, host_report)
 
 DEFAULT_SEED = 20261006
 DEFAULT_REPEATS = 3
@@ -53,7 +52,6 @@ MINIMUM_SEARCH_MARGIN = 4
 HOLDOUT_RETRIES_PER_ARM = 1
 # Seconds that the wall clock may step back between prepare and resume, for example after an NTP step.
 CLOCK_TOLERANCE = 5.0
-HarnessName = str
 
 
 class Stop(CodedError):
@@ -92,13 +90,23 @@ class _Provider(Protocol):
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]: ...
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
+    def check_name(self, candidate: Candidate) -> None: ...
+    def check_candidate(self, candidate: Candidate) -> bool: ...
+
+    @property
+    def rejection(self) -> str | None: ...
 
 
 Factory = Callable[[str, Budget, Callable[[], None]], _Provider]
 
 
 def _engine_hash() -> str:
-    return digest({path.name: path.read_text() for path in Path(__file__).parent.glob("*.py")})
+    root = Path(__file__).parent
+    return digest({
+        path.relative_to(root).as_posix(): path.read_text()
+        for path in sorted(root.rglob("*.py"))
+        if "__pycache__" not in path.parts
+    })
 
 
 def _field(record: dict[str, object], key: str) -> object:
@@ -159,14 +167,6 @@ def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeO
     runs = max((int(grader.type in ("command", "hybrid", "journey")) + int(bool(grader.capture))
                 for grader in (contract.grader(case.kind) for case in cases)), default=0)
     return runs * options.sandbox_seconds
-
-
-def _sizing_options(configuration: Configuration | None, options: ClaudeOptions) -> ClaudeOptions:
-    """Return the options that size the run: the task role of a supplied configuration, or the run's own `options`."""
-    if configuration is None:
-        return options
-    role = configuration.roles["task"]
-    return role.options if role.adapter == "claude" else ClaudeOptions()
 
 
 def _case_calls(contract: Contract, case: Case) -> int:
@@ -344,18 +344,6 @@ def _frozen_statistics(record: dict[str, object]) -> Statistics:
         raise Stop("run-record-tampered", "the recorded statistics are malformed; create a new run", {}) from None
 
 
-def _host_selections(configuration: Configuration | None) -> list[tuple[str, str | None]]:
-    """Return the distinct `(adapter, executable)` pairs of the built-in roles. A command role relies on its sandbox probe.
-
-    A Claude role names its own executable. A Codex role runs `codex` from PATH.
-    """
-    if configuration is None:
-        return []
-    pairs = {(role.adapter, role.command[0] if role.adapter == "claude" else None)
-             for role in configuration.roles.values() if role.adapter in BUILTIN_ADAPTERS}
-    return sorted(pairs, key=lambda pair: (pair[0], pair[1] or ""))
-
-
 def _differences(recorded: object, observed: object, name: str = "") -> list[str]:
     """Name each preflight evidence key whose value differs, with both values. Keys sit in dotted paths."""
     if isinstance(recorded, dict) and isinstance(observed, dict):
@@ -376,7 +364,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     """
     draft = out / DRAFT_NAME
     if not draft.is_file():
-        hosts = [(adapter, None)] if resolve_harness else _host_selections(configuration)
+        hosts = [(adapter, None)] if resolve_harness else (configuration.host_selections() if configuration is not None else [])
         report = host_report(hosts) if hosts else None
         if report is not None and not report["ok"]:
             raise Stop("host-not-ready", "fix each failed host check, then call run again; no model call ran", report)
@@ -390,9 +378,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     contract = intake_contract(target)
     resolved = resolve_statistics(contract, statistics_given or {})
     kind = _supported_kind(contract)
-    judge = configuration.roles.get("judge") if configuration is not None else None
-    judge_adapter = judge.adapter if judge is not None else adapter
-    if contract.kinds[kind].capture and judge_adapter != "claude":
+    if contract.kinds[kind].capture and not Configuration.judge_captures(configuration, adapter):
         raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
     drafted = load_draft(draft)
@@ -409,8 +395,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     expected = case_hash(cases, split_seed)
     if resolve_harness or configuration is not None:
         chosen = configuration if configuration is not None else Configuration.single(adapter, model, options)
-        for role in chosen.roles.values():
-            _ = resolve_read_roots(role.options.sandbox_read, out)
+        chosen.check_read_roots(out)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
@@ -424,7 +409,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
     seed_candidate = Candidate(files, tuple(_editable(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
-    plan = _size_plan(contract, scored, repeats, _sizing_options(configuration, options))
+    plan = _size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
     shown = _estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
@@ -482,7 +467,7 @@ class _Session:
         options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
         configuration = supplied if supplied is not None else (
             Configuration.single(adapter, model, options) if factory is None else None)
-        self.sizing = _sizing_options(configuration, options)
+        self.sizing = options if configuration is None else configuration.sizing_options()
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
@@ -797,15 +782,12 @@ class _Session:
 
     def check_name(self) -> None:
         """Stop before any live call when the seed name matches a Claude Code command or a foreign skill."""
-        check = cast(Callable[[Candidate], None] | None, getattr(self.provider, "check_name", None))
-        if check is not None:
-            check(self.seed)
+        self.provider.check_name(self.seed)
 
     def check_seed(self) -> None:
         """Stop before any search call when the seed fails the local candidate contract check."""
-        check = cast(Callable[[Candidate], bool] | None, getattr(self.provider, "check_candidate", None))
-        if check is not None and not check(self.seed):
-            raise _baseline_rejected(cast(str | None, getattr(self.provider, "rejection", None)))
+        if not self.provider.check_candidate(self.seed):
+            raise _baseline_rejected(self.provider.rejection)
 
     def search(self) -> None:
         """Run the one GEPA search over train and validation cases. Holdout cases never enter it."""
@@ -1112,7 +1094,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
     values = {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
               "sandbox_seconds": sandbox_seconds}
     given = {field: value for field, value in values.items() if value is not None}
-    if given and adapter == "codex":
+    if given and Configuration.refuses_claude_options(adapter):
         raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
     if given and (configuration is not None or factory is not None):
         raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to the built-in harness; "

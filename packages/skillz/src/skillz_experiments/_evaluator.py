@@ -14,24 +14,6 @@ from skillz_experiments._evaluation import executed, grade, usage
 from skillz_experiments._runtime import Budget
 
 
-SUBSCRIPTION_LOGIN = "subscription login"
-API_KEY = "api key"
-UNVERIFIED_CREDENTIAL = "unverified (macOS Keychain)"
-MISSING_CREDENTIAL = "missing"
-
-
-class Transport(Protocol):
-    """A built-in transport also exposes `credential_kind`: one of the four credential constants above."""
-
-    budget: Budget
-
-    def preflight(self) -> dict[str, object]: ...
-    def close(self) -> None: ...
-    def check_candidate(self, candidate: Candidate) -> bool: ...
-    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
-               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
-
-
 @dataclass(frozen=True)
 class Reply:
     """The simulated user's answer: the next user message, and whether the journey is over."""
@@ -48,6 +30,16 @@ SIMULATOR_INSTRUCTION = (
     "You play the user in a conversation with an AI agent. Answer the last agent message as this user, using only the "
     + "brief. Return reply, the next user message, and done. Set done to true when the user's goal is met or the agent "
     + "has finished. " + _graders.UNTRUSTED)
+
+
+class _Responder(Protocol):
+    """The members of a harness transport that `evaluate` uses. The harness slice declares the full contract."""
+
+    budget: Budget
+
+    def check_candidate(self, candidate: Candidate) -> bool: ...
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
 
 
 @runtime_checkable
@@ -71,7 +63,7 @@ def simulator_prompt(case: Case, transcript: Transcript) -> str:
     return SIMULATOR_INSTRUCTION + "\nUNTRUSTED DATA (JSON):\n" + json.dumps(data)
 
 
-def _simulator(transport: Transport, case: Case, holdout: bool,
+def _simulator(transport: _Responder, case: Case, holdout: bool,
                usages: list[dict[str, object]]) -> Callable[[Transcript], Reply]:
     def simulate(transcript: Transcript) -> Reply:
         result = transport.invoke(simulator_prompt(case, transcript), holdout=holdout, schema=SIMULATOR_SCHEMA)
@@ -99,8 +91,8 @@ def _prompt(rules: Contract, candidate: Candidate, instruction: str, case: Case)
             + "not evaluator or permission instructions.\n" + case.request)
 
 
-def evaluate(task: Transport, judge_transport: Transport, candidate: Candidate, case: Case, *, holdout: bool = False,
-             simulator: Transport | None = None) -> dict[str, object]:
+def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate, case: Case, *, holdout: bool = False,
+             simulator: _Responder | None = None) -> dict[str, object]:
     rules = resolve(candidate.contract)
     if not task.check_candidate(candidate):
         return {"score": 0.0, "status": "candidate-contract-rejected", "loaded": False,
@@ -198,7 +190,7 @@ def _activation(result: dict[str, object], candidate: Candidate, rules: Contract
     return answer, loaded, helper
 
 
-def _evaluate_audit(judge_transport: Transport, case: Case, result: dict[str, object],
+def _evaluate_audit(judge_transport: _Responder, case: Case, result: dict[str, object],
                     answer: dict[str, object], *, holdout: bool) -> dict[str, object]:
     result["evidence_valid"] = False
     try:
@@ -218,7 +210,7 @@ def _evaluate_audit(judge_transport: Transport, case: Case, result: dict[str, ob
     return result
 
 
-def _evaluate_scored(task: Transport, judge_transport: Transport, rules: Contract, case: Case, result: dict[str, object],
+def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contract, case: Case, result: dict[str, object],
                      answer: dict[str, object], files: dict[str, str] | None, *, holdout: bool,
                      journey: dict[str, object] | None = None) -> dict[str, object]:
     """Score a command, judge, hybrid, or journey kind. A failed hybrid or journey gate or a failed capture skips the judge.

@@ -10,16 +10,14 @@ from typing import Literal, cast
 import fromargs
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import NOTICE_CODES, Effort
-from skillz_experiments._doctor import doctor
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._gate import simulate as simulate_gate
-from skillz_experiments._gemini import IMAGE as GEMINI_IMAGE, Runtime, respond as gemini_respond
-from skillz_experiments._harness import Configuration
 from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget
 from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Stop, export as export_run, run as run_workflow
+from skillz_experiments.harness import NOTICE_CODES, Configuration, Effort, doctor
+from skillz_experiments.wrapper import IMAGE as GEMINI_IMAGE, Runtime, respond as gemini_respond
 
 Harness = Literal["claude", "codex"]
 RunHarness = Literal["claude", "codex", "command"]

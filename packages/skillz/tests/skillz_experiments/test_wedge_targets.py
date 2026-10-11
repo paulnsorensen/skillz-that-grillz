@@ -28,7 +28,7 @@ from skillz_experiments._contract import Contract, load_contract
 from skillz_experiments._cases import repo_root
 from skillz_experiments._gate import DEFAULT_STATISTICS
 from skillz_experiments._graders import Sandbox
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness import Configuration
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import Budget
 from skillz_experiments._search import Edit
@@ -134,6 +134,15 @@ class Recorder:
 class _Provider:
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
 
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}

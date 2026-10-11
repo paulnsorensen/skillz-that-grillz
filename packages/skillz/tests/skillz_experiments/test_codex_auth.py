@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from skillz_experiments._codex import Codex
+from skillz_experiments.harness._codex import Codex
 from skillz_experiments._runtime import Budget, process
 
 TOKENS = ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")

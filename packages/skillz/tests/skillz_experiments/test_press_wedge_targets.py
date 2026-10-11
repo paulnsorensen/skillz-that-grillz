@@ -135,6 +135,15 @@ class _Provider:
         self.budget: Budget = budget
         self.checkpoint: Callable[[], None] = checkpoint
 
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
+
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 

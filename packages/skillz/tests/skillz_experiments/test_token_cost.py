@@ -475,6 +475,15 @@ class _Priced:
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
         pass
 
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
+
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 

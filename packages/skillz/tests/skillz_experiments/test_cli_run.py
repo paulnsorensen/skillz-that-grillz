@@ -15,8 +15,8 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
 from skillz_experiments._cli import main
-from skillz_experiments._codex import Codex
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness import Configuration
+from skillz_experiments.harness._codex import Codex
 from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget
 
@@ -85,6 +85,15 @@ class _Provider:
 
     def __init__(self, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.budget, self.checkpoint, self.lock = budget, checkpoint, threading.Lock()
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
 
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}

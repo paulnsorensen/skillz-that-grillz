@@ -11,11 +11,10 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _claude
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import ClaudeCode
-from skillz_experiments._harness import Configuration, Harness
+from skillz_experiments.harness import Configuration, Harness, _claude
+from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._runtime import Budget
 
 pytestmark = pytest.mark.usefixtures("host_login")
