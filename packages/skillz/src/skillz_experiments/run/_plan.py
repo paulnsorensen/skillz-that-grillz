@@ -21,10 +21,7 @@ from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import Case, CodedError, Split
 from skillz_experiments._contract import Contract
 from skillz_experiments._wedge_targets import TargetPlan, mcp_text, never_editable
-from skillz_experiments.harness import (
-    ClaudeOptions,
-    Configuration,
-)
+from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, overshoot
 
@@ -67,14 +64,6 @@ def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeO
     runs = max((int(grader.type in ("command", "hybrid", "journey")) + int(bool(grader.capture))
                 for grader in (contract.grader(case.kind) for case in cases)), default=0)
     return runs * options.sandbox_seconds
-
-
-def sizing_options(configuration: Configuration | None, options: ClaudeOptions) -> ClaudeOptions:
-    """Return the options that size the run: the task role of a supplied configuration, or the run's own `options`."""
-    if configuration is None:
-        return options
-    role = configuration.roles["task"]
-    return role.options if role.adapter == "claude" else ClaudeOptions()
 
 
 def case_calls(contract: Contract, case: Case) -> int:

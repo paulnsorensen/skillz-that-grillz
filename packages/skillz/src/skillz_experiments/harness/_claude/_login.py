@@ -11,6 +11,7 @@ from typing import cast, final, Literal
 
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._records import write_bytes
+from skillz_experiments.harness._check import MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, UNVERIFIED_CREDENTIAL
 from skillz_experiments.harness._claude._constants import AUTH_FAILED, CONFIG_PREFIX, LOGIN_HINT
 
 
@@ -132,18 +133,28 @@ class _Credential:
         return write_bytes(self.path, source[0], guard=self.unchanged)
 
 
+def login_credential_kind() -> str:
+    """Return the credential kind from the login file alone, without a Claude executable. It reads no file content."""
+    if sys.platform == "darwin":
+        return UNVERIFIED_CREDENTIAL
+    try:
+        _ = _Credential.find()
+    except (CodedError, OSError):
+        return MISSING_CREDENTIAL
+    return SUBSCRIPTION_LOGIN
+
+
 @final
 class ClaudeLogin:
     """The one config directory and login link that every Claude role of a run shares.
 
     The owner closes it once. Close deletes the directory, then reports what happened to the login.
-    With `api_key`, no directory exists and no login links: nono injects the host API key instead.
     """
 
-    def __init__(self, *, api_key: bool = False) -> None:
+    def __init__(self) -> None:
         self.credential: _Credential | None = None
         self._temporary: Path | None = None
-        if api_key or sys.platform == "darwin":
+        if sys.platform == "darwin":
             self.config_dir = host_config_dir()
             return
         self.credential = _Credential.find()

@@ -12,19 +12,17 @@ from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX, candidate_files
 from skillz_experiments._cases import CodedError, mapping, relative, repo_root
 from skillz_experiments._new_cli import expand_files, parse_value, unused_helpers
 from skillz_experiments._records import open_record, write
-from skillz_experiments.harness import (
-    NOTICE_CODES as _NOTICE_CODES,
-)
+from skillz_experiments.harness import stop_kind
 from skillz_experiments.run._session import engine_hash, field, is_inside, record_outcomes, text_field
 
 
 def summary(record: dict[str, object]) -> dict[str, object]:
     keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
-            "gate", "search", "estimate", "contract_hash", "contract_source", "isolation", "claude_options")
+            "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options")
     result = {key: record.get(key) for key in keys}
     if "close_warning" in record:
         code = mapping(record["close_warning"]).get("code")
-        hint = "no action needed" if code in _NOTICE_CODES else "log in again before the next run"
+        hint = "no action needed" if stop_kind(code) == "notice" else "log in again before the next run"
         result["close_warning"] = {"code": code, "hint": hint}
     return result
 

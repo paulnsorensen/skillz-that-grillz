@@ -32,6 +32,8 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
 from skillz_experiments._wedge_targets import Rebuilder
 from skillz_experiments.run import Stop, export, run
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -90,15 +92,13 @@ class Recorder:
 
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -156,8 +156,6 @@ def archive_text(data: bytes, suffix: str) -> str:
     with ZipFile(io.BytesIO(data)) as archive:
         name = next(name for name in archive.namelist() if name.endswith(suffix))
         return archive.read(name).decode()
-
-
 
 
 @pytest.fixture

@@ -1,18 +1,13 @@
-from skillz_experiments.harness._claude import NOTICE_CODES, TERMINAL_CODES, ClaudeOptions, Effort, Isolation, resolve_read_roots
-from skillz_experiments.harness._doctor import doctor
-from skillz_experiments.harness._harness import Configuration, EnvironmentDiffers, Harness, Role, validate_isolation
+"""The harness slice: how a run reaches a model. Import only this barrel from outside the slice."""
+from skillz_experiments.harness._claude import ClaudeOptions, Effort, stop_kind
+from skillz_experiments.harness._doctor import doctor, host_report
+from skillz_experiments.harness._harness import Configuration, EnvironmentDiffers, Harness
+from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, CONFIGURED_SELECTIONS, NONO_REMOVED, check_selection,
+                                               configured_selection, has_claude_sandbox, refuses_claude_options)
+from skillz_experiments.harness._seatbelt import command_profile
 
 __all__ = [
-    "NOTICE_CODES",
-    "TERMINAL_CODES",
-    "ClaudeOptions",
-    "Configuration",
-    "Effort",
-    "EnvironmentDiffers",
-    "Harness",
-    "Isolation",
-    "Role",
-    "doctor",
-    "resolve_read_roots",
-    "validate_isolation",
+    "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "CONFIGURED_SELECTIONS", "doctor",
+    "host_report", "ClaudeOptions", "Effort", "NONO_REMOVED", "check_selection", "command_profile",
+    "configured_selection", "has_claude_sandbox", "refuses_claude_options", "stop_kind",
 ]

@@ -36,6 +36,8 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
 from skillz_experiments._wedge_targets import BuildFailed, plan_targets, settle
 from skillz_experiments.run import Stop, export, run
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -131,15 +133,13 @@ class Recorder:
 
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -720,18 +720,16 @@ class Preferring:
 
 
 @final
-class _Preferred:
+class _Preferred(FakeProvider):
     def __init__(self, state: Preferring, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.state, self.budget, self.checkpoint = state, budget, checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         if self.budget.calls == 0:
             for _ in range(_plan.PREFLIGHT_CALLS):
                 self.budget.claim()
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         for _ in range(self.state.contract.calls(case.kind)):

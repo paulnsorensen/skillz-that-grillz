@@ -32,23 +32,23 @@ from skillz_experiments._seed import check_coverage, seed_cases
 from skillz_experiments._wedge_targets import plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
-    TERMINAL_CODES as _TERMINAL_CODES,
-)
-from skillz_experiments.harness import (
     ClaudeOptions,
     Configuration,
     EnvironmentDiffers,
-    doctor,
-    resolve_read_roots,
-    validate_isolation,
+    check_selection,
+    has_claude_sandbox,
+    host_report,
+    refuses_claude_options,
+    stop_kind,
 )
 from skillz_experiments.run._export import summary
-from skillz_experiments.run._plan import editable_files, plan_estimate, size_plan, sizing_options, supported_kind
+from skillz_experiments.run._plan import editable_files, plan_estimate, size_plan, supported_kind
 from skillz_experiments.run._resume import (
     check_resume,
     check_statistics,
     frozen_statistics,
     open_lock,
+    refuse_nono,
     refuse_terminated,
     require_private,
     statistics_flag,
@@ -66,7 +66,7 @@ DEFAULT_REPEATS = 3
 
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
-             options: ClaudeOptions, configuration: Configuration | None = None, isolation: str = "claude",
+             options: ClaudeOptions, configuration: Configuration | None = None,
              statistics_given: Mapping[str, float] | None = None) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
@@ -75,7 +75,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     """
     draft = out / DRAFT_NAME
     if not draft.is_file():
-        report = doctor(adapter, isolation) if resolve_harness else None
+        hosts = [(adapter, None)] if resolve_harness else (configuration.host_selections() if configuration is not None else [])
+        report = host_report(hosts) if hosts else None
         if report is not None and not report["ok"]:
             raise Stop("host-not-ready", "fix each failed host check, then call run again; no model call ran", report)
         data: dict[str, object] = {"draft": str(draft), "facts": skill_facts(target)}
@@ -88,9 +89,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     contract = intake_contract(target)
     resolved = resolve_statistics(contract, statistics_given or {})
     kind = supported_kind(contract)
-    judge = configuration.roles.get("judge") if configuration is not None else None
-    judge_adapter = judge.adapter if judge is not None else adapter
-    if contract.kinds[kind].capture and judge_adapter != "claude":
+    captures = configuration.judge_captures() if configuration is not None else has_claude_sandbox(adapter)
+    if contract.kinds[kind].capture and not captures:
         raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
     drafted = load_draft(draft)
@@ -106,9 +106,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
                          + "add task cases in more families to the draft, then call run again")
     expected = case_hash(cases, split_seed)
     if resolve_harness or configuration is not None:
-        chosen = configuration if configuration is not None else Configuration.single(adapter, model, isolation, options)
-        for role in chosen.roles.values():
-            _ = resolve_read_roots(role.options.sandbox_read, out)
+        chosen = configuration if configuration is not None else Configuration.single(adapter, model, options)
+        chosen.check_read_roots(out)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
                    {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
@@ -122,7 +121,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
     seed_candidate = Candidate(files, tuple(editable_files(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
-    plan = size_plan(contract, scored, repeats, sizing_options(configuration, options))
+    plan = size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
     shown = plan_estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
@@ -140,7 +139,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
-        "isolation": isolation, **({"claude_options": options.data()} if resolve_harness else {}),
+        **({"claude_options": options.data()} if resolve_harness else {}),
+        **({"harness": configuration.identity()} if configuration is not None else {}),
         "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
@@ -166,7 +166,7 @@ def _close(session: Session, pending: BaseException | None) -> None:
     except CodedError as error:
         detail = {"code": error.code, "message": str(error)}
         with session.lock:
-            terminal = error.code in _TERMINAL_CODES and session.record.get("failure_code") not in _TERMINAL_CODES
+            terminal = stop_kind(error.code) == "terminal" and stop_kind(session.record.get("failure_code")) != "terminal"
             if pending is not None:
                 session.record["close_failure"] = detail
                 if terminal:
@@ -180,35 +180,28 @@ def _close(session: Session, pending: BaseException | None) -> None:
             pending.add_note(f"closing the provider also failed with {error.code}: {error}")
 
 
-def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
-        edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
-        approve_cases: str | None = None, approve_budget: int | None = None,
-        effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
-        factory: Factory | None = None, configuration: Configuration | None = None,
-        isolation: str = "claude", statistics: Mapping[str, float] | None = None) -> dict[str, object]:
-    """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
-
-    `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
-    them. A resume uses the recorded options. A value that a resume passes must match the record.
-    """
-    if adapter not in ("claude", "codex"):
-        raise ValueError("harness must be claude or codex")
-    validate_isolation(adapter, isolation)
+def _check_arguments(adapter: HarnessName, configuration: Configuration | None, factory: Factory | None,
+                     edit: Edit | None, repeats: int | None,
+                     values: Mapping[str, object]) -> tuple[ClaudeOptions, dict[str, object]]:
+    """Check the run arguments before any work. Return the requested Claude options and the fields that the caller gave."""
+    check_selection(adapter, configuration is not None)
     if edit is not None and edit not in get_args(Edit):
         raise ValueError("edit must be prose or prose+cli")
     if repeats is not None and repeats < 1:
         raise ValueError("repeats must be at least 1")
-    values = {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
-              "sandbox_seconds": sandbox_seconds}
     given = {field: value for field, value in values.items() if value is not None}
-    if given and adapter == "codex":
+    if given and configuration is None and refuses_claude_options(adapter):
         raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
     if given and (configuration is not None or factory is not None):
         raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to the built-in harness; "
                          + "set them in the supplied configuration")
     requested = ClaudeOptions.parse(given)
-    given = {field: getattr(requested, field) for field in given}
-    statistics_given: dict[str, float] = {}
+    return requested, {field: getattr(requested, field) for field in given}
+
+
+def _check_statistics_flags(statistics: Mapping[str, float] | None) -> dict[str, float]:
+    """Check each statistics flag of the caller and return the accepted values."""
+    accepted: dict[str, float] = {}
     for name, value in (statistics or {}).items():
         if name not in Statistics.flags():
             allowed = ", ".join(statistics_flag(flag) for flag in Statistics.flags())
@@ -217,7 +210,57 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             checked = Statistics.declared({name: value})[name]
         except ValueError as error:
             raise ValueError(f"{statistics_flag(name)} {str(error).removeprefix(f'statistics {name} ')}") from None
-        statistics_given[name] = cast(float, checked)
+        accepted[name] = cast(float, checked)
+    return accepted
+
+
+def _drive(session: Session) -> dict[str, object]:
+    """Run the remaining phases of `session`, close the provider, and return the run summary."""
+    pending: BaseException | None = None
+    try:
+        try:
+            if session.phase == "prepared":
+                session.check_name()
+            session.preflight()
+            if session.phase == "prepared":
+                session.check_seed()
+                session.search()
+            if session.phase == "searched":
+                session.gate()
+            if session.phase == "gated":
+                session.finish()
+        except EnvironmentDiffers:
+            raise
+        except (OSError, ValueError, RuntimeError, OverflowError) as error:
+            fault = session.authoritative(error)
+            session.record_failure(fault)
+            if fault is error:
+                raise
+            raise fault from error
+    except BaseException as error:
+        pending = error
+        raise
+    finally:
+        _close(session, pending)
+    return summary(session.record)
+
+
+def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
+        edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
+        approve_cases: str | None = None, approve_budget: int | None = None,
+        effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
+        factory: Factory | None = None, configuration: Configuration | None = None,
+        statistics: Mapping[str, float] | None = None) -> dict[str, object]:
+    """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
+
+    `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
+    them. A resume uses the recorded options. A value that a resume passes must match the record.
+    """
+    requested, given = _check_arguments(
+        adapter, configuration, factory, edit, repeats,
+        {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
+         "sandbox_seconds": sandbox_seconds})
+    statistics_given = _check_statistics_flags(statistics)
     if is_inside(out, target):
         raise ValueError("--out must be outside the target skill directory")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -237,41 +280,16 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                 if statistics_given:
                     check_statistics(statistics_given, frozen_statistics(record))
                 return summary(record)
+            refuse_nono(record)
             frozen = frozen_statistics(record)
             check_statistics(statistics_given, frozen)
-            check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation)
+            check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None)
         else:
             frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
-                              options=requested, configuration=configuration, isolation=isolation,
+                              options=requested, configuration=configuration,
                               statistics_given=statistics_given)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
-        session = Session(out, model, adapter, factory, configuration, isolation, statistics=frozen)
-        pending: BaseException | None = None
-        try:
-            try:
-                if session.phase == "prepared":
-                    session.check_name()
-                session.preflight()
-                if session.phase == "prepared":
-                    session.check_seed()
-                    session.search()
-                if session.phase == "searched":
-                    session.gate()
-                if session.phase == "gated":
-                    session.finish()
-            except EnvironmentDiffers:
-                raise
-            except (OSError, ValueError, RuntimeError, OverflowError) as error:
-                fault = session.authoritative(error)
-                session.record_failure(fault)
-                if fault is error:
-                    raise
-                raise fault from error
-        except BaseException as error:
-            pending = error
-            raise
-        finally:
-            _close(session, pending)
-        return summary(session.record)
+        session = Session(out, model, adapter, factory, configuration, statistics=frozen)
+        return _drive(session)

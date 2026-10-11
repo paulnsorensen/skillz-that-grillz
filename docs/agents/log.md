@@ -106,4 +106,5 @@
 
 
 - 2026-10-10 · ci-38102417849-bounded-wait · merged · parallel-quality-gate.md · Record the Linux descendant-state race and approved bounded test observation. Preserve the runtime timeout and final assertion.
+- 2026-10-11 · issue-211-nono-removal · updated · decisions/skillz-autoimprove.md, sources/codex-skill-discovery-isolation.md, ideas/session-driven-skill-optimization.md · Mark ADR-007 superseded after the removal of the nono backend and the `--isolation` option. Note that the Codex adapter requires 0.154.0 or newer.
 

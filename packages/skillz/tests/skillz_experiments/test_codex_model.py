@@ -2,33 +2,25 @@
 from __future__ import annotations
 
 import os
-import re
 import stat
 from pathlib import Path
 
 import pytest
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments.harness._codex import Codex, supported_version
+from skillz_experiments.harness._codex import Codex, supported
 from skillz_experiments._budget import Budget
 
 
 @pytest.mark.parametrize("text", ["codex-cli 0.154.0", "codex-cli 0.160.0\n", "codex-cli 0.154.1", "codex-cli 1.0.0"])
 def test_the_minimum_and_newer_versions_are_accepted(text: str) -> None:
-    assert supported_version(text) == text.strip()
+    assert supported(text)
 
 
 @pytest.mark.parametrize("text", ["codex-cli 0.153.9", "codex-cli 0.99.0", "", "codex 0.160.0", "codex-cli 0.160",
-                                  "codex-cli 0.160.0-alpha.1"])
-def test_an_older_or_unparseable_version_is_rejected_with_the_minimum(text: str) -> None:
-    with pytest.raises(RuntimeError, match=r"unsupported Codex version; expected codex-cli 0\.154\.0 or newer; found " + re.escape(repr(text.strip()))):
-        _ = supported_version(text)
-
-
-def test_the_found_text_in_a_version_error_is_cut_to_80_characters() -> None:
-    with pytest.raises(RuntimeError) as caught:
-        _ = supported_version("x" * 200)
-    assert "x" * 80 in str(caught.value) and "x" * 81 not in str(caught.value)
+                                  "codex-cli 0.154.0-alpha.1"])
+def test_an_older_or_unparseable_version_is_rejected(text: str) -> None:
+    assert not supported(text)
 
 
 def test_a_rejected_model_stops_with_model_unsupported_after_one_call(tmp_path: Path,
@@ -63,21 +55,14 @@ def test_a_rejected_model_stops_with_model_unsupported_after_one_call(tmp_path: 
 @pytest.mark.parametrize("text", ["codex-cli 0.154.0\n", "codex-cli 0.154.0\r\n", "  codex-cli 1.0.0  ", "codex-cli 0.200.0",
                                   "codex-cli 0.1000.0"])
 def test_whitespace_around_a_valid_version_is_trimmed_and_numeric_order_is_used(text: str) -> None:
-    assert supported_version(text) == text.strip()
+    assert supported(text)
 
 
 @pytest.mark.parametrize("text", ["codex-cli 0.99.999", "codex-cli 0.153.999", "codex-cli 0.154.0 extra", "codex-cli  0.160.0",
                                   "codex-cli v0.160.0", "codex-cli 0.160.0.1", "codex-cli -1.0.0", "\n",
-                                  "Codex-CLI 0.160.0", "codex-cli 0.160.0\ncodex-cli 0.160.0"])
-def test_a_malformed_or_older_version_is_rejected(text: str) -> None:
-    with pytest.raises(RuntimeError, match="unsupported Codex version"):
-        _ = supported_version(text)
-
-
-def test_a_non_ascii_digit_version_is_rejected() -> None:
-    """Arabic-Indic digits are not a version the CLI prints; the parser must not read them as 0.154.0."""
-    with pytest.raises(RuntimeError, match="unsupported Codex version"):
-        _ = supported_version("codex-cli ٠.١٥٤.٠")
+                                  "Codex-CLI 0.160.0", "codex-cli 0.160.0\ncodex-cli 0.160.0", "codex-cli \u0660.\u0661\u0665\u0664.\u0660"])
+def test_a_malformed_older_or_non_ascii_version_is_rejected(text: str) -> None:
+    assert not supported(text)
 
 
 def _fake_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, events: list[str]) -> Path:

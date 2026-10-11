@@ -28,12 +28,14 @@ from skillz_experiments._contract import Contract, load_contract
 from skillz_experiments._cases import repo_root
 from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._graders import Sandbox
-from skillz_experiments.harness._harness import Configuration
+from skillz_experiments.harness import Configuration
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
 from skillz_experiments._wedge_targets import WEDGE_EDIT_LIMIT, plan_targets
 from skillz_experiments.run import Stop, export, run
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -131,15 +133,13 @@ class Recorder:
 
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -414,7 +414,6 @@ def test_the_real_skill_plans_the_inspector_as_the_only_editable_target() -> Non
     names = _plan.editable_files(skeleton.files | plan.sources | {NEW_CLI: ""}, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert set(plan.sources) | {NEW_CLI} <= set(names)
     assert not any(name.startswith(("@wedge/packages/fromargs/", "@wedge/packages/skillz/src/skillz_experiments/")) for name in names)
-
 
 
 def test_a_broken_build_rejects_the_candidate_with_build_failed(
@@ -751,7 +750,6 @@ def test_a_winner_that_no_longer_builds_stops_the_gate_with_build_failed(
         session.provider.close()
     assert stopped.value.code == "build-failed" and "next" in stopped.value.data
     assert recorder.seen == []
-
 
 
 def test_a_helper_that_shares_a_source_with_an_oversized_named_target_keeps_its_own_names(world: World) -> None:

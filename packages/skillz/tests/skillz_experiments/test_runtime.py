@@ -4,7 +4,9 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -31,6 +33,70 @@ def test_deadline_kills_process_group(tmp_path: Path) -> None:
             break
         time.sleep(0.02)
     assert state == "Z"
+
+def test_deadline_sends_sigterm_before_sigkill_so_a_wrapper_runs_its_stopper(tmp_path: Path) -> None:
+    script = ("import signal,sys,pathlib,time\n"
+              "def stop(*_):\n"
+              " pathlib.Path('stopper.ran').write_text('yes'); sys.exit(0)\n"
+              "signal.signal(signal.SIGTERM, stop)\n"
+              "pathlib.Path('ready').write_text('1')\n"
+              "time.sleep(30)\n")
+    with pytest.raises(BudgetExhausted, match="terminated"):
+        _ = process([sys.executable, "-c", script], cwd=tmp_path, timeout=5, environment={"PATH": os.defpath})
+    assert (tmp_path / "stopper.ran").read_text() == "yes"
+
+
+def test_interrupt_sends_sigterm_before_sigkill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    script = ("import signal,sys,pathlib,time\n"
+              "def stop(*_):\n"
+              " pathlib.Path('stopper.ran').write_text('yes'); sys.exit(0)\n"
+              "signal.signal(signal.SIGTERM, stop)\n"
+              "pathlib.Path('ready').write_text('1')\n"
+              "time.sleep(30)\n")
+    real = cast(Callable[..., tuple[str, str]], subprocess.Popen.communicate)
+    calls = {"n": 0}
+
+    def interrupted(self: subprocess.Popen[str], *args: object, **kwargs: object) -> tuple[str, str]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            deadline = time.monotonic() + 5
+            while not (tmp_path / "ready").exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            raise KeyboardInterrupt
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+    assert threading.current_thread() is threading.main_thread()
+    with pytest.raises(KeyboardInterrupt):
+        _ = process([sys.executable, "-c", script], cwd=tmp_path, timeout=30, environment={"PATH": os.defpath})
+    assert (tmp_path / "stopper.ran").read_text() == "yes"
+
+
+def test_a_second_interrupt_during_the_grace_wait_still_kills_a_child_that_ignores_sigterm(tmp_path: Path) -> None:
+    import _thread
+    import threading
+
+    from skillz_experiments import _runtime
+
+    script = ("import signal,pathlib,time\n"
+              "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+              "pathlib.Path('ready').write_text('1')\n"
+              "time.sleep(60)\n")
+    with subprocess.Popen([sys.executable, "-c", script], cwd=tmp_path, text=True, stdin=subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True) as child:
+        deadline = time.monotonic() + 10
+        while not (tmp_path / "ready").exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        timer = threading.Timer(0.5, _thread.interrupt_main)
+        timer.start()
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                _runtime._end(child)  # pyright: ignore[reportPrivateUsage]
+        finally:
+            timer.cancel()
+        assert child.poll() is not None
 
 
 def test_candidate_forbidden_change(tmp_path: Path) -> None:

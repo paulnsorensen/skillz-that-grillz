@@ -6,14 +6,14 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 
 import pytest
 
 from skillz_experiments.run import _run
+from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import _options, _sandbox, _transport
-from skillz_experiments.harness._harness import Configuration
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments.search import Edit
 from skillz_experiments.run import Stop, run
@@ -69,9 +69,9 @@ def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The doctor tests call `_doctor.doctor` directly.
     """
-    def ready(harness: str, isolation: str = "claude") -> dict[str, object]:
-        return {"ok": True, "harness": harness, "isolation": isolation, "checks": [], "live_calls": 0}
-    monkeypatch.setattr(_run, "doctor", ready)
+    def ready(selections: Sequence[tuple[str, str | None]]) -> dict[str, object]:
+        return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
+    monkeypatch.setattr(_run, "host_report", ready)
 
 @pytest.fixture
 def umask_022() -> Iterator[None]:

@@ -13,7 +13,28 @@ from pathlib import Path
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, BudgetExhausted
 
+TERM_GRACE_SECONDS = 10.0
+
 _CHILDREN = threading.BoundedSemaphore(MAX_CONCURRENT_CALLS)
+
+
+def _end(child: subprocess.Popen[str]) -> None:
+    """Send SIGTERM to the child's group, wait `TERM_GRACE_SECONDS`, then SIGKILL whatever remains."""
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        _ = child.communicate(timeout=TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    finally:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        _ = child.communicate()
+
 
 def process(command: list[str], *, cwd: Path, timeout: float,
             environment: dict[str, str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -31,12 +52,10 @@ def process(command: list[str], *, cwd: Path, timeout: float,
             try:
                 stdout, stderr = child.communicate(input_text, timeout=timeout)
             except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                _ = child.communicate()
+                _end(child)
                 raise BudgetExhausted("process group terminated at deadline") from None
             except BaseException:
-                os.killpg(child.pid, signal.SIGKILL)
-                _ = child.communicate()
+                _end(child)
                 raise
             return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
     finally:

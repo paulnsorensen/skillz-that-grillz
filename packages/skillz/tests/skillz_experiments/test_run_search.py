@@ -13,9 +13,8 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
+from skillz_experiments.harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._codex import Codex
-from skillz_experiments.harness._harness import Configuration, Harness
-from skillz_experiments.harness._harness import EnvironmentDiffers
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
@@ -24,6 +23,8 @@ from skillz_experiments.search import overshoot
 from skillz_experiments.run import _session
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -62,12 +63,13 @@ class Search:
 
 
 @final
-class Provider:
+class Provider(FakeProvider):
     def __init__(self, state: Search, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.state = state
         self.budget = budget
         self.checkpoint = checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         """Claim the live calls once. A resume reuses the recorded pass, as the real harness does."""
         if self.state.preflight_error is not None:
@@ -77,6 +79,7 @@ class Provider:
                 self.budget.claim()
         return {"isolation": "test-provider"}
 
+    @override
     def close(self) -> None:
         error, self.state.close_error = self.state.close_error, None
         if error is not None:

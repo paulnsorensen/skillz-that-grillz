@@ -14,8 +14,8 @@ import pytest
 from skillz_experiments.harness._claude import _events, _settings, _transport
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError
+from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._claude._transport import ClaudeCode
-from skillz_experiments.harness._harness import Configuration, Harness
 from skillz_experiments._budget import Budget
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -491,8 +491,8 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
         original = _settings.settings
 
         def weaker(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                   unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
-            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
+                   unix_sockets: bool = False) -> dict[str, object]:
+            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
         monkeypatch.setattr(_transport, "settings", weaker)

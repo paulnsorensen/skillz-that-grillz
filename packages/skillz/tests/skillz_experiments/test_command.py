@@ -13,7 +13,9 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cli import main
 from skillz_experiments._contract import load_contract, parse
-from skillz_experiments.harness._harness import Configuration
+from skillz_experiments.harness import Configuration, has_claude_sandbox
+from skillz_experiments.harness._command import Command
+from skillz_experiments.harness._roles import adapter_class
 from skillz_experiments.run import run
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget, BudgetExhausted
@@ -114,6 +116,19 @@ def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path) -> None:
         assert [item["operation"] for item in requests(log)] == ["infer"]
     finally:
         adapter.close()
+
+
+def test_command_preflight_says_the_probe_covers_only_the_sandbox_operation(tmp_path: Path) -> None:
+    config, _, log = configured(tmp_path)
+    adapter = Configuration.load(config, "offline").create("offline", Budget(20, 60), lambda: None)
+    try:
+        evidence = adapter.preflight()
+    finally:
+        adapter.close()
+    roles = cast(dict[str, dict[str, object]], evidence["roles"])
+    assert roles and all(role["isolation"] == "passed" and role["isolation_scope"] == "sandbox operation"
+                         for role in roles.values())
+    assert evidence["live_calls"] == 0 and "infer" not in [item["operation"] for item in requests(log)]
 
 
 def test_executable_alias_keeps_invoked_name(tmp_path: Path) -> None:
@@ -238,3 +253,12 @@ def test_nested_helper_fixture_runs_through_command_adapter(tmp_path: Path) -> N
         assert adapter.transports["task"].check_candidate(candidate)
     finally:
         adapter.close()
+
+
+@pytest.mark.parametrize("name", ["config", "gemini", ""])
+def test_an_unknown_adapter_name_raises_instead_of_becoming_a_command(name: str) -> None:
+    with pytest.raises(ValueError, match="unknown adapter"):
+        _ = adapter_class(name)
+    with pytest.raises(ValueError, match="unknown adapter"):
+        _ = has_claude_sandbox(name)
+    assert adapter_class("command") is Command

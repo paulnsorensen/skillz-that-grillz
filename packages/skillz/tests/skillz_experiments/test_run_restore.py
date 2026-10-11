@@ -17,16 +17,17 @@ from types import SimpleNamespace
 from typing import cast, final
 
 import pytest
+from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments.harness._claude._transport import ClaudeCode
-from skillz_experiments.harness._claude._options import ClaudeOptions
 from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
-from skillz_experiments.gate import DEFAULT_STATISTICS
-from skillz_experiments.harness._harness import Configuration, EnvironmentDiffers, Harness, Role
+from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, Harness
+from skillz_experiments.harness._claude import ClaudeCode
+from skillz_experiments.harness._roles import Role
 from skillz_experiments._records import read, write
+from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._budget import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments.search import Edit
 from skillz_experiments.run import Stop, export, run, summary
@@ -37,7 +38,8 @@ from skillz_experiments.run._plan import (
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
     plan_estimate,
 )
-from skillz_experiments.run._session import Session
+from skillz_experiments.run._session import Session, engine_hash
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -84,15 +86,13 @@ class State:
         return lambda _model, _budget, _checkpoint: _Fake(self)
 
 
-class _Fake:
+class _Fake(FakeProvider):
     def __init__(self, state: State) -> None:
         self.state: State = state
 
+    @override
     def preflight(self) -> dict[str, object]:
         return self.state.preflight(None)
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         return self.state.evaluate(candidate, case, holdout)
@@ -528,7 +528,7 @@ def test_a_symlinked_run_lock_is_refused_and_its_target_stays_intact(
     assert victim.read_text() == "keep me" and state.evaluated == []
 
 
-class _Spending:
+class _Spending(FakeProvider):
     """A fake that claims the budget for each call and spends `delay` seconds on each search call.
 
     Its preflight reads the time left, as the real transports do through the sandbox probe.
@@ -539,12 +539,10 @@ class _Spending:
         self.budget: Budget = budget
         self.delay: float = delay
 
+    @override
     def preflight(self) -> dict[str, object]:
         _ = self.budget.remaining()
         return self.state.preflight(None)
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -619,6 +617,18 @@ def test_a_run_prepared_by_an_older_runner_stops_with_a_create_a_new_run_message
         _ = run(target, out, MODEL, live=True, factory=State().factory())
 
 
+def test_a_change_in_a_harness_module_changes_the_engine_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    before = engine_hash()
+    original = Path.read_text
+
+    def edited(self: Path) -> str:
+        text = original(self)
+        return text + "\n# edited" if self.parent.name == "harness" and self.name == "_harness.py" else text
+
+    monkeypatch.setattr(Path, "read_text", edited)
+    assert engine_hash() != before
+
+
 def test_a_prepared_run_records_the_engine_hash(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     out = _prepared(tmp_path, make_target(tmp_path), write_draft, approvals)
@@ -630,7 +640,7 @@ def test_a_completed_run_returns_its_summary_even_when_the_target_moved(
     target, state = make_target(tmp_path), State()
     out = _prepared(tmp_path, target, write_draft, approvals)
     summary = run(target, out, MODEL, live=True, factory=state.factory())
-    assert summary["phase"] == "complete" and summary["isolation"] == "claude"
+    assert summary["phase"] == "complete" and "isolation" not in summary
     moved = tmp_path / "moved"
     _ = shutil.copytree(target, moved)
     assert run(moved, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
@@ -643,13 +653,37 @@ def test_a_taken_seed_name_stops_the_run_before_the_live_preflight(
 
     @final
     class Taken(_Fake):
-        def check_name(self, candidate: Candidate) -> None:
+        @override
+        def check_name(self, candidate: object) -> None:
+            assert isinstance(candidate, Candidate)
             raise CodedError("candidate-name-taken", f"{candidate.skill!r} is taken")
 
     with pytest.raises(CodedError) as stopped:
         _ = run(target, out, MODEL, live=True, factory=lambda _model, _budget, _checkpoint: Taken(state))
     assert stopped.value.code == "candidate-name-taken"
     assert state.preflights == [] and state.evaluated == []
+
+
+def test_a_run_that_recorded_the_removed_nono_backend_stops_with_the_issue_link(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    record["isolation"] = "nono"
+    write(out / "run.json", record)
+    with pytest.raises(CodedError, match="issues/211") as stopped:
+        _ = run(target, out, MODEL, live=True, factory=State().factory())
+    assert stopped.value.code == "nono-removed"
+
+
+def test_a_run_that_recorded_the_claude_backend_still_resumes(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    record["isolation"] = "claude"
+    write(out / "run.json", record)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
 
 
 def test_a_terminated_run_resumed_with_another_flag_reports_the_termination_first(

@@ -15,8 +15,10 @@ import pytest
 from skillz_experiments._candidate import Candidate, make_workspace, stage_task
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments.harness._harness import Configuration, Harness, Role
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._roles import Role
 from skillz_experiments._budget import Budget, BudgetExhausted
+from fake_provider import FakeProvider
 
 RUBRIC = "RUBRIC_SENTINEL: rate how readable the rewrite is."
 EXPECTED = "EXPECTED_SENTINEL"
@@ -42,7 +44,7 @@ def contract(script: str = PASS) -> Contract:
                             "review": {"grader": "audit"}}}, "skill")
 
 
-class Task:
+class Task(FakeProvider):
     """A task transport with the Sandbox capability. It records every prompt, case, and grader workspace."""
 
     def __init__(self, output: object = None, stdout: str | None = None, code: int = 0) -> None:
@@ -54,16 +56,6 @@ class Task:
         self.argvs: list[list[str]] = []
         self.stdout: str | None = stdout
         self.code: int = code
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -88,22 +80,12 @@ class Task:
         return run.returncode, run.stdout, run.stderr
 
 
-class Judge:
+class Judge(FakeProvider):
     def __init__(self, answer: object = None) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.answer: object = {"score_percent": 70} if answer is None else answer
         self.prompts: list[str] = []
         self.holdouts: list[bool] = []
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

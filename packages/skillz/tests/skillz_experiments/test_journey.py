@@ -12,11 +12,13 @@ from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, load_cases
-from skillz_experiments.harness._claude._transport import ClaudeCode
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript, task_tokens
-from skillz_experiments.harness._harness import Configuration, Harness, Role
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._claude import ClaudeCode
+from skillz_experiments.harness._roles import Role
 from skillz_experiments._budget import Budget
+from fake_provider import FakeProvider
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 BRIEF = "BRIEF_SENTINEL: wants a short plan."
@@ -145,22 +147,12 @@ def test_turn_inventory_changed_in_a_later_init_event_stops_with_isolation_faile
     assert caught.value.code == "isolation-failed" and "turn 2" in str(caught.value)
 
 
-class Judge:
+class Judge(FakeProvider):
     def __init__(self, answers: list[dict[str, object]]) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.answers: list[dict[str, object]] = answers
         self.prompts: list[str] = []
         self.schemas: list[dict[str, object] | None] = []
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -171,21 +163,11 @@ class Judge:
         return {"answer": self.answers.pop(0), "usage": TOKENS.copy(), "latency_seconds": 0.1}
 
 
-class Talker:
+class Talker(FakeProvider):
     """A task transport that asks its simulator once and has a sandbox."""
 
     def __init__(self) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         del workspace, argv
@@ -226,7 +208,6 @@ def test_simulator_prompt_holds_the_brief_the_request_and_replies_but_never_expe
     assert "untrusted data" in prompt
     assert judge.prompts[1].count(RUBRIC) == 1 and BRIEF in judge.prompts[1]
     assert result["score"] == 0.6
-
 
 
 @pytest.mark.parametrize("sim_input", [10, None])

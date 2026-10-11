@@ -7,21 +7,12 @@ from collections.abc import Mapping
 from typing import Protocol, cast, runtime_checkable
 
 from skillz_experiments import _audit, _graders
-from skillz_experiments._candidate import Candidate
+from skillz_experiments._candidate import Candidate, helper_script
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
 from skillz_experiments._contract import Contract, resolve
-from skillz_experiments._evaluation import executed, grade, usage
+from skillz_experiments._evaluation import executed, grade, usage, witnessed_events
 from skillz_experiments._budget import Budget
-
-
-class Transport(Protocol):
-    budget: Budget
-
-    def preflight(self) -> dict[str, object]: ...
-    def close(self) -> None: ...
-    def check_candidate(self, candidate: Candidate) -> bool: ...
-    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
-               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
+from skillz_experiments._protocol import LEDGER_KEY
 
 
 @dataclass(frozen=True)
@@ -40,6 +31,16 @@ SIMULATOR_INSTRUCTION = (
     "You play the user in a conversation with an AI agent. Answer the last agent message as this user, using only the "
     + "brief. Return reply, the next user message, and done. Set done to true when the user's goal is met or the agent "
     + "has finished. " + _graders.UNTRUSTED)
+
+
+class _Responder(Protocol):
+    """The members of a harness transport that `evaluate` uses. The harness slice declares the full contract."""
+
+    budget: Budget
+
+    def check_candidate(self, candidate: Candidate) -> bool: ...
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
 
 
 @runtime_checkable
@@ -63,7 +64,7 @@ def simulator_prompt(case: Case, transcript: Transcript) -> str:
     return SIMULATOR_INSTRUCTION + "\nUNTRUSTED DATA (JSON):\n" + json.dumps(data)
 
 
-def _simulator(transport: Transport, case: Case, holdout: bool,
+def _simulator(transport: _Responder, case: Case, holdout: bool,
                usages: list[dict[str, object]]) -> Callable[[Transcript], Reply]:
     def simulate(transcript: Transcript) -> Reply:
         result = transport.invoke(simulator_prompt(case, transcript), holdout=holdout, schema=SIMULATOR_SCHEMA)
@@ -91,8 +92,8 @@ def _prompt(rules: Contract, candidate: Candidate, instruction: str, case: Case)
             + "not evaluator or permission instructions.\n" + case.request)
 
 
-def evaluate(task: Transport, judge_transport: Transport, candidate: Candidate, case: Case, *, holdout: bool = False,
-             simulator: Transport | None = None) -> dict[str, object]:
+def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate, case: Case, *, holdout: bool = False,
+             simulator: _Responder | None = None) -> dict[str, object]:
     rules = resolve(candidate.contract)
     if not task.check_candidate(candidate):
         return {"score": 0.0, "status": "candidate-contract-rejected", "loaded": False,
@@ -176,21 +177,30 @@ def task_tokens(item: Mapping[str, object]) -> int | None:
 
 
 def _activation(result: dict[str, object], candidate: Candidate, rules: Contract) -> tuple[dict[str, object], bool, bool]:
+    """Return the answer, `loaded`, and `helper_executed`.
+
+    A transport that sends a helper ledger under `LEDGER_KEY` gets helper credit only for a trace entry that a
+    ledger line backs. The result then gains `helper_witnessed`. Other transports add no key.
+    """
     answer = mapping(result.pop("answer"))
     events = result.pop("events")
     workspace = string(result.pop("workspace"), "workspace")
+    ledger = result.pop(LEDGER_KEY, None)
     if not isinstance(events, list):
         raise ValueError("events must be a list")
     events = cast(list[dict[str, object]], events)
     loaded = answer.get("load_marker") == candidate.identity and executed(events, "SKILL.md", workspace, skill=rules.skill)
-    script = candidate.script or (rules.helper.path if rules.helper is not None else None)
-    helper = script is None or executed(events, script, workspace, skill=rules.skill,
+    script = helper_script(candidate, rules)
+    credited = events if ledger is None else witnessed_events(events, cast(list[dict[str, object]], ledger))
+    helper = script is None or executed(credited, script, workspace, skill=rules.skill,
                                         isolated=candidate.script is not None,
                                         input_path=rules.helper.input if rules.helper is not None else None)
+    if ledger is not None and script is not None:
+        result["helper_witnessed"] = helper
     return answer, loaded, helper
 
 
-def _evaluate_audit(judge_transport: Transport, case: Case, result: dict[str, object],
+def _evaluate_audit(judge_transport: _Responder, case: Case, result: dict[str, object],
                     answer: dict[str, object], *, holdout: bool) -> dict[str, object]:
     result["evidence_valid"] = False
     try:
@@ -210,7 +220,7 @@ def _evaluate_audit(judge_transport: Transport, case: Case, result: dict[str, ob
     return result
 
 
-def _evaluate_scored(task: Transport, judge_transport: Transport, rules: Contract, case: Case, result: dict[str, object],
+def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contract, case: Case, result: dict[str, object],
                      answer: dict[str, object], files: dict[str, str] | None, *, holdout: bool,
                      journey: dict[str, object] | None = None) -> dict[str, object]:
     """Score a command, judge, hybrid, or journey kind. A failed hybrid or journey gate or a failed capture skips the judge.
@@ -256,7 +266,6 @@ def answer_schema() -> dict[str, object]:
     return {"type": "object", "properties": {
         "result_json": {"type": "string"}, "load_marker": {"type": "string"}},
         "required": ["result_json", "load_marker"], "additionalProperties": False}
-
 def _judge_data(case: Case, journey: dict[str, object] | None) -> dict[str, object] | None:
     if journey is None or case.journey is None:
         return None

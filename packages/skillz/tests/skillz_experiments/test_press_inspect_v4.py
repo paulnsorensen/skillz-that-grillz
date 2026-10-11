@@ -27,7 +27,7 @@ from skillz_experiments.harness._command import Command
 from skillz_experiments._contract import HELPER_FIXTURES, load_contract, resolve
 from skillz_experiments._evaluation import fixture_failure, helper_failure
 from skillz_experiments._graders import Sandbox
-from skillz_experiments.harness._harness import Configuration, Harness
+from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments._budget import Budget
 from skillz_experiments._runtime import process as run_process
 from skillz_experiments._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle

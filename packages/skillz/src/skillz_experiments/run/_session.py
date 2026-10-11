@@ -28,15 +28,13 @@ from skillz_experiments._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics, Verdict, case_deltas, close
 from skillz_experiments.gate import verdict as gate_verdict
 from skillz_experiments.harness import (
-    TERMINAL_CODES as _TERMINAL_CODES,
-)
-from skillz_experiments.harness import (
     ClaudeOptions,
     Configuration,
     EnvironmentDiffers,
     Harness,
+    stop_kind,
 )
-from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan, sizing_options
+from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit, overshoot
 from skillz_experiments.search import search as pareto_search
@@ -76,6 +74,11 @@ class _Provider(Protocol):
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]: ...
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
+    def check_name(self, candidate: Candidate) -> None: ...
+    def check_candidate(self, candidate: Candidate) -> bool: ...
+
+    @property
+    def rejection(self) -> str | None: ...
 
 
 Factory = Callable[[str, Budget, Callable[[], None]], _Provider]
@@ -84,6 +87,15 @@ Factory = Callable[[str, Budget, Callable[[], None]], _Provider]
 def engine_hash() -> str:
     package = Path(__file__).parent.parent
     return digest({path.relative_to(package).as_posix(): path.read_text() for path in package.rglob("*.py")})
+
+
+def _differences(recorded: object, observed: object, name: str = "") -> list[str]:
+    """Name each preflight evidence key whose value differs, with both values. Keys sit in dotted paths."""
+    if isinstance(recorded, dict) and isinstance(observed, dict):
+        before, after = cast(dict[str, object], recorded), cast(dict[str, object], observed)
+        return [line for key in sorted(set(before) | set(after))
+                for line in _differences(before.get(key), after.get(key), f"{name}.{key}" if name else key)]
+    return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
 
 
 def field(record: dict[str, object], key: str) -> object:
@@ -123,7 +135,7 @@ def record_outcomes(record: dict[str, object]) -> list[dict[str, object]]:
 @final
 class Session:
     def __init__(self, out: Path, model: str, adapter: HarnessName, factory: Factory | None,
-                 supplied: Configuration | None, isolation: str = "claude", *, statistics: Statistics) -> None:
+                 supplied: Configuration | None, *, statistics: Statistics) -> None:
         self.out = out
         self.lock = threading.RLock()
         self.record = open_record(out / "run.json")
@@ -144,8 +156,8 @@ class Session:
         self.outcomes = record_outcomes(self.record)
         options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
         configuration = supplied if supplied is not None else (
-            Configuration.single(adapter, model, isolation, options) if factory is None else None)
-        self.sizing = sizing_options(configuration, options)
+            Configuration.single(adapter, model, options) if factory is None else None)
+        self.sizing = options if configuration is None else configuration.sizing_options()
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
@@ -194,7 +206,7 @@ class Session:
             identity = configuration.identity()
             _ = self.record.setdefault("harness", identity)
             if self.record["harness"] != identity:
-                raise ValueError("harness configuration differs from the frozen record; create a new run")
+                raise CodedError("harness-changed", "harness configuration differs from the frozen record; create a new run")
         if judged:
             judge_model = configuration.roles["judge"].model if configuration is not None else model
             _ = self.record.setdefault("judge_model", judge_model)
@@ -267,14 +279,15 @@ class Session:
         environment_hash = preflight.get("environment_hash")
         _ = self.record.setdefault("environment_hash", environment_hash)
         if self.record["environment_hash"] != environment_hash:
-            raise EnvironmentDiffers("runtime environment differs from the frozen record")
+            before = mapping(cast(dict[str, object], recorded)) if isinstance(recorded, dict) else {}
+            changed = _differences(before.get("roles", before), preflight.get("roles", preflight))
+            evidence = "; ".join(changed[:6]) or "the environment hash only"
+            raise EnvironmentDiffers("runtime environment differs from the frozen record; changed evidence: "
+                                     + evidence + "; restore the first-run environment and resume, "
+                                     + "or start a new run")
         self.record["preflight"] = preflight
-        if isinstance(self.provider, Harness) and any(
-                role.adapter == "codex" for role in self.provider.configuration.roles.values()):
-            roles = mapping(preflight.get("roles", {}))
-            self.record["codex_version"] = next(
-                version for version in (mapping(item).get("codex_version") for item in roles.values())
-                if isinstance(version, str))
+        if isinstance(self.provider, Harness):
+            self.record |= self.provider.run_facts
         self.checkpoint()
 
     def evaluate_case(self, candidate: Candidate, case: Case, arm: str, *, holdout: bool = False,
@@ -411,8 +424,8 @@ class Session:
             held = self._fault
             if held is None:
                 replace = True
-            elif error.code in _TERMINAL_CODES:
-                replace = held.code not in _TERMINAL_CODES
+            elif stop_kind(error.code) == "terminal":
+                replace = stop_kind(held.code) != "terminal"
             else:
                 replace = isinstance(held, BudgetExhausted) and not isinstance(error, BudgetExhausted)
             if replace:
@@ -442,7 +455,7 @@ class Session:
             _ = self.record.pop("failure_code", None)
         else:
             self.record["failure_code"] = code
-        if code in _TERMINAL_CODES:
+        if stop_kind(code) == "terminal":
             _ = self.record.pop("preflight", None)
         self.checkpoint()
 
@@ -460,15 +473,12 @@ class Session:
 
     def check_name(self) -> None:
         """Stop before any live call when the seed name matches a Claude Code command or a foreign skill."""
-        check = cast(Callable[[Candidate], None] | None, getattr(self.provider, "check_name", None))
-        if check is not None:
-            check(self.seed)
+        self.provider.check_name(self.seed)
 
     def check_seed(self) -> None:
         """Stop before any search call when the seed fails the local candidate contract check."""
-        check = cast(Callable[[Candidate], bool] | None, getattr(self.provider, "check_candidate", None))
-        if check is not None and not check(self.seed):
-            raise _baseline_rejected(cast(str | None, getattr(self.provider, "rejection", None)))
+        if not self.provider.check_candidate(self.seed):
+            raise _baseline_rejected(self.provider.rejection)
 
     def search(self) -> None:
         """Run the one GEPA search over train and validation cases. Holdout cases never enter it."""

@@ -1,30 +1,36 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import cast, final
+from typing import ClassVar, cast, final
 
-from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
+from skillz_experiments._candidate import Candidate, helper_script, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._evaluator import answer_schema
-from skillz_experiments.harness._isolation import listening, probe
+from skillz_experiments._protocol import LEDGER_KEY, RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._budget import Budget
 from skillz_experiments._runtime import process
+from skillz_experiments.harness._check import Check
+from skillz_experiments.harness._isolation import listening, probe
+from skillz_experiments.harness._witness import LedgerError, Witness, ledger_entries, stage_witness
+from skillz_experiments.harness._check import UNVERIFIED_CREDENTIAL
+
+WITNESS_ERROR_KEY = "helper_witness_error"
+"""The run-record field that names why the helper witness could not confirm a helper run."""
 
 
 def _response(value: object, operation: str) -> dict[str, object]:
     result = mapping(value)
-    fields = {"sandbox": {"returncode", "stdout", "stderr"}, "discover": {"skills"},
-              "infer": {"answer", "trace", "usage"}}
-    if (type(result.get("schema_version")) is not int or result["schema_version"] != 1
+    if (type(result.get("schema_version")) is not int or result["schema_version"] != VERSION
             or result.get("operation") != operation
-            or set(result) != {"schema_version", "operation"} | fields[operation]):
+            or set(result) != {"schema_version", "operation"} | RESPONSE_FIELDS[operation]):
         raise ValueError("invalid harness response envelope")
     if operation == "sandbox" and (
         type(result["returncode"]) is not int
@@ -41,16 +47,14 @@ def _events(result: dict[str, object]) -> list[dict[str, object]]:
     events: list[dict[str, object]] = []
     for value in cast(list[object], raw):
         item = mapping(value)
-        argv = item.get("argv")
-        if (set(item) != {"argv", "exit_code"} or type(item["exit_code"]) is not int
-                or not isinstance(argv, list) or not argv
-                or not all(isinstance(arg, str) and arg for arg in cast(list[object], argv))):
+        argv = argv_strings(item.get("argv"))
+        if set(item) != {"argv", "exit_code"} or type(item["exit_code"]) is not int or argv is None:
             raise ValueError("invalid completed command trace")
         events.append({"type": "item.completed", "item": {"type": "command_execution",
-                       "command": shlex.join(cast(list[str], argv)), "exit_code": item["exit_code"]}})
+                       "command": shlex.join(argv), "exit_code": item["exit_code"]}})
     if result["usage"] is not None:
         counts = mapping(result["usage"])
-        if set(counts) - {"input_tokens", "cached_input_tokens", "output_tokens"} or any(
+        if set(counts) - set(USAGE_KEYS) or any(
             value is not None and (type(value) is not int or value < 0) for value in counts.values()
         ):
             raise ValueError("invalid harness token usage")
@@ -82,8 +86,40 @@ def _validate_answer(value: object, schema: dict[str, object]) -> None:
         raise ValueError("unsupported runner response schema")
 
 
+def _stated_reason(stderr: str) -> str:
+    """Return the last wrapper line that is a JSON error object `{"error": TEXT, "exit_code": N[, "code": C]}`.
+
+    The reference wrappers print this line for their own errors. The runner shows no other stderr text.
+    """
+    for line in reversed(stderr.splitlines()):
+        try:
+            item = mapping(loads_untrusted(line))
+        except ValueError:
+            continue
+        if set(item) - {"error", "exit_code", "code"} or not isinstance(item.get("error"), str) or "exit_code" not in item:
+            continue
+        return cast(str, item["error"])[:500]
+    return ""
+
+
+def _failure(stderr: str) -> str:
+    """Describe a failed harness command. Keep the raw stderr tail in a private file, not in the message."""
+    message = "harness command fails; no unsafe fallback"
+    reason = _stated_reason(stderr)
+    if reason:
+        message += f": {reason}"
+    if stderr.strip():
+        descriptor, filename = tempfile.mkstemp(prefix="skillz-harness-stderr-", suffix=".txt")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            _ = stream.write(stderr[-4000:])
+        message += f"; private stderr tail: {filename}"
+    return message
+
+
 @final
 class Command:
+    claude_sandbox: ClassVar[bool] = False
+    refuses_claude_options: ClassVar[bool] = False
     rejection: str | None = None
 
     def __init__(self, command: tuple[str, ...], model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
@@ -92,16 +128,27 @@ class Command:
         self.budget = budget
         self.checkpoint = checkpoint
 
+    @property
+    def credential_kind(self) -> str:
+        """Name the credential kind. The runner cannot read the login of a user command."""
+        return UNVERIFIED_CREDENTIAL
+
+    @classmethod
+    def host_checks(cls, executable: str | None = None) -> list[Check]:
+        """Return no rows: a command role relies on its own sandbox probe in the live preflight."""
+        del executable
+        return []
+
     def close(self) -> None:
         pass
 
     def _request(self, operation: str, workspace: Path, **payload: object) -> dict[str, object]:
-        request = {"schema_version": 1, "operation": operation, "workspace": str(workspace),
+        request = {"schema_version": VERSION, "operation": operation, "workspace": str(workspace),
                    "model": self.model, **payload}
         result = process(list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
                          environment={"PATH": "/usr/bin:/bin"}, input_text=json.dumps(request))
         if result.returncode:
-            raise RuntimeError("harness command fails; no unsafe fallback")
+            raise RuntimeError(_failure(result.stderr))
         if len(result.stdout) > 1_000_000:
             raise ValueError("harness response exceeds size limit")
         return _response(loads_untrusted(result.stdout), operation)
@@ -124,6 +171,27 @@ class Command:
             raise ValueError("invalid discovered skill")
         return entries == [{"name": name, "path": str(skill)}]
 
+    def reuse_key(self, fingerprint: object) -> str | None:
+        """A command harness keeps no live pass, so it has no reuse key."""
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        """A command harness always runs its preflight."""
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        """Report no run-record fact for a command harness."""
+        del evidence
+        return {}
+
+    def adopt_login(self) -> None:
+        """A command harness shares no Claude login."""
+
+    def check_name(self, candidate: Candidate) -> None:
+        """A command harness has no name collision to check."""
+        del candidate
+
     def preflight(self) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             root = Path(directory)
@@ -141,7 +209,8 @@ class Command:
             _ = (skill / "SKILL.md").write_text("---\nname: skillz\ndescription: Inspect public fixtures\n---\nProbe.\n")
             if not self._discover(workspace, "skillz"):
                 raise RuntimeError("harness skill discovery preflight fails")
-        return {"adapter": "command", "model": self.model, "isolation": "passed", "live_calls": 0}
+        return {"adapter": "command", "model": self.model, "isolation": "passed", "isolation_scope": "sandbox operation",
+                "live_calls": 0}
 
     def check_candidate(self, candidate: Candidate) -> bool:
         self.rejection = None
@@ -160,8 +229,14 @@ class Command:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)
             skill: dict[str, object] = {}
+            witness: Witness | None = None
+            helper: str | None = None
             if candidate is not None:
                 skill = {"skill_name": candidate.skill, "skill_path": str(workspace / ".agents/skills" / candidate.skill)}
+                rules = resolve(candidate.contract)
+                helper = helper_script(candidate, rules)
+                if helper is not None:
+                    witness = stage_witness(workspace, candidate.skill, helper)
             self.budget.claim(holdout=holdout)
             self.checkpoint()
             started = time.monotonic()
@@ -169,5 +244,17 @@ class Command:
             answer = mapping(result["answer"])
             _validate_answer(answer, schema or answer_schema())
             events = _events(result)
-            return {"answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
-                    "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
+            outcome: dict[str, object] = {
+                "answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
+                "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
+            if helper is not None:
+                outcome[LEDGER_KEY] = []
+                if witness is None:
+                    outcome[WITNESS_ERROR_KEY] = "staging-failed"
+                else:
+                    try:
+                        outcome[LEDGER_KEY] = ledger_entries(witness)
+                    except LedgerError as fault:
+                        outcome[LEDGER_KEY] = fault.entries
+                        outcome[WITNESS_ERROR_KEY] = fault.cause
+            return outcome

@@ -1,8 +1,9 @@
 # Custom experiment harness
 
-Read this reference when the user selects the `claude` adapter, checks a command adapter, or checks role files with `self-test --preflight-only`.
-`run` accepts only `claude` or `codex` for `--harness`.
-A command adapter or a role file applies only to `self-test --preflight-only --harness-config`.
+Read this reference when the user selects the `claude` adapter, runs their own command, or checks role files.
+`run --harness` accepts `claude`, `codex`, or `command`.
+`run --harness-config PATH` loads a role file. `run --harness command --command ARGV...` builds a one-role command configuration for all three roles.
+`self-test --preflight-only --harness-config` checks the same configuration without a run.
 Under `run`, the judge uses `--model`.
 
 ## Select a command
@@ -11,6 +12,7 @@ Ask: "Which harness command and model do you want to check?"
 Ask for an explicit argument array, not a shell command string.
 A raw harness CLI does not automatically implement this protocol.
 Use a trusted user-installed wrapper when the harness lacks these operations.
+The skill also ships a tested Gemini CLI wrapper and recipes for Copilot CLI, Cursor CLI, OpenCode, and Pi.
 
 Keep the wrapper, its configuration, and authentication outside the candidate skill.
 Do not place credentials in the JSON configuration or command arguments.
@@ -35,9 +37,8 @@ Create a private configuration file outside the skill:
 Task, reflection, and judge roles inherit the top-level adapter, command, and CLI model.
 Each role can override inherited fields.
 The adapter is `codex`, `command`, or `claude`.
-A Codex role accepts only `adapter`, `model`, and `isolation: claude`, without inherited command or identity fields.
-A `claude` role accepts `adapter`, `model`, `command`, `effort`, `isolation`, `sandbox_read`, and `sandbox_seconds`. The command names only the executable.
-Every Claude role of a run must use the same isolation.
+A Codex role accepts only `adapter` and `model`, without inherited command or identity fields.
+A `claude` role accepts `adapter`, `model`, `command`, `effort`, `sandbox_read`, and `sandbox_seconds`. The command names only the executable.
 `effort`, `sandbox_read`, and `sandbox_seconds` match the `run` options `--effort`, `--sandbox-read`, and `--sandbox-seconds`.
 The role fingerprint includes them.
 A `command` role sends the contract skill name and path to the wrapper.
@@ -61,14 +62,38 @@ For mixed adapters, omit the top-level adapter fields. Define each role complete
 
 Use one command configuration for all roles unless the user requests separate settings.
 
-Pass `--harness-config /absolute/path/to/harness.json` to each `self-test --preflight-only` check.
-`run` does not read it. `export` makes no harness invocation.
+Pass `--harness-config /absolute/path/to/harness.json` to `self-test --preflight-only` or to `run`.
+`export` makes no harness invocation.
+
+## Run with your own command
+
+`run --harness-config PATH` runs every role through the file. The file must sit outside the target skill.
+The inline form takes the argument array as repeated `--command` options, one per argument:
+
+```sh
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" run --target /path/to/skill --out "$OUT" --model MODEL --live \
+  --harness command --command /usr/bin/python3 --command /abs/wrapper.py --command=--flag
+```
+
+Write an argument that starts with `-` as `--command=VALUE`. A bare `--command -x` fails.
+The model comes from `--model`. The role identity is `command-` plus the executable name.
+These combinations stop with the code `usage` before any work:
+
+- `--harness-config` with `--harness` or `--command`.
+- `--command` without `--harness command`.
+- `--harness command` without `--command`.
+
+The runner skips the `doctor` host checks for a command role. Built-in `claude` and `codex` roles in a file still get them.
+Before any task call, the runner sends the command a `sandbox` probe. If the probe fails, the run stops with no fallback.
+A resume with another file, another command, or a dropped `--harness-config` stops with `harness-changed`.
 
 The runner resolves executable paths and existing file arguments before freezing each role.
-Pass script and configuration paths as separate arguments, not embedded `--config=PATH` strings.
+The runner also resolves, fingerprints, and boundary-checks `--option=PATH` values, `NAME=/abs` values, and `-r/abs` values.
+Pass script and configuration paths as separate arguments when you can.
 The runner stops when an executable, script, file argument, model, or role changes.
 Transitive imports and wrapper-managed resources remain the trusted wrapper's responsibility.
 Reports contain adapter names, model names, and fingerprints, never command arguments.
+The `run.json` adapter label is `config` for `--harness-config` and `command` for `--harness command`.
 
 ## The claude adapter
 
@@ -136,7 +161,7 @@ A resumed `run` reuses the recorded pass and makes no new live call.
 Every resume still runs the free helper sandbox probe, which makes no model call.
 The reuse key joins the role fingerprint and the Claude environment hash.
 The environment hash includes the network probe version.
-The environment hash leaves out token variables and the per-process config directory, so it stays stable across processes.
+The environment hash leaves out token variables and the run's temporary config directory, so it stays stable across processes.
 A changed key stops the run with the code `environment-differs` and the text "runtime environment differs from the frozen record".
 The run stays resumable. Resume it after you restore the first-run environment.
 A runner upgrade that changes the sandbox settings or the network probe also changes the key. Restoring the environment cannot fix that case, so start a new run.
@@ -163,7 +188,7 @@ The message names the cause and the fix.
 If `bwrap` is missing, install bubblewrap.
 If `socat` is missing, install socat.
 If the host restricts user namespaces for every process, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
-Or add an AppArmor profile for `bwrap`, or use `--isolation nono`.
+Or add an AppArmor profile for `bwrap`.
 
 On Ubuntu 24.04 and later, the AppArmor profile `bwrap-userns-restrict` lets `bwrap` start, but strips capabilities from every process that `bwrap` starts.
 The sysctl does not lift that profile. Claude Code's Unix-socket filter needs a nested user namespace, so it fails there.
@@ -172,7 +197,7 @@ When the probe fails, the settings set `sandbox.network.allowAllUnixSockets: tru
 A Claude Code maintainer verified that this setting turns off only Unix-socket filtering. File rules and domain rules stay on.
 The live preflight then also probes a runner-owned host Unix socket. A Bash command that reaches it stops the run with `network-isolation-failed`.
 The environment hash includes this setting, so a resume on a host with the other result stops with `environment-differs`.
-The preflight evidence records `unix_socket_filter` as `on`, `off`, or `nono`.
+The preflight evidence records `unix_socket_filter` as `on` or `off`.
 A failure in the live preflight can cost its one call, but it never reaches a task call.
 The macOS path is unverified live. Verify it before you authorize private data.
 The network probes cover only direct loopback TCP and the proxy HTTP path on the live Bash path. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
@@ -200,34 +225,21 @@ The journey grader gate reads that file.
 
 The runner stages each companion skill under `.claude/skills` and each agent file under `.claude/agents`.
 The runner passes the declared MCP file with `--mcp-config` and grants the permission `mcp__<server>` for each server.
-The sandbox profile can deny paths that an MCP server needs.
-Under `--isolation claude`, MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
-Under `--isolation nono`, they run inside the nono profile.
+MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
+They run unconfined on the host; only the seed-fixed MCP config limits them.
 
 Codex and command transports raise `journey-unsupported`.
 A declared surface raises `contract-surface-unsupported` first.
 
-## The nono backend
+## Credential kind
 
-`--isolation nono` runs each Claude process inside nono on Linux. Claude Code's own sandbox is off.
-nono uses Landlock, which needs no user namespace, so the AppArmor restriction does not apply.
-One boundary covers the file tools and the Bash commands.
-The profile grants read-write access to the workspace and to a fresh, empty config directory for each process.
-Bash can read that directory, so no transcript or memory from another call is there. Claude Code also saves no session.
-It grants read-only access to the system core paths, the Claude executable directory, the settings file, and the staged skills.
-The staged `.agents` and `.claude` trees sit beside the workspace, because Landlock cannot keep a directory inside a writable grant read-only.
-The profile includes no shared temporary directory, so the run directory and other temporary files stay unreadable.
-nono's proxy allows only `api.anthropic.com`. Direct connections and UDP fail. Pathname Unix sockets need an explicit grant.
-nono injects `ANTHROPIC_API_KEY` from the host. The sandbox sees only a per-session proxy token, never the key.
-The config directory links no Claude login. The run bills the API key.
-With its own sandbox off, Claude Code needs an explicit rule to run Bash, so the settings allow Bash. nono is the boundary.
-A workspace symlink `.agents` points to the read-only tree, so the task prompt and the activation check keep their relative paths.
-The live preflight runs the same read, Read-tool, write, TCP, HTTP, and Unix-socket probes as the default backend.
-It also probes a runner-owned abstract Unix socket, which has no file and which only Landlock scoping can hide.
-The environment hash includes the nono binary digest and the Landlock ABI, so a nono or kernel upgrade stops a resume with `environment-differs`.
-The helper sandbox probe and helper fixtures still run in `bwrap`, so the host still needs bubblewrap.
-Residual risk: a task command can send requests to `api.anthropic.com` through the proxy token. It cannot reach another host or read the key.
-The nono backend is unverified on macOS. A fresh run stops there with `host-not-ready`. A resume stops with `nono-unavailable`.
+The runner uses the host subscription login for Claude and for Codex. It needs no API key.
+`doctor` prints a `credential` row. Its detail is `subscription login`, `api key`, `unverified (macOS Keychain)`, or `missing`.
+A Codex login file with an `OPENAI_API_KEY` value gives `api key`. The harness bills that key per token.
+A macOS Keychain login has no file, so the runner cannot read it. The kind is `unverified (macOS Keychain)`.
+A Codex role without a login stops with `login-missing`. Run `codex login`.
+The `run.json` preflight evidence records the same `credential` value for each built-in `claude` and `codex` role.
+A `missing` value fails the doctor. The row tells the user to log in with the harness CLI.
 
 ## JSON protocol, version one
 
@@ -332,6 +344,25 @@ Trace entries report completed command executions, not model claims or planned c
 Never synthesize a successful load or helper event.
 The evaluator independently checks the marker and qualifying command traces.
 
+### Helper witness
+
+A command harness reports its own trace, so the trace alone does not prove that the helper ran.
+For each task `infer`, the runner replaces the candidate helper with a stub in the workspace.
+The real helper stays in the same directory under a dot name, so `__file__`-relative reads still work.
+The stub runs the real helper, keeps its exit code and output, and appends one line to a ledger at the workspace root.
+The line holds a per-call nonce, the stub argv, and the exit code. The ledger is not a task output.
+The runner grants helper credit only for a trace entry that a ledger line of the same call backs.
+The argv and the exit code must match. Without a matching line, the helper earns no credit. A judged, hybrid, or command kind then reports `activation-rejected`. An `exact-json` kind scores 0.
+The `contract` check stages no stub. The `claude` and `codex` adapters stage no stub and grade as before.
+The protocol stays at `schema_version` 1. The wrapper sees no change.
+
+The run record of each outcome gains `helper_witnessed`: `true` when a ledger line backs the helper run, `false` when it does not.
+The key is absent for `claude` and `codex` outcomes, and for a task that has no helper.
+The sandbox must let the helper write the ledger in the workspace root. If it does not, the helper earns no credit.
+
+The witness proves that a real execution of the helper took place.
+It does not stop a model that writes ledger lines on purpose. The model can read the stub and forge a line.
+
 Return `usage: null` when usage is unavailable.
 Individual counts can also be absent or null.
 Counts must be nonnegative integers when known.
@@ -346,6 +377,9 @@ Protocol fixtures test runner behavior, not real operating-system isolation.
 Verify the actual harness sandbox before authorizing private data or paid invocations.
 
 Codex and command preflights make no inference invocation.
+The Codex preflight requires `codex --version` to report 0.154.0 or newer and records the observed string as `codex_version`.
+A lower or unparsable version stops with `codex-version-unsupported`. A resume on a different recorded version stops with `environment-differs`.
+A runner upgrade needs a new run. A run record from an older runner does not resume.
 Each `claude` role makes one live preflight call per run.
 Every attempted inference, including a failed response, consumes the shared invocation budget.
 All roles share the same deadline and holdout reservation.

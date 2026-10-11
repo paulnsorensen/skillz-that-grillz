@@ -12,6 +12,7 @@ from typing import cast
 
 from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments.harness._claude._constants import INSTALL_BUBBLEWRAP, SANDBOX_STDERR
+from skillz_experiments.harness._seatbelt import command_profile
 
 
 # Curl exit codes that show a request attempt. Codes 5 and 6 are name-resolution failures, and 22 needs `-f`.
@@ -34,9 +35,6 @@ USERNS_FIX = ("allow unprivileged user namespaces with `sudo sysctl -w kernel.ap
 LIVE_TOOLS = ("/usr/bin/python3", "/usr/bin/curl")
 
 
-SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
-
-
 class NetworkIsolationFailed(CodedError):
     """The live Bash path reaches the network, or the network probe gives no usable result."""
 
@@ -52,13 +50,13 @@ class SandboxUnavailable(CodedError):
         super().__init__("sandbox-unavailable", f"Claude Code sandbox unavailable: {cause}; no unsafe fallback; fix: {fix}")
 
 
-def host_tools(isolation: str) -> list[tuple[str, bool, str]]:
+def host_tools() -> list[tuple[str, bool, str]]:
     """List each host tool that the sandbox and the live preflight need, as (name, found, fix).
 
     The doctor reports these rows, and the helper sandbox probe stops on the first missing one.
     """
     wanted = [] if sys.platform == "darwin" else [
-        ("bwrap", INSTALL_BUBBLEWRAP), *([] if isolation == "nono" else [(helper, INSTALL_SOCAT) for helper in SANDBOX_HELPERS])]
+        ("bwrap", INSTALL_BUBBLEWRAP), *((helper, INSTALL_SOCAT) for helper in SANDBOX_HELPERS)]
     return [*((name, shutil.which(name) is not None, fix) for name, fix in wanted),
             *((path, Path(path).is_file(), f"install {Path(path).name}") for path in LIVE_TOOLS)]
 
@@ -169,23 +167,6 @@ def nested_userns_blocked() -> bool:
     return result.returncode != 0 and result.stderr.strip() in {"unshare", "map"}
 
 
-def seatbelt_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
-    """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
-
-    The profile allows no network. It allows reads of the system runtime, the extra read roots, and the
-    workspace, and writes to the workspace except `.agents`. Later rules win, so the `.agents` deny follows
-    the write allow.
-    """
-    path = str(workspace)
-    rules = ["(version 1)", "(deny default)", "(allow process-fork)", "(allow process-exec)",
-             "(allow signal (target self))", "(allow sysctl-read)", "(allow file-read-metadata)",
-             *[f'(allow file-read* (subpath "{root}"))' for root in (*SEATBELT_RUNTIME, *read_roots)],
-             '(allow file-read* (literal "/dev/null") (literal "/dev/urandom"))',
-             f'(allow file-read* (subpath "{path}"))', f'(allow file-write* (subpath "{path}"))',
-             f'(deny file-write* (subpath "{path}/.agents"))', '(allow file-write* (literal "/dev/null"))']
-    return "\n".join(rules) + "\n"
-
-
 def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str],
                  read_roots: tuple[str, ...] = (), capture: Path | None = None) -> list[str]:
     """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No external network.
@@ -201,7 +182,7 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
     """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
-        return [tool, "-p", seatbelt_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
+        return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
     mount = ["--bind", str(capture), SANDBOX_CAPTURE] if capture is not None else []
     shell = ['/bin/sh', '-c', 'exec "$@" 2>"$0"', f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [

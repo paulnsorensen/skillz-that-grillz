@@ -13,12 +13,6 @@ from skillz_experiments.harness._claude._constants import SANDBOX_SECONDS
 from skillz_experiments.harness._claude._login import host_config_dir
 
 
-Isolation = Literal["claude", "nono"]
-
-
-ISOLATIONS: tuple[str, ...] = get_args(Isolation)
-
-
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 
 

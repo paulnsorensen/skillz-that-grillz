@@ -20,9 +20,6 @@ BUILTIN_AGENTS = frozenset({"general-purpose", "Explore", "Plan", "statusline-se
                             "claude-code-guide", "claude"})
 
 
-NONO_HINT = "or run with `--isolation nono`"
-
-
 def control_response(events: list[dict[str, object]]) -> dict[str, object]:
     response = next((event.get("response") for event in events
                      if event.get("type") == "control_response" and isinstance(event.get("response"), dict)), None)
@@ -123,10 +120,10 @@ def find_leak(events: list[dict[str, object]], skills: list[str], builtin: Colle
 
 
 def failure(returncode: int, stderr: str, events: list[dict[str, object]], skills: list[str],
-             builtin: Collection[str] = (), *, nono_fix: bool = False, allowed: Collection[str] = ()) -> str | None:
+             builtin: Collection[str] = (), *, allowed: Collection[str] = ()) -> str | None:
     """Name the isolation failure that a probe run shows, or return None when the run is isolated.
 
-    Raise SandboxUnavailable when the Bash sandbox cannot start. With `nono_fix`, its fix also offers nono.
+    Raise SandboxUnavailable when the Bash sandbox cannot start.
     `allowed` names the contract surface skills that may load without being required.
     """
     final = final_event(events)
@@ -134,8 +131,7 @@ def failure(returncode: int, stderr: str, events: list[dict[str, object]], skill
     detail = (stderr[:8192] + " " + (str(final.get("result", ""))[:2048] if final else "")).lower()
     if returncode != 0 and "sandbox" in detail:
         fix = sandbox_fix(detail)
-        raise SandboxUnavailable(f"the Bash sandbox cannot start ({' '.join(stderr[:200].split())})",
-                                 f"{fix}; {NONO_HINT}" if nono_fix else fix)
+        raise SandboxUnavailable(f"the Bash sandbox cannot start ({' '.join(stderr[:200].split())})", fix)
     if errored and any(word in detail for word in ("login", "api key", "authenticat", "unauthorized", "401", "oauth")):
         return AUTH_FAILED
     loaded = loaded_skills(events, [*builtin, *allowed])

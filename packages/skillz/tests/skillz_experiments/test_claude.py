@@ -21,14 +21,14 @@ from skillz_experiments.harness._claude import _login as claude_login
 from skillz_experiments.harness._claude import _constants, _events, _options, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError, digest
-from skillz_experiments.harness._claude._transport import ClaudeCode
-from skillz_experiments.harness._claude._options import ClaudeOptions, resolve_read_roots
-from skillz_experiments.harness._claude._sandbox import NetworkIsolationFailed, sandbox_argv, seatbelt_profile
+from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
+from skillz_experiments.harness._claude._sandbox import sandbox_argv
 from skillz_experiments._contract import Surface, load_contract, parse
-from skillz_experiments._evaluator import Transport
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._transport import Transport
 from skillz_experiments._graders import Sandbox
-from skillz_experiments.harness._harness import Configuration, Harness
 from skillz_experiments._budget import Budget, BudgetExhausted
+from skillz_experiments.harness._seatbelt import command_profile
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 ROOT = Path(__file__).parents[4]
@@ -166,15 +166,13 @@ def test_a_claude_role_effort_reaches_every_call_and_the_fingerprint(tmp_path: P
     assert configuration.roles["judge"].fingerprint() != plain.roles["judge"].fingerprint()
 
 
-def test_default_and_isolation_only_role_fingerprints_keep_the_pre_option_digest(tmp_path: Path) -> None:
+def test_default_role_fingerprints_keep_the_pre_option_digest(tmp_path: Path) -> None:
     executable = fake_claude(tmp_path)
     role = _claude_config(tmp_path, executable).roles["judge"]
     files = {str(executable.resolve()): (str(executable.resolve()), hashlib.sha256(executable.read_bytes()).hexdigest())}
     base = {"adapter": role.adapter, "model": role.model, "command": role.command, "identity": role.identity, "files": files}
     assert role.fingerprint() == digest(base)
     assert _claude_config(tmp_path, executable, sandbox_seconds=20).roles["judge"].fingerprint() == digest(base)
-    assert _claude_config(tmp_path, executable, isolation="nono").roles["judge"].fingerprint() == digest(
-        base | {"isolation": "nono"})
 
 
 @pytest.mark.parametrize("options, message", [
@@ -184,6 +182,12 @@ def test_default_and_isolation_only_role_fingerprints_keep_the_pre_option_digest
 def test_invalid_claude_options_stop_the_configuration(tmp_path: Path, options: dict[str, object], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         _ = _claude_config(tmp_path, fake_claude(tmp_path), **options)
+
+
+def test_a_role_configuration_with_an_isolation_key_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(CodedError, match="is removed") as caught:
+        _ = _claude_config(tmp_path, fake_claude(tmp_path), isolation="claude")
+    assert caught.value.code == "isolation-removed"
 
 
 def test_claude_options_are_normalized_unique_and_sorted() -> None:
@@ -438,6 +442,7 @@ def test_argv_or_settings_or_usage_usage_comes_from_the_json_result(tmp_path: Pa
 @pytest.mark.parametrize(("mode", "reason", "code"), [
     ("auth-fail", "authentication", "login-missing"),
     ("foreign-skill", "foreign skill", "preflight-leak"),
+    ("spoofed-plugin", "foreign plugin", "preflight-leak"),
 ])
 def test_preflight_stops_on_isolation_failure_without_fallback(
         tmp_path: Path, mode: str, reason: str, code: str, sandbox_passes: None) -> None:
@@ -487,6 +492,7 @@ def test_preflight_passes_when_only_the_probe_skill_loads(tmp_path: Path, sandbo
         session.close()
     roles = cast(dict[str, dict[str, object]], evidence["roles"])
     assert roles["task"]["isolation"] == "passed"
+    assert roles["task"]["credential"] == "subscription login"
     assert roles["task"]["live_calls"] == 1
 
 
@@ -600,9 +606,9 @@ def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(
         original_environment = ClaudeCode._environment  # pyright: ignore[reportPrivateUsage]
 
         def without_setting(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                            unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
+                            unix_sockets: bool = False) -> dict[str, object]:
             return {key: value for key, value in original_settings(workspace, out, overrides=overrides,
-                                                                   unix_sockets=unix_sockets, sandboxed=sandboxed).items()
+                                                                   unix_sockets=unix_sockets).items()
                     if key != "disableBundledSkills"}
 
         def without_variable(self: ClaudeCode, workspace: Path) -> dict[str, str]:
@@ -754,8 +760,8 @@ def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path
     original = _settings.settings
 
     def open_network(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                     unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
-        changed = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
+                     unix_sockets: bool = False) -> dict[str, object]:
+        changed = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
         changed["sandbox"] = cast(dict[str, object], changed["sandbox"]) | {
             "network": {"allowedDomains": ["example.com"], "strictAllowlist": True}}
         return changed
@@ -859,7 +865,7 @@ def test_bubblewrap_argv_mounts_each_read_root_read_only_at_its_own_path() -> No
 
 
 def test_seatbelt_profile_allows_reads_only_of_each_read_root() -> None:
-    lines = seatbelt_profile(Path("/w/workspace"), ("/opt/pw-browsers",)).splitlines()
+    lines = command_profile(Path("/w/workspace"), ("/opt/pw-browsers",)).splitlines()
     assert '(allow file-read* (subpath "/opt/pw-browsers"))' in lines
     assert not any("/opt/pw-browsers" in line for line in lines if "write" in line or "network" in line)
 
@@ -893,7 +899,7 @@ def test_a_bubblewrap_command_reads_a_read_root_and_serves_itself_on_loopback(
 
 
 def test_seatbelt_profile_denies_network_host_reads_and_candidate_writes() -> None:
-    profile = seatbelt_profile(Path("/w/workspace"))
+    profile = command_profile(Path("/w/workspace"))
     lines = profile.splitlines()
     assert lines[:2] == ["(version 1)", "(deny default)"]
     assert not any("network" in line and line.startswith("(allow") for line in lines)
@@ -909,7 +915,7 @@ def test_seatbelt_argv_runs_the_command_with_a_clean_environment() -> None:
     workspace = Path("/w/workspace")
     argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", workspace, ["/usr/bin/python3", "-c", "pass"],
                         {"PATH": "/usr/bin:/bin", "HOME": "/w/workspace/home"})
-    assert argv[:3] == ["/usr/bin/sandbox-exec", "-p", seatbelt_profile(workspace)]
+    assert argv[:3] == ["/usr/bin/sandbox-exec", "-p", command_profile(workspace)]
     assert argv[3:] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=/w/workspace/home",
                         "/usr/bin/python3", "-c", "pass"]
 
@@ -1065,8 +1071,8 @@ def test_preflight_fails_when_the_workspace_allow_is_missing(
     original = _settings.settings
 
     def without_allow(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                      unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
-        document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
+                      unix_sockets: bool = False) -> dict[str, object]:
+        document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
         cast(dict[str, dict[str, object]], document["sandbox"])["filesystem"]["allowRead"] = []
         return document
     monkeypatch.setattr(_transport, "settings", without_allow)
@@ -1589,6 +1595,31 @@ def test_environment_key_changes_with_the_run_directory(tmp_path: Path) -> None:
         second.close()
 
 
+def test_environment_key_pins_the_documented_payload_with_the_fixed_isolation_entry(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    settings: dict[str, object] = {"sandbox": {"enabled": True}}
+    environment = {"PATH": "/bin", "CLAUDE_CONFIG_DIR": "/config", "LANG": "C.UTF-8"}
+    def floor(self: ClaudeCode, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
+        del self, workspace, overrides
+        return settings
+
+    def fixed_environment(self: ClaudeCode, workspace: Path) -> dict[str, str]:
+        del self, workspace
+        return environment
+
+    monkeypatch.setattr(ClaudeCode, "_floor", floor)
+    monkeypatch.setattr(ClaudeCode, "_environment", fixed_environment)
+    try:
+        key = adapter.environment_key()
+    finally:
+        adapter.close()
+    assert key == digest({"settings": settings, "environment": {"PATH": "/bin", "LANG": "C.UTF-8"}, "tools": _transport.TOOLS,
+                          "skill": _constants.PROBE_PREFIX, "platform": sys.platform, "network_probe": _transport.NETWORK_PROBE,
+                          "read_probe": _transport.READ_PROBE, "setting_sources": _transport.SETTING_SOURCES,
+                          "isolation": "claude"})
+
+
 def inventory_calls(executable: Path) -> list[dict[str, object]]:
     log = executable.with_name("claude.inventory.log")
     return [cast(dict[str, object], json.loads(line)) for line in log.read_text().splitlines()] if log.exists() else []
@@ -1960,7 +1991,7 @@ def test_a_claude_directory_write_failure_stops_the_preflight(
     assert caught.value.code == "preflight-leak"
 
 
-def test_the_sandbox_fix_offers_nono_only_for_the_claude_isolation_on_linux(
+def test_the_sandbox_fix_names_no_removed_backend(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
     monkeypatch.setattr(sys, "platform", "linux")
@@ -1970,8 +2001,7 @@ def test_the_sandbox_fix_offers_nono_only_for_the_claude_isolation_on_linux(
             _ = session.preflight()
     finally:
         session.close()
-    assert caught.value.code == "sandbox-unavailable" and "--isolation nono" in str(caught.value)
-    assert "--isolation nono" not in _sandbox.USERNS_FIX
+    assert caught.value.code == "sandbox-unavailable" and "nono" not in str(caught.value)
 
 
 SURFACE_SKILL = "---\nname: skillz\ndescription: x\n---\n"

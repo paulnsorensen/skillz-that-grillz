@@ -35,6 +35,8 @@ Any reuse of an existing login must keep credentials outside the candidate comma
 This is an implementation requirement, not evidence that a live self-test succeeds.
 See [session-driven skill prompt and CLI optimization](../ideas/session-driven-skill-optimization.md) for the evaluation contract.
 
+Note 2026-10-11: the runner no longer pins Codex to 0.154.0. It requires 0.154.0 or newer, passes `--strict-config` to `codex exec` and `codex app-server`, keeps every behavior probe, and records the observed version. The findings above come from 0.154.0 source and stay a baseline.
+
 [^local]: Installed Codex CLI 0.154.0 help and parser probes, 2026-09-28; shared configuration and parser preflight in `packages/skillz/src/skillz_experiments/harness/_codex.py`.
 
 [^roots]: https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/ext/skills/src/host_roots.rs#L74-L199
@@ -44,4 +46,4 @@ See [session-driven skill prompt and CLI optimization](../ideas/session-driven-s
 [^tests]: https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/app-server/tests/suite/v2/skills_list.rs#L133-L180
 [^feature]: https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/features/src/lib.rs#L222-L225
 
-_Source: OpenAI Codex rust-v0.154.0 primary source files · Updated: 2026-09-28_
+_Source: OpenAI Codex rust-v0.154.0 primary source files · Updated: 2026-10-11_

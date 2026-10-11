@@ -5,7 +5,6 @@ import tempfile
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import cast
 
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._contract import Surface
@@ -25,7 +24,7 @@ MACOS_READ = ("/System", "/Library")
 
 
 def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-             unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
+             unix_sockets: bool = False) -> dict[str, object]:
     """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
 
     Sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
@@ -35,9 +34,7 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
     Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
     `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter, which cannot start where the host blocks
-    a nested user namespace; the live preflight then probes a host socket. `sandboxed=False` turns Claude Code's own
-    sandbox off, for a role that nono confines as a whole. Then nono keeps the staged trees beside the workspace
-    read-only, and the deny rules do not apply: a task can still create `<workspace>/.claude` entries.
+    a nested user namespace; the live preflight then probes a host socket.
     """
     runtime = [*RUNTIME_READ, *(MACOS_READ if sys.platform == "darwin" else ())]
     temporary = unique([tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())])
@@ -56,10 +53,6 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
                                  *[f"Read(/{root}/{CONFIG_PREFIX}*/**)" for root in temporary]]}}
     if overrides:
         floor["skillOverrides"] = {name: "off" for name in sorted(overrides)}
-    if not sandboxed:
-        # Claude Code allows sandboxed Bash on its own. With its sandbox off, Bash needs an explicit rule; nono is the boundary.
-        floor["sandbox"] = {"enabled": False}
-        floor["permissions"] = cast(dict[str, object], floor["permissions"]) | {"allow": ["Skill", "Bash"]}
     return floor
 
 

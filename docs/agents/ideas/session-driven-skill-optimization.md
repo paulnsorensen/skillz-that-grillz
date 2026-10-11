@@ -73,7 +73,7 @@ The runner records unknown usage as null. Dollar cost remains unknown.
 
 ## Codex isolation and native loading
 
-The Codex adapter pins CLI 0.154.0 and requires an explicit model.
+The Codex adapter requires CLI 0.154.0 or newer, passes `--strict-config`, records the observed version, and requires an explicit model.
 The user selects the existing ChatGPT login for the first smoke test.
 Temporary isolated home directories keep user configuration and host skills out of candidate discovery.
 A temporary authentication symlink references the existing login without engine-side credential copying.[^runtime]
@@ -147,4 +147,4 @@ Do not describe the public self-test as a real-session benchmark.
 [^harness]: `packages/skillz/src/skillz_experiments/harness/_harness.py`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
 [^isolation]: `docs/agents/decisions/skillz-autoimprove.md:33-39`; `skills/skillz/references/experiment-harness.md:68-92`.
 
-_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-05 · Supersedes: proposal-only status and unresolved first-harness choice_
+_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-11 · Supersedes: proposal-only status and unresolved first-harness choice_

@@ -29,13 +29,15 @@ from skillz_experiments.harness._claude._transport import ClaudeCode
 from skillz_experiments.harness._claude._settings import Inventory, settings
 from skillz_experiments._cli import main
 from skillz_experiments.gate import DEFAULT_STATISTICS, case_deltas, verdict
-from skillz_experiments.harness._harness import Configuration
+from skillz_experiments.harness import Configuration
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, PENDING_KINDS, DraftCase, case_hash, split_cases)
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget
 from skillz_experiments.search import Edit, search
 from skillz_experiments.search._engine import Evaluate, Propose
 from skillz_experiments.run import Stop, export, run
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -77,15 +79,13 @@ class Spy:
 
 
 @final
-class _Fake:
+class _Fake(FakeProvider):
     def __init__(self, spy: Spy, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.spy, self.budget, self.checkpoint = spy, budget, checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
