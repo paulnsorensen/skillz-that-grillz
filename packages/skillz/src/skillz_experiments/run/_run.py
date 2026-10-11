@@ -190,7 +190,7 @@ def _check_arguments(adapter: HarnessName, configuration: Configuration | None, 
     if repeats is not None and repeats < 1:
         raise ValueError("repeats must be at least 1")
     given = {field: value for field, value in values.items() if value is not None}
-    if given and refuses_claude_options(adapter):
+    if given and configuration is None and refuses_claude_options(adapter):
         raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to --harness claude")
     if given and (configuration is not None or factory is not None):
         raise ValueError("--effort, --sandbox-read, and --sandbox-seconds apply only to the built-in harness; "

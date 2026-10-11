@@ -55,10 +55,16 @@ def refuses_claude_options(adapter: str) -> bool:
 
 
 def adapter_class(adapter: str) -> type[Transport]:
-    """Return the class that serves `adapter`. Any name but `claude` and `codex` is a user command."""
-    if adapter == "claude":
-        return ClaudeCode
-    return Codex if adapter == "codex" else Command
+    """Return the class that serves `adapter`. Raise `ValueError` for a name that is not `claude`, `codex`, or `command`."""
+    match adapter:
+        case "claude":
+            return ClaudeCode
+        case "codex":
+            return Codex
+        case "command":
+            return Command
+        case _:
+            raise ValueError(f"unknown adapter {adapter!r}")
 
 
 _LONG_OR_EQUALS = re.compile(r"(-[^=]*=|[A-Za-z_][A-Za-z0-9_]*=)(.*)", re.DOTALL)

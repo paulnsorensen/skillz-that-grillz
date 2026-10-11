@@ -451,10 +451,11 @@ def test_macos_profile_denies_sibling_temp_reads_before_it_allows_this_trials_di
     _ = infer(directory, root)
     text = (root.resolve() / ".gemini/sandbox-macos-skillz.sb").read_text()
     broad = text.index('(allow file-read*\n    (literal "/")')
-    deny = text.index('(deny file-read*\n    (subpath "/private/var/folders")\n    (subpath "/private/tmp")')
+    deny = text.index('(deny file-read-data file-read-xattr\n    (subpath "/private/var/folders")\n    (subpath "/private/tmp")')
     allow = text.index('(allow file-read*\n    (subpath (param "TARGET_DIR"))\n    (subpath (param "TMP_DIR"))')
     credentials = text.index('(deny file-read*\n    (literal (string-append (param "HOME_DIR") "/.gemini/oauth_creds.json"))')
     assert broad < deny < allow < credentials
+    assert '(deny file-read*\n    (subpath "/private/var/folders")' not in text
     assert '(subpath (param "CACHE_DIR"))' in text[allow:credentials]
 
 

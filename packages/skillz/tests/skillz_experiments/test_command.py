@@ -13,7 +13,9 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cli import main
 from skillz_experiments._contract import load_contract, parse
-from skillz_experiments.harness import Configuration
+from skillz_experiments.harness import Configuration, has_claude_sandbox
+from skillz_experiments.harness._command import Command
+from skillz_experiments.harness._roles import adapter_class
 from skillz_experiments.run import run
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget, BudgetExhausted
@@ -251,3 +253,12 @@ def test_nested_helper_fixture_runs_through_command_adapter(tmp_path: Path) -> N
         assert adapter.transports["task"].check_candidate(candidate)
     finally:
         adapter.close()
+
+
+@pytest.mark.parametrize("name", ["config", "gemini", ""])
+def test_an_unknown_adapter_name_raises_instead_of_becoming_a_command(name: str) -> None:
+    with pytest.raises(ValueError, match="unknown adapter"):
+        _ = adapter_class(name)
+    with pytest.raises(ValueError, match="unknown adapter"):
+        _ = has_claude_sandbox(name)
+    assert adapter_class("command") is Command
