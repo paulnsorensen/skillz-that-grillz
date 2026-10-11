@@ -16,7 +16,7 @@ from skillz_experiments._evaluator import evaluate
 from skillz_experiments._protocol import LEDGER_KEY
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness import Configuration
-from skillz_experiments.harness._witness import LEDGER, Witness, ledger_entries, stage_witness
+from skillz_experiments.harness._witness import LEDGER, LedgerError, Witness, ledger_entries, stage_witness
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MAIN = "import sys; from skillz_experiments._cli import main; sys.exit(main())"
@@ -259,3 +259,60 @@ def test_a_helper_that_cannot_be_staged_sends_an_empty_ledger_and_earns_no_credi
     finally:
         adapter.close()
     assert result["helper_executed"] is False and result["helper_witnessed"] is False
+
+
+def invoked(tmp_path: Path, mode: str, monkeypatch: pytest.MonkeyPatch, after_stage: bool = False) -> dict[str, object]:
+    def spy(workspace: Path, skill: str, helper: str) -> Witness | None:
+        witness = stage_witness(workspace, skill, helper)
+        if after_stage:
+            (workspace / LEDGER).mkdir()
+        return witness
+
+    monkeypatch.setattr("skillz_experiments.harness._command.stage_witness", spy)
+    adapter = Configuration.load(configured(tmp_path, mode), "fake-model").create(
+        "fake-model", Budget(5, 60, 0), lambda: None)
+    try:
+        task = adapter.transports["task"]
+        return evaluate(task, task, candidate(), case(tmp_path))
+    finally:
+        adapter.close()
+
+
+def test_a_staging_failure_is_reported_with_its_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def unstaged(workspace: Path, skill: str, helper: str) -> Witness | None:
+        assert (workspace / ".agents/skills" / skill / helper).is_file()
+        return None
+
+    monkeypatch.setattr("skillz_experiments.harness._command.stage_witness", unstaged)
+    adapter = Configuration.load(configured(tmp_path, "witness-real"), "fake-model").create(
+        "fake-model", Budget(5, 60, 0), lambda: None)
+    try:
+        task = adapter.transports["task"]
+        result = evaluate(task, task, candidate(), case(tmp_path))
+    finally:
+        adapter.close()
+    assert result["helper_witnessed"] is False and result["helper_witness_error"] == "staging-failed"
+
+
+def test_an_unreadable_ledger_is_reported_with_its_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    result = invoked(tmp_path, "witness-real", monkeypatch, after_stage=True)
+    assert result["helper_witnessed"] is False and result["helper_witness_error"] == "ledger-unreadable"
+
+
+def test_a_truncated_ledger_is_reported_with_its_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._witness.LEDGER_BYTES_LIMIT", 10)
+    result = invoked(tmp_path, "witness-real", monkeypatch)
+    assert result["helper_witness_error"] == "ledger-truncated"
+
+
+def test_an_absent_ledger_is_no_witness_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    result = invoked(tmp_path, "witness-forged", monkeypatch)
+    assert result["helper_witnessed"] is False and "helper_witness_error" not in result
+
+
+def test_ledger_entries_raise_a_distinct_cause_for_a_non_regular_ledger(tmp_path: Path) -> None:
+    witness = Witness("mine", tmp_path / LEDGER)
+    witness.ledger.mkdir()
+    with pytest.raises(LedgerError) as caught:
+        _ = ledger_entries(witness)
+    assert caught.value.cause == "ledger-unreadable"

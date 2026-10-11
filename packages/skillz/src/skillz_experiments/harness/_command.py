@@ -19,8 +19,11 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._runtime import process
 from skillz_experiments.harness._check import Check
 from skillz_experiments.harness._isolation import listening, probe
-from skillz_experiments.harness._witness import Witness, ledger_entries, stage_witness
+from skillz_experiments.harness._witness import LedgerError, Witness, ledger_entries, stage_witness
 from skillz_experiments.harness._check import UNVERIFIED_CREDENTIAL
+
+WITNESS_ERROR_KEY = "helper_witness_error"
+"""The run-record field that names why the helper witness could not confirm a helper run."""
 
 
 def _response(value: object, operation: str) -> dict[str, object]:
@@ -245,5 +248,13 @@ class Command:
                 "answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
                 "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
             if helper is not None:
-                outcome[LEDGER_KEY] = [] if witness is None else ledger_entries(witness)
+                outcome[LEDGER_KEY] = []
+                if witness is None:
+                    outcome[WITNESS_ERROR_KEY] = "staging-failed"
+                else:
+                    try:
+                        outcome[LEDGER_KEY] = ledger_entries(witness)
+                    except LedgerError as fault:
+                        outcome[LEDGER_KEY] = fault.entries
+                        outcome[WITNESS_ERROR_KEY] = fault.cause
             return outcome
