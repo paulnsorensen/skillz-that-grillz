@@ -3,14 +3,14 @@
 - target_param: `{TARGET}` (a skill name or agent type)
 - target_kind: `skill` or `agent`, from the dispatch prompt
 - start table: set `{START_TABLE}` and `{NAME_COLUMN}` from `target_kind`, as the
-  Substitution section of `engine/references/query-conventions.md` defines
+  Substitution section of the `conventions` input defines
 - harness: `harness='all'` (`skill_invocations` and `agent_spawns` are claude-dominant — note that)
 - owner: skillz
 
 Detect usage decay and error-rate changes for `{TARGET}`.
 Tool events inside invocation windows are temporal correlations, not attributed effects.
-Run in one fresh read-only context. Schema: `engine/references/canonical-schema.md`
-in this `skillz` skill. Replace each placeholder before you run a query.
+Run in one fresh read-only context. Schema: the `schema` input.
+Replace each placeholder before you run a query.
 
 For an `agent` target, a window starts at each spawn of that agent in the session.
 `agent_spawns` has no join key to the spawned agent's own tool calls.

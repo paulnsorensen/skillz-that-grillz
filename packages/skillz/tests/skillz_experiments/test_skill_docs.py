@@ -118,7 +118,7 @@ def _long(path: Path, inspector: ModuleType, maximum: int) -> list[dict[str, int
 
 
 # Table cells are exempt: the inspector flushes sentences on `|`.
-PROSE_FILES = [SKILL, *sorted((SKILL_DIR / "references").glob("*.md")), *sorted((SKILL_DIR / "engine/references").glob("*.md"))]
+PROSE_FILES = [SKILL, *sorted((SKILL_DIR / "references").glob("*.md"))]
 
 
 @pytest.mark.parametrize("path", PROSE_FILES, ids=[str(path.relative_to(SKILL_DIR)) for path in PROSE_FILES])

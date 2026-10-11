@@ -44,18 +44,6 @@ class CheckSkillzReferencesTest(unittest.TestCase):
         self.assertIn("a.md:1: names c.md", out)
         self.assertIn("a.md:2: names d.md", out)
 
-    def test_engine_references_are_allowed_but_mixed_line_still_fails(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            _ = (root / "a.md").write_text(
-                "Reads `engine/references/b.md` and [x](../engine/references/b.md).\nReads `engine/references/b.md` then b.md.\n"
-            )
-            _ = (root / "b.md").write_text("No mention.\n")
-            code, out, _ = _run(root)
-        self.assertEqual(code, 1)
-        self.assertNotIn("a.md:1", out)
-        self.assertIn("a.md:2: names b.md", out)
-
     def test_independent_references_pass(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -20,3 +20,9 @@ entry = "wedge:main"
 source = "../../packages/wedge/src/wedge"
 include = ["../../packages/fromargs/src/fromargs"]
 groups = ["wedge"]
+
+[[target]]
+name = "session-analytics"
+entry = "session_analytics:main"
+source = "../../packages/session-analytics/src/session_analytics"
+include = ["../../packages/fromargs/src/fromargs"]
