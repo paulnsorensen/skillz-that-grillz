@@ -329,6 +329,30 @@ def test_default_registered_twice_raises_value_error() -> None:
             return "ran"
 
 
+def test_command_name_registered_twice_raises_value_error() -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def show() -> str:
+        return "first"
+
+    with pytest.raises(ValueError, match="already registered"):
+
+        @app.command(name="show")
+        def other() -> str:
+            return "second"
+
+    assert app.run(["show"]) == 0
+
+
+def test_group_name_registered_twice_raises_value_error() -> None:
+    app = fromargs.App("t")
+    _ = app.group("sub")
+
+    with pytest.raises(ValueError, match="already registered"):
+        _ = app.group("sub")
+
+
 def test_group_default_command_reserving_an_option_is_rejected() -> None:
     app = fromargs.App("t")
 
