@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import atexit
+import functools
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from typing import TYPE_CHECKING, cast
 
@@ -41,9 +44,11 @@ DB_TMP_PATH = f"{DB_PATH}.tmp"
 # into an existing directory never aliases (and rmtree's) that directory's
 # own "stage" subdir.
 STAGE_DIR = f"{DB_PATH}.stage"
-# DuckDB spills here. Its own default, `<database>.tmp`, collides with
-# DB_TMP_PATH for queries and lands in the working directory for none.
-SPILL_DIR = f"{DB_PATH}.spill"
+# DuckDB spills under this root. Its own default, `<database>.tmp`, collides
+# with DB_TMP_PATH for queries and lands in the working directory for none.
+# Each process spills to its own subdirectory (see spill_dir), because DuckDB
+# deletes the spill files it finds in its temp directory when it closes.
+SPILL_ROOT = f"{DB_PATH}.spill"
 TTL_SECONDS = 3600  # 1 hour
 
 # The schema version is an integer stamped in the one-row `schema_info` table.
@@ -65,7 +70,11 @@ DEFAULT_MEMORY_LIMIT = "4GB"
 DEFAULT_THREADS = 4
 MAX_THREADS = 256
 MAX_SPILL_SIZE = "20GB"
-_SIZE = re.compile(r"(?i)(\d+(?:\.\d+)?) ?([KMGT]i?B)")
+_SIZE = re.compile(r"(?i)(\d+(?:\.\d+)?) ?([KMGT])(i?)B")
+# DuckDB cannot run a simple aggregate below 4MiB; 16MiB leaves headroom.
+MIN_MEMORY_BYTES = 16 * 1024**2
+# DuckDB stores the limit in 64 bits and refuses a larger value.
+MEMORY_BYTES_CEILING = 2**64
 
 DUCKDB_MISSING = (
     "DuckDB CLI not found. Install it with one of: "
@@ -106,11 +115,16 @@ def sql_quote(text: str) -> str:
 def _memory_limit() -> str:
     value = os.environ.get(MEMORY_LIMIT_ENV) or DEFAULT_MEMORY_LIMIT
     match = _SIZE.fullmatch(value)
-    if not match or float(match[1]) <= 0:
-        raise DatabaseError(
-            f"{MEMORY_LIMIT_ENV} must be a positive size with a unit such as 4GB or 512MiB; got {value!r}."
-        )
-    return value
+    if match:
+        base = 1024 if match[3] else 1000
+        multiplier = cast(int, base ** ("KMGT".index(cast(str, match[2]).upper()) + 1))
+        size = int(float(cast(str, match[1])) * multiplier)
+        if MIN_MEMORY_BYTES <= size < MEMORY_BYTES_CEILING:
+            return value
+    raise DatabaseError(
+        f"{MEMORY_LIMIT_ENV} must be a size of at least 16MiB and below 16EiB, "
+        + f"with a unit such as 4GB or 512MiB; got {value!r}."
+    )
 
 
 def _threads() -> int:
@@ -120,13 +134,34 @@ def _threads() -> int:
     return int(value)
 
 
-def duckdb_settings() -> list[str]:
-    """The SET statements every DuckDB run applies; an invalid environment value raises."""
+def validate_settings() -> None:
+    """Raise DatabaseError (exit 4) when a SESSIONS_DUCKDB_* environment value is invalid."""
+    _ = _memory_limit(), _threads()
+
+
+@functools.cache
+def spill_dir() -> str:
+    """This process's own spill directory under SPILL_ROOT, made on first use and removed at exit."""
+    try:
+        os.makedirs(SPILL_ROOT, mode=0o700, exist_ok=True)
+        path = tempfile.mkdtemp(prefix=f"{os.getpid()}-", dir=SPILL_ROOT)
+    except OSError as error:
+        raise DatabaseError(f"Cannot create the DuckDB spill directory: {error}") from error
+    _ = atexit.register(shutil.rmtree, path, True)
+    return path
+
+
+def duckdb_settings(*, ingest: bool) -> list[str]:
+    """The SET statements a DuckDB run applies; an invalid environment value raises.
+
+    Only ingest drops insertion order to save memory, so a read-only query
+    keeps its row order.
+    """
     return [
         f"SET memory_limit='{_memory_limit()}'",
         f"SET threads={_threads()}",
-        "SET preserve_insertion_order=false",
-        f"SET temp_directory='{sql_quote(SPILL_DIR)}'",
+        *(["SET preserve_insertion_order=false"] if ingest else []),
+        f"SET temp_directory='{sql_quote(spill_dir())}'",
         f"SET max_temp_directory_size='{MAX_SPILL_SIZE}'",
     ]
 
@@ -142,7 +177,7 @@ def duckdb_argv(sql: str, *, as_json: bool = False) -> list[str]:
     if as_json:
         argv += ["-readonly", "-json"]
     argv.append(DB_PATH if as_json else DB_TMP_PATH)
-    for statement in duckdb_settings():
+    for statement in duckdb_settings(ingest=not as_json):
         argv += ["-cmd", statement]
     if as_json:
         argv += ["-cmd", ".safe_mode"]

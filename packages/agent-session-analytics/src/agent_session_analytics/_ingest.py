@@ -39,13 +39,13 @@ from agent_session_analytics._db import (
     IngestError,
     configured_path,
     db_is_fresh,
-    duckdb_settings,
     query_rows,
     require_duckdb,
     run_sql,
     sql_quote,
+    validate_settings,
 )
-from agent_session_analytics._emitters import DERIVED_TABLES, INTERRUPT_PREFIX, DerivedTable
+from agent_session_analytics._emitters import DERIVED_TABLES, DerivedTable
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -968,7 +968,7 @@ def _do_ingest_and_swap() -> float:
             harness,
             json_extract_string(tool_name, '$') AS tool_name,
             json_extract_string(tool_use_id, '$') AS tool_use_id,
-            input,
+            json_extract(input, '$[0]') AS input,
             json_extract_string(bash_cmd, '$') AS bash_cmd,
             json_extract_string(skill_name, '$') AS skill_name,
             json_extract_string(skill_args, '$') AS skill_args,
@@ -1155,40 +1155,13 @@ def _do_ingest_and_swap() -> float:
            OR content LIKE '%The user doesn''t want to proceed%';
     """)
 
-    # Step 11: interrupt_events, a view over structured markers only. A Claude
-    # interrupt is a user entry whose text (string content, or the first text
-    # block) starts with the marker; the LIKE prefilter keeps the JSON parse to
-    # the few candidate rows. A Codex interrupt is a turn_aborted entry with
-    # reason 'interrupted'.
+    # Step 11: interrupt_events (one row per structured interrupt marker; the
+    # staging pass applies the marker rule, see _emitters).
     _log("  Creating interrupt_events...")
     run_sql(f"""
-        CREATE VIEW interrupt_events AS
-        WITH claude_candidates AS (
-            SELECT harness, sessionId, timestamp, json_extract(message, '$.content') AS content
-            FROM raw_entries
-            WHERE harness = 'claude' AND type = 'user'
-              AND CAST(message AS VARCHAR) LIKE '%{INTERRUPT_PREFIX}%'
-        )
+        CREATE TABLE interrupt_events AS
         SELECT harness, sessionId, timestamp
-        FROM claude_candidates
-        WHERE starts_with(
-            CASE json_type(content)
-                WHEN 'VARCHAR' THEN json_extract_string(content, '$')
-                WHEN 'ARRAY' THEN json_extract_string(
-                    list_filter(
-                        TRY_CAST(content AS JSON[]),
-                        lambda block: json_extract_string(block, '$.type') = 'text'
-                    )[1],
-                    '$.text'
-                )
-            END,
-            '{INTERRUPT_PREFIX}'
-        )
-        UNION ALL
-        SELECT harness, sessionId, timestamp
-        FROM raw_entries
-        WHERE harness = 'codex' AND type = 'system' AND subtype = 'turn_aborted'
-          AND stopReason = 'interrupted';
+        FROM {_read_derived(tables["interrupt_events"])};
     """)
 
     _log("  Creating indexes...")
@@ -1259,7 +1232,7 @@ def build_database(*, force: bool = False) -> float | None:
     """
     _ = os.umask(0o077)
     require_duckdb()
-    _ = duckdb_settings()  # Reject a bad environment value before the slow stage step.
+    validate_settings()  # Reject a bad environment value before the slow stage step.
 
     if not force and db_is_fresh():
         return None

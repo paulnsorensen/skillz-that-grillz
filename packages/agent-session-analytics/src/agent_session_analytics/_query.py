@@ -14,6 +14,7 @@ from agent_session_analytics._db import (
     db_is_stamped,
     query_rows,
     require_duckdb,
+    validate_settings,
 )
 from agent_session_analytics._ingest import build_database
 
@@ -40,9 +41,14 @@ def run_query(query: str) -> list[dict[str, object]]:
 
     The default database refreshes itself when it is old or has another schema
     version. A ``SESSIONS_DB`` override never refreshes: a missing database or a
-    schema mismatch is an error, so the caller runs ``ingest`` on purpose.
+    schema mismatch is an error, so the caller runs ``ingest`` on purpose. An
+    invalid ``SESSIONS_DUCKDB_*`` value is a query error (exit 5).
     """
     require_duckdb()
+    try:
+        validate_settings()
+    except DatabaseError as error:
+        raise QueryError(str(error)) from error
     if os.environ.get("SESSIONS_DB"):
         if not os.path.exists(DB_PATH):
             raise IngestError(f"No session database at {DB_PATH}; run `agent-session-analytics ingest`.")

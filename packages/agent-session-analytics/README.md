@@ -75,16 +75,17 @@ A consumer that queries the database directly runs
 - Otherwise an absolute `XDG_CACHE_HOME` selects
   `<cache>/dotfiles/session-analytics/sessions.duckdb`. A relative or unset
   value uses `~/.cache`.
-- `SESSIONS_DUCKDB_MEMORY_LIMIT` sets the DuckDB memory limit. The default is
-  `4GB`.
+- `SESSIONS_DUCKDB_MEMORY_LIMIT` sets the DuckDB memory limit, from 16MiB up to
+  but not including 16EiB. The default is `4GB`.
 - `SESSIONS_DUCKDB_THREADS` sets the DuckDB thread count, from 1 to 256. The
   default is `4`.
 - `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `CURSOR_HOME` move the log roots.
 
 Ingest writes the transient `<db>.tmp` and `<db>.stage`, and a persistent
 `<db>.lock`. An `fcntl` lock serializes ingest runs. Ingest uses umask `077`.
-DuckDB spills large operations to the `<db>.spill` directory. It caps the spill
-at 20GB.
+DuckDB spills large operations to a per-process subdirectory of the
+`<db>.spill` directory. Each process removes its own subdirectory at exit. The
+spill cap is 20GB.
 
 ## Schema version
 

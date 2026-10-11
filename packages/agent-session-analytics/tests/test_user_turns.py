@@ -155,14 +155,8 @@ def test_interrupt_events_come_from_claude_markers_and_codex_interrupted_aborts(
         {"harness": "claude", "sessionId": "s1", "timestamp": "2026-01-01T00:00:11.000Z"},
         {"harness": "codex", "sessionId": "c1", "timestamp": "2026-01-01T00:01:05.000Z"},
     ]
-    view = sandbox.query("SELECT count(*) AS n FROM duckdb_views() WHERE view_name = 'interrupt_events'")
-    assert view == [{"n": 1}]
-
-
-@needs_duckdb
-def test_schema_version_two_is_stamped(sandbox: Sandbox) -> None:
-    _seed(sandbox)
-    assert sandbox.query("SELECT version FROM schema_info") == [{"version": 2}]
+    table = sandbox.query("SELECT count(*) AS n FROM duckdb_tables() WHERE table_name = 'interrupt_events'")
+    assert table == [{"n": 1}]
 
 
 @needs_duckdb

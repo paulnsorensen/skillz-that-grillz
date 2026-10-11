@@ -68,14 +68,17 @@ def test_malformed_values_fail_validation_before_the_stage_step(
 
 
 @needs_duckdb
-@pytest.mark.xfail(strict=True, reason="press finding: the validator accepts memory limits DuckDB refuses")
 @pytest.mark.parametrize(
     "value",
     [
         # DuckDB refuses the value: "Memory value out of range".
         "99999999999TB",
+        # 2**64 bytes wraps to 0 bytes in DuckDB.
+        "16777216TiB",
         # DuckDB rounds the value to 0 bytes, which the positive-size rule forbids.
         "0.0001KB",
+        # DuckDB accepts the value but cannot run a query with it.
+        "1MiB",
     ],
 )
 def test_memory_limits_duckdb_refuses_fail_validation_before_the_stage_step(
@@ -100,4 +103,6 @@ def test_spill_directory_with_a_quote_in_the_database_path_is_escaped(sandbox: S
     assert built.returncode == 0, built.stderr
     result = sandbox.run("sql", "SELECT current_setting('temp_directory') AS spill", extra_env=env)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == [{"spill": f"{database}.spill"}]
+    spill = Path(str(cast(list[dict[str, object]], json.loads(result.stdout))[0]["spill"]))
+    assert spill.parent == Path(f"{database}.spill")
+    assert not spill.exists()

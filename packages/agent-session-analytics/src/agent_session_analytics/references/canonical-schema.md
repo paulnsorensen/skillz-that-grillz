@@ -131,18 +131,24 @@ The table holds the full prompt text. The database file is private to the user (
 | timestamp | VARCHAR | ISO timestamp of the prompt |
 | turn_index | BIGINT | 0-based position among the real prompts of the session, ordered by timestamp, then by source file and position in that file |
 | text | VARCHAR | Full prompt text, not truncated. Text blocks join with a newline |
-| prev_assistant_text | VARCHAR | Last assistant text before the prompt, or NULL when none precedes it. Claude, omp, and pi: the joined text blocks of the last assistant entry with text (Claude skips sidechain entries). Codex: `last_agent_message` of the last `task_complete` event; NULL when that turn ended without one |
+| prev_assistant_text | VARCHAR | Last assistant text before the prompt in the same session and source file, or NULL when none precedes it. Claude, omp, and pi: the joined text blocks of the last assistant entry with non-blank text (Claude skips sidechain entries). Codex: `last_agent_message` of the last `task_complete` event; NULL when that turn ended without one or was aborted (`turn_aborted`) |
 
 A real Claude prompt is a `user` entry that is not `isMeta`, `isCompactSummary`, or `isSidechain`.
-It has string content or a text block, and its text does not start with `<` or `[Request interrupted`.
-A real omp or pi prompt is a `user` row with string content or at least one text block, and its `attribution` is not `agent`. Codex prompts come from `item_completed` `UserMessage` events.
+It has string content or a text block, and its text is not blank and does not start with `<` or `[Request interrupted`.
+A real omp or pi prompt is a `user` row with non-blank string content or text blocks, and its `attribution` is not `agent`. Codex prompts come from `item_completed` `UserMessage` events with non-blank text. A Codex sub-agent rollout (non-null `parentSessionId`) gives no rows: the parent agent writes its prompts.
 
 ## `interrupt_events`
 
-A view of user interrupts from structured markers only. Columns: `harness`,
-`sessionId`, `timestamp`. Claude: a `user` entry whose text starts with
-`[Request interrupted`. Codex: a `turn_aborted` event with reason `interrupted`.
-Cursor, omp, and pi aborts are not covered (see `stop_events`).
+A table of user interrupts from structured markers only. Columns: `harness`,
+`sessionId`, `timestamp`. Claude: a main-session `user` entry (not `isSidechain`)
+whose string content or first text block starts with `[Request interrupted`.
+Codex: a `turn_aborted` event with reason `interrupted` in a top-level rollout
+(`parentSessionId` is NULL). Cursor, omp, and pi aborts are not covered (see `stop_events`).
+
+`interrupt_events` overlaps `permission_denials`. A rejected Claude tool prompt
+writes a "doesn't want to proceed" tool result and a
+`[Request interrupted by user for tool use]` marker, so one rejection can appear
+in both. Do not add the two counts.
 
 ## `raw_entries`
 

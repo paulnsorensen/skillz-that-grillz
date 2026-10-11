@@ -16,7 +16,10 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 ### Changed
 
 - Ingest builds `tool_uses`, `tool_results`, `stop_events`, and `model_turns` from narrow rows that the staging pass pre-flattens. DuckDB no longer runs `json_extract` over `raw_entries.message`. The `raw_entries` step runs on one thread. Peak memory of an ingest step drops from 11.1 GB to 2.6 GB on a 1 M-row log set. Tables, columns, and types stay the same.
-- Every DuckDB run now sets `memory_limit` (default `4GB`, was `8GB`), `threads` (default `4`), `preserve_insertion_order=false`, and a 20GB spill cap.
+- Every DuckDB run now sets `memory_limit` (default `4GB`, was `8GB`), `threads` (default `4`), and a 20GB spill cap. Ingest also sets `preserve_insertion_order=false`; read-only queries keep insertion order.
+- `SESSIONS_DUCKDB_MEMORY_LIMIT` must be at least 16MiB and below 16EiB. Ingest checks the value before the stage step.
+- An invalid `SESSIONS_DUCKDB_*` value makes `sql` exit 5 (a query error), not 4.
+- `tool_uses.input` keeps an explicit JSON `null`, and `tool_results.content` prints floats the way DuckDB prints them.
 - The schema version is now 2, so ingest rebuilds a version 1 database.
 - The Codex adapter keeps `item_completed` `UserMessage` prompts, `task_complete`, and `turn_aborted` events as `raw_entries` rows. Codex `sessions.entry_count` counts them.
 - The omp and pi adapters keep the `attribution` of a user row in `raw_entries.message`. A row with `attribution` `agent` is not a real prompt.
@@ -24,10 +27,10 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 ### Added
 
 - `SESSIONS_DUCKDB_THREADS` sets the DuckDB thread count.
-- DuckDB spills to the `<db>.spill` directory.
+- DuckDB spills to a private subdirectory of the `<db>.spill` directory, one per process. The process removes it at exit.
 - A query-hygiene rule in `query-conventions.md`.
-- The `user_turns` table: one row per real user prompt (claude, codex, omp, and pi) with `turn_index`, the full `text`, and `prev_assistant_text`.
-- The `interrupt_events` view: Claude `[Request interrupted` markers and Codex `turn_aborted` events with reason `interrupted`.
+- The `user_turns` table: one row per real user prompt (claude, codex, omp, and pi) with `turn_index`, the full `text`, and `prev_assistant_text`. Blank prompts and Codex sub-agent rollouts stay out.
+- The `interrupt_events` table: main-session Claude `[Request interrupted` markers and top-level Codex `turn_aborted` events with reason `interrupted`. The staging pass builds it. It can overlap `permission_denials`.
 
 ## [0.1.0] - 2026-10-11
 

@@ -16,9 +16,11 @@ same json_extract_string / TRY_CAST that it applied to raw_entries.message.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import cast
 
 Row = dict[str, object]
@@ -67,18 +69,60 @@ def _joined(texts: list[str]) -> str | None:
     return "\n".join(texts) if texts else None
 
 
+def _nonblank(text: str | None) -> str | None:
+    """Return text, or None when it is absent, empty, or only whitespace."""
+    return text if text and not text.isspace() else None
+
+
 def _at(value: object, key: str) -> object:
     """Return value[key] when value is an object, else None (a JSON path miss)."""
     return cast(dict[str, object], value).get(key) if isinstance(value, dict) else None
 
 
+def _float_text(value: float) -> str:
+    """Return a float the way DuckDB prints it in JSON text.
+
+    DuckDB writes the shortest round-trip digits. It uses plain notation when
+    the decimal point falls 6 places before to 21 places after the first digit,
+    with `.0` after a whole number. Other values use `<digits>e<exponent>`.
+    """
+    if not math.isfinite(value):
+        return json.dumps(value)
+    sign = "-" if math.copysign(1.0, value) < 0 else ""
+    if value == 0:
+        return f"{sign}0.0"
+    parts = Decimal(repr(abs(value))).normalize().as_tuple()
+    digits = "".join(map(str, parts.digits))
+    point = len(digits) + cast(int, parts.exponent)
+    if -6 < point <= 21:
+        if point <= 0:
+            return f"{sign}0.{'0' * -point}{digits}"
+        if len(digits) <= point:
+            return f"{sign}{digits}{'0' * (point - len(digits))}.0"
+        return f"{sign}{digits[:point]}.{digits[point:]}"
+    mantissa = digits[0] + (f".{digits[1:]}" if len(digits) > 1 else "")
+    return f"{sign}{mantissa}e{point - 1}"
+
+
+def _compact_json(value: object) -> str:
+    if isinstance(value, float):
+        return _float_text(value)
+    if isinstance(value, list):
+        return "[" + ",".join(_compact_json(item) for item in cast(list[object], value)) + "]"
+    if isinstance(value, dict):
+        items = cast(dict[str, object], value).items()
+        return "{" + ",".join(f"{_compact_json(key)}:{_compact_json(item)}" for key, item in items) + "}"
+    return json.dumps(value, ensure_ascii=False)
+
+
 def _json_text(value: object) -> str:
     """Return compact JSON text the way DuckDB prints it.
 
-    DuckDB keeps non-ASCII characters and writes control-character escapes with
-    upper-case hex digits (Python uses lower case).
+    DuckDB keeps non-ASCII characters, writes control-character escapes with
+    upper-case hex digits (Python uses lower case), and prints floats in its
+    own notation (see _float_text).
     """
-    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    text = _compact_json(value)
     return _CONTROL_ESCAPE.sub(lambda match: match.group()[:2] + match.group()[2:].upper(), text)
 
 
@@ -102,11 +146,13 @@ def _tool_uses(_harness: str, _source: str) -> Emitter:
             if _at(block, "type") != "tool_use":
                 continue
             tool_input = _at(block, "input")
+            has_input = "input" in cast(dict[str, object], block)
             yield {
                 "harness": entry.get("harness"),
                 "tool_name": _at(block, "name"),
                 "tool_use_id": _at(block, "id"),
-                "input": tool_input,
+                # A one-item list keeps an explicit JSON null apart from a missing key.
+                "input": [tool_input] if has_input else None,
                 "bash_cmd": _at(tool_input, "command"),
                 "skill_name": _at(tool_input, "skill"),
                 "skill_args": _at(tool_input, "args"),
@@ -200,14 +246,14 @@ def _claude_prompt(entry: Entry) -> str | None:
 
     A real prompt is not meta, a compact summary, or a sidechain entry. It has
     string content or at least one text block, so a tool-result-only entry is
-    not a prompt. Its text does not start with `<` (an injected tag) or with
-    the interrupt marker.
+    not a prompt. Its text is not blank and does not start with `<` (an
+    injected tag) or with the interrupt marker.
     """
     if any(entry.get(flag) is True for flag in ("isMeta", "isCompactSummary", "isSidechain")):
         return None
     message = _message(entry)
     content = message.get("content") if message else None
-    text = content if isinstance(content, str) else _joined(_texts(entry))
+    text = _nonblank(content if isinstance(content, str) else _joined(_texts(entry)))
     if text is None or text.startswith(("<", INTERRUPT_PREFIX)):
         return None
     return text
@@ -217,52 +263,62 @@ def _pi_prompt(entry: Entry) -> str | None:
     """Return the text of a real omp or pi prompt, or None for any other user entry.
 
     The agent writes rows with `attribution` 'agent', so they are not prompts.
-    A prompt has string content or at least one text block.
+    A prompt has string content or at least one text block, and its text is not blank.
     """
     message = _message(entry)
     if not message or message.get("attribution") == "agent":
         return None
     content = message.get("content")
-    return content if isinstance(content, str) else _joined(_texts(entry))
+    return _nonblank(content if isinstance(content, str) else _joined(_texts(entry)))
+
+
+def _is_codex_subagent(harness: str, entry: Entry) -> bool:
+    """Return True for an entry of a Codex sub-agent rollout: the parent agent writes its prompts."""
+    return harness == "codex" and entry.get("parentSessionId") is not None
 
 
 def _user_turns(harness: str, source: str) -> Emitter:
     """One row per real user prompt, with the last assistant text before it.
 
-    `prev_assistant_text` follows the file order. Claude and Pi-family rows take
-    the joined text blocks of the last assistant entry with text; Claude skips
-    sidechain entries. Codex takes the last `task_complete` entry, so a turn
-    that ended without `last_agent_message` resets it to NULL. `source` and
-    `ordinal` keep the file order for the turn_index tie-break.
+    `prev_assistant_text` follows the file order inside one session. It starts
+    as NULL in each source file and when the session id changes. Claude and
+    Pi-family rows take the joined text blocks of the last assistant entry with
+    non-blank text; Claude skips sidechain entries. Codex takes the last
+    `task_complete` entry, so a turn that ended without `last_agent_message`,
+    or a `turn_aborted` turn, resets it to NULL. Codex sub-agent rollouts give
+    no rows. `source` and `ordinal` keep the file order for the turn_index
+    tie-break.
     """
     prev_text: str | None = None
+    session: object = None
     ordinal = 0
 
-    def track_assistant(entry: Entry) -> None:
+    def track(entry: Entry) -> None:
         nonlocal prev_text
         if harness == "codex":
-            if entry.get("subtype") == "task_complete":
-                prev_text = _joined(_texts(entry))
+            if entry.get("subtype") in ("task_complete", "turn_aborted"):
+                prev_text = _nonblank(_joined(_texts(entry)))
             return
-        if harness == "claude" and entry.get("isSidechain") is True:
+        if entry.get("type") != "assistant" or (harness == "claude" and entry.get("isSidechain") is True):
             return
-        text = _joined(_texts(entry))
+        text = _nonblank(_joined(_texts(entry)))
         if text is not None:
             prev_text = text
 
     def emit(entry: Entry) -> Iterable[Row]:
-        nonlocal ordinal
-        if harness not in PROMPT_HARNESSES:
+        nonlocal ordinal, prev_text, session
+        if harness not in PROMPT_HARNESSES or _is_codex_subagent(harness, entry):
             return
-        if entry.get("type") == "assistant":
-            track_assistant(entry)
-            return
+        session_id = entry.get("sessionId")
+        if session_id is not None and session_id != session:
+            session, prev_text = session_id, None
         if entry.get("type") != "user":
+            track(entry)
             return
         if harness == "claude":
             text = _claude_prompt(entry)
         elif harness == "codex":
-            text = _joined(_texts(entry))
+            text = _nonblank(_joined(_texts(entry)))
         else:
             text = _pi_prompt(entry)
         if text is None:
@@ -276,6 +332,42 @@ def _user_turns(harness: str, source: str) -> Emitter:
             "text": text,
             "prev_assistant_text": prev_text,
         }
+
+    return emit
+
+
+def _is_claude_interrupt(entry: Entry) -> bool:
+    """Return True for a main-session Claude user entry whose text starts with the marker.
+
+    The text is the string content, or else the first text block.
+    """
+    if entry.get("type") != "user" or entry.get("isSidechain") is True:
+        return False
+    message = _message(entry)
+    content = message.get("content") if message else None
+    if not isinstance(content, str):
+        first = next((block for block in _blocks(entry) if _at(block, "type") == "text"), None)
+        content = _at(first, "text")
+    return isinstance(content, str) and content.startswith(INTERRUPT_PREFIX)
+
+
+def _is_codex_interrupt(entry: Entry) -> bool:
+    """Return True for a top-level Codex `turn_aborted` entry with reason 'interrupted'."""
+    return (
+        entry.get("type") == "system"
+        and entry.get("subtype") == "turn_aborted"
+        and entry.get("stopReason") == "interrupted"
+        and not _is_codex_subagent("codex", entry)
+    )
+
+
+def _interrupt_events(harness: str, _source: str) -> Emitter:
+    """One row per user interrupt from a structured marker (Claude and Codex only)."""
+    detect = {"claude": _is_claude_interrupt, "codex": _is_codex_interrupt}.get(harness)
+
+    def emit(entry: Entry) -> Iterable[Row]:
+        if detect is not None and detect(entry):
+            yield {"harness": entry.get("harness"), **_envelope(entry, "sessionId", "timestamp")}
 
     return emit
 
@@ -354,5 +446,10 @@ DERIVED_TABLES = (
             "prev_assistant_text": "VARCHAR",
         },
         _user_turns,
+    ),
+    DerivedTable(
+        "interrupt_events",
+        {"harness": "VARCHAR", "sessionId": "VARCHAR", "timestamp": "VARCHAR"},
+        _interrupt_events,
     ),
 )

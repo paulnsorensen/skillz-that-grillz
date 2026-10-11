@@ -292,19 +292,27 @@ def test_sql_serves_select_and_applies_the_memory_limit_before_safe_mode(
 
 @pytest.mark.parametrize("as_json", [True, False])
 def test_every_duckdb_run_applies_each_setting_before_safe_mode(
-    monkeypatch: pytest.MonkeyPatch, as_json: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, as_json: bool
 ) -> None:
     monkeypatch.delenv("SESSIONS_DUCKDB_MEMORY_LIMIT", raising=False)
     monkeypatch.delenv("SESSIONS_DUCKDB_THREADS", raising=False)
-    argv = _db.duckdb_argv("SELECT 1", as_json=as_json)
+    monkeypatch.setattr(_db, "SPILL_ROOT", str(tmp_path / "spill"))
+    _db.spill_dir.cache_clear()
+    try:
+        argv = _db.duckdb_argv("SELECT 1", as_json=as_json)
+        spill = _db.spill_dir()
+    finally:
+        _db.spill_dir.cache_clear()
     commands = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-cmd"]
+    # Only ingest drops insertion order; a read-only query keeps it.
     settings = [
         "SET memory_limit='4GB'",
         "SET threads=4",
-        "SET preserve_insertion_order=false",
-        f"SET temp_directory='{_db.DB_PATH}.spill'",
+        *([] if as_json else ["SET preserve_insertion_order=false"]),
+        f"SET temp_directory='{spill}'",
         "SET max_temp_directory_size='20GB'",
     ]
+    assert Path(spill).parent == tmp_path / "spill"
     assert commands[: len(settings)] == settings
     assert commands[len(settings) :] == ([".safe_mode"] if as_json else [])
     assert argv[-2:] == ["-c", "SELECT 1"]
@@ -323,14 +331,15 @@ def test_sql_reports_the_settings_that_safe_mode_then_locks(sandbox: Sandbox) ->
     )
     result = sandbox.run("sql", query, extra_env=env)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == [
-        {
-            "threads": 2,
-            "memory_limit": "1.0 GiB",
-            "ordered": False,
-            "spill": f"{sandbox.database}.spill",
-        }
-    ]
+    rows = cast(list[dict[str, object]], json.loads(result.stdout))
+    spill = Path(str(rows[0].pop("spill")))
+    assert rows == [{"threads": 2, "memory_limit": "1.0 GiB", "ordered": True}]
+    # Each process spills to its own subdirectory and removes it at exit.
+    assert spill.parent == Path(f"{sandbox.database}.spill")
+    assert not spill.exists()
+    again = sandbox.run("sql", "SELECT current_setting('temp_directory') AS spill", extra_env=env)
+    assert again.returncode == 0, again.stderr
+    assert json.loads(again.stdout) != [{"spill": str(spill)}]
     locked = sandbox.run("sql", "SET threads=8", extra_env=env)
     assert locked.returncode == 5, locked.stderr
     assert "configuration has been locked" in locked.stderr
@@ -350,13 +359,14 @@ def test_sql_reports_the_settings_that_safe_mode_then_locks(sandbox: Sandbox) ->
         ("SESSIONS_DUCKDB_THREADS", "257"),
     ],
 )
-def test_invalid_duckdb_setting_exits_4_before_the_stage_step(
+def test_invalid_duckdb_setting_fails_before_the_stage_step(
     sandbox: Sandbox, command: str, name: str, value: str
 ) -> None:
     _seed_claude(sandbox)
     args = ("ingest", "--force") if command == "ingest" else ("sql", "SELECT 1")
     result = sandbox.run(*args, extra_env={name: value})
-    assert result.returncode == 4, result.stderr
+    # An ingest error exits 4; the same bad value on the query path exits 5.
+    assert result.returncode == (4 if command == "ingest" else 5), result.stderr
     assert result.stdout == ""
     error = str(_json(result.stderr)["error"])
     assert f"{name} must be" in error
@@ -364,6 +374,16 @@ def test_invalid_duckdb_setting_exits_4_before_the_stage_step(
     assert "Traceback" not in result.stderr
     assert not Path(f"{sandbox.database}.stage").exists()
     assert not sandbox.database.exists()
+
+
+@needs_duckdb
+def test_invalid_duckdb_setting_on_a_query_with_an_existing_database_exits_5(sandbox: Sandbox) -> None:
+    _seed_claude(sandbox)
+    assert sandbox.run("ingest").returncode == 0
+    for env in ({"SESSIONS_DUCKDB_THREADS": "0"}, {"SESSIONS_DB": str(sandbox.database), "SESSIONS_DUCKDB_THREADS": "0"}):
+        result = sandbox.run("sql", "SELECT 1", extra_env=env)
+        assert result.returncode == 5, result.stderr
+        assert "SESSIONS_DUCKDB_THREADS must be" in str(_json(result.stderr)["error"])
 
 
 @needs_duckdb

@@ -7,8 +7,6 @@ previous release) over raw_entries, and compares the two row multisets.
 
 from __future__ import annotations
 
-import pytest
-
 from .conftest import Sandbox, needs_duckdb
 
 OLD_TOOL_USES = """
@@ -272,7 +270,6 @@ def test_flattened_tables_match_the_old_sql_on_malformed_rows(sandbox: Sandbox) 
 
 
 @needs_duckdb
-@pytest.mark.xfail(strict=True, reason="press finding: explicit JSON null input becomes SQL NULL")
 def test_tool_uses_input_keeps_an_explicit_json_null_like_the_old_sql(sandbox: Sandbox) -> None:
     # The old SQL kept the JSON value null; SQL NULL changes `input IS NULL` filters.
     block = {"type": "tool_use", "id": "n1", "name": "Bash", "input": None}
@@ -281,9 +278,8 @@ def test_tool_uses_input_keeps_an_explicit_json_null_like_the_old_sql(sandbox: S
 
 
 @needs_duckdb
-@pytest.mark.xfail(strict=True, reason="press finding: Python float text differs from DuckDB JSON text")
 def test_tool_results_content_prints_exponent_floats_like_the_old_sql(sandbox: Sandbox) -> None:
     # Python writes 1e-05 and 1e+16; DuckDB wrote 0.00001 and 10000000000000000.0.
-    values: list[object] = [1e-05, 1e16, 1.5e300]
+    values: list[object] = [1e-05, 1e16, 1.5e300, 1e-7, 1.25e-6, 1e20, 1e21, -0.0, 0.0, 123.0, 1.2345678901234568e20]
     _seed(sandbox, [_entry(1, "user", {"content": [_result(values)]})])
     assert _difference(sandbox, "tool_results") == []
