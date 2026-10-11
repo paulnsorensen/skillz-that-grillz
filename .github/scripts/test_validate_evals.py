@@ -131,7 +131,7 @@ class SelfTestPassesTest(unittest.TestCase):
         with redirect_stdout(out), redirect_stderr(err):
             rc = validate_evals.self_test()
         self.assertEqual(rc, 0, err.getvalue())
-        self.assertIn("self-test: 20/20 passed", out.getvalue())
+        self.assertIn("self-test: 24/24 passed", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ SOURCES = ("skill", "session")
 PENDING_KINDS = ("trigger", "near-miss")
 HOLDOUT_MINIMUM = 6
 REQUEST_PREVIEW = 80
+DRAFT_LIMIT = 2_000_000
 MINIMUM_FAMILIES = 3
 TASK_RUBRIC = "Grade the response against the reference answer in `expected`. Pass only when it meets the request."
 _FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"}
@@ -85,7 +86,7 @@ def _case(value: object, position: int) -> DraftCase:
 
 def load_draft(path: Path) -> list[DraftCase]:
     """Read and strictly validate `cases.draft.json`. Raise `ValueError` that names the bad case."""
-    if not path.is_file() or path.is_symlink() or path.stat().st_size > 2_000_000:
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > DRAFT_LIMIT:
         raise ValueError("draft must be a bounded regular file, not a symlink")
     document = loads_untrusted(path.read_text(encoding="utf-8"))
     if not isinstance(document, list) or not document:

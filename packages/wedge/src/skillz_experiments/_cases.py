@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
@@ -54,6 +56,38 @@ def relative(value: str) -> str:
     if any(part.startswith(".") for part in path.parts):
         raise ValueError("path must not be hidden")
     return value
+
+
+def read_text(root: Path, name: str, limit: int) -> str:
+    """Return the strict UTF-8 text of a regular file of at most `limit` bytes at `name` under `root`.
+
+    Open each path part with `O_NOFOLLOW`, so a symlink anywhere in `name` fails. Raise `ValueError` that
+    names `name` and never an absolute path.
+    """
+    parts = PurePosixPath(relative(name)).parts
+    descriptors: list[int] = []
+    try:
+        here = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        descriptors.append(here)
+        for part in parts[:-1]:
+            here = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=here)
+            descriptors.append(here)
+        leaf = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=here)
+        with os.fdopen(leaf, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError(f"{name} must be a regular file")
+            data = stream.read(limit + 1)
+    except OSError:
+        raise ValueError(f"{name} cannot be read") from None
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+    if len(data) > limit:
+        raise ValueError(f"{name} is too large")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"{name} must be UTF-8 text") from None
 
 
 def text_map(value: object) -> dict[str, str]:

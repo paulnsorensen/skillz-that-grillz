@@ -40,6 +40,7 @@ from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._runtime import (APPROVED_CALLS, APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted,
                                          BudgetUnapproved, Estimate, approve, estimate, gate_seconds)
 from skillz_experiments._search import Edit, REFLECTION_MINIBATCH, overshoot, search as pareto_search
+from skillz_experiments._seed import check_coverage, seed_cases
 from skillz_experiments._wedge_targets import (Rebuilder, TargetPlan, never_editable, plan_targets, reopen, seal,
                                                settle)
 
@@ -322,6 +323,9 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         if report is not None and not report["ok"]:
             raise Stop("host-not-ready", "fix each failed host check, then call run again; no model call ran", report)
         data: dict[str, object] = {"draft": str(draft), "facts": skill_facts(target)}
+        seeded = seed_cases(target)
+        if seeded is not None:
+            data["seed_cases"] = seeded
         raise Stop("cases-missing", f"write the case draft to {draft}, then call run again",
                    data | ({"doctor": report} if report else {}))
     split_seed = DEFAULT_SEED if seed is None else seed
@@ -333,7 +337,9 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if contract.kinds[kind].capture and judge_adapter != "claude":
         raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
-    cases = split_cases(load_draft(draft), split_seed, kind)
+    drafted = load_draft(draft)
+    check_coverage(target, drafted)
+    cases = split_cases(drafted, split_seed, kind)
     unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})
     if unknown:
         raise CodedError("contract-family-unknown", f"the contract family_budgets names no draft family: {', '.join(unknown)}; "
