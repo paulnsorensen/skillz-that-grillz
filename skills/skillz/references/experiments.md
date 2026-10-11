@@ -168,7 +168,8 @@ Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
 
 When `<skill>/evals/evals.json` exists, start the draft from it.
 Map each entry to one case with `source: skill`.
-Use the entry `name` as the case `id` and `family`, and the `prompt` as the `request`.
+Use the entry `name` as the case `id`, and the `prompt` as the `request`.
+Set the case `family` by the `family` rule below, not from the entry `name`.
 An entry with `expected_skill: null` is a `near-miss` case.
 An entry with no `assertions` is a `trigger` case. Every other entry is a `task` case.
 For a `task` case, read each listed fixture into `files`, keyed by its listed path.
@@ -180,6 +181,9 @@ Each case has these fields:
 
 - `id`: a unique name.
 - `family`: a group name for related cases. A family never crosses splits.
+  Give one family to the `task` cases that share a fixture or test the same behavior.
+  Name the family for that behavior, for example `merged-changes`.
+  A unique family for each case lets a near-copy of a search case reach the holdout.
 - `kind`: `trigger`, `near-miss`, or `task`.
 - `request`: the user request that the case sends.
 - `files`: a map of path to text, for the starting fixture. A `task` case needs it.
