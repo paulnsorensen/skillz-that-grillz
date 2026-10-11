@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import cast
 
@@ -12,10 +12,11 @@ from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, load_cases
-from skillz_experiments._claude import ClaudeCode
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript, task_tokens
-from skillz_experiments._harness import Configuration, Harness, Role
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._claude import ClaudeCode
+from skillz_experiments.harness._roles import Role
 from skillz_experiments._runtime import Budget
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
@@ -152,6 +153,25 @@ class Judge:
         self.prompts: list[str] = []
         self.schemas: list[dict[str, object] | None] = []
 
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        del evidence
+        return {}
+
+    def adopt_login(self) -> None:
+        return None
+
     def preflight(self) -> dict[str, object]:
         return {}
 
@@ -176,6 +196,25 @@ class Talker:
 
     def __init__(self) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        del evidence
+        return {}
+
+    def adopt_login(self) -> None:
+        return None
 
     def preflight(self) -> dict[str, object]:
         return {}

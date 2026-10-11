@@ -11,8 +11,7 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments._harness import Harness
-from skillz_experiments._harness import EnvironmentDiffers
+from skillz_experiments.harness import EnvironmentDiffers, Harness
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
@@ -63,6 +62,15 @@ class Provider:
         self.state = state
         self.budget = budget
         self.checkpoint = checkpoint
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
 
     def preflight(self) -> dict[str, object]:
         """Claim the live calls once. A resume reuses the recorded pass, as the real harness does."""

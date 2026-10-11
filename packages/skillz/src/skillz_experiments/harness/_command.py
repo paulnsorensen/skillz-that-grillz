@@ -5,18 +5,20 @@ import os
 import shlex
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import cast, final
+from typing import ClassVar, cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._evaluator import answer_schema
-from skillz_experiments._isolation import listening, probe
 from skillz_experiments._protocol import RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._runtime import Budget, process
+from skillz_experiments.harness._check import Check
+from skillz_experiments.harness._isolation import listening, probe
+from skillz_experiments.harness._check import UNVERIFIED_CREDENTIAL
 
 
 def _response(value: object, operation: str) -> dict[str, object]:
@@ -111,6 +113,8 @@ def _failure(stderr: str) -> str:
 
 @final
 class Command:
+    claude_sandbox: ClassVar[bool] = False
+    refuses_claude_options: ClassVar[bool] = False
     rejection: str | None = None
 
     def __init__(self, command: tuple[str, ...], model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
@@ -118,6 +122,17 @@ class Command:
         self.model = model
         self.budget = budget
         self.checkpoint = checkpoint
+
+    @property
+    def credential_kind(self) -> str:
+        """Name the credential kind. The runner cannot read the login of a user command."""
+        return UNVERIFIED_CREDENTIAL
+
+    @classmethod
+    def host_checks(cls, executable: str | None = None) -> list[Check]:
+        """Return no rows: a command role relies on its own sandbox probe in the live preflight."""
+        del executable
+        return []
 
     def close(self) -> None:
         pass
@@ -150,6 +165,27 @@ class Command:
         if any(set(item) != {"name", "path"} or not all(isinstance(v, str) for v in item.values()) for item in entries):
             raise ValueError("invalid discovered skill")
         return entries == [{"name": name, "path": str(skill)}]
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        """A command harness keeps no live pass, so it has no reuse key."""
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        """A command harness always runs its preflight."""
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        """Report no run-record fact for a command harness."""
+        del evidence
+        return {}
+
+    def adopt_login(self) -> None:
+        """A command harness shares no Claude login."""
+
+    def check_name(self, candidate: Candidate) -> None:
+        """A command harness has no name collision to check."""
+        del candidate
 
     def preflight(self) -> dict[str, object]:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:

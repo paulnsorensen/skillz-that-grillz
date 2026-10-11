@@ -15,10 +15,10 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, Journey, Split, load_cases
-from skillz_experiments._claude import ClaudeCode, ClaudeOptions
 from skillz_experiments._contract import Contract, load_contract
 from skillz_experiments._evaluator import evaluate
-from skillz_experiments._harness import Configuration, Harness
+from skillz_experiments.harness import ClaudeOptions, Configuration, Harness
+from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
 from skillz_experiments._records import read
 from skillz_experiments._runtime import (
@@ -78,6 +78,11 @@ class Judge:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.answers: list[dict[str, object]] = answers
         self.prompts: list[str] = []
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
 
     def preflight(self) -> dict[str, object]:
         return {}
@@ -270,6 +275,15 @@ class Provider:
         self.checkpoint = checkpoint
         self.prompts = prompts
         self.lock = threading.Lock()
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
 
     def preflight(self) -> dict[str, object]:
         if self.budget.calls == 0:

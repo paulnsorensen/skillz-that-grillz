@@ -16,16 +16,16 @@ from typing import cast, final
 
 import pytest
 
-from skillz_experiments import _claude, _codex
+from skillz_experiments.harness import _claude, _codex
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError, digest
-from skillz_experiments._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots, sandbox_argv
+from skillz_experiments.harness._claude import (ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots,
+                                                sandbox_argv)
 from skillz_experiments._contract import Surface, load_contract, parse
-from skillz_experiments._evaluator import Transport
+from skillz_experiments.harness import Configuration, Harness, Transport
 from skillz_experiments._graders import Sandbox
-from skillz_experiments._harness import Configuration, Harness
 from skillz_experiments._runtime import Budget, BudgetExhausted
-from skillz_experiments._seatbelt import command_profile
+from skillz_experiments.harness._seatbelt import command_profile
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 ROOT = Path(__file__).parents[4]
@@ -111,7 +111,7 @@ def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_pa
 
 
 def test_partial_claude_usage_stays_unknown() -> None:
-    from skillz_experiments._claude import _token_events  # pyright: ignore[reportPrivateUsage]
+    from skillz_experiments.harness._claude import _token_events  # pyright: ignore[reportPrivateUsage]
     from skillz_experiments._evaluation import usage
 
     assert usage(_token_events({"usage": {"input_tokens": 2}})) == {
@@ -1444,7 +1444,7 @@ def test_close_reports_credential_changed_and_leaves_no_temporary_when_the_repla
         del source, destination
         raise OSError("replace refused")
 
-    monkeypatch.setattr("skillz_experiments._claude.os.replace", refuse)
+    monkeypatch.setattr("skillz_experiments.harness._claude.os.replace", refuse)
     with pytest.raises(CodedError) as caught:
         adapter.close()
     assert caught.value.code == "credential-changed" and real.read_text() == original
@@ -1469,7 +1469,7 @@ def test_the_real_login_is_not_replaced_when_a_newer_login_lands_during_the_writ
         if real.read_text() == _login():
             os.replace(newer, real)
 
-    monkeypatch.setattr("skillz_experiments._claude.os.fsync", fsync_then_race)
+    monkeypatch.setattr("skillz_experiments.harness._claude.os.fsync", fsync_then_race)
     with pytest.raises(CodedError) as caught:
         adapter.close()
     assert caught.value.code == "credential-changed" and real.read_text() == _login("theirs")

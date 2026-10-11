@@ -14,7 +14,7 @@ import pytest
 from skillz_experiments import _workflow
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness import Configuration
 from skillz_experiments._records import read
 from skillz_experiments._workflow import Stop, run
 

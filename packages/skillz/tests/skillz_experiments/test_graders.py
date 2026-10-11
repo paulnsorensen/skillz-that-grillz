@@ -13,7 +13,8 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._harness import Configuration, Harness, Role
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._roles import Role
 from skillz_experiments._runtime import Budget
 
 RUBRIC = "RUBRIC_SENTINEL: rate how readable the rewrite is."
@@ -46,6 +47,25 @@ class FakeTask:
         self.output: dict[str, str] = {"result.txt": "rewritten\n"} if output is None else output
         self.prompts: list[str] = []
         self.workspaces: list[dict[str, str]] = []
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        del evidence
+        return {}
+
+    def adopt_login(self) -> None:
+        return None
 
     def preflight(self) -> dict[str, object]:
         return {}
@@ -87,6 +107,25 @@ class FakeJudge:
         self.answer: dict[str, object] | None = answer
         self.prompts: list[str] = []
         self.schemas: list[dict[str, object] | None] = []
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        del evidence
+        return {}
+
+    def adopt_login(self) -> None:
+        return None
 
     def preflight(self) -> dict[str, object]:
         return {}

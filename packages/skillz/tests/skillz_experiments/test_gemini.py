@@ -10,11 +10,10 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _gemini
 from skillz_experiments._cli import main
-from skillz_experiments._gemini import respond
-from skillz_experiments._harness import Configuration
-from skillz_experiments._seatbelt import command_profile
+from skillz_experiments.harness import Configuration, command_profile
+from skillz_experiments.wrapper import _gemini
+from skillz_experiments.wrapper._gemini import respond
 from skillz_experiments._runtime import Budget
 
 FIXTURES = Path(__file__).parent / "fixtures"

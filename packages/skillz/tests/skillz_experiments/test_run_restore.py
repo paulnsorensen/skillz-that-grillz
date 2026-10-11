@@ -17,19 +17,21 @@ from types import SimpleNamespace
 from typing import cast, final
 
 import pytest
+from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments._claude import ClaudeCode, ClaudeOptions
 from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
 from skillz_experiments._gate import DEFAULT_STATISTICS
-from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, Role
+from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, Harness
+from skillz_experiments.harness._claude import ClaudeCode
+from skillz_experiments.harness._roles import Role
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments._search import Edit
 from skillz_experiments._workflow import HOLDOUT_RETRIES_PER_ARM, Factory, Stop, export, run, summary
-from skillz_experiments._workflow import _command_seconds, _estimate, _plan, _Session  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments._workflow import _command_seconds, _engine_hash, _estimate, _plan, _Session  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -79,6 +81,15 @@ class State:
 class _Fake:
     def __init__(self, state: State) -> None:
         self.state: State = state
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: Candidate) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
 
     def preflight(self) -> dict[str, object]:
         return self.state.preflight(None)
@@ -479,6 +490,15 @@ class _Spending:
         self.budget: Budget = budget
         self.delay: float = delay
 
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
+
     def preflight(self) -> dict[str, object]:
         _ = self.budget.remaining()
         return self.state.preflight(None)
@@ -559,6 +579,18 @@ def test_a_run_prepared_by_an_older_runner_stops_with_a_create_a_new_run_message
         _ = run(target, out, MODEL, live=True, factory=State().factory())
 
 
+def test_a_change_in_a_harness_module_changes_the_engine_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    before = _engine_hash()
+    original = Path.read_text
+
+    def edited(self: Path) -> str:
+        text = original(self)
+        return text + "\n# edited" if self.parent.name == "harness" and self.name == "_harness.py" else text
+
+    monkeypatch.setattr(Path, "read_text", edited)
+    assert _engine_hash() != before
+
+
 def test_a_prepared_run_records_the_engine_hash(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     out = _prepared(tmp_path, make_target(tmp_path), write_draft, approvals)
@@ -583,6 +615,7 @@ def test_a_taken_seed_name_stops_the_run_before_the_live_preflight(
 
     @final
     class Taken(_Fake):
+        @override
         def check_name(self, candidate: Candidate) -> None:
             raise CodedError("candidate-name-taken", f"{candidate.skill!r} is taken")
 

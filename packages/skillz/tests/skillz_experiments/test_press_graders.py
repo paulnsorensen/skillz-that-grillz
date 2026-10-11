@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -15,7 +16,8 @@ import pytest
 from skillz_experiments._candidate import Candidate, make_workspace, stage_task
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._harness import Configuration, Harness, Role
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._roles import Role
 from skillz_experiments._runtime import Budget, BudgetExhausted
 
 RUBRIC = "RUBRIC_SENTINEL: rate how readable the rewrite is."
@@ -54,6 +56,25 @@ class Task:
         self.argvs: list[list[str]] = []
         self.stdout: str | None = stdout
         self.code: int = code
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        del evidence
+        return {}
+
+    def adopt_login(self) -> None:
+        return None
 
     def preflight(self) -> dict[str, object]:
         return {}
@@ -94,6 +115,25 @@ class Judge:
         self.answer: object = {"score_percent": 70} if answer is None else answer
         self.prompts: list[str] = []
         self.holdouts: list[bool] = []
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def reuse_key(self, fingerprint: object) -> str | None:
+        del fingerprint
+
+    def resume(self, kept: object) -> bool:
+        del kept
+        return False
+
+    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
+        del evidence
+        return {}
+
+    def adopt_login(self) -> None:
+        return None
 
     def preflight(self) -> dict[str, object]:
         return {}

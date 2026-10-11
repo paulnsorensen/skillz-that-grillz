@@ -23,10 +23,10 @@ import pytest
 from skillz_experiments import _workflow
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments._claude import CONFIG_PREFIX, CREDENTIALS, ClaudeCode, Inventory, settings
 from skillz_experiments._cli import main
 from skillz_experiments._gate import DEFAULT_STATISTICS, case_deltas, verdict
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness import Configuration
+from skillz_experiments.harness._claude import CONFIG_PREFIX, CREDENTIALS, ClaudeCode, Inventory, settings
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, PENDING_KINDS, DraftCase, case_hash, split_cases)
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import MAX_CONCURRENT_CALLS, Budget
@@ -76,6 +76,15 @@ class Spy:
 class _Fake:
     def __init__(self, spy: Spy, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.spy, self.budget, self.checkpoint = spy, budget, checkpoint
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
 
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}

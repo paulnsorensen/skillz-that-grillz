@@ -11,8 +11,9 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _claude, _doctor, _workflow
-from skillz_experiments._claude import ClaudeCode
+from skillz_experiments import _workflow
+from skillz_experiments.harness import _claude, _codex, _doctor
+from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._cli import main
 from skillz_experiments._cases import CodedError
 from skillz_experiments._workflow import Stop, run
@@ -61,6 +62,21 @@ def test_a_ready_host_passes_with_no_model_call(host_bin: Callable[[str], Path])
               for line in executable.with_name("claude.log").read_text().splitlines()]
     assert logged == [["--version"]]
     assert executable.with_name("claude.inventory.log").exists()
+
+
+def _ordered(report: dict[str, object]) -> list[tuple[str, str]]:
+    return [(cast(str, row["check"]), cast(str, row["status"])) for row in cast(list[dict[str, object]], report["checks"])]
+
+
+def test_the_claude_doctor_keeps_the_layer_1_rows_in_order(
+        host_bin: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    _ = host_bin("ok")
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: False)
+    assert _ordered(_doctor.doctor("claude")) == [
+        ("claude", "pass"), ("tool:bwrap", "pass"), (f"tool:{sys.executable}", "pass"), ("apparmor", "info"),
+        ("login", "pass"), ("credential", "pass"), ("sandbox-probe", "pass"), ("skill-inventory", "pass"),
+        ("live-isolation", "needs-live")]
 
 
 def test_an_account_skill_is_reported_as_turned_off(host_bin: Callable[[str], Path]) -> None:
@@ -177,9 +193,10 @@ def test_the_codex_doctor_reports_the_credential_kind(monkeypatch: pytest.Monkey
 
         def close(self) -> None:
             pass
-    monkeypatch.setattr(_doctor, "Codex", FakeCodex)
+    monkeypatch.setattr(_codex, "Codex", FakeCodex)
     report = _doctor.doctor("codex")
     assert report["ok"] is ok and rows(report)["credential"]["detail"] == kind
+    assert _ordered(report) == [("codex-preflight", "pass"), ("credential", "pass" if ok else "fail")]
 
 
 def test_the_doctor_accepts_no_isolation_option(capsys: pytest.CaptureFixture[str]) -> None:
@@ -260,11 +277,11 @@ def test_an_early_codex_failure_still_reports_the_credential_kind(monkeypatch: p
 
         def close(self) -> None:
             pass
-    monkeypatch.setattr(_doctor, "Codex", BrokenCodex)
+    monkeypatch.setattr(_codex, "Codex", BrokenCodex)
     def api_key(home: Path) -> str:
         del home
         return "api key"
-    monkeypatch.setattr(_doctor, "codex_credential_kind", api_key)
+    monkeypatch.setattr(_codex, "credential_kind", api_key)
     report = _doctor.doctor("codex")
     row = rows(report)["credential"]
     assert report["ok"] is False and str(row["detail"]).startswith("api key") and row["status"] == "info"

@@ -13,7 +13,7 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cli import main
 from skillz_experiments._contract import load_contract, parse
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness import Configuration
 from skillz_experiments._workflow import run
 from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget, BudgetExhausted

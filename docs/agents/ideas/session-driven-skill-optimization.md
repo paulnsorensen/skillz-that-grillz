@@ -138,13 +138,13 @@ Do not describe the public self-test as a real-session benchmark.
 [^cases]: `packages/skillz/src/skillz_experiments/_cases.py:44-58,128-211`; `_records.py:41-69`.
 [^candidate]: `packages/skillz/src/skillz_experiments/_candidate.py:52-113`; `_records.py:41-69`.
 [^evaluator]: `packages/skillz/src/skillz_experiments/_evaluation.py:11-83`; `_evaluator.py:38-71`; `packages/skillz/src/skillz_inspect` (built as `skills/skillz/scripts/inspect-skill.pyz`).
-[^runtime]: `packages/skillz/src/skillz_experiments/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
+[^runtime]: `packages/skillz/src/skillz_experiments/harness/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
 [^workflow]: `packages/skillz/src/skillz_experiments/_workflow.py:101-292,365-417`; `_runtime.py:16-45`.
 [^export]: `packages/skillz/src/skillz_experiments/_workflow.py:437-471`.
 [^contract]: `packages/skillz/src/skillz_experiments/_contract.py:34-92,139-175`; `skills/skillz/references/experiments.md:167-200`; `skills/skillz/evals/autoimprove.json`.
 [^graders]: `packages/skillz/src/skillz_experiments/_graders.py:60-115`; `_evaluator.py:38-130`.
-[^claude]: `packages/skillz/src/skillz_experiments/_claude.py:259-282`; `_harness.py:19,76-82`.
-[^harness]: `packages/skillz/src/skillz_experiments/_harness.py:83-86`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
+[^claude]: `packages/skillz/src/skillz_experiments/harness/_claude.py` and `harness/_harness.py`.
+[^harness]: `packages/skillz/src/skillz_experiments/harness/_harness.py`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
 [^isolation]: `docs/agents/decisions/skillz-autoimprove.md:33-39`; `skills/skillz/references/experiment-harness.md:68-92`.
 
 _Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-11 · Supersedes: proposal-only status and unresolved first-harness choice_

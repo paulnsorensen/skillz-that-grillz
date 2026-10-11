@@ -11,8 +11,8 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _claude, _workflow
-from skillz_experiments._harness import Configuration
+from skillz_experiments import _workflow
+from skillz_experiments.harness import Configuration, _claude
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Factory, Stop, run

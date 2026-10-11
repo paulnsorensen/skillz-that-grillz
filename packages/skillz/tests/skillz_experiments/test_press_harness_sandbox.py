@@ -13,12 +13,12 @@ from typing import cast, final
 
 import pytest
 
-from skillz_experiments import _cli, _doctor, _gemini, _workflow
+from skillz_experiments import _cli, _workflow
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
-from skillz_experiments._codex import Codex, supported
-from skillz_experiments._evaluator import MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness import MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, Configuration, _doctor
+from skillz_experiments.harness._codex import Codex, supported
+from skillz_experiments.wrapper import _gemini
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import Budget
 from skillz_experiments._workflow import Stop, run
@@ -187,6 +187,15 @@ def test_codexRun_recordsTheCredentialKindOfEveryBuiltInRoleInRunJson(
 class _Provider:
     def __init__(self) -> None:
         self.calls = 0
+
+    rejection: str | None = None
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> bool:
+        del candidate
+        return True
 
     def preflight(self) -> dict[str, object]:
         self.calls += 1

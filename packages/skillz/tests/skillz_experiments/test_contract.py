@@ -11,7 +11,7 @@ import pytest
 from skillz_experiments._candidate import Candidate, make_workspace, stage_task
 from skillz_experiments._cases import Case, CodedError, Journey, digest, load_cases, mapping
 from skillz_experiments._cli import main
-from skillz_experiments._codex import Codex
+from skillz_experiments.harness._codex import Codex
 from skillz_experiments._contract import Surface, parse
 from skillz_experiments._runtime import Budget, BudgetExhausted
 from skillz_experiments._workflow import _editable  # pyright: ignore[reportPrivateUsage]
@@ -166,7 +166,7 @@ def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monke
         return subprocess.CompletedProcess(command, 0, reply["stdout"], "")
 
     monkeypatch.setattr(Codex, "_discover", discover)
-    monkeypatch.setattr("skillz_experiments._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
     assert adapter.check_candidate(candidate)
     assert seen == ["echo-skill"]
     assert commands[0][-2:] == [".agents/skills/echo-skill/scripts/echo.py", "fixtures/nested/input.md"]
