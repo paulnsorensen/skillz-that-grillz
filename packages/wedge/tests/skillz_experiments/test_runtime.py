@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -19,10 +20,15 @@ def test_deadline_kills_process_group(tmp_path: Path) -> None:
                     timeout=0.5, environment={"PATH": os.defpath})
     pid = int((tmp_path / "descendant.pid").read_text())
     status = Path(f"/proc/{pid}/stat")
-    try:
-        state = status.read_text().split()[2]
-    except (FileNotFoundError, ProcessLookupError):
-        return
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            state = status.read_text().split()[2]
+        except (FileNotFoundError, ProcessLookupError):
+            return
+        if state == "Z" or time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
     assert state == "Z"
 
 
