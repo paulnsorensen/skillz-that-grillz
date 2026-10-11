@@ -12,11 +12,11 @@ from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, load_cases
-from skillz_experiments._claude import ClaudeCode
+from skillz_experiments.harness._claude._transport import ClaudeCode
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript, task_tokens
-from skillz_experiments._harness import Configuration, Harness, Role
-from skillz_experiments._runtime import Budget
+from skillz_experiments.harness._harness import Configuration, Harness, Role
+from skillz_experiments._budget import Budget
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 BRIEF = "BRIEF_SENTINEL: wants a short plan."

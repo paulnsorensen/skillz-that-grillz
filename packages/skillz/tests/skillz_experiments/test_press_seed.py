@@ -13,7 +13,7 @@ from skillz_experiments import _cases, _seed
 from skillz_experiments._cases import CodedError
 from skillz_experiments._intake import load_draft
 from skillz_experiments._seed import READ_LIMIT, SEED_LIMIT
-from skillz_experiments._workflow import Stop, run
+from skillz_experiments.run import Stop, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
 

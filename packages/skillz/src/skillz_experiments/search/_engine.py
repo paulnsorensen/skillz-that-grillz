@@ -7,7 +7,7 @@ import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, Protocol, cast, get_args
 
-from skillz_experiments._runtime import MAX_CONCURRENT_CALLS
+from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 
 REFLECTION_MINIBATCH = 2
 Edit = Literal["prose", "prose+cli"]

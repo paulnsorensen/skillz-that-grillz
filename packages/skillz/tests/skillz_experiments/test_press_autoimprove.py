@@ -20,18 +20,22 @@ from typing import NamedTuple, cast, final
 
 import pytest
 
-from skillz_experiments import _workflow
+from skillz_experiments.run import _session
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments._claude import CONFIG_PREFIX, CREDENTIALS, ClaudeCode, Inventory, settings
+from skillz_experiments.harness._claude._constants import CONFIG_PREFIX
+from skillz_experiments.harness._claude._login import CREDENTIALS
+from skillz_experiments.harness._claude._transport import ClaudeCode
+from skillz_experiments.harness._claude._settings import Inventory, settings
 from skillz_experiments._cli import main
-from skillz_experiments._gate import DEFAULT_STATISTICS, case_deltas, verdict
-from skillz_experiments._harness import Configuration
+from skillz_experiments.gate import DEFAULT_STATISTICS, case_deltas, verdict
+from skillz_experiments.harness._harness import Configuration
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, PENDING_KINDS, DraftCase, case_hash, split_cases)
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import MAX_CONCURRENT_CALLS, Budget
-from skillz_experiments._search import Edit, Evaluate, Propose, search
-from skillz_experiments._workflow import Stop, export, run
+from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget
+from skillz_experiments.search import Edit, search
+from skillz_experiments.search._engine import Evaluate, Propose
+from skillz_experiments.run import Stop, export, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -421,7 +425,7 @@ def test_holdout_ids_requests_and_expected_values_never_reach_search_or_reflecti
         seen["train"], seen["validation"] = list(train), list(validation)
         return search(seed, edit_mode, train, validation, evaluate, propose, metric_calls=metric_calls)
 
-    monkeypatch.setattr(_workflow, "pareto_search", spy_search)
+    monkeypatch.setattr(_session, "pareto_search", spy_search)
     spy = Spy()
     result = run(target, out, MODEL, live=True, edit=cast(Edit, edit), approve_cases=approved_hash,
                  approve_budget=calls, factory=spy.factory)
@@ -1040,7 +1044,7 @@ def test_an_oversized_proposal_scores_zero_with_a_rejected_feedback_entry(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     prep = prepare(tmp_path, make_target, write_draft, approvals)
-    session = _workflow._Session(prep.out, MODEL, "claude", Spy().factory, None, statistics=DEFAULT_STATISTICS)
+    session = _session.Session(prep.out, MODEL, "claude", Spy().factory, None, statistics=DEFAULT_STATISTICS)
     try:
         components = {name: "x" * 262145 for name in session.seed.editable}
         score, feedback = session._evaluate_example(components, next(iter(session._search_cases)))

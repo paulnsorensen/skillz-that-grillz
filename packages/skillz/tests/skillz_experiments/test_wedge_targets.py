@@ -21,19 +21,19 @@ import pytest
 import wedge._build as wedge_build
 from wedge._build import build_many
 
-from skillz_experiments import _workflow
+from skillz_experiments.run import _plan, _session
 from skillz_experiments._candidate import NEW_CLI, FROZEN_FILE_LIMIT, FROZEN_TOTAL_LIMIT, PACKAGE_LIMIT, Candidate, make_workspace
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract, load_contract
 from skillz_experiments._cases import repo_root
-from skillz_experiments._gate import DEFAULT_STATISTICS
+from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._graders import Sandbox
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness._harness import Configuration
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import Budget
-from skillz_experiments._search import Edit
+from skillz_experiments._budget import Budget
+from skillz_experiments.search import Edit
 from skillz_experiments._wedge_targets import WEDGE_EDIT_LIMIT, plan_targets
-from skillz_experiments._workflow import Stop, export, run
+from skillz_experiments.run import Stop, export, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -166,8 +166,8 @@ def prepared(world: World, tmp_path: Path, write_draft: Callable[..., list[str]]
     return out
 
 
-def open_session(out: Path, recorder: Recorder) -> _workflow._Session:
-    return _workflow._Session(out, MODEL, "claude", recorder.factory, None, statistics=DEFAULT_STATISTICS)
+def open_session(out: Path, recorder: Recorder) -> _session.Session:
+    return _session.Session(out, MODEL, "claude", recorder.factory, None, statistics=DEFAULT_STATISTICS)
 
 
 def evaluate(out: Path, recorder: Recorder, change: Callable[[dict[str, str]], None]) -> tuple[float, dict[str, object]]:
@@ -203,7 +203,7 @@ def test_foreign_pyz_non_utf8_and_large_text_are_frozen_and_never_editable(world
     assert {"scripts/foreign.pyz", "data/blob.bin", "data/big.txt", "scripts/alpha.pyz", "scripts/beta.pyz"} <= skeleton.frozen.keys()
     assert not {"scripts/foreign.pyz", "data/blob.bin", "data/big.txt"} & skeleton.files.keys()
     plan = plan_targets(world.skill, skeleton.files, contract, "prose+cli")
-    names = _workflow._editable(skeleton.files | plan.sources, contract, "prose+cli", skeleton.frozen.keys(), plan)
+    names = _plan.editable_files(skeleton.files | plan.sources, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert BETA in names
     assert not {"scripts/foreign.pyz", "data/blob.bin", "data/big.txt"} & set(names)
 
@@ -299,14 +299,14 @@ def test_pyz_wedge_toml_and_uv_lock_are_never_editable(world: World) -> None:
     skeleton = Candidate.capture(world.skill, [], contract)
     plan = plan_targets(world.skill, skeleton.files, contract, "prose+cli")
     assert list(plan.sources) == [BETA]
-    names = _workflow._editable(skeleton.files | plan.sources, contract, "prose+cli", skeleton.frozen.keys(), plan)
+    names = _plan.editable_files(skeleton.files | plan.sources, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert not any(name.endswith(("wedge.toml", "uv.lock", ".pyz")) for name in names) and BETA in names
     for name in ("wedge.toml", "uv.lock", "scripts/beta.pyz"):
         _ = (world.skill / "evals/autoimprove.json").write_text(json.dumps({
             "schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
             "kinds": {"echo": {"grader": "exact-json"}}, "editable": ["SKILL.md", name]}))
         with pytest.raises(CodedError) as caught:
-            _ = _workflow._editable(skeleton.files, load_contract(world.skill), "prose+cli", skeleton.frozen.keys(), plan)
+            _ = _plan.editable_files(skeleton.files, load_contract(world.skill), "prose+cli", skeleton.frozen.keys(), plan)
         assert caught.value.code == "editable-build-file"
 
 
@@ -319,7 +319,7 @@ def test_a_helper_that_names_an_own_pyz_is_not_a_missing_file(
     skeleton = Candidate.capture(world.skill, [], contract)
     plan = plan_targets(world.skill, skeleton.files, contract, "prose+cli")
     with pytest.raises(CodedError) as caught:
-        _ = _workflow._editable(skeleton.files, contract, "prose+cli", skeleton.frozen.keys(), plan)
+        _ = _plan.editable_files(skeleton.files, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert caught.value.code == "helper-file-missing"
 
 
@@ -411,7 +411,7 @@ def test_the_real_skill_plans_the_inspector_as_the_only_editable_target() -> Non
     assert {"scripts/skillz-experiment.pyz", "scripts/inspect-skill.pyz"} <= set(plan.frozen)
     assert "skillz-experiment" in plan.reasons
     assert plan.capable is not None
-    names = _workflow._editable(skeleton.files | plan.sources | {NEW_CLI: ""}, contract, "prose+cli", skeleton.frozen.keys(), plan)
+    names = _plan.editable_files(skeleton.files | plan.sources | {NEW_CLI: ""}, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert set(plan.sources) | {NEW_CLI} <= set(names)
     assert not any(name.startswith(("@wedge/packages/fromargs/", "@wedge/packages/skillz/src/skillz_experiments/")) for name in names)
 
@@ -668,7 +668,7 @@ def test_a_contract_editable_entry_that_is_a_frozen_file_stops(world: World) -> 
     contract = load_contract(world.skill)
     plan = plan_targets(world.skill, skeleton.files, contract, "prose+cli")
     with pytest.raises(CodedError) as caught:
-        _ = _workflow._editable(skeleton.files, contract, "prose+cli", skeleton.frozen.keys(), plan)
+        _ = _plan.editable_files(skeleton.files, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert caught.value.code == "editable-frozen"
 
 
@@ -704,7 +704,7 @@ def test_a_rebuild_stages_first_party_files_that_no_proposal_edits_from_the_seed
     assert rebuilt == world.pyz("beta")
 
 
-def _gated(out: Path, recorder: Recorder, change: dict[str, str]) -> _workflow._Session:
+def _gated(out: Path, recorder: Recorder, change: dict[str, str]) -> _session.Session:
     """Open a session whose recorded winner is the seed with `change` applied."""
     session = open_session(out, recorder)
     seed = cast(dict[str, str], session.record["seed"])
@@ -799,7 +799,7 @@ def test_a_frozen_target_records_why_and_helper_missing_shows_it(world: World) -
     assert plan.editable == () and "SKILL.md" in plan.reasons["alpha"]
     assert cast(dict[str, str], plan.record()["frozen"]) == dict(plan.reasons)
     with pytest.raises(CodedError) as caught:
-        _ = _workflow._editable(skeleton.files, contract, "prose+cli", skeleton.frozen.keys(), plan)
+        _ = _plan.editable_files(skeleton.files, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert caught.value.code == "helper-missing" and "alpha is frozen because" in str(caught.value)
     prose = plan_targets(world.skill, skeleton.files, contract, "prose")
     assert "--edit prose" in prose.reasons["beta"]

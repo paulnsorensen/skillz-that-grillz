@@ -13,8 +13,8 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._harness import Configuration, Harness, Role
-from skillz_experiments._runtime import Budget
+from skillz_experiments.harness._harness import Configuration, Harness, Role
+from skillz_experiments._budget import Budget
 
 RUBRIC = "RUBRIC_SENTINEL: rate how readable the rewrite is."
 GATE_SCRIPT = {

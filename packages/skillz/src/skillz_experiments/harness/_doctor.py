@@ -8,11 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
-from skillz_experiments import _claude, _nono
+import skillz_experiments.harness._claude as _claude
+import skillz_experiments.harness._nono as _nono
 from skillz_experiments._cases import CodedError
-from skillz_experiments._codex import Codex
-from skillz_experiments._harness import validate_isolation
-from skillz_experiments._runtime import Budget
+from skillz_experiments.harness._codex import Codex
+from skillz_experiments.harness._harness import validate_isolation
+from skillz_experiments._budget import Budget
 
 Status = Literal["pass", "fail", "info", "needs-live"]
 APPARMOR_SYSCTL = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")

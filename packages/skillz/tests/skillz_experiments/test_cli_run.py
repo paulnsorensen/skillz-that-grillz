@@ -15,10 +15,10 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
 from skillz_experiments._cli import main
-from skillz_experiments._codex import Codex
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness._codex import Codex
+from skillz_experiments.harness._harness import Configuration
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
