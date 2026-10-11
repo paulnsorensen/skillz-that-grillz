@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import functools
-import hashlib
 import json
 import os
 import re
@@ -20,10 +19,10 @@ from typing import Literal, cast, final, get_args
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, relative, string
 from skillz_experiments._contract import Surface, resolve
-from skillz_experiments._evaluator import Reply, Transcript, answer_schema
 from skillz_experiments._evaluation import helper_failure, usage
+from skillz_experiments._evaluator import (MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, UNVERIFIED_CREDENTIAL, Reply, Transcript,
+                                           answer_schema)
 from skillz_experiments._graders import CAPTURE_DIRECTORY
-from skillz_experiments import _nono
 from skillz_experiments._isolation import listening, probe, watched, watched_abstract, watched_unix
 from skillz_experiments._records import write_bytes
 from skillz_experiments._runtime import Budget, BudgetExhausted, live, process
@@ -54,12 +53,9 @@ INSTALL_BUBBLEWRAP = "install bubblewrap (for example `sudo apt install bubblewr
 INSTALL_SOCAT = "install socat (for example `sudo apt install socat`)"
 USERNS_FIX = ("allow unprivileged user namespaces with `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, "
               "or add an AppArmor profile for bwrap")
-NONO_HINT = "or run with `--isolation nono`"
 # Settings sources that Claude Code reads besides `--settings`. `project` keeps the staged project skill and drops user
 # settings, user skills, and plugins. `--restricted` would also drop the project skill, so the runner does not use it.
 SETTING_SOURCES = "project"
-Isolation = Literal["claude", "nono"]
-ISOLATIONS: tuple[str, ...] = get_args(Isolation)
 LIVE_TOOLS = ("/usr/bin/python3", "/usr/bin/curl")
 INVENTORY_REQUEST = json.dumps({"type": "control_request", "request_id": "skillz-inventory",
                                 "request": {"subtype": "initialize"}}) + "\n"
@@ -212,13 +208,13 @@ def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
-def host_tools(isolation: str) -> list[tuple[str, bool, str]]:
+def host_tools() -> list[tuple[str, bool, str]]:
     """List each host tool that the sandbox and the live preflight need, as (name, found, fix).
 
     The doctor reports these rows, and the helper sandbox probe stops on the first missing one.
     """
     wanted = [] if sys.platform == "darwin" else [
-        ("bwrap", INSTALL_BUBBLEWRAP), *([] if isolation == "nono" else [(helper, INSTALL_SOCAT) for helper in SANDBOX_HELPERS])]
+        ("bwrap", INSTALL_BUBBLEWRAP), *((helper, INSTALL_SOCAT) for helper in SANDBOX_HELPERS)]
     return [*((name, shutil.which(name) is not None, fix) for name, fix in wanted),
             *((path, Path(path).is_file(), f"install {Path(path).name}") for path in LIVE_TOOLS)]
 
@@ -344,18 +340,28 @@ class _Credential:
         return write_bytes(self.path, source[0], guard=self.unchanged)
 
 
+def login_credential_kind() -> str:
+    """Return the credential kind from the login file alone, without a Claude executable. It reads no file content."""
+    if sys.platform == "darwin":
+        return UNVERIFIED_CREDENTIAL
+    try:
+        _ = _Credential.find()
+    except (CodedError, OSError):
+        return MISSING_CREDENTIAL
+    return SUBSCRIPTION_LOGIN
+
+
 @final
 class ClaudeLogin:
     """The one config directory and login link that every Claude role of a run shares.
 
     The owner closes it once. Close deletes the directory, then reports what happened to the login.
-    With `api_key`, no directory exists and no login links: nono injects the host API key instead.
     """
 
-    def __init__(self, *, api_key: bool = False) -> None:
+    def __init__(self) -> None:
         self.credential: _Credential | None = None
         self._temporary: Path | None = None
-        if api_key or sys.platform == "darwin":
+        if sys.platform == "darwin":
             self.config_dir = _host_config_dir()
             return
         self.credential = _Credential.find()
@@ -426,7 +432,7 @@ def _check_ancestors(workspace: Path) -> None:
 
 
 def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-             unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
+             unix_sockets: bool = False) -> dict[str, object]:
     """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
 
     Sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
@@ -436,9 +442,7 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
     Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
     `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter, which cannot start where the host blocks
-    a nested user namespace; the live preflight then probes a host socket. `sandboxed=False` turns Claude Code's own
-    sandbox off, for a role that nono confines as a whole. Then nono keeps the staged trees beside the workspace
-    read-only, and the deny rules do not apply: a task can still create `<workspace>/.claude` entries.
+    a nested user namespace; the live preflight then probes a host socket.
     """
     runtime = [*RUNTIME_READ, *(MACOS_READ if sys.platform == "darwin" else ())]
     temporary = _unique([tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())])
@@ -457,10 +461,6 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
                                  *[f"Read(/{root}/{CONFIG_PREFIX}*/**)" for root in temporary]]}}
     if overrides:
         floor["skillOverrides"] = {name: "off" for name in sorted(overrides)}
-    if not sandboxed:
-        # Claude Code allows sandboxed Bash on its own. With its sandbox off, Bash needs an explicit rule; nono is the boundary.
-        floor["sandbox"] = {"enabled": False}
-        floor["permissions"] = cast(dict[str, object], floor["permissions"]) | {"allow": ["Skill", "Bash"]}
     return floor
 
 
@@ -624,10 +624,10 @@ def _leak(events: list[dict[str, object]], skills: list[str], builtin: Collectio
 
 
 def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skills: list[str],
-             builtin: Collection[str] = (), *, nono_fix: bool = False, allowed: Collection[str] = ()) -> str | None:
+             builtin: Collection[str] = (), *, allowed: Collection[str] = ()) -> str | None:
     """Name the isolation failure that a probe run shows, or return None when the run is isolated.
 
-    Raise SandboxUnavailable when the Bash sandbox cannot start. With `nono_fix`, its fix also offers nono.
+    Raise SandboxUnavailable when the Bash sandbox cannot start.
     `allowed` names the contract surface skills that may load without being required.
     """
     final = _final(events)
@@ -636,7 +636,7 @@ def _failure(returncode: int, stderr: str, events: list[dict[str, object]], skil
     if returncode != 0 and "sandbox" in detail:
         fix = _sandbox_fix(detail)
         raise SandboxUnavailable(f"the Bash sandbox cannot start ({' '.join(stderr[:200].split())})",
-                                 f"{fix}; {NONO_HINT}" if nono_fix else fix)
+                                 fix)
     if errored and any(word in detail for word in ("login", "api key", "authenticat", "unauthorized", "401", "oauth")):
         return AUTH_FAILED
     loaded = _loaded_skills(events, [*builtin, *allowed])
@@ -1035,20 +1035,12 @@ class ClaudeCode:
     rejection: str | None = None
 
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
-                 out: Path | None = None, login: ClaudeLogin | None = None, isolation: str = "claude",
-                 options: ClaudeOptions | None = None, surface: Surface | None = None,
-                 files: Mapping[str, str] | None = None) -> None:
-        """`isolation` is `claude` (Claude Code's own Bash sandbox) or `nono` (nono confines the whole process).
-
-        `surface` is the contract's extra tool surface, and `files` are the skill files that it names.
-        """
-        if isolation not in ISOLATIONS:
-            raise ValueError("isolation must be claude or nono")
+                 out: Path | None = None, login: ClaudeLogin | None = None, options: ClaudeOptions | None = None,
+                 surface: Surface | None = None, files: Mapping[str, str] | None = None) -> None:
+        """`surface` is the contract's extra tool surface, and `files` are the skill files that it names."""
         self.surface = surface
         self.declared = declared_names(surface, files)
         self.mcp_seed = (files or {}).get(surface.mcp_config) if surface is not None and surface.mcp_config is not None else None
-        self.isolation = isolation
-        self.nono = _nono.require() if isolation == "nono" else None
         self.out = out
         self.options = options or ClaudeOptions()
         self.read_roots = resolve_read_roots(self.options.sandbox_read, out)
@@ -1060,10 +1052,15 @@ class ClaudeCode:
         self.budget = budget
         self.checkpoint = checkpoint
         self.owns_login = login is None
-        self.login = ClaudeLogin(api_key=self.nono is not None) if login is None else login
+        self.login = ClaudeLogin() if login is None else login
         self.credential = self.login.credential
         self.config_dir = self.login.config_dir
         self._inventory: Inventory | None = None
+
+    @property
+    def credential_kind(self) -> str:
+        """Name the credential kind. A macOS Keychain login has no file, so the runner cannot verify it."""
+        return SUBSCRIPTION_LOGIN if self.credential is not None else UNVERIFIED_CREDENTIAL
 
     def close(self) -> None:
         """Close the login when this role created it. The harness closes a login that it shares."""
@@ -1074,67 +1071,39 @@ class ClaudeCode:
         """Return True when the host blocks the nested user namespace of Claude Code's Unix-socket filter.
 
         The settings then skip that filter. The filesystem and domain rules stay on, and the live preflight
-        probes a host Unix socket instead. Under nono, Claude Code's own sandbox is off, so this is False.
+        probes a host Unix socket instead.
         """
-        return self.nono is None and nested_userns_blocked()
-
-    def _nono_fix(self) -> bool:
-        """Return True when a failure of Claude Code's own sandbox can also be fixed by `--isolation nono`."""
-        return self.isolation == "claude" and sys.platform.startswith("linux")
-
-    def _login_fix(self) -> str:
-        return f"export a valid {_nono.CREDENTIAL}" if self.nono is not None else LOGIN_HINT
+        return nested_userns_blocked()
 
     def _floor(self, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
-        floor = settings(workspace, self.out, overrides=overrides, unix_sockets=self.unix_sockets(),
-                         sandboxed=self.nono is None)
+        floor = settings(workspace, self.out, overrides=overrides, unix_sockets=self.unix_sockets())
         if self.declared.servers:
             permissions = cast(dict[str, object], floor["permissions"])
             floor["permissions"] = permissions | {"allow": [*cast(list[str], permissions["allow"]),
                                                             *(f"mcp__{name}" for name in sorted(self.declared.servers))]}
         return floor
 
-    def _config(self, workspace: Path) -> Path:
-        """Return the Claude config directory of one process. Under nono, each process gets a fresh, empty directory
-        beside its workspace: Bash can read the config directory there, so no transcript or memory may cross calls.
-        """
-        return workspace.parent / "claude-config" if self.nono is not None else self.config_dir
-
     def _environment(self, workspace: Path) -> dict[str, str]:
         environment = {"PATH": f"{self.executable.parent}:/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
         environment |= {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1"}
-        if self.nono is not None:
-            environment["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-        return environment | {"CLAUDE_CONFIG_DIR": str(self._config(workspace))}
-
-    def agents_dir(self, workspace: Path) -> Path:
-        """Return where the staged `.agents` tree sits while Claude Code runs. Under nono it sits beside the workspace,
-        because Landlock cannot keep a directory inside the writable workspace read-only.
-        """
-        return (workspace.parent if self.nono is not None else workspace) / ".agents"
+        return environment | {"CLAUDE_CONFIG_DIR": str(self.config_dir)}
 
     def _stage(self, workspace: Path, candidate: Candidate | None = None) -> None:
         """Copy the staged skills to the project skill directory that Claude Code loads from.
 
-        Under nono, `.agents` moves beside the workspace, and a workspace symlink keeps the relative paths that the
-        task prompt and the activation check use. A write through the symlink reaches the read-only tree and fails.
         A contract surface adds the candidate's agents to `.claude/agents` and its companions to `.claude/skills`;
         companion files and directories are read-only.
         """
-        if self.nono is not None:
-            _ = shutil.move(workspace / ".agents", self.agents_dir(workspace))
-            (workspace / ".agents").symlink_to(Path("..") / ".agents")
-        project = self.agents_dir(workspace).parent
-        _ = shutil.copytree(project / ".agents/skills", project / ".claude/skills")
+        _ = shutil.copytree(workspace / ".agents/skills", workspace / ".claude/skills")
         if self.surface is None or candidate is None:
             return
         for path in self.surface.agents:
-            agent = project / ".claude/agents" / PurePosixPath(path).name
+            agent = workspace / ".claude/agents" / PurePosixPath(path).name
             agent.parent.mkdir(parents=True, exist_ok=True)
             _ = agent.write_text(candidate.files[path], encoding="utf-8")
         for root in self.surface.companions:
-            target = project / ".claude/skills" / PurePosixPath(root).name
+            target = workspace / ".claude/skills" / PurePosixPath(root).name
             files = {name: text.encode("utf-8") for name, text in candidate.files.items()} | candidate.frozen
             for name, data in files.items():
                 if name.startswith(root + "/"):
@@ -1145,27 +1114,6 @@ class ClaudeCode:
             for directory in sorted((path for path in target.rglob("*") if path.is_dir()), reverse=True):
                 directory.chmod(0o555)
             target.chmod(0o555)
-
-    def _launch(self, workspace: Path, argv: list[str], settings_path: Path) -> tuple[list[str], dict[str, str]]:
-        """Return the command and environment that start `argv`. Under nono, nono starts Claude Code with a profile
-        that grants the workspace, a fresh config directory, and read access to the staged skills.
-        """
-        environment = self._environment(workspace)
-        if self.nono is None:
-            return argv, environment
-        state = workspace.parent / "nono-state"
-        state.mkdir(exist_ok=True)
-        self._config(workspace).mkdir(exist_ok=True)
-        profile_path = workspace.parent / "nono-profile.json"
-        _ = profile_path.write_text(json.dumps(self._profile(self._config(workspace), workspace.parent, settings_path,
-                                                             environment)))
-        return _nono.command(self.nono, profile_path, environment, argv), _nono.host_environment(state)
-
-    def _profile(self, config_dir: Path, project: Path, settings_file: Path, environment: dict[str, str]) -> dict[str, object]:
-        """Build the nono profile for `_launch` and `environment_key`, so the preflight key follows the real sandbox."""
-        mcp = project / MCP_FILE if self.surface is not None and self.surface.mcp_config is not None else None
-        return _nono.profile(config_dir=config_dir, project=project, executable=self.executable.resolve(),
-                             settings_file=settings_file, variables=sorted(environment), mcp_file=mcp)
 
     def _tools(self) -> str:
         """Return the `--tools` value: the base tools, then each surface tool that is not already there."""
@@ -1202,7 +1150,7 @@ class ClaudeCode:
             mcp_path = workspace.parent / MCP_FILE
             _ = mcp_path.write_text(candidate.files[self.surface.mcp_config], encoding="utf-8")
         argv = self._command(settings_path, schema, mcp_path) + (["--input-format", "stream-json"] if stream else [])
-        return self._launch(workspace, argv, settings_path)
+        return argv, self._environment(workspace)
 
     def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float,
              expected: list[str], candidate: Candidate | None = None) -> tuple[int, str, list[dict[str, object]]]:
@@ -1215,8 +1163,7 @@ class ClaudeCode:
         _check_ancestors(workspace)
         settings_path = workspace.parent / "inventory-settings.json"
         _ = settings_path.write_text(json.dumps(self._floor(workspace, overrides)))
-        command, environment = self._launch(workspace, [*self._base(settings_path), "--input-format", "stream-json"],
-                                            settings_path)
+        command, environment = [*self._base(settings_path), "--input-format", "stream-json"], self._environment(workspace)
         timeout = min(INVENTORY_SECONDS, self.budget.remaining())
         try:
             result = process(command, cwd=workspace, timeout=timeout, environment=environment, input_text=INVENTORY_REQUEST)
@@ -1227,9 +1174,9 @@ class ClaudeCode:
         events = _events(result.stdout)
         commands = _commands(events)
         if commands is None:
-            reason = _failure(result.returncode, result.stderr, events, [], nono_fix=self._nono_fix())
+            reason = _failure(result.returncode, result.stderr, events, [])
             if reason == AUTH_FAILED:
-                raise _login_failed(self._login_fix())
+                raise _login_failed(LOGIN_HINT)
             error = str(_control_response(events).get("error", ""))[:200]
             raise _preflight_leak("the Claude Code initialize response has no valid command list, so the skill inventory "
                                   + f"is unknown (exit {result.returncode}; stderr: {' '.join(result.stderr[:200].split())!r}; "
@@ -1266,24 +1213,18 @@ class ClaudeCode:
     def environment_key(self) -> str:
         """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment.
 
-        The key leaves out the per-process config directory, so it stays stable across processes. It also leaves
+        The key leaves out the run's temporary config directory, so it stays stable across processes. It also leaves
         out the skill overrides: they follow the login's skills, and every task call checks its init event.
-        Under nono it also holds the nono executable and the profile shape.
         """
         environment = {name: value for name, value in self._environment(Path("/TASK")).items() if name != "CLAUDE_CONFIG_DIR"}
-        isolation: dict[str, object] = {"isolation": self.isolation}
-        if self.nono is not None:
-            isolation |= {"nono": self.nono, "nono_sha256": hashlib.sha256(Path(self.nono).read_bytes()).hexdigest(),
-                          "landlock_abi": _nono.landlock_abi(), "profile": self._profile(
-                              Path("/CONFIG"), Path("/PROJECT"), Path("/PROJECT/settings.json"), environment)}
         surface: dict[str, object] = {} if self.surface is None else {
             "surface": self.surface.data() | {"servers": sorted(self.declared.servers)}}
         return digest({"settings": self._floor(Path("/TASK"), ()), "environment": environment, "tools": TOOLS,
                        "skill": PROBE_PREFIX, "platform": sys.platform, "network_probe": NETWORK_PROBE, "read_probe": READ_PROBE,
-                       "setting_sources": SETTING_SOURCES} | isolation | surface)
+                       "setting_sources": SETTING_SOURCES, "isolation": "claude"} | surface)
 
     def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
-        for name, found, fix in host_tools(self.isolation):
+        for name, found, fix in host_tools():
             if not found:
                 raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
         with listening() as port:
@@ -1336,14 +1277,13 @@ class ClaudeCode:
             control = secrets.token_hex(16)
             control_file = workspace / "control.txt"
             _ = control_file.write_text(control)
-            protected = [self.agents_dir(workspace) / "write-probe",
-                         self.agents_dir(workspace).parent / ".claude/skills" / name / "write-probe"]
+            protected = [workspace / ".agents/write-probe", workspace / ".claude/skills" / name / "write-probe"]
             write_control = workspace / "write-control.txt"
             write_token = secrets.token_hex(16)
             network_token = secrets.token_hex(16)
             sockets = root / "s"
             sockets.mkdir()
-            probing = self.unix_sockets() or self.nono is not None
+            probing = self.unix_sockets()
             abstract = f"skillz-{network_token[:16]}"
             with (watched() as (port, connected), watched_unix(sockets, active=probing) as (socket_path, socket_reached),
                   watched_abstract(abstract, active=probing) as abstract_reached):
@@ -1371,9 +1311,9 @@ class ClaudeCode:
         leak = _leak(events, [name], builtin, self.declared)
         if leak is not None:
             raise _preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
-        reason = _failure(returncode, stderr, events, [name], builtin, nono_fix=self._nono_fix(), allowed=self.declared.skills)
+        reason = _failure(returncode, stderr, events, [name], builtin, allowed=self.declared.skills)
         if reason == AUTH_FAILED:
-            raise _login_failed(self._login_fix())
+            raise _login_failed(LOGIN_HINT)
         network = _network_failure(events, port, network_token)
         if network is None and probing:
             network = _unix_failure(events, str(socket_path), network_token)
@@ -1391,9 +1331,8 @@ class ClaudeCode:
             raise NetworkIsolationFailed(network)
         if reason is not None:
             raise _preflight_leak(reason)
-        return {"adapter": "claude", "model": self.model, "isolation": "passed", "backend": self.isolation,
-                "network": "denied", "live_calls": 1,
-                "unix_socket_filter": "nono" if self.nono is not None else "off" if self.unix_sockets() else "on",
+        return {"adapter": "claude", "model": self.model, "isolation": "passed", "credential": self.credential_kind,
+                "network": "denied", "live_calls": 1, "unix_socket_filter": "off" if self.unix_sockets() else "on",
                 "environment_key": self.environment_key()}
 
     def check_name(self, candidate: Candidate) -> None:
@@ -1541,8 +1480,8 @@ class ClaudeCode:
                                  + f"expected {expected}; the invocation counts against the budget")
             unloaded = bool(expected) and not loaded and not failed
         if failed or final is None:
-            reason = (_failure(returncode, stderr, events, expected, builtin, nono_fix=self._nono_fix(),
-                               allowed=self.declared.skills) or "missing-final-response")
+            reason = (_failure(returncode, stderr, events, expected, builtin, allowed=self.declared.skills)
+                      or "missing-final-response")
             raise RuntimeError(f"Claude Code fails: {reason} (exit {returncode}); the invocation counts against the budget")
         return final, unloaded
 

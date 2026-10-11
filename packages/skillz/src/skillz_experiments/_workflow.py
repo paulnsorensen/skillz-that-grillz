@@ -26,13 +26,12 @@ from skillz_experiments._candidate import (NEW_CLI, WEDGE_PREFIX, Candidate, can
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping, relative, repo_root
 from skillz_experiments._claude import (NOTICE_CODES as _NOTICE_CODES, TERMINAL_CODES as _TERMINAL_CODES, ClaudeOptions,
                                         resolve_read_roots)
-from skillz_experiments._codex import VERSION
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._doctor import doctor
+from skillz_experiments._doctor import host_report
 from skillz_experiments._evaluator import task_tokens
 from skillz_experiments._gate import (DEFAULT_STATISTICS, Statistics, Verdict, case_deltas, close,
                                       verdict as gate_verdict)
-from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, validate_isolation
+from skillz_experiments._harness import BUILTIN_ADAPTERS, NONO_REMOVED, Configuration, EnvironmentDiffers, Harness
 from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, approval_question, case_hash, freeze, intake_contract,
                                         load_draft, skill_facts, split_cases)
 from skillz_experiments._new_cli import expand_files, parse_value, prompt_rule, unused_helpers
@@ -345,9 +344,30 @@ def _frozen_statistics(record: dict[str, object]) -> Statistics:
         raise Stop("run-record-tampered", "the recorded statistics are malformed; create a new run", {}) from None
 
 
+def _host_selections(configuration: Configuration | None) -> list[tuple[str, str | None]]:
+    """Return the distinct `(adapter, executable)` pairs of the built-in roles. A command role relies on its sandbox probe.
+
+    A Claude role names its own executable. A Codex role runs `codex` from PATH.
+    """
+    if configuration is None:
+        return []
+    pairs = {(role.adapter, role.command[0] if role.adapter == "claude" else None)
+             for role in configuration.roles.values() if role.adapter in BUILTIN_ADAPTERS}
+    return sorted(pairs, key=lambda pair: (pair[0], pair[1] or ""))
+
+
+def _differences(recorded: object, observed: object, name: str = "") -> list[str]:
+    """Name each preflight evidence key whose value differs, with both values. Keys sit in dotted paths."""
+    if isinstance(recorded, dict) and isinstance(observed, dict):
+        before, after = cast(dict[str, object], recorded), cast(dict[str, object], observed)
+        return [line for key in sorted(set(before) | set(after))
+                for line in _differences(before.get(key), after.get(key), f"{name}.{key}" if name else key)]
+    return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
+
+
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
-             options: ClaudeOptions, configuration: Configuration | None = None, isolation: str = "claude",
+             options: ClaudeOptions, configuration: Configuration | None = None,
              statistics_given: Mapping[str, float] | None = None) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
@@ -356,7 +376,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     """
     draft = out / DRAFT_NAME
     if not draft.is_file():
-        report = doctor(adapter, isolation) if resolve_harness else None
+        hosts = [(adapter, None)] if resolve_harness else _host_selections(configuration)
+        report = host_report(hosts) if hosts else None
         if report is not None and not report["ok"]:
             raise Stop("host-not-ready", "fix each failed host check, then call run again; no model call ran", report)
         data: dict[str, object] = {"draft": str(draft), "facts": skill_facts(target)}
@@ -387,7 +408,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
                          + "add task cases in more families to the draft, then call run again")
     expected = case_hash(cases, split_seed)
     if resolve_harness or configuration is not None:
-        chosen = configuration if configuration is not None else Configuration.single(adapter, model, isolation, options)
+        chosen = configuration if configuration is not None else Configuration.single(adapter, model, options)
         for role in chosen.roles.values():
             _ = resolve_read_roots(role.options.sandbox_read, out)
     if approve_cases != expected:
@@ -421,7 +442,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
-        "isolation": isolation, **({"claude_options": options.data()} if resolve_harness else {}),
+        **({"claude_options": options.data()} if resolve_harness else {}),
+        **({"harness": configuration.identity()} if configuration is not None else {}),
         "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
@@ -438,7 +460,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
 @final
 class _Session:
     def __init__(self, out: Path, model: str, adapter: HarnessName, factory: Factory | None,
-                 supplied: Configuration | None, isolation: str = "claude", *, statistics: Statistics) -> None:
+                 supplied: Configuration | None, *, statistics: Statistics) -> None:
         self.out = out
         self.lock = threading.RLock()
         self.record = open_record(out / "run.json")
@@ -459,7 +481,7 @@ class _Session:
         self.outcomes = _outcomes(self.record)
         options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
         configuration = supplied if supplied is not None else (
-            Configuration.single(adapter, model, isolation, options) if factory is None else None)
+            Configuration.single(adapter, model, options) if factory is None else None)
         self.sizing = _sizing_options(configuration, options)
         self._freeze_identities(model, configuration, judged)
         self.budget = self._open_budget()
@@ -509,7 +531,7 @@ class _Session:
             identity = configuration.identity()
             _ = self.record.setdefault("harness", identity)
             if self.record["harness"] != identity:
-                raise ValueError("harness configuration differs from the frozen record; create a new run")
+                raise CodedError("harness-changed", "harness configuration differs from the frozen record; create a new run")
         if judged:
             judge_model = configuration.roles["judge"].model if configuration is not None else model
             _ = self.record.setdefault("judge_model", judge_model)
@@ -582,11 +604,14 @@ class _Session:
         environment_hash = preflight.get("environment_hash")
         _ = self.record.setdefault("environment_hash", environment_hash)
         if self.record["environment_hash"] != environment_hash:
-            raise EnvironmentDiffers("runtime environment differs from the frozen record")
+            before = mapping(cast(dict[str, object], recorded)) if isinstance(recorded, dict) else {}
+            changed = _differences(before.get("roles", before), preflight.get("roles", preflight))
+            raise EnvironmentDiffers("runtime environment differs from the frozen record; changed evidence: "
+                                     + "; ".join(changed[:6]) + "; restore the first-run environment and resume, "
+                                     + "or start a new run")
         self.record["preflight"] = preflight
-        if isinstance(self.provider, Harness) and any(
-                role.adapter == "codex" for role in self.provider.configuration.roles.values()):
-            self.record["codex_version"] = VERSION
+        if isinstance(self.provider, Harness) and self.provider.codex_version is not None:
+            self.record["codex_version"] = self.provider.codex_version
         self.checkpoint()
 
     def evaluate_case(self, candidate: Candidate, case: Case, arm: str, *, holdout: bool = False,
@@ -1020,17 +1045,33 @@ def _open_lock(out: Path) -> TextIO:
 _OPTION_FLAGS = (("--effort", "effort"), ("--sandbox-read", "sandbox_read"), ("--sandbox-seconds", "sandbox_seconds"))
 
 
+def _refuse_nono(record: dict[str, object]) -> None:
+    """Stop a resume of a run that recorded the removed nono backend. Older records of the default backend stay readable."""
+    if record.get("isolation") == "nono":
+        raise CodedError("nono-removed", NONO_REMOVED)
+
+
+_CONFIGURED_ADAPTERS = frozenset({"command", "config"})
+
+
 def _check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
                   seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object],
-                  isolation: str) -> None:
-    """Stop when a resume names another model, adapter, isolation, target, edit, repeats, seed, or Claude option
-    than the first run.
+                  configured: bool) -> None:
+    """Stop when a resume names another model, adapter, target, edit, repeats, seed, or Claude option
+    than the first run. A run that froze a harness configuration resumes only with a configuration.
     """
-    for flag, value, field in ("--model", model, "model"), ("--harness", adapter, "adapter"):
-        if _text_field(record, field) != value:
-            raise _config_differs(flag)
-    if record.get("isolation", "claude") != isolation:
-        raise _config_differs("--isolation")
+    if _text_field(record, "model") != model:
+        raise _config_differs("--model")
+    recorded_adapter = _text_field(record, "adapter")
+    if recorded_adapter in _CONFIGURED_ADAPTERS and "harness" not in record:
+        raise CodedError("run-record-tampered", "the run record lacks its frozen harness identity; create a new run")
+    lost_configuration = recorded_adapter in _CONFIGURED_ADAPTERS and not configured
+    crossed_configuration = recorded_adapter != adapter and bool({recorded_adapter, adapter} & _CONFIGURED_ADAPTERS)
+    if lost_configuration or crossed_configuration:
+        raise CodedError("harness-changed", "the harness selection differs from the frozen record; "
+                         + "resume with the same --harness-config or --harness command --command, or create a new run")
+    if recorded_adapter != adapter:
+        raise _config_differs("--harness")
     for flag, value, field in ("--edit", edit, "edit"), ("--repeats", repeats, "repeats"), ("--seed", seed, "split_seed"):
         if value is not None and value != record.get(field):
             raise _config_differs(flag)
@@ -1054,15 +1095,16 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         approve_cases: str | None = None, approve_budget: int | None = None,
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
-        isolation: str = "claude", statistics: Mapping[str, float] | None = None) -> dict[str, object]:
+        statistics: Mapping[str, float] | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
     them. A resume uses the recorded options. A value that a resume passes must match the record.
     """
-    if adapter not in ("claude", "codex"):
-        raise ValueError("harness must be claude or codex")
-    validate_isolation(adapter, isolation)
+    if adapter not in (BUILTIN_ADAPTERS if configuration is None else (*BUILTIN_ADAPTERS, "command", "config")):
+        raise ValueError("harness must be claude, codex, or command")
+    if adapter == "command" and configuration is None:
+        raise ValueError("--harness command requires a command configuration")
     if edit is not None and edit not in get_args(Edit):
         raise ValueError("edit must be prose or prose+cli")
     if repeats is not None and repeats < 1:
@@ -1106,17 +1148,18 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                 if statistics_given:
                     _check_statistics(statistics_given, _frozen_statistics(record))
                 return summary(record)
+            _refuse_nono(record)
             frozen = _frozen_statistics(record)
             _check_statistics(statistics_given, frozen)
-            _check_resume(record, target, edit, repeats, seed, model, adapter, given, isolation)
+            _check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None)
         else:
             frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
-                              options=requested, configuration=configuration, isolation=isolation,
+                              options=requested, configuration=configuration,
                               statistics_given=statistics_given)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
-        session = _Session(out, model, adapter, factory, configuration, isolation, statistics=frozen)
+        session = _Session(out, model, adapter, factory, configuration, statistics=frozen)
         pending: BaseException | None = None
         try:
             try:
@@ -1148,7 +1191,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
 
 def summary(record: dict[str, object]) -> dict[str, object]:
     keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
-            "gate", "search", "estimate", "contract_hash", "contract_source", "isolation", "claude_options")
+            "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options")
     result = {key: record.get(key) for key in keys}
     if "close_warning" in record:
         code = mapping(record["close_warning"]).get("code")

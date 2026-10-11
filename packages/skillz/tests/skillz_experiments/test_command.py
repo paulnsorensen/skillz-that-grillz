@@ -116,6 +116,19 @@ def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path) -> None:
         adapter.close()
 
 
+def test_command_preflight_says_the_probe_covers_only_the_sandbox_operation(tmp_path: Path) -> None:
+    config, _, log = configured(tmp_path)
+    adapter = Configuration.load(config, "offline").create("offline", Budget(20, 60), lambda: None)
+    try:
+        evidence = adapter.preflight()
+    finally:
+        adapter.close()
+    roles = cast(dict[str, dict[str, object]], evidence["roles"])
+    assert roles and all(role["isolation"] == "passed" and role["isolation_scope"] == "sandbox operation"
+                         for role in roles.values())
+    assert evidence["live_calls"] == 0 and "infer" not in [item["operation"] for item in requests(log)]
+
+
 def test_executable_alias_keeps_invoked_name(tmp_path: Path) -> None:
     executable = tmp_path / "multicall"
     _ = executable.write_text("#!/usr/bin/python3\nimport sys\nfrom pathlib import Path\nprint(Path(sys.argv[0]).name)\n")

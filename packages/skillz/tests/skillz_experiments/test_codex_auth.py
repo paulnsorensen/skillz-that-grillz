@@ -45,3 +45,26 @@ def test_codex_links_auth_json_and_sets_only_codex_home(tmp_path: Path, monkeypa
     assert child["HOME"] == str(workspace / "home")
     assert 'auth={"login": "host"}' in lines
     assert not adapter.codex_home.exists()
+
+
+@pytest.mark.parametrize("login, kind", [('{"tokens": {"id_token": "t"}}', "subscription login"),
+                                         ('{"OPENAI_API_KEY": "sk-secret"}', "api key"), (None, "missing")])
+def test_codex_reports_the_credential_kind_from_the_host_login(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, login: str | None, kind: str) -> None:
+    if Path("/etc/codex/skills").exists():
+        pytest.skip("admin skill roots stop the Codex transport")
+    host = tmp_path / "host-codex"
+    host.mkdir()
+    if login is not None:
+        _ = (host / "auth.json").write_text(login)
+    fake = tmp_path / "bin/codex"
+    fake.parent.mkdir()
+    _ = fake.write_text("#!/bin/sh\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{fake.parent}:{os.environ['PATH']}")
+    monkeypatch.setenv("CODEX_HOME", str(host))
+    adapter = Codex("m", Budget(10, 120, 0), lambda: None)
+    try:
+        assert adapter.credential_kind == kind
+    finally:
+        adapter.close()

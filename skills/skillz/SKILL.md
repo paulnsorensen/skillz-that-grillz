@@ -50,6 +50,7 @@ The agent drafts the cases. The user needs no contract and no case manifest.
 Run `scripts/skillz-experiment.pyz run`, answer each coded stop, and then run `export`.
 Ask at most three questions: harness and model, case approval, and budget approval.
 When the user selects the `claude` adapter or a custom command check, also read `references/experiment-harness.md`.
+For Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi, also read `references/harness-recipes.md`.
 Use the installed `scripts/skillz-experiment.pyz`. Do not require a source checkout.
 
 ## Shared protocol
@@ -278,3 +279,4 @@ Read on demand:
 - `references/calibration.md` — when you tag a finding's severity and confidence; the confidence × severity kernel.
 - `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the run flow, case draft, gate verdict, export, optional contract, graders, isolation, and the helper contracts.
 - `references/experiment-harness.md` — the user selects the `claude` adapter, or checks a custom command or role files.
+- `references/harness-recipes.md` — the user wants to run experiments through Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi.

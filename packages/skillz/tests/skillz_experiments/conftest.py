@@ -6,7 +6,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 
 import pytest
@@ -67,9 +67,9 @@ def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The doctor tests call `_doctor.doctor` directly.
     """
-    def ready(harness: str, isolation: str = "claude") -> dict[str, object]:
-        return {"ok": True, "harness": harness, "isolation": isolation, "checks": [], "live_calls": 0}
-    monkeypatch.setattr(_workflow, "doctor", ready)
+    def ready(selections: Sequence[tuple[str, str | None]]) -> dict[str, object]:
+        return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
+    monkeypatch.setattr(_workflow, "host_report", ready)
 
 @pytest.fixture
 def umask_022() -> Iterator[None]:

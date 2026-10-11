@@ -5,21 +5,24 @@ import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import fromargs
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import NOTICE_CODES, Effort, Isolation
+from skillz_experiments._claude import NOTICE_CODES, Effort
 from skillz_experiments._doctor import doctor
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._gate import simulate as simulate_gate
+from skillz_experiments._gemini import IMAGE as GEMINI_IMAGE, Runtime, respond as gemini_respond
 from skillz_experiments._harness import Configuration
+from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget
 from skillz_experiments._search import Edit
 from skillz_experiments._workflow import Stop, export as export_run, run as run_workflow
 
 Harness = Literal["claude", "codex"]
+RunHarness = Literal["claude", "codex", "command"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -45,8 +48,42 @@ def _coded() -> Generator[None]:
 app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. No automatic installation.")
 
 
+def _completed(out: Path) -> bool:
+    try:
+        return read(out / "run.json").get("phase") == "complete"
+    except (OSError, ValueError):
+        return False
+
+
+def _run_harness(model: str, target: Path, harness: RunHarness | None, harness_config: Path | None,
+                 command: list[str] | None, out: Path) -> tuple[str, Configuration | None]:
+    """Resolve the harness options of `run` before any work. Return the adapter name and the configuration, if any.
+
+    `harness` is None when the user gives no `--harness`, so a conflict with `--harness-config` shows.
+    A completed run in `out` needs no harness, so a configuration that no longer loads does not stop its summary.
+    """
+    if harness_config is not None and (harness is not None or command is not None):
+        raise CodedError("usage", "--harness-config cannot combine with --harness or --command")
+    if command is not None and harness != "command":
+        raise CodedError("usage", "--command requires --harness command")
+    if harness == "command" and command is None:
+        raise CodedError("usage", "--harness command requires --command ARGV...")
+    if harness_config is None and harness != "command":
+        return harness or "claude", None
+    try:
+        configuration = (Configuration.load(harness_config, model) if harness_config is not None
+                         else Configuration.command(cast(list[str], command), model))
+        configuration.check_boundary(target)
+    except (CodedError, ValueError, OSError):
+        if not _completed(out):
+            raise
+        return "claude", None
+    return ("command" if harness == "command" else "config"), configuration
+
+
 @app.command(name="run")
-def run_command(*, target: Path, out: Path, model: str, harness: Harness = "claude", isolation: Isolation = "claude",
+def run_command(*, target: Path, out: Path, model: str, harness: RunHarness | None = None,
+                harness_config: Path | None = None, command: list[str] | None = None,
                 live: bool = False, edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
                 approve_cases: str | None = None, approve_budget: int | None = None,
                 effort: Effort | None = None, sandbox_read: list[Path] | None = None,
@@ -56,10 +93,14 @@ def run_command(*, target: Path, out: Path, model: str, harness: Harness = "clau
                 min_token_saving: float | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
-    `--isolation nono` confines the whole Claude process with nono on Linux and needs ANTHROPIC_API_KEY on the host.
-
     Parameters
     ----------
+    harness
+        claude (default) or codex, or command for your own command (requires --command).
+    harness_config
+        Harness configuration file with per-role adapters. Cannot combine with --harness or --command.
+    command
+        Argument array of your own harness command for --harness command: --command EXECUTABLE ARG...
     effort
         Claude Code effort level for every role (claude harness only).
     sandbox_read
@@ -81,20 +122,22 @@ def run_command(*, target: Path, out: Path, model: str, harness: Harness = "clau
              "max_token_increase_per_gain": max_token_increase_per_gain, "min_token_saving": min_token_saving}
     statistics = {name: value for name, value in flags.items() if value is not None}
     with _coded():
-        return run_workflow(target, out, model, adapter=harness, live=live, edit=edit, repeats=repeats, seed=seed,
+        adapter, configuration = _run_harness(model, target, harness, harness_config, command, out)
+        return run_workflow(target, out, model, adapter=adapter, configuration=configuration, live=live, edit=edit,
+                            repeats=repeats, seed=seed,
                             approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
                             sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
-                            sandbox_seconds=sandbox_seconds, isolation=isolation, statistics=statistics or None)
+                            sandbox_seconds=sandbox_seconds, statistics=statistics or None)
 
 
 @app.command(name="doctor")
-def doctor_command(*, harness: Harness = "claude", isolation: Isolation = "claude") -> dict[str, object]:
+def doctor_command(*, harness: Harness = "claude") -> dict[str, object]:
     """Check the host for a run with no model call: tools, login, sandbox, and skill isolation, in one pass.
 
     The command exits 0 even when a check fails. Read `ok` in the report: it is false when any check fails.
     """
     with _coded():
-        return doctor(harness, isolation)
+        return doctor(harness)
 
 
 @app.command(name="export")
@@ -137,6 +180,16 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
                     raise
                 warning = str(error)
         return result if warning is None else result | {"close_warning": warning}
+
+
+group = app.group("harness-wrapper", help="Reference wrappers for the command adapter. Each speaks JSON protocol version 1.")
+
+
+@group.command(name="gemini")
+def gemini_command(*, bin_dir: Path | None = None, runtime: Runtime | None = None, image: str = GEMINI_IMAGE) -> None:
+    """Run Gemini CLI with its native sandbox behind the command adapter. Read one request on stdin, answer on stdout."""
+    response = gemini_respond(sys.stdin.read(), bin_dir=bin_dir, runtime=runtime, image=image)
+    _ = sys.stdout.write(json.dumps(response) + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:

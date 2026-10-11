@@ -35,7 +35,7 @@ def _executable(path: Path, body: str) -> Path:
 def test_run_accepts_only_claude_or_codex_and_launches_headless(tmp_path: Path, capsys: pytest.CaptureFixture[str],
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI rejects other harness names. For claude and codex this checks adapter argv, not the run path."""
-    for harness in ("command", "other"):
+    for harness in ("other",):
         code = main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "out"), "--model", "m",
                      "--harness", harness])
         captured = capsys.readouterr()

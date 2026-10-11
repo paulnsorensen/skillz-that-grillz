@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -10,15 +11,50 @@ from pathlib import Path
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
-from skillz_experiments._cases import Case, digest, loads_untrusted, mapping, string
+from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments._discovery import discover
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments._evaluator import answer_schema, evaluate
+from skillz_experiments._evaluator import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, answer_schema, evaluate
 from skillz_experiments._isolation import listening, probe
 from skillz_experiments._runtime import Budget, process
 
-VERSION = "codex-cli 0.154.0"
+MINIMUM_VERSION = (0, 154, 0)
+MINIMUM_TEXT = ".".join(map(str, MINIMUM_VERSION))
+# The fixed role fingerprint label. The observed `codex --version` string, not this label, gates and records the version.
+CODEX_IDENTITY = "codex-cli 0.154.0"
+_MAX_DIGITS = 4000  # Python's default limit for int(): `sys.int_info.default_max_str_digits` (4300) stays above it.
+_AUTH_LIMIT = 1_000_000
+_NUMBER = f"([0-9]{{1,{_MAX_DIGITS}}})"
+_VERSION_OUTPUT = re.compile(rf"codex-cli {_NUMBER}\.{_NUMBER}\.{_NUMBER}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?")
+
+
+def supported(output: str) -> bool:
+    """Return whether `codex --version` output names a release at or above the minimum."""
+    match = _VERSION_OUTPUT.fullmatch(output.strip())
+    if match is None:
+        return False
+    core = (int(match[1]), int(match[2]), int(match[3]))
+    return core > MINIMUM_VERSION or (core == MINIMUM_VERSION and match[4] is None)
+
+
+def host_home() -> Path:
+    return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).resolve()
+
+
+def credential_kind(home: Path) -> str:
+    """Return the credential kind that `auth.json` in `home` holds. It reads field names and never keeps a value."""
+    try:
+        with (home / "auth.json").open("rb") as stream:
+            document = loads_untrusted(stream.read(_AUTH_LIMIT).decode())
+    except (OSError, ValueError):
+        return MISSING_CREDENTIAL
+    if not isinstance(document, dict):
+        return MISSING_CREDENTIAL
+    fields = cast(dict[str, object], document)
+    if isinstance(fields.get("tokens"), dict) and fields["tokens"]:
+        return SUBSCRIPTION_LOGIN
+    return API_KEY if fields.get("OPENAI_API_KEY") else MISSING_CREDENTIAL
 
 
 def _inline(values: dict[str, str]) -> str:
@@ -57,12 +93,16 @@ class Codex:
         self.model = string(model, "explicit model")
         self.budget = budget
         self.checkpoint = checkpoint
-        host_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).resolve()
+        self.host_home = host_home()
         if Path("/etc/codex/skills").exists():
             raise RuntimeError("admin skill roots require an isolated runner")
         self.authentication_home = tempfile.TemporaryDirectory(prefix="skillz-auth-reference-")
         self.codex_home = Path(self.authentication_home.name)
-        (self.codex_home / "auth.json").symlink_to(host_home / "auth.json")
+        (self.codex_home / "auth.json").symlink_to(self.host_home / "auth.json")
+
+    @property
+    def credential_kind(self) -> str:
+        return credential_kind(self.host_home)
 
     def close(self) -> None:
         self.authentication_home.cleanup()
@@ -72,10 +112,15 @@ class Codex:
                 "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
 
     def preflight(self) -> dict[str, object]:
+        credential = self.credential_kind
+        if credential == MISSING_CREDENTIAL:
+            raise CodedError("login-missing", f"no Codex login in {self.host_home / 'auth.json'}; log in with `codex login`")
         version = process([str(self.executable), "--version"], cwd=Path("/tmp"), timeout=min(10, self.budget.remaining()),
                           environment={"PATH": "/usr/bin:/bin"})
-        if version.returncode or version.stdout.strip() != VERSION:
-            raise RuntimeError("unsupported Codex version; expected " + VERSION)
+        observed = version.stdout.strip()
+        if version.returncode or not supported(observed):
+            raise CodedError("codex-version-unsupported", f"unsupported Codex version {observed!r}; "
+                             + f"install Codex {MINIMUM_TEXT} or newer (`codex --version` must print `codex-cli X.Y.Z`)")
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             root = Path(directory)
             workspace = root / "workspace"
@@ -104,7 +149,7 @@ class Codex:
             if parser.returncode:
                 evidence = failure_details(parser.returncode, parser.stderr, [])
                 raise RuntimeError(f"Codex execution options preflight fails: {evidence['reason']}")
-        return {"codex_version": VERSION, "model": self.model, "isolation": "passed",
+        return {"codex_version": observed, "model": self.model, "isolation": "passed", "credential": credential,
                 "host_skill_discovery": "isolated-home", "live_calls": 0,
                 "environment_hash": digest(configuration(Path("/TASK"), self.executable, []))}
 
@@ -135,13 +180,13 @@ class Codex:
                     "output_files": snapshot_outputs(workspace)}
 
     def _execution_command(self, workspace: Path, schema: Path, output: Path) -> list[str]:
-        return [str(self.executable), "exec", *configuration(workspace, self.executable, []),
+        return [str(self.executable), "exec", "--strict-config", *configuration(workspace, self.executable, []),
                 "--ignore-user-config", "--ignore-rules", "--ephemeral", "--json",
                 "--skip-git-repo-check", "-C", str(workspace), "--model", self.model,
                 "--output-schema", str(schema), "--output-last-message", str(output), "-"]
 
     def _discover(self, workspace: Path, skill: str) -> bool:
-        command = [str(self.executable), "app-server", *configuration(workspace, self.executable, [])]
+        command = [str(self.executable), "app-server", "--strict-config", *configuration(workspace, self.executable, [])]
         return discover(command, workspace, self._environment(workspace), min(30, self.budget.remaining()), skill)
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
