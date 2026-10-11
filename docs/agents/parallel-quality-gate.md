@@ -55,6 +55,14 @@ The socket-path failure passes after the short-base correction.
 The remaining failures have no completed local baseline comparison.
 Do not label them pre-existing or weaken runtime guards to hide them.[^2]
 
+### Process termination observation
+
+The first changed-tree Linux CI run reports one failure, 2914 passed, and 18 skipped in wedge pytest.
+The process-group test observes descendant state `R` immediately after termination instead of expected state `Z`.[^8]
+The approved test correction polls for up to two seconds with a monotonic deadline.
+It retains disappeared-process success, the final zombie-state assertion, and the unchanged 0.5-second runtime timeout.
+A still-live descendant fails after the observation deadline.[^9]
+
 ## References
 
 [^1]: .github/workflows/validate.yml:3-6,38-82. The workflow runs on pull requests or pushes to main.
@@ -65,4 +73,7 @@ Do not label them pre-existing or weaken runtime guards to hide them.[^2]
 [^6]: .github/scripts/run_gate.py:89-107,196-217; .github/scripts/test_run_gate.py:82-127.
 [^7]: packages/wedge/pyproject.toml:37-38; packages/fromargs/pyproject.toml:28-29; uv.lock; packages/wedge/src/wedge/_key.py:134-152; packages/wedge/examples/skills/cheese-cave/scripts/cheese-cave.wedge.json.
 
-_Source: Approved parallel-build contract, origin/main workspace rebase, and local verification · Updated: 2026-10-10 · Supersedes: preliminary separate-environment description_
+[^8]: [Linux CI run 38102417849](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/38102417849); .context/parallelism/linux-ci-failure.log. The local log is gitignored.
+[^9]: packages/wedge/tests/skillz_experiments/test_runtime.py:14-32; .context/parallelism/implementation-contract.md:55-64. The user approves the test-only correction and CI rerun.
+
+_Source: Approved parallel-build contract, workspace rebase, local verification, and Linux CI finding · Updated: 2026-10-10 · Supersedes: immediate descendant-state observation_

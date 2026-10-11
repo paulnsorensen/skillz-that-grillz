@@ -102,3 +102,7 @@
 
 - 2026-10-10 · rebase-43a9dbe-parallel-gate · merged · parallel-quality-gate.md · Replace separate lib environments with one shared packages workspace preparation. Record the user-selected Linux CI verification route.
 
+
+
+- 2026-10-10 · ci-38102417849-bounded-wait · merged · parallel-quality-gate.md · Record the Linux descendant-state race and approved bounded test observation. Preserve the runtime timeout and final assertion.
+
