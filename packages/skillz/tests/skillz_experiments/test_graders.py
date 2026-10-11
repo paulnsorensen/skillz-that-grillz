@@ -16,6 +16,7 @@ from skillz_experiments._contract import Contract, parse
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._roles import Role
 from skillz_experiments._budget import Budget
+from fake_provider import FakeProvider
 
 RUBRIC = "RUBRIC_SENTINEL: rate how readable the rewrite is."
 GATE_SCRIPT = {
@@ -39,7 +40,7 @@ def contract(script: str = GATE_SCRIPT["pass"], flags: tuple[str, ...] = ("-I",)
                             "rewrite": {"grader": "hybrid", "argv": argv, "rubric": RUBRIC}}}, "skill")
 
 
-class FakeTask:
+class FakeTask(FakeProvider):
     """A task transport without the optional Sandbox capability."""
 
     def __init__(self, output: dict[str, str] | None = None) -> None:
@@ -47,35 +48,6 @@ class FakeTask:
         self.output: dict[str, str] = {"result.txt": "rewritten\n"} if output is None else output
         self.prompts: list[str] = []
         self.workspaces: list[dict[str, str]] = []
-
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def reuse_key(self, fingerprint: object) -> str | None:
-        del fingerprint
-
-    def resume(self, kept: object) -> bool:
-        del kept
-        return False
-
-    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
-        del evidence
-        return {}
-
-    def adopt_login(self) -> None:
-        return None
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -100,42 +72,13 @@ class SandboxedTask(FakeTask):
         return run.returncode, run.stdout, run.stderr
 
 
-class FakeJudge:
+class FakeJudge(FakeProvider):
     def __init__(self, percent: object = 70, answer: dict[str, object] | None = None) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.percent: object = percent
         self.answer: dict[str, object] | None = answer
         self.prompts: list[str] = []
         self.schemas: list[dict[str, object] | None] = []
-
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def reuse_key(self, fingerprint: object) -> str | None:
-        del fingerprint
-
-    def resume(self, kept: object) -> bool:
-        del kept
-        return False
-
-    def run_facts(self, evidence: Mapping[str, object]) -> dict[str, object]:
-        del evidence
-        return {}
-
-    def adopt_login(self) -> None:
-        return None
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

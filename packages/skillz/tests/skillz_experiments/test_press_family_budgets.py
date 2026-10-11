@@ -17,6 +17,8 @@ from skillz_experiments.gate import Statistics, verdict
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._resume import resolve_statistics
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 MODEL = "local-test"
 
@@ -283,24 +285,13 @@ REGRESSING = ("f0", "f1")
 
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
         pass
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         improved = "improved" in candidate.files["SKILL.md"]

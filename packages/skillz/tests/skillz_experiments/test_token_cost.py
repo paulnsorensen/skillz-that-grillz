@@ -26,6 +26,8 @@ from skillz_experiments.run._session import (
     _reflection_request as reflection_request,  # pyright: ignore[reportPrivateUsage]
     Session,
 )
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -455,7 +457,7 @@ def test_the_cli_passes_both_token_flags_to_run(tmp_path: Path, monkeypatch: pyt
 
 # --- workflow: provider with usage -----------------------------------------------------------------------
 
-class _Priced:
+class _Priced(FakeProvider):
     """A fake provider. The `improved` candidate scores `GAIN` on every case and uses `IMPROVED` task tokens.
 
     `HOLDOUT_GAIN`, when set, replaces `GAIN` on the holdout.
@@ -473,20 +475,9 @@ class _Priced:
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
         pass
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         improved = "improved" in candidate.files["SKILL.md"]

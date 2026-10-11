@@ -224,17 +224,21 @@ def test_discover_rejects_a_skill_path_outside_the_workspace_skills(tmp_path: Pa
     assert not (directory / "gemini.log").exists()
 
 
-@pytest.mark.parametrize("raw", [
-    "not json", "[]", json.dumps({"schema_version": 2, "operation": "sandbox", "workspace": "/tmp"}),
-    json.dumps({"schema_version": 1, "operation": "frobnicate", "workspace": "/tmp"}),
-    json.dumps({"schema_version": 1, "operation": "sandbox", "workspace": "relative"}),
-    json.dumps({"schema_version": 1, "operation": "sandbox", "workspace": "/tmp", "argv": []}),
-    json.dumps({"schema_version": 1, "operation": "discover", "workspace": "/tmp"}),
-    json.dumps({"schema_version": 1, "operation": "infer", "workspace": "/tmp", "prompt": "p"}),
+@pytest.mark.parametrize(("raw", "message"), [
+    ("not json", "request is not JSON"), ("[]", "request must be a JSON object"),
+    (json.dumps({"schema_version": 2, "operation": "sandbox", "workspace": "/tmp"}), "unsupported schema_version"),
+    (json.dumps({"schema_version": 1, "operation": "frobnicate", "workspace": "/tmp"}), "unknown operation"),
+    (json.dumps({"schema_version": 1, "operation": "sandbox", "workspace": "relative"}),
+     "workspace must be an existing absolute directory"),
+    (json.dumps({"schema_version": 1, "operation": "sandbox", "workspace": "/tmp", "argv": []}),
+     "workspace must be a runner workspace"),
+    (json.dumps({"schema_version": 1, "operation": "discover", "workspace": "/tmp"}), "workspace must be a runner workspace"),
+    (json.dumps({"schema_version": 1, "operation": "infer", "workspace": "/tmp", "prompt": "p"}),
+     "workspace must be a runner workspace"),
 ])
-def test_protocol_errors_are_rejected_before_any_tool_runs(tmp_path: Path, raw: str) -> None:
+def test_protocol_errors_are_rejected_before_any_tool_runs(tmp_path: Path, raw: str, message: str) -> None:
     directory = fake_bin(tmp_path)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=message):
         _ = respond(raw, bin_dir=directory)
     assert not (directory / "docker.log").exists() and not (directory / "gemini.log").exists()
 
@@ -611,7 +615,11 @@ def test_command_line_reports_a_bad_request_as_json_error() -> None:
     assert str(cast(dict[str, object], json.loads(result.stderr))["error"]).endswith("request is not JSON")
 
 
-def test_command_line_refuses_an_unknown_runtime() -> None:
-    result = subprocess.run([sys.executable, "-c", MAIN, "harness-wrapper", "gemini", "--runtime", "lxc"], input="{}",
+def test_command_line_refuses_an_unknown_runtime(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    result = subprocess.run([sys.executable, "-c", MAIN, "harness-wrapper", "gemini", "--bin-dir", str(directory),
+                             "--runtime", "lxc"], input=request("sandbox", workspace(tmp_path), argv=["true"]),
                             capture_output=True, text=True, check=False)
-    assert result.returncode != 0 and result.stdout == ""
+    assert result.returncode != 0 and result.stdout == "" and "Traceback" not in result.stderr
+    assert "runtime" in result.stderr and "lxc" in result.stderr
+    assert not (directory / "docker.log").exists()

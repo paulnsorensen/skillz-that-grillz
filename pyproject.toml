@@ -37,6 +37,12 @@ failOnWarnings = true
 root = "packages/fromargs"
 extraPaths = ["packages/fromargs/src", "packages/fromargs/examples"]
 
+[[tool.basedpyright.executionEnvironments]]
+root = "packages/skillz/tests/skillz_experiments"
+extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/agent-session-analytics/src", "packages/fromargs/src", "packages/fromargs/examples"]
+# The test files share helper modules (`fake_provider`) from their own directory; it has no package marker.
+reportImplicitRelativeImport = false
+
 [tool.vulture]
 paths = [".github/scripts", "packages", "skills"]
 exclude = ["*/.venv/*", "*/__pycache__/*", "*/.pytest_cache/*"]

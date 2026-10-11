@@ -38,6 +38,8 @@ from skillz_experiments.run._plan import (
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
     size_plan,
 )
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FAKE = FIXTURES / "fake_claude.py"
@@ -83,28 +85,13 @@ def frozen_case(target: Path, contract: Contract, tmp_path: Path) -> Case:
 
 
 @final
-class Judge:
+class Judge(FakeProvider):
     """A stub simulator and judge: it pops one answer per call."""
 
     def __init__(self, answers: list[dict[str, object]]) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.answers: list[dict[str, object]] = answers
         self.prompts: list[str] = []
-
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -278,7 +265,7 @@ def write_journeys(out: Path, max_turns: int, families: int = 5) -> None:
 
 
 @final
-class Provider:
+class Provider(FakeProvider):
     """A fake provider that claims the budget of a journey like the real harness. `improved` text scores best."""
 
     def __init__(self, contract: Contract, budget: Budget, checkpoint: Callable[[], None], prompts: list[str]) -> None:
@@ -288,23 +275,12 @@ class Provider:
         self.prompts = prompts
         self.lock = threading.Lock()
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         if self.budget.calls == 0:
             for _ in range(PREFLIGHT_CALLS):
                 self.budget.claim()
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         assert case.journey is not None
