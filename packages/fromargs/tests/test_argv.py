@@ -85,6 +85,62 @@ def test_splits_equals_form(capsys: pytest.CaptureFixture[str]) -> None:
     assert "note: split quoted argument" in capsys.readouterr().err
 
 
+def test_splits_merged_option_and_value(capsys: pytest.CaptureFixture[str]) -> None:
+    calls: list[dict[str, object]] = []
+
+    repaired = repair_rejected(_app(calls), ["show", "x", "--count 2"])
+
+    assert repaired == ["show", "x", "--count", "2"]
+    assert (
+        capsys.readouterr().err
+        == "note: split quoted argument '--count 2' into ['--count', '2']\n"
+    )
+    assert calls == []
+
+
+def test_splits_merged_option_value_and_next_option(capsys: pytest.CaptureFixture[str]) -> None:
+    calls: list[dict[str, object]] = []
+
+    repaired = repair_rejected(_app(calls), ["show", "x", "--count 2 --label y"])
+
+    assert repaired == ["show", "x", "--count", "2", "--label", "y"]
+    assert "note: split quoted argument" in capsys.readouterr().err
+
+
+def test_merged_free_text_option_is_not_split(capsys: pytest.CaptureFixture[str]) -> None:
+    calls: list[dict[str, object]] = []
+
+    assert repair_rejected(_app(calls), ["show", "x", "--label y"]) is None
+    assert capsys.readouterr().err == ""
+
+
+def test_merged_option_as_free_text_value_is_not_split(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = App()
+
+    @app.command
+    def note(*, _label: str, _count: int) -> None:
+        raise AssertionError("probing must not run a handler")
+
+    argv = ["note", "--label", "--count 2"]
+
+    assert repair_rejected(app, argv) is None
+    assert capsys.readouterr().err == ""
+
+
+def test_run_repairs_merged_option_and_value(capsys: pytest.CaptureFixture[str]) -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def show(*, count: int = 1) -> int:
+        return count
+
+    assert app.run(["show", "--count 3"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "3"
+    assert captured.err == "note: split quoted argument '--count 3' into ['--count', '3']\n"
+
 def test_valid_argv_is_returned_unchanged(capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[dict[str, object]] = []
     app = fromargs.App("t")

@@ -50,7 +50,7 @@ def repair_rejected(app: App, argv: Sequence[str]) -> list[str] | None:
         if pieces is None or control_flags.intersection(pieces):
             continue
         previous = original[index - 1] if index else ""
-        option = token.partition("=")[0] if token.startswith("--") else previous
+        option = pieces[0].partition("=")[0] if token.startswith("--") else previous
         if option not in splittable:
             continue
         candidate = original[:index] + pieces + original[index + 1 :]

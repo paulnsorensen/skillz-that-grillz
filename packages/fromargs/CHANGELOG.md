@@ -14,6 +14,15 @@ Then relock, and push a `fromargs-v<version>` tag after the release commit merge
 
 ## [Unreleased]
 
+### Fixed
+
+- Quote repair now splits an option merged with its value, such as `"--count 3"`.
+  Before, `run()` rejected that token as an unknown option at exit 2.
+  The repair still skips free-text `str` and path options.
+- `App.command` and `App.group` raise `ValueError` for a name that is already registered.
+  Before, they raised `cyclopts.CommandCollisionError`, which is not a `ValueError`.
+  `App.default` already raised `ValueError` for a second default handler.
+
 ## [0.2.0] - 2026-10-04
 
 ### Changed
