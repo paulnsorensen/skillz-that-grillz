@@ -26,6 +26,7 @@ import shutil
 import sys
 import time
 from collections.abc import Iterator
+from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
@@ -41,17 +42,16 @@ from agent_session_analytics._db import (
     query_rows,
     require_duckdb,
     run_sql,
+    sql_quote,
+    validate_settings,
 )
+from agent_session_analytics._emitters import DERIVED_TABLES, DerivedTable
 
 if TYPE_CHECKING:
     from typing import TypeAlias
 
 _JsonValue: TypeAlias = "None | bool | int | float | str | list[_JsonValue] | dict[str, _JsonValue]"
 
-
-def _sql_quote(path: str) -> str:
-    """Escape a filesystem path for embedding as a single-quoted SQL literal."""
-    return path.replace("'", "''")
 
 # Canonical raw-entry columns the flattening SQL reads. Adapters emit a subset;
 # read_json(union_by_name) fills the rest with NULL.
@@ -299,6 +299,51 @@ def _codex_parent_session(payload: dict[str, _JsonValue]) -> str | None:
     return parent if isinstance(parent, str) and parent else None
 
 
+def _codex_is_subagent(payload: dict[str, _JsonValue]) -> bool:
+    """Return True when session_meta marks an agent-run rollout.
+
+    Any ``source.subagent`` value counts: ``thread_spawn`` children, and
+    ``other`` (for example ``guardian``) or ``review`` runs that name no parent.
+    """
+    source = payload.get("source")
+    return isinstance(source, dict) and "subagent" in source
+
+
+def _codex_event(payload: dict[str, _JsonValue]) -> dict[str, _JsonValue] | None:
+    """Map one non-token ``event_msg`` payload to canonical fields, or None to drop it.
+
+    An ``item_completed`` ``UserMessage`` item becomes a user entry with its
+    text blocks. ``task_complete`` becomes an assistant entry with subtype
+    ``task_complete`` and ``last_agent_message`` as its one text block (no block
+    when the turn ended without one). ``turn_aborted`` becomes a system entry
+    with subtype ``turn_aborted`` and the abort reason in ``stopReason``.
+    """
+    ptype = payload.get("type")
+    if ptype == "item_completed":
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "UserMessage":
+            return None
+        content = item.get("content")
+        blocks: list[_JsonValue] = [
+            {"type": "text", "text": block["text"]}
+            for block in (content if isinstance(content, list) else [])
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+        ]
+        return {"type": "user", "message": {"content": blocks}} if blocks else None
+    if ptype == "task_complete":
+        last = payload.get("last_agent_message")
+        blocks = [{"type": "text", "text": last}] if isinstance(last, str) else []
+        return {"type": "assistant", "subtype": "task_complete", "message": {"content": blocks}}
+    if ptype == "turn_aborted":
+        reason = payload.get("reason")
+        return {
+            "type": "system",
+            "subtype": "turn_aborted",
+            "stopReason": reason if isinstance(reason, str) else None,
+        }
+    return None
+
+
 def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     """Codex rollout JSONL -> canonical envelope.
 
@@ -314,13 +359,19 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     token row before any id falls back to the file path, so ids stay unique.
     ``session_meta.cli_version`` stamps ``version`` on every entry. A
     sub-agent rollout names its parent in the first ``session_meta``; that id
-    stamps ``parentSessionId`` on every entry. Each non-duplicate
+    stamps ``parentSessionId`` on every entry. Any ``source.subagent`` value
+    stamps ``isSidechain`` true on every entry, as Cursor does for sub-agent
+    files, so agent-run rollouts without a parent id stay identifiable. Each
+    non-duplicate
     ``token_count`` event with a ``last_token_usage`` becomes one
     ``token_usage`` entry (unique ``message.id``, empty content). Only
-    model_turns reads it, as one row; no other table sees it.
+    model_turns reads it, as one row; no other table sees it. User prompts,
+    ``task_complete``, and ``turn_aborted`` events map through _codex_event;
+    ``response_item`` user messages (preambles and injected context) stay out.
     """
     session_id = None
     parent_session_id = None
+    is_subagent = False
     cwd = None
     cli_version = None
     model = None
@@ -335,6 +386,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
         if etype == "session_meta" and isinstance(payload, dict):
             if session_id is None:
                 parent_session_id = _codex_parent_session(payload)
+                is_subagent = _codex_is_subagent(payload)
             session_id = session_id or payload.get("id")
             cwd = cwd or payload.get("cwd")
             cli_version = cli_version or payload.get("cli_version") or None
@@ -358,6 +410,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 "timestamp": ts,
                 "sessionId": session_id,
                 "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
                 "version": cli_version,
                 "cwd": cwd,
                 "message": {
@@ -367,6 +420,20 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                     "usage": usage,
                 },
             }
+            continue
+        if etype == "event_msg" and isinstance(payload, dict):
+            event = _codex_event(payload)
+            if event is not None:
+                yield {
+                    "harness": "codex",
+                    "timestamp": ts,
+                    "sessionId": session_id,
+                    "parentSessionId": parent_session_id,
+                    "isSidechain": is_subagent,
+                    "version": cli_version,
+                    "cwd": cwd,
+                    **event,
+                }
             continue
         if etype != "response_item" or not isinstance(payload, dict):
             continue
@@ -391,6 +458,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 "timestamp": ts,
                 "sessionId": session_id,
                 "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
                 "version": cli_version,
                 "cwd": cwd,
                 "message": {
@@ -415,6 +483,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 "timestamp": ts,
                 "sessionId": session_id,
                 "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
                 "version": cli_version,
                 "cwd": cwd,
                 "message": {
@@ -494,7 +563,8 @@ def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]
     ``message`` entries: assistant ``toolCall`` blocks become tool_use blocks
     (other blocks pass through); role ``toolResult`` becomes a user tool_result
     block joined on ``toolCallId``, with the msg-level ``isError`` boolean as
-    the error flag; role ``user`` passes through. Tool names (``bash``, ``read``,
+    the error flag; role ``user`` passes through with its ``attribution``, if
+    present. Tool names (``bash``, ``read``,
     ``mcp__<server>_<tool>``) are kept verbatim.
     """
     session_id = None
@@ -575,13 +645,17 @@ def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]
                 },
             }
         elif role == "user":
+            attribution = msg.get("attribution")
             yield {
                 "harness": harness,
                 "type": "user",
                 "timestamp": ts,
                 "sessionId": session_id,
                 "cwd": cwd,
-                "message": {"content": msg.get("content")},
+                "message": {
+                    "content": msg.get("content"),
+                    **({"attribution": attribution} if attribution is not None else {}),
+                },
             }
 
 
@@ -807,36 +881,60 @@ def _log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+def _derived_path(table: str) -> str:
+    return os.path.join(STAGE_DIR, "derived", f"{table}.jsonl")
+
+
 def stage_harnesses() -> list[str]:
     """Run every adapter; write canonical rows to per-harness staging JSONL.
 
-    Returns the list of harness names that produced at least one row. Adapters
-    that discover no logs (or have no normalizer) are reported and skipped.
+    The same pass writes narrow pre-flattened rows for each derived table
+    (see _emitters). Returns the list of harness names that produced at least
+    one row. Adapters that discover no logs (or have no normalizer) are
+    reported and skipped.
     """
     if os.path.isdir(STAGE_DIR):
         shutil.rmtree(STAGE_DIR)
-    os.makedirs(STAGE_DIR, exist_ok=True)
+    os.makedirs(os.path.join(STAGE_DIR, "derived"), exist_ok=True)
 
     loaded: list[str] = []
-    for name, discover, normalize in ADAPTERS:
-        sources = discover()
-        if not sources or normalize is None:
-            _log(f"  {name}: no accessible logs — skipped")
-            continue
-        out_path = os.path.join(STAGE_DIR, f"{name}.jsonl")
-        count = 0
-        with open(out_path, "w", encoding="utf-8") as out:
-            for src in sources:
-                for entry in normalize(src):
-                    _ = out.write(json.dumps(entry) + "\n")
-                    count += 1
-        if count:
-            loaded.append(name)
-            _log(f"  {name}: {count} canonical entries")
-        else:
-            os.remove(out_path)
-            _log(f"  {name}: no accessible logs — skipped")
+    with ExitStack() as stack:
+        sinks = [
+            (table, stack.enter_context(open(_derived_path(table.name), "w", encoding="utf-8")))
+            for table in DERIVED_TABLES
+        ]
+        for name, discover, normalize in ADAPTERS:
+            sources = discover()
+            if not sources or normalize is None:
+                _log(f"  {name}: no accessible logs — skipped")
+                continue
+            out_path = os.path.join(STAGE_DIR, f"{name}.jsonl")
+            count = 0
+            with open(out_path, "w", encoding="utf-8") as out:
+                for src in sources:
+                    emitters = [(table.make_emitter(name, src), sink) for table, sink in sinks]
+                    for entry in normalize(src):
+                        _ = out.write(json.dumps(entry) + "\n")
+                        count += 1
+                        for emit, sink in emitters:
+                            for row in emit(cast(dict[str, object], entry)):
+                                _ = sink.write(json.dumps(row) + "\n")
+            if count:
+                loaded.append(name)
+                _log(f"  {name}: {count} canonical entries")
+            else:
+                os.remove(out_path)
+                _log(f"  {name}: no accessible logs — skipped")
     return loaded
+
+
+def _read_derived(table: DerivedTable) -> str:
+    """Return the SQL source that reads one table's staged rows with typed columns."""
+    columns = "{" + ", ".join(f"{k}: '{v}'" for k, v in table.columns.items()) + "}"
+    return (
+        f"read_json('{sql_quote(_derived_path(table.name))}', "
+        f"format='newline_delimited', ignore_errors=true, columns={columns})"
+    )
 
 
 def columns_struct() -> str:
@@ -859,11 +957,15 @@ def _do_ingest_and_swap() -> float:
     stage_glob = os.path.join(STAGE_DIR, "*.jsonl")
 
     # Step 1: union every harness's canonical JSONL into raw_entries.
+    # The JSON parser holds a few wide messages per thread (up to 9 MB each,
+    # measured). One thread cuts peak memory from 4.5 GB to 2.5 GB and costs no
+    # wall time. Each run is its own DuckDB process, so the setting stays local.
     run_sql(f"""
+        SET threads = 1;
         CREATE TABLE raw_entries AS
         SELECT *
         FROM read_json(
-            '{_sql_quote(stage_glob)}',
+            '{sql_quote(stage_glob)}',
             format='newline_delimited',
             union_by_name=true,
             ignore_errors=true,
@@ -871,37 +973,32 @@ def _do_ingest_and_swap() -> float:
         );
     """)
 
+    # The next four tables read the narrow rows that stage_harnesses() wrote,
+    # not raw_entries.message. JSON columns hold the raw value at each path.
+    # json_extract_string(col, '$') returns the same text that
+    # json_extract_string(message, '<path>') returned.
+    tables = {table.name: table for table in DERIVED_TABLES}
+
     # Step 2: tool_uses (flattened from assistant content blocks).
     _log("  Creating tool_uses...")
-    run_sql("""
+    run_sql(f"""
         CREATE TABLE tool_uses AS
-        WITH content_blocks AS (
-            SELECT
-                unnest(json_extract(json_extract(message, '$.content'), '$[*]')) AS block,
-                harness, timestamp, sessionId, cwd, gitBranch
-            FROM raw_entries
-            WHERE type = 'assistant'
-              AND message IS NOT NULL
-              AND json_extract(message, '$.content') IS NOT NULL
-              AND json_type(json_extract(message, '$.content')) = 'ARRAY'
-        )
         SELECT
             harness,
-            json_extract_string(block, '$.name') AS tool_name,
-            json_extract_string(block, '$.id') AS tool_use_id,
-            json_extract(block, '$.input') AS input,
-            json_extract_string(block, '$.input.command') AS bash_cmd,
-            json_extract_string(block, '$.input.skill') AS skill_name,
-            json_extract_string(block, '$.input.args') AS skill_args,
-            json_extract_string(block, '$.input.subagent_type') AS agent_type,
-            json_extract_string(block, '$.input.description') AS agent_desc,
-            json_extract_string(block, '$.input.mode') AS agent_mode,
-            json_extract_string(block, '$.input.pattern') AS grep_pattern,
-            json_extract_string(block, '$.input.file_path') AS file_path,
-            json_extract_string(block, '$.input.query') AS query,
+            json_extract_string(tool_name, '$') AS tool_name,
+            json_extract_string(tool_use_id, '$') AS tool_use_id,
+            json_extract(input, '$[0]') AS input,
+            json_extract_string(bash_cmd, '$') AS bash_cmd,
+            json_extract_string(skill_name, '$') AS skill_name,
+            json_extract_string(skill_args, '$') AS skill_args,
+            json_extract_string(agent_type, '$') AS agent_type,
+            json_extract_string(agent_desc, '$') AS agent_desc,
+            json_extract_string(agent_mode, '$') AS agent_mode,
+            json_extract_string(grep_pattern, '$') AS grep_pattern,
+            json_extract_string(file_path, '$') AS file_path,
+            json_extract_string(query, '$') AS query,
             timestamp, sessionId, cwd, gitBranch
-        FROM content_blocks
-        WHERE json_extract_string(block, '$.type') = 'tool_use';
+        FROM {_read_derived(tables["tool_uses"])};
     """)
 
     # Step 3: tool_results (from user message content blocks).
@@ -910,95 +1007,97 @@ def _do_ingest_and_swap() -> float:
     # to explicit 'false' rather than a NULL every string compare treats as
     # success silently. is_error_explicit preserves whether the source block
     # carried the flag, so coverage stays measurable (issue #704).
+    # The staging pass already cut content to 500 characters.
     _log("  Creating tool_results...")
-    run_sql("""
+    run_sql(f"""
         CREATE TABLE tool_results AS
-        WITH content_blocks AS (
-            SELECT
-                unnest(json_extract(json_extract(message, '$.content'), '$[*]')) AS block,
-                harness, timestamp, sessionId
-            FROM raw_entries
-            WHERE type = 'user'
-              AND message IS NOT NULL
-              AND json_type(json_extract(message, '$.content')) = 'ARRAY'
-        )
         SELECT
             harness,
-            json_extract_string(block, '$.tool_use_id') AS tool_use_id,
-            substr(json_extract_string(block, '$.content'), 1, 500) AS content,
-            coalesce(json_extract_string(block, '$.is_error'), 'false') AS is_error,
-            json_extract_string(block, '$.is_error') IS NOT NULL AS is_error_explicit,
+            json_extract_string(tool_use_id, '$') AS tool_use_id,
+            content,
+            coalesce(json_extract_string(is_error, '$'), 'false') AS is_error,
+            json_extract_string(is_error, '$') IS NOT NULL AS is_error_explicit,
             timestamp, sessionId
-        FROM content_blocks
-        WHERE json_extract_string(block, '$.type') = 'tool_result';
+        FROM {_read_derived(tables["tool_results"])};
     """)
 
-    # Step 4: stop_events.
+    # Step 4: stop_events. The staging pass kept only the listed stop reasons.
     _log("  Creating stop_events...")
-    run_sql("""
+    run_sql(f"""
         CREATE TABLE stop_events AS
-        SELECT
-            harness,
-            json_extract_string(message, '$.stop_reason') AS stop_reason,
-            timestamp, sessionId, cwd, gitBranch
-        FROM raw_entries
-        WHERE type = 'assistant'
-          AND message IS NOT NULL
-          AND json_extract_string(message, '$.stop_reason')
-              IN ('end_turn', 'stop_sequence', 'max_tokens', 'success', 'error', 'aborted');
+        SELECT harness, stop_reason, timestamp, sessionId, cwd, gitBranch
+        FROM {_read_derived(tables["stop_events"])};
     """)
 
     # Step 4b: model_turns (one row per assistant turn that names a model).
     # Claude writes one raw entry per content block of a message, and repeats
     # `usage` on each entry, so entries group by `message.id`: tool calls sum,
     # usage takes one value. omp and other harnesses carry no `message.id` and
-    # keep one row per entry. TRY_CAST keeps one malformed metric from
-    # aborting the whole ingest. Latency and prompt_tokens are omp-only.
+    # keep one row per entry (the staging pass gives each a unique row_key).
+    # TRY_CAST keeps one malformed metric from aborting the whole ingest.
+    # Latency and prompt_tokens are omp-only.
     # Codex token rows carry no content, so tool_calls stays NULL (not measured).
     # context_tokens is the prompt size the model read: Claude's input_tokens
     # excludes cache reads and creation, so they are added; Codex's
     # input_tokens already includes cached tokens.
     _log("  Creating model_turns...")
-    run_sql("""
+    run_sql(f"""
         CREATE TABLE model_turns AS
         WITH fragments AS (
             SELECT
-                harness, sessionId, cwd, timestamp, message,
-                coalesce(json_extract_string(message, '$.id'),
-                         'row:' || row_number() OVER ()) AS turn_key,
-                CASE WHEN harness = 'codex' THEN NULL ELSE
-                (SELECT count(*)
-                   FROM unnest(json_extract(json_extract(message, '$.content'), '$[*]')) AS c(block)
-                  WHERE json_extract_string(block, '$.type') = 'tool_use') END AS tool_calls
-            FROM raw_entries
-            WHERE type IN ('assistant', 'token_usage')
-              AND message IS NOT NULL
-              AND json_extract_string(message, '$.model') IS NOT NULL
+                harness, sessionId, cwd, timestamp,
+                coalesce(json_extract_string(message_id, '$'), row_key) AS turn_key,
+                json_extract_string(model, '$') AS model_name,
+                json_extract_string(stop_reason, '$') AS stop_reason_text,
+                json_extract_string(error_message, '$') AS error_text,
+                TRY_CAST(input_tokens AS BIGINT) AS in_tokens,
+                TRY_CAST(output_tokens AS BIGINT) AS out_tokens,
+                TRY_CAST(cache_read_tokens AS BIGINT) AS cache_read,
+                TRY_CAST(cache_creation_tokens AS BIGINT) AS cache_creation,
+                TRY_CAST(prompt_tokens AS BIGINT) AS prompt,
+                TRY_CAST(duration_ms AS DOUBLE) AS duration,
+                TRY_CAST(ttft_ms AS DOUBLE) AS ttft,
+                tool_calls
+            FROM {_read_derived(tables["model_turns"])}
         )
         SELECT
             harness,
-            any_value(json_extract_string(message, '$.model')) AS model,
-            arg_max(json_extract_string(message, '$.stop_reason'), timestamp) AS stop_reason,
-            max(json_extract_string(message, '$.error_message')) AS error_message,
-            max(TRY_CAST(json_extract(message, '$.usage.input_tokens') AS BIGINT)) AS input_tokens,
-            max(TRY_CAST(json_extract(message, '$.usage.output_tokens') AS BIGINT)) AS output_tokens,
-            max(TRY_CAST(json_extract(message, '$.usage.cache_read_input_tokens') AS BIGINT))
-                AS cache_read_tokens,
-            max(TRY_CAST(json_extract(message, '$.usage.cache_creation_input_tokens') AS BIGINT))
-                AS cache_creation_tokens,
+            any_value(model_name) AS model,
+            arg_max(stop_reason_text, timestamp) AS stop_reason,
+            max(error_text) AS error_message,
+            max(in_tokens) AS input_tokens,
+            max(out_tokens) AS output_tokens,
+            max(cache_read) AS cache_read_tokens,
+            max(cache_creation) AS cache_creation_tokens,
             CASE WHEN harness = 'claude'
-                THEN max(TRY_CAST(json_extract(message, '$.usage.input_tokens') AS BIGINT))
-                    + coalesce(max(TRY_CAST(json_extract(message, '$.usage.cache_read_input_tokens') AS BIGINT)), 0)
-                    + coalesce(max(TRY_CAST(json_extract(message, '$.usage.cache_creation_input_tokens') AS BIGINT)), 0)
-                ELSE max(TRY_CAST(json_extract(message, '$.usage.input_tokens') AS BIGINT))
+                THEN max(in_tokens)
+                    + coalesce(max(cache_read), 0)
+                    + coalesce(max(cache_creation), 0)
+                ELSE max(in_tokens)
             END AS context_tokens,
-            max(TRY_CAST(json_extract(message, '$.prompt_tokens') AS BIGINT)) AS prompt_tokens,
-            max(TRY_CAST(json_extract(message, '$.duration_ms') AS DOUBLE)) AS duration_ms,
-            max(TRY_CAST(json_extract(message, '$.ttft_ms') AS DOUBLE)) AS ttft_ms,
+            max(prompt) AS prompt_tokens,
+            max(duration) AS duration_ms,
+            max(ttft) AS ttft_ms,
             CAST(sum(tool_calls) AS BIGINT) AS tool_calls,
             min(timestamp) AS timestamp, sessionId, any_value(cwd) AS cwd
         FROM fragments
         GROUP BY harness, sessionId, turn_key;
+    """)
+
+    # Step 4c: user_turns (one row per real user prompt; see _emitters).
+    # turn_index counts real prompts per harness and session, ordered by
+    # timestamp, then by source file and position in that file.
+    _log("  Creating user_turns...")
+    run_sql(f"""
+        CREATE TABLE user_turns AS
+        SELECT
+            harness, sessionId, timestamp,
+            row_number() OVER (
+                PARTITION BY harness, sessionId
+                ORDER BY TRY_CAST(timestamp AS TIMESTAMPTZ) NULLS LAST, source, ordinal
+            ) - 1 AS turn_index,
+            text, prev_assistant_text
+        FROM {_read_derived(tables["user_turns"])};
     """)
 
     # Step 5: agent_spawns.
@@ -1075,6 +1174,15 @@ def _do_ingest_and_swap() -> float:
            OR content LIKE '%The user doesn''t want to proceed%';
     """)
 
+    # Step 11: interrupt_events (one row per structured interrupt marker; the
+    # staging pass applies the marker rule, see _emitters).
+    _log("  Creating interrupt_events...")
+    run_sql(f"""
+        CREATE TABLE interrupt_events AS
+        SELECT harness, sessionId, timestamp
+        FROM {_read_derived(tables["interrupt_events"])};
+    """)
+
     _log("  Creating indexes...")
     run_sql("""
         CREATE INDEX idx_tool_uses_name ON tool_uses(tool_name);
@@ -1143,6 +1251,7 @@ def build_database(*, force: bool = False) -> float | None:
     """
     _ = os.umask(0o077)
     require_duckdb()
+    validate_settings()  # Reject a bad environment value before the slow stage step.
 
     if not force and db_is_fresh():
         return None

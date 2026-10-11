@@ -78,6 +78,17 @@ duckdb -init /dev/null -readonly <database> -json -c "SQL"
 The `-init /dev/null` flag skips `~/.duckdbrc`. The `-readonly` flag blocks
 writes. The `-json` flag gives machine-readable output.
 
+## Query hygiene
+
+The database holds wide text: `raw_entries.message` reaches 9 MB per row.
+DuckDB memory grows with the bytes a query reads. Keep queries narrow:
+
+- Select only the columns you need before you join wide text columns.
+- Filter early, by `harness`, `sessionId`, or `timestamp`.
+- Avoid `ORDER BY` over wide text such as `input` or `content`. Sort a key, then join.
+- Avoid `json_extract` over `raw_entries.message`. Use the flattened tables:
+  `tool_uses`, `tool_results`, `model_turns`, and `stop_events`.
+
 ## Signal-quality honesty
 
 Three domains are known low/medium-signal and must degrade gracefully:
