@@ -7,9 +7,9 @@ import functools
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
-import tempfile
 import time
 from typing import TYPE_CHECKING, cast
 
@@ -44,11 +44,12 @@ DB_TMP_PATH = f"{DB_PATH}.tmp"
 # into an existing directory never aliases (and rmtree's) that directory's
 # own "stage" subdir.
 STAGE_DIR = f"{DB_PATH}.stage"
-# DuckDB spills under this root. Its own default, `<database>.tmp`, collides
-# with DB_TMP_PATH for queries and lands in the working directory for none.
-# Each process spills to its own subdirectory (see spill_dir), because DuckDB
-# deletes the spill files it finds in its temp directory when it closes.
-SPILL_ROOT = f"{DB_PATH}.spill"
+# DuckDB spills to a path that starts with this prefix. Its own default,
+# `<database>.tmp`, collides with DB_TMP_PATH for queries and lands in the
+# working directory for none. Each process spills to its own path (see
+# spill_dir), because DuckDB deletes the spill files it finds in its temp
+# directory when it closes.
+SPILL_PREFIX = f"{DB_PATH}.spill"
 TTL_SECONDS = 3600  # 1 hour
 
 # The schema version is an integer stamped in the one-row `schema_info` table.
@@ -135,18 +136,19 @@ def _threads() -> int:
 
 
 def validate_settings() -> None:
-    """Raise DatabaseError (exit 4) when a SESSIONS_DUCKDB_* environment value is invalid."""
+    """Raise DatabaseError when a SESSIONS_DUCKDB_* environment value is invalid."""
     _ = _memory_limit(), _threads()
 
 
 @functools.cache
 def spill_dir() -> str:
-    """This process's own spill directory under SPILL_ROOT, made on first use and removed at exit."""
-    try:
-        os.makedirs(SPILL_ROOT, mode=0o700, exist_ok=True)
-        path = tempfile.mkdtemp(prefix=f"{os.getpid()}-", dir=SPILL_ROOT)
-    except OSError as error:
-        raise DatabaseError(f"Cannot create the DuckDB spill directory: {error}") from error
+    """This process's own spill path, `<db>.spill-<pid>-<token>`, removed at exit.
+
+    DuckDB creates the directory only when a run spills, so a read-only query
+    needs no writable directory. DuckDB does not create parent directories, so
+    the path sits beside the database.
+    """
+    path = f"{SPILL_PREFIX}-{os.getpid()}-{secrets.token_hex(4)}"
     _ = atexit.register(shutil.rmtree, path, True)
     return path
 

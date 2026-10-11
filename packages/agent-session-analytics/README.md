@@ -83,9 +83,10 @@ A consumer that queries the database directly runs
 
 Ingest writes the transient `<db>.tmp` and `<db>.stage`, and a persistent
 `<db>.lock`. An `fcntl` lock serializes ingest runs. Ingest uses umask `077`.
-DuckDB spills large operations to a per-process subdirectory of the
-`<db>.spill` directory. Each process removes its own subdirectory at exit. The
-spill cap is 20GB.
+DuckDB spills large operations to a per-process `<db>.spill-<pid>-<token>`
+directory. DuckDB creates it only when a run spills, so a read-only query needs
+no writable directory. Each process removes its own directory at exit; a killed
+process can leave one behind, which is safe to delete. The spill cap is 20GB.
 
 ## Schema version
 

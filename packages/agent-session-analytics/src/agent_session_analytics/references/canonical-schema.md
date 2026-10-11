@@ -142,8 +142,8 @@ A real omp or pi prompt is a `user` row with non-blank string content or text bl
 A table of user interrupts from structured markers only. Columns: `harness`,
 `sessionId`, `timestamp`. Claude: a main-session `user` entry (not `isSidechain`)
 whose string content or first text block starts with `[Request interrupted`.
-Codex: a `turn_aborted` event with reason `interrupted` in a top-level rollout
-(`parentSessionId` is NULL). Cursor, omp, and pi aborts are not covered (see `stop_events`).
+Codex: a `turn_aborted` event with reason `interrupted` in a rollout that is not
+agent-run (`isSidechain` is not true). Cursor, omp, and pi aborts are not covered (see `stop_events`).
 
 `interrupt_events` overlaps `permission_denials`. A rejected Claude tool prompt
 writes a "doesn't want to proceed" tool result and a

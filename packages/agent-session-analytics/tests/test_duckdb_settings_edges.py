@@ -104,5 +104,23 @@ def test_spill_directory_with_a_quote_in_the_database_path_is_escaped(sandbox: S
     result = sandbox.run("sql", "SELECT current_setting('temp_directory') AS spill", extra_env=env)
     assert result.returncode == 0, result.stderr
     spill = Path(str(cast(list[dict[str, object]], json.loads(result.stdout))[0]["spill"]))
-    assert spill.parent == Path(f"{database}.spill")
+    assert spill.parent == database.parent
+    assert spill.name.startswith("sessions.duckdb.spill-")
     assert not spill.exists()
+
+
+@needs_duckdb
+def test_sql_reads_a_database_in_a_read_only_directory(sandbox: Sandbox) -> None:
+    _seed(sandbox)
+    database = sandbox.root / "readonly" / "sessions.duckdb"
+    database.parent.mkdir()
+    env = {"SESSIONS_DB": str(database)}
+    built = sandbox.run("ingest", "--force", extra_env=env)
+    assert built.returncode == 0, built.stderr
+    database.parent.chmod(0o500)
+    try:
+        result = sandbox.run("sql", "SELECT version FROM schema_info", extra_env=env)
+    finally:
+        database.parent.chmod(0o700)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [{"version": 2}]

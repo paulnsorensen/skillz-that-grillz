@@ -296,7 +296,7 @@ def test_every_duckdb_run_applies_each_setting_before_safe_mode(
 ) -> None:
     monkeypatch.delenv("SESSIONS_DUCKDB_MEMORY_LIMIT", raising=False)
     monkeypatch.delenv("SESSIONS_DUCKDB_THREADS", raising=False)
-    monkeypatch.setattr(_db, "SPILL_ROOT", str(tmp_path / "spill"))
+    monkeypatch.setattr(_db, "SPILL_PREFIX", str(tmp_path / "spill"))
     _db.spill_dir.cache_clear()
     try:
         argv = _db.duckdb_argv("SELECT 1", as_json=as_json)
@@ -312,7 +312,10 @@ def test_every_duckdb_run_applies_each_setting_before_safe_mode(
         f"SET temp_directory='{spill}'",
         "SET max_temp_directory_size='20GB'",
     ]
-    assert Path(spill).parent == tmp_path / "spill"
+    assert Path(spill).parent == tmp_path
+    assert Path(spill).name.startswith("spill-")
+    # DuckDB makes the directory only when a run spills.
+    assert not Path(spill).exists()
     assert commands[: len(settings)] == settings
     assert commands[len(settings) :] == ([".safe_mode"] if as_json else [])
     assert argv[-2:] == ["-c", "SELECT 1"]
@@ -334,8 +337,9 @@ def test_sql_reports_the_settings_that_safe_mode_then_locks(sandbox: Sandbox) ->
     rows = cast(list[dict[str, object]], json.loads(result.stdout))
     spill = Path(str(rows[0].pop("spill")))
     assert rows == [{"threads": 2, "memory_limit": "1.0 GiB", "ordered": True}]
-    # Each process spills to its own subdirectory and removes it at exit.
-    assert spill.parent == Path(f"{sandbox.database}.spill")
+    # Each process spills to its own path beside the database and removes it at exit.
+    assert spill.parent == Path(sandbox.database).parent
+    assert spill.name.startswith(f"{Path(sandbox.database).name}.spill-")
     assert not spill.exists()
     again = sandbox.run("sql", "SELECT current_setting('temp_directory') AS spill", extra_env=env)
     assert again.returncode == 0, again.stderr

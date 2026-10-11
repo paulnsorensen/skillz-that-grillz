@@ -23,14 +23,15 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 - The schema version is now 2, so ingest rebuilds a version 1 database.
 - The Codex adapter keeps `item_completed` `UserMessage` prompts, `task_complete`, and `turn_aborted` events as `raw_entries` rows. Codex `sessions.entry_count` counts them.
 - The omp and pi adapters keep the `attribution` of a user row in `raw_entries.message`. A row with `attribution` `agent` is not a real prompt.
+- Codex `raw_entries.isSidechain` is now `true` for every row of a rollout whose `session_meta.source` has a `subagent` value (`thread_spawn`, `guardian`, or `review`) and `false` otherwise. It was NULL.
 
 ### Added
 
 - `SESSIONS_DUCKDB_THREADS` sets the DuckDB thread count.
-- DuckDB spills to a private subdirectory of the `<db>.spill` directory, one per process. The process removes it at exit.
+- DuckDB spills to a private `<db>.spill-<pid>-<token>` directory, one per process. DuckDB creates it only when a run spills, and the process removes it at exit.
 - A query-hygiene rule in `query-conventions.md`.
-- The `user_turns` table: one row per real user prompt (claude, codex, omp, and pi) with `turn_index`, the full `text`, and `prev_assistant_text`. Blank prompts and Codex sub-agent rollouts stay out.
-- The `interrupt_events` table: main-session Claude `[Request interrupted` markers and top-level Codex `turn_aborted` events with reason `interrupted`. The staging pass builds it. It can overlap `permission_denials`.
+- The `user_turns` table: one row per real user prompt (claude, codex, omp, and pi) with `turn_index`, the full `text`, and `prev_assistant_text`. Blank prompts and agent-run Codex rollouts stay out.
+- The `interrupt_events` table: main-session Claude `[Request interrupted` markers and Codex `turn_aborted` events with reason `interrupted` outside agent-run rollouts. The staging pass builds it. It can overlap `permission_denials`.
 
 ## [0.1.0] - 2026-10-11
 
