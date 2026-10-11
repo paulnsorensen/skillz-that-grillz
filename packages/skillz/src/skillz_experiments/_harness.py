@@ -12,7 +12,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
 from skillz_experiments._claude import (ISOLATIONS, NOTICE_CODES, OPTION_FIELDS, TERMINAL_CODES, ClaudeCode, ClaudeLogin,
                                         ClaudeOptions)
-from skillz_experiments._codex import Codex, VERSION
+from skillz_experiments._codex import Codex, MINIMUM_VERSION
 from skillz_experiments._command import Command
 from skillz_experiments._contract import Surface
 from skillz_experiments._evaluator import Transport, evaluate
@@ -98,7 +98,7 @@ def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool =
     if adapter == "codex":
         if fields - {"adapter", "model"}:
             raise ValueError("Codex role accepts only adapter and model")
-        return Role("codex", selected_model, _command(["codex"], root, path_only=path_only), VERSION)
+        return Role("codex", selected_model, _command(["codex"], root, path_only=path_only), MINIMUM_VERSION)
     if adapter == "claude":
         if fields - {"adapter", "model", "command", *OPTION_FIELDS}:
             raise ValueError("Claude role accepts only adapter, model, command, isolation, effort, sandbox_read, "
