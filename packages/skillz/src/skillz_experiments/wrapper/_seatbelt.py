@@ -1,6 +1,8 @@
 """The macOS Seatbelt profile for Gemini CLI `infer`.
 
-The profile is a copy of Gemini CLI's `strict-open` profile plus a deny for `.agents`.
+The profile is a copy of Gemini CLI's `strict-open` profile plus two changes: reads below `/private/var/folders` and
+`/private/tmp` are denied, so other trials stay out of reach, and then only this call's workspace, temporary, cache, and
+HOME directories are allowed again. A final rule denies writes to `.agents`.
 Copied from upstream `packages/cli/src/utils/sandboxBuiltinProfiles.ts` (main branch, October 2026).
 Not run on a live macOS host. Gemini CLI fills the `TARGET_DIR`, `TMP_DIR`, `HOME_DIR`, `CACHE_DIR` and
 `INCLUDE_DIR_n` parameters. The last rule wins in Seatbelt, so the final deny overrides the workspace write rule.
@@ -108,6 +110,16 @@ STRICT_OPEN = r"""(version 1)
 (allow file-ioctl (regex #"^/dev/tty.*"))
 (allow network-inbound (local ip "localhost:9229"))
 (allow network-outbound)
+(deny file-read*
+    (subpath "/private/var/folders")
+    (subpath "/private/tmp")
+)
+(allow file-read*
+    (subpath (param "TARGET_DIR"))
+    (subpath (param "TMP_DIR"))
+    (subpath (param "CACHE_DIR"))
+    (subpath (param "HOME_DIR"))
+)
 (deny file-read* file-write*
     (literal "/var/run/docker.sock")
     (literal "/var/run/docker.sock.raw")

@@ -74,6 +74,31 @@ def test_interrupt_sends_sigterm_before_sigkill(tmp_path: Path, monkeypatch: pyt
     assert (tmp_path / "stopper.ran").read_text() == "yes"
 
 
+def test_a_second_interrupt_during_the_grace_wait_still_kills_a_child_that_ignores_sigterm(tmp_path: Path) -> None:
+    import _thread
+    import threading
+
+    from skillz_experiments import _runtime
+
+    script = ("import signal,pathlib,time\n"
+              "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+              "pathlib.Path('ready').write_text('1')\n"
+              "time.sleep(60)\n")
+    with subprocess.Popen([sys.executable, "-c", script], cwd=tmp_path, text=True, stdin=subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True) as child:
+        deadline = time.monotonic() + 10
+        while not (tmp_path / "ready").exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        timer = threading.Timer(0.5, _thread.interrupt_main)
+        timer.start()
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                _runtime._end(child)  # pyright: ignore[reportPrivateUsage]
+        finally:
+            timer.cancel()
+        assert child.poll() is not None
+
+
 def test_candidate_forbidden_change(tmp_path: Path) -> None:
     from skillz_experiments._candidate import Candidate
 
