@@ -13,9 +13,9 @@ from typing import cast
 
 import pytest
 
-from wedge._build import build
+from wedge._build import build, build_many
 
-_WEDGE_SKILL_DIR = Path(__file__).resolve().parents[4] / "skills" / "skillz" / "wedge"
+_SKILLZ_DIR = Path(__file__).resolve().parents[4] / "skills" / "skillz"
 
 
 def test_bundled_shiv_pin_matches_the_wedge_library_pin(repo_root: Path) -> None:
@@ -34,7 +34,10 @@ def _base_python() -> str:
 
 @pytest.fixture(scope="module")
 def wedge_pyz(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    return build(_WEDGE_SKILL_DIR, tmp_path_factory.mktemp("wedge-cli")).path
+    outcomes = build_many([_SKILLZ_DIR], tmp_path_factory.mktemp("wedge-cli"))
+    results = [o.value for o in outcomes if o.value is not None and o.value.name == "wedge"]
+    assert len(results) == 1, [o.error for o in outcomes]
+    return results[0].path
 
 
 def test_bundled_wedge_builds_a_skill_under_an_interpreter_without_shiv(

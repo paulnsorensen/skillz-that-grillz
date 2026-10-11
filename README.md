@@ -39,7 +39,7 @@ The optional `autoimprove` mode (alias `experiment`) needs Codex, Claude Code, o
 It needs no source checkout.
 See [the autoimprove workflow](skills/skillz/references/experiments.md).
 
-`skillz wedge` ships the `wedge` CLI as a bundled `wedge/scripts/wedge.pyz`, so
+`skillz wedge` ships the `wedge` CLI as a bundled `scripts/wedge.pyz`, so
 it needs no wedge checkout. To wedge a CLI, the target needs a uv project with a
 committed `uv.lock` that resolves fromargs, and the host needs uv on `PATH`.
 Dependencies must be pure-Python wheels without platform markers or path or URL

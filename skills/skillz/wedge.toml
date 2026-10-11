@@ -13,3 +13,10 @@ name = "inspect-skill"
 entry = "skillz_inspect:main"
 source = "../../packages/skillz/src/skillz_inspect"
 include = ["../../packages/fromargs/src/fromargs"]
+
+[[target]]
+name = "wedge"
+entry = "wedge:main"
+source = "../../packages/wedge/src/wedge"
+include = ["../../packages/fromargs/src/fromargs"]
+groups = ["wedge"]

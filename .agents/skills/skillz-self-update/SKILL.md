@@ -52,5 +52,5 @@ Report the research delta, applied fixes, rejected claims, the autoimprove verdi
 
 - It never runs `npx` or `skills add` against the working copy.
 - It never applies an autoimprove patch without a `promote` or `promote-cheaper` verdict and the user's approval.
-- It does not upgrade GEPA, `skillz-experiment.pyz`, the analytics engine snapshot, Python dependencies, `skills/skillz/wedge/scripts/wedge.pyz`, or releases.
+- It does not upgrade GEPA, `skillz-experiment.pyz`, the analytics engine snapshot, Python dependencies, `skills/skillz/scripts/wedge.pyz`, or releases.
 - It does not sync the result to other harnesses. That is out of scope for this skill.

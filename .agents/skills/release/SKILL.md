@@ -52,7 +52,7 @@ A tag push publishes to PyPI after one approval, and PyPI never accepts the same
 
    ```bash
    uv run --locked --project packages/wedge wedge lock --root packages/wedge/examples/skills
-   uv run --locked --project packages/wedge wedge bundle skills/skillz skills/skillz/wedge
+   uv run --locked --project packages/wedge wedge bundle skills/skillz
    ```
 
 8. Run `just fromargs-release-notes <version>` and read the output. It must show the complete new section.
