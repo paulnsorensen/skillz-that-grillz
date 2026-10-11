@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -10,9 +11,8 @@ from typing import cast, final
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
-from skillz_experiments._claude import (ISOLATIONS, NOTICE_CODES, OPTION_FIELDS, TERMINAL_CODES, ClaudeCode, ClaudeLogin,
-                                        ClaudeOptions)
-from skillz_experiments._codex import Codex, VERSION
+from skillz_experiments._claude import NOTICE_CODES, OPTION_FIELDS, TERMINAL_CODES, ClaudeCode, ClaudeLogin, ClaudeOptions
+from skillz_experiments._codex import CODEX_IDENTITY, Codex
 from skillz_experiments._command import Command
 from skillz_experiments._contract import Surface
 from skillz_experiments._evaluator import Transport, evaluate
@@ -20,6 +20,10 @@ from skillz_experiments._records import read
 from skillz_experiments._runtime import Budget
 
 CLAUDE_IDENTITY = "claude-code-restricted"
+ROLES = ("task", "reflection", "judge")
+BUILTIN_ADAPTERS = ("claude", "codex")
+NONO_REMOVED = ("this run used the nono isolation backend, which the runner no longer supports; see "
+                "https://github.com/paulnsorensen/skillz-that-grillz/issues/211; start a new run in a new --out directory")
 
 
 class EnvironmentDiffers(CodedError):
@@ -27,6 +31,22 @@ class EnvironmentDiffers(CodedError):
 
     def __init__(self, message: str) -> None:
         super().__init__("environment-differs", message)
+
+
+_LONG_OR_EQUALS = re.compile(r"(-[^=]*=|[A-Za-z_][A-Za-z0-9_]*=)(.*)", re.DOTALL)
+_SHORT_ATTACHED = re.compile(r"(-[A-Za-z])(/.*)", re.DOTALL)
+
+
+def _split(argument: str) -> tuple[str, str]:
+    """Split `--option=value`, `NAME=value`, and `-rVALUE` (absolute value) into prefix and value. Any other argument is all value."""
+    found = _LONG_OR_EQUALS.fullmatch(argument) or _SHORT_ATTACHED.fullmatch(argument)
+    return (found.group(1), found.group(2)) if found is not None else ("", argument)
+
+
+def _paths(command: tuple[str, ...]) -> list[str]:
+    """Return each absolute path that an argument names alone or as the value of an `--option=value` argument."""
+    values = (_split(argument)[1] for argument in command)
+    return [value for value in values if Path(value).is_absolute()]
 
 
 def _command(value: object, root: Path, *, path_only: bool = False) -> tuple[str, ...]:
@@ -44,9 +64,10 @@ def _command(value: object, root: Path, *, path_only: bool = False) -> tuple[str
         executable = str(candidate)
     parts[0] = str(Path(executable).absolute())
     for index, argument in enumerate(parts[1:], 1):
-        path = root / argument
-        if not argument.startswith("-") and path.is_file():
-            parts[index] = str(path.absolute())
+        prefix, name = _split(argument)
+        path = root / name
+        if (prefix or not argument.startswith("-")) and path.is_file():
+            parts[index] = prefix + str(path.absolute())
     return tuple(parts)
 
 
@@ -56,58 +77,47 @@ class Role:
     model: str
     command: tuple[str, ...]
     identity: str
-    isolation: str = "claude"
     options: ClaudeOptions = ClaudeOptions()
 
     def fingerprint(self) -> str:
         files = {part: (str(Path(part).resolve()), hashlib.sha256(Path(part).read_bytes()).hexdigest())
-                 for part in self.command if Path(part).is_absolute() and Path(part).is_file()}
+                 for part in _paths(self.command) if Path(part).is_file()}
         options = self.options.data()
         return digest({"adapter": self.adapter, "model": self.model, "command": self.command,
                        "identity": self.identity, "files": files}
-                      | ({"isolation": self.isolation} if self.isolation != "claude" else {})
                       | ({"options": options} if options else {}))
 
     def create(self, budget: Budget, checkpoint: Callable[[], None], out: Path | None = None,
                login: ClaudeLogin | None = None, surface: Surface | None = None,
                files: Mapping[str, str] | None = None) -> Transport:
         if self.adapter == "claude":
-            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out, login, self.isolation,
-                              self.options, surface, files)
+            return ClaudeCode(self.model, budget, checkpoint, Path(self.command[0]), out, login, self.options, surface, files)
         return (Codex(self.model, budget, checkpoint) if self.adapter == "codex"
                 else Command(self.command, self.model, budget, checkpoint))
 
 
-def validate_isolation(adapter: str, isolation: str) -> None:
-    """Raise `ValueError` unless `isolation` is known and fits `adapter`. Only the claude harness supports nono."""
-    if isolation not in ISOLATIONS:
-        raise ValueError("isolation must be claude or nono")
-    if isolation == "nono" and adapter != "claude":
-        raise ValueError("nono isolation supports only the claude harness")
-
-
-def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False,
-          isolation: str = "claude") -> Role:
-    if set(value) - {"adapter", "command", "identity", "model", "isolation", *OPTION_FIELDS}:
+def _role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False) -> Role:
+    if "isolation" in value:
+        if value["isolation"] == "nono":
+            raise CodedError("nono-removed", NONO_REMOVED)
+        raise CodedError("isolation-removed", "the role key `isolation` is removed; delete it from the harness configuration")
+    if set(value) - {"adapter", "command", "identity", "model", *OPTION_FIELDS}:
         raise ValueError("unknown harness role configuration field")
     adapter = value.get("adapter", "codex")
     selected_model = string(value.get("model", model), "role model")
-    selected = string(value.get("isolation", isolation), "role isolation")
-    validate_isolation(str(adapter), selected)
-    fields = set(value) - {"isolation"}
     if adapter == "codex":
-        if fields - {"adapter", "model"}:
+        if set(value) - {"adapter", "model"}:
             raise ValueError("Codex role accepts only adapter and model")
-        return Role("codex", selected_model, _command(["codex"], root, path_only=path_only), VERSION)
+        return Role("codex", selected_model, _command(["codex"], root, path_only=path_only), CODEX_IDENTITY)
     if adapter == "claude":
-        if fields - {"adapter", "model", "command", *OPTION_FIELDS}:
-            raise ValueError("Claude role accepts only adapter, model, command, isolation, effort, sandbox_read, "
+        if set(value) - {"adapter", "model", "command", *OPTION_FIELDS}:
+            raise ValueError("Claude role accepts only adapter, model, command, effort, sandbox_read, "
                              + "and sandbox_seconds")
         parts = value.get("command", ["claude"])
         if not isinstance(parts, list) or len(cast(list[object], parts)) != 1:
             raise ValueError("Claude command must name only the executable")
         return Role("claude", selected_model, _command(cast(list[object], parts), root, path_only=path_only),
-                    CLAUDE_IDENTITY, selected, ClaudeOptions.parse(value))
+                    CLAUDE_IDENTITY, ClaudeOptions.parse(value))
     if adapter != "command":
         raise ValueError("harness adapter must be codex, claude, or command")
     if set(value) & OPTION_FIELDS:
@@ -121,44 +131,47 @@ class Configuration:
     roles: dict[str, Role]
     source: Path | None = None
 
-    def __post_init__(self) -> None:
-        if len({role.isolation for role in self.roles.values() if role.adapter == "claude"}) > 1:
-            raise ValueError("every Claude role of a run must use the same isolation")
-
     @classmethod
     def load(cls, path: Path | None, model: str) -> Configuration:
         document = read(path) if path is not None else {"schema_version": 1}
         if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
             raise ValueError("unsupported harness configuration version")
         overrides = mapping(document.get("roles", {}))
-        if set(overrides) - {"task", "reflection", "judge", "simulator"}:
+        if set(overrides) - {*ROLES, "simulator"}:
             raise ValueError("unknown harness role")
         defaults = {key: value for key, value in document.items() if key not in {"schema_version", "roles"}}
         root = path.resolve().parent if path is not None else Path.cwd()
         roles = {name: _role(defaults | mapping(overrides.get(name, {})), model, root)
-                 for name in ("task", "reflection", "judge")}
+                 for name in ROLES}
         if "simulator" in overrides:
             roles["simulator"] = _role(defaults | mapping(overrides["simulator"]), model, root)
         return cls(roles, path.resolve() if path is not None else None)
 
     @classmethod
-    def single(cls, adapter: str, model: str, isolation: str = "claude", options: ClaudeOptions | None = None) -> Configuration:
+    def single(cls, adapter: str, model: str, options: ClaudeOptions | None = None) -> Configuration:
         """Return a configuration that runs every role on one headless harness: `claude` or `codex`.
 
         The simulator role is absent: a journey case then uses the judge role as its simulator.
 
-        `isolation` is `claude` (Claude Code's own sandbox) or `nono`, which only the `claude` harness supports.
         `options` apply to every role, and only the `claude` harness takes them.
         """
-        if adapter not in ("claude", "codex"):
+        if adapter not in BUILTIN_ADAPTERS:
             raise ValueError("harness must be claude or codex")
-        role = _role({"adapter": adapter, **({} if options is None else options.data())}, model, Path.cwd(), path_only=True,
-                     isolation=isolation)
-        return cls({name: role for name in ("task", "reflection", "judge")})
+        role = _role({"adapter": adapter, **({} if options is None else options.data())}, model, Path.cwd(), path_only=True)
+        return cls({name: role for name in ROLES})
+
+    @classmethod
+    def command(cls, argv: list[str], model: str) -> Configuration:
+        """Return a configuration that runs every role through one user command that speaks the adapter protocol.
+
+        The identity names the executable, so a resume with another executable stops with `harness-changed`.
+        """
+        role = _role({"adapter": "command", "command": argv, "identity": f"command-{Path(argv[0] if argv else '').name}"},
+                     model, Path.cwd())
+        return cls({name: role for name in ROLES})
 
     def check_boundary(self, target: Path) -> None:
-        paths = [Path(argument) for role in self.roles.values() for argument in role.command
-                 if Path(argument).is_absolute()]
+        paths = [Path(argument) for role in self.roles.values() for argument in _paths(role.command)]
         if self.source is not None:
             paths.append(self.source)
         if any(path.resolve().is_relative_to(target.resolve()) for path in paths):
@@ -191,6 +204,7 @@ class Harness:
         self.identity = configuration.identity()
         self.transports: dict[str, Transport] = {}
         self.login: ClaudeLogin | None = None
+        self.codex_version: str | None = None
         try:
             for name, role in configuration.roles.items():
                 transport = role.create(budget, checkpoint, out, self.login, surface if name == "task" else None, files)
@@ -215,6 +229,8 @@ class Harness:
         The reuse key joins the role fingerprint and the Claude environment key. A changed key means that the
         runtime environment differs from the frozen record. It fails before any live call, so it costs nothing.
         A reused role still runs the free sandbox probe. Codex and Command roles always run.
+        The observed Codex version sits in the evidence, so another version changes the environment hash.
+        The caller compares that hash and stops with `environment-differs`. `codex_version` holds the observed version.
         """
         self._unchanged()
         keys = mapping(recorded.get("reuse_keys", {})) if recorded else {}
@@ -238,6 +254,9 @@ class Harness:
                 evidence[name] = kept
                 continue
             evidence[name] = adapter.preflight()
+        versions = [mapping(item).get("codex_version") for name, item in evidence.items()
+                    if self.configuration.roles[name].adapter == "codex"]
+        self.codex_version = next((version for version in versions if isinstance(version, str)), None)
         live = sum(cast(int, mapping(item).get("live_calls", 0)) for item in evidence.values())
         return {"roles": evidence, "environment_hash": digest(evidence), "live_calls": live, "reuse_keys": reuse_keys}
 

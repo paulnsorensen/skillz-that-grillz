@@ -490,8 +490,8 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
         original = _claude.settings
 
         def weaker(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                   unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
-            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
+                   unix_sockets: bool = False) -> dict[str, object]:
+            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
         monkeypatch.setattr(_claude, "settings", weaker)

@@ -570,7 +570,7 @@ def test_a_completed_run_returns_its_summary_even_when_the_target_moved(
     target, state = make_target(tmp_path), State()
     out = _prepared(tmp_path, target, write_draft, approvals)
     summary = run(target, out, MODEL, live=True, factory=state.factory())
-    assert summary["phase"] == "complete" and summary["isolation"] == "claude"
+    assert summary["phase"] == "complete" and "isolation" not in summary
     moved = tmp_path / "moved"
     _ = shutil.copytree(target, moved)
     assert run(moved, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
@@ -590,6 +590,28 @@ def test_a_taken_seed_name_stops_the_run_before_the_live_preflight(
         _ = run(target, out, MODEL, live=True, factory=lambda _model, _budget, _checkpoint: Taken(state))
     assert stopped.value.code == "candidate-name-taken"
     assert state.preflights == [] and state.evaluated == []
+
+
+def test_a_run_that_recorded_the_removed_nono_backend_stops_with_the_issue_link(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    record["isolation"] = "nono"
+    write(out / "run.json", record)
+    with pytest.raises(CodedError, match="issues/211") as stopped:
+        _ = run(target, out, MODEL, live=True, factory=State().factory())
+    assert stopped.value.code == "nono-removed"
+
+
+def test_a_run_that_recorded_the_claude_backend_still_resumes(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    record["isolation"] = "claude"
+    write(out / "run.json", record)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
 
 
 def test_a_terminated_run_resumed_with_another_flag_reports_the_termination_first(

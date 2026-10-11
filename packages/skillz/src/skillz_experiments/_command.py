@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import tempfile
 import time
@@ -14,16 +15,15 @@ from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._evaluator import answer_schema
 from skillz_experiments._isolation import listening, probe
+from skillz_experiments._protocol import RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._runtime import Budget, process
 
 
 def _response(value: object, operation: str) -> dict[str, object]:
     result = mapping(value)
-    fields = {"sandbox": {"returncode", "stdout", "stderr"}, "discover": {"skills"},
-              "infer": {"answer", "trace", "usage"}}
-    if (type(result.get("schema_version")) is not int or result["schema_version"] != 1
+    if (type(result.get("schema_version")) is not int or result["schema_version"] != VERSION
             or result.get("operation") != operation
-            or set(result) != {"schema_version", "operation"} | fields[operation]):
+            or set(result) != {"schema_version", "operation"} | RESPONSE_FIELDS[operation]):
         raise ValueError("invalid harness response envelope")
     if operation == "sandbox" and (
         type(result["returncode"]) is not int
@@ -40,16 +40,14 @@ def _events(result: dict[str, object]) -> list[dict[str, object]]:
     events: list[dict[str, object]] = []
     for value in cast(list[object], raw):
         item = mapping(value)
-        argv = item.get("argv")
-        if (set(item) != {"argv", "exit_code"} or type(item["exit_code"]) is not int
-                or not isinstance(argv, list) or not argv
-                or not all(isinstance(arg, str) and arg for arg in cast(list[object], argv))):
+        argv = argv_strings(item.get("argv"))
+        if set(item) != {"argv", "exit_code"} or type(item["exit_code"]) is not int or argv is None:
             raise ValueError("invalid completed command trace")
         events.append({"type": "item.completed", "item": {"type": "command_execution",
-                       "command": shlex.join(cast(list[str], argv)), "exit_code": item["exit_code"]}})
+                       "command": shlex.join(argv), "exit_code": item["exit_code"]}})
     if result["usage"] is not None:
         counts = mapping(result["usage"])
-        if set(counts) - {"input_tokens", "cached_input_tokens", "output_tokens"} or any(
+        if set(counts) - set(USAGE_KEYS) or any(
             value is not None and (type(value) is not int or value < 0) for value in counts.values()
         ):
             raise ValueError("invalid harness token usage")
@@ -81,6 +79,36 @@ def _validate_answer(value: object, schema: dict[str, object]) -> None:
         raise ValueError("unsupported runner response schema")
 
 
+def _stated_reason(stderr: str) -> str:
+    """Return the last wrapper line that is a JSON error object `{"error": TEXT, "exit_code": N[, "code": C]}`.
+
+    The reference wrappers print this line for their own errors. The runner shows no other stderr text.
+    """
+    for line in reversed(stderr.splitlines()):
+        try:
+            item = mapping(loads_untrusted(line))
+        except ValueError:
+            continue
+        if set(item) - {"error", "exit_code", "code"} or not isinstance(item.get("error"), str) or "exit_code" not in item:
+            continue
+        return cast(str, item["error"])[:500]
+    return ""
+
+
+def _failure(stderr: str) -> str:
+    """Describe a failed harness command. Keep the raw stderr tail in a private file, not in the message."""
+    message = "harness command fails; no unsafe fallback"
+    reason = _stated_reason(stderr)
+    if reason:
+        message += f": {reason}"
+    if stderr.strip():
+        descriptor, filename = tempfile.mkstemp(prefix="skillz-harness-stderr-", suffix=".txt")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            _ = stream.write(stderr[-4000:])
+        message += f"; private stderr tail: {filename}"
+    return message
+
+
 @final
 class Command:
     rejection: str | None = None
@@ -95,12 +123,12 @@ class Command:
         pass
 
     def _request(self, operation: str, workspace: Path, **payload: object) -> dict[str, object]:
-        request = {"schema_version": 1, "operation": operation, "workspace": str(workspace),
+        request = {"schema_version": VERSION, "operation": operation, "workspace": str(workspace),
                    "model": self.model, **payload}
         result = process(list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
                          environment={"PATH": "/usr/bin:/bin"}, input_text=json.dumps(request))
         if result.returncode:
-            raise RuntimeError("harness command fails; no unsafe fallback")
+            raise RuntimeError(_failure(result.stderr))
         if len(result.stdout) > 1_000_000:
             raise ValueError("harness response exceeds size limit")
         return _response(loads_untrusted(result.stdout), operation)
@@ -140,7 +168,8 @@ class Command:
             _ = (skill / "SKILL.md").write_text("---\nname: skillz\ndescription: Inspect public fixtures\n---\nProbe.\n")
             if not self._discover(workspace, "skillz"):
                 raise RuntimeError("harness skill discovery preflight fails")
-        return {"adapter": "command", "model": self.model, "isolation": "passed", "live_calls": 0}
+        return {"adapter": "command", "model": self.model, "isolation": "passed", "isolation_scope": "sandbox operation",
+                "live_calls": 0}
 
     def check_candidate(self, candidate: Candidate) -> bool:
         self.rejection = None

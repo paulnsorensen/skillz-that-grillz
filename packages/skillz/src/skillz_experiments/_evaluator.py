@@ -14,7 +14,15 @@ from skillz_experiments._evaluation import executed, grade, usage
 from skillz_experiments._runtime import Budget
 
 
+SUBSCRIPTION_LOGIN = "subscription login"
+API_KEY = "api key"
+UNVERIFIED_CREDENTIAL = "unverified (macOS Keychain)"
+MISSING_CREDENTIAL = "missing"
+
+
 class Transport(Protocol):
+    """A built-in transport also exposes `credential_kind`: one of the four credential constants above."""
+
     budget: Budget
 
     def preflight(self) -> dict[str, object]: ...
@@ -256,7 +264,6 @@ def answer_schema() -> dict[str, object]:
     return {"type": "object", "properties": {
         "result_json": {"type": "string"}, "load_marker": {"type": "string"}},
         "required": ["result_json", "load_marker"], "additionalProperties": False}
-
 def _judge_data(case: Case, journey: dict[str, object] | None) -> dict[str, object] | None:
     if journey is None or case.journey is None:
         return None

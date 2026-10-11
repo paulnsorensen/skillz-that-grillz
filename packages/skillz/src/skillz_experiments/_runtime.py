@@ -23,6 +23,7 @@ APPROVED_CALLS = 200
 APPROVED_SECONDS = 7200
 JOURNEY_CALLS = 1000
 JOURNEY_SECONDS = 28800
+TERM_GRACE_SECONDS = 10.0
 
 _CHILDREN = threading.BoundedSemaphore(MAX_CONCURRENT_CALLS)
 
@@ -176,6 +177,23 @@ def approve(sized: Estimate, approved_calls: int | None, *, reserve: int, reserv
                   reserve_seconds=min(reserve_time, sized.seconds), journey=sized.journey)
 
 
+def _end(child: subprocess.Popen[str]) -> None:
+    """Send SIGTERM to the child's group, wait `TERM_GRACE_SECONDS`, then SIGKILL whatever remains."""
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        _ = child.communicate(timeout=TERM_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    _ = child.communicate()
+
+
 def process(command: list[str], *, cwd: Path, timeout: float,
             environment: dict[str, str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run a child under a call slot. Time spent waiting for the slot counts against `timeout`."""
@@ -192,12 +210,10 @@ def process(command: list[str], *, cwd: Path, timeout: float,
             try:
                 stdout, stderr = child.communicate(input_text, timeout=timeout)
             except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                _ = child.communicate()
+                _end(child)
                 raise BudgetExhausted("process group terminated at deadline") from None
             except BaseException:
-                os.killpg(child.pid, signal.SIGKILL)
-                _ = child.communicate()
+                _end(child)
                 raise
             return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
     finally:

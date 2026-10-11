@@ -47,17 +47,23 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" run --target /path/to/skill --ou
 
 Pass the same command again after each stop. Add the approval option that the stop names.
 A model call needs `--live`; without it the run stops with `live-required`. The three data stops happen before any model call.
-`--harness` accepts only `claude` or `codex`. The runner launches only headless `claude -p` or `codex exec`.
-The `claude` harness reuses the Claude login. The `codex` harness reuses the ChatGPT login and needs Codex CLI 0.154.0.
+`--harness` accepts `claude`, `codex`, or `command`. The built-in harnesses launch only headless `claude -p` or `codex exec`.
+To run your own command, pass `--harness-config PATH` or `--harness command --command EXECUTABLE --command ARG ...`. Write an argument that starts with `-` as `--command=VALUE`.
+`--harness-config` cannot combine with `--harness` or `--command`; `--command` needs `--harness command`, and `--harness command` needs `--command`. Each misuse stops with the code `usage` before any work.
+The `doctor` host checks skip a command role. The runner sends its sandbox probe before any task call.
+The `claude` harness reuses the Claude login. The `codex` harness reuses the ChatGPT login and needs Codex CLI 0.154.0 or newer.
+The runner records the observed `codex --version` string as `codex_version` in `run.json`.
+A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
+A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
-Do not create or request provider credentials. The one exception is the API key that `--isolation nono` needs after the user chooses it.
+Do not create or request provider credentials. The runner needs no API key.
 A fresh run first runs the free host checks of `doctor`. They make no model call.
 A failed check stops the run with `host-not-ready` before the case draft. The stop lists every check and its fix.
+When roles use more than one built-in harness, `checks` stays one flat list. Each check name carries the harness as a prefix, such as `codex:credential`.
+A `claude` role with its own `command` gets the host checks on that executable.
+The `credential` check names the kind: `subscription login`, `api key`, `unverified (macOS Keychain)`, or `missing`.
 Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" doctor --harness claude` to see the checks without a run.
-`--isolation claude` is the default. Claude Code's own sandbox then confines Bash commands.
-`--isolation nono` runs the whole Claude process in nono on Linux. Use it only when the user asks or the host needs it.
-The nono backend needs `nono`, Linux 6.7 or later, and `ANTHROPIC_API_KEY` on the host.
-nono injects the key through its proxy, so the sandbox never sees it. This backend bills the API key, not the Claude login.
+Claude Code's own sandbox confines Bash commands.
 `--edit prose` is the default and changes only Markdown files.
 `--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
 `--repeats` sets the repeats for each holdout case. The default is 3.
@@ -89,7 +95,7 @@ Map each coded stop to its next step:
 
 | Code | Data on stdout | Next step |
 |---|---|---|
-| `host-not-ready` | `ok`, `harness`, `isolation`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
+| `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_cases` (only when `evals/evals.json` exists), `doctor` (the host checks) | Write the case draft. Start from `seed_cases` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
@@ -106,24 +112,28 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 
 | Code | Meaning | Next step |
 |---|---|---|
-| `login-missing` | No Claude login file exists, or Claude Code rejects the login during the preflight (authentication failed). Under nono, the host API key is missing or invalid. | Ask the user to run `claude` once and log in. Under nono, export a valid `ANTHROPIC_API_KEY`. |
+| `login-missing` | No Claude login file exists, or Claude Code rejects the login during the preflight (authentication failed). A Codex role finds no `tokens` and no `OPENAI_API_KEY` in `auth.json`. | Ask the user to run `claude` or `codex login` once. |
 | `sandbox-read-invalid` | A `--sandbox-read` root is missing, is a symlink, holds an unsafe character, overlaps a refused path, holds a socket entry, or is too large to check. The message names the root. | On a fresh run, give a valid resolved path. On a resume, restore the path or start a new `--out`. |
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
-| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. | For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, run with `--isolation nono` or report the Claude Code version; no unsafe fallback exists. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
-| `nono-unavailable` | `--isolation nono` cannot run. The message names each unmet requirement and its fix. | Apply each fix, or use `--isolation claude`. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. | For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, report the Claude Code version; no unsafe fallback exists. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
+| `nono-removed` | A resume found a run that recorded the removed nono backend, or a role file sets `isolation` to `nono`. The message links issue 211. A completed run still returns its summary. | Start a new run directory. |
+| `isolation-removed` | A role file sets the removed `isolation` key. | Delete the key. |
+| `codex-version-unsupported` | The Codex CLI is older than 0.154.0, or its `--version` output is unparsable. No model call ran. | Install Codex 0.154.0 or newer, then run again. |
+| `environment-differs` | A resume runs on a different Codex version, or the runtime environment differs from the frozen record. The message names the changed key. No model call ran. | Restore the recorded version or start a new run. |
+| `usage` | `--harness-config`, `--harness`, and `--command` conflict. The message names the conflict. | Fix the options, then run again. |
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. In a journey, the stop also covers a skill inventory change between turns. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
-| `harness-changed` | The harness executable or script differs from the frozen record. | Restore the frozen harness, or start a new run directory. |
+| `harness-changed` | The harness executable, script, or role file differs from the frozen record, or a resume drops `--harness-config` or `--command`. | Restore the frozen harness and pass the same options, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `frozen-file-too-large` | A frozen file is over 16 MiB, or the frozen files together are over 64 MiB. The message names the file. | Remove the file from the skill, or shrink it, then run again. |
 | `target-not-built` | `wedge.toml` lists a target, and its `scripts/NAME.pyz` is missing, is a symlink, or is not a file. | Run `wedge bundle` for the skill, then run again. |
@@ -425,7 +435,7 @@ It has git headers and paths relative to the repository root. Apply it from the 
 Only a changed wedge source must lie inside the repository root.
 A changed source path outside the repository root stops export with `export-path-escapes`.
 A skill-only change exports outside a repository.
-`doctor --harness claude` runs the free host checks without a run. Add `--isolation nono` to check the nono backend.
+`doctor --harness claude` runs the free host checks without a run.
 `self-test --preflight-only --model MODEL` checks the harness without a run.
 Pass `--harness-config FILE` to check a custom command adapter. The harness reference that `SKILL.md` lists describes it.
 
@@ -569,8 +579,7 @@ Paths are relative to the skill root.
 Only the Claude task role supports a surface. Other roles stop with `contract-surface-unsupported`.
 The live preflight accepts only the declared names. It stops with `preflight-leak` on any other name.
 The surface joins the environment reuse key.
-Under `--isolation claude`, MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
-Under `--isolation nono`, they run inside the nono profile.
+MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
 The MCP config holds commands that the host runs, so search never edits it.
 
 The kind named `journey` takes the `journey` grader, and no other kind does. Any other pairing stops with `contract-kinds`.
@@ -611,6 +620,7 @@ Candidate commands use a deny-by-default filesystem profile and no network acces
 The staged candidate is read-only. The task workspace is writable.
 The runner disables external skills, user configuration, hooks, plugins, apps, and web search.
 An existing administrator skill directory stops the Codex run.
+The runner passes `--strict-config` to `codex exec` and `codex app-server`, so an unknown configuration key stops the call. Every behavior probe still runs.
 The `claude` adapter runs `claude -p --setting-sources project` with `--tools Bash,Read,Skill` and `--strict-mcp-config`.
 It applies the sandbox floor, denies host reads, and disables bundled skills. It turns off every foreign skill that a free inventory finds.
 The harness reference that `SKILL.md` lists defines its preflight and login handling.

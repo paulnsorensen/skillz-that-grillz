@@ -33,17 +33,8 @@ def _inside(path: str, roots: list[str]) -> bool:
     return any(path == root or path.startswith(root.rstrip("/") + "/") for root in roots)
 
 
-def _nono_roots(name: str) -> list[str] | None:
-    """Return the roots that the fake `nono` grants in the variable `name`, or None outside nono."""
-    value = os.environ.get(name)
-    return None if value is None else value.split(os.pathsep)
-
-
 def _readable(path: str, settings: dict[str, object]) -> bool:
-    """Mimic the sandbox read rule: the narrower allow wins over a deny. Under the fake `nono`, only its read grants count."""
-    granted = _nono_roots("FAKE_NONO_READ")
-    if granted is not None:
-        return _inside(path, granted)
+    """Mimic the sandbox read rule: the narrower allow wins over a deny."""
     filesystem = cast(dict[str, list[str]], cast(dict[str, object], settings.get("sandbox", {})).get("filesystem", {}))
     denied = [root for root in filesystem.get("denyRead", []) if _inside(path, [root])]
     allowed = [root for root in filesystem.get("allowRead", []) if _inside(path, [root])]
@@ -53,10 +44,7 @@ def _readable(path: str, settings: dict[str, object]) -> bool:
 
 
 def _writable(path: str, settings: dict[str, object]) -> bool:
-    """Mimic the sandbox write rule: a path under a `denyWrite` root fails. Under the fake `nono`, only its write grants count."""
-    granted = _nono_roots("FAKE_NONO_WRITE")
-    if granted is not None:
-        return _inside(path, granted)
+    """Mimic the sandbox write rule: a path under a `denyWrite` root fails."""
     filesystem = cast(dict[str, list[str]], cast(dict[str, object], settings.get("sandbox", {})).get("filesystem", {}))
     return not any(_inside(path, [root]) for root in filesystem.get("denyWrite", []))
 
@@ -187,7 +175,7 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     if mode == "inventory-error":
         emit({"type": "control_response", "response": {"subtype": "error", "request_id": "skillz-inventory",
                                                       "error": "profile rejected"}})
-        print("nono: profile rejected", file=sys.stderr)
+        print("claude: profile rejected", file=sys.stderr)
         return 2
     body: dict[str, object] = {} if mode == "inventory-broken" else {"commands": commands, "agents": []}
     if mode == "inventory-bad-row":
@@ -200,15 +188,14 @@ def inventory(mode: str, config: dict[str, object]) -> int:
 def read_tool_probe(prompt: str, mode: str) -> list[str]:
     """Answer the preflight Read-tool step. It denies a path outside the working directory, as the live preflight expects.
 
-    Real `claude -p` behavior is unverified here: the live preflight decides. Under the fake `nono`, its read grants decide.
+    Real `claude -p` behavior is unverified here: the live preflight decides.
     `read-tool-escape` returns the file content. `read-tool-skipped` never calls the Read tool.
     """
     found = re.search(r"read the file `([^`]+)` with the Read tool", prompt)
     if found is None or mode == "read-tool-skipped":
         return []
     path = found.group(1)
-    granted = _nono_roots("FAKE_NONO_READ")
-    allowed = _inside(path, granted) if granted is not None else _inside(path, [str(Path.cwd()), str(Path.cwd().resolve())])
+    allowed = _inside(path, [str(Path.cwd()), str(Path.cwd().resolve())])
     text = Path(path).read_text() if mode == "read-tool-escape" or allowed else "denied"
     emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "rt1", "name": "Read",
           "input": {"file_path": path}}]}})
