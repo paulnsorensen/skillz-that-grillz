@@ -19,6 +19,7 @@ from skillz_experiments._harness import Configuration, Harness
 from skillz_experiments._runtime import Budget
 
 pytestmark = pytest.mark.usefixtures("host_login")
+linux_only = pytest.mark.skipif(sys.platform == "darwin", reason="macOS uses the real config directory")
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 SKILL = "---\nname: skillz\ndescription: x\n---\n"
 SCRIPTED = '''#!/usr/bin/env python3
@@ -162,8 +163,11 @@ def test_the_claude_child_environment_holds_only_the_allowed_names(
     finally:
         session.close()
     environment = cast(dict[str, str], calls(executable)[0]["environment"])
-    assert set(environment) - {"LC_CTYPE"} <= {"PATH", "HOME", "TMPDIR", "LANG", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
-                                               "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS", "CLAUDE_CONFIG_DIR"}
+    # On macOS, the OS adds `__CF_USER_TEXT_ENCODING` to every process.
+    # The Xcode `python3` shim that runs the fake adds the build-path names.
+    host: set[str] = {"__CF_USER_TEXT_ENCODING", "SDKROOT", "CPATH", "LIBRARY_PATH", "MANPATH"} if sys.platform == "darwin" else set()
+    assert set(environment) - {"LC_CTYPE"} - host <= {"PATH", "HOME", "TMPDIR", "LANG", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
+                                                      "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS", "CLAUDE_CONFIG_DIR"}
     assert environment["HOME"] != str(Path.home())
 
 
@@ -481,7 +485,7 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     elif change == "probe-skill":
         monkeypatch.setattr(_claude, "PROBE_PREFIX", "other-")
     elif change == "platform":
-        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(sys, "platform", "linux" if sys.platform == "darwin" else "darwin")
     elif change == "settings":
         original = _claude.settings
 
@@ -625,6 +629,7 @@ def test_a_candidate_that_does_not_load_still_reports_the_usage_of_the_charged_c
     assert cast(dict[str, object], result["usage"])["output_tokens"] == 1
 
 
+@linux_only
 def test_environment_key_ignores_token_variables_and_the_per_process_config_dir(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     executable = fake_claude(tmp_path)

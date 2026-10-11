@@ -47,6 +47,8 @@ def _bwrap_works() -> bool:
 
 
 needs_bwrap = pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is unavailable")
+linux_only = pytest.mark.skipif(sys.platform == "darwin", reason="macOS uses the real config directory")
+darwin_only = pytest.mark.skipif(sys.platform != "darwin", reason="only macOS uses the real config directory")
 pytestmark = pytest.mark.usefixtures("host_login")
 
 
@@ -245,13 +247,16 @@ def test_sandbox_read_roots_under_shared_socket_locations_are_refused(tmp_path: 
     assert caught.value.code == "sandbox-read-invalid"
 
 
-def test_a_sandbox_read_root_that_holds_a_socket_is_refused_without_following_links(tmp_path: Path) -> None:
+def test_a_sandbox_read_root_that_holds_a_socket_is_refused_without_following_links(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     holder = tmp_path / "h"
     (holder / "inner").mkdir(parents=True)
     clean = tmp_path / "clean"
     clean.mkdir()
+    # A relative address stays under the 104-byte AF_UNIX limit of the long macOS temp path.
+    monkeypatch.chdir(holder / "inner")
     with socket.socket(socket.AF_UNIX) as server:
-        server.bind(str(holder / "inner/s"))
+        server.bind("s")
         for root in (holder, holder / "inner"):
             with pytest.raises(CodedError, match="socket entry") as caught:
                 _ = resolve_read_roots((str(root),), None)
@@ -305,7 +310,7 @@ def test_sandbox_read_roots_that_expose_runtime_paths_or_credentials_are_refused
     (runtime / "bus-dir").mkdir(parents=True)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
     system = [Path(root) for root in _claude.RUNTIME_DENY if Path(root).exists()]
-    assert Path("/proc") in system
+    assert Path("/proc") in system or not Path("/proc").exists()
     credentials: list[Path] = []
     for name in _claude.HOME_DENY:
         path = home / name
@@ -1162,6 +1167,7 @@ def test_linux_environment_links_only_the_credential_and_forwards_no_token(
     assert f"Read(/{tempfile.gettempdir()}/skillz-claude-config-*/**)" in settings["permissions"]["deny"]
 
 
+@linux_only
 def test_the_login_comes_from_the_host_config_dir_when_it_is_set(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     other = tmp_path / "other-config"
@@ -1175,6 +1181,7 @@ def test_the_login_comes_from_the_host_config_dir_when_it_is_set(
         adapter.close()
 
 
+@linux_only
 def test_a_missing_login_is_coded_with_a_fix_hint(tmp_path: Path, host_login: Path) -> None:
     host_login.unlink()
     with pytest.raises(CodedError, match="run `claude` once and log in") as caught:
@@ -1183,6 +1190,7 @@ def test_a_missing_login_is_coded_with_a_fix_hint(tmp_path: Path, host_login: Pa
     assert not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
 
 
+@linux_only
 def test_close_deletes_the_config_dir(tmp_path: Path) -> None:
     adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
     directory = adapter.config_dir
@@ -1190,6 +1198,31 @@ def test_close_deletes_the_config_dir(tmp_path: Path) -> None:
     adapter.close()
     assert not directory.exists()
     adapter.close()
+
+
+@darwin_only
+def test_macos_uses_the_host_config_dir_and_links_no_login(tmp_path: Path, host_login: Path) -> None:
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    try:
+        assert adapter.config_dir == host_login.parent
+        assert adapter.login.credential is None
+        assert not os.path.islink(host_login)
+        assert not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
+    finally:
+        adapter.close()
+
+
+@darwin_only
+def test_macos_takes_the_config_dir_from_the_environment_and_close_keeps_it(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    other = tmp_path / "other-config"
+    other.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(other))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    assert adapter.config_dir == other
+    adapter.close()
+    adapter.close()
+    assert other.is_dir()
 
 
 def _login(token: str = "a", **extra: str) -> str:
@@ -1307,6 +1340,7 @@ class _FailingClose:
         raise self.error
 
 
+@linux_only
 @pytest.mark.parametrize(("codes", "winner"), [
     (["credential-refreshed", "credential-changed"], "credential-changed"),
     (["credential-changed", "credential-rotated"], "credential-changed"),
