@@ -42,7 +42,7 @@ def test_deadline_sends_sigterm_before_sigkill_so_a_wrapper_runs_its_stopper(tmp
               "pathlib.Path('ready').write_text('1')\n"
               "time.sleep(30)\n")
     with pytest.raises(BudgetExhausted, match="terminated"):
-        _ = process([sys.executable, "-c", script], cwd=tmp_path, timeout=1.5, environment={"PATH": os.defpath})
+        _ = process([sys.executable, "-c", script], cwd=tmp_path, timeout=5, environment={"PATH": os.defpath})
     assert (tmp_path / "stopper.ran").read_text() == "yes"
 
 

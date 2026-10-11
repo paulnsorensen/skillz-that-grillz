@@ -24,6 +24,8 @@ from skillz_experiments.wrapper import _gemini
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 REPO = Path(__file__).resolve().parents[4]
@@ -186,25 +188,14 @@ def test_codexRun_recordsTheCredentialKindOfEveryBuiltInRoleInRunJson(
 # ---------------------------------------------------------------- AC-6 nono records
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     def __init__(self) -> None:
         self.calls = 0
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         self.calls += 1
         return {'environment_hash': 'e1', 'isolation': 'passed'}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: object, case: object, *, holdout: bool = False) -> dict[str, object]:
         del candidate, case, holdout
@@ -298,8 +289,6 @@ def test_nonoRecord_viaTheCli_exitsNonzeroWithTheCodeOnStderr(
     code = main(['run', '--target', str(target), '--out', str(out), '--model', 'm', '--live'])
     err = cast(dict[str, str], json.loads(capsys.readouterr().err))
     assert code == 1 and err['code'] == 'nono-removed' and 'issues/211' in err['error']
-
-
 
 
 # ---------------------------------------------------------------- AC-9 / AC-10 / AC-11 usage errors
@@ -621,10 +610,14 @@ def workspace(tmp_path: Path) -> Path:
     return path
 
 
-@pytest.mark.parametrize('raw', ['', '   ', '{', 'nul', 'null', '1', '"x"', '[]', '[1]', 'true',
-                                 '{"schema_version": 1}', '{"schema_version": 1, "operation": "sandbox"}'])
-def test_respond_nonRequests_raiseValueErrorOnly(tmp_path: Path, raw: str) -> None:
-    with pytest.raises(ValueError):
+@pytest.mark.parametrize(('raw', 'message'), [
+    *[(raw, 'request is not JSON') for raw in ['', '   ', '{', 'nul']],
+    *[(raw, 'request must be a JSON object') for raw in ['null', '1', '"x"', '[]', '[1]', 'true']],
+    ('{"schema_version": 1}', 'unknown operation'),
+    ('{"schema_version": 1, "operation": "sandbox"}', 'workspace must be an existing absolute directory'),
+])
+def test_respond_nonRequests_raiseValueErrorOnly(tmp_path: Path, raw: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
         _ = _gemini.respond(raw, bin_dir=_bin(tmp_path))
 
 
@@ -632,7 +625,7 @@ def test_respond_nonRequests_raiseValueErrorOnly(tmp_path: Path, raw: str) -> No
 def test_respond_wrongProtocolVersion_isRejectedBeforeAnyTool(tmp_path: Path, workspace: Path, version: object) -> None:
     directory = _bin(tmp_path)
     raw = json.dumps({'schema_version': version, 'operation': 'sandbox', 'workspace': str(workspace), 'argv': ['true']})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='unsupported schema_version'):
         _ = _gemini.respond(raw, bin_dir=directory)
     assert _logged(directory / 'docker.log') == []
 
@@ -641,7 +634,7 @@ def test_respond_wrongProtocolVersion_isRejectedBeforeAnyTool(tmp_path: Path, wo
 def test_respond_unknownOperation_raisesValueErrorNotTypeError(tmp_path: Path, workspace: Path, operation: object) -> None:
     '''AC-14: an unhashable operation (list, dict) is a bad request. The set membership test raises TypeError instead.'''
     directory = _bin(tmp_path)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='unknown operation'):
         _ = _gemini.respond(_request(operation, workspace, argv=['true']), bin_dir=directory)
     assert _logged(directory / 'docker.log') == []
 
@@ -649,7 +642,7 @@ def test_respond_unknownOperation_raisesValueErrorNotTypeError(tmp_path: Path, w
 @pytest.mark.parametrize('workspace_value', [None, 5, '', 'relative/dir', '/definitely/not/a/dir', '/tmp/' + chr(0) + 'x', ['/tmp']])
 def test_respond_badWorkspace_raisesValueError(tmp_path: Path, workspace_value: object) -> None:
     raw = json.dumps({'schema_version': 1, 'operation': 'sandbox', 'workspace': workspace_value, 'argv': ['true']})
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='workspace must be|embedded null character'):
         _ = _gemini.respond(raw, bin_dir=_bin(tmp_path))
 
 
@@ -714,7 +707,10 @@ def test_infer_deeplyNestedModelAnswer_isACleanResultOrACleanError(tmp_path: Pat
     _gemini_script(directory, depth)
     try:
         result = _gemini.respond(_request('infer', workspace, prompt='p', response_schema=GEMINI_SCHEMA), bin_dir=directory)
-    except (ValueError, RuntimeError):
+    except RecursionError:
+        pytest.fail('the nesting depth bound is gone: respond raised RecursionError')
+    except (ValueError, RuntimeError) as error:
+        assert 'recursion' not in str(error).lower()
         return
     _ = json.dumps(result)
 
@@ -727,6 +723,7 @@ def test_wrapperCli_deeplyNestedModelAnswer_neverEndsInATraceback(tmp_path: Path
                           input=_request('infer', workspace, prompt='p', response_schema=GEMINI_SCHEMA),
                           capture_output=True, text=True, check=False)
     assert 'Traceback' not in done.stderr and 'RecursionError' not in done.stderr
+    assert 'recursion' not in done.stderr.lower()
     assert done.returncode in (0, 1)
 
 

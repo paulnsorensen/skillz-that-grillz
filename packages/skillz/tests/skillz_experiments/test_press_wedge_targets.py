@@ -33,6 +33,8 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
 from skillz_experiments._wedge_targets import Rebuilder, plan_targets
 from skillz_experiments.run import Stop, export, run
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -130,26 +132,15 @@ class Recorder:
 
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder: Recorder = recorder
         self.budget: Budget = budget
         self.checkpoint: Callable[[], None] = checkpoint
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -383,7 +374,6 @@ def test_an_own_target_that_the_mcp_config_runs_stays_frozen_and_contributes_no_
     assert "scripts/alpha.pyz" in plan.frozen
     names = editable_names(skeleton.files | plan.sources, contract, skeleton.frozen.keys(), plan)
     assert ALPHA not in names and BETA in names
-
 
 
 def test_a_name_that_only_looks_like_a_mention_does_not_make_a_target_editable(world: World) -> None:

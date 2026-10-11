@@ -36,6 +36,8 @@ from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget
 from skillz_experiments.search import Edit, search
 from skillz_experiments.search._engine import Evaluate, Propose
 from skillz_experiments.run import Stop, export, run
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -77,24 +79,13 @@ class Spy:
 
 
 @final
-class _Fake:
+class _Fake(FakeProvider):
     def __init__(self, spy: Spy, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.spy, self.budget, self.checkpoint = spy, budget, checkpoint
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)

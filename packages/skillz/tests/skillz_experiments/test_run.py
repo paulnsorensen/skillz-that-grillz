@@ -20,6 +20,7 @@ from skillz_experiments.search import Edit
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._session import _reflection_request as reflection_request  # pyright: ignore[reportPrivateUsage]
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -38,26 +39,15 @@ class Recorder:
         return Provider(self, budget, checkpoint)
 
 
-class Provider:
+class Provider(FakeProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder: Recorder = recorder
         self.budget: Budget = budget
         self.checkpoint: Callable[[], None] = checkpoint
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)

@@ -19,6 +19,8 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._resume import resolve_statistics
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 MODEL = "local-test"
 LEGACY_IDENTITY = "f97f7476933403cbc6180cf3dc3cb54ca9d9eb63a7cf37bae92dd6aa9612b2e8"
@@ -149,26 +151,15 @@ def test_resolution_takes_the_flag_then_the_contract_then_the_default() -> None:
 
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     """A fake provider. The seed scores 0 and a proposal that says `improved` scores 1."""
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
         pass
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         del holdout

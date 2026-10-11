@@ -24,6 +24,7 @@ from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
 from skillz_experiments._budget import Budget, BudgetExhausted
+from fake_provider import FakeProvider
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 BRIEF = "BRIEF_SENTINEL_9f2c: wants a short plan."
@@ -400,28 +401,13 @@ def test_an_undeclared_agent_server_or_plugin_that_appears_only_in_a_later_init_
 
 # AC-6, AC-4, AC-9: the gate, the judge, the simulator prompt, and the budget around one journey.
 
-class Judge:
+class Judge(FakeProvider):
     """A stub simulator and judge that pops one answer per call and claims the budget that it shares with the task."""
 
     def __init__(self, answers: list[dict[str, object]]) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.answers: list[dict[str, object]] = answers
         self.prompts: list[str] = []
-
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

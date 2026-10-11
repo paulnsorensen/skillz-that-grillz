@@ -39,6 +39,7 @@ from skillz_experiments.run._plan import (
     plan_estimate,
 )
 from skillz_experiments.run._session import Session, engine_hash
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -85,24 +86,13 @@ class State:
         return lambda _model, _budget, _checkpoint: _Fake(self)
 
 
-class _Fake:
+class _Fake(FakeProvider):
     def __init__(self, state: State) -> None:
         self.state: State = state
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: Candidate) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         return self.state.preflight(None)
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         return self.state.evaluate(candidate, case, holdout)
@@ -538,7 +528,7 @@ def test_a_symlinked_run_lock_is_refused_and_its_target_stays_intact(
     assert victim.read_text() == "keep me" and state.evaluated == []
 
 
-class _Spending:
+class _Spending(FakeProvider):
     """A fake that claims the budget for each call and spends `delay` seconds on each search call.
 
     Its preflight reads the time left, as the real transports do through the sandbox probe.
@@ -549,21 +539,10 @@ class _Spending:
         self.budget: Budget = budget
         self.delay: float = delay
 
-    rejection: str | None = None
-
-    def check_name(self, candidate: object) -> None:
-        del candidate
-
-    def check_candidate(self, candidate: object) -> bool:
-        del candidate
-        return True
-
+    @override
     def preflight(self) -> dict[str, object]:
         _ = self.budget.remaining()
         return self.state.preflight(None)
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -675,7 +654,8 @@ def test_a_taken_seed_name_stops_the_run_before_the_live_preflight(
     @final
     class Taken(_Fake):
         @override
-        def check_name(self, candidate: Candidate) -> None:
+        def check_name(self, candidate: object) -> None:
+            assert isinstance(candidate, Candidate)
             raise CodedError("candidate-name-taken", f"{candidate.skill!r} is taken")
 
     with pytest.raises(CodedError) as stopped:
