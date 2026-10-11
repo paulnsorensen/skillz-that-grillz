@@ -72,12 +72,13 @@ def _template_project(repo_root: Path, dest: Path) -> Path:
     """A uv project that holds fromargs source and a skills/records directory.
 
     The project's own lock supplies the closure. Its fromargs source is
-    vendored through ``include``, as ``packaging.md`` documents.
+    vendored through ``include``, as ``packaging.md`` documents. fromargs is
+    a workspace member without its own lock, so the copy locks itself.
     """
     fromargs = repo_root / "packages/fromargs"
     dest.mkdir()
-    for name in ("pyproject.toml", "uv.lock"):
-        _ = shutil.copy2(fromargs / name, dest / name)
+    _ = shutil.copy2(fromargs / "pyproject.toml", dest / "pyproject.toml")
+    _ = subprocess.run(["uv", "lock", "--project", str(dest)], check=True, capture_output=True, text=True)
     _ = shutil.copytree(
         fromargs / "src/fromargs", dest / "src/fromargs", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )

@@ -27,7 +27,7 @@ SOURCE = "../../../../fromargs/examples/cheese_cave.py"
 def _multi(skill: Path, *names: str, extra: str = "") -> None:
     """Rewrite the fixture's wedge.toml into ``[[target]]`` tables over one source."""
     header = (
-        'project = "../../../../fromargs"\n'
+        'project = "../../../../.."\n'
         'include = ["../../../../fromargs/src/fromargs"]\n'
         'repo = "paulnsorensen/skillz-that-grillz"\n'
     )

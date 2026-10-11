@@ -39,7 +39,7 @@ from wedge._key import FORMAT_VERSION, BuildPaths, compute_key
 SOURCE = "../../../../fromargs/examples/cheese_cave.py"
 ENTRY = "cheese_cave:main"
 HEAD = (
-    'project = "../../../../fromargs"\n'
+    'project = "../../../../.."\n'
     'include = ["../../../../fromargs/src/fromargs"]\n'
     'repo = "paulnsorensen/skillz-that-grillz"\n'
 )
@@ -309,18 +309,18 @@ def test_load_targets_duplicate_names_are_caught_even_with_distinct_other_fields
     [
         ("../../../../../../../../../../etc/hostname", "../../../../fromargs/src/fromargs"),
         ("/etc/hostname", "../../../../fromargs/src/fromargs"),
-        ("../../../../fromargs-evil/mod.py", "../../../../fromargs/src/fromargs"),
+        ("../../../../../../fromargs-evil/mod.py", "../../../../fromargs/src/fromargs"),
         (SOURCE, "../../../../../../../../../../etc"),
         (SOURCE, "/etc"),
-        (SOURCE, "../../../../fromargs-evil"),
-        (SOURCE, "../../../../fromargs/../fromargs-evil"),
+        (SOURCE, "../../../../../../fromargs-evil"),
+        (SOURCE, "../../../../fromargs/../../../fromargs-evil"),
     ],
 )
 def test_compute_key_target_path_leaving_the_project_is_a_config_error(
     tmp_path: Path, copy_repo_subset: CopySubset, source: str, include: str
 ) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
-    evil = skill.parent.parent.parent.parent / "fromargs-evil"
+    evil = skill.parents[5] / "fromargs-evil"
     evil.mkdir()
     _ = (evil / "mod.py").write_text("x = 1\n")
     _write(skill, _table("a", source=source, extra=f'include = ["{include}"]\n'))
@@ -1053,10 +1053,10 @@ def test_stage_sources_overlay_replaces_checkout_files_and_leaves_the_rest(
     skill = copy_repo_subset(tmp_path / "checkout")
     paths = resolve_target(skill, _only_target(skill))
     overlay = tmp_path / "overlay"
-    (overlay / "examples").mkdir(parents=True)
-    _ = (overlay / "examples/cheese_cave.py").write_text("EDITED = True\n")
-    (overlay / "src/fromargs").mkdir(parents=True)
-    _ = (overlay / "src/fromargs/__init__.py").write_text("EDITED_INIT = True\n")
+    (overlay / "packages/fromargs/examples").mkdir(parents=True)
+    _ = (overlay / "packages/fromargs/examples/cheese_cave.py").write_text("EDITED = True\n")
+    (overlay / "packages/fromargs/src/fromargs").mkdir(parents=True)
+    _ = (overlay / "packages/fromargs/src/fromargs/__init__.py").write_text("EDITED_INIT = True\n")
     real_before = (paths.source).read_text()
     untouched = (paths.includes[0] / "_errors.py").read_text()
 
@@ -1077,11 +1077,11 @@ def test_stage_sources_overlay_file_outside_the_target_sources_is_rejected(
     skill = copy_repo_subset(tmp_path / "checkout")
     paths = resolve_target(skill, _only_target(skill))
     overlay = tmp_path / "overlay"
-    (overlay / "examples").mkdir(parents=True)
-    _ = (overlay / "examples/cheese_cave.py").write_text("EDITED = True\n")
-    _ = (overlay / "examples/new_module.py").write_text("ADDED = True\n")
+    (overlay / "packages/fromargs/examples").mkdir(parents=True)
+    _ = (overlay / "packages/fromargs/examples/cheese_cave.py").write_text("EDITED = True\n")
+    _ = (overlay / "packages/fromargs/examples/new_module.py").write_text("ADDED = True\n")
 
-    with pytest.raises(ConfigError, match="overlay file is not under the target's sources: examples/new_module.py"):
+    with pytest.raises(ConfigError, match="overlay file is not under the target's sources: packages/fromargs/examples/new_module.py"):
         _ = stage_sources(paths, tmp_path / "staged", overlay)
 
     assert not (tmp_path / "staged").exists(), "a rejected overlay stages nothing"
@@ -1092,8 +1092,8 @@ def test_stage_sources_overlay_symlink_is_rejected(tmp_path: Path, copy_repo_sub
     skill = copy_repo_subset(tmp_path / "checkout")
     paths = resolve_target(skill, _only_target(skill))
     overlay = tmp_path / "overlay"
-    (overlay / "examples").mkdir(parents=True)
-    (overlay / "examples/cheese_cave.py").symlink_to(paths.source)
+    (overlay / "packages/fromargs/examples").mkdir(parents=True)
+    (overlay / "packages/fromargs/examples/cheese_cave.py").symlink_to(paths.source)
 
     with pytest.raises(ValueError, match="regular file"):
         _ = stage_sources(paths, tmp_path / "staged", overlay)
