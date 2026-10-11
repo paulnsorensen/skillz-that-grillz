@@ -17,12 +17,16 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 
 - Ingest builds `tool_uses`, `tool_results`, `stop_events`, and `model_turns` from narrow rows that the staging pass pre-flattens. DuckDB no longer runs `json_extract` over `raw_entries.message`. The `raw_entries` step runs on one thread. Peak memory of an ingest step drops from 11.1 GB to 2.6 GB on a 1 M-row log set. Tables, columns, and types stay the same.
 - Every DuckDB run now sets `memory_limit` (default `4GB`, was `8GB`), `threads` (default `4`), `preserve_insertion_order=false`, and a 20GB spill cap.
+- The schema version is now 2, so ingest rebuilds a version 1 database.
+- The Codex adapter keeps `item_completed` `UserMessage` prompts, `task_complete`, and `turn_aborted` events as `raw_entries` rows. Codex `sessions.entry_count` counts them.
 
 ### Added
 
 - `SESSIONS_DUCKDB_THREADS` sets the DuckDB thread count.
 - DuckDB spills to the `<db>.spill` directory.
 - A query-hygiene rule in `query-conventions.md`.
+- The `user_turns` table: one row per real user prompt (claude, codex, omp, and pi) with `turn_index`, the full `text`, and `prev_assistant_text`.
+- The `interrupt_events` view: Claude `[Request interrupted` markers and Codex `turn_aborted` events with reason `interrupted`.
 
 ## [0.1.0] - 2026-10-11
 

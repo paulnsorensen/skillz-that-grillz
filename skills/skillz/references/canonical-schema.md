@@ -1,6 +1,6 @@
 # Canonical Schema
 
-Contents: [tool_uses](#tool_uses), [tool_results](#tool_results), [stop_events](#stop_events), [model_turns](#model_turns), [agent_spawns](#agent_spawns), [skill_invocations](#skill_invocations), [mcp_calls](#mcp_calls), [sessions](#sessions), [stop_hooks](#stop_hooks), [permission_denials](#permission_denials), [raw_entries](#raw_entries), [schema_info](#schema_info), [Type gotchas](#type-gotchas).
+Contents: [tool_uses](#tool_uses), [tool_results](#tool_results), [stop_events](#stop_events), [model_turns](#model_turns), [agent_spawns](#agent_spawns), [skill_invocations](#skill_invocations), [mcp_calls](#mcp_calls), [sessions](#sessions), [stop_hooks](#stop_hooks), [permission_denials](#permission_denials), [user_turns](#user_turns), [interrupt_events](#interrupt_events), [raw_entries](#raw_entries), [schema_info](#schema_info), [Type gotchas](#type-gotchas).
 
 The shape every harness adapter normalizes into and every analytics pack queries
 against. `agent-session-analytics ingest` loads one canonical row shape (the Claude envelope plus a
@@ -103,7 +103,7 @@ One row per `(harness, sessionId, cwd, branch)`. Columns: `harness`,
 `parent_session_id`, `entry_count`. `version` is the harness CLI version (Claude `version`, Codex
 `session_meta.cli_version`) of the latest entry by timestamp. It is NULL when
 the log names none.
-`entry_count` counts the rows of the session in `raw_entries` except Codex `token_usage` rows. Those rows are synthetic and feed only `model_turns`.
+`entry_count` counts the rows of the session in `raw_entries` except Codex `token_usage` rows. Those rows are synthetic and feed only `model_turns`. Codex user prompts, `task_complete`, and `turn_aborted` rows count.
 `parent_session_id` is the Codex `source.subagent.thread_spawn.parent_thread_id` of a sub-agent rollout. It is NULL for any other session.
 A forked Codex sub-agent rollout counts as a standalone session with its own `sessionId`. A Claude sidechain keeps the parent `sessionId`.
 
@@ -118,6 +118,31 @@ none). Columns: `harness`, `timestamp`, `sessionId`, `hookCount`,
 
 Pre-filtered `tool_results` for permission/hook denials (claude-dominant).
 Columns: `harness`, `content`, `sessionId`, `timestamp`.
+
+## `user_turns`
+
+One row per real user prompt (claude, codex, omp, and pi; cursor is not covered).
+The table holds the full prompt text. The database file is private to the user (umask 077).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| harness | VARCHAR | Source harness |
+| sessionId | VARCHAR | Session identifier |
+| timestamp | VARCHAR | ISO timestamp of the prompt |
+| turn_index | BIGINT | 0-based position among the real prompts of the session, ordered by timestamp, then by source file and position in that file |
+| text | VARCHAR | Full prompt text, not truncated. Text blocks join with a newline |
+| prev_assistant_text | VARCHAR | Last assistant text before the prompt, or NULL when none precedes it. Claude, omp, and pi: the joined text blocks of the last assistant entry with text (Claude skips sidechain entries). Codex: `last_agent_message` of the last `task_complete` event; NULL when that turn ended without one |
+
+A real Claude prompt is a `user` entry that is not `isMeta`, `isCompactSummary`, or `isSidechain`.
+It has string content or a text block, and its text does not start with `<` or `[Request interrupted`.
+A real omp or pi prompt is a `user` row with at least one text block. Codex prompts come from `item_completed` `UserMessage` events.
+
+## `interrupt_events`
+
+A view of user interrupts from structured markers only. Columns: `harness`,
+`sessionId`, `timestamp`. Claude: a `user` entry whose text starts with
+`[Request interrupted`. Codex: a `turn_aborted` event with reason `interrupted`.
+Cursor, omp, and pi aborts are not covered (see `stop_events`).
 
 ## `raw_entries`
 

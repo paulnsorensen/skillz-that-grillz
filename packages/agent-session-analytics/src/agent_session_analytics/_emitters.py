@@ -27,6 +27,10 @@ Emitter = Callable[[Entry], Iterable[Row]]
 
 STOP_REASONS = ("end_turn", "stop_sequence", "max_tokens", "success", "error", "aborted")
 CONTENT_CLIP = 500
+# A Claude user text with this prefix marks an interrupt, not a prompt.
+INTERRUPT_PREFIX = "[Request interrupted"
+# The harnesses whose user prompts reach user_turns.
+PROMPT_HARNESSES = ("claude", "codex", "omp", "pi")
 # An escaped backslash (kept as is) or a \u00XX control escape (hex upper-cased).
 _CONTROL_ESCAPE = re.compile(r"[\\][\\]|[\\]u00[0-9a-f]{2}")
 
@@ -47,6 +51,20 @@ def _blocks(entry: Entry) -> list[object]:
     message = _message(entry)
     content = message.get("content") if message else None
     return cast(list[object], content) if isinstance(content, list) else []
+
+
+def _texts(entry: Entry) -> list[str]:
+    """Return the text of each `text` content block, in order."""
+    texts: list[str] = []
+    for block in _blocks(entry):
+        text = _at(block, "text")
+        if _at(block, "type") == "text" and isinstance(text, str):
+            texts.append(text)
+    return texts
+
+
+def _joined(texts: list[str]) -> str | None:
+    return "\n".join(texts) if texts else None
 
 
 def _at(value: object, key: str) -> object:
@@ -177,6 +195,73 @@ def _model_turns(harness: str, source: str) -> Emitter:
     return emit
 
 
+def _claude_prompt(entry: Entry) -> str | None:
+    """Return the text of a real Claude prompt, or None for any other user entry.
+
+    A real prompt is not meta, a compact summary, or a sidechain entry. It has
+    string content or at least one text block, so a tool-result-only entry is
+    not a prompt. Its text does not start with `<` (an injected tag) or with
+    the interrupt marker.
+    """
+    if any(entry.get(flag) is True for flag in ("isMeta", "isCompactSummary", "isSidechain")):
+        return None
+    message = _message(entry)
+    content = message.get("content") if message else None
+    text = content if isinstance(content, str) else _joined(_texts(entry))
+    if text is None or text.startswith(("<", INTERRUPT_PREFIX)):
+        return None
+    return text
+
+
+def _user_turns(harness: str, source: str) -> Emitter:
+    """One row per real user prompt, with the last assistant text before it.
+
+    `prev_assistant_text` follows the file order. Claude and Pi-family rows take
+    the joined text blocks of the last assistant entry with text; Claude skips
+    sidechain entries. Codex takes the last `task_complete` entry, so a turn
+    that ended without `last_agent_message` resets it to NULL. `source` and
+    `ordinal` keep the file order for the turn_index tie-break.
+    """
+    prev_text: str | None = None
+    ordinal = 0
+
+    def track_assistant(entry: Entry) -> None:
+        nonlocal prev_text
+        if harness == "codex":
+            if entry.get("subtype") == "task_complete":
+                prev_text = _joined(_texts(entry))
+            return
+        if harness == "claude" and entry.get("isSidechain") is True:
+            return
+        text = _joined(_texts(entry))
+        if text is not None:
+            prev_text = text
+
+    def emit(entry: Entry) -> Iterable[Row]:
+        nonlocal ordinal
+        if harness not in PROMPT_HARNESSES:
+            return
+        if entry.get("type") == "assistant":
+            track_assistant(entry)
+            return
+        if entry.get("type") != "user":
+            return
+        text = _claude_prompt(entry) if harness == "claude" else _joined(_texts(entry))
+        if text is None:
+            return
+        ordinal += 1
+        yield {
+            "harness": entry.get("harness"),
+            **_envelope(entry, "sessionId", "timestamp"),
+            "source": source,
+            "ordinal": ordinal,
+            "text": text,
+            "prev_assistant_text": prev_text,
+        }
+
+    return emit
+
+
 _ENVELOPE = {"timestamp": "VARCHAR", "sessionId": "VARCHAR"}
 _ENVELOPE_CWD = {**_ENVELOPE, "cwd": "VARCHAR"}
 _ENVELOPE_GIT = {**_ENVELOPE_CWD, "gitBranch": "VARCHAR"}
@@ -238,5 +323,18 @@ DERIVED_TABLES = (
             **_ENVELOPE_CWD,
         },
         _model_turns,
+    ),
+    DerivedTable(
+        "user_turns",
+        {
+            "harness": "VARCHAR",
+            "sessionId": "VARCHAR",
+            "timestamp": "VARCHAR",
+            "source": "VARCHAR",
+            "ordinal": "BIGINT",
+            "text": "VARCHAR",
+            "prev_assistant_text": "VARCHAR",
+        },
+        _user_turns,
     ),
 )

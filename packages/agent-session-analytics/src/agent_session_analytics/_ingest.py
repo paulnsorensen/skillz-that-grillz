@@ -45,7 +45,7 @@ from agent_session_analytics._db import (
     run_sql,
     sql_quote,
 )
-from agent_session_analytics._emitters import DERIVED_TABLES, DerivedTable
+from agent_session_analytics._emitters import DERIVED_TABLES, INTERRUPT_PREFIX, DerivedTable
 
 if TYPE_CHECKING:
     from typing import TypeAlias
@@ -299,6 +299,41 @@ def _codex_parent_session(payload: dict[str, _JsonValue]) -> str | None:
     return parent if isinstance(parent, str) and parent else None
 
 
+def _codex_event(payload: dict[str, _JsonValue]) -> dict[str, _JsonValue] | None:
+    """Map one non-token ``event_msg`` payload to canonical fields, or None to drop it.
+
+    An ``item_completed`` ``UserMessage`` item becomes a user entry with its
+    text blocks. ``task_complete`` becomes an assistant entry with subtype
+    ``task_complete`` and ``last_agent_message`` as its one text block (no block
+    when the turn ended without one). ``turn_aborted`` becomes a system entry
+    with subtype ``turn_aborted`` and the abort reason in ``stopReason``.
+    """
+    ptype = payload.get("type")
+    if ptype == "item_completed":
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "UserMessage":
+            return None
+        content = item.get("content")
+        blocks: list[_JsonValue] = [
+            {"type": "text", "text": block["text"]}
+            for block in (content if isinstance(content, list) else [])
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+        ]
+        return {"type": "user", "message": {"content": blocks}} if blocks else None
+    if ptype == "task_complete":
+        last = payload.get("last_agent_message")
+        blocks = [{"type": "text", "text": last}] if isinstance(last, str) else []
+        return {"type": "assistant", "subtype": "task_complete", "message": {"content": blocks}}
+    if ptype == "turn_aborted":
+        reason = payload.get("reason")
+        return {
+            "type": "system",
+            "subtype": "turn_aborted",
+            "stopReason": reason if isinstance(reason, str) else None,
+        }
+    return None
+
+
 def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     """Codex rollout JSONL -> canonical envelope.
 
@@ -317,7 +352,9 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     stamps ``parentSessionId`` on every entry. Each non-duplicate
     ``token_count`` event with a ``last_token_usage`` becomes one
     ``token_usage`` entry (unique ``message.id``, empty content). Only
-    model_turns reads it, as one row; no other table sees it.
+    model_turns reads it, as one row; no other table sees it. User prompts,
+    ``task_complete``, and ``turn_aborted`` events map through _codex_event;
+    ``response_item`` user messages (preambles and injected context) stay out.
     """
     session_id = None
     parent_session_id = None
@@ -367,6 +404,19 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                     "usage": usage,
                 },
             }
+            continue
+        if etype == "event_msg" and isinstance(payload, dict):
+            event = _codex_event(payload)
+            if event is not None:
+                yield {
+                    "harness": "codex",
+                    "timestamp": ts,
+                    "sessionId": session_id,
+                    "parentSessionId": parent_session_id,
+                    "version": cli_version,
+                    "cwd": cwd,
+                    **event,
+                }
             continue
         if etype != "response_item" or not isinstance(payload, dict):
             continue
@@ -1010,6 +1060,22 @@ def _do_ingest_and_swap() -> float:
         GROUP BY harness, sessionId, turn_key;
     """)
 
+    # Step 4c: user_turns (one row per real user prompt; see _emitters).
+    # turn_index counts real prompts per harness and session, ordered by
+    # timestamp, then by source file and position in that file.
+    _log("  Creating user_turns...")
+    run_sql(f"""
+        CREATE TABLE user_turns AS
+        SELECT
+            harness, sessionId, timestamp,
+            row_number() OVER (
+                PARTITION BY harness, sessionId
+                ORDER BY TRY_CAST(timestamp AS TIMESTAMPTZ) NULLS LAST, source, ordinal
+            ) - 1 AS turn_index,
+            text, prev_assistant_text
+        FROM {_read_derived(tables["user_turns"])};
+    """)
+
     # Step 5: agent_spawns.
     _log("  Creating agent_spawns...")
     run_sql("""
@@ -1082,6 +1148,42 @@ def _do_ingest_and_swap() -> float:
         WHERE content LIKE 'Permission to use % has been denied%'
            OR content LIKE 'Hook PreToolUse:% denied this tool%'
            OR content LIKE '%The user doesn''t want to proceed%';
+    """)
+
+    # Step 11: interrupt_events, a view over structured markers only. A Claude
+    # interrupt is a user entry whose text (string content, or the first text
+    # block) starts with the marker; the LIKE prefilter keeps the JSON parse to
+    # the few candidate rows. A Codex interrupt is a turn_aborted entry with
+    # reason 'interrupted'.
+    _log("  Creating interrupt_events...")
+    run_sql(f"""
+        CREATE VIEW interrupt_events AS
+        WITH claude_candidates AS (
+            SELECT harness, sessionId, timestamp, json_extract(message, '$.content') AS content
+            FROM raw_entries
+            WHERE harness = 'claude' AND type = 'user'
+              AND CAST(message AS VARCHAR) LIKE '%{INTERRUPT_PREFIX}%'
+        )
+        SELECT harness, sessionId, timestamp
+        FROM claude_candidates
+        WHERE starts_with(
+            CASE json_type(content)
+                WHEN 'VARCHAR' THEN json_extract_string(content, '$')
+                WHEN 'ARRAY' THEN json_extract_string(
+                    list_filter(
+                        TRY_CAST(content AS JSON[]),
+                        lambda block: json_extract_string(block, '$.type') = 'text'
+                    )[1],
+                    '$.text'
+                )
+            END,
+            '{INTERRUPT_PREFIX}'
+        )
+        UNION ALL
+        SELECT harness, sessionId, timestamp
+        FROM raw_entries
+        WHERE harness = 'codex' AND type = 'system' AND subtype = 'turn_aborted'
+          AND stopReason = 'interrupted';
     """)
 
     _log("  Creating indexes...")
