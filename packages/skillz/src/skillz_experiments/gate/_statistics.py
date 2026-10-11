@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+import math
+import statistics
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, fields
+from types import MappingProxyType
+from typing import cast
+
+
+def threshold(value: object) -> float | None:
+    """Return `value` as a float when it is a finite number of at least 0; else return None.
+
+    A bool, a non-number, an int too large for a float, a non-finite number, and a negative number give None.
+    """
+    if type(value) not in (int, float):
+        return None
+    try:
+        number = float(cast(float, value))
+    except OverflowError:
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number + 0.0  # turns -0.0 into 0.0 so both hash alike
+
+
+def _saving(value: object) -> float | None:
+    """Return `value` as a float when it lies strictly between 0 and 1; else return None."""
+    number = threshold(value)
+    return number if number is not None and 0 < number < 1 else None
+
+
+def _budget_map(name: str, value: object) -> dict[str, float]:
+    """Check a map of family name to budget. Raise `ValueError` for a shape problem."""
+    if not isinstance(value, dict):
+        raise ValueError(f"statistics {name} must be an object of numbers")
+    result: dict[str, float] = {}
+    for key, number in cast(dict[object, object], value).items():
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError(f"statistics {name} keys must be nonempty strings")
+        checked = threshold(number)
+        if checked is None:
+            raise ValueError(f"statistics {name} {key} must be a finite number of at least 0")
+        result[key] = checked
+    return result
+
+
+@dataclass(frozen=True)
+class Statistics:
+    """Resolved promotion thresholds. The defaults reproduce the built-in 2*SE rule.
+
+    Every field except `min_token_saving` only tightens the rule. `min_token_saving` also adds `promote-cheaper`.
+    That verdict needs no observed loss and claims no gain. The SE multiplier stays 2. `min_gain` and
+    `min_lower_bound` are floors of at least 0.
+    A field with `flag` metadata also has a CLI flag. A field with `nullable` metadata may be None, which
+    turns its rule off. A field with `map` metadata holds a name-to-number map and is contract-only.
+    `max_token_increase_per_gain` and `min_token_saving` set the token rule, which is off while both are None.
+    `min_token_saving` is a saving share strictly between 0 and 1.
+    A field with `check` metadata sets its own value check: a function that returns the checked float or None.
+    The default check is `threshold`. The `rule` metadata then names the accepted values in the error message.
+    `declared`, `parse`, and `data` check the shape of a map, not its agreement with any run record.
+    """
+
+    min_gain: float = field(default=0.0, metadata={"flag": True})
+    min_lower_bound: float = field(default=0.0, metadata={"flag": True})
+    family_budget: float | None = field(default=None, metadata={"flag": True, "nullable": True})
+    family_budgets: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}), hash=False,
+                                                metadata={"map": True})
+    max_token_increase_per_gain: float | None = field(default=None, metadata={"flag": True, "nullable": True})
+    min_token_saving: float | None = field(default=None, metadata={
+        "flag": True, "nullable": True, "check": _saving, "rule": "null or a number above 0 and below 1"})
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "family_budgets", MappingProxyType(dict(sorted(self.family_budgets.items()))))
+
+    @property
+    def token_rule(self) -> bool:
+        """Whether a token field is set, which turns the token rule on."""
+        return self.max_token_increase_per_gain is not None or self.min_token_saving is not None
+
+    @classmethod
+    def names(cls) -> tuple[str, ...]:
+        return tuple(item.name for item in fields(cls))
+
+    @classmethod
+    def flags(cls) -> tuple[str, ...]:
+        return tuple(item.name for item in fields(cls) if item.metadata.get("flag"))
+
+    @classmethod
+    def declared(cls, value: object) -> dict[str, object]:
+        """Check a partial mapping of thresholds. Raise `ValueError` for a shape problem."""
+        if not isinstance(value, dict):
+            raise ValueError("statistics must be an object")
+        item = cast(dict[str, object], value)
+        unknown = sorted(set(item) - set(cls.names()))
+        if unknown:
+            raise ValueError(f"statistics has unknown fields: {', '.join(unknown)}; allowed: {', '.join(cls.names())}")
+        metadata = {entry.name: entry.metadata for entry in fields(cls)}
+        result: dict[str, object] = {}
+        for name, number in item.items():
+            if metadata[name].get("map"):
+                result[name] = _budget_map(name, number)
+            elif number is None and metadata[name].get("nullable"):
+                result[name] = None
+            else:
+                check = cast(Callable[[object], float | None], metadata[name].get("check", threshold))
+                checked = check(number)
+                if checked is None:
+                    rule = cast(str, metadata[name].get("rule", "a finite number of at least 0"))
+                    raise ValueError(f"statistics {name} must be {rule}")
+                result[name] = checked
+        return result
+
+    @classmethod
+    def parse(cls, value: object) -> Statistics:
+        """Check a full mapping of thresholds: exactly the fields of this class. Raise `ValueError` otherwise."""
+        checked = cls.declared(value)
+        missing = sorted(set(cls.names()) - set(checked))
+        if missing:
+            raise ValueError(f"statistics lacks fields: {', '.join(missing)}")
+        return cast(Callable[..., Statistics], cls)(**checked)
+
+    def data(self) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for item in fields(self):
+            value = cast(object, getattr(self, item.name))
+            result[item.name] = dict(cast(Mapping[str, float], value)) if item.metadata.get("map") else value
+        return result
+
+
+DEFAULT_STATISTICS = Statistics()
+
+
+def case_deltas(
+    baseline: Mapping[str, Sequence[float]], winner: Mapping[str, Sequence[float]]
+) -> dict[str, float]:
+    """Return the winner-minus-baseline mean delta per case, averaged over repeats."""
+    if baseline.keys() != winner.keys():
+        raise ValueError("baseline and winner must score the same case ids")
+    deltas: dict[str, float] = {}
+    for case_id, base in baseline.items():
+        won = winner[case_id]
+        if not base or not won:
+            raise ValueError(f"case {case_id} has no repeat scores")
+        deltas[case_id] = statistics.fmean(won) - statistics.fmean(base)
+    return deltas

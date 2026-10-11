@@ -11,7 +11,7 @@ from typing import cast
 
 from skillz_experiments._cases import CodedError, digest, string
 from skillz_experiments._contract import Surface
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import OPTION_FIELDS, ClaudeCode, ClaudeLogin, ClaudeOptions
 from skillz_experiments.harness._codex import CODEX_IDENTITY, Codex
 from skillz_experiments.harness._command import Command

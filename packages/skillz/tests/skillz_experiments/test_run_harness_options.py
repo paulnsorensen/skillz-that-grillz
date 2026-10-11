@@ -11,12 +11,12 @@ from typing import cast, final
 
 import pytest
 
-from skillz_experiments import _workflow
+from skillz_experiments.run import _run
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
 from skillz_experiments.harness import Configuration
 from skillz_experiments._records import read
-from skillz_experiments._workflow import Stop, run
+from skillz_experiments.run import Stop, run
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -188,7 +188,7 @@ def test_a_command_role_skips_doctor_and_a_builtin_role_in_a_config_runs_it(
         checked.extend(selections)
         return {"ok": True, "harness": "claude", "checks": [], "live_calls": 0}
 
-    monkeypatch.setattr(_workflow, "host_report", fake_report)
+    monkeypatch.setattr(_run, "host_report", fake_report)
     config, _, _ = _config(tmp_path)
     with pytest.raises(Stop) as command_only:
         _ = run(target, tmp_path / "command-run", "offline", live=True, configuration=Configuration.load(config, "offline"))
@@ -210,7 +210,7 @@ def test_a_failed_host_check_of_a_builtin_role_in_a_config_stops_the_run(
         del selections
         return {"ok": False, "harness": "claude", "checks": [], "live_calls": 0}
 
-    monkeypatch.setattr(_workflow, "host_report", failing_report)
+    monkeypatch.setattr(_run, "host_report", failing_report)
     claude = _fake_claude(tmp_path / "bin")
     config = tmp_path / "harness.json"
     _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [str(claude)]}))

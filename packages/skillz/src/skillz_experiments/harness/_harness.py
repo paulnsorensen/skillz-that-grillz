@@ -11,7 +11,7 @@ from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments._contract import Surface
 from skillz_experiments._evaluator import evaluate
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, ClaudeLogin, ClaudeOptions,
                                               resolve_read_roots)
 from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, HarnessName, Role, adapter_class,

@@ -11,12 +11,13 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _workflow
-from skillz_experiments.harness import _claude, _codex, _doctor
-from skillz_experiments.harness._claude import ClaudeCode
+from skillz_experiments.run import _run
+from skillz_experiments.harness import _codex, _doctor
+from skillz_experiments.harness._claude import _sandbox, _transport
+from skillz_experiments.harness._claude._transport import ClaudeCode
 from skillz_experiments._cli import main
 from skillz_experiments._cases import CodedError
-from skillz_experiments._workflow import Stop, run
+from skillz_experiments.run import Stop, run
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -31,7 +32,7 @@ def host_bin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str],
     _ = bwrap.write_text("#!/bin/sh\nexit 0\n")
     bwrap.chmod(0o755)
     monkeypatch.setenv("PATH", f"{directory}:/usr/bin:/bin")
-    monkeypatch.setattr(_claude, "LIVE_TOOLS", (sys.executable,))
+    monkeypatch.setattr(_sandbox, "LIVE_TOOLS", (sys.executable,))
 
     def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, argv, seconds
@@ -72,7 +73,7 @@ def test_the_claude_doctor_keeps_the_layer_1_rows_in_order(
         host_bin: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _ = host_bin("ok")
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: False)
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: False)
     assert _ordered(_doctor.doctor("claude")) == [
         ("claude", "pass"), ("tool:bwrap", "pass"), (f"tool:{sys.executable}", "pass"), ("apparmor", "info"),
         ("login", "pass"), ("credential", "pass"), ("sandbox-probe", "pass"), ("skill-inventory", "pass"),
@@ -97,8 +98,8 @@ def test_every_independent_problem_is_reported_in_one_pass(
         host_bin: Callable[[str], Path], host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _ = host_bin("ok")
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(_claude, "SANDBOX_HELPERS", ("socat-missing-for-test",))
-    monkeypatch.setattr(_claude, "LIVE_TOOLS", ("/nonexistent/curl",))
+    monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ("socat-missing-for-test",))
+    monkeypatch.setattr(_sandbox, "LIVE_TOOLS", ("/nonexistent/curl",))
     host_login.unlink()
     report = _doctor.doctor("claude")
     failed = {name for name, row in rows(report).items() if row["status"] == "fail"}
@@ -111,7 +112,7 @@ def test_a_missing_tool_does_not_hide_the_skill_inventory(
         host_bin: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _ = host_bin("ok")
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(_claude, "SANDBOX_HELPERS", ("socat-missing-for-test",))
+    monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ("socat-missing-for-test",))
     checks = rows(_doctor.doctor("claude"))
     assert checks["tool:socat-missing-for-test"]["status"] == "fail"
     assert checks["skill-inventory"]["status"] == "pass" and "sandbox-probe" not in checks
@@ -154,7 +155,7 @@ def test_a_setup_error_that_is_not_coded_is_labelled_claude_setup(
     def broken(*args: object, **kwargs: object) -> ClaudeCode:
         del args, kwargs
         raise OSError("no space left")
-    monkeypatch.setattr(_claude, "ClaudeCode", broken)
+    monkeypatch.setattr(_transport, "ClaudeCode", broken)
     report = _doctor.doctor("claude")
     row = rows(report)["claude-setup"]
     assert report["ok"] is False and row["status"] == "fail" and "TMPDIR" in cast(str, row["fix"])
@@ -212,7 +213,7 @@ def test_a_missing_claude_executable_fails_with_its_fix(tmp_path: Path, monkeypa
 
 def test_a_blocked_nested_namespace_is_explained(host_bin: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _ = host_bin("ok")
-    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: True)
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
     report = _doctor.doctor("claude")
     assert report["ok"] is True
     assert "allowAllUnixSockets" in cast(str, rows(report)["nested-namespace"]["detail"])
@@ -227,7 +228,7 @@ def test_a_failed_host_check_stops_a_fresh_run_before_cases_missing(
     def failing(selections: Sequence[tuple[str, str | None]]) -> dict[str, object]:
         asked.extend(harness for harness, _ in selections)
         return report
-    monkeypatch.setattr(_workflow, "host_report", failing)
+    monkeypatch.setattr(_run, "host_report", failing)
     with pytest.raises(Stop) as stopped:
         _ = run(make_target(tmp_path), tmp_path / "out", "m", live=True)
     assert stopped.value.code == "host-not-ready"

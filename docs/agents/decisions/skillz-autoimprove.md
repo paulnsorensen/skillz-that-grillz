@@ -2,7 +2,7 @@
 
 These records explain the design of `/skillz autoimprove`, which generalizes the skillz experiment runner at `packages/skillz/src/skillz_experiments/`.
 The approved spec is `specs/skillz-autoimprove.md` in the durable cheese corpus.
-The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10.
+The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10. ADR-011 to ADR-013 come from a second Mold session on 2026-10-10, recorded in `specs/skillz-experiments-module-layout.md`.
 
 ## Records
 
@@ -94,5 +94,22 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Decision:** A run with a journey case shows a separate journey budget line and asks for approval once. The ceiling is 1000 calls and 28800 seconds. The plan charges 30 seconds for each call, so the seconds cap binds first, at about 960 calls. This amends skillz-pragmatic-autoimprove ADR-005 for those runs.
 - **Alternatives:** Journeys only in the gate. A fit inside 200 calls and 7200 seconds with 4 turns and 1 repeat, which weakens ADR-002. Higher global caps.
 - **Consequences:** Journey runs take hours. The plan sizes the holdout gate from the sum of its case costs. It sizes each search call at the mean case cost. A mixed manifest then does not pay the journey cost for every case. Anthropic usage terms still limit volume.
+### ADR-011: Grow skillz_experiments into pressure-driven slices  [status: accepted]
+- **Context:** The package has 28 flat modules. `_workflow.py` has 1262 lines and `_claude.py` has 1595 lines. The borrow list in `.cheese/research/autoimprove-borrow-candidates.md` adds 52 mechanisms, and most of them would land inside `_workflow._Session`.
+- **Decision:** One wave with no behaviour change creates four subpackages, each with an `__init__.py` facade: `run/`, `search/`, `gate/`, and `harness/`. `Budget` moves to a shared `_budget.py`. The other flat modules move into `evaluation/`, `cases/`, or `candidate/` when a later wave first touches them. `search/` and `gate/` never import `run/` or `harness/`.
+- **Alternatives:** All slices in one wave (largest diff for little gain). A flat split into `_x.py` siblings (no crust). No change (every proposer feature grows `_Session`).
+- **Consequences:** The four slices receive 42 of the 52 placed borrow ids. The first wave changes about 41 test import lines. Later waves can run in separate worktrees, but they all wire into `run/_session.py`.
 
-_Source: Mold session 2026-10-03, Mold session 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-11 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment)_
+### ADR-012: Run the proposer line first, with the gate and harness waves beside it  [status: accepted]
+- **Context:** After the structural wave, seven feature waves remain. The #182 false-promotion ratchet guards gate changes only, and the gate, not the proposer, decides promotion.
+- **Decision:** W0 fixes #191, #190, and #193. W1 is the structural wave from ADR-011. The main line is W3 leakage (#174), then W4 proposer (#194 and #153), then W5 search mechanics. W2 gate (#182, #134) and W6 harness and cost (#176, #179) run beside it in separate worktrees. W7 targets (#112) runs last.
+- **Alternatives:** A serial order with the gate first. A serial order with the proposer first. The proposer line only, with the other waves as follow-ups.
+- **Consequences:** The GEPA and RRSI work lands first. The parallel waves can conflict in `run/_session.py`. W7 waits for a re-ground of #112.
+
+### ADR-013: Treat check_candidate as the O1 cascade first stage  [status: accepted]
+- **Context:** OpenEvolve cascade evaluation (O1) needs a cheap deterministic first stage. `check_candidate` already materializes the candidate, checks the SKILL.md name, and runs the helper fixtures. A failure scores 0 before any model call (`_evaluator.py:97`). It runs once per case evaluation, not once per candidate.
+- **Decision:** O1 adds no cascade module and no smoke stage. W5 memoizes `check_candidate` by candidate identity within one run, because the contract is frozen for the run. The I1 leakage gate rejects copied case text at proposal time, which is earlier than any cascade stage.
+- **Alternatives:** A one-case smoke stage before the GEPA minibatch, which saves calls only when about half of candidates fail it. Deferral until the G3 evaluation policy is measured. No change.
+- **Consequences:** O1 closes with a small change. The memo must keep the rejection reason that `check_candidate` sets on the transport. A cross-run cache would need the contract hash in its key.
+
+_Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-11 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout)_

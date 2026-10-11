@@ -16,10 +16,11 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import parse
-from skillz_experiments._gate import Statistics, verdict
+from skillz_experiments.gate import Statistics, verdict
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import Stop, resolve_statistics, run
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, run
+from skillz_experiments.run._resume import resolve_statistics
 
 MODEL = "local-test"
 SPREAD = [1.0, 2.0, 3.0]

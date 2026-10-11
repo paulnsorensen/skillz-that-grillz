@@ -13,8 +13,8 @@ from skillz_experiments._cases import Case, CodedError, Journey, digest, load_ca
 from skillz_experiments._cli import main
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments._contract import Surface, parse
-from skillz_experiments._runtime import Budget, BudgetExhausted
-from skillz_experiments._workflow import _editable  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments._budget import Budget, BudgetExhausted
+from skillz_experiments.run._plan import editable_files
 
 ECHO = Path(__file__).parent / "fixtures/echo-skill"
 
@@ -321,15 +321,15 @@ def test_contract_surface_round_trips_through_data() -> None:
 def test_contract_surface_default_editable_set_excludes_companion_files() -> None:
     contract = parse(surface_contract({"companions": ["skills/helper"]}), "skill")
     files = {"SKILL.md": "a", "references/r.md": "b", "skills/helper/SKILL.md": "c", "skills/helper/scripts/x.py": "d"}
-    assert _editable(files, contract, "prose") == ["SKILL.md", "references/r.md"]
+    assert editable_files(files, contract, "prose") == ["SKILL.md", "references/r.md"]
 
 
 def test_contract_surface_default_editable_set_excludes_agents_and_the_mcp_config() -> None:
     contract = parse(surface_contract({"mcp_config": "scripts/mcp.json", "agents": ["agents/reviewer.md"]}), "skill")
     files = {"SKILL.md": "a", "agents/reviewer.md": "b", "scripts/mcp.json": "{}", "scripts/run.py": "c"}
-    assert _editable(files, contract, "prose+cli") == ["SKILL.md", "scripts/run.py"]
+    assert editable_files(files, contract, "prose+cli") == ["SKILL.md", "scripts/run.py"]
     plain = parse(surface_contract(), "skill")
-    assert _editable(files, plain, "prose+cli") == ["SKILL.md", "agents/reviewer.md", "scripts/mcp.json", "scripts/run.py"]
+    assert editable_files(files, plain, "prose+cli") == ["SKILL.md", "agents/reviewer.md", "scripts/mcp.json", "scripts/run.py"]
 
 
 def test_contract_surface_helper_path_inside_a_companion_is_read_only() -> None:
@@ -348,18 +348,18 @@ def test_contract_surface_files_the_mcp_config_runs_are_read_only_under_prose_cl
     files = {"SKILL.md": "a", "mcp/docs.json": MCP_RUNS_SERVER, "scripts/server.py": "s", "scripts/run.py": "c"}
     contract = parse(surface_contract({"mcp_config": "mcp/docs.json"}), "skill")
     assert contract.read_only("scripts/server.py", MCP_RUNS_SERVER) and not contract.read_only("scripts/run.py", MCP_RUNS_SERVER)
-    assert _editable(files, contract, "prose+cli") == ["SKILL.md", "scripts/run.py"]
+    assert editable_files(files, contract, "prose+cli") == ["SKILL.md", "scripts/run.py"]
     explicit = parse(surface_contract({"mcp_config": "mcp/docs.json"}, editable=["SKILL.md", "scripts/server.py", "scripts/run.py"]),
                      "skill")
     with pytest.raises(CodedError, match="scripts/server.py") as caught:
-        _ = _editable(files, explicit, "prose+cli")
+        _ = editable_files(files, explicit, "prose+cli")
     assert caught.value.code == "contract-surface"
     helped = parse(surface_contract({"mcp_config": "mcp/docs.json"}, helper={"path": "scripts/server.py"}), "skill")
     with pytest.raises(CodedError, match="scripts/server.py") as caught:
-        _ = _editable(files, helped, "prose+cli")
+        _ = editable_files(files, helped, "prose+cli")
     assert caught.value.code == "contract-surface"
     plain = parse(surface_contract(), "skill")
-    assert _editable(files, plain, "prose+cli") == ["SKILL.md", "scripts/run.py", "scripts/server.py"]
+    assert editable_files(files, plain, "prose+cli") == ["SKILL.md", "scripts/run.py", "scripts/server.py"]
 
 
 @pytest.mark.parametrize("kinds", [

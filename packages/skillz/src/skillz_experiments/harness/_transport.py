@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
 from skillz_experiments.harness._check import Check
 
 if TYPE_CHECKING:

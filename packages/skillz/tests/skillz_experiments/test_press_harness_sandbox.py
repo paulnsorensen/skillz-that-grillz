@@ -13,15 +13,16 @@ from typing import cast, final
 
 import pytest
 
-from skillz_experiments import _cli, _workflow
+from skillz_experiments import _cli
+from skillz_experiments.run import _run, _session
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
 from skillz_experiments.harness import MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, Configuration, _doctor
 from skillz_experiments.harness._codex import Codex, supported
 from skillz_experiments.wrapper import _gemini
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import Stop, run
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, run
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 REPO = Path(__file__).resolve().parents[4]
@@ -210,10 +211,10 @@ class _Provider:
         raise RuntimeError('stop here')
 
 
-def _factory(provider: _Provider) -> _workflow.Factory:
+def _factory(provider: _Provider) -> _session.Factory:
     def make(_model: str, _budget: object, _checkpoint: object) -> _Provider:
         return provider
-    return cast(_workflow.Factory, make)
+    return cast(_session.Factory, make)
 
 
 def _prepared_run(tmp_path: Path, target: Path, write_draft: Callable[..., list[str]]) -> Path:
@@ -498,7 +499,7 @@ def test_commandRole_neverRunsDoctorEvenWhenClaudeAndCodexAreAbsent(
         visits.extend(harness for harness, _ in selections)
         return _doctor.host_report(selections)
 
-    monkeypatch.setattr(_workflow, 'host_report', spying)
+    monkeypatch.setattr(_run, 'host_report', spying)
     monkeypatch.setenv('PATH', str(empty))
     harness, _, log = _inline(tmp_path)
     out = tmp_path / 'run'
@@ -512,7 +513,7 @@ def test_commandRole_withoutADraft_asksForCasesNotForAHostFix(
         tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     empty = tmp_path / 'empty-bin'
     empty.mkdir()
-    monkeypatch.setattr(_workflow, 'host_report', _doctor.host_report)
+    monkeypatch.setattr(_run, 'host_report', _doctor.host_report)
     monkeypatch.setenv('PATH', str(empty))
     harness, _, _ = _inline(tmp_path)
     code, out, _ = _cli_run(capsys, target, tmp_path / 'run', *harness)

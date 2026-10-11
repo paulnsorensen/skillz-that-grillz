@@ -17,7 +17,7 @@ from skillz_experiments._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, T
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._roles import Role
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 BRIEF = "BRIEF_SENTINEL: wants a short plan."

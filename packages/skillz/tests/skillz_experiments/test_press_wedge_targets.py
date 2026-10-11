@@ -27,16 +27,17 @@ from skillz_experiments._candidate import (FROZEN_FILE_LIMIT, FROZEN_TOTAL_LIMIT
                                            as_text)
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract, load_contract
-from skillz_experiments._gate import DEFAULT_STATISTICS
+from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import Budget
-from skillz_experiments._search import Edit
+from skillz_experiments._budget import Budget
+from skillz_experiments.search import Edit
 from skillz_experiments._wedge_targets import Rebuilder, plan_targets
-from skillz_experiments._workflow import Stop, export, run
+from skillz_experiments.run import Stop, export, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
-WORKFLOW = importlib.import_module("skillz_experiments._workflow")
+WORKFLOW = importlib.import_module("skillz_experiments.run._session")
+PLAN = importlib.import_module("skillz_experiments.run._plan")
 MODEL = "local-test"
 ALPHA = "@wedge/proj/alpha.py"
 BETA = "@wedge/proj/beta/__init__.py"
@@ -164,7 +165,7 @@ class _Provider:
 
 
 class Session(Protocol):
-    """The public face of `_workflow._Session` that these tests touch."""
+    """The public face of `_session._Session` that these tests touch."""
 
     seed: Candidate
     rebuilder: Rebuilder | None
@@ -184,7 +185,7 @@ def prepared(world: World, tmp_path: Path, write_draft: Callable[..., list[str]]
 
 
 def open_session(out: Path, recorder: Recorder) -> Session:
-    opener = cast(Callable[..., Session], getattr(WORKFLOW, "_Session"))
+    opener = cast(Callable[..., Session], getattr(WORKFLOW, "Session"))
     return opener(out, MODEL, "claude", recorder.factory, None, statistics=DEFAULT_STATISTICS)
 
 
@@ -205,7 +206,7 @@ def evaluate(out: Path, recorder: Recorder, change: Callable[[dict[str, str]], N
 
 
 def editable_names(files: dict[str, str], contract: Contract, frozen: Collection[str], plan: object) -> list[str]:
-    method = cast(Callable[..., list[str]], getattr(WORKFLOW, "_editable"))
+    method = cast(Callable[..., list[str]], getattr(PLAN, "editable_files"))
     return method(files, contract, "prose+cli", frozen, plan)
 
 

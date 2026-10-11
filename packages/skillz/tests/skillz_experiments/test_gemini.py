@@ -14,7 +14,7 @@ from skillz_experiments._cli import main
 from skillz_experiments.harness import Configuration, command_profile
 from skillz_experiments.wrapper import _gemini
 from skillz_experiments.wrapper._gemini import respond
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MAIN = "import sys; from skillz_experiments._cli import main; sys.exit(main())"
@@ -324,7 +324,8 @@ def test_a_termination_signal_kills_the_named_container(tmp_path: Path) -> None:
 
 @SUBPROCESS_WRAPPER
 def test_the_runner_deadline_runs_the_wrapper_stopper_before_it_kills_the_group(tmp_path: Path) -> None:
-    from skillz_experiments._runtime import BudgetExhausted, process
+    from skillz_experiments._budget import BudgetExhausted
+    from skillz_experiments._runtime import process
 
     directory = fake_bin(tmp_path)
     _ = (directory / "docker.mode").write_text("hang")

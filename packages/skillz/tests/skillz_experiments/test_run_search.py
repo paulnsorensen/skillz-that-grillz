@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import stat
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -11,14 +13,16 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments.harness import EnvironmentDiffers, Harness
+from skillz_experiments.harness import Configuration, EnvironmentDiffers, Harness
+from skillz_experiments.harness._codex import Codex
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
-from skillz_experiments._runtime import Budget, BudgetExhausted
-from skillz_experiments._search import overshoot
-from skillz_experiments import _workflow as workflow
-from skillz_experiments._workflow import PREFLIGHT_CALLS, Stop, export, run
+from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
+from skillz_experiments.search import overshoot
+from skillz_experiments.run import _session
+from skillz_experiments.run import Stop, export, run
+from skillz_experiments.run._plan import PREFLIGHT_CALLS
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -206,13 +210,13 @@ def test_a_resumed_search_spends_at_most_the_remaining_share(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     allowances: list[int] = []
-    real = workflow.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
+    real = _session.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
 
     def spy(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
         allowances.append(cast(int, kwargs["metric_calls"]))
         return real(*args, **kwargs)  # pyright: ignore[reportAny]
 
-    monkeypatch.setattr(workflow, "pareto_search", spy)
+    monkeypatch.setattr(_session, "pareto_search", spy)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.evaluate_fault = lambda number: (
         EnvironmentDiffers("runtime environment differs from the frozen record") if number == 3 else None)
@@ -326,12 +330,12 @@ def test_a_coded_reflection_failure_stops_the_search_instead_of_skipping_the_pro
 def test_a_lasting_reflection_fault_on_the_last_iteration_still_stops_the_run(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
-    real = workflow.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
+    real = _session.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
 
     def tiny(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
         return real(*args, **{**kwargs, "metric_calls": len(cast(list[object], args[3])) + 2})  # pyright: ignore[reportAny]
 
-    monkeypatch.setattr(workflow, "pareto_search", tiny)
+    monkeypatch.setattr(_session, "pareto_search", tiny)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda _number: CodedError("isolation-failed", "a guard fired")
     with pytest.raises(CodedError) as caught:
@@ -691,3 +695,48 @@ def test_a_run_stopped_by_another_coded_error_still_resumes(
     with pytest.raises(CodedError):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+
+
+def test_a_full_codex_run_ends_model_unsupported_after_the_first_rejected_call(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real `Codex.invoke` behind a real `Harness` and `run`: the first rejection ends the run, not `search-failed`."""
+    if Path("/etc/codex/skills").exists():
+        pytest.skip("admin skill roots stop the Codex transport")
+    host = tmp_path / "host-codex"
+    host.mkdir()
+    _ = (host / "auth.json").write_text("{}")
+    log = tmp_path / "codex.log"
+    fake = tmp_path / "bin/codex"
+    fake.parent.mkdir()
+    message = "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account."
+    _ = fake.write_text("#!/bin/sh\n" + f"echo call >> {log}\n" + "cat >/dev/null\n"
+                        + "echo '{\"type\":\"error\",\"message\":\"" + message + "\"}'\n" + "exit 1\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{fake.parent}:{os.environ['PATH']}")
+    monkeypatch.setenv("CODEX_HOME", str(host))
+
+    def preflight(self: Codex) -> dict[str, object]:
+        del self
+        return {"codex_version": "codex-cli 0.160.0", "isolation": "passed", "live_calls": 0, "environment_hash": "e1"}
+
+    monkeypatch.setattr(Codex, "preflight", preflight)
+
+    def accept(self: Codex, candidate: Candidate) -> bool:
+        del self, candidate
+        return True
+
+    monkeypatch.setattr(Codex, "check_candidate", accept)
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    configuration = Configuration.single("codex", MODEL)
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
+                configuration=configuration)
+    assert caught.value.code == "model-unsupported"
+    record = read(out / "run.json")
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    assert record["failure_code"] == "model-unsupported" and record["phase"] == "prepared"
+    assert not any(item.get("status") == "evaluation-failed" for item in outcomes)
+    assert log.read_text().count("call") <= MAX_CONCURRENT_CALLS, "later search calls ran after the first rejection"

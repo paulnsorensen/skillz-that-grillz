@@ -23,7 +23,7 @@ from skillz_experiments._evaluator import Reply, Transcript, evaluate
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
-from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._budget import Budget, BudgetExhausted
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
 BRIEF = "BRIEF_SENTINEL_9f2c: wants a short plan."

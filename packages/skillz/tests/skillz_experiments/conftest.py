@@ -11,14 +11,16 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _workflow
-from skillz_experiments.harness import Configuration, _claude
+from skillz_experiments.run import _run
+from skillz_experiments.harness import Configuration
+from skillz_experiments.harness._claude import _options, _sandbox, _transport
 from skillz_experiments._intake import DRAFT_NAME
-from skillz_experiments._search import Edit
-from skillz_experiments._workflow import Factory, Stop, run
+from skillz_experiments.search import Edit
+from skillz_experiments.run import Stop, run
+from skillz_experiments.run._session import Factory
 
 FIXTURES = Path(__file__).parent / "fixtures"
-_REAL_NESTED_USERNS_BLOCKED = _claude.nested_userns_blocked
+_REAL_NESTED_USERNS_BLOCKED = _sandbox.nested_userns_blocked
 
 
 @pytest.fixture(scope="session")
@@ -46,15 +48,15 @@ def harness_on_path(harness_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def nested_userns_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Report that the host allows a nested user namespace, so the sandbox settings do not depend on the host's AppArmor.
 
-    A test of the blocked case patches `_claude.nested_userns_blocked` itself.
+    A test of the blocked case patches `_sandbox.nested_userns_blocked` itself.
     """
-    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: False)
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: False)
 
 
 @pytest.fixture
 def real_nested_userns_probe(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], bool]]:
     """Restore the real, cached `nested_userns_blocked` for a test of the probe itself, and clear its cache around the test."""
-    monkeypatch.setattr(_claude, "nested_userns_blocked", _REAL_NESTED_USERNS_BLOCKED)
+    monkeypatch.setattr(_transport, "nested_userns_blocked", _REAL_NESTED_USERNS_BLOCKED)
     cache_clear = cast(Callable[[], None], getattr(_REAL_NESTED_USERNS_BLOCKED, "cache_clear"))
     cache_clear()
     yield _REAL_NESTED_USERNS_BLOCKED
@@ -69,7 +71,7 @@ def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     def ready(selections: Sequence[tuple[str, str | None]]) -> dict[str, object]:
         return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
-    monkeypatch.setattr(_workflow, "host_report", ready)
+    monkeypatch.setattr(_run, "host_report", ready)
 
 @pytest.fixture
 def umask_022() -> Iterator[None]:
@@ -103,8 +105,8 @@ def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(credential.parents[1]))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(tempfile, "tempdir", str(scratch))
-    monkeypatch.setattr(_claude, "SANDBOX_HELPERS", ())
-    monkeypatch.setattr(_claude, "SOCKET_DENY", ())  # pytest roots live under /tmp, which production denies
+    monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ())
+    monkeypatch.setattr(_options, "SOCKET_DENY", ())  # pytest roots live under /tmp, which production denies
     return credential
 
 

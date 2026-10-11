@@ -4,12 +4,12 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from skillz_experiments._workflow import _Session  # pyright: ignore[reportPrivateUsage] -- tests build a bare session
 from skillz_experiments.harness import EnvironmentDiffers
+from skillz_experiments.run._session import Session
 
 
-def _session(recorded: dict[str, object], observed: dict[str, object]) -> _Session:
-    session = object.__new__(_Session)
+def _session(recorded: dict[str, object], observed: dict[str, object]) -> Session:
+    session = object.__new__(Session)
     session.record = {"preflight": recorded, "environment_hash": recorded["environment_hash"]}
     session.provider = cast(object, SimpleNamespace(preflight=lambda: observed))  # pyright: ignore[reportAttributeAccessIssue]
     return session

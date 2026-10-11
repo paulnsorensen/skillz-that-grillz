@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
 from skillz_experiments._cases import CodedError, digest, mapping, relative, string
-from skillz_experiments._gate import Statistics
+from skillz_experiments.gate import Statistics
 
 LOCATION = "evals/autoimprove.json"
 GraderType = Literal["exact-json", "judge", "command", "hybrid", "audit", "journey"]

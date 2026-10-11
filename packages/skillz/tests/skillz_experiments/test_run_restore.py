@@ -23,15 +23,22 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
-from skillz_experiments._gate import DEFAULT_STATISTICS
 from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._roles import Role
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
-from skillz_experiments._search import Edit
-from skillz_experiments._workflow import HOLDOUT_RETRIES_PER_ARM, Factory, Stop, export, run, summary
-from skillz_experiments._workflow import _command_seconds, _engine_hash, _estimate, _plan, _Session  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.gate import DEFAULT_STATISTICS
+from skillz_experiments._budget import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
+from skillz_experiments.search import Edit
+from skillz_experiments.run import Stop, export, run, summary
+from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM
+from skillz_experiments.run._session import Factory
+from skillz_experiments.run._plan import (
+    _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
+    _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
+    plan_estimate,
+)
+from skillz_experiments.run._session import Session, engine_hash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -294,6 +301,58 @@ def test_resume_hands_the_recorded_preflight_to_the_harness_and_runs_it_once_per
     assert len(state.preflights) == 2
 
 
+def test_a_resume_with_another_installed_codex_version_stops_as_environment_differs(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real `Harness` and `Codex` role; only the Codex preflight, which needs the CLI, reports a settable version."""
+    from skillz_experiments.harness._codex import Codex
+
+    host = tmp_path / "host-codex"
+    host.mkdir()
+    _ = (host / "auth.json").write_text("{}")
+    stub = tmp_path / "bin" / "codex"
+    stub.parent.mkdir()
+    _ = stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CODEX_HOME", str(host))
+    installed = {"version": "codex-cli 0.154.0"}
+    target, state = make_target(tmp_path), State()
+
+    def preflight(self: Codex) -> dict[str, object]:
+        del self
+        return {"codex_version": installed["version"], "isolation": "passed", "live_calls": 0}
+
+    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        del self
+        return state.evaluate(candidate, case, holdout)
+
+    def invoke(self: Harness, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        del self
+        return _Fake(state).invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+
+    monkeypatch.setattr(Codex, "preflight", preflight)
+
+    def accept(self: Codex, candidate: Candidate) -> bool:
+        del self, candidate
+        return True
+
+    monkeypatch.setattr(Codex, "check_candidate", accept)
+    monkeypatch.setattr(Harness, "evaluate", evaluate)
+    monkeypatch.setattr(Harness, "invoke", invoke)
+    configuration = Configuration.single("codex", MODEL)
+    out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state, configuration)
+    assert read(out / "run.json")["codex_version"] == "codex-cli 0.154.0"
+    seen = len(state.evaluated)
+    installed["version"] = "codex-cli 0.160.0"
+    with pytest.raises(EnvironmentDiffers):
+        _ = run(target, out, MODEL, live=True, configuration=configuration)
+    assert len(state.evaluated) == seen
+    installed["version"] = "codex-cli 0.154.0"
+    assert run(target, out, MODEL, live=True, configuration=configuration)["phase"] == "complete"
+
+
 def _changed_judge(model: str) -> dict[str, str]:
     return {"model": model, "changed": "yes"}
 
@@ -306,12 +365,12 @@ def test_a_changed_judge_stops_a_resume_and_an_export(
     out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
     assert read(out / "run.json")["judge"]
     with monkeypatch.context() as patch:
-        patch.setattr("skillz_experiments._workflow.judge_identity", _changed_judge)
+        patch.setattr("skillz_experiments.run._session.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = run(target, out, MODEL, live=True, factory=state.factory())
     assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
     with monkeypatch.context() as patch:
-        patch.setattr("skillz_experiments._workflow.judge_identity", _changed_judge)
+        patch.setattr("skillz_experiments.run._export.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = export(out, tmp_path / "export")
     assert not (tmp_path / "export").exists()
@@ -390,7 +449,7 @@ def test_concurrent_case_evaluations_leave_a_valid_checkpoint_with_every_outcome
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, state = make_target(tmp_path), State()
     out = _prepared(tmp_path, target, write_draft, approvals)
-    session = _Session(out, MODEL, "claude", state.factory(), None, statistics=DEFAULT_STATISTICS)
+    session = Session(out, MODEL, "claude", state.factory(), None, statistics=DEFAULT_STATISTICS)
     try:
         cases = session.cases * 4
         def evaluate(case: Case) -> dict[str, object]:
@@ -580,7 +639,7 @@ def test_a_run_prepared_by_an_older_runner_stops_with_a_create_a_new_run_message
 
 
 def test_a_change_in_a_harness_module_changes_the_engine_hash(monkeypatch: pytest.MonkeyPatch) -> None:
-    before = _engine_hash()
+    before = engine_hash()
     original = Path.read_text
 
     def edited(self: Path) -> str:
@@ -588,7 +647,7 @@ def test_a_change_in_a_harness_module_changes_the_engine_hash(monkeypatch: pytes
         return text + "\n# edited" if self.parent.name == "harness" and self.name == "_harness.py" else text
 
     monkeypatch.setattr(Path, "read_text", edited)
-    assert _engine_hash() != before
+    assert engine_hash() != before
 
 
 def test_a_prepared_run_records_the_engine_hash(
@@ -712,7 +771,7 @@ def test_a_live_resume_gives_the_recorded_claude_options_to_every_call(
     with pytest.raises(Stop):
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, effort="xhigh", sandbox_seconds=120)
     executable = _claude_on_path(tmp_path, monkeypatch)
-    session = _Session(out, MODEL, "claude", None, None, statistics=DEFAULT_STATISTICS)
+    session = Session(out, MODEL, "claude", None, None, statistics=DEFAULT_STATISTICS)
     try:
         provider = cast(Harness, session.provider)
         _ = provider.transports["judge"].invoke("hello")
@@ -793,32 +852,32 @@ def test_a_supplied_configuration_refuses_option_values_and_its_roots_stop_befor
 
 
 def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reserve() -> None:
-    plain, slow = _plan(6, 6, 6, 1, 3), _plan(6, 6, 6, 1, 3, 30)
+    plain, slow = plan_run(6, 6, 6, 1, 3), plan_run(6, 6, 6, 1, 3, 30)
     gate_evaluations = 2 * 6 * 3 + 2 * HOLDOUT_RETRIES_PER_ARM
     assert slow.sandbox_gate == math.ceil(gate_evaluations * 30 / MAX_CONCURRENT_CALLS)
     assert slow.sized.calls == plain.sized.calls
     assert slow.sized.seconds == plain.sized.seconds + slow.sandbox_total > plain.sized.seconds
     assert slow.reserve_seconds > plain.reserve_seconds
-    assert _estimate(slow, 3, 6)["sandbox_seconds"] == slow.sandbox_total
-    assert "sandbox_seconds" not in _estimate(plain, 3, 6)
+    assert plan_estimate(slow, 3, 6)["sandbox_seconds"] == slow.sandbox_total
+    assert "sandbox_seconds" not in plan_estimate(plain, 3, 6)
     contract = Contract("s", "$s", {"task": Grader("command", ("x",)), "plain": Grader("exact-json")})
     task, other = (cast(Case, cast(object, SimpleNamespace(kind=kind))) for kind in ("task", "plain"))
     options = ClaudeOptions(sandbox_seconds=90)
-    assert _command_seconds(contract, [task], options) == 90 and _command_seconds(contract, [other], options) == 0
+    assert command_seconds(contract, [task], options) == 90 and command_seconds(contract, [other], options) == 0
     judged = Contract("s", "$s", {"look": Grader("judge", rubric="r", capture=("x",)),
                                    "mix": Grader("hybrid", ("x",), "r", ("x",)), "hy": Grader("hybrid", ("x",), "r")})
     look, mix, hybrid = (cast(Case, cast(object, SimpleNamespace(kind=kind))) for kind in ("look", "mix", "hy"))
-    assert _command_seconds(judged, [look], options) == 90 and _command_seconds(judged, [hybrid], options) == 90
-    assert _command_seconds(judged, [mix], options) == 180 and _command_seconds(judged, [look, mix], options) == 180
+    assert command_seconds(judged, [look], options) == 90 and command_seconds(judged, [hybrid], options) == 90
+    assert command_seconds(judged, [mix], options) == 180 and command_seconds(judged, [look, mix], options) == 180
 
 
 def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:
-    plain = _plan(30, 30, 6, 1, 3)
-    shrunk = [_plan(30, 30, 6, 1, 3, seconds) for seconds in (20, 60, 100)]
+    plain = plan_run(30, 30, 6, 1, 3)
+    shrunk = [plan_run(30, 30, 6, 1, 3, seconds) for seconds in (20, 60, 100)]
     assert all(plan.sized.seconds <= APPROVED_SECONDS for plan in shrunk)
     assert shrunk[0].metric_calls < plain.metric_calls and shrunk[2].metric_calls < shrunk[0].metric_calls
     with pytest.raises(Stop, match="sandbox time alone need") as caught:
-        _ = _plan(30, 30, 6, 1, 3, 600)
+        _ = plan_run(30, 30, 6, 1, 3, 600)
     assert caught.value.code == "budget-unapproved"
 
 

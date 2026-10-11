@@ -15,7 +15,8 @@ from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._evaluator import LEDGER_KEY, answer_schema
 from skillz_experiments._protocol import RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
-from skillz_experiments._runtime import Budget, process
+from skillz_experiments._budget import Budget
+from skillz_experiments._runtime import process
 from skillz_experiments.harness._check import Check
 from skillz_experiments.harness._isolation import listening, probe
 from skillz_experiments.harness._witness import Witness, ledger_entries, stage_witness

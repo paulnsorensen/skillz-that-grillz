@@ -14,9 +14,9 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cli import main
 from skillz_experiments._contract import load_contract, parse
 from skillz_experiments.harness import Configuration
-from skillz_experiments._workflow import run
+from skillz_experiments.run import run
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._budget import Budget, BudgetExhausted
 
 
 def test_unsandboxed_wrapper_runs_probe_and_never_infers(tmp_path: Path) -> None:

@@ -18,7 +18,7 @@ from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._roles import Role
-from skillz_experiments._runtime import Budget, BudgetExhausted
+from skillz_experiments._budget import Budget, BudgetExhausted
 
 RUBRIC = "RUBRIC_SENTINEL: rate how readable the rewrite is."
 EXPECTED = "EXPECTED_SENTINEL"

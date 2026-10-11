@@ -17,7 +17,7 @@ from skillz_experiments._cases import load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._evaluation import witnessed_events
 from skillz_experiments._evaluator import LEDGER_KEY, _activation, evaluate  # pyright: ignore[reportPrivateUsage]
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._witness import (

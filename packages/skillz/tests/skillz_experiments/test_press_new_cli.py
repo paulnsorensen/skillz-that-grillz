@@ -25,17 +25,17 @@ from wedge._config import load_targets, parse_targets
 from skillz_experiments._candidate import NEW_CLI, TEXT_FILE_LIMIT, Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._facts import audit_facts
-from skillz_experiments._gate import DEFAULT_STATISTICS
+from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._new_cli import expand_files, unused_helpers
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import Budget
-from skillz_experiments._search import Edit
+from skillz_experiments._budget import Budget
+from skillz_experiments.search import Edit
 from skillz_experiments._wedge_targets import Rebuilder
-from skillz_experiments._workflow import Stop, export, run
+from skillz_experiments.run import Stop, export, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
-WORKFLOW = importlib.import_module("skillz_experiments._workflow")
+WORKFLOW = importlib.import_module("skillz_experiments.run._session")
 Draft = Callable[..., list[str]]
 Approvals = Callable[..., tuple[str, int]]
 MODEL = "local-test"
@@ -145,7 +145,7 @@ def prepared(w: World, tmp_path: Path, write_draft: Callable[..., list[str]],
 
 
 def open_session(out: Path, recorder: Recorder) -> Session:
-    opener = cast(Callable[..., Session], getattr(WORKFLOW, "_Session"))
+    opener = cast(Callable[..., Session], getattr(WORKFLOW, "Session"))
     return opener(out, MODEL, "claude", recorder.factory, None, statistics=DEFAULT_STATISTICS)
 
 

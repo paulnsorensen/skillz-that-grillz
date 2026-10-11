@@ -10,7 +10,8 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._runtime import BudgetExhausted, process
+from skillz_experiments._budget import BudgetExhausted
+from skillz_experiments._runtime import process
 
 
 def test_deadline_kills_process_group(tmp_path: Path) -> None:
