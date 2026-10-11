@@ -1,6 +1,6 @@
 # wedge skill packaging decisions
 
-These records explain the design of `wedge`, a packaging tool at `lib/src/wedge/`, inside the `skillz-that-grillz` package at `lib/`. `wedge` shivs a `fromargs` CLI into a skill as a content-addressed `.pyz`. It supports legacy release assets and opt-in direct archives (ADR-010). Other repositories use it through the `actions/wedge` GitHub Action (ADR-007). The design brief was a session spec, not a durable spec; these records are the durable source of the design.
+These records explain the design of `wedge`, a packaging tool at `packages/wedge/src/wedge/`, inside the `skillz-that-grillz` package at `packages/wedge/`. `wedge` shivs a `fromargs` CLI into a skill as a content-addressed `.pyz`. It supports legacy release assets and opt-in direct archives (ADR-010). Other repositories use it through the `actions/wedge` GitHub Action (ADR-007). The design brief was a session spec, not a durable spec; these records are the durable source of the design.
 
 ## Records
 
@@ -50,7 +50,7 @@ These records explain the design of `wedge`, a packaging tool at `lib/src/wedge/
 
 ### ADR-007: Portable projects and a public composite action  [status: accepted]
 
-- **Context:** Other repositories want to ship wedged skills. The first version assumed this repository's `lib/fromargs` layout, so it could not run in a consumer repository.
+- **Context:** Other repositories want to ship wedged skills. The first version assumed this repository's `packages/fromargs` layout, so it could not run in a consumer repository.
 - **Decision:** `wedge.toml` names its layout. `project` (default `.`) contains `pyproject.toml` and `uv.lock`; `include` lists local package trees to vendor; `repo` is required and must be `owner/name`. `source` and each `include` entry must resolve inside `project`, reject symlinks, and have unique top-level names. Configured local inputs cannot overwrite installed dependencies. `uv export` omits local path packages, so consumers vendor them through `include`; unsupported URL or path requirements fail with guidance. Publication validates lock field types, names, digests, format, repository agreement, and duplicate skill names before side effects. `FORMAT_VERSION = 8` marks this integrated key layout and normalized-content digest.[^8] The public `actions/wedge/action.yml` composite action supports `command: check|publish`, runs Wedge with `uv run --locked` against its own `lib/` project, verifies the pinned gh digest, installs gh under runner temp without sudo, and exports its path.
 - **Alternatives:** A separate Wedge repository with a root `action.yml`, or publishing Wedge and fromargs to PyPI. Deferred: the action needs no index because it runs from its own checkout.
 - **Consequences:** Consumers reference `paulnsorensen/skillz-that-grillz/actions/wedge@<sha>`. Validation covers a standalone consumer project with its own `uv.lock`. The pinned `shiv` version remains exact because shiv writes its version into each `.pyz`. The Action preserves a failed Wedge result and exits nonzero so callers can diagnose publication failures.
@@ -67,7 +67,7 @@ These records explain the design of `wedge`, a packaging tool at `lib/src/wedge/
 ### ADR-009: Wedge fans out across skills; consumers keep no build loop  [status: accepted]
 
 - **Context:** `build` and `lock` took one skill directory while `check` and `publish` discovered skills under `--root`. A repository with 13 skills over one package wrote its own thread pool and `xargs -P` loop around `wedge`, renamed the outputs, and paid 13 `uv export` and 13 `--no-cache` wheel downloads per run. It also pinned the wedge commit in a wrapper script and in the workflow, with a test to keep the two equal.
-- **Decision:** Every command resolves skills the same way: positional directories, else `*/wedge.toml` under each `--root`, and an empty discovery is an error. Positional directories and `--root` are exclusive, and every `--root` must be a directory. Resolved duplicate directories collapse to one, in first-seen order. `build`, `lock`, and `publish` run skills through one `fan_out` helper (`--jobs` threads, one outcome per skill, one skill's failure never stops the others). `fan_out` catches every exception per item on purpose, so one skill's crash never stops the rest. `build_many` groups skills by resolved project, source, includes, and groups. It populates one site directory per group and shivs each skill from it; `lock` and `publish` build through it. `build` and `lock` print `{name: {...}}`. `wedge.toml` gains `groups`, a list of uv dependency groups exported into the closure. A project whose CLI dependencies must stay out of its published library uses this. `groups` may not name `dev`: uv drops a `--group dev` export, so the CLI ships without its dependencies. An unknown key in `wedge.toml` fails, naming the file that set it. Legacy `wedge check` rejects a `.pyz` committed beside a launcher (ADR-002) and reports duplicate skill names. Direct bundles use `wedge bundle --check` (ADR-010). A `wedge.toml` in a discovery root supplies defaults for every skill beside it (any key but `name` and `entry`; the skill's file wins). It joins the key only when present, so existing keys stand. A parent directory that holds a `SKILL.md` is a skill, not a discovery root, so a CLI directory nested in a skill reads no defaults (2026-10-05, #151). With `--branch`, `publish` refuses unless `--target` resolves to the checked-out HEAD of every skill directory. It then compares that commit against the branch through the compare API. A shallow checkout still passes, and a branch name alone no longer suffices. A uv-managed consumer pins wedge once, as the sole dependency of a small uv project of its own (`tools/wedge/`). It runs `uv run --locked --project tools/wedge wedge …` locally and in CI; the composite action remains for repositories without uv. The pin cannot live in the skill project's own lock: uv carries the `fromargs` path source from `lib/pyproject.toml` into any lock that depends on wedge. That replaces the `fromargs` wheel in the `.pyz` closure with a git checkout. The post-merge workflow skips `publish` when no `skills/*/wedge.toml` exists, so a repository with no wedged skills yet stays green.
+- **Decision:** Every command resolves skills the same way: positional directories, else `*/wedge.toml` under each `--root`, and an empty discovery is an error. Positional directories and `--root` are exclusive, and every `--root` must be a directory. Resolved duplicate directories collapse to one, in first-seen order. `build`, `lock`, and `publish` run skills through one `fan_out` helper (`--jobs` threads, one outcome per skill, one skill's failure never stops the others). `fan_out` catches every exception per item on purpose, so one skill's crash never stops the rest. `build_many` groups skills by resolved project, source, includes, and groups. It populates one site directory per group and shivs each skill from it; `lock` and `publish` build through it. `build` and `lock` print `{name: {...}}`. `wedge.toml` gains `groups`, a list of uv dependency groups exported into the closure. A project whose CLI dependencies must stay out of its published library uses this. `groups` may not name `dev`: uv drops a `--group dev` export, so the CLI ships without its dependencies. An unknown key in `wedge.toml` fails, naming the file that set it. Legacy `wedge check` rejects a `.pyz` committed beside a launcher (ADR-002) and reports duplicate skill names. Direct bundles use `wedge bundle --check` (ADR-010). A `wedge.toml` in a discovery root supplies defaults for every skill beside it (any key but `name` and `entry`; the skill's file wins). It joins the key only when present, so existing keys stand. A parent directory that holds a `SKILL.md` is a skill, not a discovery root, so a CLI directory nested in a skill reads no defaults (2026-10-05, #151). With `--branch`, `publish` refuses unless `--target` resolves to the checked-out HEAD of every skill directory. It then compares that commit against the branch through the compare API. A shallow checkout still passes, and a branch name alone no longer suffices. A uv-managed consumer pins wedge once, as the sole dependency of a small uv project of its own (`tools/wedge/`). It runs `uv run --locked --project tools/wedge wedge …` locally and in CI; the composite action remains for repositories without uv. The pin cannot live in the skill project's own lock: uv carries the `fromargs` path source from `packages/wedge/pyproject.toml` into any lock that depends on wedge. That replaces the `fromargs` wheel in the `.pyz` closure with a git checkout. The post-merge workflow skips `publish` when no `skills/*/wedge.toml` exists, so a repository with no wedged skills yet stays green.
 - **Alternatives:** Per-skill files only. Rejected: 13 skills repeated the same five lines, and a skill directory is copied for use, not for building. A wedge dependency group in the consumer's own project. Rejected: uv carries wedge's `fromargs` path source into that lock. Skipping the publish build when the asset already matches the lock. Rejected: the rebuild is what proves a developer-machine lock reproducible (ADR-008). Verifying only the compressed bytes at launch. Rejected: the launcher's contract is the content digest (ADR-004).
 - **Consequences:** A consumer's glue shrinks to one pinned tool project and one command per recipe; the manifest gives tests each archive's path. Site sharing makes a stale skill build before its key mismatch is reported, since keys come from the same pass that resolves the site. The action's `uses:` pin and the consumer's `uv.lock` pin remain two pins only for consumers that use both.
 
@@ -78,10 +78,10 @@ These records explain the design of `wedge`, a packaging tool at `lib/src/wedge/
 - **Alternatives:** Keep the release-asset launcher as the only delivery mode. Rejected for consumers that need a copied skill to run without a network fetch.
 - **Consequences:** Direct consumers commit the larger `.pyz` and run `wedge bundle --check` in CI. The legacy lock, launcher, and release-asset workflow remain available. The `wedge check` restriction on a `.pyz` beside a launcher still applies only to that legacy mode. `wedge publish` reports a skill with `scripts/<name>.pyz` and no lock as `skipped`, because no release asset exists for it; a missing lock without a bundle still fails. The repository's own `skillz` skill ships two direct bundles: `scripts/skillz-experiment.pyz` and the builder at `wedge/scripts/wedge.pyz`.
 
-_Source: PR #103, `lib/src/wedge/`, `lib/tests/wedge/test_cli.py`, and `lib/README.md` · Updated: 2026-09-27 · Supersedes: ADR-002's blanket ban on committed `.pyz` files for opt-in direct bundles_
+_Source: PR #103, `packages/wedge/src/wedge/`, `packages/wedge/tests/wedge/test_cli.py`, and `packages/wedge/README.md` · Updated: 2026-09-27 · Supersedes: ADR-002's blanket ban on committed `.pyz` files for opt-in direct bundles_
 
-[^10]: `lib/src/wedge/_bundle.py`; `lib/tests/wedge/test_cli.py`
-[^11]: `lib/src/wedge/_config.py`; `lib/src/wedge/_key.py`; `lib/src/wedge/_build.py`; `lib/tests/wedge/test_key.py`
+[^10]: `packages/wedge/src/wedge/_bundle.py`; `packages/wedge/tests/wedge/test_cli.py`
+[^11]: `packages/wedge/src/wedge/_config.py`; `packages/wedge/src/wedge/_key.py`; `packages/wedge/src/wedge/_build.py`; `packages/wedge/tests/wedge/test_key.py`
 
 ### ADR-011: [[target]] tables and a reusable site layer  [status: accepted]
 
@@ -90,7 +90,7 @@ _Source: PR #103, `lib/src/wedge/`, `lib/tests/wedge/test_cli.py`, and `lib/READ
 - **Alternatives:** Keep one site directory per target set in `build_many`. Rejected because it leaves two build paths. Reject several targets per skill and use one directory per CLI. Rejected because it repeats the install.
 - **Consequences:** The bytes of a single-target build do not change. The build rejects a first-party top-level `bin`, a symlink, and a name that shadows an installed package. It writes each archive through a temporary file and an atomic replace. A later change defines the lock shape for several targets.
 
-_Source: `lib/src/wedge/` and `lib/tests/wedge/test_targets.py` · Updated: 2026-10-10_
+_Source: `packages/wedge/src/wedge/` and `packages/wedge/tests/wedge/test_targets.py` · Updated: 2026-10-10_
 
 ## Teaching the packaging workflow
 
@@ -116,7 +116,7 @@ The run never silently copies libraries or changes shared dependencies.
 It verifies source behavior and a relocated launcher with a hash-checked local archive.
 That local verification does not prove remote asset availability.[^13]
 
-The skill ships the builder as its own direct bundle, `skills/skillz/wedge/scripts/wedge.pyz`, built from `lib/src/wedge` with a `wedge` dependency group that pins shiv.[^15]
+The skill ships the builder as its own direct bundle, `skills/skillz/wedge/scripts/wedge.pyz`, built from `packages/wedge/src/wedge` with a `wedge` dependency group that pins shiv.[^15]
 The builder sits in a subdirectory because wedge reads one `wedge.toml` per skill directory, and `skills/skillz/wedge.toml` builds `skillz-experiment`.
 A user who installs only the skill can then build without a wedge checkout or tool project; `uv` stays a host requirement because it is a native binary.
 Inside an archive, `sys.executable` is the host interpreter, so the builder runs `python -m shiv` with `PYTHONPATH` set to the directory that holds the imported shiv.
@@ -135,16 +135,16 @@ The autoimprove wedge arm (`skillz-autoimprove.md`, ADR-005) is unchanged; its a
 _Source: the published teaching skill and the records above · Updated: 2026-10-10_
 
 [^12]: `skills/skillz/SKILL.md`; `skills/skillz/references/offload.md`
-[^13]: `skills/skillz/references/wedge-packaging.md`; `lib/tests/wedge/test_skill_template.py`
-[^15]: `skills/skillz/wedge/wedge.toml`; `pyproject.toml`; `lib/src/wedge/_build.py`; `lib/tests/wedge/test_bundled_cli.py`
-[^16]: `lib/src/wedge/_config.py`; `lib/src/wedge/_key.py`; `lib/src/wedge/_build.py`; `lib/src/wedge/_bundle.py`; `lib/src/wedge/_lock.py`; `lib/src/wedge/_publish.py`; `lib/tests/wedge/test_targets.py`; `lib/tests/wedge/test_press_targets.py`
+[^13]: `skills/skillz/references/wedge-packaging.md`; `packages/wedge/tests/wedge/test_skill_template.py`
+[^15]: `skills/skillz/wedge/wedge.toml`; `pyproject.toml`; `packages/wedge/src/wedge/_build.py`; `packages/wedge/tests/wedge/test_bundled_cli.py`
+[^16]: `packages/wedge/src/wedge/_config.py`; `packages/wedge/src/wedge/_key.py`; `packages/wedge/src/wedge/_build.py`; `packages/wedge/src/wedge/_bundle.py`; `packages/wedge/src/wedge/_lock.py`; `packages/wedge/src/wedge/_publish.py`; `packages/wedge/tests/wedge/test_targets.py`; `packages/wedge/tests/wedge/test_press_targets.py`
 
-[^1]: `lib/src/wedge/_key.py`
-[^2]: `lib/src/wedge/_publish.py`
-[^3]: `lib/src/wedge/_cli.py`
-[^4]: `lib/src/wedge/_build.py`; `lib/src/wedge/_key.py`; `lib/tests/wedge/test_build.py`
-[^5]: `.github/workflows/publish-fromargs.yml`; `lib/fromargs/pyproject.toml`
-[^6]: `lib/pyproject.toml`; `lib/src/wedge/_build.py`; `lib/src/wedge/_resolve.py`
+[^1]: `packages/wedge/src/wedge/_key.py`
+[^2]: `packages/wedge/src/wedge/_publish.py`
+[^3]: `packages/wedge/src/wedge/_cli.py`
+[^4]: `packages/wedge/src/wedge/_build.py`; `packages/wedge/src/wedge/_key.py`; `packages/wedge/tests/wedge/test_build.py`
+[^5]: `.github/workflows/publish-fromargs.yml`; `packages/fromargs/pyproject.toml`
+[^6]: `packages/wedge/pyproject.toml`; `packages/wedge/src/wedge/_build.py`; `packages/wedge/src/wedge/_resolve.py`
 [^7]: `justfile`; `.github/workflows/wedge.yml`
-[^8]: `lib/src/wedge/_config.py`; `lib/src/wedge/_key.py`; `lib/src/wedge/_resolve.py`; `lib/src/wedge/_publish.py`; `actions/wedge/action.yml`; `lib/tests/wedge/test_consumer.py`
-[^9]: `lib/src/wedge/_digest.py`; `lib/src/wedge/_launcher.py`; `lib/tests/wedge/test_launcher.py`
+[^8]: `packages/wedge/src/wedge/_config.py`; `packages/wedge/src/wedge/_key.py`; `packages/wedge/src/wedge/_resolve.py`; `packages/wedge/src/wedge/_publish.py`; `actions/wedge/action.yml`; `packages/wedge/tests/wedge/test_consumer.py`
+[^9]: `packages/wedge/src/wedge/_digest.py`; `packages/wedge/src/wedge/_launcher.py`; `packages/wedge/tests/wedge/test_launcher.py`

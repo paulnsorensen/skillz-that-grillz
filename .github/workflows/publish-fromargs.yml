@@ -34,9 +34,9 @@ jobs:
         run: |
           set -euo pipefail
           tag_version="${GITHUB_REF_NAME#fromargs-v}"
-          project_version="$(grep -m1 '^version = ' lib/fromargs/pyproject.toml | sed -E 's/version = "(.*)"/\1/')"
+          project_version="$(grep -m1 '^version = ' packages/fromargs/pyproject.toml | sed -E 's/version = "(.*)"/\1/')"
           if [ "$tag_version" != "$project_version" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} names version ${tag_version}, but lib/fromargs/pyproject.toml has ${project_version}."
+            echo "::error::Tag ${GITHUB_REF_NAME} names version ${tag_version}, but packages/fromargs/pyproject.toml has ${project_version}."
             exit 1
           fi
 
@@ -59,7 +59,7 @@ jobs:
         run: just test-fromargs
 
       - name: Build fromargs
-        run: uv build --project lib/fromargs --out-dir dist
+        run: uv build --package fromargs --no-sources --out-dir dist
 
       - name: Check package metadata
         run: uvx twine check dist/*

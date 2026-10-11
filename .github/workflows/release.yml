@@ -70,7 +70,7 @@ jobs:
 
       - name: Install uv
         if: steps.guard.outputs.already_published != 'true'
-        # `just test` runs the lib/fromargs pytest suite through `uv run`.
+        # `just test` runs the workspace pytest suites through `uv run`.
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.11.32"
@@ -88,7 +88,7 @@ jobs:
         # Pin the tools it shells out to so CI matches a developer's machine:
         #   npm: markdownlint-cli2
         #   pip: yamllint + pyyaml (validators)
-        #   uv: pinned by the Install uv step; lib/fromargs pytest from its uv.lock
+        #   uv: pinned by the Install uv step; workspace pytest from the root uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
         run: |
           set -euo pipefail

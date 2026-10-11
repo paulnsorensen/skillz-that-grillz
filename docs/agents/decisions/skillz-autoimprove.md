@@ -1,6 +1,6 @@
 # skillz autoimprove decisions
 
-These records explain the design of `/skillz autoimprove`, which generalizes the skillz experiment runner at `lib/src/skillz_experiments/`.
+These records explain the design of `/skillz autoimprove`, which generalizes the skillz experiment runner at `packages/wedge/src/skillz_experiments/`.
 The approved spec is `specs/skillz-autoimprove.md` in the durable cheese corpus.
 The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10.
 
@@ -14,7 +14,7 @@ That ADR supersedes the records about those commands and arms in this file. Thes
 - **Decision:** A contract names the skill, task kinds, invocation, optional helper, grader per kind, and editable files. It lives in `<skill>/evals/autoimprove.json` or in a `target` block of the case manifest; the manifest block wins. With neither, autoimprove asks the user to choose judge-only grading with a powerful model, or to find or draft a contract. A drafted contract carries `"status": "draft"` and `dataset` refuses it until the user approves it.
 - **Alternatives:** Inference from SKILL.md and `scripts/` with judge-only grading (no deterministic grade for rewrite skills). A manifest-only or skill-only location.
 - **Consequences:** Skills outside this repository work. Each target needs a contract, but autoimprove can draft one.
-- **Amendment 2026-10-10:** The helper is now `inspect-skill.pyz`, built from `lib/src/skillz_inspect`.
+- **Amendment 2026-10-10:** The helper is now `inspect-skill.pyz`, built from `packages/wedge/src/skillz_inspect`.
 
 ### ADR-002: Use exact-json, judge, command, and hybrid graders  [status: accepted]
 - **Context:** Rewrite skills such as bash-shortening produce changed files. Their truth is mostly output state. gskill grades by test pass or fail only.
@@ -27,8 +27,8 @@ That ADR supersedes the records about those commands and arms in this file. Thes
 - **Decision:** Skillz docs and add, improve, and reflection prose use STE. `inspect_skill.py` schema v2 adds `long_sentences` facts. A `Prose (ASD-STE100)` audit lens judges passive voice and multi-instruction sentences.
   Schema v3 moves `long_sentences` to sentences over 25 words and adds `advisory_sentences` for 21 to 25 words.
 - **Alternatives:** A judge-only lens. A separate STE script.
-- **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `lib/src/skillz_experiments/_evaluation.py`, `skills/skillz/evals/autoimprove.json`, and the `skills/skillz/references/experiments.md` example.
-- **Amendment 2026-10-10:** The inspector is now the fromargs package `lib/src/skillz_inspect`, built as `inspect-skill.pyz`, at schema 4.
+- **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `packages/wedge/src/skillz_experiments/_evaluation.py`, `skills/skillz/evals/autoimprove.json`, and the `skills/skillz/references/experiments.md` example.
+- **Amendment 2026-10-10:** The inspector is now the fromargs package `packages/wedge/src/skillz_inspect`, built as `inspect-skill.pyz`, at schema 4.
 
 ### ADR-004: Run the Claude Code adapter in --restricted mode  [status: superseded in part by ADR-006; amended by skillz-pragmatic-autoimprove ADR-001]
 - **Context:** The Codex adapter isolates discovery, filesystem, and network. Claude Code documents `--restricted` for eval harnesses; `--bare` needs an API key.

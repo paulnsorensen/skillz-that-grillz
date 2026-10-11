@@ -6,7 +6,7 @@ author: paulnsorensen
 
 # A composite action cannot set `permissions:`. For `command: publish`, the
 # calling job must grant `contents: write`; `command: check` needs only read.
-# The action runs wedge from its own checkout (lib/ beside this directory),
+# The action runs wedge from its own checkout (packages/wedge/ in this repository),
 # so pinning this action to a commit SHA also pins the wedge version.
 
 inputs:
@@ -128,7 +128,7 @@ runs:
         stdout_file="$work_dir/stdout"
         stderr_file="$work_dir/stderr"
         set +e
-        uv run --locked --project "$GITHUB_ACTION_PATH/../../lib" wedge "${args[@]}" >"$stdout_file" 2>"$stderr_file"
+        uv run --locked --project "$GITHUB_ACTION_PATH/../../packages/wedge" wedge "${args[@]}" >"$stdout_file" 2>"$stderr_file"
         status=$?
         set -e
         if [[ -s "$stdout_file" ]]; then

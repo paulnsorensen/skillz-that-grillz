@@ -79,7 +79,7 @@ Input → Output: `gouda\nbrie\nedam\nbrie\n` → counts sorted by frequency and
 
 With the template copied into a target skill, run it in the target's uv project.
 Set `TARGET_PROJECT` to the project that has fromargs as a locked dependency.
-In the skillz-that-grillz repository only, use `$REPO_ROOT/lib`.
+In the skillz-that-grillz repository only, use `$REPO_ROOT`.
 
 ```bash
 uv run --locked --project "$TARGET_PROJECT" python "$SKILL_DIR/records.py" counts "$INPUT"
@@ -100,5 +100,5 @@ uv run --script "$SKILL_DIR/records.py" counts "$INPUT"
 
 ## Sources
 
-The [fromargs README](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/lib/fromargs/README.md) defines the library contract.
+The [fromargs README](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/packages/fromargs/README.md) defines the library contract.
 The [Agent Skills script guide](https://agentskills.io/skill-creation/using-scripts) explains explicit inputs, concise help, bounded output, and actionable errors.

@@ -8,7 +8,9 @@ on:
   push:
     branches: [main]
     paths:
-      - "lib/**"
+      - "packages/**"
+      - "pyproject.toml"
+      - "uv.lock"
       - "actions/wedge/**"
       - "skills/*/wedge.toml"
       - "skills/**/*.wedge.json"
@@ -31,7 +33,7 @@ jobs:
       # workflow_dispatch from another ref cannot publish.
       - name: Publish wedge assets
         # Skip when no skill under `roots: skills` is wedged yet, so this
-        # workflow stays green on a merge that only touches lib/**.
+        # workflow stays green on a merge that only touches packages/**.
         if: hashFiles('skills/*/wedge.toml') != ''
         uses: ./actions/wedge
         with:

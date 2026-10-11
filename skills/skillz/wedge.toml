@@ -4,12 +4,12 @@ repo = "paulnsorensen/skillz-that-grillz"
 [[target]]
 name = "skillz-experiment"
 entry = "skillz_experiments._cli:main"
-source = "../../lib/src/skillz_experiments"
-include = ["../../lib/fromargs/src/fromargs", "../../lib/src/wedge"]
+source = "../../packages/wedge/src/skillz_experiments"
+include = ["../../packages/fromargs/src/fromargs", "../../packages/wedge/src/wedge"]
 groups = ["experiments", "wedge"]
 
 [[target]]
 name = "inspect-skill"
 entry = "skillz_inspect:main"
-source = "../../lib/src/skillz_inspect"
-include = ["../../lib/fromargs/src/fromargs"]
+source = "../../packages/wedge/src/skillz_inspect"
+include = ["../../packages/fromargs/src/fromargs"]

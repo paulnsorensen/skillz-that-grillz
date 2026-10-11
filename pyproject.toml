@@ -7,32 +7,38 @@ dependencies = ["fromargs>=0.2.0,<0.3"]
 [dependency-groups]
 dev = ["basedpyright==1.40.1", "pytest>=8", "pyyaml==6.0.2", "types-PyYAML==6.0.12.20260906", "typing-extensions==4.16.0", "vulture==2.16"]
 experiments = ["gepa==0.1.4"]
-# skills/skillz/wedge bundles the wedge CLI. Keep this pin equal to lib/pyproject.toml:
+# skills/skillz/wedge bundles the wedge CLI. Keep this pin equal to packages/wedge/pyproject.toml:
 # shiv writes its version into every archive it builds.
 wedge = ["shiv==1.0.8"]
 
 [tool.uv]
 package = false
 
+# One workspace and one uv.lock: the published packages live under packages/.
+# The consumer example is a standalone project with its own lock.
+[tool.uv.workspace]
+members = ["packages/*"]
+exclude = ["packages/wedge/examples/consumer"]
+
 [tool.uv.sources]
-fromargs = { path = "lib/fromargs" }
+fromargs = { workspace = true }
 
 [tool.basedpyright]
 pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
-include = ["lib", "skills"]
+include = ["packages", "skills"]
 exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache"]
-extraPaths = ["lib/src", "lib/fromargs/src", "lib/fromargs/examples"]
+extraPaths = ["packages/wedge/src", "packages/fromargs/src", "packages/fromargs/examples"]
 typeCheckingMode = "recommended"
 failOnWarnings = true
 
 [[tool.basedpyright.executionEnvironments]]
-root = "lib/fromargs"
-extraPaths = ["lib/fromargs/src", "lib/fromargs/examples"]
+root = "packages/fromargs"
+extraPaths = ["packages/fromargs/src", "packages/fromargs/examples"]
 
 [tool.vulture]
-paths = [".github/scripts", "lib", "skills"]
+paths = [".github/scripts", "packages", "skills"]
 exclude = ["*/.venv/*", "*/__pycache__/*", "*/.pytest_cache/*"]
 min_confidence = 60
 ignore_decorators = [
