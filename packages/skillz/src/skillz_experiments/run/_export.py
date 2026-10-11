@@ -18,7 +18,7 @@ from skillz_experiments.run._session import engine_hash, field, is_inside, recor
 
 def summary(record: dict[str, object]) -> dict[str, object]:
     keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
-            "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options")
+            "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility")
     result = {key: record.get(key) for key in keys}
     if "close_warning" in record:
         code = mapping(record["close_warning"]).get("code")
