@@ -25,6 +25,24 @@ class Simulation:
     false_promotions_one_holdout: int
 
 
+POWER_EFFECTS = (0.1, 0.2, 0.3)
+
+
+@dataclass(frozen=True)
+class Power:
+    """Promote rate of the production gate when the candidate has a true effect.
+
+    The candidate beats each baseline case chance by `effect`, then the clip to [0, 1] and
+    the same per-case spread as the null simulation apply. `rate` equals `promotions / trials`.
+    """
+
+    effect: float
+    trials: int
+    cases: int
+    promotions: int
+    rate: float
+
+
 def _draws(rng: random.Random, chances: Sequence[float], repeats: int) -> list[list[float]]:
     draw = rng.random
     return [[float(draw() < chance) for _ in range(repeats)] for chance in chances]
@@ -114,3 +132,45 @@ def simulate(
         split += won_split
         single += won_single
     return Simulation(trials, cases, split / trials, single / trials, split, single)
+
+
+def simulate_power(
+    effect: float,
+    seed: int = 20261006,
+    trials: int = 2000,
+    cases: int = 10,
+    repeats: int = 3,
+    *,
+    rule: Callable[[list[float]], Verdict] | None = None,
+) -> Power:
+    """Estimate how often the gate promotes a candidate that truly beats the baseline by about `effect`.
+
+    The candidate chance on each case is `clip(gauss(base + effect, 0.10))`, so `effect` is the mean shift before the
+    per-case spread and the clip to [0, 1]. The clip removes part of the shift near the ceiling, so the realised mean
+    gain is lower than `effect`: about 0.097, 0.188, and 0.271 for 0.1, 0.2, and 0.3.
+    The run uses the seed, case count, repeats, baseline cases, and gate of `simulate`.
+    It skips the validation search, so each trial holds one baseline and one candidate on `cases` holdout cases.
+    `rule` replaces the verdict function, as in `simulate`; a rule that never promotes gets zero power.
+    Raise `ValueError` when `trials < 1`, `cases < 2`, `repeats < 1`, or `effect` is not above 0.
+    """
+    if trials < 1:
+        raise ValueError("simulate_power needs at least 1 trial")
+    if cases < 2:
+        raise ValueError("simulate_power needs at least 2 cases")
+    if repeats < 1:
+        raise ValueError("simulate_power needs at least 1 repeat")
+    if not effect > 0:
+        raise ValueError("simulate_power needs an effect above 0")
+    rng = random.Random(seed)
+    promotions = 0
+    for _ in range(trials):
+        base = [rng.betavariate(2, 2) for _ in range(cases)]
+        candidate = _chances(rng, [chance + effect for chance in base], 0.10)
+        base_draws = _draws(rng, base, repeats)
+        win_draws = _draws(rng, candidate, repeats)
+        if rule is None:
+            result = _floored(base_draws, win_draws)
+        else:
+            result = rule([sum(w) / repeats - sum(b) / repeats for w, b in zip(win_draws, base_draws)])
+        promotions += result.verdict == "promote"
+    return Power(effect, trials, cases, promotions, promotions / trials)

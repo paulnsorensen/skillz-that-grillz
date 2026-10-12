@@ -11,7 +11,7 @@ import fromargs
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._facts import audit_facts
-from skillz_experiments.gate import simulate as simulate_gate
+from skillz_experiments.gate import POWER_EFFECTS, simulate as simulate_gate, simulate_power
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
@@ -21,7 +21,10 @@ from skillz_experiments.wrapper import register as register_wrappers
 
 Harness = Literal["claude", "codex"]
 RunHarness = Literal["claude", "codex", "command"]
-Metric = Literal["false_promotions_2se", "false_promotions_one_holdout", "rate_2se", "rate_one_holdout"]
+Metric = Literal[
+    "false_promotions_2se", "false_promotions_one_holdout", "rate_2se", "rate_one_holdout",
+    "true_promotions_effect_10", "true_promotions_effect_20", "true_promotions_effect_30",
+    "power_effect_10", "power_effect_20", "power_effect_30"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -160,11 +163,37 @@ def audit_facts_command(directory: Path) -> dict[str, object]:
     return audit_facts(directory)
 
 
+def _simulation_report() -> dict[str, object]:
+    result = simulate_gate()
+    report: dict[str, object] = {
+        "trials": result.trials, "cases": result.cases,
+        "false_promotions_2se": result.false_promotions_2se,
+        "false_promotions_one_holdout": result.false_promotions_one_holdout,
+        "rate_2se": result.rate_2se, "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
+    for effect in POWER_EFFECTS:
+        power = simulate_power(effect)
+        label = round(effect * 100)
+        report[f"true_promotions_effect_{label}"] = power.promotions
+        report[f"power_effect_{label}"] = power.rate
+    return report
+
+
+def _simulation_figure(metric: Metric) -> int | float:
+    """Compute only the figure that `metric` names; it equals the same key of the full report."""
+    for effect in POWER_EFFECTS:
+        label = round(effect * 100)
+        if metric == f"true_promotions_effect_{label}":
+            return simulate_power(effect).promotions
+        if metric == f"power_effect_{label}":
+            return simulate_power(effect).rate
+    return cast(int | float, getattr(simulate_gate(), metric))
+
+
 @app.command(name="self-test")
 def self_test(*, model: str | None = None, preflight_only: bool = False, simulate: bool = False,
               metric: Metric | None = None, harness_config: Path | None = None, max_invocations: int = 20,
               max_seconds: float = 1200) -> dict[str, object] | int | float:
-    """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates (--simulate).
+    """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates and power (--simulate).
 
     With --simulate, --metric NAME prints only that number, so `ratchet.py measure` can read it.
     """
@@ -173,13 +202,7 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
     if metric is not None and not simulate:
         raise ValueError("--metric requires --simulate")
     if simulate:
-        result = simulate_gate()
-        report: dict[str, object] = {
-            "trials": result.trials, "cases": result.cases,
-            "false_promotions_2se": result.false_promotions_2se,
-            "false_promotions_one_holdout": result.false_promotions_one_holdout,
-            "rate_2se": result.rate_2se, "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
-        return report if metric is None else cast(int | float, report[metric])
+        return _simulation_report() if metric is None else _simulation_figure(metric)
     if model is None:
         raise ValueError("--preflight-only requires --model")
     with _coded():

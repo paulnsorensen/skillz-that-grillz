@@ -320,10 +320,23 @@ Never report a delta without its SE and case count.
 `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion counts and rates of the gate. It makes no model call.
 The keys `false_promotions_2se` and `false_promotions_one_holdout` are integer counts; each rate is its count divided by `trials`.
 The counts cover `promote` only. They do not cover `promote-cheaper`.
-`--simulate --metric NAME` prints only that one number, with no JSON. The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, and `rate_one_holdout`. Without `--metric`, the output has the same keys as before.
+`--simulate --metric NAME` prints only that one number, with no JSON. It computes only the figure that it names, so a selector costs well under the full report. Without `--metric`, the output keeps its earlier keys. The power keys follow them.
+The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, `rate_one_holdout`, and the power names below.
 Each metric in `packages/skillz/ratchets.json` names its own selector in its `command`, so `ratchet.py measure -- <command>` reads one deterministic number.
-The `skillz-pytest` job fails when a metric in that file passes its threshold. It checks `false_promotions_2se` against 39 and `false_promotions_one_holdout` against 1623.
-The one-holdout count is a reference ratchet. It models the select-and-gate rule of skill-creator, not the production gate. It stays in `ratchets.json` because the value is exact for the seed and costs about one second. A rise above 1623 fails the job. A fall passes, and nothing tightens the threshold until a person runs `ratchet.py tighten`.
+The `skillz-pytest` job fails when a metric in that file passes its threshold. It checks every metric in the file.
+The one-holdout count is a reference ratchet. It models the select-and-gate rule of skill-creator, not the production gate. Its threshold is 1623.
+It stays in `ratchets.json` because the value is exact for the seed and costs about half a second. A rise above 1623 fails the job. A fall passes, and nothing tightens the threshold until a person runs `ratchet.py tighten`.
+
+#### Gate power
+
+The false-promotion count alone passes a gate that never promotes. The power figures close that gap.
+For each true effect of 0.1, 0.2, and 0.3, the simulation draws each candidate case chance as `clip(gauss(base + effect, 0.10))`. The clip to [0, 1] removes part of the shift near the ceiling.
+So the realised mean gain is below the nominal effect, at about 0.097, 0.188, and 0.271. The simulation then runs the production gate, with the SE floor.
+It uses the seed, the 10 cases, the 3 repeats, and the 2000 trials of the false-promotion simulation. It skips the validation search.
+The keys `true_promotions_effect_10`, `_20`, and `_30` are integer counts of `promote`. The keys `power_effect_10`, `_20`, and `_30` are the rates, each its count divided by `trials`.
+Power is ratcheted. The metrics `gate-power-effect-10`, `-20`, and `-30` in `ratchets.json` use `direction: higher`, with the thresholds 191, 628, and 1240.
+The figures are exact for the seed. A power gain passes, and nothing raises the threshold until a person runs `ratchet.py tighten`. A later change cannot buy fewer false promotions with lost power without a person lowering a threshold in review.
+A rule that never promotes has power 0, so it fails these ratchets.
 
 ## Wedge targets
 

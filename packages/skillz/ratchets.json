@@ -13,6 +13,27 @@
       "threshold": 1623,
       "tolerance": 0.0,
       "unit": "count"
+    },
+    "gate-power-effect-10": {
+      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate --metric true_promotions_effect_10",
+      "direction": "higher",
+      "threshold": 191,
+      "tolerance": 0.0,
+      "unit": "count"
+    },
+    "gate-power-effect-20": {
+      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate --metric true_promotions_effect_20",
+      "direction": "higher",
+      "threshold": 628,
+      "tolerance": 0.0,
+      "unit": "count"
+    },
+    "gate-power-effect-30": {
+      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate --metric true_promotions_effect_30",
+      "direction": "higher",
+      "threshold": 1240,
+      "tolerance": 0.0,
+      "unit": "count"
     }
   },
   "version": 1
