@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from skillz_experiments._cli import self_test
 from skillz_experiments.gate import Verdict, simulate
 
@@ -13,7 +15,7 @@ def _never_promote(deltas: list[float]) -> Verdict:
 
 
 def test_cli_prints_integer_counts_equal_to_the_simulation_and_no_live_calls() -> None:
-    printed = self_test(simulate=True)
+    printed = cast(dict[str, object], self_test(simulate=True))
     expected = simulate()
     assert printed["false_promotions_2se"] == expected.false_promotions_2se
     assert printed["false_promotions_one_holdout"] == expected.false_promotions_one_holdout

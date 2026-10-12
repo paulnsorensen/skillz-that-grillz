@@ -1,14 +1,14 @@
 {
   "metrics": {
     "gate-false-promotions-2se": {
-      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate",
+      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate --metric false_promotions_2se",
       "direction": "lower",
       "threshold": 39,
       "tolerance": 0.0,
       "unit": "count"
     },
     "gate-false-promotions-one-holdout-reference": {
-      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate",
+      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate --metric false_promotions_one_holdout",
       "direction": "lower",
       "threshold": 1623,
       "tolerance": 0.0,

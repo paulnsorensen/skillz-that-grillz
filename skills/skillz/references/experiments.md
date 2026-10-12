@@ -320,7 +320,10 @@ Never report a delta without its SE and case count.
 `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion counts and rates of the gate. It makes no model call.
 The keys `false_promotions_2se` and `false_promotions_one_holdout` are integer counts; each rate is its count divided by `trials`.
 The counts cover `promote` only. They do not cover `promote-cheaper`.
-The `skillz-pytest` job fails when `false_promotions_2se` rises above the threshold in `packages/skillz/ratchets.json`.
+`--simulate --metric NAME` prints only that one number, with no JSON. The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, and `rate_one_holdout`. Without `--metric`, the output has the same keys as before.
+Each metric in `packages/skillz/ratchets.json` names its own selector in its `command`, so `ratchet.py measure -- <command>` reads one deterministic number.
+The `skillz-pytest` job fails when a metric in that file passes its threshold. It checks `false_promotions_2se` against 39 and `false_promotions_one_holdout` against 1623.
+The one-holdout count is a reference ratchet. It models the select-and-gate rule of skill-creator, not the production gate. It stays in `ratchets.json` because the value is exact for the seed and costs about one second. A change to the simulated world fails the job.
 
 ## Wedge targets
 
