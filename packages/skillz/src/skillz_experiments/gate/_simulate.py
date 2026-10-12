@@ -32,8 +32,9 @@ POWER_EFFECTS = (0.1, 0.2, 0.3)
 class Power:
     """Promote rate of the production gate when the candidate has a true effect.
 
-    The candidate beats each baseline case chance by `effect`, then the clip to [0, 1] and
-    the same per-case spread as the null simulation apply. `rate` equals `promotions / trials`.
+    The candidate chance on each case is `clip(gauss(base + effect, 0.10))`: `effect` shifts the baseline chance,
+    then the per-case spread and the clip to [0, 1] apply. The clip lowers the realised mean gain below `effect`.
+    `rate` equals `promotions / trials`.
     """
 
     effect: float

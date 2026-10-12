@@ -211,7 +211,7 @@ LAST_PROPOSAL = "This may be the last proposal, so prefer one small, safe change
 
 
 def _allowance(out: Path) -> int:
-    """Return the search calls that GEPA can use in all: the planned calls less the overshoot margin."""
+    """Return the GEPA call budget: the planned calls less the overshoot margin. The last iteration can pass it by up to that margin."""
     planned = cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
     return planned - overshoot(len(_validation(out)))
 
