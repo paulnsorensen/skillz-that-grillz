@@ -23,7 +23,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._resume import resolve_statistics
 from skillz_experiments.run._session import Session
-from skillz_experiments.search import reflection_request
+from skillz_experiments.search import request as reflection_request
 from typing_extensions import override
 from fake_provider import FakeProvider
 

@@ -33,7 +33,8 @@ from skillz_experiments._intake import intake_contract
 from skillz_experiments._new_cli import VALUE_LIMIT, expand_files, unused_helpers
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
-from skillz_experiments.search import Edit, reflection_request
+from skillz_experiments.search import Edit
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments._wedge_targets import BuildFailed, plan_targets, settle
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override

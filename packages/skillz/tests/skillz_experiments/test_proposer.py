@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from skillz_experiments.search import accept_proposal, reflection_request
+from skillz_experiments.search import accept as accept_proposal
+from skillz_experiments.search import request as reflection_request
 
 STE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
        "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "

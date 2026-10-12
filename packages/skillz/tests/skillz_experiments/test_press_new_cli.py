@@ -29,7 +29,8 @@ from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._new_cli import expand_files, unused_helpers
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
-from skillz_experiments.search import Edit, reflection_request
+from skillz_experiments.search import Edit
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments._wedge_targets import Rebuilder
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override

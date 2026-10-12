@@ -35,7 +35,9 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import Denylist, Edit, accept_proposal, overshoot, reflection_request
+from skillz_experiments.search import Denylist, Edit, overshoot
+from skillz_experiments.search import accept as accept_proposal
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search import check as check_leakage
 from skillz_experiments.search import search as pareto_search
 
