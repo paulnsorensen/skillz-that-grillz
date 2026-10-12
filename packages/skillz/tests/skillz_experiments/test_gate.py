@@ -103,7 +103,7 @@ def test_simulation_needs_at_least_two_candidates(candidates: int) -> None:
 def test_simulation_rejects_sizes_that_cannot_run_a_trial(overrides: dict[str, int], message: str) -> None:
     arguments = {"trials": 1, "cases": 6, "repeats": 1} | overrides
     with pytest.raises(ValueError, match=message):
-        _ = simulate(**arguments)
+        _ = simulate(trials=arguments["trials"], cases=arguments["cases"], repeats=arguments["repeats"])
 
 
 def test_simulation_accepts_the_smallest_valid_sizes() -> None:

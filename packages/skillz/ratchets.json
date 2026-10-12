@@ -1,0 +1,19 @@
+{
+  "metrics": {
+    "gate-false-promotions-2se": {
+      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate",
+      "direction": "lower",
+      "threshold": 73,
+      "tolerance": 0.0,
+      "unit": "count"
+    },
+    "gate-false-promotions-one-holdout-reference": {
+      "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate",
+      "direction": "lower",
+      "threshold": 1623,
+      "tolerance": 0.0,
+      "unit": "count"
+    }
+  },
+  "version": 1
+}

@@ -32,7 +32,9 @@ pytestmark = pytest.mark.usefixtures("host_login")
 # --- gate ------------------------------------------------------------------------------------------------
 
 def test_simulate_default_rates_are_pinned() -> None:
-    assert simulate() == Simulation(trials=2000, cases=10, rate_2se=0.0365, rate_one_holdout=0.8115)
+    assert simulate() == Simulation(
+        trials=2000, cases=10, rate_2se=0.0365, rate_one_holdout=0.8115,
+        false_promotions_2se=73, false_promotions_one_holdout=1623)
 
 
 @pytest.mark.parametrize("values", [
