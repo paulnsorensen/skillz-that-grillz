@@ -63,8 +63,8 @@ def _fields(record: dict[str, object]) -> dict[str, object]:
     return cast(dict[str, object], _frozen(record)["fields"])
 
 
-@pytest.mark.ac("AC-1")
-@pytest.mark.ac("AC-2")
+@pytest.mark.ac("gh-235:AC-1")
+@pytest.mark.ac("gh-235:AC-2")
 def test_a_run_freezes_its_fingerprint_and_an_equal_run_compares_clean(
         tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     out, first, summary = _judged_run(tmp_path / "a", "judge-a", make_target, approved_run)
@@ -86,7 +86,7 @@ def test_a_run_freezes_its_fingerprint_and_an_equal_run_compares_clean(
     assert compare(first, second) == ()
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("gh-235:AC-3")
 def test_runs_that_differ_only_in_the_judge_model_name_that_field(
         tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     _, first, _ = _judged_run(tmp_path / "a", "judge-a", make_target, approved_run)
@@ -95,7 +95,7 @@ def test_runs_that_differ_only_in_the_judge_model_name_that_field(
     assert _frozen(first)["fingerprint"] != _frozen(second)["fingerprint"]
 
 
-@pytest.mark.ac("AC-5")
+@pytest.mark.ac("gh-235:AC-5")
 def test_runs_that_differ_only_in_the_judge_model_flag_compare_on_judge_model(judged: JudgedRun, tmp_path: Path) -> None:
     twin = tmp_path / "twin"
     _ = shutil.copytree(judged.out, twin)
@@ -106,7 +106,7 @@ def test_runs_that_differ_only_in_the_judge_model_flag_compare_on_judge_model(ju
     assert compare(first, second) == ("judge_model",)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("gh-235:AC-3")
 def test_runs_that_differ_only_in_the_task_role_model_name_that_field(
         tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     _, plain, _ = _judged_run(tmp_path / "a", "judge-a", make_target, approved_run)
@@ -115,7 +115,7 @@ def test_runs_that_differ_only_in_the_task_role_model_name_that_field(
     assert compare(plain, overridden) == ("task_model",)
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("gh-235:AC-4")
 @pytest.mark.parametrize("record", [{}, {"compatibility": None}, {"compatibility": "x"}, {"compatibility": {"fields": []}},
                                     {"compatibility": {"fields": {}}}])
 def test_a_record_without_a_fingerprint_is_missing_on_either_side(record: dict[str, object]) -> None:
@@ -125,7 +125,7 @@ def test_a_record_without_a_fingerprint_is_missing_on_either_side(record: dict[s
     assert compare(present, present) == ()
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("gh-235:AC-3")
 def test_compare_tells_an_absent_field_from_a_null_field() -> None:
     absent: dict[str, object] = {"compatibility": {"fields": {"edit": "prose"}}}
     null: dict[str, object] = {"compatibility": {"fields": {"edit": "prose", "judge_model": None}}}
@@ -134,14 +134,14 @@ def test_compare_tells_an_absent_field_from_a_null_field() -> None:
     assert compare(null, null) == ()
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("gh-235:AC-3")
 def test_compare_names_every_differing_field_including_one_present_on_one_side() -> None:
     first: dict[str, object] = {"compatibility": {"fields": {"edit": "prose", "repeats": 3, "skill": "a"}}}
     second: dict[str, object] = {"compatibility": {"fields": {"edit": "prose+cli", "repeats": 3, "extra": 1}}}
     assert compare(first, second) == ("edit", "extra", "skill")
 
 
-@pytest.mark.ac("AC-5")
+@pytest.mark.ac("gh-235:AC-5")
 def test_an_export_carries_the_fingerprint_and_no_case_text(
         tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     out, record, _ = _judged_run(tmp_path / "a", "judge-a", make_target, approved_run, expected={"marker": "expected-sentinel"})
@@ -154,7 +154,7 @@ def test_an_export_carries_the_fingerprint_and_no_case_text(
     assert "expected-sentinel" not in json.dumps(_frozen(record))
 
 
-@pytest.mark.ac("AC-6")
+@pytest.mark.ac("gh-235:AC-6")
 def test_the_scoring_files_are_pinned_and_exist() -> None:
     assert SCORING_FILES == ("_evaluator.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
     assert [name for name in SCORING_FILES if not (PACKAGE / name).is_file()] == []
@@ -167,7 +167,7 @@ def copied(tmp_path: Path) -> Path:
     return copy
 
 
-@pytest.mark.ac("AC-6")
+@pytest.mark.ac("gh-235:AC-6")
 @pytest.mark.parametrize("module", ["gate/_rules.py", "gate/_statistics.py", "_evaluator.py", "_evaluation.py", "_graders.py",
                                     "_audit.py", "_contract.py"])
 def test_a_scoring_module_edit_changes_the_scoring_digest(copied: Path, module: str) -> None:
@@ -178,14 +178,14 @@ def test_a_scoring_module_edit_changes_the_scoring_digest(copied: Path, module: 
     assert scoring_digest(copied) != before
 
 
-@pytest.mark.ac("AC-6")
+@pytest.mark.ac("gh-235:AC-6")
 def test_a_file_added_to_gate_changes_the_scoring_digest(copied: Path) -> None:
     before = scoring_digest(copied)
     _ = (copied / "gate" / "_added.py").write_text("X = 1\n")
     assert scoring_digest(copied) != before
 
 
-@pytest.mark.ac("AC-6")
+@pytest.mark.ac("gh-235:AC-6")
 @pytest.mark.parametrize("module", ["search/_engine.py", "run/_session.py", "harness/_claude/_events.py", "_cli.py", "__init__.py"])
 def test_an_edit_outside_the_scoring_modules_keeps_the_scoring_digest(copied: Path, module: str) -> None:
     before = scoring_digest(copied)

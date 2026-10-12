@@ -50,70 +50,70 @@ class Mutation:
 
 MUTATIONS: list[Mutation] = [
     Mutation(
-        ac_id="AC-1",
+        ac_id="fromargs-cli-library:AC-1",
         label="command registration renames every command",
         rel_file="_app.py",
         old='        _ = self._cyclopts.command(obj, name=name, help=help, **kwargs)',
         new='        _ = self._cyclopts.command(obj, name=f"broken-{name or \'\'}", help=help, **kwargs)',
     ),
     Mutation(
-        ac_id="AC-2",
+        ac_id="fromargs-cli-library:AC-2",
         label="JSON result payload is discarded",
         rel_file="_output.py",
         old="    print(serialized, file=stream)",
         new='    print(json.dumps({"broken": True}), file=stream)',
     ),
     Mutation(
-        ac_id="AC-3",
+        ac_id="fromargs-cli-library:AC-3",
         label="None-result exit code",
         rel_file="_run.py",
         old="    if status is None:\n        return 0",
         new="    if status is None:\n        return 1",
     ),
     Mutation(
-        ac_id="AC-4",
+        ac_id="fromargs-cli-library:AC-4",
         label="JSON error envelope key",
         rel_file="_run.py",
         old='    print(json.dumps({"error": message, "exit_code": exit_code}), file=sys.stderr)',
         new='    print(json.dumps({"error": message, "code": exit_code}), file=sys.stderr)',
     ),
     Mutation(
-        ac_id="AC-5",
+        ac_id="fromargs-cli-library:AC-5",
         label="--json stops being a no-op",
         rel_file="_argv.py",
         old='GLOBAL_FLAGS = frozenset({"--json", "--full"})',
         new='GLOBAL_FLAGS = frozenset({"--full"})',
     ),
     Mutation(
-        ac_id="AC-6",
+        ac_id="fromargs-cli-library:AC-6",
         label="--full never turns off truncation",
         rel_file="_argv.py",
         old='    return kept + after, "--full" in before',
         new="    return kept + after, False",
     ),
     Mutation(
-        ac_id="AC-7",
+        ac_id="fromargs-cli-library:AC-7",
         label="limit truncation ignores --full",
         rel_file="_output.py",
         old="        if not full and total > limit:",
         new="        if total > limit:",
     ),
     Mutation(
-        ac_id="AC-8",
+        ac_id="fromargs-cli-library:AC-8",
         label="full handler parameter no longer reserved",
         rel_file="_app.py",
         old="    reserved = sorted(GLOBAL_FLAGS.intersection(names))",
         new='    reserved = sorted(frozenset({"--json"}).intersection(names))',
     ),
     Mutation(
-        ac_id="AC-9",
+        ac_id="fromargs-cli-library:AC-9",
         label="public surface grows an extra name",
         rel_file="__init__.py",
         old='__all__ = ["App", "CliError", "Group", "Parameter", "contract_error"]',
         new='__all__ = ["App", "CliError", "Group", "Parameter", "contract_error", "extra"]',
     ),
     Mutation(
-        ac_id="AC-10",
+        ac_id="fromargs-cli-library:AC-10",
         label="no JSON-input flag or stdin reader",
         na_reason=(
             "fromargs never reads sys.stdin and defines no JSON-input flag "
@@ -122,14 +122,14 @@ MUTATIONS: list[Mutation] = [
         ),
     ),
     Mutation(
-        ac_id="AC-11",
+        ac_id="fromargs-cli-library:AC-11",
         label="ambiguous quote split accepts the first candidate",
         rel_file="_argv.py",
         old="        if found is not None:\n            return None",
         new="        if found is not None:\n            return found[0]",
     ),
     Mutation(
-        ac_id="AC-12",
+        ac_id="fromargs-cli-library:AC-12",
         label="probe parse invokes the handler",
         rel_file="_argv.py",
         old=(
@@ -143,7 +143,7 @@ MUTATIONS: list[Mutation] = [
         ),
     ),
     Mutation(
-        ac_id="AC-13",
+        ac_id="fromargs-cli-library:AC-13",
         label='"Did you mean" suggestion wording',
         na_reason=(
             "Did-you-mean suggestions are native Cyclopts error-message "
@@ -154,28 +154,28 @@ MUTATIONS: list[Mutation] = [
         ),
     ),
     Mutation(
-        ac_id="AC-15",
+        ac_id="fromargs-cli-library:AC-15",
         label="resolved version falls back before checking the caller module",
         rel_file="_app.py",
         old="            caller = frame.f_back if frame is not None else None",
         new="            caller = frame",
     ),
     Mutation(
-        ac_id="AC-16",
+        ac_id="fromargs-cli-library:AC-16",
         label="default handler is never registered with Cyclopts",
         rel_file="_app.py",
         old="            _ = self._cyclopts.default(obj, validator=validator)",
         new="            pass",
     ),
     Mutation(
-        ac_id="AC-17",
+        ac_id="fromargs-cli-library:AC-17",
         label="group kwargs are dropped from the nested Cyclopts app",
         rel_file="_app.py",
         old="        sub = cyclopts.App(name=name, help=help, **cyclopts_kwargs)",
         new="        sub = cyclopts.App(name=name, help=help)",
     ),
     Mutation(
-        ac_id="AC-14",
+        ac_id="fromargs-cli-library:AC-14",
         label="underscore flag binding (--max_count -> max_count)",
         na_reason=(
             "Underscore/dash flag normalization is native Cyclopts behavior "

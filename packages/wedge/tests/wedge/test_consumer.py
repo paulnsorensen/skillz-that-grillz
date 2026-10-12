@@ -29,7 +29,7 @@ def _wedge(cwd: Path, *args: str) -> dict[str, object]:
     return cast(dict[str, object], json.loads(result.stdout))
 
 
-@pytest.mark.ac("AC-W8")
+@pytest.mark.ac("wedge-skill-packaging:AC-W8")
 def test_consumer_checks_relocks_and_runs_outside_this_repo(
     tmp_path: Path, consumer_dir: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:

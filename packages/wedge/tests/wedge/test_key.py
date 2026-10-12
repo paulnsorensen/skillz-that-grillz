@@ -17,7 +17,7 @@ def _key(skill: Path) -> str:
     return compute_key(skill, load_config(skill))
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_is_stable_across_checkout_paths(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -26,7 +26,7 @@ def test_key_is_stable_across_checkout_paths(
     assert _key(skill_a) == _key(skill_b)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 @pytest.mark.parametrize(
     "relative",
     [
@@ -47,7 +47,7 @@ def test_key_changes_with_each_build_input(
     assert _key(skill) != before
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_is_unchanged_by_pycache(tmp_path: Path, copy_repo_subset: Callable[[Path], Path]) -> None:
     root = tmp_path / "checkout"
     skill = copy_repo_subset(root)
@@ -58,7 +58,7 @@ def test_key_is_unchanged_by_pycache(tmp_path: Path, copy_repo_subset: Callable[
     assert _key(skill) == before
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_export_is_the_project_closure_without_builder_dependencies(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -71,7 +71,7 @@ def test_export_is_the_project_closure_without_builder_dependencies(
     assert {"cyclopts", "attrs", "docstring-parser"} <= names
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 @pytest.mark.parametrize("variable", ["FORCE_COLOR", "CLICOLOR_FORCE"])
 def test_export_is_plain_text_when_the_caller_forces_color(
     tmp_path: Path,
@@ -90,7 +90,7 @@ def test_export_is_plain_text_when_the_caller_forces_color(
     assert {"cyclopts", "attrs", "docstring-parser"} <= names
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_export_adds_each_configured_dependency_group(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
@@ -109,7 +109,7 @@ def test_export_adds_each_configured_dependency_group(monkeypatch: pytest.Monkey
     assert seen[0][-6:] == ["--group", "runtime", "--group", "cli", "--project", "/project"]
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_groups_must_be_a_list_of_names(tmp_path: Path) -> None:
     _ = (tmp_path / "wedge.toml").write_text(
         'name = "x"\nentry = "x:main"\nsource = "x.py"\nrepo = "o/r"\ngroups = "runtime"\n'
@@ -119,7 +119,7 @@ def test_groups_must_be_a_list_of_names(tmp_path: Path) -> None:
         _ = load_config(tmp_path)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_groups_may_not_include_dev(tmp_path: Path) -> None:
     _ = (tmp_path / "wedge.toml").write_text(
         'name = "x"\nentry = "x:main"\nsource = "x.py"\nrepo = "o/r"\ngroups = ["dev"]\n'
@@ -129,7 +129,7 @@ def test_groups_may_not_include_dev(tmp_path: Path) -> None:
         _ = load_config(tmp_path)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_unknown_key_is_a_config_error(tmp_path: Path) -> None:
     _ = (tmp_path / "wedge.toml").write_text(
         'name = "x"\nentry = "x:main"\nsource = "x.py"\nrepo = "o/r"\ngroup = ["cli"]\n'
@@ -139,7 +139,7 @@ def test_unknown_key_is_a_config_error(tmp_path: Path) -> None:
         _ = load_config(tmp_path)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_a_bad_shared_default_names_the_shared_file(tmp_path: Path) -> None:
     root = tmp_path / "skills"
     skill = root / "hello"
@@ -156,7 +156,7 @@ def test_a_bad_shared_default_names_the_shared_file(tmp_path: Path) -> None:
     assert str(skill / "wedge.toml") not in str(raised.value)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_a_bad_own_value_names_the_skill_file(tmp_path: Path) -> None:
     root = tmp_path / "skills"
     skill = root / "hello"
@@ -172,7 +172,7 @@ def test_a_bad_own_value_names_the_skill_file(tmp_path: Path) -> None:
     assert str(skill / "wedge.toml") in str(raised.value)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_rejects_source_symlink(tmp_path: Path, copy_repo_subset: Callable[[Path], Path]) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
     source = skill / "alias.py"
@@ -185,7 +185,7 @@ def test_key_rejects_source_symlink(tmp_path: Path, copy_repo_subset: Callable[[
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_rejects_intermediate_symlink(tmp_path: Path, copy_repo_subset: Callable[[Path], Path]) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
     alias = skill / "alias"
@@ -196,7 +196,7 @@ def test_key_rejects_intermediate_symlink(tmp_path: Path, copy_repo_subset: Call
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_rejects_source_directory_symlink(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -214,7 +214,7 @@ def test_key_rejects_source_directory_symlink(
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_rejects_relative_intermediate_symlink(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -232,7 +232,7 @@ def test_key_rejects_relative_intermediate_symlink(
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_rejects_sibling_alias_symlink(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -249,7 +249,7 @@ def test_key_rejects_sibling_alias_symlink(
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_rejects_absolute_alias_symlink(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -268,7 +268,7 @@ def test_key_rejects_absolute_alias_symlink(
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_rejects_nested_include_symlink(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -283,7 +283,7 @@ def test_key_rejects_nested_include_symlink(
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_key_ignores_files_outside_configured_inputs(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -294,7 +294,7 @@ def test_key_ignores_files_outside_configured_inputs(
     assert _key(skill) == before
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 @pytest.mark.parametrize(
     ("line", "message"),
     [
@@ -316,7 +316,7 @@ def test_bad_include_is_a_config_error(
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_project_without_uv_lock_is_a_config_error(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -327,7 +327,7 @@ def test_project_without_uv_lock_is_a_config_error(
         _ = _key(skill)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 @pytest.mark.parametrize(
     ("repo_line", "message"),
     [(None, "missing required key 'repo'"), ('repo = "not-a-slug"', "owner/name")],
@@ -343,7 +343,7 @@ def test_repo_is_required_and_validated(
         _ = load_config(skill)
 
 
-@pytest.mark.ac("AC-W1")
+@pytest.mark.ac("wedge-skill-packaging:AC-W1")
 def test_source_paths_select_only_explicit_files(tmp_path: Path) -> None:
     _ = (tmp_path / "wedge.toml").write_text(
         'name = "x"\nentry = "x:main"\nsource = "pkg"\nsource_paths = ["__init__.py"]\nrepo = "o/r"\n'
@@ -361,7 +361,7 @@ def test_source_paths_select_only_explicit_files(tmp_path: Path) -> None:
     assert _key(tmp_path) != before
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 @pytest.mark.parametrize("selector", [[], [""], ["../outside"], ["/absolute"]])
 def test_source_paths_rejects_unsafe_selectors(tmp_path: Path, selector: list[str]) -> None:
     _ = (tmp_path / "wedge.toml").write_text(
@@ -371,7 +371,7 @@ def test_source_paths_rejects_unsafe_selectors(tmp_path: Path, selector: list[st
         _ = load_config(tmp_path)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_compute_key_rejects_intermediate_source_selector_symlink(tmp_path: Path) -> None:
     _ = (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\nversion='0'\n")
     _ = (tmp_path / "uv.lock").write_text("version = 1\n")

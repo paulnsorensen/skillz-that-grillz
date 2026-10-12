@@ -36,7 +36,7 @@ CLI_HEAD = ("Improve the supplied skill text and helper script components. "
 PROSE_CLI = CLI_HEAD + STE + STATUS
 
 
-@pytest.mark.ac("AC-1")
+@pytest.mark.ac("gh-238:AC-1")
 def test_the_prose_request_text_and_schema_are_pinned() -> None:
     prompt, schema = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)
     assert prompt == PROSE + '{"candidate": {"SKILL.md": "t"}, "feedback": {}}'
@@ -44,7 +44,7 @@ def test_the_prose_request_text_and_schema_are_pinned() -> None:
                       "required": ["SKILL.md"], "additionalProperties": False}
 
 
-@pytest.mark.ac("AC-1")
+@pytest.mark.ac("gh-238:AC-1")
 def test_the_prose_and_cli_request_text_and_schema_are_pinned() -> None:
     components = ["SKILL.md", "@new-cli"]
     prompt, schema = reflection_request("prose+cli", {name: "t" for name in components}, {}, components, progress=START)
@@ -54,14 +54,14 @@ def test_the_prose_and_cli_request_text_and_schema_are_pinned() -> None:
                       "required": components, "additionalProperties": False}
 
 
-@pytest.mark.ac("AC-2")
+@pytest.mark.ac("gh-238:AC-2")
 @pytest.mark.parametrize("answer", [{"SKILL.md": "x", "extra": "y"}, {}, {"SKILL.md": 1}])
 def test_an_answer_with_other_keys_or_a_non_text_value_is_refused(answer: dict[str, object]) -> None:
     with pytest.raises(ValueError, match="reflection keys differ from the frozen components"):
         _ = accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})
 
 
-@pytest.mark.ac("AC-2")
+@pytest.mark.ac("gh-238:AC-2")
 def test_an_answer_that_is_not_an_object_is_refused() -> None:
     with pytest.raises(ValueError, match="expected a JSON object"):
         _ = accept_proposal(["SKILL.md"], ["SKILL.md"], {"SKILL.md": "t"})

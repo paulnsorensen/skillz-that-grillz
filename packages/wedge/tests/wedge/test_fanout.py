@@ -41,7 +41,7 @@ def _second_skill(consumer: Path, name: str = "goodbye") -> Path:
     return skill
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_lock_root_locks_every_skill_and_check_passes(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -56,7 +56,7 @@ def test_lock_root_locks_every_skill_and_check_passes(
     assert check([consumer / SKILLS / "hello", second]) == []
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_build_root_writes_every_asset_under_out(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -74,7 +74,7 @@ def test_build_root_writes_every_asset_under_out(
         assert path.is_file()
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_one_broken_skill_fails_the_command_but_not_the_others(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -93,7 +93,7 @@ def test_one_broken_skill_fails_the_command_but_not_the_others(
     assert hello_lock.is_file(), "the healthy skill was still locked"
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 @pytest.mark.parametrize("command", [build_cmd, lock_cmd, check_cmd])
 def test_a_root_without_skills_is_an_error(
     tmp_path: Path, command: Callable[..., object], monkeypatch: pytest.MonkeyPatch
@@ -105,7 +105,7 @@ def test_a_root_without_skills_is_an_error(
         _ = command(root=["empty"])
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_fan_out_runs_skills_concurrently_and_keeps_input_order(tmp_path: Path) -> None:
     # Both operations wait at one barrier: only a parallel run gets past it.
     barrier = threading.Barrier(2, timeout=5)
@@ -120,7 +120,7 @@ def test_fan_out_runs_skills_concurrently_and_keeps_input_order(tmp_path: Path) 
     assert all(o.error is None for o in outcomes)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_fan_out_with_one_job_never_overlaps(tmp_path: Path) -> None:
     running = 0
     overlapped = False
@@ -137,7 +137,7 @@ def test_fan_out_with_one_job_never_overlaps(tmp_path: Path) -> None:
     assert all(o.error is None for o in outcomes)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_skills_over_one_project_share_one_site_directory(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -159,7 +159,7 @@ def test_skills_over_one_project_share_one_site_directory(
     assert {o.value.name for o in outcomes if o.value is not None} == {"hello", "goodbye"}
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_a_site_that_cannot_be_populated_fails_each_skill_that_shares_it(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -176,7 +176,7 @@ def test_a_site_that_cannot_be_populated_fails_each_skill_that_shares_it(
     assert [o.error for o in outcomes] == ["uv exited 1: index unreachable"] * 2
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_two_skills_with_one_name_both_fail_and_the_rest_build(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -194,7 +194,7 @@ def test_two_skills_with_one_name_both_fail_and_the_rest_build(
     assert sorted(p.name for p in (tmp_path / "dist").iterdir()) == [outcomes[2].value.path.name]
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_fan_out_reports_a_subprocess_failure_with_its_stderr(tmp_path: Path) -> None:
     def operation(_skill_dir: Path) -> None:
         raise subprocess.CalledProcessError(2, ["uv", "pip"], stderr="no such wheel\n")
@@ -205,7 +205,7 @@ def test_fan_out_reports_a_subprocess_failure_with_its_stderr(tmp_path: Path) ->
     assert outcomes[0].error == "uv exited 2: no such wheel"
 
 
-@pytest.mark.ac("AC-W5")
+@pytest.mark.ac("wedge-skill-packaging:AC-W5")
 def test_check_refuses_a_committed_archive(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -220,7 +220,7 @@ def test_check_refuses_a_committed_archive(
     assert json.loads((skill / "scripts" / "hello.wedge.json").read_text())["name"] == "hello"
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_check_reports_every_duplicate_skill_name(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -237,7 +237,7 @@ def test_check_reports_every_duplicate_skill_name(
     assert any(i.skill_dir == str(twin) and i.reason == "duplicate skill name 'hello'" for i in issues)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_lock_many_isolates_a_lock_write_failure(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:

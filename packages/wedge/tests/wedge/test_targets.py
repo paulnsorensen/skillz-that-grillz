@@ -46,7 +46,7 @@ def _tree_digest(root: Path) -> str:
     return digest.hexdigest()
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_target_tables_parse_into_one_config_each(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -62,7 +62,7 @@ def test_target_tables_parse_into_one_config_each(
     assert discover_skills([skill.parent]) == [skill]
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_a_target_table_overrides_the_top_level_defaults(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -74,7 +74,7 @@ def test_a_target_table_overrides_the_top_level_defaults(
     assert load_targets(skill)[0].groups == ("other",)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_mixed_single_and_table_forms_are_a_config_error(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -85,7 +85,7 @@ def test_mixed_single_and_table_forms_are_a_config_error(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_duplicate_target_names_are_a_config_error(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -96,7 +96,7 @@ def test_duplicate_target_names_are_a_config_error(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_an_unknown_key_in_a_target_table_is_a_config_error(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -109,7 +109,7 @@ def test_an_unknown_key_in_a_target_table_is_a_config_error(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_lock_check_and_release_publish_reject_target_tables(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -136,7 +136,7 @@ def test_lock_check_and_release_publish_reject_target_tables(
     assert all(message in r["reason"] for r in published.values())
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_publish_skips_each_direct_bundle_target_of_a_multi_target_skill(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -152,7 +152,7 @@ def test_publish_skips_each_direct_bundle_target_of_a_multi_target_skill(
     }
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_bundle_command_checks_a_two_target_skill(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -166,7 +166,7 @@ def test_bundle_command_checks_a_two_target_skill(
     assert written["cave-a"]["key"] != written["cave-b"]["key"]
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_single_target_form_keeps_its_config_and_key(fixture_skill_dir: Path) -> None:
     (only,) = load_targets(fixture_skill_dir)
 
@@ -175,7 +175,7 @@ def test_single_target_form_keeps_its_config_and_key(fixture_skill_dir: Path) ->
     assert compute_key(fixture_skill_dir, only) == load_lock(fixture_skill_dir, FIXTURE_NAME).key
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_bundle_writes_and_checks_every_target(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path], rewrite_pyz: Callable[..., Path]
 ) -> None:
@@ -196,7 +196,7 @@ def test_bundle_writes_and_checks_every_target(
     assert errors[1] is not None and "cave-b.pyz" in errors[1]
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_a_layer_builds_byte_identical_output_without_the_network(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -238,7 +238,7 @@ def test_a_layer_builds_byte_identical_output_without_the_network(
     assert len(populated) == 1
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_one_layer_serves_every_target_of_a_skill(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -259,7 +259,7 @@ def test_one_layer_serves_every_target_of_a_skill(
         assert path.read_bytes() == outcome.value.path.read_bytes()
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_a_layer_rejects_a_target_with_other_groups(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -273,7 +273,7 @@ def test_a_layer_rejects_a_target_with_other_groups(
         _ = build_from_layer(layer, sources, other, tmp_path / "out")
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_a_layer_rejects_first_party_source_that_shadows_an_installed_path(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:

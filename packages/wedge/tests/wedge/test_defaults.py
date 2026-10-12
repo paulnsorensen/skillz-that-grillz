@@ -26,7 +26,7 @@ def _split_defaults(consumer: Path) -> Path:
     return skill
 
 
-@pytest.mark.ac("AC-W10")
+@pytest.mark.ac("wedge-skill-packaging:AC-W10")
 def test_shared_defaults_fill_in_what_a_skill_omits(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -38,7 +38,7 @@ def test_shared_defaults_fill_in_what_a_skill_omits(
     assert load_config(skill) == before
 
 
-@pytest.mark.ac("AC-W10")
+@pytest.mark.ac("wedge-skill-packaging:AC-W10")
 def test_a_skill_overrides_a_shared_default(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -50,7 +50,7 @@ def test_a_skill_overrides_a_shared_default(
     assert load_config(skill).repo == "other-owner/other-repo"
 
 
-@pytest.mark.ac("AC-W10")
+@pytest.mark.ac("wedge-skill-packaging:AC-W10")
 def test_shared_defaults_may_not_name_a_skill(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -61,7 +61,7 @@ def test_shared_defaults_may_not_name_a_skill(
         _ = load_config(consumer / SKILLS / "hello")
 
 
-@pytest.mark.ac("AC-W10")
+@pytest.mark.ac("wedge-skill-packaging:AC-W10")
 def test_a_cli_nested_in_a_skill_ignores_the_skills_own_manifest(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -85,7 +85,7 @@ def test_a_cli_nested_in_a_skill_ignores_the_skills_own_manifest(
     assert (config.name, config.entry) == ("tool", "hello:main")
 
 
-@pytest.mark.ac("AC-W10")
+@pytest.mark.ac("wedge-skill-packaging:AC-W10")
 def test_shared_defaults_are_part_of_the_key(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -104,7 +104,7 @@ def test_shared_defaults_are_part_of_the_key(
     assert compute_key(skill, load_config(skill)) != locked.key
 
 
-@pytest.mark.ac("AC-W10")
+@pytest.mark.ac("wedge-skill-packaging:AC-W10")
 def test_check_dot_reads_the_parent_directorys_defaults(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -116,7 +116,7 @@ def test_check_dot_reads_the_parent_directorys_defaults(
     assert load_config(Path(".")) == load_config(skill)
 
 
-@pytest.mark.ac("AC-W10")
+@pytest.mark.ac("wedge-skill-packaging:AC-W10")
 def test_a_symlinked_skill_reads_the_real_parents_defaults(
     tmp_path: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
