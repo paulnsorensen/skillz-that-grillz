@@ -1,5 +1,6 @@
 """The environment-differs stop names its evidence even when only the hash changed."""
 
+import threading
 from types import SimpleNamespace
 from typing import cast
 
@@ -12,6 +13,7 @@ from skillz_experiments.run._session import Session
 def _session(recorded: dict[str, object], observed: dict[str, object]) -> Session:
     session = object.__new__(Session)
     session.budget = Budget(1, 60.0, reserve=0)
+    session.lock = threading.RLock()
     session.record = {"preflight": recorded, "environment_hash": recorded["environment_hash"]}
     session.provider = cast(object, SimpleNamespace(preflight=lambda: observed))  # pyright: ignore[reportAttributeAccessIssue]
     return session

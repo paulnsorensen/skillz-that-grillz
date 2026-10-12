@@ -1009,6 +1009,25 @@ def test_a_simulator_without_judged_cases_reports_the_model_the_judge_role_ran_o
     assert cast(dict[str, dict[str, object]], summary(_spend_record())["usage_by_role"])["simulator"]["model"] == "task-m"
 
 
+def test_a_preflight_that_fails_after_its_claim_saves_the_count(
+        tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out, state = make_target(tmp_path), tmp_path / "run", State(claims=True)
+
+    class Failing(_Fake):
+        @override
+        def preflight(self) -> dict[str, object]:
+            _ = super().preflight()
+            raise EnvironmentDiffers("the environment changed after the claim")
+
+    def factory(_model: str, budget: Budget, _checkpoint: Callable[[], None]) -> Failing:
+        return Failing(state, budget)
+
+    with pytest.raises(EnvironmentDiffers):
+        _ = approved_run(target, out, factory=factory)
+    record = read(out / "run.json")
+    assert record["preflight_calls"] == 1 == record["calls"]
+
+
 def test_the_summary_reconciles_calls_with_the_worst_case_bound_and_flags_overspend(
         tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
@@ -1020,8 +1039,14 @@ def test_the_summary_reconciles_calls_with_the_worst_case_bound_and_flags_oversp
     assert read(out / "run.json")["preflight_calls"] == 1 and finished["calls"] > 1
     unrecorded = read(out / "run.json")
     del unrecorded["preflight_calls"]
-    unrecorded["calls"] = finished["calls_upper_bound"]
-    assert summary(unrecorded, out)["usage_gap"] == 1
+    unrecorded["calls"] = finished["calls_upper_bound"] + 3
+    legacy = summary(unrecorded, out)
+    assert legacy["calls_upper_bound"] is None and "usage_gap" not in legacy
+    rejected = read(out / "run.json")
+    outcomes = cast(list[dict[str, object]], rejected["outcomes"])
+    evaluated = next(item for item in outcomes if item.get("split") != "reflection")
+    outcomes.append({**evaluated, "status": "candidate-contract-rejected"})
+    assert summary(rejected, out)["calls_upper_bound"] == finished["calls_upper_bound"]
     task = cast(dict[str, dict[str, object]], finished["usage_by_role"])["task"]
     assert task["outcomes"] and task["input_tokens"] == 10 * cast(int, task["outcomes"])
     record = read(out / "run.json")

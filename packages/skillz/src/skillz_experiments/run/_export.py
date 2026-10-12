@@ -82,17 +82,23 @@ def usage_by_role(record: dict[str, object]) -> dict[str, object]:
     return result
 
 
-def calls_upper_bound(record: dict[str, object], out: Path) -> int:
-    """Return the planned worst-case call count: the recorded preflight claims, one per reflection, `case_calls` per evaluation."""
+def calls_upper_bound(record: dict[str, object], out: Path) -> int | None:
+    """Return the planned worst-case call count: the recorded preflight claims, one per reflection, `case_calls` per evaluation.
+
+    A record without an integer `preflight_calls` predates the count, so the bound is unknown and this returns None.
+    A `candidate-contract-rejected` outcome made no call, so it adds nothing.
+    """
+    preflight = record.get("preflight_calls")
+    if type(preflight) is not int:
+        return None
     contract = parse(field(record, "contract"), text_field(record, "contract_source"))
     cases = {case.identifier: case for case in load_cases(out / "cases.json", contract.grader_types())}
-    preflight = record.get("preflight_calls", 0)
-    total = preflight if type(preflight) is int else 0
+    total = preflight
     for item in record_outcomes(record):
         case = cases.get(str(item.get("case_id")))
         if item.get("split") == "reflection":
             total += 1
-        elif case is not None:
+        elif case is not None and item.get("status") != "candidate-contract-rejected":
             total += case_calls(contract, case)
     return total
 
@@ -107,7 +113,7 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
         bound = calls_upper_bound(record, out)
         result["calls_upper_bound"] = bound
         calls = record.get("calls")
-        if isinstance(calls, int) and calls > bound:
+        if bound is not None and isinstance(calls, int) and calls > bound:
             result["usage_gap"] = calls - bound
     if "close_warning" in record:
         code = mapping(record["close_warning"]).get("code")
