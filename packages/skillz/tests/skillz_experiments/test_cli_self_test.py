@@ -82,5 +82,7 @@ def test_the_metric_selector_needs_simulate(capsys: pytest.CaptureFixture[str]) 
 
 
 def test_an_unknown_metric_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
-    assert _cli.main(["self-test", "--simulate", "--metric", "nope"]) != 0
-    assert capsys.readouterr().out == ""
+    assert _cli.main(["self-test", "--simulate", "--metric", "nope"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "--metric" in captured.err

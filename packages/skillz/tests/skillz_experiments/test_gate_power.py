@@ -4,27 +4,20 @@ from typing import cast, get_args
 
 import pytest
 
+from gate_rules import always_promote, never_promote
 from skillz_experiments import _cli
-from skillz_experiments.gate import POWER_EFFECTS, Verdict, simulate_power
-
-
-def _always_promote(deltas: list[float]) -> Verdict:
-    return Verdict("promote", 0.0, 0.0, len(deltas))
-
-
-def _never_promote(deltas: list[float]) -> Verdict:
-    return Verdict("reject", 0.0, 0.0, len(deltas))
+from skillz_experiments.gate import POWER_EFFECTS, Power, Verdict, simulate, simulate_power
 
 
 @pytest.mark.parametrize("effect", POWER_EFFECTS)
 def test_a_rule_that_never_promotes_has_zero_power(effect: float) -> None:
-    result = simulate_power(effect, trials=200, rule=_never_promote)
+    result = simulate_power(effect, trials=200, rule=never_promote)
     assert result.promotions == 0
     assert result.rate == 0.0
 
 
 def test_a_rule_that_always_promotes_has_full_power() -> None:
-    result = simulate_power(0.2, trials=200, rule=_always_promote)
+    result = simulate_power(0.2, trials=200, rule=always_promote)
     assert result.promotions == 200
     assert result.rate == 1.0
 
@@ -73,6 +66,43 @@ def test_the_cli_reports_a_count_and_a_rate_for_each_effect() -> None:
         assert printed[f"true_promotions_effect_{label}"] == expected.promotions
         assert printed[f"power_effect_{label}"] == expected.rate
         assert type(printed[f"true_promotions_effect_{label}"]) is int
+
+
+@pytest.fixture(scope="module")
+def _full_report() -> dict[str, object]:
+    return cast(dict[str, object], _cli.self_test(simulate=True))
+
+
+@pytest.mark.parametrize("metric", get_args(_cli.Metric))
+def test_a_selected_figure_equals_the_same_key_of_the_full_report(
+        _full_report: dict[str, object], metric: str) -> None:
+    selected = _cli.self_test(simulate=True, metric=metric)  # pyright: ignore[reportArgumentType]
+    assert selected == _full_report[metric]
+    assert type(selected) is type(_full_report[metric])
+
+
+def test_a_power_selector_runs_one_power_simulation_and_no_null_simulation(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[float] = []
+
+    def counting(effect: float) -> Power:
+        calls.append(effect)
+        return simulate_power(effect, trials=20)
+
+    def forbidden() -> object:
+        raise AssertionError("a power selector must not run the null simulation")
+
+    monkeypatch.setattr(_cli, "simulate_power", counting)
+    monkeypatch.setattr(_cli, "simulate_gate", forbidden)
+    _ = _cli.self_test(simulate=True, metric="power_effect_20")
+    assert calls == [0.2]
+
+
+def test_a_false_promotion_selector_runs_no_power_simulation(monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(effect: float) -> object:
+        raise AssertionError(f"a false-promotion selector must not simulate power at {effect}")
+
+    monkeypatch.setattr(_cli, "simulate_power", forbidden)
+    assert _cli.self_test(simulate=True, metric="rate_2se") == simulate().rate_2se
 
 
 def test_every_numeric_report_key_but_the_fixed_ones_is_a_metric_selector() -> None:

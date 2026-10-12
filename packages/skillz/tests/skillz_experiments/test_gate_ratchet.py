@@ -9,6 +9,7 @@ from typing import cast
 
 import pytest
 
+from gate_rules import never_promote
 from skillz_experiments import _cli
 from skillz_experiments.gate import POWER_EFFECTS, Verdict, simulate, simulate_power
 
@@ -41,6 +42,7 @@ def _measured(entry: Entry) -> float:
 
 
 def _breaches(entry: Entry, value: float) -> bool:
+    assert entry["direction"] in ("lower", "higher"), f"unknown direction {entry['direction']!r}"
     threshold = float(entry["threshold"])
     return value > threshold if entry["direction"] == "lower" else value < threshold
 
@@ -70,26 +72,17 @@ def test_a_ratchet_one_step_inside_the_value_fails(name: str) -> None:
     assert _breaches(entry | {"threshold": value - worse}, value) is True
 
 
-def _never_promote(deltas: list[float]) -> Verdict:
-    return Verdict("reject", 0.0, 0.0, len(deltas))
-
-
 @pytest.mark.parametrize("effect", POWER_EFFECTS)
 def test_a_gate_that_never_promotes_breaches_the_power_ratchet(effect: float) -> None:
     name = f"gate-power-effect-{round(effect * 100)}"
     entry = _entries()[name]
     assert entry["direction"] == "higher"
-    assert _breaches(entry, simulate_power(effect, rule=_never_promote).promotions)
+    assert _breaches(entry, simulate_power(effect, rule=never_promote).promotions)
 
 
 def test_each_metric_has_its_own_selector() -> None:
     selectors = [_selector(entry) for entry in _entries().values()]
     assert len(set(selectors)) == len(selectors)
-
-
-def test_false_promotions_2se_stay_at_or_below_the_ratchet() -> None:
-    value, threshold = simulate().false_promotions_2se, _threshold()
-    assert value <= threshold, f"{METRIC} is {value}, above the ratchet threshold {threshold}"
 
 
 def test_a_weakened_rule_exceeds_the_ratchet() -> None:

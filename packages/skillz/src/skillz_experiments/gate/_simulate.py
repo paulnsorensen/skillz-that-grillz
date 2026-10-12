@@ -143,8 +143,11 @@ def simulate_power(
     *,
     rule: Callable[[list[float]], Verdict] | None = None,
 ) -> Power:
-    """Estimate how often the gate promotes a candidate that truly beats the baseline by `effect`.
+    """Estimate how often the gate promotes a candidate that truly beats the baseline by about `effect`.
 
+    The candidate chance on each case is `clip(gauss(base + effect, 0.10))`, so `effect` is the mean shift before the
+    per-case spread and the clip to [0, 1]. The clip removes part of the shift near the ceiling, so the realised mean
+    gain is lower than `effect`: about 0.097, 0.188, and 0.271 for 0.1, 0.2, and 0.3.
     The run uses the seed, case count, repeats, baseline cases, and gate of `simulate`.
     It skips the validation search, so each trial holds one baseline and one candidate on `cases` holdout cases.
     `rule` replaces the verdict function, as in `simulate`; a rule that never promotes gets zero power.

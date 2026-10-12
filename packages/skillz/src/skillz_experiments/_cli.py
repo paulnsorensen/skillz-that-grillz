@@ -163,6 +163,32 @@ def audit_facts_command(directory: Path) -> dict[str, object]:
     return audit_facts(directory)
 
 
+def _simulation_report() -> dict[str, object]:
+    result = simulate_gate()
+    report: dict[str, object] = {
+        "trials": result.trials, "cases": result.cases,
+        "false_promotions_2se": result.false_promotions_2se,
+        "false_promotions_one_holdout": result.false_promotions_one_holdout,
+        "rate_2se": result.rate_2se, "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
+    for effect in POWER_EFFECTS:
+        power = simulate_power(effect)
+        label = round(effect * 100)
+        report[f"true_promotions_effect_{label}"] = power.promotions
+        report[f"power_effect_{label}"] = power.rate
+    return report
+
+
+def _simulation_figure(metric: Metric) -> int | float:
+    """Compute only the figure that `metric` names; it equals the same key of the full report."""
+    for effect in POWER_EFFECTS:
+        label = round(effect * 100)
+        if metric == f"true_promotions_effect_{label}":
+            return simulate_power(effect).promotions
+        if metric == f"power_effect_{label}":
+            return simulate_power(effect).rate
+    return cast(int | float, getattr(simulate_gate(), metric))
+
+
 @app.command(name="self-test")
 def self_test(*, model: str | None = None, preflight_only: bool = False, simulate: bool = False,
               metric: Metric | None = None, harness_config: Path | None = None, max_invocations: int = 20,
@@ -176,18 +202,7 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
     if metric is not None and not simulate:
         raise ValueError("--metric requires --simulate")
     if simulate:
-        result = simulate_gate()
-        report: dict[str, object] = {
-            "trials": result.trials, "cases": result.cases,
-            "false_promotions_2se": result.false_promotions_2se,
-            "false_promotions_one_holdout": result.false_promotions_one_holdout,
-            "rate_2se": result.rate_2se, "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
-        for effect in POWER_EFFECTS:
-            power = simulate_power(effect)
-            label = round(effect * 100)
-            report[f"true_promotions_effect_{label}"] = power.promotions
-            report[f"power_effect_{label}"] = power.rate
-        return report if metric is None else cast(int | float, report[metric])
+        return _simulation_report() if metric is None else _simulation_figure(metric)
     if model is None:
         raise ValueError("--preflight-only requires --model")
     with _coded():
