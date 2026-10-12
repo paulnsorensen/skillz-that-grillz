@@ -80,7 +80,8 @@ def _run_harness(model: str, target: Path, harness: RunHarness | None, harness_c
 
 
 @app.command(name="run")
-def run_command(*, target: Path, out: Path, model: str, harness: RunHarness | None = None,
+def run_command(*, target: Path, out: Path, model: str, judge_model: str | None = None,
+                harness: RunHarness | None = None,
                 harness_config: Path | None = None, command: list[str] | None = None,
                 live: bool = False, edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
                 approve_cases: str | None = None, approve_budget: int | None = None,
@@ -99,6 +100,8 @@ def run_command(*, target: Path, out: Path, model: str, harness: RunHarness | No
         Harness configuration file with per-role adapters. Cannot combine with --harness or --command.
     command
         Argument array of your own harness command for --harness command: --command EXECUTABLE ARG...
+    judge_model
+        Model of the judge calls. Task and reflection calls use --model. Defaults to --model.
     effort
         Claude Code effort level for every role (claude harness only).
     sandbox_read
@@ -125,7 +128,8 @@ def run_command(*, target: Path, out: Path, model: str, harness: RunHarness | No
                             repeats=repeats, seed=seed,
                             approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
                             sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
-                            sandbox_seconds=sandbox_seconds, statistics=statistics or None)
+                            sandbox_seconds=sandbox_seconds, statistics=statistics or None,
+                            judge_model=judge_model)
 
 
 @app.command(name="doctor")

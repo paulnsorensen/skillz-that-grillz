@@ -4,13 +4,18 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 from collections.abc import Callable, Iterator, Sequence
-from typing import cast
+from typing import NamedTuple, cast
 
 import pytest
 
+from skillz_experiments._budget import Budget
+from skillz_experiments.harness._command import Command
+from skillz_experiments.harness._roles import Role
+from skillz_experiments.harness._transport import Transport
 from skillz_experiments.run import _run
 from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import _options, _sandbox, _transport
@@ -185,3 +190,41 @@ def approvals() -> Callable[..., tuple[str, int]]:
 def approved_run() -> Callable[..., dict[str, object]]:
     """Hand the `run` test helper `approved_run` to a test."""
     return _approved_run
+
+
+class JudgedRun(NamedTuple):
+    """An intake target whose two approvals are given and whose built-in roles all run through the command wrapper."""
+
+    target: Path
+    out: Path
+    case_hash: str
+    calls: int
+    settings: Path
+
+    @property
+    def log(self) -> Path:
+        return self.settings.parent / "requests.jsonl"
+
+    def start(self, *, live: bool = True, judge_model: str | None = None) -> dict[str, object]:
+        """Call `run` with the approvals. The wrapper logs the model of every request."""
+        return run(self.target, self.out, "task-model", live=live, approve_cases=self.case_hash,
+                   approve_budget=self.calls, judge_model=judge_model)
+
+
+@pytest.fixture
+def judged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> JudgedRun:
+    """Hand a `JudgedRun` to a test. Write `mode` into `settings` to change how the wrapper answers."""
+    wrapper = tmp_path / "wrapper.py"
+    _ = shutil.copyfile(FIXTURES / "command_wrapper.py", wrapper)
+    settings = tmp_path / "settings.json"
+    _ = settings.write_text(json.dumps({"mode": "normal", "log": str(tmp_path / "requests.jsonl")}))
+
+    def create(self: Role, budget: Budget, checkpoint: Callable[[], None], *_unused: object) -> Transport:
+        return Command((sys.executable, str(wrapper), str(settings)), self.model, budget, checkpoint)
+
+    monkeypatch.setattr(Role, "create", create)
+    target, out = _make_target(tmp_path), tmp_path / "run"
+    (target / "evals/autoimprove.json").unlink()
+    _ = _write_draft(out)
+    case_hash, calls = _approvals(target, out, "task-model")
+    return JudgedRun(target, out, case_hash, calls, settings)

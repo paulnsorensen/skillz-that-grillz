@@ -67,7 +67,7 @@ DEFAULT_REPEATS = 3
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
              options: ClaudeOptions, configuration: Configuration | None = None,
-             statistics_given: Mapping[str, float] | None = None) -> Statistics:
+             statistics_given: Mapping[str, float] | None = None, judge_model: str | None) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
     A fresh run with a built-in harness first runs the free host checks, so a host problem stops the run
@@ -106,7 +106,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
                          + "add task cases in more families to the draft, then call run again")
     expected = case_hash(cases, split_seed)
     if resolve_harness or configuration is not None:
-        chosen = configuration if configuration is not None else Configuration.single(adapter, model, options)
+        chosen = configuration if configuration is not None else Configuration.split(adapter, model, judge_model, options)
         chosen.check_read_roots(out)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
@@ -139,6 +139,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
+        "judge_model_flag": judge_model,
         **({"claude_options": options.data()} if resolve_harness else {}),
         **({"harness": configuration.identity()} if configuration is not None else {}),
         "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
@@ -250,8 +251,12 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         approve_cases: str | None = None, approve_budget: int | None = None,
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
-        statistics: Mapping[str, float] | None = None) -> dict[str, object]:
+        statistics: Mapping[str, float] | None = None,
+        judge_model: str | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
+
+    `judge_model` sets the model of the judge calls. Task and reflection calls use `model`. The first run records it,
+    and a resume that passes another value stops with `run-config-differs`.
 
     `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
     them. A resume uses the recorded options. A value that a resume passes must match the record.
@@ -260,6 +265,11 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         adapter, configuration, factory, edit, repeats,
         {"effort": effort, "sandbox_read": None if sandbox_read is None else tuple(sandbox_read),
          "sandbox_seconds": sandbox_seconds})
+    if judge_model is not None and not judge_model.strip():
+        raise ValueError("--judge-model must name a model")
+    if judge_model is not None and (configuration is not None or factory is not None):
+        raise ValueError("--judge-model applies only to the built-in harness; set the judge model in the supplied "
+                         + "configuration")
     statistics_given = _check_statistics_flags(statistics)
     if is_inside(out, target):
         raise ValueError("--out must be outside the target skill directory")
@@ -283,12 +293,13 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             refuse_nono(record)
             frozen = frozen_statistics(record)
             check_statistics(statistics_given, frozen)
-            check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None)
+            check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None,
+                         judge_model)
         else:
             frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
                               options=requested, configuration=configuration,
-                              statistics_given=statistics_given)
+                              statistics_given=statistics_given, judge_model=judge_model)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)
