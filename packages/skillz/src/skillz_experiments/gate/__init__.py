@@ -1,5 +1,12 @@
 from skillz_experiments.gate._rules import Verdict, close, verdict
 from skillz_experiments.gate._simulate import simulate
-from skillz_experiments.gate._statistics import DEFAULT_STATISTICS, Statistics, case_deltas
+from skillz_experiments.gate._statistics import (
+    DEFAULT_STATISTICS,
+    HoldoutDeltas,
+    Statistics,
+    case_deltas,
+    holdout_deltas,
+)
 
-__all__ = ["DEFAULT_STATISTICS", "Statistics", "Verdict", "case_deltas", "close", "simulate", "verdict"]
+__all__ = ["DEFAULT_STATISTICS", "HoldoutDeltas", "Statistics", "Verdict", "case_deltas", "close", "holdout_deltas",
+           "simulate", "verdict"]

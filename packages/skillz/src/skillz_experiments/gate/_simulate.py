@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from skillz_experiments.gate._rules import Verdict, verdict
+from skillz_experiments.gate._statistics import holdout_deltas
 
 
 @dataclass(frozen=True)
@@ -24,9 +25,20 @@ class Simulation:
     false_promotions_one_holdout: int
 
 
-def _scores(rng: random.Random, chances: Sequence[float], repeats: int) -> list[float]:
+def _draws(rng: random.Random, chances: Sequence[float], repeats: int) -> list[list[float]]:
     draw = rng.random
-    return [sum(draw() < chance for _ in range(repeats)) / repeats for chance in chances]
+    return [[float(draw() < chance) for _ in range(repeats)] for chance in chances]
+
+
+def _scores(rng: random.Random, chances: Sequence[float], repeats: int) -> list[float]:
+    return [sum(case) / repeats for case in _draws(rng, chances, repeats)]
+
+
+def _floored(base: list[list[float]], win: list[list[float]]) -> Verdict:
+    """Return the verdict of the production gate: deltas and the repeat-noise SE floor."""
+    paired = holdout_deltas({f"{index:06d}": case for index, case in enumerate(base)},
+                            {f"{index:06d}": case for index, case in enumerate(win)})
+    return verdict(list(paired.deltas.values()), se_floor=paired.se_floor)
 
 
 def _chances(rng: random.Random, base: Sequence[float], spread: float) -> list[float]:
@@ -34,7 +46,7 @@ def _chances(rng: random.Random, base: Sequence[float], spread: float) -> list[f
 
 
 def _trial(rng: random.Random, cases: int, repeats: int, candidates: int,
-           rule: Callable[[list[float]], Verdict]) -> tuple[bool, bool]:
+           rule: Callable[[list[float]], Verdict] | None) -> tuple[bool, bool]:
     """Run one null trial; return whether each gate falsely promotes."""
     arms = candidates + 1
     validation = max(1, (arms - 2) * cases // arms)
@@ -47,9 +59,13 @@ def _trial(rng: random.Random, cases: int, repeats: int, candidates: int,
     means = [statistics.fmean(_scores(rng, chances, repeats)) for chances in tries]
     best = max(range(candidates), key=means.__getitem__)
     base, tries = world(cases)
-    base_scores = _scores(rng, base, repeats)
-    win_scores = _scores(rng, tries[best], repeats)
-    split = rule([w - b for w, b in zip(win_scores, base_scores)]).verdict == "promote"
+    base_draws = _draws(rng, base, repeats)
+    win_draws = _draws(rng, tries[best], repeats)
+    if rule is None:
+        result = _floored(base_draws, win_draws)
+    else:
+        result = rule([sum(w) / repeats - sum(b) / repeats for w, b in zip(win_draws, base_draws)])
+    split = result.verdict == "promote"
 
     base, tries = world(cases)
     base_scores = _scores(rng, base, repeats)
@@ -65,7 +81,7 @@ def simulate(
     repeats: int = 3,
     candidates: int = 5,
     *,
-    rule: Callable[[list[float]], Verdict] = verdict,
+    rule: Callable[[list[float]], Verdict] | None = None,
 ) -> Simulation:
     """Estimate false-promotion rates when no candidate has a true effect.
 
@@ -79,7 +95,8 @@ def simulate(
     (candidates + 1) * cases * repeats, so the comparison favors the one-holdout
     rule. The gate cannot promote with fewer than 2 cases, so a smaller holdout
     reports a false rate of zero without a test.
-    `rule` replaces the split gate's verdict function; tests inject a weakened gate with it.
+    The split gate uses the production deltas and the SE floor from the repeat spread inside each case.
+    `rule` replaces the split gate's verdict function with one that sees only the deltas; tests inject a weakened gate with it.
     Raise `ValueError` when `trials < 1`, `cases < 2`, `repeats < 1`, or `candidates < 2`.
     """
     if trials < 1:

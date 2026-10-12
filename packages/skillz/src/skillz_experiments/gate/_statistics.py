@@ -144,3 +144,47 @@ def case_deltas(
             raise ValueError(f"case {case_id} has no repeat scores")
         deltas[case_id] = statistics.fmean(won) - statistics.fmean(base)
     return deltas
+
+
+@dataclass(frozen=True)
+class HoldoutDeltas:
+    """The paired holdout result: per-case deltas, the SE floor, the per-case moves, and the shared case count."""
+
+    deltas: dict[str, float]
+    se_floor: float
+    moves: dict[str, list[str]]
+    n_shared: int
+
+
+def _repeat_se(scores: Sequence[float]) -> float:
+    """Return the standard error of the repeat mean. One repeat gives 0."""
+    return statistics.stdev(scores) / math.sqrt(len(scores)) if len(scores) > 1 else 0.0
+
+
+def holdout_deltas(
+    baseline: Mapping[str, Sequence[float]], winner: Mapping[str, Sequence[float]]
+) -> HoldoutDeltas:
+    """Pair the scored repeats of both arms per case and return the deltas, the SE floor, and the moves.
+
+    A case with no scored repeat on an arm drops out of the deltas, the moves, and the floor.
+    The floor is `sqrt(sum(se_b^2 + se_w^2)) / n` over the shared cases, where each `se` is the standard error of
+    the repeat mean of one case on one arm. A move is resolved when the mean delta exceeds
+    `max(2 * sqrt(se_b^2 + se_w^2), 1e-9)`; a resolved positive move is `fixed`, a resolved negative move is
+    `broke`, and the rest are `unresolved`. Each list of case ids is sorted.
+    """
+    shared = sorted(case_id for case_id in baseline.keys() & winner.keys() if baseline[case_id] and winner[case_id])
+    deltas: dict[str, float] = {}
+    moves: dict[str, list[str]] = {"fixed": [], "broke": [], "unresolved": []}
+    total = 0.0
+    for case_id in shared:
+        base, won = baseline[case_id], winner[case_id]
+        delta = statistics.fmean(won) - statistics.fmean(base)
+        variance = _repeat_se(base) ** 2 + _repeat_se(won) ** 2
+        deltas[case_id] = delta
+        total += variance
+        if abs(delta) > max(2 * math.sqrt(variance), 1e-9):
+            moves["fixed" if delta > 0 else "broke"].append(case_id)
+        else:
+            moves["unresolved"].append(case_id)
+    floor = math.sqrt(total) / len(shared) if shared else 0.0
+    return HoldoutDeltas(deltas, floor, moves, len(shared))

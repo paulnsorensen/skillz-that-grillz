@@ -233,6 +233,22 @@ The gate scores baseline and winner on holdout cases that no search step saw.
 It scores each case `--repeats` times and averages the repeats.
 It then takes the mean of the paired case deltas and its standard error (SE).
 
+The SE has a floor from the repeat noise inside each case (`se_floor`). The gate uses the larger of the raw SE and the floor.
+For each case and arm, the gate takes the SE of the repeat mean. One scored repeat gives an SE of 0.
+`se_floor` is `sqrt(sum(se_baseline² + se_winner²)) / n` over the `n` cases that remain. The floor never lowers the SE.
+The zero-SE rule below applies only when the floor is also 0.
+
+A provider fault on one holdout repeat (`OSError`, `ValueError`, or `RuntimeError`) records an outcome with status `evaluation-failed`, and the gate goes on.
+A coded fault still stops the run. A resume runs each failed repeat again, and the newest outcome of a repeat wins. The spend stays inside the approved budget, else the run stops with `gate-budget-exhausted`.
+Only `evaluation-failed` leaves a repeat unscored. A rejected candidate, a capture failure, and a grader zero score 0.
+The gate drops a case with no scored repeat on an arm. `n_shared` is the number of cases that remain.
+A winner equal to the baseline scores no case, so its `n_shared` is 0.
+With fewer than 2 shared cases, the verdict is `inconclusive` and `se` is the SE floor.
+
+The gate record also holds `moves`: the case ids that `fixed`, `broke`, or left `unresolved`.
+A move is resolved when the absolute mean delta of the case exceeds `max(2·sqrt(se_baseline² + se_winner²), 1e-9)`.
+A resolved positive move is `fixed`, a resolved negative move is `broke`, and the rest are `unresolved`. Case ids are hashes, so no case text enters the record.
+
 - `promote`: the mean delta exceeds 2·SE and passes the floors. When the SE is 0, every case delta must be positive.
 - `promote-cheaper`: the mean delta is from 0 to 2·SE, and the task tokens drop by more than 2·`token_se` and by at least `min_token_saving`. See "The token rule".
 - `reject`: the mean delta falls below -2·SE.
