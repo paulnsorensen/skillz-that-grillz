@@ -692,6 +692,7 @@ A proposal leaks when the text that it adds to a component, compared with the se
 
 Text that the seed already holds never fires a rule.
 A leaking proposal scores 0 and makes no task or judge call. It records no outcome.
+GEPA still counts each rejected evaluation against its metric-call allowance. A proposer that keeps leaking can end the search early with approved calls left.
 Its feedback has `reason` and `rejected` set to `candidate-leakage-rejected`, plus the `rule` and the existing `request`.
 The feedback holds no expected text.
 `summary` and `report.json` carry `search.leakage_rejections`: the count of distinct rejected proposals per rule.

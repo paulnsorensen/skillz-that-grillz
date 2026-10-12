@@ -926,6 +926,18 @@ def test_leakage_counts_survive_a_fault_and_resume_and_the_record_holds_only_dig
     assert ANSWER not in text and SPAN not in text and "denylist" not in text
 
 
+def test_a_provider_that_checkpoints_in_its_constructor_opens_the_session(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
+        checkpoint()
+        return state.factory(model, budget, checkpoint)
+
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=factory)
+    assert result["phase"] == "complete" and read(out / "run.json")["leakage_rejected"] == {}
+
+
 def test_a_proposal_that_repeats_text_the_seed_already_holds_is_not_rejected(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals, seed_extra=SPAN)

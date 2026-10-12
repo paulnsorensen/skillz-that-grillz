@@ -196,15 +196,16 @@ class Session:
         self._freeze_identities(model, configuration, judged)
         self._freeze_compatibility(configuration)
         self.budget = self._open_budget()
-        self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
-                                                                  self.seed.files) if configuration is not None
-                                    else cast(Factory, factory)(model, self.budget, self.checkpoint))
         self._fault: CodedError | None = None
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
         # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
         self._denylist = Denylist.build(self._search_cases.values())
         self._leak_rules: dict[str, str | None] = {}
+        # Set before the provider gets `self.checkpoint`, which reads it.
         self._leak_rejections = self._recorded_rejections()
+        self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
+                                                                  self.seed.files) if configuration is not None
+                                    else cast(Factory, factory)(model, self.budget, self.checkpoint))
         self.rebuilder = self._open_rebuilder()
 
     def _seed_frozen(self) -> dict[str, bytes]:
