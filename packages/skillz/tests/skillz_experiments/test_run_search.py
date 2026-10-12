@@ -61,6 +61,8 @@ class Search:
         self.close_error: Exception | None = None
         self.suffix = ""
         self.improved_calls = 0
+        self.prompts: list[str] = []
+        self.interleave = False
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -149,9 +151,10 @@ class Provider(FakeProvider):
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
-        del prompt, candidate, case
+        del candidate, case
         assert schema is not None
         with self.state.lock:
+            self.state.prompts.append(prompt)
             self.state.invokes += 1
             fault = self.state.invoke_fault(self.state.invokes)
         if fault is not None:
@@ -160,6 +163,11 @@ class Provider(FakeProvider):
         with self.state.lock:
             self.state.proposals += 1
             number = self.state.proposals
+        if self.state.interleave:
+            # A new line after every line of the parent text: one edit per line.
+            parent = cast(dict[str, dict[str, str]], json.loads(prompt.split("\n", 1)[1]))["candidate"]
+            return {"answer": {name: "".join(f"{line}\nimproved {number}\n" for line in text.splitlines())
+                               for name, text in parent.items()}}
         return {"answer": {name: f"improved {number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
 
 
@@ -189,8 +197,42 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
     state.exhaust_after_improved = len(_validation(out))
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
-    assert search == {"reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}}
+    assert search == {"reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
+
+
+def _budgets(prompts: list[str]) -> list[int]:
+    return [int(prompt.split("Make at most ", 1)[1].split(" ", 1)[0]) for prompt in prompts]
+
+
+@pytest.mark.ac("AC-1")
+@pytest.mark.ac("AC-3")
+def test_each_reflection_prompt_states_a_shrinking_budget_and_its_progress_and_a_small_edit_is_not_counted(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    heads = [prompt.split("\n", 1)[0] for prompt in state.prompts]
+    planned = cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
+    assert len(heads) == state.proposals >= 3
+    assert all(f"this is proposal {number}." in head for number, head in enumerate(heads, 1))
+    assert all(f"of {planned} (" in head for head in heads)
+    budgets = _budgets(state.prompts)
+    assert budgets[0] in (5, 6) and budgets == sorted(budgets, reverse=True) and budgets[-1] < budgets[0]
+    assert cast(dict[str, object], result["search"])["proposal_over_budget"] == 0
+
+
+@pytest.mark.ac("AC-2")
+def test_a_proposal_above_the_budget_is_still_evaluated_and_counted(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.interleave = True
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    over = cast(int, cast(dict[str, object], result["search"])["proposal_over_budget"])
+    assert state.improved_calls > 0 and 0 < over <= state.proposals
+    assert cast(int, read(out / "run.json")["proposal_over_budget"]) == over
+    assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
 
 
 def _validation(out: Path) -> list[str]:
@@ -255,7 +297,7 @@ def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before
     outcomes.extend([filler] * (planned - overshoot(len(validation)) - spent))
     write(out / "run.json", record)
     result = run(target, out, MODEL, live=True, factory=state.factory)
-    assert cast(dict[str, object], result["search"]) == {"reason": "search-share-spent-best-validated", "retained_seed": False, "leakage_rejections": {}}
+    assert cast(dict[str, object], result["search"]) == {"reason": "search-share-spent-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -270,7 +312,7 @@ def test_a_resume_with_a_real_allowance_keeps_the_pre_abort_candidate_over_worse
     proposals_before = state.proposals
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert state.proposals > proposals_before
-    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": False, "leakage_rejections": {}}
+    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved 1 " in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -282,7 +324,7 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     assert "best_validated" in record
-    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}}
+    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert cast(dict[str, object], record["gate"])["reason"] == "winner-equals-baseline"
 
 
@@ -294,7 +336,7 @@ def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     kept = cast(dict[str, object], read(out / "run.json")["best_validated"])
     assert kept["mean"] == pytest.approx(0.5)
-    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}}
+    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
 
 
 def test_an_earlier_validated_candidate_stays_best_over_a_later_worse_one(

@@ -34,6 +34,7 @@ from skillz_experiments._new_cli import VALUE_LIMIT, expand_files, unused_helper
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
+from skillz_experiments.search import Progress
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments._wedge_targets import BuildFailed, plan_targets, settle
 from skillz_experiments.run import Stop, export, run
@@ -450,16 +451,19 @@ PROSE_HEAD = ("Improve only the supplied skill text components. Preserve the hel
               "Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
               "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
               "and at most 25 words per descriptive sentence. "
-              "Return complete component contents. Do not alter independent checks or permissions.")
+              "Return complete component contents. Do not alter independent checks or permissions."
+              " Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
+              "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%).")
+START = Progress(spent=0, planned=100, proposal=1)
 
 
 def test_the_prose_prompt_is_unchanged_byte_for_byte() -> None:
-    prompt, _ = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    prompt, _ = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START)
     assert prompt == PROSE_HEAD + '\n{"candidate": {"SKILL.md": "x"}, "feedback": {}}'
 
 
 def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
-    prompt, _ = reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    prompt, _ = reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START)
     head = prompt.split("\n", 1)[0]
     assert ("The fromargs package is the default for a wedged Python source. Use one parser. "
             "Print JSON errors on stderr. "
@@ -472,10 +476,10 @@ def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
 
 def test_the_new_cli_sentence_appears_only_when_the_component_is_offered() -> None:
     offered, _ = reflection_request(
-        "prose+cli", {NEW_CLI: ""}, {}, ["SKILL.md", NEW_CLI])
+        "prose+cli", {NEW_CLI: ""}, {}, ["SKILL.md", NEW_CLI], progress=START)
     assert f"The {NEW_CLI} component adds one new fromargs wedge target as TOML with the keys name and module." in offered
     absent, _ = reflection_request(
-        "prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+        "prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START)
     assert "component adds one new" not in absent
 
 

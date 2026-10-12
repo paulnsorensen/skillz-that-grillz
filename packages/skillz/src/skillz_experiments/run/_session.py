@@ -36,6 +36,7 @@ from skillz_experiments.harness import (
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Denylist, Edit, overshoot
+from skillz_experiments.search import Progress
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search import check as check_leakage
@@ -506,18 +507,39 @@ class Session:
     def _propose(self, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
                  components: list[str]) -> dict[str, str]:
         self._raise_fault()
-        prompt, schema = reflection_request(self.edit, candidate, feedback, components,
+        with self.lock:
+            progress = Progress(spent=len(self._search_outcomes()),
+                                planned=_int_field(mapping(field(self.record, "estimate")), "metric_calls"),
+                                proposal=1 + sum(1 for item in self.outcomes
+                                                 if item.get("arm") == "search" and item.get("split") == "reflection"))
+        prompt, schema = reflection_request(self.edit, candidate, feedback, components, progress=progress,
                                             cheaper=self.statistics.token_rule)
         try:
             result = self.provider.invoke(prompt, schema=schema)
         except CodedError as error:
             self._latch(error)
             raise
+        refusal: ValueError | None = None
+        proposal: dict[str, str] = {}
+        edits = 0
+        try:
+            proposal, edits = accept_proposal(result["answer"], components, candidate)
+        except ValueError as error:
+            refusal = error
         with self.lock:
             self.outcomes.append({"arm": "search", "split": "reflection", "usage": result.get("usage"),
                                   "latency_seconds": result.get("latency_seconds")})
+            if edits > progress.budget():
+                # The budget is advisory. The count shows whether enforcement is worth the wasted reflection calls.
+                self.record["proposal_over_budget"] = self._over_budget() + 1
             self.checkpoint()
-        return accept_proposal(result["answer"], components)
+        if refusal is not None:
+            raise refusal
+        return proposal
+
+    def _over_budget(self) -> int:
+        """Return the proposals above the stated edit budget. A run record without the field counts none."""
+        return _int_field(self.record, "proposal_over_budget") if "proposal_over_budget" in self.record else 0
 
     def _latch(self, error: CodedError) -> None:
         """Keep one CodedError from a model call. A terminal code replaces a held fault with another code. A coded fault replaces a held budget stop. Otherwise the first fault stays."""
@@ -614,7 +636,8 @@ class Session:
         with self.lock:
             rejections = {rule: len(keys) for rule, keys in sorted(self._leak_rejections.items())}
         self.record["search"] = {"reason": reason, "retained_seed": winner.identity == self.seed.identity,
-                                 "leakage_rejections": rejections}
+                                 "leakage_rejections": rejections,
+                                 "proposal_over_budget": self._over_budget()}
         self.record["phase"] = "searched"
         self.checkpoint()
 
