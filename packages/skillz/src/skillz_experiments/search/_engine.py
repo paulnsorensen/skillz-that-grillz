@@ -30,8 +30,11 @@ def overshoot(validation: int) -> int:
 
 def search(seed: dict[str, str], edit: Edit, train: list[object], validation: list[object],
            evaluate: Evaluate, propose: Propose, *, metric_calls: int,
-           workers: int = MAX_CONCURRENT_CALLS) -> None:
-    """Run one GEPA search over `seed`, which holds only the editable components."""
+           workers: int = MAX_CONCURRENT_CALLS, stalled: Callable[[], bool] | None = None) -> bool:
+    """Run one GEPA search over `seed`, which holds only the editable components.
+
+    GEPA calls `stalled` before each iteration and stops when it returns true. Return whether `stalled` stopped it.
+    """
     if edit not in get_args(Edit):
         raise ValueError("edit must be prose or prose+cli")
     if not train or not validation:
@@ -53,6 +56,13 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
             raise ValueError("proposal components differ from the frozen set")
         return evaluate(candidate, example)
 
+    stopped = False
+
+    def stop(_state: object) -> bool:
+        nonlocal stopped
+        stopped = stopped or (stalled is not None and stalled())
+        return stopped
+
     # GEPA turns each proposer exception into a skipped proposal. The caller's session latch re-raises a coded fault.
     config = api.GEPAConfig(
         engine=api.EngineConfig(max_metric_calls=metric_calls, parallel=True,
@@ -64,7 +74,9 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
         reflection=api.ReflectionConfig(custom_candidate_proposer=propose, reflection_lm=None,
                                         module_selector="all", reflection_minibatch_size=REFLECTION_MINIBATCH,
                                         skip_perfect_score=True, perfect_score=1.0),
+        stop_callbacks=None if stalled is None else [stop],
     )
     with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
         _ = api.optimize_anything(seed, evaluator=score, dataset=train, valset=validation,
                                   objective="Maximize independent task correctness.", config=config)
+    return stopped

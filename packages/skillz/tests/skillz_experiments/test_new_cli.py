@@ -453,7 +453,8 @@ PROSE_HEAD = ("Improve only the supplied skill text components. Preserve the hel
               "and at most 25 words per descriptive sentence. "
               "Return complete component contents. Do not alter independent checks or permissions."
               " Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
-              "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%).")
+              "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%). "
+              "Proposals since the last validation gain: 0.")
 START = Progress(spent=0, planned=100, proposal=1)
 
 
