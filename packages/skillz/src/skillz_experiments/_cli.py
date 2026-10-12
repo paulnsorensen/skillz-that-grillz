@@ -21,6 +21,7 @@ from skillz_experiments.wrapper import register as register_wrappers
 
 Harness = Literal["claude", "codex"]
 RunHarness = Literal["claude", "codex", "command"]
+Metric = Literal["false_promotions_2se", "false_promotions_one_holdout", "rate_2se", "rate_one_holdout"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -161,17 +162,24 @@ def audit_facts_command(directory: Path) -> dict[str, object]:
 
 @app.command(name="self-test")
 def self_test(*, model: str | None = None, preflight_only: bool = False, simulate: bool = False,
-              harness_config: Path | None = None, max_invocations: int = 20,
-              max_seconds: float = 1200) -> dict[str, object]:
-    """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates (--simulate)."""
+              metric: Metric | None = None, harness_config: Path | None = None, max_invocations: int = 20,
+              max_seconds: float = 1200) -> dict[str, object] | int | float:
+    """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates (--simulate).
+
+    With --simulate, --metric NAME prints only that number, so `ratchet.py measure` can read it.
+    """
     if preflight_only == simulate:
         raise ValueError("choose exactly one of --preflight-only or --simulate")
+    if metric is not None and not simulate:
+        raise ValueError("--metric requires --simulate")
     if simulate:
         result = simulate_gate()
-        return {"trials": result.trials, "cases": result.cases,
-                "false_promotions_2se": result.false_promotions_2se,
-                "false_promotions_one_holdout": result.false_promotions_one_holdout,
-                "rate_2se": result.rate_2se, "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
+        report: dict[str, object] = {
+            "trials": result.trials, "cases": result.cases,
+            "false_promotions_2se": result.false_promotions_2se,
+            "false_promotions_one_holdout": result.false_promotions_one_holdout,
+            "rate_2se": result.rate_2se, "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
+        return report if metric is None else cast(int | float, report[metric])
     if model is None:
         raise ValueError("--preflight-only requires --model")
     with _coded():
