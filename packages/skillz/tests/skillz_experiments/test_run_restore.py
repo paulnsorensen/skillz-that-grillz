@@ -939,3 +939,71 @@ def test_a_first_call_waits_for_the_run_lock_before_it_writes_the_record(
     assert caught.value.code == "run-in-progress"
     assert not (out / "run.json").exists()
     assert ((out / "cases.json").stat().st_mtime_ns if (out / "cases.json").exists() else None) == frozen
+
+
+_USAGE = {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 3}
+
+
+def _spend_record(**extra: object) -> dict[str, object]:
+    """Return a run record with one journey, one exact-json, and one reflection outcome."""
+    outcomes: list[dict[str, object]] = [
+        {"split": "train", "case_id": "j", "task_usage": _USAGE, "judge_usage": _USAGE | {"input_tokens": 1},
+         "simulator_usage": _USAGE | {"input_tokens": 7}, "latency_seconds": 2.0, "judge_latency_seconds": 0.5},
+        {"split": "train", "case_id": "e", "usage": _USAGE, "latency_seconds": 1.0},
+        {"split": "reflection", "usage": _USAGE, "latency_seconds": 4.0}]
+    return {"model": "task-m", "calls": 0, "outcomes": outcomes} | extra
+
+
+def test_the_summary_reports_spend_per_role_with_the_model_each_role_used() -> None:
+    harness = {name: {"model": model} for name, model in
+               (("task", "task-m"), ("reflection", "task-m"), ("judge", "judge-m"))}
+    roles = cast(dict[str, dict[str, object]], summary(_spend_record(harness=harness))["usage_by_role"])
+    assert roles["task"] == {"outcomes": 2, "input_tokens": 20, "cached_tokens": 8, "output_tokens": 6,
+                             "latency_seconds": 3.0, "model": "task-m"}
+    assert roles["judge"] == {"outcomes": 1, "input_tokens": 1, "cached_tokens": 4, "output_tokens": 3,
+                              "latency_seconds": 0.5, "model": "judge-m"}
+    assert roles["simulator"]["input_tokens"] == 7 and roles["simulator"]["latency_seconds"] is None
+    assert roles["simulator"]["model"] == "judge-m"
+    assert roles["reflection"] == {"outcomes": 1, "input_tokens": 10, "cached_tokens": 4, "output_tokens": 3,
+                                   "latency_seconds": 4.0, "model": "task-m"}
+
+
+def test_a_role_without_usage_shows_null_tokens_and_no_model() -> None:
+    record = _spend_record()
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    outcomes[1]["usage"] = None
+    outcomes[2]["usage"] = {"input_tokens": None}
+    del outcomes[0]["task_usage"]
+    roles = cast(dict[str, dict[str, object]], summary(record)["usage_by_role"])
+    assert roles["task"]["outcomes"] == 1
+    assert all(roles["task"][name] is None for name in ("input_tokens", "cached_tokens", "output_tokens"))
+    assert roles["reflection"]["outcomes"] == 1 and roles["reflection"]["input_tokens"] is None
+    empty = cast(dict[str, dict[str, object]], summary({"model": "m", "outcomes": []})["usage_by_role"])
+    assert empty["judge"] == {"outcomes": 0, "input_tokens": None, "cached_tokens": None, "output_tokens": None,
+                              "latency_seconds": None, "model": None}
+
+
+def test_a_simulator_without_judged_cases_reports_the_model_the_judge_role_ran_on() -> None:
+    """`judge_model` stays unset when no case is judged, but a simulator then ran on the judge role."""
+    record = _spend_record(judge_model_flag="flag-judge")
+    roles = cast(dict[str, dict[str, object]], summary(record)["usage_by_role"])
+    assert roles["simulator"]["model"] == "flag-judge"
+    assert cast(dict[str, dict[str, object]], summary(_spend_record())["usage_by_role"])["simulator"]["model"] == "task-m"
+
+
+def test_the_summary_reconciles_calls_with_the_worst_case_bound_and_flags_overspend(
+        tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    state = State(extra={"usage": _USAGE})
+    finished = approved_run(target, out, factory=state.factory())
+    assert isinstance(finished["calls"], int) and isinstance(finished["calls_upper_bound"], int)
+    assert finished["calls"] <= finished["calls_upper_bound"] and finished["calls_upper_bound"] > 0
+    assert "usage_gap" not in finished
+    task = cast(dict[str, dict[str, object]], finished["usage_by_role"])["task"]
+    assert task["outcomes"] and task["input_tokens"] == 10 * cast(int, task["outcomes"])
+    record = read(out / "run.json")
+    record["calls"] = finished["calls_upper_bound"] + 3
+    assert summary(record, out)["usage_gap"] == 3
+    _ = export(out, tmp_path / "export")
+    report = cast(dict[str, object], json.loads((tmp_path / "export/report.json").read_text()))
+    assert report["usage_by_role"] == finished["usage_by_role"] and report["cost_usd"] is None
