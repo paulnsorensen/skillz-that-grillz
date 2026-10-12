@@ -467,6 +467,22 @@ The limit is 20 words per procedural sentence and 25 words per descriptive sente
 This matches the inspector tiers and the prose workflow. ADR-015 records the choice (issue #153).
 The prompt text lives in `search/_proposer.py`. A change to it starts a new run.
 
+### Edit budget and run status
+
+Every reflection prompt states an edit budget and a run-status block after its instructions.
+The progress `p` is the search calls spent over the search allowance, clamped to 0 through 1.
+The allowance is `estimate.metric_calls` less the overshoot margin of the last search iteration. It is the most calls that the search can use.
+The budget is `floor(1 + 5 * 0.5 * (1 + cos(pi * p)))`. It falls from 6 edits at `p = 0` to 1 edit at `p = 1`.
+An edit is one block of consecutive changed lines, found with `difflib.SequenceMatcher` over the lines of one component.
+The count adds the blocks of all changed components.
+The run-status block gives the proposal number, the search calls spent of the allowance, and the whole percent (integer math, rounded down).
+The budget sentence reads "1 edit" when the budget is 1.
+From `p = 0.85` it adds: "This may be the last proposal, so prefer one small, safe change."
+The numbers come from the run record. They never come from case content.
+The budget is advisory. The runner never rejects a proposal for its size.
+`summary` and `report.json` carry `search.proposal_over_budget`: the count of proposals above the budget stated in their prompt, including proposals that the leakage check later rejects.
+The count shows whether enforcement is worth the wasted reflection calls.
+
 ## Export
 
 Run `export` only after the run reports the phase `complete`.
