@@ -3,7 +3,7 @@
     "gate-false-promotions-2se": {
       "command": "python3 skills/skillz/scripts/skillz-experiment.pyz self-test --simulate",
       "direction": "lower",
-      "threshold": 73,
+      "threshold": 39,
       "tolerance": 0.0,
       "unit": "count"
     },

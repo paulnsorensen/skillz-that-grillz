@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from typing import Protocol, cast, final, get_args
 
@@ -25,7 +26,7 @@ from skillz_experiments._evaluator import task_tokens
 from skillz_experiments._new_cli import prompt_rule
 from skillz_experiments._records import open_record, read, write
 from skillz_experiments._wedge_targets import Rebuilder, reopen
-from skillz_experiments.gate import Statistics, Verdict, case_deltas, close
+from skillz_experiments.gate import Statistics, Verdict, close, holdout_deltas
 from skillz_experiments.gate import verdict as gate_verdict
 from skillz_experiments.harness import (
     ClaudeOptions,
@@ -49,10 +50,16 @@ HarnessName = str
 SCORING_FILES = ("_evaluator.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
 
 
-def _failed_outcome(case: Case, candidate: Candidate, error: Exception) -> dict[str, object]:
-    """Return the outcome that records a failed search evaluation as a zero score."""
-    return {"arm": "search", "split": case.split, "case_id": case.identifier, "score": 0.0,
-            "status": "evaluation-failed", "failure": str(error), "search_candidate": candidate.identity}
+def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
+                    repeat: int | None = None) -> dict[str, object]:
+    """Return the outcome that records a failed evaluation as a zero score. A holdout failure names its arm and repeat."""
+    outcome: dict[str, object] = {"arm": arm, "split": case.split, "case_id": case.identifier, "score": 0.0,
+                                  "status": "evaluation-failed", "failure": str(error)}
+    if arm == "search":
+        outcome["search_candidate"] = candidate.identity
+    if repeat is not None:
+        outcome["repeat"] = repeat
+    return outcome
 
 
 def _baseline_rejected(detail: str | None = None) -> Stop:
@@ -574,9 +581,16 @@ class Session:
         return self.seed
 
     def _holdout_outcomes(self) -> list[dict[str, object]]:
-        """Return the holdout outcomes of the baseline and the winner."""
-        return [item for item in self.outcomes if item.get("split") == "holdout"
-                and item.get("arm") in ("baseline", "winner")]
+        """Return the scored holdout outcomes of the baseline and the winner.
+
+        An `evaluation-failed` outcome is unscored and drops out. The newest outcome of an (arm, case, repeat) wins.
+        """
+        newest: dict[tuple[object, object, object], dict[str, object]] = {}
+        for item in self.outcomes:
+            if (item.get("split") == "holdout" and item.get("arm") in ("baseline", "winner")
+                    and item.get("status") != "evaluation-failed"):
+                newest[(item["arm"], item["case_id"], item.get("repeat"))] = item
+        return list(newest.values())
 
     def _holdout_scores(self, arm: str) -> dict[str, list[float]]:
         scores: dict[str, list[tuple[int, float]]] = {}
@@ -616,13 +630,21 @@ class Session:
                 raise _baseline_rejected()
             arms = {"baseline": self.seed, "winner": winner}
             done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in self.outcomes
-                    if item.get("split") == "holdout"}
+                    if item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
             todo = [(arm, case, repeat) for arm in arms for case in holdout for repeat in range(repeats)
                     if (arm, case.identifier, repeat) not in done]
 
             def score(task: tuple[str, Case, int]) -> None:
                 arm, case, repeat = task
-                result = self.evaluate_case(arms[arm], case, arm, holdout=True, repeat=repeat)
+                try:
+                    result = self.evaluate_case(arms[arm], case, arm, holdout=True, repeat=repeat)
+                except CodedError:
+                    raise
+                except (OSError, ValueError, RuntimeError) as error:
+                    with self.lock:
+                        self.outcomes.append(_failed_outcome(case, arms[arm], error, arm=arm, repeat=repeat))
+                        self.checkpoint()
+                    return
                 if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
                     raise _baseline_rejected()
 
@@ -633,9 +655,11 @@ class Session:
                            {"next": "start a new run in a new directory"})
             with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
                 _ = list(pool.map(score, todo))
-            deltas = case_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner"))
-            outcome = gate_verdict(deltas, thresholds=self.statistics, families=families,
-                                   tokens=self._holdout_tokens() if self.statistics.token_rule else None)
+            paired = holdout_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner"))
+            tokens = ({case_id: arms_tokens for case_id, arms_tokens in self._holdout_tokens().items()
+                       if case_id in paired.deltas} if self.statistics.token_rule else None)
+            outcome = replace(gate_verdict(paired.deltas, thresholds=self.statistics, families=families,
+                                           tokens=tokens, se_floor=paired.se_floor), moves=paired.moves)
             self.record["gate"] = {**outcome.data(), "repeats": repeats}
         self.record["winner_hash"] = winner.identity
         self.record["phase"] = "gated"

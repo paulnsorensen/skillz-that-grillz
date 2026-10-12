@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from skillz_experiments.gate import case_deltas, simulate, verdict
+from skillz_experiments.gate import case_deltas, holdout_deltas, simulate, verdict
 
 
 def test_case_deltas_average_repeats_per_case() -> None:
@@ -110,3 +110,65 @@ def test_simulation_accepts_the_smallest_valid_sizes() -> None:
     result = simulate(seed=7, trials=1, cases=2, repeats=1, candidates=2)
     assert result.trials == 1
     assert result.cases == 2
+
+
+def _spread(mean: float, se: float, repeats: int = 3) -> list[float]:
+    """Return `repeats` scores around `mean` whose repeat-mean standard error is `se`."""
+    root = math.sqrt(repeats)
+    return [mean - se * root + se * root * 2 / (repeats - 1) * index for index in range(repeats)]
+
+
+def test_the_se_floor_turns_a_promote_on_noisy_repeats_into_inconclusive() -> None:
+    baseline = {case: _spread(0.5, 0.1) for case in "abcd"}
+    winner = {case: _spread(mean, 0.1) for case, mean in zip("abcd", (0.6, 0.6, 0.62, 0.6))}
+    paired = holdout_deltas(baseline, winner)
+    assert verdict(paired.deltas).verdict == "promote"
+    result = verdict(paired.deltas, se_floor=paired.se_floor)
+    assert paired.se_floor == pytest.approx((4 * (0.1**2 + 0.1**2)) ** 0.5 / 4)
+    assert result.verdict == "inconclusive" and result.se_floor > verdict(paired.deltas).se
+    assert result.se == result.se_floor
+
+
+def test_one_repeat_per_case_gives_a_zero_floor_and_the_same_verdict() -> None:
+    baseline = {"a": [0.0], "b": [0.0], "c": [0.0], "d": [0.0]}
+    winner = {"a": [0.1], "b": [0.2], "c": [0.3], "d": [0.2]}
+    paired = holdout_deltas(baseline, winner)
+    assert paired.se_floor == 0.0
+    assert verdict(paired.deltas, se_floor=paired.se_floor) == verdict(paired.deltas)
+
+
+def test_the_floor_never_lowers_the_se() -> None:
+    assert verdict([0.1, 0.2, 0.3], se_floor=0.0).se == pytest.approx(0.1 / 3**0.5)
+    assert verdict([0.1, 0.2, 0.3], se_floor=0.001).se == pytest.approx(0.1 / 3**0.5)
+
+
+def test_the_zero_se_branch_needs_a_zero_floor() -> None:
+    assert verdict([0.1, 0.1, 0.1]).verdict == "promote"
+    assert verdict([0.1, 0.1, 0.1], se_floor=0.2).verdict == "inconclusive"
+
+
+def test_a_move_inside_repeat_noise_is_unresolved_not_broke() -> None:
+    paired = holdout_deltas({"a": _spread(1.0, 0.1)}, {"a": _spread(0.9, 0.1)})
+    assert paired.moves == {"fixed": [], "broke": [], "unresolved": ["a"]}
+
+
+def test_moves_split_into_fixed_broke_and_unresolved_by_case_id() -> None:
+    baseline = {"up": [0.0, 0.0], "down": [1.0, 1.0], "same": [0.5, 0.5], "noisy": [0.0, 1.0]}
+    winner = {"up": [1.0, 1.0], "down": [0.0, 0.0], "same": [0.5, 0.5], "noisy": [1.0, 0.0]}
+    assert holdout_deltas(baseline, winner).moves == {
+        "fixed": ["up"], "broke": ["down"], "unresolved": ["noisy", "same"]}
+
+
+def test_a_case_without_a_scored_repeat_on_one_arm_drops_out() -> None:
+    baseline = {"a": [1.0, 1.0], "b": [1.0, 1.0], "c": [1.0, 1.0]}
+    winner = {"a": [1.0, 1.0], "b": [], "c": [0.0, 0.0]}
+    paired = holdout_deltas(baseline, winner)
+    assert paired.n_shared == 2 and sorted(paired.deltas) == ["a", "c"]
+    assert "b" not in {case for ids in paired.moves.values() for case in ids}
+    assert holdout_deltas({"a": [1.0]}, {}).n_shared == 0
+
+
+def test_the_verdict_data_carries_the_floor_the_shared_count_and_the_moves() -> None:
+    data = verdict([0.1, 0.2, 0.3], se_floor=0.5).data()
+    assert data["se_floor"] == 0.5 and data["n_shared"] == 3
+    assert data["moves"] == {"fixed": [], "broke": [], "unresolved": []}

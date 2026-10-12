@@ -8,6 +8,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
+class ProviderCrash(OverflowError):
+    """A provider error that ends the run. The gate does not catch an `OverflowError`; `run` records it and re-raises."""
+
+
 class FakeProvider:
     """No-op defaults for every `Transport` member that a fake does not exercise."""
 

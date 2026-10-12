@@ -776,6 +776,6 @@ def test_a_run_without_flags_keeps_the_prompt_free_of_the_token_sentence(
 
 def test_simulate_rates_are_unchanged_by_the_token_rule() -> None:
     result = simulate()
-    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0365, 0.8115)
+    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0195, 0.8115)
     again = simulate()
     assert (again.rate_2se, again.rate_one_holdout) == (result.rate_2se, result.rate_one_holdout)

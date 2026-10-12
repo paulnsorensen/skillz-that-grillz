@@ -138,7 +138,7 @@ def test_defaults_keep_every_verdict_and_the_pinned_simulation() -> None:
         assert verdict(values).skipped_families == ()
     assert simulate() == simulate(trials=2000, cases=10)
     result = simulate()
-    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0365, 0.8115)
+    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0195, 0.8115)
 
 
 # --- the Statistics record -------------------------------------------------------------------------------

@@ -24,7 +24,7 @@ from skillz_experiments.run import _session
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -53,6 +53,7 @@ class Search:
         self.invoke_fault: Callable[[int], Exception | None] = lambda _number: None
         self.holdout_calls = 0
         self.holdout_fault: Callable[[int], Exception | None] = lambda _number: None
+        self.holdout_case_fault: Callable[[bool, str], Exception | None] = lambda _improved, _case: None
         self.holdout_head_delay = 0.0
         self.search_delay = 0.0
         self.preflight_error: Exception | None = None
@@ -115,6 +116,9 @@ class Provider(FakeProvider):
             fault = state.holdout_fault(number)
             if fault is not None:
                 raise fault
+            case_fault = state.holdout_case_fault(improved, case.identifier)
+            if case_fault is not None:
+                raise case_fault
         if holdout and state.drain_search:
             with state.lock:
                 while state.drain_search and self.budget.calls < self.budget.maximum - self.budget.reserve:
@@ -127,7 +131,7 @@ class Provider(FakeProvider):
                 failing = state.fail_holdout > 0
                 state.fail_holdout -= failing
             if failing:
-                raise RuntimeError("provider fell over")
+                raise ProviderCrash("provider fell over")
         self.checkpoint()
         digest = hashlib.sha256(f"{state.noise}{candidate.identity}{case.identifier}".encode()).digest()[0]
         base = 0.7 if improved else 0.2
@@ -395,7 +399,7 @@ def test_a_failed_holdout_call_resumes_and_finishes_within_the_approved_budget(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.fail_holdout = 1
     state.drain_search = True
-    with pytest.raises(RuntimeError, match="fell over"):
+    with pytest.raises(ProviderCrash, match="fell over"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert read(out / "run.json")["phase"] == "searched"
     result = run(target, out, MODEL, live=True, factory=state.factory)
@@ -408,7 +412,7 @@ def test_a_gate_that_cannot_finish_stops_with_gate_budget_exhausted(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.fail_holdout = 10_000
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ProviderCrash):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     stop: Stop | None = None
     for _attempt in range(100):
@@ -417,7 +421,7 @@ def test_a_gate_that_cannot_finish_stops_with_gate_budget_exhausted(
         except Stop as error:
             stop = error
             break
-        except RuntimeError:
+        except ProviderCrash:
             continue
     assert stop is not None
     assert stop.code == "gate-budget-exhausted" and "new run" in str(stop.data["next"])
@@ -571,7 +575,7 @@ def test_a_credential_change_found_on_close_after_a_failure_keeps_the_failure_an
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.fail_holdout = 1
     state.close_error = CodedError("credential-changed", "the login file changed")
-    with pytest.raises(RuntimeError) as first:
+    with pytest.raises(ProviderCrash) as first:
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     recorded = read(out / "run.json")
     assert recorded["failure"] == str(first.value) and recorded["failure"] != "the login file changed"
@@ -590,7 +594,7 @@ def test_a_handled_login_change_on_close_after_a_failure_does_not_end_the_run(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.fail_holdout = 1
     state.close_error = CodedError(code, "the login changed and the run handled it")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ProviderCrash):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     recorded = read(out / "run.json")
     assert recorded["close_failure"] == {"code": code, "message": "the login changed and the run handled it"}
@@ -676,7 +680,7 @@ def test_a_transient_gate_failure_records_no_terminal_code(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.fail_holdout = 1
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ProviderCrash):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert "failure_code" not in read(out / "run.json")
     assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
@@ -690,6 +694,62 @@ def test_a_run_stopped_by_another_coded_error_still_resumes(
     with pytest.raises(CodedError):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+
+
+def _failed_holdout(record: dict[str, object]) -> list[dict[str, object]]:
+    return [item for item in cast(list[dict[str, object]], record["outcomes"])
+            if item.get("split") == "holdout" and item.get("status") == "evaluation-failed"]
+
+
+def test_a_provider_fault_on_every_winner_repeat_of_one_holdout_case_drops_that_case_and_the_gate_finishes(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    victim: list[str] = []
+
+    def fault(improved: bool, case: str) -> Exception | None:
+        with state.lock:
+            if improved and not victim:
+                victim.append(case)
+        return RuntimeError("transport fell over") if improved and case == victim[0] else None
+
+    state.holdout_case_fault = fault
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    record = read(out / "run.json")
+    gate = cast(dict[str, object], record["gate"])
+    failed = _failed_holdout(record)
+    assert result["phase"] == "complete" and victim
+    assert {(item["arm"], item["case_id"]) for item in failed} == {("winner", victim[0])}
+    assert sorted(cast(int, item["repeat"]) for item in failed) == list(range(cast(int, gate["repeats"])))
+    scored = {item["case_id"] for item in cast(list[dict[str, object]], record["outcomes"])
+              if item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
+    assert gate["n_shared"] == len(scored | {victim[0]}) - 1 == gate["cases"]
+    moves = cast(dict[str, list[str]], gate["moves"])
+    assert set(moves) == {"fixed", "broke", "unresolved"}
+    assert victim[0] not in [case for ids in moves.values() for case in ids]
+    assert "se_floor" in gate
+
+
+def test_a_resume_retries_a_failed_holdout_repeat_once_and_uses_the_new_score(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.holdout_fault = lambda number: (RuntimeError("transport fell over") if number == 1 else
+                                          ProviderCrash("stop the gate") if number == 2 else None)
+    with pytest.raises(ProviderCrash):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    (failed,) = _failed_holdout(read(out / "run.json"))
+    state.holdout_fault = lambda _number: None
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    record = read(out / "run.json")
+    triple = (failed["arm"], failed["case_id"], failed["repeat"])
+    retried = [item for item in cast(list[dict[str, object]], record["outcomes"])
+               if (item.get("arm"), item.get("case_id"), item.get("repeat")) == triple]
+    assert result["phase"] == "complete" and cast(int, record["calls"]) <= calls
+    assert [item.get("status") for item in retried][0] == "evaluation-failed" and len(retried) == 2
+    assert retried[1].get("status") != "evaluation-failed"
+    assert len(_failed_holdout(record)) == 1
+    assert cast(dict[str, object], record["gate"])["n_shared"] == cast(dict[str, object], record["gate"])["cases"]
 
 
 def test_a_full_codex_run_ends_model_unsupported_after_the_first_rejected_call(

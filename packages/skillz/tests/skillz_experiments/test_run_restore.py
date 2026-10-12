@@ -39,7 +39,7 @@ from skillz_experiments.run._plan import (
     plan_estimate,
 )
 from skillz_experiments.run._session import Session, engine_hash
-from fake_provider import FakeProvider
+from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -71,7 +71,7 @@ class State:
         with self.lock:
             self.evaluated.append((case.identifier, holdout))
         if holdout and self.fail_holdout:
-            raise RuntimeError("provider fell over")
+            raise ProviderCrash("provider fell over")
         improved = "improved" in candidate.files["SKILL.md"]
         result: dict[str, object] = {"score": float(improved), "candidate_hash": candidate.identity,
                                      "case_hash": case.identifier} | self.extra
@@ -141,7 +141,7 @@ def _stopped_at_gate(tmp_path: Path, target: Path, write_draft: Drafter, approva
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
     state.fail_holdout = True
-    with pytest.raises(RuntimeError, match="fell over"):
+    with pytest.raises(ProviderCrash, match="fell over"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
                 factory=state.factory() if configuration is None else None, configuration=configuration)
     state.fail_holdout = False

@@ -20,7 +20,7 @@ from skillz_experiments.search import Edit
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._session import _reflection_request as reflection_request  # pyright: ignore[reportPrivateUsage]
-from fake_provider import FakeProvider
+from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -189,7 +189,7 @@ class Failing(Provider):
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         if holdout and not Failing.failed:
             Failing.failed = True
-            raise RuntimeError("provider fell over")
+            raise ProviderCrash("provider fell over")
         return super().evaluate(candidate, case, holdout=holdout)
 
 
@@ -202,7 +202,7 @@ def test_a_failed_gate_keeps_the_search_and_resumes_with_the_approved_budget_wit
     def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Failing(provider, budget, checkpoint)
 
-    with pytest.raises(RuntimeError, match="fell over"):
+    with pytest.raises(ProviderCrash, match="fell over"):
         _ = run(target, out, "local-test", live=True, approve_cases=case_hash, approve_budget=calls, factory=factory)
     record = read(out / "run.json")
     assert record["phase"] == "searched" and record["failure"] == "provider fell over"
