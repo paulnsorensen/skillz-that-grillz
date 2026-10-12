@@ -88,15 +88,43 @@ class TraceGateTest(unittest.TestCase):
     @pytest.mark.ac("gh-267:AC-9")
     def test_a_malformed_marker_argument_names_its_file_and_line(self) -> None:
         cases = {
-            "non-literal": ('ID = "demo:AC-1"\n\n\n@pytest.mark.ac(ID)\ndef test_a() -> None:\n    pass\n', "exactly one string literal"),
-            "bare id": ('@pytest.mark.ac("AC-1")\ndef test_a() -> None:\n    pass\n', "'AC-1' must match <source>:<id>"),
-            "upper-case source": ('@pytest.mark.ac("Demo:AC-1")\ndef test_a() -> None:\n    pass\n', "must match <source>:<id>"),
-            "two arguments": ('@pytest.mark.ac("demo:AC-1", "demo:AC-2")\ndef test_a() -> None:\n    pass\n', "exactly one string literal"),
-            "no call": ("@pytest.mark.ac\ndef test_a() -> None:\n    pass\n", "exactly one string literal"),
+            "non-literal": ('ID = "demo:AC-1"\n\n\n@pytest.mark.ac(ID)\ndef test_a() -> None:\n    pass\n', 7, "exactly one string literal"),
+            "bare id": ('@pytest.mark.ac("AC-1")\ndef test_a() -> None:\n    pass\n', 4, "'AC-1' must match <source>:<id>"),
+            "upper-case source": ('@pytest.mark.ac("Demo:AC-1")\ndef test_a() -> None:\n    pass\n', 4, "must match <source>:<id>"),
+            "two arguments": ('@pytest.mark.ac("demo:AC-1", "demo:AC-2")\ndef test_a() -> None:\n    pass\n', 4, "exactly one string literal"),
+            "no call": ("@pytest.mark.ac\ndef test_a() -> None:\n    pass\n", 4, "exactly one string literal"),
         }
-        for label, (body, fragment) in cases.items():
+        for label, (body, line, fragment) in cases.items():
             with self.subTest(label):
-                self._expect({"demo": TABLE_HEAD + _row()}, {"packages/wedge/tests/test_bad.py": "import pytest\n\n\n" + body}, fragment)
+                tests = {"packages/wedge/tests/test_bad.py": "import pytest\n\n\n" + body}
+                self._expect({"demo": TABLE_HEAD + _row()}, tests, f"packages/wedge/tests/test_bad.py:{line}: ")
+                self._expect({"demo": TABLE_HEAD + _row()}, tests, fragment)
+
+    @pytest.mark.ac("gh-267:AC-9")
+    def test_a_row_after_a_gap_in_the_criteria_table_is_reported(self) -> None:
+        cases = {
+            "after a blank line": TABLE_HEAD + _row() + "\n" + _row("AC-2"),
+            "after prose": TABLE_HEAD + _row() + "Notes follow.\n" + _row("AC-2"),
+        }
+        for label, text in cases.items():
+            with self.subTest(label):
+                self._expect({"demo": text}, None, "docs/agents/criteria/demo.md:" + str(text.count("\n")) + ": row outside the criteria table")
+
+    @pytest.mark.ac("gh-267:AC-9")
+    def test_prose_after_the_criteria_table_stays_clean(self) -> None:
+        self._expect_clean({"demo": TABLE_HEAD + _row() + "\nNotes: a | b in prose does not start a row.\n"})
+
+    @pytest.mark.ac("gh-267:AC-9")
+    def test_an_unreadable_file_is_reported_not_raised(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = _build(Path(directory), {"demo": TABLE_HEAD + _row()})
+            _ = (root / "packages/wedge/tests/test_binary.py").write_bytes(b"\xff")
+            _ = (root / "docs/agents/criteria/binary.md").write_bytes(b"\xff")
+            code, output = _check(root)
+        self.assertEqual(code, 1, output)
+        self.assertNotIn("Traceback", output)
+        self.assertIn("packages/wedge/tests/test_binary.py:1: cannot read file", output)
+        self.assertIn("docs/agents/criteria/binary.md:1: cannot read file", output)
 
     @pytest.mark.ac("gh-267:AC-9")
     def test_a_duplicate_id_names_its_file_and_line(self) -> None:
@@ -131,6 +159,22 @@ class TraceGateTest(unittest.TestCase):
         for label, body in forms.items():
             with self.subTest(label):
                 self._expect_clean({"demo": TABLE_HEAD + _row()}, {"packages/skillz/tests/test_form.py": body})
+
+    @pytest.mark.ac("gh-267:AC-10")
+    def test_aliased_pytest_imports_count_as_marked_tests(self) -> None:
+        forms = {
+            "import pytest as": 'import pytest as pt\n\n\n@pt.mark.ac("demo:AC-1")\ndef test_a() -> None:\n    pass\n',
+            "from pytest import mark": 'from pytest import mark\n\n\n@mark.ac("demo:AC-1")\ndef test_a() -> None:\n    pass\n',
+            "from pytest import mark as": 'from pytest import mark as m\n\n\npytestmark = m.ac("demo:AC-1")\n',
+        }
+        for label, body in forms.items():
+            with self.subTest(label):
+                self._expect_clean({"demo": TABLE_HEAD + _row()}, {"packages/skillz/tests/test_alias.py": body})
+
+    @pytest.mark.ac("gh-267:AC-10")
+    def test_a_malformed_aliased_marker_is_reported(self) -> None:
+        body = 'import pytest as pt\n\n\n@pt.mark.ac("AC-1")\ndef test_a() -> None:\n    pass\n'
+        self._expect({"demo": TABLE_HEAD + _row()}, {"packages/skillz/tests/test_alias.py": body}, "packages/skillz/tests/test_alias.py:4: ")
 
     @pytest.mark.ac("gh-267:AC-10")
     def test_a_docstring_or_comment_mention_is_not_a_marker(self) -> None:

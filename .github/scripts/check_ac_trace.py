@@ -29,6 +29,7 @@ HEADER = ("id", "kind", "criterion", "verified by")
 KINDS = ("test", "process")
 INDEX = "index.md"
 LITERAL_FAULT = "ac marker needs exactly one string literal argument"
+UNREADABLE_FAULT = "cannot read file"
 
 
 @dataclass(frozen=True)
@@ -53,23 +54,56 @@ def _inside(root: Path, path: Path) -> bool:
     return path.resolve().is_relative_to(root.resolve())
 
 
-def _is_ac_mark(node: ast.AST) -> bool:
-    return isinstance(node, ast.Attribute) and ast.unparse(node) == "pytest.mark.ac"
+def _read(path: Path, rel: str) -> tuple[str, list[str]]:
+    try:
+        return path.read_text(encoding="utf-8"), []
+    except (UnicodeDecodeError, OSError):
+        return "", [f"{rel}:1: {UNREADABLE_FAULT}"]
+
+
+def _pytest_names(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """Return the local names bound to the pytest module and to pytest.mark."""
+    modules: set[str] = set()
+    marks: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update((alias.asname or alias.name) for alias in node.names if alias.name == "pytest")
+        elif isinstance(node, ast.ImportFrom) and node.module == "pytest" and node.level == 0:
+            marks.update((alias.asname or alias.name) for alias in node.names if alias.name == "mark")
+    return modules, marks
+
+
+def _is_ac_mark(node: ast.AST, modules: set[str], marks: set[str]) -> bool:
+    if not (isinstance(node, ast.Attribute) and node.attr == "ac"):
+        return False
+    owner = node.value
+    if isinstance(owner, ast.Name):
+        return owner.id in marks
+    return (
+        isinstance(owner, ast.Attribute)
+        and owner.attr == "mark"
+        and isinstance(owner.value, ast.Name)
+        and owner.value.id in modules
+    )
 
 
 def _scan_test_file(root: Path, path: Path) -> tuple[list[Marker], list[str]]:
     rel = path.relative_to(root).as_posix()
     if not _inside(root, path):
         return [], [f"{rel}:1: path resolves outside the repository"]
+    source, unreadable = _read(path, rel)
+    if unreadable:
+        return [], unreadable
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
+        tree = ast.parse(source, filename=rel)
     except SyntaxError as error:
         return [], [f"{rel}:{error.lineno or 1}: cannot parse test file: {error.msg}"]
+    modules, marks = _pytest_names(tree)
     markers: list[Marker] = []
     faults: list[str] = []
     called: set[int] = set()
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _is_ac_mark(node.func)):
+        if not (isinstance(node, ast.Call) and _is_ac_mark(node.func, modules, marks)):
             continue
         called.add(id(node.func))
         where = f"{rel}:{node.lineno}"
@@ -85,7 +119,7 @@ def _scan_test_file(root: Path, path: Path) -> tuple[list[Marker], list[str]]:
     faults.extend(
         f"{rel}:{node.lineno}: {LITERAL_FAULT}"
         for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute) and _is_ac_mark(node) and id(node) not in called
+        if isinstance(node, ast.Attribute) and _is_ac_mark(node, modules, marks) and id(node) not in called
     )
     return markers, faults
 
@@ -109,7 +143,10 @@ def _parse_criteria(root: Path, path: Path) -> tuple[Criteria, list[str]]:
     criteria = Criteria()
     if not _inside(root, path):
         return criteria, [f"{rel}:1: path resolves outside the repository"]
-    lines = path.read_text(encoding="utf-8").splitlines()
+    text, unreadable = _read(path, rel)
+    if unreadable:
+        return criteria, unreadable
+    lines = text.splitlines()
     faults: list[str] = []
     first = next((line for line in lines if line.strip()), "")
     if not first.startswith("# "):
@@ -124,11 +161,12 @@ def _parse_criteria(root: Path, path: Path) -> tuple[Criteria, list[str]]:
     divider = _cells(lines[start + 1]) if start + 1 < len(lines) else []
     if len(divider) != len(HEADER) or not all(SEPARATOR_CELL.fullmatch(cell) for cell in divider):
         return criteria, [*faults, f"{rel}:{start + 2}: table header needs a separator row"]
-    rows = 0
-    for index in range(start + 2, len(lines)):
-        if not lines[index].startswith("|"):
-            break
-        rows += 1
+    end = next((index for index in range(start + 2, len(lines)) if not lines[index].startswith("|")), len(lines))
+    faults.extend(
+        f"{rel}:{index + 1}: row outside the criteria table" for index in range(end, len(lines)) if lines[index].startswith("|")
+    )
+    rows = end - (start + 2)
+    for index in range(start + 2, end):
         where = f"{rel}:{index + 1}"
         cells = _cells(lines[index])
         if len(cells) != len(HEADER):

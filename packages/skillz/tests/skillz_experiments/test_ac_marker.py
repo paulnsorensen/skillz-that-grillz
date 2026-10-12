@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-CONFTEST = Path(__file__).with_name("conftest.py")
+CONFTEST = Path(__file__).parents[1] / "conftest.py"
 INI = "[pytest]\nmarkers =\n    ac(id): ties a test to an acceptance-criterion ID\naddopts = --strict-markers -p no:cacheprovider\n"
 
 
