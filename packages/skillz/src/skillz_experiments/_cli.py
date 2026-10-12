@@ -190,7 +190,7 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
         return result if warning is None else result | {"close_warning": warning}
 
 
-register_wrappers(app)
+register_wrappers(app.group("harness-wrapper", help="Reference wrappers for the command adapter. Each speaks JSON protocol version 1."))
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -143,6 +143,35 @@ def test_the_cli_names_no_vendor_wrapper() -> None:
     assert wrapper == {f"{PREFIX}.wrapper", f"{PREFIX}.wrapper.register"}
 
 
+def _runtime_imports(tree: ast.AST) -> set[str]:
+    """Return each module that `tree` imports outside `if TYPE_CHECKING:` blocks."""
+    found: set[str] = set()
+    for node in ast.iter_child_nodes(tree):
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
+            continue
+        if isinstance(node, ast.Import):
+            found.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            found.add(node.module or "")
+        else:
+            found |= _runtime_imports(node)
+    return found
+
+
+def test_the_wrapper_slice_does_not_import_the_cli_framework_at_runtime() -> None:
+    checked = [path for path in _modules() if _slice_of(path) == "wrapper"]
+    assert checked
+    broken = [f"{path.relative_to(PACKAGE)} imports {name}"
+              for path in checked for name in sorted(_runtime_imports(ast.parse(path.read_text())))
+              if name == "fromargs" or name.startswith("fromargs.")]
+    assert broken == []
+
+
+def test_the_runtime_import_scan_skips_type_checking_blocks() -> None:
+    tree = ast.parse("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import fromargs\ndef f():\n    import fromargs.x\n")
+    assert _runtime_imports(tree) == {"typing", "fromargs.x"}
+
+
 def _is_facade_member(name: str, slice_name: str) -> bool:
     """Return whether `name` is `slice.<attr>` where `<attr>` is a facade export, not a private submodule."""
     attribute = name.removeprefix(f"{PREFIX}.{slice_name}.")
