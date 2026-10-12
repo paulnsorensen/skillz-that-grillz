@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import stat
 import threading
@@ -58,6 +59,8 @@ class Search:
         self.search_delay = 0.0
         self.preflight_error: Exception | None = None
         self.close_error: Exception | None = None
+        self.suffix = ""
+        self.improved_calls = 0
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -89,6 +92,9 @@ class Provider(FakeProvider):
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         state = self.state
         improved = "improved" in candidate.files["SKILL.md"]
+        if improved and not holdout:
+            with state.lock:
+                state.improved_calls += 1
         if not holdout:
             with state.lock:
                 state.search_calls += 1
@@ -154,7 +160,7 @@ class Provider(FakeProvider):
         with self.state.lock:
             self.state.proposals += 1
             number = self.state.proposals
-        return {"answer": {name: f"improved {number} " + "x" * self.state.padding for name in cast(list[str], schema["required"])}}
+        return {"answer": {name: f"improved {number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
 
 
 def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
@@ -183,7 +189,7 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
     state.exhaust_after_improved = len(_validation(out))
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
-    assert search == {"reason": "budget-exhausted-best-validated", "retained_seed": False}
+    assert search == {"reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -249,7 +255,7 @@ def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before
     outcomes.extend([filler] * (planned - overshoot(len(validation)) - spent))
     write(out / "run.json", record)
     result = run(target, out, MODEL, live=True, factory=state.factory)
-    assert cast(dict[str, object], result["search"]) == {"reason": "search-share-spent-best-validated", "retained_seed": False}
+    assert cast(dict[str, object], result["search"]) == {"reason": "search-share-spent-best-validated", "retained_seed": False, "leakage_rejections": {}}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -264,7 +270,7 @@ def test_a_resume_with_a_real_allowance_keeps_the_pre_abort_candidate_over_worse
     proposals_before = state.proposals
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert state.proposals > proposals_before
-    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": False}
+    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": False, "leakage_rejections": {}}
     assert "improved 1 " in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -276,7 +282,7 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     assert "best_validated" in record
-    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True}
+    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}}
     assert cast(dict[str, object], record["gate"])["reason"] == "winner-equals-baseline"
 
 
@@ -288,7 +294,7 @@ def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     kept = cast(dict[str, object], read(out / "run.json")["best_validated"])
     assert kept["mean"] == pytest.approx(0.5)
-    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True}
+    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}}
 
 
 def test_an_earlier_validated_candidate_stays_best_over_a_later_worse_one(
@@ -816,3 +822,126 @@ def test_a_full_codex_run_ends_model_unsupported_after_the_first_rejected_call(
     assert record["failure_code"] == "model-unsupported" and record["phase"] == "prepared"
     assert not any(item.get("status") == "evaluation-failed" for item in outcomes)
     assert log.read_text().count("call") <= MAX_CONCURRENT_CALLS, "later search calls ran after the first rejection"
+
+
+SPAN = "summarise the quarterly ledger totals and flag every unusual"
+ANSWER = "the quarterly total is exactly four hundred dollars"
+FIXTURE = "ledger-fixture.md"
+
+
+def _leak_start(tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
+                seed_extra: str = "") -> tuple[Path, Path, Search, str, int]:
+    """Start a run whose first case holds a long request, a long expected answer, and a named fixture."""
+    target, out = make_target(tmp_path), tmp_path / "run"
+    if seed_extra:
+        with (target / "SKILL.md").open("a", encoding="utf-8") as handle:
+            _ = handle.write("\n" + seed_extra + "\n")
+    cases: list[dict[str, object]] = []
+    for family in range(5):
+        for index in range(2):
+            name = f"t{family}-{index}"
+            cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"please {SPAN} payment {name} today",
+                          "files": {FIXTURE: "hello\n"}, "expected": {"answer": ANSWER}, "source": "skill"})
+    out.mkdir(mode=0o700, parents=True)
+    _ = (out / "cases.draft.json").write_text(json.dumps(cases), encoding="utf-8")
+    case_hash, calls = approvals(target, out)
+    return target, out, Search(target), case_hash, calls
+
+
+def _spy_feedback(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, dict[str, object]]]:
+    seen: list[tuple[float, dict[str, object]]] = []
+    real = _session.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
+        evaluate = cast(Callable[[dict[str, str], object], tuple[float, dict[str, object]]], args[4])
+
+        def recording(components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
+            result = evaluate(components, example)
+            seen.append(result)
+            return result
+        return real(args[0], args[1], args[2], args[3], recording, args[5], **kwargs)  # pyright: ignore[reportAny]
+
+    monkeypatch.setattr(_session, "pareto_search", spy)
+    return seen
+
+
+@pytest.mark.parametrize(("suffix", "rule"), [
+    (" " + SPAN, "request-span"), (" " + ANSWER, "expected-answer"),
+    (" see case t1-1 here", "case-id"), (f" open {FIXTURE} first", "fixture-name")])
+def test_a_leaking_proposal_scores_zero_without_a_task_or_judge_call_and_is_counted(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
+        monkeypatch: pytest.MonkeyPatch, suffix: str, rule: str) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = suffix
+    seen = _spy_feedback(monkeypatch)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    rejections = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
+    assert state.proposals > 0 and state.improved_calls == 0
+    assert list(rejections) == [rule] and 0 < rejections[rule] <= state.proposals
+    rejected = [(score, feedback) for score, feedback in seen if feedback.get("reason") == "candidate-leakage-rejected"]
+    assert rejected
+    for score, feedback in rejected:
+        assert score == 0.0
+        assert set(feedback) == {"task_correct", "request", "rejected", "reason", "rule"} and feedback["rule"] == rule
+        assert ANSWER not in json.dumps({key: value for key, value in feedback.items() if key != "request"})
+    record = read(out / "run.json")
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    assert all("improved" not in str(item) for item in outcomes)
+    assert cast(dict[str, object], record["search"])["leakage_rejections"] == rejections
+
+
+def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " " + ANSWER
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert cast(dict[str, object], result["search"])["leakage_rejections"]
+    text = (out / "run.json").read_text(encoding="utf-8")
+    assert ANSWER not in text and SPAN not in text and "denylist" not in text
+    destination = tmp_path / "exported"
+    _ = export(out, destination)
+    report = read(destination / "report.json")
+    assert cast(dict[str, object], report["search"])["leakage_rejections"] == cast(dict[str, object], result["search"])["leakage_rejections"]
+    assert ANSWER not in (destination / "report.json").read_text(encoding="utf-8")
+
+
+def test_leakage_counts_survive_a_fault_and_resume_and_the_record_holds_only_digests(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " " + ANSWER
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    stopped = read(out / "run.json")
+    assert stopped["phase"] == "prepared" and "search" not in stopped
+    before = cast(dict[str, list[str]], stopped["leakage_rejected"])
+    assert list(before) == ["expected-answer"] and before["expected-answer"]
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    record = read(out / "run.json")
+    after = cast(dict[str, list[str]], record["leakage_rejected"])
+    counts = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
+    assert set(before["expected-answer"]) < set(after["expected-answer"])
+    assert counts == {"expected-answer": len(after["expected-answer"])}
+    text = (out / "run.json").read_text(encoding="utf-8")
+    assert ANSWER not in text and SPAN not in text and "denylist" not in text
+
+
+def test_a_provider_that_checkpoints_in_its_constructor_opens_the_session(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
+        checkpoint()
+        return state.factory(model, budget, checkpoint)
+
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=factory)
+    assert result["phase"] == "complete" and read(out / "run.json")["leakage_rejected"] == {}
+
+
+def test_a_proposal_that_repeats_text_the_seed_already_holds_is_not_rejected(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals, seed_extra=SPAN)
+    state.suffix = " " + SPAN
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert cast(dict[str, object], result["search"])["leakage_rejections"] == {}
+    assert state.improved_calls > 0

@@ -671,11 +671,34 @@ Exported outcomes carry `scores`.
 
 Each run freezes a compatibility fingerprint in `run.json` as `compatibility`. `summary` and `report.json` carry it.
 The fingerprint is the digest of `compatibility.fields`. The fields hold no case text.
-The fields are `contract_hash`, `skill`, `adapter`, `task_model`, `judge_model`, `claude_options`, `edit`, `repeats`, `statistics`, `split_digest`, and `scoring_digest`.
+The fields are `contract_hash`, `skill`, `adapter`, `task_model`, `judge_model`, `claude_options`, `edit`, `repeats`, `statistics`, `split_digest`, `scoring_digest`, and `leakage_digest`.
 `judge_model` is `null` when no case kind is judged.
 `scoring_digest` covers the source of the scoring modules. An edit to the search, run, or harness code keeps it.
+`leakage_digest` covers the source of the leakage check. A change to a rule or a threshold starts a new cohort.
 `run.compare(a, b)` names each field that differs between two run records.
 It returns `("missing-fingerprint",)` when either record has no fingerprint.
+
+The search checks every proposal for leakage before any task or judge call.
+The denylist holds the request, journey brief, expected strings, case ids, and fixture names of the train and validation cases.
+Holdout cases are never in it. The session rebuilds it on every open and never writes it to `run.json` or an export.
+A proposal leaks when the text that it adds to a component, compared with the seed, matches one rule:
+
+| Rule | Fires when the added text holds |
+| --- | --- |
+| `request-span` | a verbatim 8-word span of a request or journey brief (case-insensitive, edge punctuation ignored) |
+| `expected-answer` | an expected string of at least 20 characters (whitespace squashed, case-insensitive) |
+| `case-id` | a case id as a whole token |
+| `fixture-name` | a fixture file name as a whole token |
+
+Text that the seed already holds never fires a rule.
+A leaking proposal scores 0 and makes no task or judge call. It records no outcome.
+GEPA still counts each rejected evaluation against its metric-call allowance. A proposer that keeps leaking can end the search early with approved calls left.
+Its feedback has `reason` and `rejected` set to `candidate-leakage-rejected`, plus the `rule` and the existing `request`.
+The feedback holds no expected text.
+`summary` and `report.json` carry `search.leakage_rejections`: the count of distinct rejected proposals per rule.
+The runner saves the digests of rejected proposals per rule in `run.json` at each checkpoint, never case text.
+A resumed run merges them back, so the counts cover the whole run.
+The runner rebuilds the denylist from the frozen cases on every open and never writes it.
 
 Run records contain private local inputs.
 Exports contain a candidate patch and measurements, not requests or expected answers.

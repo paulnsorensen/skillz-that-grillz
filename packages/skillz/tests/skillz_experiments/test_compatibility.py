@@ -16,14 +16,14 @@ from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._records import read
 from skillz_experiments.harness._harness import Configuration
 from skillz_experiments.run import compare, export
-from skillz_experiments.run._session import SCORING_FILES, scoring_digest
+from skillz_experiments.run._session import SCORING_FILES, leakage_digest, scoring_digest
 
 if TYPE_CHECKING:
     from .conftest import JudgedRun
 
 PACKAGE = Path(skillz_experiments.__file__).parent
 FIELDS = {"contract_hash", "skill", "adapter", "task_model", "judge_model", "claude_options", "edit",
-          "repeats", "statistics", "split_digest", "scoring_digest"}
+          "repeats", "statistics", "split_digest", "scoring_digest", "leakage_digest"}
 
 
 def _judged_run(base: Path, judge_model: str, make_target: Callable[..., Path],
@@ -71,12 +71,13 @@ def test_a_run_freezes_its_fingerprint_and_an_equal_run_compares_clean(
     _, second, _ = _judged_run(tmp_path / "b", "judge-a", make_target, approved_run)
     saved = cast(list[dict[str, object]], json.loads((out / "cases.json").read_text())["cases"])
     fields = _fields(first)
-    assert set(fields) == FIELDS and len(fields) == 11
+    assert set(fields) == FIELDS and len(fields) == 12
     assert _frozen(first)["fingerprint"] == digest(fields)
     assert fields["task_model"] == "task-model" and fields["judge_model"] == "judge-a"
     assert fields["adapter"] == "command"
     assert fields["edit"] == "prose" and fields["repeats"] == 3 and fields["statistics"] == first["statistics"]
     assert fields["scoring_digest"] == scoring_digest(PACKAGE)
+    assert fields["leakage_digest"] == leakage_digest(PACKAGE)
     assert fields["split_digest"] == digest({
         split: sorted(str(case["id"]) for case in saved if case["split"] == split) for split in ("train", "validation")})
     assert fields["skill"] == cast(dict[str, object], first["contract"])["skill"]
@@ -191,3 +192,12 @@ def test_an_edit_outside_the_scoring_modules_keeps_the_scoring_digest(copied: Pa
     path = copied / module
     _ = path.write_text(path.read_text() + "\n# changed\n")
     assert scoring_digest(copied) == before
+
+
+@pytest.mark.parametrize("module", ["search/_leakage.py", "search/_engine.py", "run/_session.py"])
+def test_only_an_edit_to_the_leakage_check_changes_the_leakage_digest(copied: Path, module: str) -> None:
+    before = leakage_digest(copied)
+    assert before == leakage_digest(PACKAGE)
+    path = copied / module
+    _ = path.write_text(path.read_text() + "\n# changed\n")
+    assert (leakage_digest(copied) != before) == (module == "search/_leakage.py")

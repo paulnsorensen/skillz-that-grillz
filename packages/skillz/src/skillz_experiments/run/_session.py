@@ -37,7 +37,8 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import Edit, overshoot
+from skillz_experiments.search import Denylist, Edit, overshoot
+from skillz_experiments.search import check as check_leakage
 from skillz_experiments.search import search as pareto_search
 
 # Seconds that the wall clock may step back between prepare and resume, for example after an NTP step.
@@ -45,6 +46,8 @@ CLOCK_TOLERANCE = 5.0
 
 
 HarnessName = str
+
+LEAKAGE_REJECTED = "candidate-leakage-rejected"
 
 # The flat modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
 SCORING_FILES = ("_evaluator.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
@@ -106,6 +109,11 @@ def _differences(recorded: object, observed: object, name: str = "") -> list[str
         return [line for key in sorted(set(before) | set(after))
                 for line in _differences(before.get(key), after.get(key), f"{name}.{key}" if name else key)]
     return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
+
+
+def leakage_digest(package: Path) -> str:
+    """Digest the source of the leakage check. A rule change decides which proposals get scored, so it starts a new cohort."""
+    return digest({"search/_leakage.py": (package / "search" / "_leakage.py").read_text()})
 
 
 def scoring_digest(package: Path) -> str:
@@ -188,11 +196,16 @@ class Session:
         self._freeze_identities(model, configuration, judged)
         self._freeze_compatibility(configuration)
         self.budget = self._open_budget()
+        self._fault: CodedError | None = None
+        self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
+        # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
+        self._denylist = Denylist.build(self._search_cases.values())
+        self._leak_rules: dict[str, str | None] = {}
+        # Set before the provider gets `self.checkpoint`, which reads it.
+        self._leak_rejections = self._recorded_rejections()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
                                                                   self.seed.files) if configuration is not None
                                     else cast(Factory, factory)(model, self.budget, self.checkpoint))
-        self._fault: CodedError | None = None
-        self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
         self.rebuilder = self._open_rebuilder()
 
     def _seed_frozen(self) -> dict[str, bytes]:
@@ -201,6 +214,16 @@ class Session:
             return load_frozen(mapping(field(self.record, "seed_frozen")), self.out / "frozen")
         except CodedError as error:
             raise Stop(error.code, str(error), {}) from None
+
+    def _recorded_rejections(self) -> dict[str, set[str]]:
+        """Load the rejected proposal digests per rule from the record. They hold no case text."""
+        recorded = mapping(self.record.get("leakage_rejected", {}))
+        found: dict[str, set[str]] = {}
+        for rule, keys in recorded.items():
+            if not isinstance(keys, list) or not all(isinstance(key, str) for key in cast(list[object], keys)):
+                raise ValueError("run record field leakage_rejected must map rules to lists of text")
+            found[rule] = set(cast(list[str], keys))
+        return found
 
     def _open_rebuilder(self) -> Rebuilder | None:
         """Reopen the site layers of the editable own targets. Return None when no target has editable sources."""
@@ -265,7 +288,8 @@ class Session:
             "claude_options": task.options.data() if task else self.record.get("claude_options", {}),
             "edit": text_field(self.record, "edit"),
             "repeats": field(self.record, "repeats"), "statistics": field(self.record, "statistics"),
-            "split_digest": digest(splits), "scoring_digest": scoring_digest(Path(__file__).parent.parent)}
+            "split_digest": digest(splits), "scoring_digest": scoring_digest(Path(__file__).parent.parent),
+            "leakage_digest": leakage_digest(Path(__file__).parent.parent)}
         self.record["compatibility"] = {"fingerprint": digest(fields), "fields": fields}
 
     def _open_budget(self) -> Budget:
@@ -316,6 +340,7 @@ class Session:
     def checkpoint(self) -> None:
         with self.lock:
             self.record["calls"] = self.budget.calls
+            self.record["leakage_rejected"] = {rule: sorted(keys) for rule, keys in sorted(self._leak_rejections.items())}
             write(self.out / "run.json", self.record)
 
     def cases_for(self, split: Split) -> list[Case]:
@@ -358,10 +383,30 @@ class Session:
             self.checkpoint()
         return result
 
+    def _leak_rule(self, components: dict[str, str]) -> str | None:
+        """Return the leakage rule that the proposal breaks, else None. Each distinct proposal is checked once per session."""
+        key = digest(components)
+        with self.lock:
+            if key in self._leak_rules:
+                return self._leak_rules[key]
+        leak = check_leakage(self._denylist, self.seed.files, components)
+        rule = None if leak is None else leak.rule
+        with self.lock:
+            first = key not in self._leak_rules
+            rule = self._leak_rules.setdefault(key, rule)
+            if first and rule is not None:
+                self._leak_rejections.setdefault(rule, set()).add(key)
+                self.checkpoint()
+            return rule
+
     def _evaluate_example(self, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
         case = self._search_cases.get(cast(str, example))
         if case is None:
             raise ValueError("holdout must not enter optimization")
+        rule = self._leak_rule(components)
+        if rule is not None:
+            return 0.0, {"task_correct": 0.0, "request": case.request, "rejected": LEAKAGE_REJECTED,
+                         "reason": LEAKAGE_REJECTED, "rule": rule}
         try:
             candidate = self._built(self.seed.changed(components))
         except ValueError as error:
@@ -559,7 +604,10 @@ class Session:
             raise CodedError("search-failed", "every search evaluation failed: " + str(scored[-1]["failure"])
                              + "; check the model, then start a new run directory")
         self.record["winner"] = winner.files
-        self.record["search"] = {"reason": reason, "retained_seed": winner.identity == self.seed.identity}
+        with self.lock:
+            rejections = {rule: len(keys) for rule, keys in sorted(self._leak_rejections.items())}
+        self.record["search"] = {"reason": reason, "retained_seed": winner.identity == self.seed.identity,
+                                 "leakage_rejections": rejections}
         self.record["phase"] = "searched"
         self.checkpoint()
 
