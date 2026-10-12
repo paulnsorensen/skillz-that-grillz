@@ -388,7 +388,7 @@ def test_a_record_without_the_token_keys_is_refused() -> None:
 
 
 def test_the_flag_registry_lists_both_token_flags() -> None:
-    assert Statistics.flags()[-3:-1] == ("max_token_increase_per_gain", "min_token_saving")
+    assert {"max_token_increase_per_gain", "min_token_saving"} <= set(Statistics.flags())
 
 
 @pytest.mark.parametrize("value", [0.0, 1.0, -0.1, 1.5, True, "0.5", math.nan, math.inf, 10**400])

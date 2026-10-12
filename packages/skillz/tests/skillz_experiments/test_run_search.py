@@ -730,6 +730,27 @@ def test_a_provider_fault_on_every_winner_repeat_of_one_holdout_case_drops_that_
     assert "se_floor" in gate
 
 
+def test_a_dropped_holdout_case_below_min_coverage_makes_the_gate_low_coverage(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    victim: list[str] = []
+
+    def fault(improved: bool, case: str) -> Exception | None:
+        with state.lock:
+            if improved and not victim:
+                victim.append(case)
+        return RuntimeError("transport fell over") if improved and case == victim[0] else None
+
+    state.holdout_case_fault = fault
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
+                 factory=state.factory, statistics={"min_coverage": 1.0})
+    gate = cast(dict[str, object], read(out / "run.json")["gate"])
+    assert result["phase"] == "complete" and victim
+    assert victim[0] not in [case for ids in cast(dict[str, list[str]], gate["moves"]).values() for case in ids]
+    assert gate["verdict"] == "inconclusive" and cast(list[str], gate["reasons"])[0] == "low-coverage"
+
+
 def test_a_resume_retries_a_failed_holdout_repeat_once_and_uses_the_new_score(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:

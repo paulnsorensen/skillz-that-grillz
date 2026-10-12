@@ -204,6 +204,11 @@ def test_min_coverage_zero_or_no_planned_count_never_adds_low_coverage() -> None
     assert verdict([], planned=None).reasons == ()
 
 
+def test_a_planned_count_of_zero_is_low_coverage() -> None:
+    assert verdict([], planned=0).reasons == ("low-coverage",)
+    assert verdict([], thresholds=Statistics(min_coverage=0.0), planned=0).reasons == ()
+
+
 def test_low_coverage_masks_a_reject_and_the_floors_but_a_family_breach_still_rejects() -> None:
     losing = verdict([-0.3, -0.4, -0.5, -0.4, -0.3], planned=10)
     assert (losing.verdict, losing.reasons) == ("inconclusive", ("low-coverage",))

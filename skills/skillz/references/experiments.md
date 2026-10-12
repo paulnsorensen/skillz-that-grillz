@@ -258,6 +258,7 @@ The coverage rule runs before the floors and the token rule. Coverage is `n_shar
 When coverage is below `min_coverage`, the verdict is `inconclusive` with reason `low-coverage`, even if the deltas would promote or reject. The record keeps `delta` and `se`.
 The family rule still runs after it, and a family breach still forces `reject`. A `min_coverage` of 0 turns the rule off.
 A provider fault that leaves holdout cases unscored lowers coverage, so it cannot become a promote or a reject.
+A winner equal to the baseline skips the coverage rule. Its `n_shared` is 0, but its only reason is `winner-equals-baseline`.
 
 The floors apply only to a result that would promote. That result needs `delta >= min_gain` and `delta > 2·SE + min_lower_bound`.
 When the SE is 0, the second test uses 2·SE = 0.
@@ -308,7 +309,7 @@ Without a token field, the seed wins a tie.
 
 ### Reasons and reporting
 
-The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`.
+The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`. The coverage reason is `low-coverage`.
 A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
 The summary and the export report show `reasons`, `skipped_families`, `token_delta`, and `token_se` in the `gate` object. The token fields are `null` while the token rule is off or the usage is unknown.
 The summary reports the delta, the SE, the case count, and the repeats.
@@ -514,8 +515,9 @@ The SE multiplier stays 2. A negative threshold would loosen the rule, so the ru
 
 Each field resolves in this order: the CLI flag, then the contract, then the built-in default.
 The flags are `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, and `--min-coverage`. A flag may set a value below the contract value.
-Every flag value except `--min-token-saving` must still be at least 0, so the gate stays at least as strict as the built-in rule.
+Every flag value except `--min-token-saving` must still be at least 0. The SE rule stays, so the gate stays at least as strict as the built-in rule, with two exceptions.
 `--min-token-saving` adds `promote-cheaper`.
+`--min-coverage` below 0.6 lets the gate decide on fewer scored holdout cases. A value of 0 turns the coverage rule off.
 The first run freezes the resolved values in `run.json`.
 The flags repeat on every call until `run.json` exists. The approval stops echo the resolved values as `statistics`.
 A flag that you drop after an approval stop changes the frozen values.
