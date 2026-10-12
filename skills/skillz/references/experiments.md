@@ -323,7 +323,7 @@ The counts cover `promote` only. They do not cover `promote-cheaper`.
 `--simulate --metric NAME` prints only that one number, with no JSON. The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, and `rate_one_holdout`. Without `--metric`, the output has the same keys as before.
 Each metric in `packages/skillz/ratchets.json` names its own selector in its `command`, so `ratchet.py measure -- <command>` reads one deterministic number.
 The `skillz-pytest` job fails when a metric in that file passes its threshold. It checks `false_promotions_2se` against 39 and `false_promotions_one_holdout` against 1623.
-The one-holdout count is a reference ratchet. It models the select-and-gate rule of skill-creator, not the production gate. It stays in `ratchets.json` because the value is exact for the seed and costs about one second. A change to the simulated world fails the job.
+The one-holdout count is a reference ratchet. It models the select-and-gate rule of skill-creator, not the production gate. It stays in `ratchets.json` because the value is exact for the seed and costs about one second. A rise above 1623 fails the job. A fall passes, and nothing tightens the threshold until a person runs `ratchet.py tighten`.
 
 ## Wedge targets
 

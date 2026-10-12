@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 import re
 import statistics
@@ -30,11 +31,17 @@ def _selector(entry: Entry) -> str:
     return found.group(1)
 
 
+@functools.cache
+def _measure(selector: str) -> float:
+    return cast(float, _cli.self_test(simulate=True, metric=selector))  # pyright: ignore[reportArgumentType]
+
+
 def _measured(entry: Entry) -> float:
-    return cast(float, _cli.self_test(simulate=True, metric=_selector(entry)))  # pyright: ignore[reportArgumentType]
+    return _measure(_selector(entry))
 
 
 def _breaches(entry: Entry, value: float) -> bool:
+    assert entry["direction"] in ("lower", "higher"), f"unknown direction {entry['direction']!r}"
     threshold = float(entry["threshold"])
     return value > threshold if entry["direction"] == "lower" else value < threshold
 
@@ -67,11 +74,6 @@ def test_a_ratchet_one_step_inside_the_value_fails(name: str) -> None:
 def test_each_metric_has_its_own_selector() -> None:
     selectors = [_selector(entry) for entry in _entries().values()]
     assert len(set(selectors)) == len(selectors)
-
-
-def test_false_promotions_2se_stay_at_or_below_the_ratchet() -> None:
-    value, threshold = simulate().false_promotions_2se, _threshold()
-    assert value <= threshold, f"{METRIC} is {value}, above the ratchet threshold {threshold}"
 
 
 def test_a_weakened_rule_exceeds_the_ratchet() -> None:
