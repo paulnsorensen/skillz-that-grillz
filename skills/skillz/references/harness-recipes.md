@@ -8,6 +8,7 @@ Check each flag with `--help` before you rely on it.
 ## Gemini CLI (reference wrapper, not verified live)
 
 The runner bundle ships a wrapper: `skillz-experiment harness-wrapper gemini`.
+The wrapper slice registers the `harness-wrapper` group on the CLI. The CLI core names no vendor.
 It reads one protocol request on stdin and writes one response on stdout.
 Fake-harness tests cover the wrapper, but no live Gemini CLI run has checked it (AC-16).
 Before you rely on it, run `self-test --preflight-only` with this recipe on a host that has Gemini CLI, a Google login, and a sandbox runtime.

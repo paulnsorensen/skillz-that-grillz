@@ -17,7 +17,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
 from skillz_experiments.run import Stop, export as export_run, run as run_workflow
 from skillz_experiments.harness import Configuration, Effort, configured_selection, doctor, stop_kind
-from skillz_experiments.wrapper import IMAGE as GEMINI_IMAGE, Runtime, respond as gemini_respond
+from skillz_experiments.wrapper import register as register_wrappers
 
 Harness = Literal["claude", "codex"]
 RunHarness = Literal["claude", "codex", "command"]
@@ -190,14 +190,7 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
         return result if warning is None else result | {"close_warning": warning}
 
 
-group = app.group("harness-wrapper", help="Reference wrappers for the command adapter. Each speaks JSON protocol version 1.")
-
-
-@group.command(name="gemini")
-def gemini_command(*, bin_dir: Path | None = None, runtime: Runtime | None = None, image: str = GEMINI_IMAGE) -> None:
-    """Run Gemini CLI with its native sandbox behind the command adapter. Read one request on stdin, answer on stdout."""
-    response = gemini_respond(sys.stdin.read(), bin_dir=bin_dir, runtime=runtime, image=image)
-    _ = sys.stdout.write(json.dumps(response) + "\n")
+register_wrappers(app)
 
 
 def main(argv: list[str] | None = None) -> int:

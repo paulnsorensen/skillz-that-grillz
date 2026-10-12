@@ -136,6 +136,13 @@ def test_a_full_attribute_chain_into_a_private_submodule_is_caught() -> None:
     assert _private_chains(tree, "harness") == []
 
 
+def test_the_cli_names_no_vendor_wrapper() -> None:
+    source = (PACKAGE / "_cli.py").read_text()
+    assert "gemini" not in source.lower()
+    wrapper = _slice_modules(_imported(PACKAGE / "_cli.py"), "wrapper")
+    assert wrapper == {f"{PREFIX}.wrapper", f"{PREFIX}.wrapper.register"}
+
+
 def _is_facade_member(name: str, slice_name: str) -> bool:
     """Return whether `name` is `slice.<attr>` where `<attr>` is a facade export, not a private submodule."""
     attribute = name.removeprefix(f"{PREFIX}.{slice_name}.")

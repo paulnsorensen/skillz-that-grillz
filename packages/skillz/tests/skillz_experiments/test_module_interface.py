@@ -230,7 +230,7 @@ def test_the_barrels_export_exactly_the_contract_names() -> None:
         "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "CONFIGURED_SELECTIONS", "doctor",
         "host_report", "ClaudeOptions", "Effort", "NONO_REMOVED", "check_selection", "command_profile",
         "configured_selection", "has_claude_sandbox", "refuses_claude_options", "stop_kind"}
-    assert set(wrapper_barrel.__all__) == {"respond", "Runtime", "IMAGE"}
+    assert set(wrapper_barrel.__all__) == {"register", "respond", "Runtime", "IMAGE"}
 
 
 @pytest.mark.parametrize(("code", "kind"), [
