@@ -26,11 +26,8 @@ class Verdict:
     token_se: float | None = None
     se_floor: float = 0.0
     moves: dict[str, list[str]] = field(default_factory=_no_moves, hash=False)
-
-    @property
-    def n_shared(self) -> int:
-        """The number of cases that the verdict covers: the cases scored on both arms."""
-        return self.cases
+    n_shared: int = 0
+    """The number of cases scored on both arms. It is 0 when the gate scores no case."""
 
     def data(self) -> dict[str, object]:
         """Return the gate keys of the run record, with each tuple as a list."""
@@ -140,6 +137,7 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     a band result when `min_token_saving` is set. An active token rule with no `tokens` is unknown usage.
     `token_delta` and `token_se` report the change while the rule runs and the usage is known.
     The SE is `max(raw SE, se_floor)`: the floor never lowers it. The zero-SE branch applies only when that is 0.
+    Fewer than 2 cases give an SE of `se_floor`.
     """
     if families is not None and not isinstance(deltas, Mapping):
         raise ValueError("families need deltas keyed by case id")
@@ -154,10 +152,11 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     token_delta, token_se = change if change is not None else (None, None)
     if not all(math.isfinite(value) for value in values):
         return Verdict("inconclusive", math.nan, math.nan, count, skipped_families=skipped,
-                       token_delta=token_delta, token_se=token_se, se_floor=se_floor)
+                       token_delta=token_delta, token_se=token_se, se_floor=se_floor, n_shared=count)
     if count < 2:
-        return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, 0.0, count,
-                       skipped_families=skipped, token_delta=token_delta, token_se=token_se, se_floor=se_floor)
+        return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, se_floor, count,
+                       skipped_families=skipped, token_delta=token_delta, token_se=token_se, se_floor=se_floor,
+                       n_shared=count)
     delta = statistics.fmean(values)
     se = max(statistics.stdev(values) / math.sqrt(count), se_floor)
     if se == 0:
@@ -198,4 +197,4 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     if breached:
         name = "reject"
         reasons.extend(f"family-regression:{family}" for family in breached)
-    return Verdict(name, delta, se, count, tuple(reasons), skipped, token_delta, token_se, se_floor)
+    return Verdict(name, delta, se, count, tuple(reasons), skipped, token_delta, token_se, se_floor, n_shared=count)

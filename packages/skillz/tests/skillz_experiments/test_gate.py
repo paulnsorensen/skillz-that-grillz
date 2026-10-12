@@ -142,6 +142,13 @@ def test_the_floor_never_lowers_the_se() -> None:
     assert verdict([0.1, 0.2, 0.3], se_floor=0.001).se == pytest.approx(0.1 / 3**0.5)
 
 
+def test_one_shared_case_records_the_floor_as_its_se() -> None:
+    paired = holdout_deltas({"a": _spread(0.5, 0.1)}, {"a": _spread(0.6, 0.1)})
+    result = verdict(paired.deltas, se_floor=paired.se_floor)
+    assert paired.se_floor > 0
+    assert (result.verdict, result.se, result.n_shared) == ("inconclusive", paired.se_floor, 1)
+
+
 def test_the_zero_se_branch_needs_a_zero_floor() -> None:
     assert verdict([0.1, 0.1, 0.1]).verdict == "promote"
     assert verdict([0.1, 0.1, 0.1], se_floor=0.2).verdict == "inconclusive"

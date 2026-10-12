@@ -238,6 +238,7 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
     assert gate["verdict"] == "inconclusive" and gate["reason"] == "winner-equals-baseline"
     assert gate["reasons"] == ["winner-equals-baseline"]
     assert gate["skipped_families"] == []
+    assert gate["n_shared"] == 0 and gate["cases"] == len(split_ids(out, "holdout"))
     assert not any(held for _, held in provider.evaluated)
 
 

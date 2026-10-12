@@ -242,6 +242,8 @@ A provider fault on one holdout repeat (`OSError`, `ValueError`, or `RuntimeErro
 A coded fault still stops the run. A resume runs each failed repeat again, and the newest outcome of a repeat wins. The spend stays inside the approved budget, else the run stops with `gate-budget-exhausted`.
 Only `evaluation-failed` leaves a repeat unscored. A rejected candidate, a capture failure, and a grader zero score 0.
 The gate drops a case with no scored repeat on an arm. `n_shared` is the number of cases that remain.
+A winner equal to the baseline scores no case, so its `n_shared` is 0.
+With fewer than 2 shared cases, the verdict is `inconclusive` and `se` is the SE floor.
 
 The gate record also holds `moves`: the case ids that `fixed`, `broke`, or left `unresolved`.
 A move is resolved when the absolute mean delta of the case exceeds `max(2·sqrt(se_baseline² + se_winner²), 1e-9)`.
