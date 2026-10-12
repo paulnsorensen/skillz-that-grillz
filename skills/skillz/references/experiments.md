@@ -695,7 +695,9 @@ A leaking proposal scores 0 and makes no task or judge call. It records no outco
 Its feedback has `reason` and `rejected` set to `candidate-leakage-rejected`, plus the `rule` and the existing `request`.
 The feedback holds no expected text.
 `summary` and `report.json` carry `search.leakage_rejections`: the count of distinct rejected proposals per rule.
-A resumed run counts from the resume.
+The runner saves the digests of rejected proposals per rule in `run.json` at each checkpoint, never case text.
+A resumed run merges them back, so the counts cover the whole run.
+The runner rebuilds the denylist from the frozen cases on every open and never writes it.
 
 Run records contain private local inputs.
 Exports contain a candidate patch and measurements, not requests or expected answers.

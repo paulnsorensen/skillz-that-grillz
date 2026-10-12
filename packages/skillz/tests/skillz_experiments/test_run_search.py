@@ -905,6 +905,27 @@ def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
     assert ANSWER not in (destination / "report.json").read_text(encoding="utf-8")
 
 
+def test_leakage_counts_survive_a_fault_and_resume_and_the_record_holds_only_digests(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " " + ANSWER
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    stopped = read(out / "run.json")
+    assert stopped["phase"] == "prepared" and "search" not in stopped
+    before = cast(dict[str, list[str]], stopped["leakage_rejected"])
+    assert list(before) == ["expected-answer"] and before["expected-answer"]
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    record = read(out / "run.json")
+    after = cast(dict[str, list[str]], record["leakage_rejected"])
+    counts = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
+    assert set(before["expected-answer"]) < set(after["expected-answer"])
+    assert counts == {"expected-answer": len(after["expected-answer"])}
+    text = (out / "run.json").read_text(encoding="utf-8")
+    assert ANSWER not in text and SPAN not in text and "denylist" not in text
+
+
 def test_a_proposal_that_repeats_text_the_seed_already_holds_is_not_rejected(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals, seed_extra=SPAN)

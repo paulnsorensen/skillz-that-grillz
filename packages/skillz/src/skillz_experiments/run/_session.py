@@ -204,7 +204,7 @@ class Session:
         # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
         self._denylist = Denylist.build(self._search_cases.values())
         self._leak_rules: dict[str, str | None] = {}
-        self._leak_rejections: dict[str, set[str]] = {}
+        self._leak_rejections = self._recorded_rejections()
         self.rebuilder = self._open_rebuilder()
 
     def _seed_frozen(self) -> dict[str, bytes]:
@@ -213,6 +213,16 @@ class Session:
             return load_frozen(mapping(field(self.record, "seed_frozen")), self.out / "frozen")
         except CodedError as error:
             raise Stop(error.code, str(error), {}) from None
+
+    def _recorded_rejections(self) -> dict[str, set[str]]:
+        """Load the rejected proposal digests per rule from the record. They hold no case text."""
+        recorded = mapping(self.record.get("leakage_rejected", {}))
+        found: dict[str, set[str]] = {}
+        for rule, keys in recorded.items():
+            if not isinstance(keys, list) or not all(isinstance(key, str) for key in cast(list[object], keys)):
+                raise ValueError("run record field leakage_rejected must map rules to lists of text")
+            found[rule] = set(cast(list[str], keys))
+        return found
 
     def _open_rebuilder(self) -> Rebuilder | None:
         """Reopen the site layers of the editable own targets. Return None when no target has editable sources."""
@@ -329,6 +339,7 @@ class Session:
     def checkpoint(self) -> None:
         with self.lock:
             self.record["calls"] = self.budget.calls
+            self.record["leakage_rejected"] = {rule: sorted(keys) for rule, keys in sorted(self._leak_rejections.items())}
             write(self.out / "run.json", self.record)
 
     def cases_for(self, split: Split) -> list[Case]:
@@ -375,12 +386,17 @@ class Session:
         """Return the leakage rule that the proposal breaks, else None. Each distinct proposal is checked once per session."""
         key = digest(components)
         with self.lock:
-            if key not in self._leak_rules:
-                leak = check_leakage(self._denylist, self.seed.files, components)
-                self._leak_rules[key] = None if leak is None else leak.rule
-                if leak is not None:
-                    self._leak_rejections.setdefault(leak.rule, set()).add(key)
-            return self._leak_rules[key]
+            if key in self._leak_rules:
+                return self._leak_rules[key]
+        leak = check_leakage(self._denylist, self.seed.files, components)
+        rule = None if leak is None else leak.rule
+        with self.lock:
+            first = key not in self._leak_rules
+            rule = self._leak_rules.setdefault(key, rule)
+            if first and rule is not None:
+                self._leak_rejections.setdefault(rule, set()).add(key)
+                self.checkpoint()
+            return rule
 
     def _evaluate_example(self, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
         case = self._search_cases.get(cast(str, example))
