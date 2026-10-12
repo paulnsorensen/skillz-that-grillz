@@ -1,0 +1,11 @@
+---
+name: commit-msg
+description: Write a Conventional Commit message from a short change summary. Use for "write a commit message". Do NOT use for PR descriptions.
+---
+
+# commit-msg
+
+1. Read the change summary.
+2. Pick the type: feat, fix, docs, refactor, test, or chore.
+3. Write one subject line of at most 72 characters: `type(scope): summary`.
+4. Return only the message.
