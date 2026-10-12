@@ -348,8 +348,16 @@ class Session:
 
     def preflight(self) -> None:
         recorded = self.record.get("preflight")
-        preflight = (self.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
-                     if isinstance(self.provider, Harness) else self.provider.preflight())
+        before = self.budget.calls
+        try:
+            preflight = (self.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
+                         if isinstance(self.provider, Harness) else self.provider.preflight())
+        finally:
+            claimed = self.budget.calls - before
+            if claimed:
+                with self.lock:
+                    earlier = self.record.get("preflight_calls", 0)
+                    self.record["preflight_calls"] = (earlier if type(earlier) is int else 0) + claimed
         environment_hash = preflight.get("environment_hash")
         _ = self.record.setdefault("environment_hash", environment_hash)
         if self.record["environment_hash"] != environment_hash:

@@ -58,15 +58,17 @@ def usage_by_role(record: dict[str, object]) -> dict[str, object]:
     found: dict[str, list[tuple[object, object]]] = {"task": [], "reflection": [], "judge": [], "simulator": []}
     for item in record_outcomes(record):
         if item.get("split") == "reflection":
-            if "usage" in item:
+            if isinstance(item.get("usage"), dict):
                 found["reflection"].append((item["usage"], item.get("latency_seconds")))
             continue
+        if item.get("status") == "candidate-contract-rejected":
+            continue
         task_key = "task_usage" if "task_usage" in item else "usage"
-        if task_key in item:
+        if isinstance(item.get(task_key), dict):
             found["task"].append((item[task_key], item.get("latency_seconds")))
-        if "judge_usage" in item:
+        if isinstance(item.get("judge_usage"), dict):
             found["judge"].append((item["judge_usage"], item.get("judge_latency_seconds")))
-        if "simulator_usage" in item:
+        if isinstance(item.get("simulator_usage"), dict):
             found["simulator"].append((item["simulator_usage"], None))
     result: dict[str, object] = {}
     for role, entries in found.items():
@@ -81,10 +83,11 @@ def usage_by_role(record: dict[str, object]) -> dict[str, object]:
 
 
 def calls_upper_bound(record: dict[str, object], out: Path) -> int:
-    """Return the planned worst-case call count of the recorded outcomes: one per reflection, `case_calls` per evaluation."""
+    """Return the planned worst-case call count: the recorded preflight claims, one per reflection, `case_calls` per evaluation."""
     contract = parse(field(record, "contract"), text_field(record, "contract_source"))
     cases = {case.identifier: case for case in load_cases(out / "cases.json", contract.grader_types())}
-    total = 0
+    preflight = record.get("preflight_calls", 0)
+    total = preflight if type(preflight) is int else 0
     for item in record_outcomes(record):
         case = cases.get(str(item.get("case_id")))
         if item.get("split") == "reflection":

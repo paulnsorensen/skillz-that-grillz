@@ -57,6 +57,7 @@ class State:
     fail_holdout: bool = False
     reject_baseline: bool = False
     preflight_delay: float = 0.0
+    claims: bool = False
     extra: dict[str, object] = field(default_factory=lambda: cast(dict[str, object], {}))
     preflights: list[dict[str, object] | None] = field(default_factory=lambda: cast(list[dict[str, object] | None], []))
     evaluated: list[tuple[str, bool]] = field(default_factory=lambda: cast(list[tuple[str, bool]], []))
@@ -83,18 +84,23 @@ class State:
         return sum(held for _, held in self.evaluated)
 
     def factory(self) -> Factory:
-        return lambda _model, _budget, _checkpoint: _Fake(self)
+        return lambda _model, budget, _checkpoint: _Fake(self, budget if self.claims else None)
 
 
 class _Fake(FakeProvider):
-    def __init__(self, state: State) -> None:
+    def __init__(self, state: State, budget: Budget | None = None) -> None:
         self.state: State = state
+        self.budget: Budget | None = budget
 
     @override
     def preflight(self) -> dict[str, object]:
+        if self.budget is not None:
+            self.budget.claim()
         return self.state.preflight(None)
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        if self.budget is not None:
+            self.budget.claim(holdout=holdout)
         return self.state.evaluate(candidate, case, holdout)
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
@@ -975,12 +981,24 @@ def test_a_role_without_usage_shows_null_tokens_and_no_model() -> None:
     outcomes[2]["usage"] = {"input_tokens": None}
     del outcomes[0]["task_usage"]
     roles = cast(dict[str, dict[str, object]], summary(record)["usage_by_role"])
-    assert roles["task"]["outcomes"] == 1
+    assert roles["task"]["outcomes"] == 0 and roles["task"]["model"] is None
     assert all(roles["task"][name] is None for name in ("input_tokens", "cached_tokens", "output_tokens"))
     assert roles["reflection"]["outcomes"] == 1 and roles["reflection"]["input_tokens"] is None
     empty = cast(dict[str, dict[str, object]], summary({"model": "m", "outcomes": []})["usage_by_role"])
     assert empty["judge"] == {"outcomes": 0, "input_tokens": None, "cached_tokens": None, "output_tokens": None,
                               "latency_seconds": None, "model": None}
+
+
+def test_an_outcome_without_usage_or_without_a_task_call_does_not_count_for_a_role() -> None:
+    record = _spend_record()
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    outcomes.append({"split": "train", "case_id": "g", "usage": _USAGE, "task_usage": _USAGE, "judge_usage": None,
+                     "latency_seconds": 1.0})
+    outcomes.append({"split": "train", "case_id": "r", "status": "candidate-contract-rejected", "usage": _USAGE,
+                     "latency_seconds": 1.0})
+    roles = cast(dict[str, dict[str, object]], summary(record)["usage_by_role"])
+    assert roles["judge"]["outcomes"] == 1
+    assert roles["task"]["outcomes"] == 3
 
 
 def test_a_simulator_without_judged_cases_reports_the_model_the_judge_role_ran_on() -> None:
@@ -994,11 +1012,16 @@ def test_a_simulator_without_judged_cases_reports_the_model_the_judge_role_ran_o
 def test_the_summary_reconciles_calls_with_the_worst_case_bound_and_flags_overspend(
         tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
-    state = State(extra={"usage": _USAGE})
+    state = State(extra={"usage": _USAGE}, claims=True)
     finished = approved_run(target, out, factory=state.factory())
     assert isinstance(finished["calls"], int) and isinstance(finished["calls_upper_bound"], int)
     assert finished["calls"] <= finished["calls_upper_bound"] and finished["calls_upper_bound"] > 0
     assert "usage_gap" not in finished
+    assert read(out / "run.json")["preflight_calls"] == 1 and finished["calls"] > 1
+    unrecorded = read(out / "run.json")
+    del unrecorded["preflight_calls"]
+    unrecorded["calls"] = finished["calls_upper_bound"]
+    assert summary(unrecorded, out)["usage_gap"] == 1
     task = cast(dict[str, dict[str, object]], finished["usage_by_role"])["task"]
     assert task["outcomes"] and task["input_tokens"] == 10 * cast(int, task["outcomes"])
     record = read(out / "run.json")
