@@ -30,6 +30,12 @@ def _saving(value: object) -> float | None:
     return number if number is not None and 0 < number < 1 else None
 
 
+def _coverage(value: object) -> float | None:
+    """Return `value` as a float when it lies from 0 to 1; else return None."""
+    number = threshold(value)
+    return number if number is not None and number <= 1 else None
+
+
 def _budget_map(name: str, value: object) -> dict[str, float]:
     """Check a map of family name to budget. Raise `ValueError` for a shape problem."""
     if not isinstance(value, dict):
@@ -56,6 +62,8 @@ class Statistics:
     turns its rule off. A field with `map` metadata holds a name-to-number map and is contract-only.
     `max_token_increase_per_gain` and `min_token_saving` set the token rule, which is off while both are None.
     `min_token_saving` is a saving share strictly between 0 and 1.
+    `min_coverage` is the least share of planned holdout cases that must be scored, from 0 to 1. Below it the
+    verdict is `inconclusive`. 0 turns the rule off.
     A field with `check` metadata sets its own value check: a function that returns the checked float or None.
     The default check is `threshold`. The `rule` metadata then names the accepted values in the error message.
     `declared`, `parse`, and `data` check the shape of a map, not its agreement with any run record.
@@ -69,6 +77,8 @@ class Statistics:
     max_token_increase_per_gain: float | None = field(default=None, metadata={"flag": True, "nullable": True})
     min_token_saving: float | None = field(default=None, metadata={
         "flag": True, "nullable": True, "check": _saving, "rule": "null or a number above 0 and below 1"})
+    min_coverage: float = field(default=0.6, metadata={
+        "flag": True, "check": _coverage, "rule": "a number from 0 to 1"})
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "family_budgets", MappingProxyType(dict(sorted(self.family_budgets.items()))))

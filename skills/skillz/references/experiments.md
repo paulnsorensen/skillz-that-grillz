@@ -90,7 +90,7 @@ Parallel calls share it. The estimate and the holdout gate reserve include it.
 The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
 The stops that ask for approval echo the options as `claude_options`.
 These three options apply only to `--harness claude`. The first run records them.
-`--min-gain N` and `--min-lower-bound N` set the floors of the gate. `--family-budget N` sets the regression budget of every family. `--max-token-increase-per-gain N` and `--min-token-saving N` set the token rule. Each value must be at least 0. `--min-token-saving` must also be above 0 and below 1. "Set promotion thresholds" describes them.
+`--min-gain N` and `--min-lower-bound N` set the floors of the gate. `--family-budget N` sets the regression budget of every family. `--max-token-increase-per-gain N` and `--min-token-saving N` set the token rule. Each value must be at least 0. `--min-token-saving` must also be above 0 and below 1. `--min-coverage N` sets the least share of planned holdout cases that must be scored, from 0 to 1. "Set promotion thresholds" describes them.
 When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, Claude option, or threshold flag.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
@@ -138,7 +138,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--judge-model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--judge-model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, `--min-coverage`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `frozen-file-too-large` | A frozen file is over 16 MiB, or the frozen files together are over 64 MiB. The message names the file. | Remove the file from the skill, or shrink it, then run again. |
 | `target-not-built` | `wedge.toml` lists a target, and its `scripts/NAME.pyz` is missing, is a symlink, or is not a file. | Run `wedge bundle` for the skill, then run again. |
@@ -164,7 +164,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
 | `contract-capture-unsupported` | A kind declares `capture`, and the harness is not `claude`. | Run with `--harness claude`, or remove `capture`. |
-| `contract-statistics-invalid` | The `statistics` value is not an object. Or it holds an unknown field, a negative value, or a value that is not a finite number (such as a bool or a string). Or `family_budgets` is not an object of numbers, or has an empty or blank name. Or `min_token_saving` is not `null` or a number above 0 and below 1. | Fix the contract, then run again. |
+| `contract-statistics-invalid` | The `statistics` value is not an object. Or it holds an unknown field, a negative value, or a value that is not a finite number (such as a bool or a string). Or `family_budgets` is not an object of numbers, or has an empty or blank name. Or `min_token_saving` is not `null` or a number above 0 and below 1. Or `min_coverage` is not a number from 0 to 1. | Fix the contract, then run again. |
 | `contract-family-unknown` | A `family_budgets` name matches no family in the case draft. The stop comes after the draft loads. | Fix the family name in the contract, or add the family to the draft. |
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
@@ -254,6 +254,12 @@ A resolved positive move is `fixed`, a resolved negative move is `broke`, and th
 - `reject`: the mean delta falls below -2·SE.
 - `inconclusive`: any other result, or fewer than two holdout cases, or a winner equal to the baseline.
 
+The coverage rule runs before the floors and the token rule. Coverage is `n_shared` divided by the number of planned holdout cases.
+When coverage is below `min_coverage`, the verdict is `inconclusive` with reason `low-coverage`, even if the deltas would promote or reject. The record keeps `delta` and `se`.
+The family rule still runs after it, and a family breach still forces `reject`. A `min_coverage` of 0 turns the rule off.
+A provider fault that leaves holdout cases unscored lowers coverage, so it cannot become a promote or a reject.
+A winner equal to the baseline skips the coverage rule. Its `n_shared` is 0, but its only reason is `winner-equals-baseline`.
+
 The floors apply only to a result that would promote. That result needs `delta >= min_gain` and `delta > 2·SE + min_lower_bound`.
 When the SE is 0, the second test uses 2·SE = 0.
 A result that fails a floor becomes `inconclusive`. A floor never creates a `reject`.
@@ -303,7 +309,7 @@ Without a token field, the seed wins a tie.
 
 ### Reasons and reporting
 
-The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`.
+The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`. The coverage reason is `low-coverage`.
 A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
 The summary and the export report show `reasons`, `skipped_families`, `token_delta`, and `token_se` in the `gate` object. The token fields are `null` while the token rule is off or the usage is unknown.
 The summary reports the delta, the SE, the case count, and the repeats.
@@ -499,17 +505,19 @@ The object accepts these fields:
 - `family_budgets`: an object that maps a family name to its own budget. It overrides `family_budget` for that family. A flag cannot set it.
 - `max_token_increase_per_gain`: the largest token change that one unit of score gain can buy. The default is `null`, which turns this check off.
 - `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off.
+- `min_coverage`: the least share of planned holdout cases that must be scored on both arms, from 0 to 1. The default is 0.6. Below it the verdict is `inconclusive` with reason `low-coverage`. 0 turns the rule off.
 
 Each number is finite and at least 0. `family_budget`, `max_token_increase_per_gain`, and `min_token_saving` may also be `null`.
-`min_token_saving` must also be above 0 and below 1. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
+`min_token_saving` must also be above 0 and below 1. `min_coverage` must also be at most 1. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
 A `family_budgets` value that is not an object, or that has an empty or blank name, stops the run with the same code.
 Each name must match a family in the case draft, else the run stops with `contract-family-unknown`.
 The SE multiplier stays 2. A negative threshold would loosen the rule, so the runner refuses it.
 
 Each field resolves in this order: the CLI flag, then the contract, then the built-in default.
-The flags are `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, and `--min-token-saving`. A flag may set a value below the contract value.
-Every flag value except `--min-token-saving` must still be at least 0, so the gate stays at least as strict as the built-in rule.
+The flags are `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, and `--min-coverage`. A flag may set a value below the contract value.
+Every flag value except `--min-token-saving` must still be at least 0. The SE rule stays, so the gate stays at least as strict as the built-in rule, with two exceptions.
 `--min-token-saving` adds `promote-cheaper`.
+`--min-coverage` below 0.6 lets the gate decide on fewer scored holdout cases. A value of 0 turns the coverage rule off.
 The first run freezes the resolved values in `run.json`.
 The flags repeat on every call until `run.json` exists. The approval stops echo the resolved values as `statistics`.
 A flag that you drop after an approval stop changes the frozen values.

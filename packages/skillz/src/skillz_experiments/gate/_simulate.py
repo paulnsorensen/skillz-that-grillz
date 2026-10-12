@@ -38,7 +38,7 @@ def _floored(base: list[list[float]], win: list[list[float]]) -> Verdict:
     """Return the verdict of the production gate: deltas and the repeat-noise SE floor."""
     paired = holdout_deltas({f"{index:06d}": case for index, case in enumerate(base)},
                             {f"{index:06d}": case for index, case in enumerate(win)})
-    return verdict(list(paired.deltas.values()), se_floor=paired.se_floor)
+    return verdict(list(paired.deltas.values()), se_floor=paired.se_floor, planned=len(base))
 
 
 def _chances(rng: random.Random, base: Sequence[float], spread: float) -> list[float]:

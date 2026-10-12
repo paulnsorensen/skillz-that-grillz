@@ -89,7 +89,7 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                 sandbox_seconds: int | None = None, min_gain: float | None = None,
                 min_lower_bound: float | None = None, family_budget: float | None = None,
                 max_token_increase_per_gain: float | None = None,
-                min_token_saving: float | None = None) -> dict[str, object]:
+                min_token_saving: float | None = None, min_coverage: float | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
     Parameters
@@ -118,9 +118,13 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
         Largest token change per unit of score gain. At least 0. Turns the token rule on. Overrides the contract value.
     min_token_saving
         Smallest token saving, as a share above 0 and below 1. Turns the token rule on. Overrides the contract value.
+    min_coverage
+        Least share of planned holdout cases scored on both arms, from 0 to 1. Below it the gate is inconclusive.
+        0 turns the rule off. Overrides the contract value.
     """
     flags = {"min_gain": min_gain, "min_lower_bound": min_lower_bound, "family_budget": family_budget,
-             "max_token_increase_per_gain": max_token_increase_per_gain, "min_token_saving": min_token_saving}
+             "max_token_increase_per_gain": max_token_increase_per_gain, "min_token_saving": min_token_saving,
+             "min_coverage": min_coverage}
     statistics = {name: value for name, value in flags.items() if value is not None}
     with _coded():
         adapter, configuration = _run_harness(model, target, harness, harness_config, command, out)

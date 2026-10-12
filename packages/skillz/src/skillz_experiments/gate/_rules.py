@@ -116,7 +116,7 @@ def _reaches(value: float, limit: float) -> bool:
 def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statistics = DEFAULT_STATISTICS,
             families: Mapping[str, str] | None = None,
             tokens: Mapping[str, tuple[float | None, float | None]] | None = None,
-            se_floor: float = 0.0) -> Verdict:
+            se_floor: float = 0.0, planned: int | None = None) -> Verdict:
     """Promote when the mean case delta exceeds twice its standard error and passes the floors.
 
     The floors only tighten the rule: a `promote` that misses `min_gain` or `min_lower_bound` becomes
@@ -138,6 +138,10 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     `token_delta` and `token_se` report the change while the rule runs and the usage is known.
     The SE is `max(raw SE, se_floor)`: the floor never lowers it. The zero-SE branch applies only when that is 0.
     Fewer than 2 cases give an SE of `se_floor`.
+    `planned` is the number of planned cases. The coverage rule runs when `planned` is set and `min_coverage` is
+    above 0: if `len(deltas) / planned` is below `min_coverage`, the verdict is `inconclusive` with reason
+    `low-coverage`. It runs before the floors and the token rule, keeps `delta` and `se`, and the family rule
+    can still force `reject`.
     """
     if families is not None and not isinstance(deltas, Mapping):
         raise ValueError("families need deltas keyed by case id")
@@ -145,18 +149,21 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
         raise ValueError("tokens need deltas keyed by the same case ids")
     values = list(deltas.values()) if isinstance(deltas, Mapping) else list(deltas)
     count = len(values)
+    low = (planned is not None and thresholds.min_coverage > 0
+           and (planned <= 0 or count / planned < thresholds.min_coverage))
+    cover = ["low-coverage"] if low else []
     breached, skipped = _family_rule(deltas if isinstance(deltas, Mapping) else {}, families, thresholds)
     limit, saving = thresholds.max_token_increase_per_gain, thresholds.min_token_saving
     active = thresholds.token_rule
     change = _token_change(tokens) if active and tokens is not None else None
     token_delta, token_se = change if change is not None else (None, None)
     if not all(math.isfinite(value) for value in values):
-        return Verdict("inconclusive", math.nan, math.nan, count, skipped_families=skipped,
+        return Verdict("inconclusive", math.nan, math.nan, count, tuple(cover), skipped_families=skipped,
                        token_delta=token_delta, token_se=token_se, se_floor=se_floor, n_shared=count)
     if count < 2:
         return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, se_floor, count,
-                       skipped_families=skipped, token_delta=token_delta, token_se=token_se, se_floor=se_floor,
-                       n_shared=count)
+                       tuple(cover), skipped_families=skipped, token_delta=token_delta, token_se=token_se,
+                       se_floor=se_floor, n_shared=count)
     delta = statistics.fmean(values)
     se = max(statistics.stdev(values) / math.sqrt(count), se_floor)
     if se == 0:
@@ -173,15 +180,17 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     else:
         name = "inconclusive"
     in_band = name == "inconclusive"
-    reasons: list[str] = []
-    if name == "promote":
+    reasons: list[str] = list(cover)
+    if low:
+        name = "inconclusive"
+    elif name == "promote":
         if not delta >= thresholds.min_gain:
             reasons.append("min-gain")
         if not delta > 2 * se + thresholds.min_lower_bound:
             reasons.append("lower-bound")
         if reasons:
             name = "inconclusive"
-    if active:
+    if active and not low:
         if name == "promote" and change is None:
             name = "inconclusive"
             reasons.append("unknown-usage")
