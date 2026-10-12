@@ -508,10 +508,8 @@ class Session:
                  components: list[str]) -> dict[str, str]:
         self._raise_fault()
         with self.lock:
-            progress = Progress(spent=len(self._search_outcomes()),
-                                planned=_int_field(mapping(field(self.record, "estimate")), "metric_calls"),
-                                proposal=1 + sum(1 for item in self.outcomes
-                                                 if item.get("arm") == "search" and item.get("split") == "reflection"))
+            progress = Progress(spent=len(self._search_outcomes()), planned=self._search_ceiling(),
+                                proposal=1 + len(self._reflections()))
         prompt, schema = reflection_request(self.edit, candidate, feedback, components, progress=progress,
                                             cheaper=self.statistics.token_rule)
         try:
@@ -527,19 +525,29 @@ class Session:
         except ValueError as error:
             refusal = error
         with self.lock:
-            self.outcomes.append({"arm": "search", "split": "reflection", "usage": result.get("usage"),
-                                  "latency_seconds": result.get("latency_seconds")})
+            outcome: dict[str, object] = {"arm": "search", "split": "reflection", "usage": result.get("usage"),
+                                          "latency_seconds": result.get("latency_seconds")}
             if edits > progress.budget():
                 # The budget is advisory. The count shows whether enforcement is worth the wasted reflection calls.
-                self.record["proposal_over_budget"] = self._over_budget() + 1
+                outcome["over_budget"] = True
+            self.outcomes.append(outcome)
             self.checkpoint()
         if refusal is not None:
             raise refusal
         return proposal
 
+    def _reflections(self) -> list[dict[str, object]]:
+        """Return the recorded reflection calls, one per proposal."""
+        return [item for item in self.outcomes if item.get("arm") == "search" and item.get("split") == "reflection"]
+
     def _over_budget(self) -> int:
-        """Return the proposals above the stated edit budget. A run record without the field counts none."""
-        return _int_field(self.record, "proposal_over_budget") if "proposal_over_budget" in self.record else 0
+        """Return the proposals above the edit budget stated in their prompt."""
+        return sum(1 for item in self._reflections() if item.get("over_budget") is True)
+
+    def _search_ceiling(self) -> int:
+        """Return the search calls that GEPA can use in all: the estimate less the last iteration's overshoot margin."""
+        planned = _int_field(mapping(field(self.record, "estimate")), "metric_calls")
+        return planned - overshoot(len(self.cases_for("validation")))
 
     def _latch(self, error: CodedError) -> None:
         """Keep one CodedError from a model call. A terminal code replaces a held fault with another code. A coded fault replaces a held budget stop. Otherwise the first fault stays."""
@@ -608,9 +616,8 @@ class Session:
         files = {name: self.seed.files[name] for name in self.seed.editable}
         train = [case.identifier for case in self.cases_for("train")]
         validation = [case.identifier for case in self.cases_for("validation")]
-        planned = _int_field(mapping(field(self.record, "estimate")), "metric_calls")
         spent = len(self._search_outcomes())
-        allowance = planned - spent - overshoot(len(validation))
+        allowance = self._search_ceiling() - spent
         reason = "search-share-spent-best-validated"
         if allowance >= 1:
             # Search and reflection calls leave the gate its estimated time. Preflight and the gate use all of it.

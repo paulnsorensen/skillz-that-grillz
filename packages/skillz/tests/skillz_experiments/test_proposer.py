@@ -80,8 +80,9 @@ def _status(progress: Progress) -> str:
 @pytest.mark.ac("AC-1")
 def test_the_stated_budget_is_six_at_the_start_and_one_at_the_end() -> None:
     assert "at most 6 edits" in _status(Progress(spent=0, planned=100, proposal=1))
-    assert "at most 1 edits" in _status(Progress(spent=100, planned=100, proposal=9))
-    assert "at most 1 edits" in _status(Progress(spent=250, planned=100, proposal=9))
+    assert "Make at most 1 edit across all components." in _status(Progress(spent=100, planned=100, proposal=9))
+    assert "Make at most 1 edit across all components." in _status(Progress(spent=250, planned=100, proposal=9))
+    assert "Make at most 2 edits across all components." in _status(Progress(spent=70, planned=100, proposal=9))
 
 
 @pytest.mark.ac("AC-1")
@@ -111,6 +112,13 @@ def test_the_status_block_is_pinned_for_a_late_search() -> None:
             "This may be the last proposal, so prefer one small, safe change.")
     assert _status(Progress(spent=72, planned=120, proposal=7)).endswith(middle)
     assert _status(Progress(spent=110, planned=120, proposal=9)).endswith(last)
+
+
+@pytest.mark.ac("AC-5")
+@pytest.mark.parametrize(("spent", "planned", "percent"),
+                         [(29, 100, 29), (57, 100, 57), (58, 100, 58), (1, 3, 33), (2, 3, 66), (7, 7, 100), (9, 7, 100)])
+def test_the_percent_is_exact_integer_math_rounded_down(spent: int, planned: int, percent: int) -> None:
+    assert f"({percent}%)." in _status(Progress(spent=spent, planned=planned, proposal=1))
 
 
 @pytest.mark.ac("AC-2")

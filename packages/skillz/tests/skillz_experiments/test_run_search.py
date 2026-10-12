@@ -62,7 +62,7 @@ class Search:
         self.suffix = ""
         self.improved_calls = 0
         self.prompts: list[str] = []
-        self.interleave = False
+        self.edit_offset: int | None = None
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -163,10 +163,12 @@ class Provider(FakeProvider):
         with self.state.lock:
             self.state.proposals += 1
             number = self.state.proposals
-        if self.state.interleave:
-            # A new line after every line of the parent text: one edit per line.
+        if self.state.edit_offset is not None:
+            # The stated budget plus the offset: a new line after that many parent lines is one edit each.
             parent = cast(dict[str, dict[str, str]], json.loads(prompt.split("\n", 1)[1]))["candidate"]
-            return {"answer": {name: "".join(f"{line}\nimproved {number}\n" for line in text.splitlines())
+            edits = _budgets([prompt])[0] + self.state.edit_offset
+            return {"answer": {name: "".join(f"{line}\nimproved {number}\n" if index < edits else f"{line}\n"
+                                             for index, line in enumerate(text.splitlines()))
                                for name, text in parent.items()}}
         return {"answer": {name: f"improved {number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
 
@@ -205,6 +207,15 @@ def _budgets(prompts: list[str]) -> list[int]:
     return [int(prompt.split("Make at most ", 1)[1].split(" ", 1)[0]) for prompt in prompts]
 
 
+LAST_PROPOSAL = "This may be the last proposal, so prefer one small, safe change."
+
+
+def _allowance(out: Path) -> int:
+    """Return the search calls that GEPA can use in all: the planned calls less the overshoot margin."""
+    planned = cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
+    return planned - overshoot(len(_validation(out)))
+
+
 @pytest.mark.ac("AC-1")
 @pytest.mark.ac("AC-3")
 def test_each_reflection_prompt_states_a_shrinking_budget_and_its_progress_and_a_small_edit_is_not_counted(
@@ -213,26 +224,56 @@ def test_each_reflection_prompt_states_a_shrinking_budget_and_its_progress_and_a
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     heads = [prompt.split("\n", 1)[0] for prompt in state.prompts]
-    planned = cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
+    allowance = _allowance(out)
     assert len(heads) == state.proposals >= 3
     assert all(f"this is proposal {number}." in head for number, head in enumerate(heads, 1))
-    assert all(f"of {planned} (" in head for head in heads)
+    assert all(f"of {allowance} (" in head for head in heads)
     budgets = _budgets(state.prompts)
     assert budgets[0] in (5, 6) and budgets == sorted(budgets, reverse=True) and budgets[-1] < budgets[0]
     assert cast(dict[str, object], result["search"])["proposal_over_budget"] == 0
 
 
-@pytest.mark.ac("AC-2")
-def test_a_proposal_above_the_budget_is_still_evaluated_and_counted(
+@pytest.mark.ac("AC-4")
+def test_the_last_proposal_of_a_normal_run_states_the_last_proposal_sentence_and_the_smallest_budget(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.interleave = True
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert _budgets(state.prompts)[-1] == 1
+    assert LAST_PROPOSAL in state.prompts[-1].split("\n", 1)[0]
+    assert LAST_PROPOSAL not in state.prompts[0].split("\n", 1)[0]
+
+
+@pytest.mark.ac("AC-2")
+@pytest.mark.parametrize(("offset", "counted"), [(0, False), (1, True)])
+def test_only_a_proposal_with_more_edits_than_the_budget_is_counted(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], offset: int, counted: bool) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.edit_offset = offset
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     over = cast(int, cast(dict[str, object], result["search"])["proposal_over_budget"])
-    assert state.improved_calls > 0 and 0 < over <= state.proposals
-    assert cast(int, read(out / "run.json")["proposal_over_budget"]) == over
+    assert state.improved_calls > 0 and state.proposals >= 3
+    assert over == (state.proposals if counted else 0)
+    assert "proposal_over_budget" not in read(out / "run.json")
     assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
+
+
+@pytest.mark.ac("AC-2")
+def test_the_over_budget_count_survives_a_resume(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.edit_offset = 1
+    state.abort_after_improved = len(_validation(out))
+    with pytest.raises(CodedError, match="the process stopped"):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    before = state.proposals
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    assert before > 0 and sum(item.get("over_budget") is True for item in outcomes) == before
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    assert state.proposals > before
+    assert cast(dict[str, object], result["search"])["proposal_over_budget"] == state.proposals
 
 
 def _validation(out: Path) -> list[str]:

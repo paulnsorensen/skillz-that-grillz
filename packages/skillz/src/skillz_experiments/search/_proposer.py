@@ -38,7 +38,10 @@ LAST_PROPOSAL_FROM = 0.85
 
 @dataclass(frozen=True)
 class Progress:
-    """Where the search stands. The numbers come from the session record, never from case content."""
+    """Where the search stands. The numbers come from the session record, never from case content.
+
+    `planned` is the search's real allowance: the planned calls less the last iteration's overshoot margin.
+    """
     spent: int
     planned: int
     proposal: int
@@ -52,11 +55,18 @@ class Progress:
         """Return the edit budget: a cosine schedule from `MAX_EDITS` at the start to `MIN_EDITS` at the end, rounded down."""
         return math.floor(MIN_EDITS + (MAX_EDITS - MIN_EDITS) * 0.5 * (1 + math.cos(math.pi * self.fraction)))
 
+    @property
+    def percent(self) -> int:
+        """Return the spent share as a whole percent, rounded down with integer math."""
+        return 100 if self.planned < 1 else min(100, 100 * max(0, self.spent) // self.planned)
+
     def status(self) -> str:
         """Return the budget sentence and the run-status block."""
-        text = (f"Make at most {self.budget()} edits across all components. An edit is one block of consecutive changed lines. "
+        count = self.budget()
+        text = (f"Make at most {count} {'edit' if count == 1 else 'edits'} across all components. "
+                "An edit is one block of consecutive changed lines. "
                 f"Run status: this is proposal {self.proposal}. Search calls spent: {self.spent} of {self.planned} "
-                f"({math.floor(100 * self.fraction)}%).")
+                f"({self.percent}%).")
         if self.fraction >= LAST_PROPOSAL_FROM:
             text += " This may be the last proposal, so prefer one small, safe change."
         return text
