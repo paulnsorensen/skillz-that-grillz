@@ -6,7 +6,6 @@ proposal adds to a component, so content the seed already holds never triggers.
 from __future__ import annotations
 
 import re
-import string
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import PurePosixPath
@@ -16,6 +15,10 @@ from skillz_experiments._cases import Case
 
 SHINGLE_WORDS = 8
 MIN_ANSWER_CHARS = 20
+# Unicode punctuation and symbols at a word edge, so curly quotes strip like ASCII quotes.
+_EDGES = re.compile(r"^[\W_]+|[\W_]+$")
+# A fixture name followed by `.` and a word character is a longer file name such as `ledger.csv.bak`.
+_FIXTURE_TAIL = r"[\w-]|\.[\w-]"
 
 
 @dataclass(frozen=True)
@@ -27,7 +30,7 @@ class Leak:
 
 
 def _words(text: str) -> list[str]:
-    return [word for word in (raw.strip(string.punctuation) for raw in text.lower().split()) if word]
+    return [word for word in (_EDGES.sub("", raw) for raw in text.lower().split()) if word]
 
 
 def _shingles(text: str) -> frozenset[tuple[str, ...]]:
@@ -54,9 +57,9 @@ def _leaves(value: object) -> Iterator[str]:
             yield from _leaves(cast(object, getattr(value, item.name)))
 
 
-def _token(name: str) -> re.Pattern[str]:
+def _token(name: str, tail: str = r"[\w-]") -> re.Pattern[str]:
     """Match `name` as a whole token, so it never matches inside a longer word or hyphenated name."""
-    return re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])", re.IGNORECASE)
+    return re.compile(rf"(?<![\w-]){re.escape(name)}(?!{tail})", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -85,7 +88,7 @@ class Denylist:
             identifiers.add(case.identifier)
             fixtures |= {PurePosixPath(name).name for name in case.files}
         return cls(frozenset(spans), frozenset(answers),
-                   tuple(_token(name) for name in sorted(identifiers)), tuple(_token(name) for name in sorted(fixtures)))
+                   tuple(_token(name) for name in sorted(identifiers)), tuple(_token(name, _FIXTURE_TAIL) for name in sorted(fixtures)))
 
 
 def _rule(denylist: Denylist, before: str, after: str) -> str | None:

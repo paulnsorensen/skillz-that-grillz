@@ -40,6 +40,12 @@ def test_a_span_matches_after_case_whitespace_and_edge_punctuation_are_normalize
 
 
 @pytest.mark.ac("AC-1")
+def test_a_span_matches_after_unicode_edge_punctuation_is_normalized() -> None:
+    curly = " ".join(f"“{word}”—" for word in WORDS[1:9])
+    assert _leak(f"{SEED['SKILL.md']} {curly}") == Leak("request-span", "SKILL.md")
+
+
+@pytest.mark.ac("AC-1")
 def test_a_validation_case_request_is_in_the_denylist() -> None:
     assert _leak(f"Note: {SPAN}", _case(split="validation")) == Leak("request-span", "SKILL.md")
 
@@ -83,10 +89,11 @@ def test_a_case_identifier_is_a_case_id_leak() -> None:
 def test_a_fixture_file_base_name_is_a_fixture_name_leak() -> None:
     case = _case(files={"data/nested/ledger.csv": "a,b"})
     assert _leak(f"{SEED['SKILL.md']} Read ledger.csv first.", case) == Leak("fixture-name", "SKILL.md")
+    assert _leak(f"{SEED['SKILL.md']} Read ledger.csv.", case) == Leak("fixture-name", "SKILL.md")
 
 
 @pytest.mark.ac("AC-3")
-@pytest.mark.parametrize("proposal", ["see case-70 and xcase-7 and case-7x and case-7-b", "open myledger.csv or ledger.csvx"])
+@pytest.mark.parametrize("proposal", ["see case-70 and xcase-7 and case-7x and case-7-b", "open myledger.csv or ledger.csvx or ledger.csv.bak"])
 def test_an_identifier_or_file_name_inside_a_longer_word_is_not_a_leak(proposal: str) -> None:
     assert _leak(proposal, _case("case-7")) is None
 
