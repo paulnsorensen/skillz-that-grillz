@@ -659,7 +659,8 @@ class Session:
             tokens = ({case_id: arms_tokens for case_id, arms_tokens in self._holdout_tokens().items()
                        if case_id in paired.deltas} if self.statistics.token_rule else None)
             outcome = replace(gate_verdict(paired.deltas, thresholds=self.statistics, families=families,
-                                           tokens=tokens, se_floor=paired.se_floor), moves=paired.moves)
+                                           tokens=tokens, se_floor=paired.se_floor,
+                                           planned=len(holdout)), moves=paired.moves)
             self.record["gate"] = {**outcome.data(), "repeats": repeats}
         self.record["winner_hash"] = winner.identity
         self.record["phase"] = "gated"

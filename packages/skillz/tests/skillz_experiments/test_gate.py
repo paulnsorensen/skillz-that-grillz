@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from skillz_experiments.gate import case_deltas, holdout_deltas, simulate, verdict
+from skillz_experiments.gate import Statistics, case_deltas, holdout_deltas, simulate, verdict
 
 
 def test_case_deltas_average_repeats_per_case() -> None:
@@ -179,3 +179,35 @@ def test_the_verdict_data_carries_the_floor_the_shared_count_and_the_moves() -> 
     data = verdict([0.1, 0.2, 0.3], se_floor=0.5).data()
     assert data["se_floor"] == 0.5 and data["n_shared"] == 3
     assert data["moves"] == {"fixed": [], "broke": [], "unresolved": []}
+
+
+PROMOTING = [0.3, 0.4, 0.5, 0.4, 0.3]
+
+
+def test_half_the_planned_cases_below_min_coverage_is_inconclusive_even_when_the_deltas_promote() -> None:
+    assert verdict(PROMOTING).verdict == "promote"
+    result = verdict(PROMOTING, planned=10)
+    assert (result.verdict, result.reasons) == ("inconclusive", ("low-coverage",))
+    plain = verdict(PROMOTING)
+    assert (result.delta, result.se, result.cases) == (plain.delta, plain.se, plain.cases)
+
+
+def test_coverage_at_or_above_min_coverage_leaves_the_verdict_unchanged() -> None:
+    assert verdict(PROMOTING, planned=8) == verdict(PROMOTING)  # 5/8 = 0.625
+    assert verdict(PROMOTING, thresholds=Statistics(min_coverage=0.5), planned=10) == verdict(PROMOTING)
+    assert verdict(PROMOTING, planned=5) == verdict(PROMOTING)
+
+
+def test_min_coverage_zero_or_no_planned_count_never_adds_low_coverage() -> None:
+    assert verdict(PROMOTING, thresholds=Statistics(min_coverage=0.0), planned=100) == verdict(PROMOTING)
+    assert verdict(PROMOTING, planned=None) == verdict(PROMOTING)
+    assert verdict([], planned=None).reasons == ()
+
+
+def test_low_coverage_masks_a_reject_and_the_floors_but_a_family_breach_still_rejects() -> None:
+    losing = verdict([-0.3, -0.4, -0.5, -0.4, -0.3], planned=10)
+    assert (losing.verdict, losing.reasons) == ("inconclusive", ("low-coverage",))
+    deltas = {"a": -0.9, "b": -0.8, "c": 0.5, "d": 0.6, "e": 0.7}
+    families = {"a": "x", "b": "x", "c": "y", "d": "y", "e": "y"}
+    breach = verdict(deltas, thresholds=Statistics(family_budget=0.0), families=families, planned=10)
+    assert breach.verdict == "reject" and breach.reasons == ("low-coverage", "family-regression:x")

@@ -207,6 +207,24 @@ def test_a_completed_run_with_a_different_statistics_flag_stops_with_run_config_
     assert run(target, out, MODEL)["phase"] == "complete"
 
 
+def test_a_resume_with_a_different_min_coverage_stops_with_run_config_differs(
+        tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    assert approved_run(target, out, factory=_Provider)["phase"] == "complete"
+    with pytest.raises(CodedError) as changed:
+        _ = run(target, out, MODEL, statistics={"min_coverage": 0.9})
+    assert changed.value.code == "run-config-differs" and "--min-coverage" in str(changed.value)
+    assert run(target, out, MODEL, statistics={"min_coverage": 0.6})["phase"] == "complete"
+
+
+@pytest.mark.parametrize("bad", [-0.1, 1.5, True, "0.5", math.nan, math.inf])
+def test_min_coverage_accepts_only_a_number_from_0_to_1(bad: object) -> None:
+    with pytest.raises(ValueError, match="statistics min_coverage must be a number from 0 to 1"):
+        _ = Statistics.declared({"min_coverage": bad})
+    assert Statistics.declared({"min_coverage": 0}) == {"min_coverage": 0.0}
+    assert Statistics.declared({"min_coverage": 1}) == {"min_coverage": 1.0}
+
+
 def test_a_flag_below_the_contract_value_wins_and_the_default_gate_has_no_reasons(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
