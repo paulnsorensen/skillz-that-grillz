@@ -545,7 +545,7 @@ class Session:
         return sum(1 for item in self._reflections() if item.get("over_budget") is True)
 
     def _search_ceiling(self) -> int:
-        """Return the search calls that GEPA can use in all: the estimate less the last iteration's overshoot margin."""
+        """Return the GEPA call budget: the estimate less the overshoot margin. The last iteration can pass it by up to that margin."""
         planned = _int_field(mapping(field(self.record, "estimate")), "metric_calls")
         return planned - overshoot(len(self.cases_for("validation")))
 

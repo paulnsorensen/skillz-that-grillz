@@ -75,8 +75,8 @@ def _full_report() -> dict[str, object]:
 
 @pytest.mark.parametrize("metric", get_args(_cli.Metric))
 def test_a_selected_figure_equals_the_same_key_of_the_full_report(
-        _full_report: dict[str, object], metric: str) -> None:
-    selected = _cli.self_test(simulate=True, metric=metric)  # pyright: ignore[reportArgumentType]
+        _full_report: dict[str, object], metric: _cli.Metric) -> None:
+    selected = _cli.self_test(simulate=True, metric=metric)
     assert selected == _full_report[metric]
     assert type(selected) is type(_full_report[metric])
 

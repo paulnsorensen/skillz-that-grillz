@@ -471,7 +471,7 @@ The prompt text lives in `search/_proposer.py`. A change to it starts a new run.
 
 Every reflection prompt states an edit budget and a run-status block after its instructions.
 The progress `p` is the search calls spent over the search allowance, clamped to 0 through 1.
-The allowance is `estimate.metric_calls` less the overshoot margin of the last search iteration. It is the most calls that the search can use.
+The allowance is `estimate.metric_calls` less the overshoot margin of the last search iteration. It is the GEPA call budget. The last iteration can pass it by up to the overshoot margin.
 The budget is `floor(1 + 5 * 0.5 * (1 + cos(pi * p)))`. It falls from 6 edits at `p = 0` to 1 edit at `p = 1`.
 An edit is one block of consecutive changed lines, found with `difflib.SequenceMatcher` over the lines of one component.
 The count adds the blocks of all changed components.

@@ -34,7 +34,7 @@ def _selector(entry: Entry) -> str:
 
 @cache
 def _measure(selector: str) -> float:
-    return cast(float, _cli.self_test(simulate=True, metric=selector))  # pyright: ignore[reportArgumentType]
+    return cast(float, _cli.self_test(simulate=True, metric=cast(_cli.Metric, selector)))
 
 
 def _measured(entry: Entry) -> float:
