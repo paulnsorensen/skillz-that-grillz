@@ -2,7 +2,6 @@
 """
 from __future__ import annotations
 
-import json
 import math
 import threading
 import time
@@ -19,11 +18,10 @@ from skillz_experiments._budget import (
     BudgetExhausted,
     ceilings,
 )
-from skillz_experiments._candidate import NEW_CLI, Candidate, candidate_files, load_frozen
+from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
 from skillz_experiments._evaluator import task_tokens
-from skillz_experiments._new_cli import prompt_rule
 from skillz_experiments._records import open_record, read, write
 from skillz_experiments._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics, Verdict, close, holdout_deltas
@@ -37,7 +35,7 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import Denylist, Edit, overshoot
+from skillz_experiments.search import Denylist, Edit, accept_proposal, overshoot, reflection_request
 from skillz_experiments.search import check as check_leakage
 from skillz_experiments.search import search as pareto_search
 
@@ -506,7 +504,7 @@ class Session:
     def _propose(self, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
                  components: list[str]) -> dict[str, str]:
         self._raise_fault()
-        prompt, schema = _reflection_request(self.edit, candidate, feedback, components,
+        prompt, schema = reflection_request(self.edit, candidate, feedback, components,
                                             cheaper=self.statistics.token_rule)
         try:
             result = self.provider.invoke(prompt, schema=schema)
@@ -517,10 +515,7 @@ class Session:
             self.outcomes.append({"arm": "search", "split": "reflection", "usage": result.get("usage"),
                                   "latency_seconds": result.get("latency_seconds")})
             self.checkpoint()
-        answer = mapping(result["answer"])
-        if set(answer) != set(components) or not all(isinstance(value, str) for value in answer.values()):
-            raise ValueError("reflection keys differ from the frozen components")
-        return cast(dict[str, str], answer)
+        return accept_proposal(result["answer"], components)
 
     def _latch(self, error: CodedError) -> None:
         """Keep one CodedError from a model call. A terminal code replaces a held fault with another code. A coded fault replaces a held budget stop. Otherwise the first fault stays."""
@@ -738,40 +733,6 @@ def _mean_tokens(counts: Sequence[int | None]) -> float | None:
         return math.fsum(known) / len(known)
     except OverflowError:
         return None
-
-
-_STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
-             "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
-             "and at most 25 words per descriptive sentence. ")
-
-
-_FROMARGS_RULE = ("The fromargs package is the default for a wedged Python source. "
-                  "Use one parser. "
-                  "Print JSON errors on stderr. "
-                  "Exit with code 2 for a usage error and code 3 for a failed input contract. "
-                  "Print only results on stdout. "
-                  "A non-Python helper keeps its language. "
-                  "A Python helper may use a stdlib `argparse` helper only when the skill has no wedge.toml "
-                  "that can build a fromargs target. ")
-
-
-def _reflection_request(edit: Edit, candidate: dict[str, str],
-                        feedback: Mapping[str, Sequence[Mapping[str, object]]],
-                        components: list[str], *, cheaper: bool = False) -> tuple[str, dict[str, object]]:
-    schema: dict[str, object] = {"type": "object",
-        "properties": {key: {"type": "string"} for key in components},
-        "required": components, "additionalProperties": False}
-    if edit == "prose+cli":
-        instruction = ("Improve the supplied skill text and helper script components. "
-                       + "Keep each script's command-line contract and output format. " + _FROMARGS_RULE)
-        if NEW_CLI in components:
-            instruction += prompt_rule()
-    else:
-        instruction = "Improve only the supplied skill text components. Preserve the helper CLI contract. "
-    head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions."
-    if cheaper:
-        head += " Prefer fewer tokens when correctness is equal."
-    return head + "\n" + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
 
 _PHASES = ("prepared", "searched", "gated", "complete")

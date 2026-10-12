@@ -2,7 +2,7 @@
 
 These records explain the design of `/skillz autoimprove`, which generalizes the skillz experiment runner at `packages/skillz/src/skillz_experiments/`.
 The approved spec is `specs/skillz-autoimprove.md` in the durable cheese corpus.
-The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10. ADR-011 to ADR-013 come from a second Mold session on 2026-10-10, recorded in `specs/skillz-experiments-module-layout.md`.
+The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10. ADR-011 to ADR-013 come from a second Mold session on 2026-10-10, recorded in `specs/skillz-experiments-module-layout.md`. ADR-015 closes issue #153.
 
 ## Records
 
@@ -121,4 +121,10 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** `engine_hash` as the cohort key (every edit splits history). A digest of the whole package without `engine_hash` (the same problem). A fingerprint that stores no fields (a mismatch then names no cause).
 - **Consequences:** A run from before this change cannot resume, because `engine_hash` differs. A completed one has no fingerprint and compares as `missing-fingerprint`. With a supplied harness configuration, the task role decides `adapter`, `task_model`, and `claude_options`. The other roles, the command, and the harness identity are not fields, so two runs that differ only there compare as equal. `compare` treats an absent field and a `null` field as different. A completed run from before W3.2 has 11 fields, so it differs from a newer run on `leakage_digest`. This ticket adds no cross-run storage. That belongs to #194.
 
-_Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-11 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout; ADR-014 run compatibility fingerprint)_
+### ADR-015: Split the reflection prompt sentence limit by sentence type  [status: accepted]
+- **Context:** Issue #153 asked which sentence limit the reflection prompt states. The prose workflow rewrites only sentences over 25 words, and the inspector tiers from #139 use 20 and 25 words. The repository prose rule limits procedural sentences to 20 words and descriptive sentences to 25 words.
+- **Decision:** #153 option 3. The reflection prompt asks for at most 20 words per procedural sentence and at most 25 words per descriptive sentence. The reason: this matches the prose workflow tiers from #139 and the repository prose rule. `_STE_RULE` already states this limit. The text now lives in `search/_proposer.py`, and a test pins it.
+- **Alternatives:** Keep 20 words for every sentence (the search aims below a gate that the skill does not enforce). Use 25 words for every sentence (loses the procedural tier).
+- **Consequences:** The proposer seam is `request(edit, candidate, feedback, components, *, cheaper)` and `accept(answer, components)` in `search/_proposer.py`. The `search` facade exports them as `reflection_request` and `accept_proposal`. `run/_session.py` keeps the model call, the fault latch, and the outcome record. A prompt text change alters the frozen experiment inputs, so a run from before the change cannot resume.
+
+_Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-12 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout; ADR-014 run compatibility fingerprint; ADR-015 reflection sentence limit)_
