@@ -2,7 +2,7 @@
 
 These records explain the design of `/skillz autoimprove`, which generalizes the skillz experiment runner at `packages/skillz/src/skillz_experiments/`.
 The approved spec is `specs/skillz-autoimprove.md` in the durable cheese corpus.
-The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10. ADR-011 to ADR-013 come from a second Mold session on 2026-10-10, recorded in `specs/skillz-experiments-module-layout.md`. ADR-015 closes issue #153.
+The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10. ADR-011 to ADR-013 come from a second Mold session on 2026-10-10, recorded in `specs/skillz-experiments-module-layout.md`. ADR-015 closes issue #153. ADR-016 comes from the PR #273 review of W4.2 (issue #239).
 
 ## Records
 
@@ -127,4 +127,18 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** Keep 20 words for every sentence (the search aims below a gate that the skill does not enforce). Use 25 words for every sentence (loses the procedural tier).
 - **Consequences:** The proposer seam is `request(edit, candidate, feedback, components, *, cheaper)` and `accept(answer, components)` in `search/_proposer.py`. The `search` facade exports them unchanged as `request` and `accept`. The consumers alias them at the import site. `run/_session.py` keeps the model call, the fault latch, and the outcome record. A prompt text change alters the frozen experiment inputs, so a run from before the change cannot resume.
 
-_Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-12 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout; ADR-014 run compatibility fingerprint; ADR-015 reflection sentence limit)_
+### ADR-016: Measure reflection progress against the search allowance  [status: accepted]
+- **Context:** W4.2 (#239) gives each reflection prompt an edit budget on a cosine schedule and a run-status block. Decision D-1 of #239 defined progress as `p = search calls spent / search calls planned`. The first implementation divided by `estimate.metric_calls`. GEPA does not get that many calls. `run/_session.py` gives GEPA `metric_calls - overshoot(len(validation))`, because GEPA checks its budget only between iterations. `overshoot` in `search/_engine.py` is `2 * REFLECTION_MINIBATCH + validation`, which is 4 plus the validation case count. The age review measured the effect on the `test_run_search.py` fixtures. With 72 planned calls, the search ended at 58 of 72 (p = 0.81). With 16 planned calls, it ended at 10 of 16 (p = 0.62), and the budget stopped at 2. The last-proposal sentence needs p >= 0.85, so it never appeared in a real run.
+- **Decision:** `p = spent / (metric_calls - overshoot(len(validation)))`, clamped to [0, 1]. `Session._search_ceiling()` computes the denominator, and `search()` uses the same value as the GEPA budget. A denominator below 1 counts as fully spent. `MAX_EDITS = 6`, `MIN_EDITS = 1`, the cosine schedule, and the 0.85 threshold do not change. The orchestrator made this call under the user's delegated session goal. The user can veto it.
+- **Alternatives:** Keep `metric_calls` as the denominator and lower the threshold and the budget floor. The search ends at a different p for each run size (0.62 and 0.81 in the probes), so no fixed threshold fits all sizes.
+- **Consequences:**
+  - The budget reaches 1 at the end of the search, and the last-proposal sentence appears in the last 15 percent.
+  - Overshoot is a larger share of a small budget. A small run goes through the whole 6-to-1 schedule in fewer calls.
+  - When `metric_calls <= overshoot`, every proposal gets budget 1 and the last-proposal sentence.
+  - The last iteration can pass the allowance by up to the overshoot margin. Then p and the percent clamp at 1 and 100.
+  - The prompt says "spent X of N". N is the allowance, not `estimate.metric_calls` in `run.json`.
+  - Late budgets are smaller, so `search.proposal_over_budget` counts more proposals than it did under the first formula. Read the count against this schedule when you decide on enforcement (D-3).
+  - The prompt text changed, so a run from before PR #273 cannot resume.
+  - See [[reflection-edit-budget]] for the formula and a worked example.
+
+_Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-12 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout; ADR-014 run compatibility fingerprint; ADR-015 reflection sentence limit; ADR-016 reflection progress against the search allowance)_
