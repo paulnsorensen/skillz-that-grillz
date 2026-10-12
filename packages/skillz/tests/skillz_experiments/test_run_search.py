@@ -216,8 +216,8 @@ def _allowance(out: Path) -> int:
     return planned - overshoot(len(_validation(out)))
 
 
-@pytest.mark.ac("AC-1")
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("gh-239:AC-1")
+@pytest.mark.ac("gh-239:AC-3")
 def test_each_reflection_prompt_states_a_shrinking_budget_and_its_progress_and_a_small_edit_is_not_counted(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -233,7 +233,7 @@ def test_each_reflection_prompt_states_a_shrinking_budget_and_its_progress_and_a
     assert cast(dict[str, object], result["search"])["proposal_over_budget"] == 0
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("gh-239:AC-4")
 def test_the_last_proposal_of_a_normal_run_states_the_last_proposal_sentence_and_the_smallest_budget(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -244,7 +244,7 @@ def test_the_last_proposal_of_a_normal_run_states_the_last_proposal_sentence_and
     assert LAST_PROPOSAL not in state.prompts[0].split("\n", 1)[0]
 
 
-@pytest.mark.ac("AC-2")
+@pytest.mark.ac("gh-239:AC-2")
 @pytest.mark.parametrize(("offset", "counted"), [(0, False), (1, True)])
 def test_only_a_proposal_with_more_edits_than_the_budget_is_counted(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
@@ -259,7 +259,7 @@ def test_only_a_proposal_with_more_edits_than_the_budget_is_counted(
     assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
 
 
-@pytest.mark.ac("AC-2")
+@pytest.mark.ac("gh-239:AC-2")
 def test_the_over_budget_count_survives_a_resume(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
