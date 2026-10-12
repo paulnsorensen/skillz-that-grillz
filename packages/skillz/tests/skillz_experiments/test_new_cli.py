@@ -34,6 +34,7 @@ from skillz_experiments._new_cli import VALUE_LIMIT, expand_files, unused_helper
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments._wedge_targets import BuildFailed, plan_targets, settle
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override
@@ -453,12 +454,12 @@ PROSE_HEAD = ("Improve only the supplied skill text components. Preserve the hel
 
 
 def test_the_prose_prompt_is_unchanged_byte_for_byte() -> None:
-    prompt, _ = _session._reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    prompt, _ = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
     assert prompt == PROSE_HEAD + '\n{"candidate": {"SKILL.md": "x"}, "feedback": {}}'
 
 
 def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
-    prompt, _ = _session._reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    prompt, _ = reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
     head = prompt.split("\n", 1)[0]
     assert ("The fromargs package is the default for a wedged Python source. Use one parser. "
             "Print JSON errors on stderr. "
@@ -470,10 +471,10 @@ def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
 
 
 def test_the_new_cli_sentence_appears_only_when_the_component_is_offered() -> None:
-    offered, _ = _session._reflection_request(
+    offered, _ = reflection_request(
         "prose+cli", {NEW_CLI: ""}, {}, ["SKILL.md", NEW_CLI])
     assert f"The {NEW_CLI} component adds one new fromargs wedge target as TOML with the keys name and module." in offered
-    absent, _ = _session._reflection_request(
+    absent, _ = reflection_request(
         "prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
     assert "component adds one new" not in absent
 

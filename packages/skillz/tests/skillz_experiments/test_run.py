@@ -17,9 +17,9 @@ from skillz_experiments._cli import main
 from skillz_experiments.gate import case_deltas, verdict
 from skillz_experiments._records import read, write
 from skillz_experiments.search import Edit
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
-from skillz_experiments.run._session import _reflection_request as reflection_request  # pyright: ignore[reportPrivateUsage]
 from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")

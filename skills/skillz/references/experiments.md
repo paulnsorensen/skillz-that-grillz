@@ -444,6 +444,13 @@ The prompt describes `@new-cli` only when the run offers it.
 The `prose` prompt does not change.
 Run `audit-facts` first to see the wedge state of the skill.
 
+### Reflection prose rule
+
+Every reflection prompt asks for ASD-STE100 prose.
+The limit is 20 words per procedural sentence and 25 words per descriptive sentence.
+This matches the inspector tiers and the prose workflow. ADR-015 records the choice (issue #153).
+The prompt text lives in `search/_proposer.py`. A change to it starts a new run.
+
 ## Export
 
 Run `export` only after the run reports the phase `complete`.
