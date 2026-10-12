@@ -13,7 +13,7 @@ import skillz_experiments
 
 PACKAGE = Path(skillz_experiments.__file__).parent
 PREFIX = "skillz_experiments"
-SLICES = ("run", "search", "gate", "harness")
+SLICES = ("run", "search", "gate", "harness", "wrapper")
 LEAF_SLICES = ("search", "gate")
 FORBIDDEN_FROM_LEAVES = ("run", "harness")
 REMOVED_FLAT_FILES = ("_workflow.py", "_search.py", "_gate.py", "_harness.py", "_claude.py")
@@ -136,40 +136,32 @@ def test_a_full_attribute_chain_into_a_private_submodule_is_caught() -> None:
     assert _private_chains(tree, "harness") == []
 
 
-def test_the_cli_names_no_vendor_wrapper() -> None:
-    source = (PACKAGE / "_cli.py").read_text()
-    assert "gemini" not in source.lower()
+def test_the_cli_names_no_gemini_and_imports_only_the_wrapper_barrel() -> None:
+    assert "gemini" not in (PACKAGE / "_cli.py").read_text().lower()
     wrapper = _slice_modules(_imported(PACKAGE / "_cli.py"), "wrapper")
-    assert wrapper == {f"{PREFIX}.wrapper", f"{PREFIX}.wrapper.register"}
+    assert wrapper <= {f"{PREFIX}.wrapper", f"{PREFIX}.wrapper.register"}
 
 
-def _runtime_imports(tree: ast.AST) -> set[str]:
-    """Return each module that `tree` imports outside `if TYPE_CHECKING:` blocks."""
-    found: set[str] = set()
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == "TYPE_CHECKING":
-            continue
-        if isinstance(node, ast.Import):
-            found.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            found.add(node.module or "")
-        else:
-            found |= _runtime_imports(node)
-    return found
+@pytest.mark.ac("AC-4")
+def test_a_private_chain_through_the_wrapper_barrel_is_caught() -> None:
+    from_import = ast.parse("from skillz_experiments import wrapper\nwrapper._gemini.IMAGE\n")
+    full_chain = ast.parse("import skillz_experiments.wrapper\nskillz_experiments.wrapper._commands.respond\n")
+    assert _private_chains(from_import, "run") == ["wrapper._gemini"]
+    assert _private_chains(full_chain, "run") == ["wrapper._commands"]
+
+
+def test_the_wrapper_register_call_through_the_barrel_is_allowed() -> None:
+    tree = ast.parse("from skillz_experiments import wrapper\nwrapper.register(group)\n")
+    assert _private_chains(tree, "run") == []
 
 
 def test_the_wrapper_slice_does_not_import_the_cli_framework_at_runtime() -> None:
-    checked = [path for path in _modules() if _slice_of(path) == "wrapper"]
-    assert checked
-    broken = [f"{path.relative_to(PACKAGE)} imports {name}"
-              for path in checked for name in sorted(_runtime_imports(ast.parse(path.read_text())))
-              if name == "fromargs" or name.startswith("fromargs.")]
-    assert broken == []
-
-
-def test_the_runtime_import_scan_skips_type_checking_blocks() -> None:
-    tree = ast.parse("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import fromargs\ndef f():\n    import fromargs.x\n")
-    assert _runtime_imports(tree) == {"typing", "fromargs.x"}
+    program = ("import sys, skillz_experiments.wrapper\n"
+               "print([name for name in sys.modules if name.split('.')[0] in ('fromargs', 'cyclopts')])")
+    environment = {**os.environ, "PYTHONPATH": os.pathsep.join([str(PACKAGE.parent), os.environ.get("PYTHONPATH", "")])}
+    result = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True, check=True, timeout=60,
+                            env=environment)
+    assert result.stdout.strip() == "[]"
 
 
 def _is_facade_member(name: str, slice_name: str) -> bool:
