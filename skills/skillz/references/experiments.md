@@ -700,6 +700,20 @@ The runner saves the digests of rejected proposals per rule in `run.json` at eac
 A resumed run merges them back, so the counts cover the whole run.
 The runner rebuilds the denylist from the frozen cases on every open and never writes it.
 
+`summary` and `report.json` carry `usage_by_role` for the roles `task`, `reflection`, `judge`, and `simulator`.
+Each role shows `outcomes`, `model`, `input_tokens`, `cached_tokens`, `output_tokens`, and `latency_seconds`.
+`outcomes` counts the outcomes whose usage value for the role is a mapping. The sums cover only those outcomes.
+An exact-json outcome has no `task_usage`, so its `usage` counts as task usage.
+A `candidate-contract-rejected` outcome ran no task call, so it counts for no role.
+A field is `null` when no outcome of the role carries a number for it. `simulator` has no latency.
+On a journey case, the task `latency_seconds` includes the simulator turns.
+A role without outcomes has a `null` model. A run without a simulator role reports the judge model for `simulator`.
+`summary` and `report.json` also carry `calls_upper_bound`: the preflight claims (`preflight_calls` in the run record, kept across a resume), plus `case_calls` summed over the evaluate outcomes, plus one per reflection outcome.
+A `candidate-contract-rejected` outcome made no call, so it adds nothing to the bound.
+A run record from before `preflight_calls` has a `null` bound and no `usage_gap`.
+When `calls` exceeds the bound, they add `usage_gap`: `calls` minus the bound. This flags calls that no outcome explains.
+`cost_usd` stays `null`. The run prices no spend.
+
 Run records contain private local inputs.
 Exports contain a candidate patch and measurements, not requests or expected answers.
 A candidate can memorize training content. Therefore, every export remains private and local.

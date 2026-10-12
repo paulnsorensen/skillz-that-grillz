@@ -243,7 +243,7 @@ def _drive(session: Session) -> dict[str, object]:
         raise
     finally:
         _close(session, pending)
-    return summary(session.record)
+    return summary(session.record, session.out)
 
 
 def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude", live: bool = False,
@@ -289,7 +289,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                 # A completed run summarises without reading its statistics unless a flag asks to compare them.
                 if statistics_given:
                     check_statistics(statistics_given, frozen_statistics(record))
-                return summary(record)
+                return summary(record, out)
             refuse_nono(record)
             frozen = frozen_statistics(record)
             check_statistics(statistics_given, frozen)
