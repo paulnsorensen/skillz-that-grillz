@@ -45,6 +45,9 @@ CLOCK_TOLERANCE = 5.0
 
 HarnessName = str
 
+# The flat modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
+SCORING_FILES = ("_evaluator.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
+
 
 def _failed_outcome(case: Case, candidate: Candidate, error: Exception) -> dict[str, object]:
     """Return the outcome that records a failed search evaluation as a zero score."""
@@ -96,6 +99,15 @@ def _differences(recorded: object, observed: object, name: str = "") -> list[str
         return [line for key in sorted(set(before) | set(after))
                 for line in _differences(before.get(key), after.get(key), f"{name}.{key}" if name else key)]
     return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
+
+
+def scoring_digest(package: Path) -> str:
+    """Digest the source of the scoring modules under `package`: every file in `gate/`, then `SCORING_FILES`.
+
+    A scoring change gives a new digest. An edit to `search/`, `run/`, or `harness/` keeps it.
+    """
+    paths = [*sorted((package / "gate").rglob("*.py")), *(package / name for name in SCORING_FILES)]
+    return digest({path.relative_to(package).as_posix(): path.read_text() for path in paths})
 
 
 def field(record: dict[str, object], key: str) -> object:
@@ -167,6 +179,7 @@ class Session:
             Configuration.split(adapter, model, judge_flag(self.record), options) if factory is None else None)
         self.sizing = options if configuration is None else configuration.sizing_options()
         self._freeze_identities(model, configuration, judged)
+        self._freeze_compatibility(configuration)
         self.budget = self._open_budget()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
                                                                   self.seed.files) if configuration is not None
@@ -226,6 +239,27 @@ class Session:
         _ = self.record.setdefault("engine_hash", engine_hash())
         if self.record["engine_hash"] != engine_hash():
             raise ValueError("evaluator differs from the frozen record; create a new run")
+
+    def _freeze_compatibility(self, configuration: Configuration | None) -> None:
+        """Freeze the compatibility fingerprint once. It runs after `_freeze_identities`, so `judge_model` is final.
+
+        A supplied configuration decides the task fields through its task role, which can override the CLI flags.
+        """
+        if "compatibility" in self.record:
+            return
+        task = configuration.roles["task"] if configuration is not None else None
+        splits = {split: sorted(case.identifier for case in self.cases if case.split == split)
+                  for split in ("train", "validation")}
+        fields: dict[str, object] = {
+            "contract_hash": text_field(self.record, "contract_hash"), "skill": self.contract.skill,
+            "adapter": task.adapter if task else text_field(self.record, "adapter"),
+            "task_model": task.model if task else text_field(self.record, "model"),
+            "judge_model": self.record.get("judge_model"),
+            "claude_options": task.options.data() if task else self.record.get("claude_options", {}),
+            "edit": text_field(self.record, "edit"),
+            "repeats": field(self.record, "repeats"), "statistics": field(self.record, "statistics"),
+            "split_digest": digest(splits), "scoring_digest": scoring_digest(Path(__file__).parent.parent)}
+        self.record["compatibility"] = {"fingerprint": digest(fields), "fields": fields}
 
     def _open_budget(self) -> Budget:
         """Rebuild the approved budget. A resumed run keeps `approved=True` and the calls it already spent.

@@ -7,7 +7,7 @@ import os
 import stat
 from collections.abc import Mapping
 from pathlib import Path
-from typing import TextIO
+from typing import TextIO, cast
 
 from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments._contract import Contract
@@ -109,6 +109,30 @@ def check_resume(record: dict[str, object], target: Path, edit: Edit | None, rep
             raise _config_differs(flag)
     if str(target.resolve()) != record.get("target_root"):
         raise _config_differs("the target skill directory")
+
+
+_ABSENT = object()
+
+
+def _frozen_fields(record: Mapping[str, object]) -> Mapping[str, object] | None:
+    """Return the compatibility fields of `record`, or None when it has no well-formed, nonempty fingerprint."""
+    found = record.get("compatibility")
+    if not isinstance(found, Mapping):
+        return None
+    fields = cast(Mapping[str, object], found).get("fields")
+    return cast(Mapping[str, object], fields) if isinstance(fields, Mapping) and fields else None
+
+
+def compare(a: Mapping[str, object], b: Mapping[str, object]) -> tuple[str, ...]:
+    """Name each compatibility field that differs between two run records, sorted.
+
+    Return `("missing-fingerprint",)` when either record has none. An empty tuple means the runs are comparable.
+    """
+    left, right = _frozen_fields(a), _frozen_fields(b)
+    if left is None or right is None:
+        return ("missing-fingerprint",)
+    return tuple(sorted(name for name in left.keys() | right.keys()
+                        if left.get(name, _ABSENT) != right.get(name, _ABSENT)))
 
 
 def check_statistics(statistics_given: Mapping[str, float], frozen: Statistics) -> None:

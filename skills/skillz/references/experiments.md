@@ -645,6 +645,14 @@ Changed frozen inputs require a new run directory.
 `summary` and `report.json` carry `contract_hash` and `contract_source`.
 Exported outcomes carry `scores`.
 
+Each run freezes a compatibility fingerprint in `run.json` as `compatibility`. `summary` and `report.json` carry it.
+The fingerprint is the digest of `compatibility.fields`. The fields hold no case text.
+The fields are `contract_hash`, `skill`, `adapter`, `task_model`, `judge_model`, `claude_options`, `edit`, `repeats`, `statistics`, `split_digest`, and `scoring_digest`.
+`judge_model` is `null` when no case kind is judged.
+`scoring_digest` covers the source of the scoring modules. An edit to the search, run, or harness code keeps it.
+`run.compare(a, b)` names each field that differs between two run records.
+It returns `("missing-fingerprint",)` when either record has no fingerprint.
+
 Run records contain private local inputs.
 Exports contain a candidate patch and measurements, not requests or expected answers.
 A candidate can memorize training content. Therefore, every export remains private and local.
