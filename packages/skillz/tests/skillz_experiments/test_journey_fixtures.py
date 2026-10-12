@@ -15,17 +15,31 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, Journey, Split, load_cases
-from skillz_experiments._claude import ClaudeCode, ClaudeOptions
 from skillz_experiments._contract import Contract, load_contract
 from skillz_experiments._evaluator import evaluate
-from skillz_experiments._harness import Configuration, Harness
+from skillz_experiments.harness import ClaudeOptions, Configuration, Harness
+from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
 from skillz_experiments._records import read
-from skillz_experiments._runtime import (
-    JOURNEY_CALLS, JOURNEY_SECONDS, Budget, BudgetExhausted, BudgetUnapproved, Estimate, approve, estimate,
+from skillz_experiments._budget import (
+    JOURNEY_CALLS,
+    JOURNEY_SECONDS,
+    Budget,
+    BudgetExhausted,
+    BudgetUnapproved,
+    Estimate,
+    approve,
+    estimate,
 )
-from skillz_experiments._workflow import HOLDOUT_RETRIES_PER_ARM, PREFLIGHT_CALLS, Stop, run
-from skillz_experiments._workflow import _command_seconds, _plan, _size_plan  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.run import Stop, run
+from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, PREFLIGHT_CALLS
+from skillz_experiments.run._plan import (
+    _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
+    _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
+    size_plan,
+)
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FAKE = FIXTURES / "fake_claude.py"
@@ -71,23 +85,13 @@ def frozen_case(target: Path, contract: Contract, tmp_path: Path) -> Case:
 
 
 @final
-class Judge:
+class Judge(FakeProvider):
     """A stub simulator and judge: it pops one answer per call."""
 
     def __init__(self, answers: list[dict[str, object]]) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
         self.answers: list[dict[str, object]] = answers
         self.prompts: list[str] = []
-
-    def preflight(self) -> dict[str, object]:
-        return {}
-
-    def close(self) -> None:
-        pass
-
-    def check_candidate(self, candidate: Candidate) -> bool:
-        del candidate
-        return True
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -261,7 +265,7 @@ def write_journeys(out: Path, max_turns: int, families: int = 5) -> None:
 
 
 @final
-class Provider:
+class Provider(FakeProvider):
     """A fake provider that claims the budget of a journey like the real harness. `improved` text scores best."""
 
     def __init__(self, contract: Contract, budget: Budget, checkpoint: Callable[[], None], prompts: list[str]) -> None:
@@ -271,14 +275,12 @@ class Provider:
         self.prompts = prompts
         self.lock = threading.Lock()
 
+    @override
     def preflight(self) -> dict[str, object]:
         if self.budget.calls == 0:
             for _ in range(PREFLIGHT_CALLS):
                 self.budget.claim()
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         assert case.journey is not None
@@ -402,16 +404,16 @@ def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_
     assert (task_cost, journey_cost) == (1, 17)
     cases = [_mixed_case(split, f"{split}-{n}", journey=n == 0 and split != "train")
              for split in ("train", "validation", "holdout") for n in range(6)]
-    plan = _size_plan(contract, cases, 3, ClaudeOptions())
+    plan = size_plan(contract, cases, 3, ClaudeOptions())
     searched = [task_cost] * 6 + [journey_cost] + [task_cost] * 5
     mean = -(-sum(searched) // len(searched))
     holdout = [journey_cost] + [task_cost] * 5
     retry = 2 * HOLDOUT_RETRIES_PER_ARM * max(holdout)
     assert plan.retry_calls == retry and plan.holdout_calls == 2 * 3 * sum(holdout) + retry
     assert plan.sized.journey
-    sandbox = _command_seconds(contract, cases, ClaudeOptions())
-    at_maximum = _plan(6, 6, 6, journey_cost, 3, sandbox, journey=True)
-    at_mean = _plan(6, 6, 6, mean, 3, sandbox, journey=True, holdout_costs=holdout)
+    sandbox = command_seconds(contract, cases, ClaudeOptions())
+    at_maximum = plan_run(6, 6, 6, journey_cost, 3, sandbox, journey=True)
+    at_mean = plan_run(6, 6, 6, mean, 3, sandbox, journey=True, holdout_costs=holdout)
     assert plan == at_mean and 1 < mean < journey_cost
     assert plan.sized.calls < at_maximum.sized.calls and plan.holdout_calls < at_maximum.holdout_calls
 
@@ -421,7 +423,7 @@ def test_the_mixed_holdout_reserve_covers_one_failed_attempt_of_the_costliest_ca
     journey_cost = contract.calls("journey", 8)
     cases = [_mixed_case(split, f"{split}-{n}", journey=n == 0 and split != "train")
              for split in ("train", "validation", "holdout") for n in range(6)]
-    plan = _size_plan(contract, cases, 3, ClaudeOptions())
+    plan = size_plan(contract, cases, 3, ClaudeOptions())
     gate_pass = 2 * 3 * (journey_cost + 5)
     assert plan.holdout_calls - gate_pass >= 2 * HOLDOUT_RETRIES_PER_ARM * journey_cost
 
@@ -432,9 +434,9 @@ def test_the_plan_stops_name_the_seconds_cap_only_for_a_journey_run(tmp_path: Pa
     journeys = [_mixed_case(split, f"{split}-{n}", journey=True) for split in ("train", "validation", "holdout") for n in range(6)]
     tasks = [_mixed_case(split, f"{split}-{n}", journey=False) for split in ("train", "validation", "holdout") for n in range(6)]
     with pytest.raises(Stop, match=note):
-        _ = _size_plan(contract, journeys, 1000, ClaudeOptions())
+        _ = size_plan(contract, journeys, 1000, ClaudeOptions())
     with pytest.raises(Stop) as plain:
-        _ = _size_plan(contract, tasks, 1000, ClaudeOptions())
+        _ = size_plan(contract, tasks, 1000, ClaudeOptions())
     assert "seconds cap binds" not in str(plain.value)
 
 
@@ -442,7 +444,7 @@ def test_a_single_turn_only_plan_sizes_like_the_flat_per_evaluation_plan(tmp_pat
     contract = _mixed_contract(tmp_path)
     cases = [_mixed_case(split, f"{split}-{n}", journey=False)
              for split in ("train", "validation", "holdout") for n in range(6)]
-    assert _size_plan(contract, cases, 3, ClaudeOptions()) == _plan(6, 6, 6, 1, 3)
+    assert size_plan(contract, cases, 3, ClaudeOptions()) == plan_run(6, 6, 6, 1, 3)
 
 
 @needs_bwrap

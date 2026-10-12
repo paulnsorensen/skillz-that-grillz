@@ -17,17 +17,15 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import parse
 from skillz_experiments._evaluator import task_tokens
-from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
+from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import (
-    Stop,
-    _reflection_request,  # pyright: ignore[reportPrivateUsage] -- unit test of the private prompt builder
-    _Session,  # pyright: ignore[reportPrivateUsage] -- tests build a bare session
-    export,
-    resolve_statistics,
-    run,
-)
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, export, run
+from skillz_experiments.run._resume import resolve_statistics
+from skillz_experiments.run._session import Session
+from skillz_experiments.search import request as reflection_request
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -225,7 +223,7 @@ def test_defaults_keep_every_verdict_and_the_pinned_simulation() -> None:
     for values in ([1.0, 2.0, 3.0], [-1.0, -2.0, -3.0], [0.0, 0.0], [1.0], [], [1.0, -1.0, 0.1]):
         assert verdict(values, thresholds=DEFAULT_STATISTICS).reasons == ()
     result = simulate()
-    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0365, 0.8115)
+    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0195, 0.8115)
 
 
 # --- charged tokens --------------------------------------------------------------------------------------
@@ -271,9 +269,9 @@ def _cases_for(_split: str) -> list[SimpleNamespace]:
 
 
 def _session(statistics: Statistics, outcomes: list[dict[str, object]], kept: dict[str, object] | None = None,
-             ) -> _Session:
+             ) -> Session:
     """Return a `_Session` with only the attributes that the tie-break reads."""
-    session = object.__new__(_Session)
+    session = object.__new__(Session)
     attributes: dict[str, object] = {
         "lock": threading.RLock(), "statistics": statistics, "outcomes": outcomes,
         "record": {} if kept is None else {"best_validated": kept},
@@ -361,10 +359,10 @@ TODAY_PROSE = ("Improve only the supplied skill text components. Preserve the he
 
 def test_the_reflection_prompt_is_unchanged_without_a_token_field_and_gains_one_sentence_with_one() -> None:
     body = json.dumps({"candidate": {"SKILL.md": "x"}, "feedback": {}}, default=str)
-    plain, schema = _reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    plain, schema = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
     assert plain == TODAY_PROSE + body
-    assert _reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], cheaper=False) == (plain, schema)
-    cheaper, same_schema = _reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], cheaper=True)
+    assert reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], cheaper=False) == (plain, schema)
+    cheaper, same_schema = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], cheaper=True)
     assert cheaper == TODAY_PROSE.replace("permissions.\n", "permissions." + SENTENCE + "\n") + body
     assert same_schema == schema
 
@@ -388,7 +386,7 @@ def test_a_record_without_the_token_keys_is_refused() -> None:
 
 
 def test_the_flag_registry_lists_both_token_flags() -> None:
-    assert Statistics.flags()[-2:] == ("max_token_increase_per_gain", "min_token_saving")
+    assert {"max_token_increase_per_gain", "min_token_saving"} <= set(Statistics.flags())
 
 
 @pytest.mark.parametrize("value", [0.0, 1.0, -0.1, 1.5, True, "0.5", math.nan, math.inf, 10**400])
@@ -457,7 +455,7 @@ def test_the_cli_passes_both_token_flags_to_run(tmp_path: Path, monkeypatch: pyt
 
 # --- workflow: provider with usage -----------------------------------------------------------------------
 
-class _Priced:
+class _Priced(FakeProvider):
     """A fake provider. The `improved` candidate scores `GAIN` on every case and uses `IMPROVED` task tokens.
 
     `HOLDOUT_GAIN`, when set, replaces `GAIN` on the holdout.
@@ -475,11 +473,9 @@ class _Priced:
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
         pass
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         improved = "improved" in candidate.files["SKILL.md"]

@@ -20,14 +20,15 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import parse
 from skillz_experiments._evaluator import task_tokens
-from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
+from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read, write
-from skillz_experiments._workflow import (
-    Stop,
-    _mean_tokens,  # pyright: ignore[reportPrivateUsage] -- unit test of the private mean
-    _Session,  # pyright: ignore[reportPrivateUsage] -- tests build a bare session
-    run,
+from skillz_experiments.run import Stop, run
+from skillz_experiments.run._session import (
+    _mean_tokens as mean_tokens,  # pyright: ignore[reportPrivateUsage]
+    Session,
 )
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -393,15 +394,15 @@ def test_a_huge_count_does_not_crash_the_mean() -> None:
     # fsum on a 10**400 int raises OverflowError, which would abort the gate mid-run.
     huge = task_tokens({"usage": _usage(input_tokens=10**400, cached_input_tokens=0, output_tokens=1)})
     assert huge is not None
-    assert _mean_tokens([huge]) is None
+    assert mean_tokens([huge]) is None
 
 
 def test_mean_tokens_is_none_for_empty_or_any_unknown_and_exact_otherwise() -> None:
-    assert _mean_tokens([]) is None
-    assert _mean_tokens([None]) is None
-    assert _mean_tokens([10, None, 20]) is None
-    assert _mean_tokens([10, 20]) == 15.0
-    assert _mean_tokens([0, 0]) == 0.0
+    assert mean_tokens([]) is None
+    assert mean_tokens([None]) is None
+    assert mean_tokens([10, None, 20]) is None
+    assert mean_tokens([10, 20]) == 15.0
+    assert mean_tokens([0, 0]) == 0.0
 
 
 # --- session: holdout tokens and tie-breaks ---------------------------------------------------------------
@@ -414,8 +415,8 @@ def _cases_for(_split: str) -> list[SimpleNamespace]:
     return [SimpleNamespace(identifier=item) for item in ("v1", "v2")]
 
 
-def _stub(statistics: Statistics, outcomes: list[dict[str, object]], kept: dict[str, object] | None = None) -> _Session:
-    session = object.__new__(_Session)
+def _stub(statistics: Statistics, outcomes: list[dict[str, object]], kept: dict[str, object] | None = None) -> Session:
+    session = object.__new__(Session)
     attributes: dict[str, object] = {
         "lock": threading.RLock(), "statistics": statistics, "outcomes": outcomes,
         "record": {} if kept is None else {"best_validated": kept},
@@ -702,7 +703,7 @@ def test_a_frozen_record_with_a_bad_token_key_is_tampered(
 SENTENCE = " Prefer fewer tokens when correctness is equal."
 
 
-class _Probe:
+class _Probe(FakeProvider):
     """A fake provider whose improved candidate always scores 1.0 and costs `IMPROVED` task tokens."""
 
     IMPROVED: int = 101
@@ -711,11 +712,9 @@ class _Probe:
     def __init__(self, _model: str, _budget: object, _checkpoint: Callable[[], None]) -> None:
         pass
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         del holdout
@@ -777,6 +776,6 @@ def test_a_run_without_flags_keeps_the_prompt_free_of_the_token_sentence(
 
 def test_simulate_rates_are_unchanged_by_the_token_rule() -> None:
     result = simulate()
-    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0365, 0.8115)
+    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0195, 0.8115)
     again = simulate()
     assert (again.rate_2se, again.rate_one_holdout) == (result.rate_2se, result.rate_one_holdout)

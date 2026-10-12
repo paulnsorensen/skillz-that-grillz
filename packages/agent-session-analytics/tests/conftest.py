@@ -62,7 +62,7 @@ class Sandbox:
 
 def sandbox_env(root: Path) -> dict[str, str]:
     env = dict(os.environ)
-    for name in ("SESSIONS_DB", "SESSIONS_DUCKDB_MEMORY_LIMIT"):
+    for name in ("SESSIONS_DB", "SESSIONS_DUCKDB_MEMORY_LIMIT", "SESSIONS_DUCKDB_THREADS"):
         _ = env.pop(name, None)
     env.update(
         HOME=str(root),

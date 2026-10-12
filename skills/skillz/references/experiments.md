@@ -47,17 +47,28 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" run --target /path/to/skill --ou
 
 Pass the same command again after each stop. Add the approval option that the stop names.
 A model call needs `--live`; without it the run stops with `live-required`. The three data stops happen before any model call.
-`--harness` accepts only `claude` or `codex`. The runner launches only headless `claude -p` or `codex exec`.
-The `claude` harness reuses the Claude login. The `codex` harness reuses the ChatGPT login and needs Codex CLI 0.154.0.
+`--harness` accepts `claude`, `codex`, or `command`. The built-in harnesses launch only headless `claude -p` or `codex exec`.
+To run your own command, pass `--harness-config PATH` or `--harness command --command EXECUTABLE --command ARG ...`. Write an argument that starts with `-` as `--command=VALUE`.
+`--harness-config` cannot combine with `--harness` or `--command`; `--command` needs `--harness command`, and `--harness command` needs `--command`. Each misuse stops with the code `usage` before any work.
+`--judge-model MODEL` sets the model of the judge calls on the same harness. Task and reflection calls use `--model`.
+Without the flag, the judge uses `--model`. Prefer a judge from another model family or tier that the same harness can run.
+The first run records the flag. A resume that omits it keeps the recorded judge model.
+The judge role also plays the simulator of a journey case, so the flag moves that simulation to the judge model too.
+`--judge-model` cannot combine with `--harness-config` or `--harness command`; set the judge model in the role file or the command.
+The `doctor` host checks skip a command role. The runner sends its sandbox probe before any task call.
+The `claude` harness reuses the Claude login. The `codex` harness reuses the ChatGPT login and needs Codex CLI 0.154.0 or newer.
+The runner records the observed `codex --version` string as `codex_version` in `run.json`.
+A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
+A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
-Do not create or request provider credentials. The one exception is the API key that `--isolation nono` needs after the user chooses it.
+Do not create or request provider credentials. The runner needs no API key.
 A fresh run first runs the free host checks of `doctor`. They make no model call.
 A failed check stops the run with `host-not-ready` before the case draft. The stop lists every check and its fix.
+When roles use more than one built-in harness, `checks` stays one flat list. Each check name carries the harness as a prefix, such as `codex:credential`.
+A `claude` role with its own `command` gets the host checks on that executable.
+The `credential` check names the kind: `subscription login`, `api key`, `unverified (macOS Keychain)`, or `missing`.
 Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" doctor --harness claude` to see the checks without a run.
-`--isolation claude` is the default. Claude Code's own sandbox then confines Bash commands.
-`--isolation nono` runs the whole Claude process in nono on Linux. Use it only when the user asks or the host needs it.
-The nono backend needs `nono`, Linux 6.7 or later, and `ANTHROPIC_API_KEY` on the host.
-nono injects the key through its proxy, so the sandbox never sees it. This backend bills the API key, not the Claude login.
+Claude Code's own sandbox confines Bash commands.
 `--edit prose` is the default and changes only Markdown files.
 `--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
 `--repeats` sets the repeats for each holdout case. The default is 3.
@@ -79,7 +90,7 @@ Parallel calls share it. The estimate and the holdout gate reserve include it.
 The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
 The stops that ask for approval echo the options as `claude_options`.
 These three options apply only to `--harness claude`. The first run records them.
-`--min-gain N` and `--min-lower-bound N` set the floors of the gate. `--family-budget N` sets the regression budget of every family. `--max-token-increase-per-gain N` and `--min-token-saving N` set the token rule. Each value must be at least 0. `--min-token-saving` must also be above 0 and below 1. "Set promotion thresholds" describes them.
+`--min-gain N` and `--min-lower-bound N` set the floors of the gate. `--family-budget N` sets the regression budget of every family. `--max-token-increase-per-gain N` and `--min-token-saving N` set the token rule. Each value must be at least 0. `--min-token-saving` must also be above 0 and below 1. `--min-coverage N` sets the least share of planned holdout cases that must be scored, from 0 to 1. "Set promotion thresholds" describes them.
 When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, Claude option, or threshold flag.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
@@ -89,7 +100,7 @@ Map each coded stop to its next step:
 
 | Code | Data on stdout | Next step |
 |---|---|---|
-| `host-not-ready` | `ok`, `harness`, `isolation`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
+| `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_cases` (only when `evals/evals.json` exists), `doctor` (the host checks) | Write the case draft. Start from `seed_cases` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
@@ -106,24 +117,28 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 
 | Code | Meaning | Next step |
 |---|---|---|
-| `login-missing` | No Claude login file exists, or Claude Code rejects the login during the preflight (authentication failed). Under nono, the host API key is missing or invalid. | Ask the user to run `claude` once and log in. Under nono, export a valid `ANTHROPIC_API_KEY`. |
+| `login-missing` | No Claude login file exists, or Claude Code rejects the login during the preflight (authentication failed). A Codex role finds no `tokens` and no `OPENAI_API_KEY` in `auth.json`. | Ask the user to run `claude` or `codex login` once. |
 | `sandbox-read-invalid` | A `--sandbox-read` root is missing, is a symlink, holds an unsafe character, overlaps a refused path, holds a socket entry, or is too large to check. The message names the root. | On a fresh run, give a valid resolved path. On a resume, restore the path or start a new `--out`. |
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
-| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. | For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, run with `--isolation nono` or report the Claude Code version; no unsafe fallback exists. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
-| `nono-unavailable` | `--isolation nono` cannot run. The message names each unmet requirement and its fix. | Apply each fix, or use `--isolation claude`. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. | For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, report the Claude Code version; no unsafe fallback exists. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
+| `nono-removed` | A resume found a run that recorded the removed nono backend, or a role file sets `isolation` to `nono`. The message links issue 211. A completed run still returns its summary. | Start a new run directory. |
+| `isolation-removed` | A role file sets the removed `isolation` key. | Delete the key. |
+| `codex-version-unsupported` | The Codex CLI is older than 0.154.0, or its `--version` output is unparsable. No model call ran. | Install Codex 0.154.0 or newer, then run again. |
+| `environment-differs` | A resume runs on a different Codex version, or the runtime environment differs from the frozen record. The message names the changed key. No model call ran. | Restore the recorded version or start a new run. |
+| `usage` | `--harness-config`, `--harness`, and `--command` conflict. The message names the conflict. | Fix the options, then run again. |
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. In a journey, the stop also covers a skill inventory change between turns. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
-| `harness-changed` | The harness executable or script differs from the frozen record. | Restore the frozen harness, or start a new run directory. |
+| `harness-changed` | The harness executable, script, or role file differs from the frozen record, or a resume drops `--harness-config` or `--command`. | Restore the frozen harness and pass the same options, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--harness`, `--isolation`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--judge-model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, `--min-coverage`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `frozen-file-too-large` | A frozen file is over 16 MiB, or the frozen files together are over 64 MiB. The message names the file. | Remove the file from the skill, or shrink it, then run again. |
 | `target-not-built` | `wedge.toml` lists a target, and its `scripts/NAME.pyz` is missing, is a symlink, or is not a file. | Run `wedge bundle` for the skill, then run again. |
@@ -149,7 +164,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
 | `contract-capture-unsupported` | A kind declares `capture`, and the harness is not `claude`. | Run with `--harness claude`, or remove `capture`. |
-| `contract-statistics-invalid` | The `statistics` value is not an object. Or it holds an unknown field, a negative value, or a value that is not a finite number (such as a bool or a string). Or `family_budgets` is not an object of numbers, or has an empty or blank name. Or `min_token_saving` is not `null` or a number above 0 and below 1. | Fix the contract, then run again. |
+| `contract-statistics-invalid` | The `statistics` value is not an object. Or it holds an unknown field, a negative value, or a value that is not a finite number (such as a bool or a string). Or `family_budgets` is not an object of numbers, or has an empty or blank name. Or `min_token_saving` is not `null` or a number above 0 and below 1. Or `min_coverage` is not a number from 0 to 1. | Fix the contract, then run again. |
 | `contract-family-unknown` | A `family_budgets` name matches no family in the case draft. The stop comes after the draft loads. | Fix the family name in the contract, or add the family to the draft. |
 | `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
@@ -218,10 +233,32 @@ The gate scores baseline and winner on holdout cases that no search step saw.
 It scores each case `--repeats` times and averages the repeats.
 It then takes the mean of the paired case deltas and its standard error (SE).
 
+The SE has a floor from the repeat noise inside each case (`se_floor`). The gate uses the larger of the raw SE and the floor.
+For each case and arm, the gate takes the SE of the repeat mean. One scored repeat gives an SE of 0.
+`se_floor` is `sqrt(sum(se_baseline² + se_winner²)) / n` over the `n` cases that remain. The floor never lowers the SE.
+The zero-SE rule below applies only when the floor is also 0.
+
+A provider fault on one holdout repeat (`OSError`, `ValueError`, or `RuntimeError`) records an outcome with status `evaluation-failed`, and the gate goes on.
+A coded fault still stops the run. A resume runs each failed repeat again, and the newest outcome of a repeat wins. The spend stays inside the approved budget, else the run stops with `gate-budget-exhausted`.
+Only `evaluation-failed` leaves a repeat unscored. A rejected candidate, a capture failure, and a grader zero score 0.
+The gate drops a case with no scored repeat on an arm. `n_shared` is the number of cases that remain.
+A winner equal to the baseline scores no case, so its `n_shared` is 0.
+With fewer than 2 shared cases, the verdict is `inconclusive` and `se` is the SE floor.
+
+The gate record also holds `moves`: the case ids that `fixed`, `broke`, or left `unresolved`.
+A move is resolved when the absolute mean delta of the case exceeds `max(2·sqrt(se_baseline² + se_winner²), 1e-9)`.
+A resolved positive move is `fixed`, a resolved negative move is `broke`, and the rest are `unresolved`. Case ids are hashes, so no case text enters the record.
+
 - `promote`: the mean delta exceeds 2·SE and passes the floors. When the SE is 0, every case delta must be positive.
 - `promote-cheaper`: the mean delta is from 0 to 2·SE, and the task tokens drop by more than 2·`token_se` and by at least `min_token_saving`. See "The token rule".
 - `reject`: the mean delta falls below -2·SE.
 - `inconclusive`: any other result, or fewer than two holdout cases, or a winner equal to the baseline.
+
+The coverage rule runs before the floors and the token rule. Coverage is `n_shared` divided by the number of planned holdout cases.
+When coverage is below `min_coverage`, the verdict is `inconclusive` with reason `low-coverage`, even if the deltas would promote or reject. The record keeps `delta` and `se`.
+The family rule still runs after it, and a family breach still forces `reject`. A `min_coverage` of 0 turns the rule off.
+A provider fault that leaves holdout cases unscored lowers coverage, so it cannot become a promote or a reject.
+A winner equal to the baseline skips the coverage rule. Its `n_shared` is 0, but its only reason is `winner-equals-baseline`.
 
 The floors apply only to a result that would promote. That result needs `delta >= min_gain` and `delta > 2·SE + min_lower_bound`.
 When the SE is 0, the second test uses 2·SE = 0.
@@ -272,7 +309,7 @@ Without a token field, the seed wins a tie.
 
 ### Reasons and reporting
 
-The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`.
+The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`. The coverage reason is `low-coverage`.
 A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
 The summary and the export report show `reasons`, `skipped_families`, `token_delta`, and `token_se` in the `gate` object. The token fields are `null` while the token rule is off or the usage is unknown.
 The summary reports the delta, the SE, the case count, and the repeats.
@@ -280,8 +317,10 @@ Small runs often report `inconclusive`. That result is honest: the data cannot s
 Report the verdict as it is. Never promote an `inconclusive` winner by hand.
 Apply a winner only after a `promote` or `promote-cheaper` verdict.
 Never report a delta without its SE and case count.
-`python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion rates of the gate. It makes no model call.
-The rates cover `promote` only. They do not cover `promote-cheaper`.
+`python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion counts and rates of the gate. It makes no model call.
+The keys `false_promotions_2se` and `false_promotions_one_holdout` are integer counts; each rate is its count divided by `trials`.
+The counts cover `promote` only. They do not cover `promote-cheaper`.
+The `skillz-pytest` job fails when `false_promotions_2se` rises above the threshold in `packages/skillz/ratchets.json`.
 
 ## Wedge targets
 
@@ -405,6 +444,13 @@ The prompt describes `@new-cli` only when the run offers it.
 The `prose` prompt does not change.
 Run `audit-facts` first to see the wedge state of the skill.
 
+### Reflection prose rule
+
+Every reflection prompt asks for ASD-STE100 prose.
+The limit is 20 words per procedural sentence and 25 words per descriptive sentence.
+This matches the inspector tiers and the prose workflow. ADR-015 records the choice (issue #153).
+The prompt text lives in `search/_proposer.py`. A change to it starts a new run.
+
 ## Export
 
 Run `export` only after the run reports the phase `complete`.
@@ -425,7 +471,7 @@ It has git headers and paths relative to the repository root. Apply it from the 
 Only a changed wedge source must lie inside the repository root.
 A changed source path outside the repository root stops export with `export-path-escapes`.
 A skill-only change exports outside a repository.
-`doctor --harness claude` runs the free host checks without a run. Add `--isolation nono` to check the nono backend.
+`doctor --harness claude` runs the free host checks without a run.
 `self-test --preflight-only --model MODEL` checks the harness without a run.
 Pass `--harness-config FILE` to check a custom command adapter. The harness reference that `SKILL.md` lists describes it.
 
@@ -466,17 +512,19 @@ The object accepts these fields:
 - `family_budgets`: an object that maps a family name to its own budget. It overrides `family_budget` for that family. A flag cannot set it.
 - `max_token_increase_per_gain`: the largest token change that one unit of score gain can buy. The default is `null`, which turns this check off.
 - `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off.
+- `min_coverage`: the least share of planned holdout cases that must be scored on both arms, from 0 to 1. The default is 0.6. Below it the verdict is `inconclusive` with reason `low-coverage`. 0 turns the rule off.
 
 Each number is finite and at least 0. `family_budget`, `max_token_increase_per_gain`, and `min_token_saving` may also be `null`.
-`min_token_saving` must also be above 0 and below 1. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
+`min_token_saving` must also be above 0 and below 1. `min_coverage` must also be at most 1. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
 A `family_budgets` value that is not an object, or that has an empty or blank name, stops the run with the same code.
 Each name must match a family in the case draft, else the run stops with `contract-family-unknown`.
 The SE multiplier stays 2. A negative threshold would loosen the rule, so the runner refuses it.
 
 Each field resolves in this order: the CLI flag, then the contract, then the built-in default.
-The flags are `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, and `--min-token-saving`. A flag may set a value below the contract value.
-Every flag value except `--min-token-saving` must still be at least 0, so the gate stays at least as strict as the built-in rule.
+The flags are `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, and `--min-coverage`. A flag may set a value below the contract value.
+Every flag value except `--min-token-saving` must still be at least 0. The SE rule stays, so the gate stays at least as strict as the built-in rule, with two exceptions.
 `--min-token-saving` adds `promote-cheaper`.
+`--min-coverage` below 0.6 lets the gate decide on fewer scored holdout cases. A value of 0 turns the coverage rule off.
 The first run freezes the resolved values in `run.json`.
 The flags repeat on every call until `run.json` exists. The approval stops echo the resolved values as `statistics`.
 A flag that you drop after an approval stop changes the frozen values.
@@ -489,7 +537,8 @@ When the skill has none, ask the user to choose one path.
 
 1. Choose judge-only grading. No flag selects it.
    Draft a contract that maps each kind to the `judge` grader with a `rubric`.
-   Under `run`, the judge uses the `--model` value, so pass a powerful model there.
+   Under `run`, the judge uses `--judge-model`, else `--model`.
+   Pass a powerful model to the flag that the judge uses.
    Show the user the rubric.
 2. Use a contract. Find an existing contract, or draft one with the user.
 
@@ -569,8 +618,7 @@ Paths are relative to the skill root.
 Only the Claude task role supports a surface. Other roles stop with `contract-surface-unsupported`.
 The live preflight accepts only the declared names. It stops with `preflight-leak` on any other name.
 The surface joins the environment reuse key.
-Under `--isolation claude`, MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
-Under `--isolation nono`, they run inside the nono profile.
+MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
 The MCP config holds commands that the host runs, so search never edits it.
 
 The kind named `journey` takes the `journey` grader, and no other kind does. Any other pairing stops with `contract-kinds`.
@@ -611,6 +659,7 @@ Candidate commands use a deny-by-default filesystem profile and no network acces
 The staged candidate is read-only. The task workspace is writable.
 The runner disables external skills, user configuration, hooks, plugins, apps, and web search.
 An existing administrator skill directory stops the Codex run.
+The runner passes `--strict-config` to `codex exec` and `codex app-server`, so an unknown configuration key stops the call. Every behavior probe still runs.
 The `claude` adapter runs `claude -p --setting-sources project` with `--tools Bash,Read,Skill` and `--strict-mcp-config`.
 It applies the sandbox floor, denies host reads, and disables bundled skills. It turns off every foreign skill that a free inventory finds.
 The harness reference that `SKILL.md` lists defines its preflight and login handling.
@@ -626,6 +675,51 @@ Changed frozen inputs require a new run directory.
 `run.json` holds the run checkpoint. `cases.json` holds the approved cases and the seed.
 `summary` and `report.json` carry `contract_hash` and `contract_source`.
 Exported outcomes carry `scores`.
+
+Each run freezes a compatibility fingerprint in `run.json` as `compatibility`. `summary` and `report.json` carry it.
+The fingerprint is the digest of `compatibility.fields`. The fields hold no case text.
+The fields are `contract_hash`, `skill`, `adapter`, `task_model`, `judge_model`, `claude_options`, `edit`, `repeats`, `statistics`, `split_digest`, `scoring_digest`, and `leakage_digest`.
+`judge_model` is `null` when no case kind is judged.
+`scoring_digest` covers the source of the scoring modules. An edit to the search, run, or harness code keeps it.
+`leakage_digest` covers the source of the leakage check. A change to a rule or a threshold starts a new cohort.
+`run.compare(a, b)` names each field that differs between two run records.
+It returns `("missing-fingerprint",)` when either record has no fingerprint.
+
+The search checks every proposal for leakage before any task or judge call.
+The denylist holds the request, journey brief, expected strings, case ids, and fixture names of the train and validation cases.
+Holdout cases are never in it. The session rebuilds it on every open and never writes it to `run.json` or an export.
+A proposal leaks when the text that it adds to a component, compared with the seed, matches one rule:
+
+| Rule | Fires when the added text holds |
+| --- | --- |
+| `request-span` | a verbatim 8-word span of a request or journey brief (case-insensitive, edge punctuation ignored) |
+| `expected-answer` | an expected string of at least 20 characters (whitespace squashed, case-insensitive) |
+| `case-id` | a case id as a whole token |
+| `fixture-name` | a fixture file name as a whole token |
+
+Text that the seed already holds never fires a rule.
+A leaking proposal scores 0 and makes no task or judge call. It records no outcome.
+GEPA still counts each rejected evaluation against its metric-call allowance. A proposer that keeps leaking can end the search early with approved calls left.
+Its feedback has `reason` and `rejected` set to `candidate-leakage-rejected`, plus the `rule` and the existing `request`.
+The feedback holds no expected text.
+`summary` and `report.json` carry `search.leakage_rejections`: the count of distinct rejected proposals per rule.
+The runner saves the digests of rejected proposals per rule in `run.json` at each checkpoint, never case text.
+A resumed run merges them back, so the counts cover the whole run.
+The runner rebuilds the denylist from the frozen cases on every open and never writes it.
+
+`summary` and `report.json` carry `usage_by_role` for the roles `task`, `reflection`, `judge`, and `simulator`.
+Each role shows `outcomes`, `model`, `input_tokens`, `cached_tokens`, `output_tokens`, and `latency_seconds`.
+`outcomes` counts the outcomes whose usage value for the role is a mapping. The sums cover only those outcomes.
+An exact-json outcome has no `task_usage`, so its `usage` counts as task usage.
+A `candidate-contract-rejected` outcome ran no task call, so it counts for no role.
+A field is `null` when no outcome of the role carries a number for it. `simulator` has no latency.
+On a journey case, the task `latency_seconds` includes the simulator turns.
+A role without outcomes has a `null` model. A run without a simulator role reports the judge model for `simulator`.
+`summary` and `report.json` also carry `calls_upper_bound`: the preflight claims (`preflight_calls` in the run record, kept across a resume), plus `case_calls` summed over the evaluate outcomes, plus one per reflection outcome.
+A `candidate-contract-rejected` outcome made no call, so it adds nothing to the bound.
+A run record from before `preflight_calls` has a `null` bound and no `usage_gap`.
+When `calls` exceeds the bound, they add `usage_gap`: `calls` minus the bound. This flags calls that no outcome explains.
+`cost_usd` stays `null`. The run prices no spend.
 
 Run records contain private local inputs.
 Exports contain a candidate patch and measurements, not requests or expected answers.

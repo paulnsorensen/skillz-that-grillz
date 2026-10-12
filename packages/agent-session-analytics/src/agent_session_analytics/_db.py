@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import atexit
+import functools
 import json
 import os
+import re
+import secrets
 import shutil
 import subprocess
 import time
@@ -40,18 +44,38 @@ DB_TMP_PATH = f"{DB_PATH}.tmp"
 # into an existing directory never aliases (and rmtree's) that directory's
 # own "stage" subdir.
 STAGE_DIR = f"{DB_PATH}.stage"
+# DuckDB spills to a path that starts with this prefix. Its own default,
+# `<database>.tmp`, collides with DB_TMP_PATH for queries and lands in the
+# working directory for none. Each process spills to its own path (see
+# spill_dir), because DuckDB deletes the spill files it finds in its temp
+# directory when it closes.
+SPILL_PREFIX = f"{DB_PATH}.spill"
 TTL_SECONDS = 3600  # 1 hour
 
 # The schema version is an integer stamped in the one-row `schema_info` table.
 # Raise it on every change to a table or column; a database with another
 # version is stale, so ingest rebuilds it even inside the freshness window.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 EXIT_NO_DUCKDB = 3
 EXIT_INGEST = 4
 EXIT_QUERY = 5
 
 DUCKDB_TIMEOUT_SECONDS = 600
+
+# `memory_limit` bounds the buffer manager, not the process RSS. Fewer threads
+# and unordered inserts keep the memory outside the buffer manager small.
+MEMORY_LIMIT_ENV = "SESSIONS_DUCKDB_MEMORY_LIMIT"
+THREADS_ENV = "SESSIONS_DUCKDB_THREADS"
+DEFAULT_MEMORY_LIMIT = "4GB"
+DEFAULT_THREADS = 4
+MAX_THREADS = 256
+MAX_SPILL_SIZE = "20GB"
+_SIZE = re.compile(r"(?i)(\d+(?:\.\d+)?) ?([KMGT])(i?)B")
+# DuckDB cannot run a simple aggregate below 4MiB; 16MiB leaves headroom.
+MIN_MEMORY_BYTES = 16 * 1024**2
+# DuckDB stores the limit in 64 bits and refuses a larger value.
+MEMORY_BYTES_CEILING = 2**64
 
 DUCKDB_MISSING = (
     "DuckDB CLI not found. Install it with one of: "
@@ -84,21 +108,87 @@ def require_duckdb() -> None:
         raise DatabaseError(DUCKDB_MISSING, exit_code=EXIT_NO_DUCKDB)
 
 
-def _duckdb(sql: str, *, as_json: bool = False) -> str:
-    """Run SQL in the DuckDB CLI.
+def sql_quote(text: str) -> str:
+    """Escape text for embedding as a single-quoted SQL literal."""
+    return text.replace("'", "''")
+
+
+def _memory_limit() -> str:
+    value = os.environ.get(MEMORY_LIMIT_ENV) or DEFAULT_MEMORY_LIMIT
+    match = _SIZE.fullmatch(value)
+    if match:
+        base = 1024 if match[3] else 1000
+        multiplier = cast(int, base ** ("KMGT".index(cast(str, match[2]).upper()) + 1))
+        size = int(float(cast(str, match[1])) * multiplier)
+        if MIN_MEMORY_BYTES <= size < MEMORY_BYTES_CEILING:
+            return value
+    raise DatabaseError(
+        f"{MEMORY_LIMIT_ENV} must be a size of at least 16MiB and below 16EiB, "
+        + f"with a unit such as 4GB or 512MiB; got {value!r}."
+    )
+
+
+def _threads() -> int:
+    value = os.environ.get(THREADS_ENV) or str(DEFAULT_THREADS)
+    if not (value.isascii() and value.isdecimal() and 1 <= int(value) <= MAX_THREADS):
+        raise DatabaseError(f"{THREADS_ENV} must be an integer from 1 to {MAX_THREADS}; got {value!r}.")
+    return int(value)
+
+
+def validate_settings() -> None:
+    """Raise DatabaseError when a SESSIONS_DUCKDB_* environment value is invalid."""
+    _ = _memory_limit(), _threads()
+
+
+@functools.cache
+def spill_dir() -> str:
+    """This process's own spill path, `<db>.spill-<pid>-<token>`, removed at exit.
+
+    DuckDB creates the directory only when a run spills, so a read-only query
+    needs no writable directory. DuckDB does not create parent directories, so
+    the path sits beside the database.
+    """
+    path = f"{SPILL_PREFIX}-{os.getpid()}-{secrets.token_hex(4)}"
+    _ = atexit.register(shutil.rmtree, path, True)
+    return path
+
+
+def duckdb_settings(*, ingest: bool) -> list[str]:
+    """The SET statements a DuckDB run applies; an invalid environment value raises.
+
+    Only ingest drops insertion order to save memory, so a read-only query
+    keeps its row order.
+    """
+    return [
+        f"SET memory_limit='{_memory_limit()}'",
+        f"SET threads={_threads()}",
+        *(["SET preserve_insertion_order=false"] if ingest else []),
+        f"SET temp_directory='{sql_quote(spill_dir())}'",
+        f"SET max_temp_directory_size='{MAX_SPILL_SIZE}'",
+    ]
+
+
+def duckdb_argv(sql: str, *, as_json: bool = False) -> list[str]:
+    """The DuckDB CLI arguments for one run.
 
     The JSON mode reads the database file in read-only safe mode. Safe mode locks
-    the configuration, so the memory limit applies first. The other mode writes
-    the temporary database that ingest builds.
+    the configuration, so every setting applies first. The other mode writes the
+    temporary database that ingest builds.
     """
-    limit = os.environ.get("SESSIONS_DUCKDB_MEMORY_LIMIT") or "8GB"
     argv = ["duckdb", "-init", "/dev/null"]
     if as_json:
         argv += ["-readonly", "-json"]
-    argv += [DB_PATH if as_json else DB_TMP_PATH, "-cmd", f"SET memory_limit='{limit}'"]
+    argv.append(DB_PATH if as_json else DB_TMP_PATH)
+    for statement in duckdb_settings(ingest=not as_json):
+        argv += ["-cmd", statement]
     if as_json:
         argv += ["-cmd", ".safe_mode"]
-    argv += ["-c", sql]
+    return argv + ["-c", sql]
+
+
+def _duckdb(sql: str, *, as_json: bool = False) -> str:
+    """Run SQL in the DuckDB CLI with the arguments from `duckdb_argv`."""
+    argv = duckdb_argv(sql, as_json=as_json)
     try:
         result = subprocess.run(
             argv,

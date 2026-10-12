@@ -14,11 +14,13 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
-from skillz_experiments._gate import case_deltas, verdict
+from skillz_experiments.gate import case_deltas, verdict
 from skillz_experiments._records import read, write
-from skillz_experiments._search import Edit
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import Stop, _reflection_request, export, run  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.search import Edit
+from skillz_experiments.search import request as reflection_request
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, export, run
+from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -37,17 +39,15 @@ class Recorder:
         return Provider(self, budget, checkpoint)
 
 
-class Provider:
+class Provider(FakeProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder: Recorder = recorder
         self.budget: Budget = budget
         self.checkpoint: Callable[[], None] = checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -189,7 +189,7 @@ class Failing(Provider):
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         if holdout and not Failing.failed:
             Failing.failed = True
-            raise RuntimeError("provider fell over")
+            raise ProviderCrash("provider fell over")
         return super().evaluate(candidate, case, holdout=holdout)
 
 
@@ -202,7 +202,7 @@ def test_a_failed_gate_keeps_the_search_and_resumes_with_the_approved_budget_wit
     def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Failing(provider, budget, checkpoint)
 
-    with pytest.raises(RuntimeError, match="fell over"):
+    with pytest.raises(ProviderCrash, match="fell over"):
         _ = run(target, out, "local-test", live=True, approve_cases=case_hash, approve_budget=calls, factory=factory)
     record = read(out / "run.json")
     assert record["phase"] == "searched" and record["failure"] == "provider fell over"
@@ -238,6 +238,7 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
     assert gate["verdict"] == "inconclusive" and gate["reason"] == "winner-equals-baseline"
     assert gate["reasons"] == ["winner-equals-baseline"]
     assert gate["skipped_families"] == []
+    assert gate["n_shared"] == 0 and gate["cases"] == len(split_ids(out, "holdout"))
     assert not any(held for _, held in provider.evaluated)
 
 
@@ -246,7 +247,7 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
 def test_every_reflection_request_requires_ste_prose_and_carries_the_candidate(
         edit: str, components: list[str], limits: tuple[int, int]) -> None:
     advisory, maximum = limits
-    prompt, schema = _reflection_request(cast(Edit, edit), {name: "text" for name in components}, {}, components)
+    prompt, schema = reflection_request(cast(Edit, edit), {name: "text" for name in components}, {}, components)
     assert "ASD-STE100" in prompt and schema["required"] == components
     assert f"at most {advisory} words per procedural sentence" in prompt
     assert f"at most {maximum} words per descriptive sentence" in prompt

@@ -11,12 +11,12 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _claude
+from skillz_experiments.harness._claude import _events, _settings, _transport
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError
-from skillz_experiments._claude import ClaudeCode
-from skillz_experiments._harness import Configuration, Harness
-from skillz_experiments._runtime import Budget
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._claude._transport import ClaudeCode
+from skillz_experiments._budget import Budget
 
 pytestmark = pytest.mark.usefixtures("host_login")
 linux_only = pytest.mark.skipif(sys.platform == "darwin", reason="macOS uses the real config directory")
@@ -143,7 +143,7 @@ def test_every_role_and_every_preflight_call_keeps_the_sandbox_floor(tmp_path: P
 def test_floor_settings_are_unaffected_by_a_hostile_home_directory(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/")
-    settings = _claude.settings(tmp_path)
+    settings = _settings.settings(tmp_path)
     deny = cast(dict[str, list[str]], settings["permissions"])["deny"]
     assert "Read(///**)" in deny or any("/**" in rule for rule in deny)
     assert cast(dict[str, object], settings["sandbox"])["allowUnsandboxedCommands"] is False
@@ -233,13 +233,13 @@ def test_preflight_stops_when_the_agents_write_succeeds_or_the_write_control_fai
 def test_settings_deny_writes_into_the_workspace_agents_directory(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    sandbox = cast(dict[str, dict[str, dict[str, list[str]]]], _claude.settings(workspace))["sandbox"]["filesystem"]
+    sandbox = cast(dict[str, dict[str, dict[str, list[str]]]], _settings.settings(workspace))["sandbox"]["filesystem"]
     assert f"{workspace}/.agents" in sandbox["denyWrite"]
     assert f"{workspace.resolve()}/.agents" in sandbox["denyWrite"]
 
 
 def test_settings_turn_off_every_hook(tmp_path: Path) -> None:
-    assert _claude.settings(tmp_path)["disableAllHooks"] is True
+    assert _settings.settings(tmp_path)["disableAllHooks"] is True
 
 
 def test_write_probe_needs_a_failed_printf_to_agents_not_any_command_that_names_it() -> None:
@@ -250,7 +250,7 @@ def test_write_probe_needs_a_failed_printf_to_agents_not_any_command_that_names_
             {"type": "tool_use", "id": f"u{index}", "name": "Bash", "input": {"command": command}}]}})
         events.append({"type": "user", "message": {"content": [
             {"type": "tool_result", "tool_use_id": f"u{index}", "is_error": error}]}})
-    assert _claude._write_failure(events, [agents], False, True) == (  # pyright: ignore[reportPrivateUsage]
+    assert _events.write_failure(events, [agents], False, True) == (
         "write probe has no evidence: no failed Bash printf to .agents")
 
 
@@ -339,7 +339,7 @@ def test_a_failed_preflight_leaves_no_partial_pass_in_a_second_attempt(tmp_path:
 
 def test_preflight_budget_exhaustion_stops_before_the_live_call(tmp_path: Path, probes: list[list[str]]) -> None:
     del probes
-    from skillz_experiments._runtime import BudgetExhausted
+    from skillz_experiments._budget import BudgetExhausted
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable, Budget(1, 120, 0))
     try:
@@ -481,20 +481,21 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     recorded = recorded_pass(tmp_path, executable)
     logged = len(calls(executable))
     if change == "tools":
-        monkeypatch.setattr(_claude, "TOOLS", "Bash,Read,Skill,Write")
+        monkeypatch.setattr(_transport, "TOOLS", "Bash,Read,Skill,Write")
     elif change == "probe-skill":
-        monkeypatch.setattr(_claude, "PROBE_PREFIX", "other-")
+        monkeypatch.setattr(_events, "PROBE_PREFIX", "other-")
+        monkeypatch.setattr(_transport, "PROBE_PREFIX", "other-")
     elif change == "platform":
         monkeypatch.setattr(sys, "platform", "linux" if sys.platform == "darwin" else "darwin")
     elif change == "settings":
-        original = _claude.settings
+        original = _settings.settings
 
         def weaker(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                   unix_sockets: bool = False, sandboxed: bool = True) -> dict[str, object]:
-            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets, sandboxed=sandboxed)
+                   unix_sockets: bool = False) -> dict[str, object]:
+            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
-        monkeypatch.setattr(_claude, "settings", weaker)
+        monkeypatch.setattr(_transport, "settings", weaker)
     else:
         original_environment = ClaudeCode._environment  # pyright: ignore[reportPrivateUsage]
 

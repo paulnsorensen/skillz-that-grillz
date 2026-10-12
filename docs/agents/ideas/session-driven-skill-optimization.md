@@ -73,7 +73,7 @@ The runner records unknown usage as null. Dollar cost remains unknown.
 
 ## Codex isolation and native loading
 
-The Codex adapter pins CLI 0.154.0 and requires an explicit model.
+The Codex adapter requires CLI 0.154.0 or newer, passes `--strict-config`, records the observed version, and requires an explicit model.
 The user selects the existing ChatGPT login for the first smoke test.
 Temporary isolated home directories keep user configuration and host skills out of candidate discovery.
 A temporary authentication symlink references the existing login without engine-side credential copying.[^runtime]
@@ -134,17 +134,17 @@ Session-based personalization needs real approved cases and a task-specific eval
 Do not describe the public self-test as a real-session benchmark.
 
 [^implementation]: `packages/skillz/src/skillz_experiments/_cli.py:38-127`; `skills/skillz/SKILL.md:33-46`; `skills/skillz/references/experiments.md:1-371`.
-[^search]: `packages/skillz/src/skillz_experiments/_search.py:29-65`.
+[^search]: `packages/skillz/src/skillz_experiments/search/_engine.py:31-70`.
 [^cases]: `packages/skillz/src/skillz_experiments/_cases.py:44-58,128-211`; `_records.py:41-69`.
 [^candidate]: `packages/skillz/src/skillz_experiments/_candidate.py:52-113`; `_records.py:41-69`.
 [^evaluator]: `packages/skillz/src/skillz_experiments/_evaluation.py:11-83`; `_evaluator.py:38-71`; `packages/skillz/src/skillz_inspect` (built as `skills/skillz/scripts/inspect-skill.pyz`).
-[^runtime]: `packages/skillz/src/skillz_experiments/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
-[^workflow]: `packages/skillz/src/skillz_experiments/_workflow.py:101-292,365-417`; `_runtime.py:16-45`.
-[^export]: `packages/skillz/src/skillz_experiments/_workflow.py:437-471`.
+[^runtime]: `packages/skillz/src/skillz_experiments/harness/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
+[^workflow]: `packages/skillz/src/skillz_experiments/run/_session.py`, `run/_plan.py`, and `run/_run.py`; `_budget.py`.
+[^export]: `packages/skillz/src/skillz_experiments/run/_export.py`.
 [^contract]: `packages/skillz/src/skillz_experiments/_contract.py:34-92,139-175`; `skills/skillz/references/experiments.md:167-200`; `skills/skillz/evals/autoimprove.json`.
 [^graders]: `packages/skillz/src/skillz_experiments/_graders.py:60-115`; `_evaluator.py:38-130`.
-[^claude]: `packages/skillz/src/skillz_experiments/_claude.py:259-282`; `_harness.py:19,76-82`.
-[^harness]: `packages/skillz/src/skillz_experiments/_harness.py:83-86`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
+[^claude]: `packages/skillz/src/skillz_experiments/harness/_claude/`; `harness/_harness.py`.
+[^harness]: `packages/skillz/src/skillz_experiments/harness/_harness.py`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
 [^isolation]: `docs/agents/decisions/skillz-autoimprove.md:33-39`; `skills/skillz/references/experiment-harness.md:68-92`.
 
-_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-05 · Supersedes: proposal-only status and unresolved first-harness choice_
+_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-11 · Supersedes: proposal-only status and unresolved first-harness choice_

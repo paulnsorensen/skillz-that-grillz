@@ -17,19 +17,29 @@ from types import SimpleNamespace
 from typing import cast, final
 
 import pytest
+from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments._claude import ClaudeCode, ClaudeOptions
 from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
-from skillz_experiments._gate import DEFAULT_STATISTICS
-from skillz_experiments._harness import Configuration, EnvironmentDiffers, Harness, Role
+from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, Harness
+from skillz_experiments.harness._claude import ClaudeCode
+from skillz_experiments.harness._roles import Role
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
-from skillz_experiments._search import Edit
-from skillz_experiments._workflow import HOLDOUT_RETRIES_PER_ARM, Factory, Stop, export, run, summary
-from skillz_experiments._workflow import _command_seconds, _estimate, _plan, _Session  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.gate import DEFAULT_STATISTICS
+from skillz_experiments._budget import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
+from skillz_experiments.search import Edit
+from skillz_experiments.run import Stop, export, run, summary
+from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM
+from skillz_experiments.run._session import Factory
+from skillz_experiments.run._plan import (
+    _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
+    _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
+    plan_estimate,
+)
+from skillz_experiments.run._session import Session, engine_hash
+from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -47,6 +57,7 @@ class State:
     fail_holdout: bool = False
     reject_baseline: bool = False
     preflight_delay: float = 0.0
+    claims: bool = False
     extra: dict[str, object] = field(default_factory=lambda: cast(dict[str, object], {}))
     preflights: list[dict[str, object] | None] = field(default_factory=lambda: cast(list[dict[str, object] | None], []))
     evaluated: list[tuple[str, bool]] = field(default_factory=lambda: cast(list[tuple[str, bool]], []))
@@ -61,7 +72,7 @@ class State:
         with self.lock:
             self.evaluated.append((case.identifier, holdout))
         if holdout and self.fail_holdout:
-            raise RuntimeError("provider fell over")
+            raise ProviderCrash("provider fell over")
         improved = "improved" in candidate.files["SKILL.md"]
         result: dict[str, object] = {"score": float(improved), "candidate_hash": candidate.identity,
                                      "case_hash": case.identifier} | self.extra
@@ -73,20 +84,23 @@ class State:
         return sum(held for _, held in self.evaluated)
 
     def factory(self) -> Factory:
-        return lambda _model, _budget, _checkpoint: _Fake(self)
+        return lambda _model, budget, _checkpoint: _Fake(self, budget if self.claims else None)
 
 
-class _Fake:
-    def __init__(self, state: State) -> None:
+class _Fake(FakeProvider):
+    def __init__(self, state: State, budget: Budget | None = None) -> None:
         self.state: State = state
+        self.budget: Budget | None = budget
 
+    @override
     def preflight(self) -> dict[str, object]:
+        if self.budget is not None:
+            self.budget.claim()
         return self.state.preflight(None)
 
-    def close(self) -> None:
-        pass
-
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        if self.budget is not None:
+            self.budget.claim(holdout=holdout)
         return self.state.evaluate(candidate, case, holdout)
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
@@ -133,7 +147,7 @@ def _stopped_at_gate(tmp_path: Path, target: Path, write_draft: Drafter, approva
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
     state.fail_holdout = True
-    with pytest.raises(RuntimeError, match="fell over"):
+    with pytest.raises(ProviderCrash, match="fell over"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
                 factory=state.factory() if configuration is None else None, configuration=configuration)
     state.fail_holdout = False
@@ -283,6 +297,58 @@ def test_resume_hands_the_recorded_preflight_to_the_harness_and_runs_it_once_per
     assert len(state.preflights) == 2
 
 
+def test_a_resume_with_another_installed_codex_version_stops_as_environment_differs(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real `Harness` and `Codex` role; only the Codex preflight, which needs the CLI, reports a settable version."""
+    from skillz_experiments.harness._codex import Codex
+
+    host = tmp_path / "host-codex"
+    host.mkdir()
+    _ = (host / "auth.json").write_text("{}")
+    stub = tmp_path / "bin" / "codex"
+    stub.parent.mkdir()
+    _ = stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CODEX_HOME", str(host))
+    installed = {"version": "codex-cli 0.154.0"}
+    target, state = make_target(tmp_path), State()
+
+    def preflight(self: Codex) -> dict[str, object]:
+        del self
+        return {"codex_version": installed["version"], "isolation": "passed", "live_calls": 0}
+
+    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+        del self
+        return state.evaluate(candidate, case, holdout)
+
+    def invoke(self: Harness, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        del self
+        return _Fake(state).invoke(prompt, candidate, case, holdout=holdout, schema=schema)
+
+    monkeypatch.setattr(Codex, "preflight", preflight)
+
+    def accept(self: Codex, candidate: Candidate) -> bool:
+        del self, candidate
+        return True
+
+    monkeypatch.setattr(Codex, "check_candidate", accept)
+    monkeypatch.setattr(Harness, "evaluate", evaluate)
+    monkeypatch.setattr(Harness, "invoke", invoke)
+    configuration = Configuration.single("codex", MODEL)
+    out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state, configuration)
+    assert read(out / "run.json")["codex_version"] == "codex-cli 0.154.0"
+    seen = len(state.evaluated)
+    installed["version"] = "codex-cli 0.160.0"
+    with pytest.raises(EnvironmentDiffers):
+        _ = run(target, out, MODEL, live=True, configuration=configuration)
+    assert len(state.evaluated) == seen
+    installed["version"] = "codex-cli 0.154.0"
+    assert run(target, out, MODEL, live=True, configuration=configuration)["phase"] == "complete"
+
+
 def _changed_judge(model: str) -> dict[str, str]:
     return {"model": model, "changed": "yes"}
 
@@ -295,12 +361,12 @@ def test_a_changed_judge_stops_a_resume_and_an_export(
     out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
     assert read(out / "run.json")["judge"]
     with monkeypatch.context() as patch:
-        patch.setattr("skillz_experiments._workflow.judge_identity", _changed_judge)
+        patch.setattr("skillz_experiments.run._session.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = run(target, out, MODEL, live=True, factory=state.factory())
     assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
     with monkeypatch.context() as patch:
-        patch.setattr("skillz_experiments._workflow.judge_identity", _changed_judge)
+        patch.setattr("skillz_experiments.run._export.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = export(out, tmp_path / "export")
     assert not (tmp_path / "export").exists()
@@ -379,7 +445,7 @@ def test_concurrent_case_evaluations_leave_a_valid_checkpoint_with_every_outcome
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, state = make_target(tmp_path), State()
     out = _prepared(tmp_path, target, write_draft, approvals)
-    session = _Session(out, MODEL, "claude", state.factory(), None, statistics=DEFAULT_STATISTICS)
+    session = Session(out, MODEL, "claude", state.factory(), None, statistics=DEFAULT_STATISTICS)
     try:
         cases = session.cases * 4
         def evaluate(case: Case) -> dict[str, object]:
@@ -468,7 +534,7 @@ def test_a_symlinked_run_lock_is_refused_and_its_target_stays_intact(
     assert victim.read_text() == "keep me" and state.evaluated == []
 
 
-class _Spending:
+class _Spending(FakeProvider):
     """A fake that claims the budget for each call and spends `delay` seconds on each search call.
 
     Its preflight reads the time left, as the real transports do through the sandbox probe.
@@ -479,12 +545,10 @@ class _Spending:
         self.budget: Budget = budget
         self.delay: float = delay
 
+    @override
     def preflight(self) -> dict[str, object]:
         _ = self.budget.remaining()
         return self.state.preflight(None)
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -559,6 +623,18 @@ def test_a_run_prepared_by_an_older_runner_stops_with_a_create_a_new_run_message
         _ = run(target, out, MODEL, live=True, factory=State().factory())
 
 
+def test_a_change_in_a_harness_module_changes_the_engine_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    before = engine_hash()
+    original = Path.read_text
+
+    def edited(self: Path) -> str:
+        text = original(self)
+        return text + "\n# edited" if self.parent.name == "harness" and self.name == "_harness.py" else text
+
+    monkeypatch.setattr(Path, "read_text", edited)
+    assert engine_hash() != before
+
+
 def test_a_prepared_run_records_the_engine_hash(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     out = _prepared(tmp_path, make_target(tmp_path), write_draft, approvals)
@@ -570,7 +646,7 @@ def test_a_completed_run_returns_its_summary_even_when_the_target_moved(
     target, state = make_target(tmp_path), State()
     out = _prepared(tmp_path, target, write_draft, approvals)
     summary = run(target, out, MODEL, live=True, factory=state.factory())
-    assert summary["phase"] == "complete" and summary["isolation"] == "claude"
+    assert summary["phase"] == "complete" and "isolation" not in summary
     moved = tmp_path / "moved"
     _ = shutil.copytree(target, moved)
     assert run(moved, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
@@ -583,13 +659,37 @@ def test_a_taken_seed_name_stops_the_run_before_the_live_preflight(
 
     @final
     class Taken(_Fake):
-        def check_name(self, candidate: Candidate) -> None:
+        @override
+        def check_name(self, candidate: object) -> None:
+            assert isinstance(candidate, Candidate)
             raise CodedError("candidate-name-taken", f"{candidate.skill!r} is taken")
 
     with pytest.raises(CodedError) as stopped:
         _ = run(target, out, MODEL, live=True, factory=lambda _model, _budget, _checkpoint: Taken(state))
     assert stopped.value.code == "candidate-name-taken"
     assert state.preflights == [] and state.evaluated == []
+
+
+def test_a_run_that_recorded_the_removed_nono_backend_stops_with_the_issue_link(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    record["isolation"] = "nono"
+    write(out / "run.json", record)
+    with pytest.raises(CodedError, match="issues/211") as stopped:
+        _ = run(target, out, MODEL, live=True, factory=State().factory())
+    assert stopped.value.code == "nono-removed"
+
+
+def test_a_run_that_recorded_the_claude_backend_still_resumes(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    record["isolation"] = "claude"
+    write(out / "run.json", record)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
 
 
 def test_a_terminated_run_resumed_with_another_flag_reports_the_termination_first(
@@ -657,7 +757,7 @@ def test_a_live_resume_gives_the_recorded_claude_options_to_every_call(
     with pytest.raises(Stop):
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, effort="xhigh", sandbox_seconds=120)
     executable = _claude_on_path(tmp_path, monkeypatch)
-    session = _Session(out, MODEL, "claude", None, None, statistics=DEFAULT_STATISTICS)
+    session = Session(out, MODEL, "claude", None, None, statistics=DEFAULT_STATISTICS)
     try:
         provider = cast(Harness, session.provider)
         _ = provider.transports["judge"].invoke("hello")
@@ -738,32 +838,32 @@ def test_a_supplied_configuration_refuses_option_values_and_its_roots_stop_befor
 
 
 def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reserve() -> None:
-    plain, slow = _plan(6, 6, 6, 1, 3), _plan(6, 6, 6, 1, 3, 30)
+    plain, slow = plan_run(6, 6, 6, 1, 3), plan_run(6, 6, 6, 1, 3, 30)
     gate_evaluations = 2 * 6 * 3 + 2 * HOLDOUT_RETRIES_PER_ARM
     assert slow.sandbox_gate == math.ceil(gate_evaluations * 30 / MAX_CONCURRENT_CALLS)
     assert slow.sized.calls == plain.sized.calls
     assert slow.sized.seconds == plain.sized.seconds + slow.sandbox_total > plain.sized.seconds
     assert slow.reserve_seconds > plain.reserve_seconds
-    assert _estimate(slow, 3, 6)["sandbox_seconds"] == slow.sandbox_total
-    assert "sandbox_seconds" not in _estimate(plain, 3, 6)
+    assert plan_estimate(slow, 3, 6)["sandbox_seconds"] == slow.sandbox_total
+    assert "sandbox_seconds" not in plan_estimate(plain, 3, 6)
     contract = Contract("s", "$s", {"task": Grader("command", ("x",)), "plain": Grader("exact-json")})
     task, other = (cast(Case, cast(object, SimpleNamespace(kind=kind))) for kind in ("task", "plain"))
     options = ClaudeOptions(sandbox_seconds=90)
-    assert _command_seconds(contract, [task], options) == 90 and _command_seconds(contract, [other], options) == 0
+    assert command_seconds(contract, [task], options) == 90 and command_seconds(contract, [other], options) == 0
     judged = Contract("s", "$s", {"look": Grader("judge", rubric="r", capture=("x",)),
                                    "mix": Grader("hybrid", ("x",), "r", ("x",)), "hy": Grader("hybrid", ("x",), "r")})
     look, mix, hybrid = (cast(Case, cast(object, SimpleNamespace(kind=kind))) for kind in ("look", "mix", "hy"))
-    assert _command_seconds(judged, [look], options) == 90 and _command_seconds(judged, [hybrid], options) == 90
-    assert _command_seconds(judged, [mix], options) == 180 and _command_seconds(judged, [look, mix], options) == 180
+    assert command_seconds(judged, [look], options) == 90 and command_seconds(judged, [hybrid], options) == 90
+    assert command_seconds(judged, [mix], options) == 180 and command_seconds(judged, [look, mix], options) == 180
 
 
 def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:
-    plain = _plan(30, 30, 6, 1, 3)
-    shrunk = [_plan(30, 30, 6, 1, 3, seconds) for seconds in (20, 60, 100)]
+    plain = plan_run(30, 30, 6, 1, 3)
+    shrunk = [plan_run(30, 30, 6, 1, 3, seconds) for seconds in (20, 60, 100)]
     assert all(plan.sized.seconds <= APPROVED_SECONDS for plan in shrunk)
     assert shrunk[0].metric_calls < plain.metric_calls and shrunk[2].metric_calls < shrunk[0].metric_calls
     with pytest.raises(Stop, match="sandbox time alone need") as caught:
-        _ = _plan(30, 30, 6, 1, 3, 600)
+        _ = plan_run(30, 30, 6, 1, 3, 600)
     assert caught.value.code == "budget-unapproved"
 
 
@@ -845,3 +945,113 @@ def test_a_first_call_waits_for_the_run_lock_before_it_writes_the_record(
     assert caught.value.code == "run-in-progress"
     assert not (out / "run.json").exists()
     assert ((out / "cases.json").stat().st_mtime_ns if (out / "cases.json").exists() else None) == frozen
+
+
+_USAGE = {"input_tokens": 10, "cached_input_tokens": 4, "output_tokens": 3}
+
+
+def _spend_record(**extra: object) -> dict[str, object]:
+    """Return a run record with one journey, one exact-json, and one reflection outcome."""
+    outcomes: list[dict[str, object]] = [
+        {"split": "train", "case_id": "j", "task_usage": _USAGE, "judge_usage": _USAGE | {"input_tokens": 1},
+         "simulator_usage": _USAGE | {"input_tokens": 7}, "latency_seconds": 2.0, "judge_latency_seconds": 0.5},
+        {"split": "train", "case_id": "e", "usage": _USAGE, "latency_seconds": 1.0},
+        {"split": "reflection", "usage": _USAGE, "latency_seconds": 4.0}]
+    return {"model": "task-m", "calls": 0, "outcomes": outcomes} | extra
+
+
+def test_the_summary_reports_spend_per_role_with_the_model_each_role_used() -> None:
+    harness = {name: {"model": model} for name, model in
+               (("task", "task-m"), ("reflection", "task-m"), ("judge", "judge-m"))}
+    roles = cast(dict[str, dict[str, object]], summary(_spend_record(harness=harness))["usage_by_role"])
+    assert roles["task"] == {"outcomes": 2, "input_tokens": 20, "cached_tokens": 8, "output_tokens": 6,
+                             "latency_seconds": 3.0, "model": "task-m"}
+    assert roles["judge"] == {"outcomes": 1, "input_tokens": 1, "cached_tokens": 4, "output_tokens": 3,
+                              "latency_seconds": 0.5, "model": "judge-m"}
+    assert roles["simulator"]["input_tokens"] == 7 and roles["simulator"]["latency_seconds"] is None
+    assert roles["simulator"]["model"] == "judge-m"
+    assert roles["reflection"] == {"outcomes": 1, "input_tokens": 10, "cached_tokens": 4, "output_tokens": 3,
+                                   "latency_seconds": 4.0, "model": "task-m"}
+
+
+def test_a_role_without_usage_shows_null_tokens_and_no_model() -> None:
+    record = _spend_record()
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    outcomes[1]["usage"] = None
+    outcomes[2]["usage"] = {"input_tokens": None}
+    del outcomes[0]["task_usage"]
+    roles = cast(dict[str, dict[str, object]], summary(record)["usage_by_role"])
+    assert roles["task"]["outcomes"] == 0 and roles["task"]["model"] is None
+    assert all(roles["task"][name] is None for name in ("input_tokens", "cached_tokens", "output_tokens"))
+    assert roles["reflection"]["outcomes"] == 1 and roles["reflection"]["input_tokens"] is None
+    empty = cast(dict[str, dict[str, object]], summary({"model": "m", "outcomes": []})["usage_by_role"])
+    assert empty["judge"] == {"outcomes": 0, "input_tokens": None, "cached_tokens": None, "output_tokens": None,
+                              "latency_seconds": None, "model": None}
+
+
+def test_an_outcome_without_usage_or_without_a_task_call_does_not_count_for_a_role() -> None:
+    record = _spend_record()
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    outcomes.append({"split": "train", "case_id": "g", "usage": _USAGE, "task_usage": _USAGE, "judge_usage": None,
+                     "latency_seconds": 1.0})
+    outcomes.append({"split": "train", "case_id": "r", "status": "candidate-contract-rejected", "usage": _USAGE,
+                     "latency_seconds": 1.0})
+    roles = cast(dict[str, dict[str, object]], summary(record)["usage_by_role"])
+    assert roles["judge"]["outcomes"] == 1
+    assert roles["task"]["outcomes"] == 3
+
+
+def test_a_simulator_without_judged_cases_reports_the_model_the_judge_role_ran_on() -> None:
+    """`judge_model` stays unset when no case is judged, but a simulator then ran on the judge role."""
+    record = _spend_record(judge_model_flag="flag-judge")
+    roles = cast(dict[str, dict[str, object]], summary(record)["usage_by_role"])
+    assert roles["simulator"]["model"] == "flag-judge"
+    assert cast(dict[str, dict[str, object]], summary(_spend_record())["usage_by_role"])["simulator"]["model"] == "task-m"
+
+
+def test_a_preflight_that_fails_after_its_claim_saves_the_count(
+        tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out, state = make_target(tmp_path), tmp_path / "run", State(claims=True)
+
+    class Failing(_Fake):
+        @override
+        def preflight(self) -> dict[str, object]:
+            _ = super().preflight()
+            raise EnvironmentDiffers("the environment changed after the claim")
+
+    def factory(_model: str, budget: Budget, _checkpoint: Callable[[], None]) -> Failing:
+        return Failing(state, budget)
+
+    with pytest.raises(EnvironmentDiffers):
+        _ = approved_run(target, out, factory=factory)
+    record = read(out / "run.json")
+    assert record["preflight_calls"] == 1 == record["calls"]
+
+
+def test_the_summary_reconciles_calls_with_the_worst_case_bound_and_flags_overspend(
+        tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    state = State(extra={"usage": _USAGE}, claims=True)
+    finished = approved_run(target, out, factory=state.factory())
+    assert isinstance(finished["calls"], int) and isinstance(finished["calls_upper_bound"], int)
+    assert finished["calls"] <= finished["calls_upper_bound"] and finished["calls_upper_bound"] > 0
+    assert "usage_gap" not in finished
+    assert read(out / "run.json")["preflight_calls"] == 1 and finished["calls"] > 1
+    unrecorded = read(out / "run.json")
+    del unrecorded["preflight_calls"]
+    unrecorded["calls"] = finished["calls_upper_bound"] + 3
+    legacy = summary(unrecorded, out)
+    assert legacy["calls_upper_bound"] is None and "usage_gap" not in legacy
+    rejected = read(out / "run.json")
+    outcomes = cast(list[dict[str, object]], rejected["outcomes"])
+    evaluated = next(item for item in outcomes if item.get("split") != "reflection")
+    outcomes.append({**evaluated, "status": "candidate-contract-rejected"})
+    assert summary(rejected, out)["calls_upper_bound"] == finished["calls_upper_bound"]
+    task = cast(dict[str, dict[str, object]], finished["usage_by_role"])["task"]
+    assert task["outcomes"] and task["input_tokens"] == 10 * cast(int, task["outcomes"])
+    record = read(out / "run.json")
+    record["calls"] = finished["calls_upper_bound"] + 3
+    assert summary(record, out)["usage_gap"] == 3
+    _ = export(out, tmp_path / "export")
+    report = cast(dict[str, object], json.loads((tmp_path / "export/report.json").read_text()))
+    assert report["usage_by_role"] == finished["usage_by_role"] and report["cost_usd"] is None

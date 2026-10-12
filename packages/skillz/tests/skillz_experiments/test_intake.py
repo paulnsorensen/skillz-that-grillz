@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _harness
+from skillz_experiments.harness import _roles
 from skillz_experiments._cases import Case, CodedError, Journey, load_cases
 from skillz_experiments._intake import (
     DRAFT_NAME, approval_question, case_hash, freeze, intake_contract, load_draft, skill_facts, split_cases,
@@ -38,7 +38,7 @@ def test_draft_assigns_seeded_family_disjoint_splits_and_one_question_without_mo
     def forbidden(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("intake must not construct a provider")
 
-    monkeypatch.setattr(_harness.Role, "create", forbidden)
+    monkeypatch.setattr(_roles.Role, "create", forbidden)
     cases = load_draft(write_draft(tmp_path, draft()))
     first = split_cases(cases, 7)
     assert [case.split for case in first] == [case.split for case in split_cases(cases, 7)]

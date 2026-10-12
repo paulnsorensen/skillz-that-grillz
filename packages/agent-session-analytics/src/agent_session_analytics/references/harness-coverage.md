@@ -33,6 +33,11 @@ Native format is already the canonical envelope (`type`, `timestamp`,
 up by the recursive walk, but those turns have no direct user interaction (no
 stop events, no denials).
 
+Real prompts reach `user_turns`. Meta, compact-summary, sidechain, tool-result-only,
+blank, and `<`-prefixed entries stay out. A main-session user text that starts with
+`[Request interrupted` is an interrupt marker: it reaches `interrupt_events`, not
+`user_turns`. Sidechain markers reach neither.
+
 Claude omits `is_error` on most successful tool results. The flattener
 backfills those to `'false'` and marks them `is_error_explicit = false`.
 Measured: ~99.5% of absent-flag results carry non-error content.
@@ -69,7 +74,12 @@ Codex has no `Skill` / `Agent` tool primitives, so `skill_invocations` and
 `agent_spawns` stay claude-centric. `reasoning` items (encrypted) are dropped.
 
 - Structured `exit_code` (including negative values), failed status, `isError`/`is_error` true, and legacy `Process exited with code N` markers set `is_error`. Pending and successful session outputs remain non-errors. Wrapper parsing trusts complete JSON or an `Output:` JSON envelope, not arbitrary prose. Content-block arrays require an execution header in the first `input_text` block. The parser processes later JSON blocks independently.
-- Wrapper-level errors are lower bounds. Nested function or MCP calls can produce different counts. The adapter omits native Codex timing and user records. It reads two other records. `session_meta.cli_version` becomes `raw_entries.version` on every entry of the session. The first `session_meta` of a sub-agent rollout names its parent in `source.subagent.thread_spawn.parent_thread_id`; that id becomes `raw_entries.parentSessionId` and `sessions.parent_session_id`. Each `event_msg` `token_count` event with a non-null `last_token_usage` becomes one `raw_entries` row of `type` `token_usage`. Only `model_turns` reads that row; `tool_uses`, `stop_events`, and `sessions.entry_count` do not. The row takes its model from the latest `turn_context`, or `unknown` before the first one, and its tokens from `last_token_usage`. The adapter skips an event whose `total_token_usage` repeats the previous event. Other `event_msg` records stay omitted.
+- Wrapper-level errors are lower bounds. Nested function or MCP calls can produce different counts. The adapter omits native Codex timing. `session_meta.cli_version` becomes `raw_entries.version` on every entry of the session. The first `session_meta` of a sub-agent rollout names its parent in `source.subagent.thread_spawn.parent_thread_id`; that id becomes `raw_entries.parentSessionId` and `sessions.parent_session_id`. Each `event_msg` `token_count` event with a non-null `last_token_usage` becomes one `raw_entries` row of `type` `token_usage`. Only `model_turns` reads that row; `tool_uses`, `stop_events`, and `sessions.entry_count` do not. The row takes its model from the latest `turn_context`, or `unknown` before the first one, and its tokens from `last_token_usage`. The adapter skips an event whose `total_token_usage` repeats the previous event.
+- User prompts come from `event_msg` `item_completed` items of type `UserMessage`. Each becomes a `user` row with its text blocks and reaches `user_turns` when its text is not blank. `response_item` user messages (AGENTS.md preambles and injected context) stay omitted. Rollouts without `UserMessage` items (older Codex versions) yield no prompts.
+- Any `session_meta.source.subagent` value sets `raw_entries.isSidechain` true on every entry of the rollout, as Cursor does for sub-agent files. Such a rollout reaches neither `user_turns` nor `interrupt_events`: an agent writes its prompts. This covers `thread_spawn` children and `other` or `review` runs, such as `guardian`. Only `thread_spawn` names a parent, so the other kinds keep a NULL `sessions.parent_session_id`. Their rows stay in `raw_entries` and `sessions`.
+- `event_msg` `task_complete` becomes an `assistant` row with subtype `task_complete` and `last_agent_message` as its text block. It feeds `user_turns.prev_assistant_text` only.
+- `event_msg` `turn_aborted` becomes a `system` row with subtype `turn_aborted` and the reason in `stopReason`. It resets `user_turns.prev_assistant_text` to NULL. Reason `interrupted` reaches `interrupt_events`.
+- Other `event_msg` records stay omitted.
 - Codex `is_error` values are adapter-derived. `explicit_error_flag_pct` does not establish source evidence for inferred wrapper, status, or exit-code signals.
 
 ### omp and pi
@@ -82,7 +92,9 @@ timestamp, title}`) supplies sessionId + cwd for every row. `message` entries:
   so `bash_cmd` extracts from `input.command`); `text`/`thinking` blocks pass
   through;
 - role `toolResult` → a user `tool_result` block, joined on `toolCallId`;
-- role `user` passes through;
+- role `user` passes through with its `attribution`, if present. A user row
+  with string content or at least one text block reaches `user_turns`, unless
+  its `attribution` is `agent` (the agent wrote it, for example a steering message);
 - assistant `model`, `usage`, `duration`, `ttft`, `contextSnapshot.promptTokens`,
   `stopReason`, and `errorMessage` map to Claude key names and feed
   `model_turns`. `stopReason` `error` and `aborted` also land in `stop_events`.

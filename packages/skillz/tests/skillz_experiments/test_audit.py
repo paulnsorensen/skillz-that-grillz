@@ -8,8 +8,8 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
-from skillz_experiments._codex import Codex
-from skillz_experiments._runtime import Budget
+from skillz_experiments.harness._codex import Codex
+from skillz_experiments._budget import Budget
 
 
 def audit_case(*, reviewed: bool = True) -> dict[str, object]:

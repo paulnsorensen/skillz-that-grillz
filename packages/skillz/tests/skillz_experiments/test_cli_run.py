@@ -15,10 +15,12 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
 from skillz_experiments._cli import main
-from skillz_experiments._codex import Codex
-from skillz_experiments._harness import Configuration
+from skillz_experiments.harness import Configuration
+from skillz_experiments.harness._codex import Codex
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
+from skillz_experiments._budget import Budget
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -35,7 +37,7 @@ def _executable(path: Path, body: str) -> Path:
 def test_run_accepts_only_claude_or_codex_and_launches_headless(tmp_path: Path, capsys: pytest.CaptureFixture[str],
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI rejects other harness names. For claude and codex this checks adapter argv, not the run path."""
-    for harness in ("command", "other"):
+    for harness in ("other",):
         code = main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "out"), "--model", "m",
                      "--harness", harness])
         captured = capsys.readouterr()
@@ -80,17 +82,15 @@ def test_run_accepts_only_claude_or_codex_and_launches_headless(tmp_path: Path, 
 
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     """A fake provider: the seed scores 0 and any proposal that says `improved` scores 1."""
 
     def __init__(self, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.budget, self.checkpoint, self.lock = budget, checkpoint, threading.Lock()
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)

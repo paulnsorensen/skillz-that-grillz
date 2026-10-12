@@ -23,18 +23,22 @@ import wedge._build as wedge_build
 from wedge._build import SiteLayer, build_many
 from wedge._config import load_targets, parse_targets
 
-from skillz_experiments import _wedge_targets, _workflow
+from skillz_experiments import _wedge_targets
+from skillz_experiments.run import _plan, _session
 from skillz_experiments._candidate import NEW_CLI, TEXT_FILE_LIMIT, Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import load_contract
-from skillz_experiments._gate import DEFAULT_STATISTICS
+from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._new_cli import VALUE_LIMIT, expand_files, unused_helpers
 from skillz_experiments._records import read, write
-from skillz_experiments._runtime import Budget
-from skillz_experiments._search import Edit
+from skillz_experiments._budget import Budget
+from skillz_experiments.search import Edit
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments._wedge_targets import BuildFailed, plan_targets, settle
-from skillz_experiments._workflow import Stop, export, run
+from skillz_experiments.run import Stop, export, run
+from typing_extensions import override
+from fake_provider import FakeProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -130,15 +134,13 @@ class Recorder:
 
 
 @final
-class _Provider:
+class _Provider(FakeProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         self.budget.claim(holdout=holdout)
@@ -164,8 +166,8 @@ def prepared(w: World, tmp_path: Path, write_draft: Callable[..., list[str]],
     return out
 
 
-def open_session(out: Path, recorder: Recorder) -> _workflow._Session:
-    return _workflow._Session(out, MODEL, "claude", recorder.factory, None, statistics=DEFAULT_STATISTICS)
+def open_session(out: Path, recorder: Recorder) -> _session.Session:
+    return _session.Session(out, MODEL, "claude", recorder.factory, None, statistics=DEFAULT_STATISTICS)
 
 
 def evaluate(out: Path, recorder: Recorder, value: str) -> tuple[float, dict[str, object]]:
@@ -452,12 +454,12 @@ PROSE_HEAD = ("Improve only the supplied skill text components. Preserve the hel
 
 
 def test_the_prose_prompt_is_unchanged_byte_for_byte() -> None:
-    prompt, _ = _workflow._reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    prompt, _ = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
     assert prompt == PROSE_HEAD + '\n{"candidate": {"SKILL.md": "x"}, "feedback": {}}'
 
 
 def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
-    prompt, _ = _workflow._reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    prompt, _ = reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
     head = prompt.split("\n", 1)[0]
     assert ("The fromargs package is the default for a wedged Python source. Use one parser. "
             "Print JSON errors on stderr. "
@@ -469,9 +471,11 @@ def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
 
 
 def test_the_new_cli_sentence_appears_only_when_the_component_is_offered() -> None:
-    offered, _ = _workflow._reflection_request("prose+cli", {NEW_CLI: ""}, {}, ["SKILL.md", NEW_CLI])
+    offered, _ = reflection_request(
+        "prose+cli", {NEW_CLI: ""}, {}, ["SKILL.md", NEW_CLI])
     assert f"The {NEW_CLI} component adds one new fromargs wedge target as TOML with the keys name and module." in offered
-    absent, _ = _workflow._reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    absent, _ = reflection_request(
+        "prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
     assert "component adds one new" not in absent
 
 
@@ -717,18 +721,16 @@ class Preferring:
 
 
 @final
-class _Preferred:
+class _Preferred(FakeProvider):
     def __init__(self, state: Preferring, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.state, self.budget, self.checkpoint = state, budget, checkpoint
 
+    @override
     def preflight(self) -> dict[str, object]:
         if self.budget.calls == 0:
-            for _ in range(_workflow.PREFLIGHT_CALLS):
+            for _ in range(_plan.PREFLIGHT_CALLS):
                 self.budget.claim()
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         for _ in range(self.state.contract.calls(case.kind)):

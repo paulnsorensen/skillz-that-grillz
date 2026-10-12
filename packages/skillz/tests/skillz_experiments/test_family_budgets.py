@@ -16,10 +16,12 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import parse
-from skillz_experiments._gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
+from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read
-from skillz_experiments._runtime import Budget
-from skillz_experiments._workflow import Stop, export, resolve_statistics, run
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, export, run
+from skillz_experiments.run._resume import resolve_statistics
+from fake_provider import FakeProvider
 
 MODEL = "local-test"
 
@@ -136,7 +138,7 @@ def test_defaults_keep_every_verdict_and_the_pinned_simulation() -> None:
         assert verdict(values).skipped_families == ()
     assert simulate() == simulate(trials=2000, cases=10)
     result = simulate()
-    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0365, 0.8115)
+    assert (result.trials, result.cases, result.rate_2se, result.rate_one_holdout) == (2000, 10, 0.0195, 0.8115)
 
 
 # --- the Statistics record -------------------------------------------------------------------------------
@@ -144,7 +146,8 @@ def test_defaults_keep_every_verdict_and_the_pinned_simulation() -> None:
 def test_the_frozen_map_holds_both_keys_and_round_trips() -> None:
     base = Statistics()
     assert base.data() == {"min_gain": 0.0, "min_lower_bound": 0.0, "family_budget": None, "family_budgets": {},
-                           "max_token_increase_per_gain": None, "min_token_saving": None}
+                           "max_token_increase_per_gain": None, "min_token_saving": None,
+                           "min_coverage": 0.6}
     full = Statistics(family_budget=0.25, family_budgets={"b": 1.0, "a": 2.0})
     assert Statistics.parse(cast(object, json.loads(json.dumps(full.data())))) == full
     assert list(cast(dict[str, float], full.data()["family_budgets"])) == ["a", "b"]
@@ -158,7 +161,7 @@ def test_a_record_without_the_family_keys_is_refused() -> None:
 
 def test_the_flag_registry_lists_the_scalar_flag_but_not_the_map() -> None:
     assert Statistics.flags() == ("min_gain", "min_lower_bound", "family_budget", "max_token_increase_per_gain",
-                                  "min_token_saving")
+                                  "min_token_saving", "min_coverage")
     assert "family_budgets" in Statistics.names()
 
 
@@ -216,17 +219,15 @@ def test_a_contract_without_the_new_keys_hashes_as_before() -> None:
 REGRESSING = ("f0", "f1")
 
 
-class _Provider:
+class _Provider(FakeProvider):
     """A fake provider. `improved` always wins the search. On the holdout, families f0 and f1 reverse that."""
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
         pass
 
+    @override
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
-
-    def close(self) -> None:
-        pass
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
         improved = "improved" in candidate.files["SKILL.md"]
@@ -398,7 +399,7 @@ def test_a_field_check_in_metadata_is_the_only_edit_a_range_flag_needs() -> None
 
 
 def test_run_checks_each_flag_through_the_field_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("skillz_experiments._workflow.Statistics", _Ranged)
+    monkeypatch.setattr("skillz_experiments.run._run.Statistics", _Ranged)
     with pytest.raises(ValueError, match="--ratio must be a number above 0 and below 1"):
         _ = run(tmp_path, tmp_path / "run", MODEL, statistics={"ratio": 1.0})
 

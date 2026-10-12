@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from skillz_experiments._discovery import valid_listing
+from skillz_experiments.harness._discovery import valid_listing
 
 
 def test_native_listing_matches_the_contract_skill_name(tmp_path: Path) -> None:

@@ -6,8 +6,8 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._runtime import MAX_CONCURRENT_CALLS
-from skillz_experiments._search import Edit, search
+from skillz_experiments._budget import MAX_CONCURRENT_CALLS
+from skillz_experiments.search import Edit, search
 
 
 def test_search_runs_several_pareto_iterations_and_picks_by_validation_mean() -> None:

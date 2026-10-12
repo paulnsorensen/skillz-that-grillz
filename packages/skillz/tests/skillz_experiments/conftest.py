@@ -4,21 +4,28 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
-from collections.abc import Callable, Iterator
-from typing import cast
+from collections.abc import Callable, Iterator, Sequence
+from typing import NamedTuple, cast
 
 import pytest
 
-from skillz_experiments import _claude, _workflow
-from skillz_experiments._harness import Configuration
+from skillz_experiments._budget import Budget
+from skillz_experiments.harness._command import Command
+from skillz_experiments.harness._roles import Role
+from skillz_experiments.harness._transport import Transport
+from skillz_experiments.run import _run
+from skillz_experiments.harness import Configuration
+from skillz_experiments.harness._claude import _options, _sandbox, _transport
 from skillz_experiments._intake import DRAFT_NAME
-from skillz_experiments._search import Edit
-from skillz_experiments._workflow import Factory, Stop, run
+from skillz_experiments.search import Edit
+from skillz_experiments.run import Stop, run
+from skillz_experiments.run._session import Factory
 
 FIXTURES = Path(__file__).parent / "fixtures"
-_REAL_NESTED_USERNS_BLOCKED = _claude.nested_userns_blocked
+_REAL_NESTED_USERNS_BLOCKED = _sandbox.nested_userns_blocked
 
 
 @pytest.fixture(scope="session")
@@ -46,15 +53,15 @@ def harness_on_path(harness_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def nested_userns_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Report that the host allows a nested user namespace, so the sandbox settings do not depend on the host's AppArmor.
 
-    A test of the blocked case patches `_claude.nested_userns_blocked` itself.
+    A test of the blocked case patches `_sandbox.nested_userns_blocked` itself.
     """
-    monkeypatch.setattr(_claude, "nested_userns_blocked", lambda: False)
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: False)
 
 
 @pytest.fixture
 def real_nested_userns_probe(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], bool]]:
     """Restore the real, cached `nested_userns_blocked` for a test of the probe itself, and clear its cache around the test."""
-    monkeypatch.setattr(_claude, "nested_userns_blocked", _REAL_NESTED_USERNS_BLOCKED)
+    monkeypatch.setattr(_transport, "nested_userns_blocked", _REAL_NESTED_USERNS_BLOCKED)
     cache_clear = cast(Callable[[], None], getattr(_REAL_NESTED_USERNS_BLOCKED, "cache_clear"))
     cache_clear()
     yield _REAL_NESTED_USERNS_BLOCKED
@@ -67,9 +74,9 @@ def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The doctor tests call `_doctor.doctor` directly.
     """
-    def ready(harness: str, isolation: str = "claude") -> dict[str, object]:
-        return {"ok": True, "harness": harness, "isolation": isolation, "checks": [], "live_calls": 0}
-    monkeypatch.setattr(_workflow, "doctor", ready)
+    def ready(selections: Sequence[tuple[str, str | None]]) -> dict[str, object]:
+        return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
+    monkeypatch.setattr(_run, "host_report", ready)
 
 @pytest.fixture
 def umask_022() -> Iterator[None]:
@@ -103,8 +110,8 @@ def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(credential.parents[1]))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     monkeypatch.setattr(tempfile, "tempdir", str(scratch))
-    monkeypatch.setattr(_claude, "SANDBOX_HELPERS", ())
-    monkeypatch.setattr(_claude, "SOCKET_DENY", ())  # pytest roots live under /tmp, which production denies
+    monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ())
+    monkeypatch.setattr(_options, "SOCKET_DENY", ())  # pytest roots live under /tmp, which production denies
     return credential
 
 
@@ -183,3 +190,41 @@ def approvals() -> Callable[..., tuple[str, int]]:
 def approved_run() -> Callable[..., dict[str, object]]:
     """Hand the `run` test helper `approved_run` to a test."""
     return _approved_run
+
+
+class JudgedRun(NamedTuple):
+    """An intake target whose two approvals are given and whose built-in roles all run through the command wrapper."""
+
+    target: Path
+    out: Path
+    case_hash: str
+    calls: int
+    settings: Path
+
+    @property
+    def log(self) -> Path:
+        return self.settings.parent / "requests.jsonl"
+
+    def start(self, *, live: bool = True, judge_model: str | None = None) -> dict[str, object]:
+        """Call `run` with the approvals. The wrapper logs the model of every request."""
+        return run(self.target, self.out, "task-model", live=live, approve_cases=self.case_hash,
+                   approve_budget=self.calls, judge_model=judge_model)
+
+
+@pytest.fixture
+def judged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> JudgedRun:
+    """Hand a `JudgedRun` to a test. Write `mode` into `settings` to change how the wrapper answers."""
+    wrapper = tmp_path / "wrapper.py"
+    _ = shutil.copyfile(FIXTURES / "command_wrapper.py", wrapper)
+    settings = tmp_path / "settings.json"
+    _ = settings.write_text(json.dumps({"mode": "normal", "log": str(tmp_path / "requests.jsonl")}))
+
+    def create(self: Role, budget: Budget, checkpoint: Callable[[], None], *_unused: object) -> Transport:
+        return Command((sys.executable, str(wrapper), str(settings)), self.model, budget, checkpoint)
+
+    monkeypatch.setattr(Role, "create", create)
+    target, out = _make_target(tmp_path), tmp_path / "run"
+    (target / "evals/autoimprove.json").unlink()
+    _ = _write_draft(out)
+    case_hash, calls = _approvals(target, out, "task-model")
+    return JudgedRun(target, out, case_hash, calls, settings)
