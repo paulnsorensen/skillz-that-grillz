@@ -33,7 +33,7 @@ def _upload_count(store: Path) -> int:
     return len(list(assets_dir.iterdir()))
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_publish_then_republish_skips_without_a_second_upload(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -97,7 +97,7 @@ def _init_git_repo_with_second_commit(skill_dir: Path) -> tuple[str, str]:
     return first, second
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_publish_refuses_a_target_the_branch_does_not_contain(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -115,7 +115,7 @@ def test_publish_refuses_a_target_the_branch_does_not_contain(
     assert _upload_count(fake_gh["store"]) == 0
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 @pytest.mark.parametrize("tip_last", [True, False])
 def test_publish_accepts_the_branch_tip_or_an_ancestor(
     tmp_path: Path,
@@ -133,7 +133,7 @@ def test_publish_accepts_the_branch_tip_or_an_ancestor(
     assert result[FIXTURE_NAME]["status"] == "published"
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_publish_accepts_a_shallow_checkout_of_the_target(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -151,7 +151,7 @@ def test_publish_accepts_a_shallow_checkout_of_the_target(
     assert result[FIXTURE_NAME]["status"] == "published"
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 @pytest.mark.parametrize("use_branch_name", [False, True])
 def test_publish_refuses_a_target_that_is_not_the_checkout_head(
     tmp_path: Path,
@@ -169,7 +169,7 @@ def test_publish_refuses_a_target_that_is_not_the_checkout_head(
     assert not (fake_gh["store"] / "calls.log").exists(), "refused before any gh call"
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_publish_cmd_refuses_a_target_the_branch_does_not_contain(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -185,14 +185,14 @@ def test_publish_cmd_refuses_a_target_the_branch_does_not_contain(
     assert _upload_count(fake_gh["store"]) == 0
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_no_wedged_skills_makes_no_gh_calls(fake_gh: FakeGh) -> None:
     # main has no wedged skills yet; a merge must not create an empty release.
     assert publish([], repo=fake_gh["repo"], target="deadbeef") == {}
     assert not (fake_gh["store"] / "calls.log").exists()
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_stale_lock_fails_before_any_upload(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -212,7 +212,7 @@ def test_stale_lock_fails_before_any_upload(
 
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_config_repository_mismatch_fails_before_gh(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -232,7 +232,7 @@ def test_config_repository_mismatch_fails_before_gh(
 
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 @pytest.mark.parametrize("repo", ['"   "', '"owner/"', '"/repo"'])
 def test_invalid_config_repository_is_rejected_before_gh(
     tmp_path: Path,
@@ -252,7 +252,7 @@ def test_invalid_config_repository_is_rejected_before_gh(
     assert not (fake_gh["store"] / "calls.log").exists()
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_lock_repository_mismatch_fails_before_gh(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -268,7 +268,7 @@ def test_lock_repository_mismatch_fails_before_gh(
         _ = publish([skill], repo=fake_gh["repo"], target="deadbeef")
 
     assert not (fake_gh["store"] / "calls.log").exists()
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_conflicting_existing_asset_fails_on_digest(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -290,7 +290,7 @@ def test_conflicting_existing_asset_fails_on_digest(
     assert "digest" in result[FIXTURE_NAME]["reason"]
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_lock_for_another_repo_fails_without_an_upload(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -302,7 +302,7 @@ def test_lock_for_another_repo_fails_without_an_upload(
     assert _upload_count(fake_gh["store"]) == 0
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_bad_layout_is_a_failed_result_not_a_crash(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -319,7 +319,7 @@ def test_bad_layout_is_a_failed_result_not_a_crash(
     assert _upload_count(fake_gh["store"]) == 0
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_a_racing_identical_upload_is_treated_as_skipped(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -349,7 +349,7 @@ def test_a_racing_identical_upload_is_treated_as_skipped(
 
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_duplicate_names_fail_before_gh(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -362,7 +362,7 @@ def test_duplicate_names_fail_before_gh(
         _ = publish([skill_a, skill_b], repo=fake_gh["repo"], target="deadbeef")
 
     assert not (fake_gh["store"] / "calls.log").exists()
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_ensure_release_tolerates_a_create_race(
     fake_gh: FakeGh, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -395,7 +395,7 @@ def _publish_subprocess_script(skill: Path, repo: str) -> str:
     )
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_two_concurrent_publishes_yield_exactly_one_upload(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -425,7 +425,7 @@ def test_two_concurrent_publishes_yield_exactly_one_upload(
     assert _upload_count(fake_gh["store"]) == 1
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_release_create_uses_full_publish_flags(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -455,7 +455,7 @@ def test_release_create_uses_full_publish_flags(
 
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_malformed_config_does_not_block_later_valid_skill(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
 ) -> None:
@@ -472,7 +472,7 @@ def test_malformed_config_does_not_block_later_valid_skill(
     assert result["cheese-cave-0"]["status"] == "failed"
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_malformed_lock_does_not_block_later_valid_skill(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
 ) -> None:
@@ -492,7 +492,7 @@ def test_malformed_lock_does_not_block_later_valid_skill(
     assert "invalid fields" in result["broken-skill"]["reason"]
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_direct_bundle_is_skipped_without_gh_calls(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
 ) -> None:
@@ -511,7 +511,7 @@ def test_direct_bundle_is_skipped_without_gh_calls(
     assert not (fake_gh["store"] / "calls.log").exists()
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_missing_lock_without_a_bundle_still_fails(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
 ) -> None:
@@ -524,7 +524,7 @@ def test_missing_lock_without_a_bundle_still_fails(
     assert not (fake_gh["store"] / "calls.log").exists()
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_all_malformed_locks_make_no_gh_calls(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], fake_gh: FakeGh
 ) -> None:
@@ -543,7 +543,7 @@ def test_all_malformed_locks_make_no_gh_calls(
     assert "invalid fields" in result["broken-skill"]["reason"]
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_asset_from_another_zlib_build_counts_as_published(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -563,7 +563,7 @@ def test_asset_from_another_zlib_build_counts_as_published(
     assert _upload_count(fake_gh["store"]) == 1
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_published_asset_is_not_trusted_when_this_host_builds_other_content(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -611,7 +611,7 @@ def _rename_skill(skill_dir: Path, new_name: str) -> None:
     _ = lock_path.rename(skill_dir / "scripts" / f"{new_name}.wedge.json")
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_two_skills_one_stale_the_other_still_publishes(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],

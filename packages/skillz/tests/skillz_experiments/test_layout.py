@@ -47,7 +47,7 @@ def _slice_modules(imported: set[str], slice_name: str) -> set[str]:
     return {name for name in imported if name == root or name.startswith(root + ".")}
 
 
-@pytest.mark.ac("AC-1")
+@pytest.mark.ac("gh-223:AC-1")
 def test_each_slice_has_a_facade_and_the_flat_modules_are_gone() -> None:
     for slice_name in SLICES:
         assert (PACKAGE / slice_name / "__init__.py").is_file(), slice_name
@@ -55,7 +55,7 @@ def test_each_slice_has_a_facade_and_the_flat_modules_are_gone() -> None:
     assert present == []
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("gh-223:AC-3")
 def test_search_and_gate_import_neither_run_nor_harness() -> None:
     checked = [path for path in _modules() if _slice_of(path) in LEAF_SLICES]
     assert checked
@@ -65,7 +65,7 @@ def test_search_and_gate_import_neither_run_nor_harness() -> None:
     assert broken == []
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("gh-223:AC-3")
 def test_importing_search_and_gate_loads_neither_run_nor_harness() -> None:
     program = ("import sys, skillz_experiments.search, skillz_experiments.gate\n"
                "print([name for name in sys.modules if name.startswith(('skillz_experiments.run', 'skillz_experiments.harness'))])")
@@ -99,7 +99,7 @@ def _private_chains(tree: ast.AST, home: str | None) -> list[str]:
     return found
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("gh-223:AC-4")
 def test_modules_outside_a_slice_import_it_only_through_its_facade() -> None:
     broken: list[str] = []
     for path in _modules():
@@ -115,21 +115,21 @@ def test_modules_outside_a_slice_import_it_only_through_its_facade() -> None:
     assert broken == []
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("gh-223:AC-4")
 def test_an_attribute_chain_into_a_private_submodule_is_caught() -> None:
     tree = ast.parse("from skillz_experiments import harness\nharness._nono.x\nharness.Facade\n")
     assert _private_chains(tree, "run") == ["harness._nono"]
     assert _private_chains(tree, "harness") == []
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("gh-223:AC-4")
 def test_an_aliased_module_import_into_a_private_submodule_is_caught() -> None:
     tree = ast.parse("import skillz_experiments.harness as h\nh._nono.x\nh.Facade\n")
     assert _private_chains(tree, "run") == ["harness._nono"]
     assert _private_chains(tree, "harness") == []
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("gh-223:AC-4")
 def test_a_full_attribute_chain_into_a_private_submodule_is_caught() -> None:
     tree = ast.parse("import skillz_experiments.harness\nskillz_experiments.harness._nono.x\nskillz_experiments.harness.Facade\n")
     assert _private_chains(tree, "run") == ["harness._nono"]
@@ -142,7 +142,7 @@ def test_the_cli_names_no_gemini_and_imports_only_the_wrapper_barrel() -> None:
     assert wrapper <= {f"{PREFIX}.wrapper", f"{PREFIX}.wrapper.register"}
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("gh-223:AC-4")
 def test_a_private_chain_through_the_wrapper_barrel_is_caught() -> None:
     from_import = ast.parse("from skillz_experiments import wrapper\nwrapper._gemini.IMAGE\n")
     full_chain = ast.parse("import skillz_experiments.wrapper\nskillz_experiments.wrapper._commands.respond\n")

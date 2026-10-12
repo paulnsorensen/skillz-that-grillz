@@ -13,12 +13,12 @@ from wedge._lock import check, launcher_path
 FIXTURE_NAME = "cheese-cave"
 
 
-@pytest.mark.ac("AC-W5")
+@pytest.mark.ac("wedge-skill-packaging:AC-W5")
 def test_fresh_fixture_passes(fixture_skill_dir: Path) -> None:
     assert check([fixture_skill_dir]) == []
 
 
-@pytest.mark.ac("AC-W5")
+@pytest.mark.ac("wedge-skill-packaging:AC-W5")
 def test_stale_cli_source_fails_with_one_issue(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]
 ) -> None:
@@ -32,7 +32,7 @@ def test_stale_cli_source_fails_with_one_issue(
     assert "stale" in issues[0].reason
 
 
-@pytest.mark.ac("AC-W5")
+@pytest.mark.ac("wedge-skill-packaging:AC-W5")
 def test_hand_edited_launcher_fails(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]
 ) -> None:
@@ -45,7 +45,7 @@ def test_hand_edited_launcher_fails(
     assert any("launcher" in issue.reason for issue in issues)
 
 
-@pytest.mark.ac("AC-W5")
+@pytest.mark.ac("wedge-skill-packaging:AC-W5")
 @pytest.mark.parametrize("mode", [0o644, 0o001])
 def test_non_executable_launcher_fails(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path], mode: int
@@ -59,7 +59,7 @@ def test_non_executable_launcher_fails(
     assert any("not executable" in issue.reason for issue in issues)
 
 
-@pytest.mark.ac("AC-W5")
+@pytest.mark.ac("wedge-skill-packaging:AC-W5")
 @pytest.mark.parametrize(
     "field,value",
     [("name", "'../unsafe'"), ("entry", "1"), ("source", "false"), ("repo", "42")],
@@ -92,7 +92,7 @@ def test_malformed_config_fields_are_rejected(
     assert "must be" in issues[0].reason or "safe" in issues[0].reason
 
 
-@pytest.mark.ac("AC-W5")
+@pytest.mark.ac("wedge-skill-packaging:AC-W5")
 @pytest.mark.parametrize(
     "field,value",
     [

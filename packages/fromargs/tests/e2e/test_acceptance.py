@@ -6,7 +6,7 @@ The only exceptions are AC-9's import-surface check (which imports
 ``fromargs`` directly) and AC-8's registration check (which drives the
 fixture through ``FROMARGS_E2E_REGISTER_BAD``, still a subprocess).
 
-Each test is marked ``@pytest.mark.ac("AC-n")`` so ``mutate.py`` can select,
+Each test is marked ``@pytest.mark.ac("fromargs-cli-library:AC-n")`` so ``mutate.py`` can select,
 per acceptance criterion, exactly the tests that must catch a broken build.
 
 Acceptance criteria:
@@ -114,7 +114,7 @@ def run_cli(
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-1")
+@pytest.mark.ac("fromargs-cli-library:AC-1")
 def test_ac01_top_level_command_runs_once(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "ok"])
 
@@ -123,7 +123,7 @@ def test_ac01_top_level_command_runs_once(tmp_path: Path) -> None:
     assert calls[0]["command"] == "widget"
 
 
-@pytest.mark.ac("AC-1")
+@pytest.mark.ac("fromargs-cli-library:AC-1")
 def test_ac01_group_command_runs_once(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["crate", "show", "3"])
 
@@ -137,7 +137,7 @@ def test_ac01_group_command_runs_once(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-2")
+@pytest.mark.ac("fromargs-cli-library:AC-2")
 def test_ac02_int_result_prints_as_one_json_document(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "7"])
 
@@ -146,7 +146,7 @@ def test_ac02_int_result_prints_as_one_json_document(tmp_path: Path) -> None:
     assert len(calls) == 1
 
 
-@pytest.mark.ac("AC-2")
+@pytest.mark.ac("fromargs-cli-library:AC-2")
 def test_ac02_dict_result_prints_as_one_json_document(tmp_path: Path) -> None:
     result, _ = run_cli(tmp_path, ["crate", "show", "9"])
 
@@ -160,7 +160,7 @@ def test_ac02_dict_result_prints_as_one_json_document(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("fromargs-cli-library:AC-3")
 def test_ac03_none_result_prints_nothing_and_exits_zero(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "none"])
 
@@ -174,7 +174,7 @@ def test_ac03_none_result_prints_nothing_and_exits_zero(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("fromargs-cli-library:AC-4")
 def test_ac04_cli_error_exits_two_as_one_json_line(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["fail", "plain"])
 
@@ -184,7 +184,7 @@ def test_ac04_cli_error_exits_two_as_one_json_line(tmp_path: Path) -> None:
     assert calls == [{"command": "fail", "args": {"kind": "plain"}}]
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("fromargs-cli-library:AC-4")
 def test_ac04_contract_error_exits_three_as_one_json_line(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["fail", "contract"])
 
@@ -196,7 +196,7 @@ def test_ac04_contract_error_exits_three_as_one_json_line(tmp_path: Path) -> Non
     assert calls == [{"command": "fail", "args": {"kind": "contract"}}]
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("fromargs-cli-library:AC-4")
 def test_ac04_parse_failure_exits_two_as_one_json_line(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widgt"])
 
@@ -215,7 +215,7 @@ def test_ac04_parse_failure_exits_two_as_one_json_line(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-5")
+@pytest.mark.ac("fromargs-cli-library:AC-5")
 @pytest.mark.parametrize(
     "argv",
     [
@@ -246,7 +246,7 @@ def test_ac05_json_flag_is_a_noop_anywhere_before_the_marker(
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-6")
+@pytest.mark.ac("fromargs-cli-library:AC-6")
 @pytest.mark.parametrize(
     "argv", [["--full", "ranked"], ["ranked", "--full"]], ids=["leading", "trailing"]
 )
@@ -260,7 +260,7 @@ def test_ac06_full_flag_anywhere_turns_off_truncation(
     assert json.loads(result.stdout) == [0, 1, 2, 3, 4]
 
 
-@pytest.mark.ac("AC-6")
+@pytest.mark.ac("fromargs-cli-library:AC-6")
 def test_ac06_full_revealed_by_a_quote_split_is_honored(tmp_path: Path) -> None:
     result, _ = run_cli(tmp_path, ["ranked", "--top", "5 --full"])
 
@@ -274,7 +274,7 @@ def test_ac06_full_revealed_by_a_quote_split_is_honored(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-7")
+@pytest.mark.ac("fromargs-cli-library:AC-7")
 def test_ac07_result_longer_than_limit_is_truncated_with_a_note(tmp_path: Path) -> None:
     result, _ = run_cli(tmp_path, ["ranked"])
 
@@ -283,7 +283,7 @@ def test_ac07_result_longer_than_limit_is_truncated_with_a_note(tmp_path: Path) 
     assert json.loads(result.stdout) == [0, 1, 2]
 
 
-@pytest.mark.ac("AC-7")
+@pytest.mark.ac("fromargs-cli-library:AC-7")
 def test_ac07_full_prints_the_whole_result_with_no_note(tmp_path: Path) -> None:
     result, _ = run_cli(tmp_path, ["ranked", "--full"])
 
@@ -297,7 +297,7 @@ def test_ac07_full_prints_the_whole_result_with_no_note(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-8")
+@pytest.mark.ac("fromargs-cli-library:AC-8")
 @pytest.mark.parametrize("reserved", ["json", "full"])
 def test_ac08_reserved_parameter_raises_at_registration(
     tmp_path: Path, reserved: str
@@ -320,7 +320,7 @@ def test_ac08_reserved_parameter_raises_at_registration(
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-9")
+@pytest.mark.ac("fromargs-cli-library:AC-9")
 def test_ac09_public_surface_is_exactly_five_names() -> None:
     assert set(fromargs.__all__) == {"App", "CliError", "contract_error", "Group", "Parameter"}
     assert len(fromargs.__all__) == 5
@@ -336,7 +336,7 @@ def test_ac09_public_surface_is_exactly_five_names() -> None:
 _NO_INPUT_CHANNEL_FLAGS = ("--json-input", "--stdin", "--payload")
 
 
-@pytest.mark.ac("AC-10")
+@pytest.mark.ac("fromargs-cli-library:AC-10")
 def test_ac10_help_advertises_no_json_input_or_stdin_flag(tmp_path: Path) -> None:
     root_help, root_calls = run_cli(tmp_path, ["--help"])
     widget_help, widget_calls = run_cli(tmp_path, ["widget", "--help"])
@@ -350,7 +350,7 @@ def test_ac10_help_advertises_no_json_input_or_stdin_flag(tmp_path: Path) -> Non
     assert widget_calls == []
 
 
-@pytest.mark.ac("AC-10")
+@pytest.mark.ac("fromargs-cli-library:AC-10")
 def test_ac10_stdin_with_invalid_payload_does_not_change_behavior(
     tmp_path: Path,
 ) -> None:
@@ -393,7 +393,7 @@ def test_ac10_stdin_with_invalid_payload_does_not_change_behavior(
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-11")
+@pytest.mark.ac("fromargs-cli-library:AC-11")
 def test_ac11_single_verified_candidate_is_split_and_noted(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "ok", "--count", "2 --dry-run"])
 
@@ -408,7 +408,7 @@ def test_ac11_single_verified_candidate_is_split_and_noted(tmp_path: Path) -> No
     assert args["dry_run"] is True
 
 
-@pytest.mark.ac("AC-11")
+@pytest.mark.ac("fromargs-cli-library:AC-11")
 def test_ac11_zero_candidates_keeps_argv_and_fails_normally(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "--count", "two --dry-run"])
 
@@ -417,7 +417,7 @@ def test_ac11_zero_candidates_keeps_argv_and_fails_normally(tmp_path: Path) -> N
     assert calls == []
 
 
-@pytest.mark.ac("AC-11")
+@pytest.mark.ac("fromargs-cli-library:AC-11")
 def test_ac11_several_candidates_keeps_argv_and_fails_normally(tmp_path: Path) -> None:
     argv = [
         "ambiguous",
@@ -433,7 +433,7 @@ def test_ac11_several_candidates_keeps_argv_and_fails_normally(tmp_path: Path) -
     assert calls == []
 
 
-@pytest.mark.ac("AC-11")
+@pytest.mark.ac("fromargs-cli-library:AC-11")
 def test_ac11_plain_str_option_value_is_never_split(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["guarded", "--label", "a --count 2"])
 
@@ -442,7 +442,7 @@ def test_ac11_plain_str_option_value_is_never_split(tmp_path: Path) -> None:
     assert calls == []
 
 
-@pytest.mark.ac("AC-11")
+@pytest.mark.ac("fromargs-cli-library:AC-11")
 def test_ac11_token_after_double_dash_is_never_split(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["guarded", "--", "--count 2"])
 
@@ -456,7 +456,7 @@ def test_ac11_token_after_double_dash_is_never_split(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-12")
+@pytest.mark.ac("fromargs-cli-library:AC-12")
 def test_ac12_handler_runs_exactly_once_after_a_healed_split(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "ok", "--count", "2 --dry-run"])
 
@@ -469,7 +469,7 @@ def test_ac12_handler_runs_exactly_once_after_a_healed_split(tmp_path: Path) -> 
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-13")
+@pytest.mark.ac("fromargs-cli-library:AC-13")
 def test_ac13_unknown_command_suggests_the_closest_match(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widgt"])
 
@@ -479,7 +479,7 @@ def test_ac13_unknown_command_suggests_the_closest_match(tmp_path: Path) -> None
     assert calls == []
 
 
-@pytest.mark.ac("AC-13")
+@pytest.mark.ac("fromargs-cli-library:AC-13")
 def test_ac13_near_miss_option_suggests_the_closest_match(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "ok", "--max_cnt", "3"])
 
@@ -493,7 +493,7 @@ def test_ac13_near_miss_option_suggests_the_closest_match(tmp_path: Path) -> Non
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-14")
+@pytest.mark.ac("fromargs-cli-library:AC-14")
 def test_ac14_underscore_flag_binds_max_count(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["widget", "ok", "--max_count", "3"])
 
@@ -508,7 +508,7 @@ def test_ac14_underscore_flag_binds_max_count(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-15")
+@pytest.mark.ac("fromargs-cli-library:AC-15")
 def test_ac15_version_resolves_from_the_calling_module(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["--version"])
 
@@ -522,7 +522,7 @@ def test_ac15_version_resolves_from_the_calling_module(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-16")
+@pytest.mark.ac("fromargs-cli-library:AC-16")
 def test_ac16_default_handler_runs_once_when_the_group_gets_no_subcommand(
     tmp_path: Path,
 ) -> None:
@@ -533,7 +533,7 @@ def test_ac16_default_handler_runs_once_when_the_group_gets_no_subcommand(
     assert calls == [{"command": "nested default", "args": {}}]
 
 
-@pytest.mark.ac("AC-16")
+@pytest.mark.ac("fromargs-cli-library:AC-16")
 def test_ac16_default_yields_to_a_named_command_in_the_group(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["nested", "ping"])
 
@@ -546,7 +546,7 @@ def test_ac16_default_yields_to_a_named_command_in_the_group(tmp_path: Path) -> 
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.ac("AC-17")
+@pytest.mark.ac("fromargs-cli-library:AC-17")
 def test_ac17_group_kwargs_reach_the_nested_cyclopts_app(tmp_path: Path) -> None:
     result, calls = run_cli(tmp_path, ["nested", "--version"])
 

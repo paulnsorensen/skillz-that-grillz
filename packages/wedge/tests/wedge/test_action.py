@@ -61,7 +61,7 @@ def _run_wedge(tmp_path: Path, uv_body: str, extra_env: dict[str, str] | None = 
     )
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_action_keeps_success_json_separate_from_uv_stderr(tmp_path: Path) -> None:
     result = _run_wedge(tmp_path, 'printf \'{"status":"ok"}\\n\'; printf \'uv startup\\n\' >&2')
 
@@ -71,7 +71,7 @@ def test_action_keeps_success_json_separate_from_uv_stderr(tmp_path: Path) -> No
     assert '{"status":"ok"}' in (tmp_path / "github-output").read_text()
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_action_preserves_failed_json_and_exit_status(tmp_path: Path) -> None:
     result = _run_wedge(tmp_path, 'printf \'{"error":"bad"}\\n\' >&2; exit 7')
 
@@ -81,7 +81,7 @@ def test_action_preserves_failed_json_and_exit_status(tmp_path: Path) -> None:
     assert '{"error":"bad"}' in (tmp_path / "github-output").read_text()
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_action_installs_gh_in_runner_temp_without_sudo(tmp_path: Path) -> None:
     commands = tmp_path / "commands"
     commands.mkdir()
@@ -121,7 +121,7 @@ def test_action_installs_gh_in_runner_temp_without_sudo(tmp_path: Path) -> None:
     assert "sudo" not in result.stderr
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 @pytest.mark.parametrize(("branch", "expect_branch_flag"), [("main", True), ("", False)])
 def test_action_wires_branch_input_to_wedge_publish(
     tmp_path: Path, branch: str, expect_branch_flag: bool
