@@ -2,10 +2,22 @@
 from __future__ import annotations
 
 import importlib
+import os
 from types import ModuleType
 from typing import cast
 
 import pytest
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip each `live` test unless `SKILLZ_LIVE=1`, so an ordinary pytest run makes no model call."""
+    del config
+    if os.environ.get("SKILLZ_LIVE") == "1":
+        return
+    skip = pytest.mark.skip(reason="live test: set SKILLZ_LIVE=1 and use `just live-smoke` to make real model calls")
+    for item in items:
+        if item.get_closest_marker("live") is not None:
+            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")

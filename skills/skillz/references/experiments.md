@@ -648,6 +648,25 @@ The runner asks for approval once. It stops with `budget-exhausted` at 1000 call
 The plan charges 30 seconds for each call. The seconds cap therefore binds first, at about 960 calls.
 A run without a journey case keeps the limits of 200 calls and 7200 seconds.
 
+## Live smoke run
+
+The repository tests fake every model call.
+The `just live-smoke HARNESS MODEL` recipe runs the real stack once from a source checkout: harness, sandbox, GEPA reflection, gate, and export.
+It runs only when `SKILLZ_LIVE=1` is set. `just build` and `just ci` never set it, and the gate removes it from each step.
+
+```sh
+SKILLZ_LIVE=1 just live-smoke codex gpt-6-luna
+```
+
+The recipe runs `self-test --preflight-only`, then one `run` of a fixture skill with 9 fixed cases and `--repeats 1`, then `export`.
+The run approves its estimate only when the estimate is at most 58 calls. The preflight gets at most 3 calls.
+The cap is therefore 61 calls. The estimate plans for at most about 30 minutes; one Codex run on Linux took about 2 minutes.
+The cost is the price of those calls on the chosen model.
+`HARNESS` is `claude` or `codex`. The recipe needs no harness configuration file.
+The test passes when the run reaches `phase == complete` and the export writes `candidate.patch`.
+It also passes when a step stops with a coded error. Any other failure fails the test.
+Each attempt appends one JSON line to `.live-smoke/runs.jsonl`: harness, model, host OS, revision, stage, verdict, code, calls, and seconds.
+Git ignores that folder.
 ## Isolation and records
 
 The built-in Codex adapter gives Codex an isolated home and an isolated configuration directory.
