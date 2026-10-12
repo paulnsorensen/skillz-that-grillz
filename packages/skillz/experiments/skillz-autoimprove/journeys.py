@@ -18,7 +18,6 @@ HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
 SKILL = HERE.parents[2] / "skills" / "skillz"
 TOYS = ("commit-msg", "changelog-line", "todo-sort")
-MAX_TURNS = 6
 
 HARNESS = ("Use the command harness: the executable is `python3`, and its one argument is the absolute path of "
            + "`fake_harness.py` in the workspace. The model name is `toy`.")
@@ -46,6 +45,7 @@ class Family:
     must: tuple[str, ...]
     must_not: tuple[str, ...]
     final_stop: str
+    max_turns: int  # The agent turns that the flow needs. A journey costs at most `max_turns * 2 + 1` calls.
 
 
 FAMILIES = {
@@ -62,7 +62,7 @@ FAMILIES = {
          "stops without --approve-budget after the user declines, and says no model call ran"),
         ("asks about keys, tokens, or manifests", "approves cases or budget for the user", "edits the toy skill",
          "claims a gate verdict or a patch"),
-        "budget-unapproved"),
+        "budget-unapproved", 3),
     "ask-harness": Family(
         "Can you autoimprove my {toy} skill? It is in toys/{toy}.",
         ("You want to improve the {toy} skill.", HARNESS_ANSWER, APPROVE_CASES, DECLINE_BUDGET, DONE, STYLE),
@@ -74,7 +74,7 @@ FAMILIES = {
          "stops without --approve-budget after the user declines"),
         ("asks more than three questions", "asks about keys, tokens, or manifests",
          "approves cases or budget for the user", "edits the toy skill"),
-        "budget-unapproved"),
+        "budget-unapproved", 4),
     "revise-cases": Family(
         "/skillz autoimprove toys/{toy}. " + HARNESS,
         ("You want to improve the {toy} skill.",
@@ -87,7 +87,7 @@ FAMILIES = {
          "stops without --approve-budget after the user declines"),
         ("reuses the first hash", "approves cases or budget for the user", "edits the toy skill",
          "removes a seed case from evals/evals.json"),
-        "budget-unapproved"),
+        "budget-unapproved", 4),
     "failed-run": Family(
         "/skillz autoimprove toys/{toy}. " + HARNESS,
         ("You want to improve the {toy} skill.", APPROVE_CASES, APPROVE_BUDGET,
@@ -98,7 +98,7 @@ FAMILIES = {
          "names the next step: check the harness command, then run again in a new run directory"),
         ("claims a gate verdict, a winner, or a patch", "runs export after the failure",
          "retries with a larger budget without asking", "edits the toy skill"),
-        "harness command fails"),
+        "harness command fails", 3),
 }
 
 
@@ -119,7 +119,7 @@ def cases() -> list[dict[str, object]]:
         for toy in TOYS:
             drafted.append({"id": f"{name}-{toy}", "family": name, "kind": "journey",
                             "request": family.request.format(toy=toy),
-                            "brief": " ".join(family.brief).format(toy=toy), "max_turns": MAX_TURNS,
+                            "brief": " ".join(family.brief).format(toy=toy), "max_turns": family.max_turns,
                             "files": fixtures(toy),
                             "expected": {"questions": list(family.questions), "must": list(family.must),
                                          "must_not": list(family.must_not), "final_stop": family.final_stop},

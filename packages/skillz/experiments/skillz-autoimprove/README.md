@@ -42,7 +42,9 @@ The shipped `skills/skillz/evals/autoimprove.json` stays unchanged.
 It prints the `run` command. Set the models, then follow the coded stops.
 The exported patch uses the same paths as `skills/skillz`.
 
-At `--repeats 2`, the estimate is 659 calls and about 20,270 seconds.
+Each family sets the agent turns that its flow needs: 3 for `named-harness` and `failed-run`, 4 for the others.
+A journey costs at most `max_turns * 2 + 1` calls: agent turns, simulator replies, and one judge call.
+At `--repeats 2`, the estimate is 411 calls and about 3.6 hours.
 `test_skillz_autoimprove_journeys.py` pins that estimate.
 
 ## Known gaps

@@ -47,12 +47,12 @@ def test_the_kit_writes_twelve_journeys_in_four_families_with_a_six_case_holdout
     assert sum(case.split == "holdout" for case in cases) == HOLDOUT_MINIMUM
 
 
-def test_the_budget_estimate_is_659_calls_at_two_repeats(tmp_path: Path) -> None:
+def test_the_budget_estimate_is_411_calls_at_two_repeats(tmp_path: Path) -> None:
     rules = contract(tmp_path)
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls) == (659, 24, 338)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls) == (411, 24, 234)
 
 
 def bash(command: str) -> dict[str, object]:
