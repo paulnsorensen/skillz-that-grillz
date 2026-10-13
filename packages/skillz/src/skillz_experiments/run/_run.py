@@ -21,6 +21,7 @@ from skillz_experiments._intake import (
     HOLDOUT_MINIMUM,
     approval_question,
     case_hash,
+    check_helper_input,
     freeze,
     intake_contract,
     load_draft,
@@ -96,6 +97,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
     drafted = load_draft(draft)
+    check_helper_input(contract, drafted)
     check_coverage(target, drafted)
     cases = split_cases(drafted, split_seed, kind)
     unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})

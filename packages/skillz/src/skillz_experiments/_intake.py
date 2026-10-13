@@ -109,6 +109,17 @@ def load_draft(path: Path) -> list[DraftCase]:
     return cases
 
 
+def check_helper_input(contract: Contract, cases: Sequence[DraftCase]) -> None:
+    """Raise `cases-invalid` when a task case omits the contract helper input from its `files`."""
+    if contract.helper is None:
+        return
+    needed = contract.helper.input
+    missing = [case.identifier for case in cases if case.kind == "task" and needed not in case.files]
+    if missing:
+        raise CodedError("cases-invalid", f"task case {', '.join(missing)}: files lacks the contract helper input {needed}; "
+                         + f"add {needed} to the files of each task case")
+
+
 def split_cases(cases: Sequence[DraftCase], seed: int, kind: str = "task") -> list[IntakeCase]:
     """Assign splits from `seed`. A family never crosses splits. Scored cases take the grading `kind`.
 
