@@ -61,9 +61,9 @@ The runner records the observed `codex --version` string as `codex_version` in `
 A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
-The `doctor` runs `claude --version` with `PATH=/usr/bin:/bin`, not the environment of the run. The `claude` row fails when the executable is not on `PATH`. When an executable is on `PATH`, the row passes whatever `--version` returns, so it does not detect a broken version-manager shim.
+The `doctor` runs `claude --version` with the environment of the run, as `_executable_environment` builds it. The `claude` row fails when the executable is not on `PATH`. It also fails when `--version` exits nonzero or does not finish.
 In the fresh-run `doctor` path, a skill inventory call that exits nonzero with no control response stops the run with `host-not-ready`. Outside that path, an inventory failure stops with `preflight-leak`.
-The sandbox preflight probes only the loopback addresses `127.0.0.1` and `localhost`. It does not probe name lookup or a non-loopback address. Do not treat it as proof of full network isolation.
+The sandbox preflight probes the loopback addresses `127.0.0.1` and `localhost`. It also probes a direct name lookup and a non-loopback TCP address. The probe version is `NETWORK_PROBE` `loopback-dns-nonloopback-v3`. Domain and proxy policy beyond these probes stays unverified. Do not treat the preflight as proof of full network isolation.
 Do not create or request provider credentials. The runner needs no API key.
 A fresh run first runs the free host checks of `doctor`. They make no model call.
 A failed check stops the run with `host-not-ready` before the case draft. The stop lists every check and its fix.
@@ -72,8 +72,12 @@ A `claude` role with its own `command` gets the host checks on that executable.
 The `credential` check names the kind: `subscription login`, `api key`, `unverified (macOS Keychain)`, or `missing`.
 Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" doctor --harness claude` to see the checks without a run.
 Claude Code's own sandbox confines Bash commands.
-`--edit prose` is the default and changes only Markdown files.
-`--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
+`--edit prose+cli` is the default. It also changes the helper scripts and the own wedge sources of the skill, in the same single search.
+A skill with no editable helper script, no own wedge source, and no usable `@new-cli` falls back to `--edit prose`.
+The fallback also applies when the `@new-cli` site layer fails. The runner writes one note on stderr, and the run does not stop.
+A resume without `--edit` keeps the mode of the first run.
+`--edit prose` changes only Markdown files.
+A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 `--repeats` sets the repeats for each holdout case. The default is 3.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
@@ -157,7 +161,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
 | `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
-| `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
+| `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
 | `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
 | `contract-kinds` | The skill contract has no `task` kind and more than one kind, or the `journey` kind and the `journey` grader are not paired. | Read `The autoimprove contract` and `Journeys` below. |
@@ -380,7 +384,7 @@ The run directory keeps the frozen files in `frozen/`. A changed frozen file sto
 
 ### Editable sources
 
-Only `--edit prose+cli` edits sources. `--edit prose` keeps every own target frozen.
+`--edit prose+cli`, the default, edits sources. `--edit prose` and the prose fallback keep every own target frozen.
 The runner adds the sources of an own target in this order:
 
 1. The target whose `.pyz` the contract helper names.
@@ -474,6 +478,8 @@ The helper file stays in the skill. Ask the user whether to delete it.
 ### Fromargs aim
 
 Under `--edit prose+cli`, the reflection prompt names fromargs as the default for edits to wedged Python sources.
+The fromargs rule goes only to a run that offers a `@wedge/` source or `@new-cli`.
+The proposer can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 It cites the fromargs rules: one parser, JSON errors on stderr, and stdout only for results.
 A usage error exits with code 2. A failed input contract exits with code 3.
 A non-Python helper keeps its language.

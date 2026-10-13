@@ -50,6 +50,7 @@ Keep the same contract: one JSON document on stdout, and one JSON error line on 
 Use exit status 2 for a usage error and 3 for a failed input contract.
 
 Inside an experiment run (`--edit prose+cli`), fromargs stays the default for each wedged Python source.
+The run can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 Only two cases keep a different helper:
 
 - A non-Python helper, such as a shell script, keeps its language.
