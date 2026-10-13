@@ -229,7 +229,9 @@ class _Provider(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         improved = "improved" in candidate.files["SKILL.md"]
         score = float(improved != (holdout and case.family in REGRESSING))
         return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier}

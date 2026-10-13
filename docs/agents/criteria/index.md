@@ -36,6 +36,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-238](./gh-238.md) — gh-238: move the reflection prompt into search/_proposer.py (W4.1)
 - [gh-239](./gh-239.md) — gh-239: annealed edit budget and run-status block in the reflection prompt (W4.2)
 - [gh-240](./gh-240.md) — gh-240: detect search stalls and stop GEPA through stop_callbacks (W4.3)
+- [gh-247](./gh-247.md) — gh-247: move the evaluator into evaluation/ and memoize check_candidate per candidate (W5.3)
 - [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
 - [gh-279](./gh-279.md) — gh-279: reuse recorded search outcomes on resume
 - [gh-285](./gh-285.md) — gh-285: isolate the temp root of the journey sandbox tests

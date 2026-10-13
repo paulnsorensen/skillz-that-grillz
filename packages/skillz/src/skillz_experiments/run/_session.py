@@ -21,7 +21,7 @@ from skillz_experiments._budget import (
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
-from skillz_experiments._evaluator import task_tokens
+from skillz_experiments.evaluation import CheckMemo, task_tokens
 from skillz_experiments._records import open_record, read, write
 from skillz_experiments._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics, Verdict, close, holdout_deltas
@@ -50,8 +50,8 @@ HarnessName = str
 
 LEAKAGE_REJECTED = "candidate-leakage-rejected"
 
-# The flat modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
-SCORING_FILES = ("_evaluator.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
+# The modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
+SCORING_FILES = ("evaluation/_evaluator.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
 
 
 def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
@@ -96,7 +96,8 @@ def is_inside(path: Path, root: Path) -> bool:
 class _Provider(Protocol):
     def preflight(self) -> dict[str, object]: ...
     def close(self) -> None: ...
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]: ...
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: CheckMemo | None = None) -> dict[str, object]: ...
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
     def check_name(self, candidate: Candidate) -> None: ...
@@ -213,6 +214,8 @@ class Session:
         # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
         self._denylist = Denylist.build(self._search_cases.values())
         self._leak_rules: dict[str, str | None] = {}
+        # One contract check per candidate identity in this session (ADR-013). It never reaches `run.json`.
+        self._checks = CheckMemo()
         # Recorded search outcomes that a resumed search reuses, one per earlier call. `search` fills it.
         self._reusable: dict[tuple[str, str, str], list[dict[str, object]]] = {}
         # The live search evaluations of the running search. Reused outcomes do not count.
@@ -395,7 +398,7 @@ class Session:
         """Score one case. The model call runs outside the lock; the record update runs inside it."""
         self._raise_fault()
         try:
-            result = self.provider.evaluate(candidate, case, holdout=holdout)
+            result = self.provider.evaluate(candidate, case, holdout=holdout, checks=self._checks)
         except CodedError as error:
             self._latch(error)
             raise
@@ -674,8 +677,9 @@ class Session:
 
     def check_seed(self) -> None:
         """Stop before any search call when the seed fails the local candidate contract check."""
-        if not self.provider.check_candidate(self.seed):
-            raise _baseline_rejected(self.provider.rejection)
+        passed, rejection = self._checks.check(self.provider, self.seed)
+        if not passed:
+            raise _baseline_rejected(rejection)
 
     def search(self) -> None:
         """Run the one GEPA search over train and validation cases. Holdout cases never enter it."""

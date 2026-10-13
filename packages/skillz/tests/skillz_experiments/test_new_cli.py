@@ -143,7 +143,9 @@ class _Provider(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         self.budget.claim(holdout=holdout)
         self.checkpoint()
         self.recorder.seen.append(candidate)
@@ -749,7 +751,9 @@ class _Preferred(FakeProvider):
                 self.budget.claim()
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         for _ in range(self.state.contract.calls(case.kind)):
             self.budget.claim(holdout=holdout)
         self.checkpoint()

@@ -13,7 +13,7 @@ from typing_extensions import override
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript, task_tokens
+from skillz_experiments.evaluation._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript, task_tokens
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._roles import Role

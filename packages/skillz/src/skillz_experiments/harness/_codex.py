@@ -15,7 +15,7 @@ from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted,
 from skillz_experiments._contract import resolve
 from skillz_experiments.harness._discovery import discover
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments._evaluator import answer_schema, evaluate
+from skillz_experiments.evaluation import answer_schema, evaluate
 from skillz_experiments._budget import Budget
 from skillz_experiments._runtime import process
 from skillz_experiments.harness._check import Check, credential_row, failed

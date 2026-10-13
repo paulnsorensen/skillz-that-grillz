@@ -16,7 +16,7 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, Journey, Split, load_cases
 from skillz_experiments._contract import Contract, load_contract
-from skillz_experiments._evaluator import evaluate
+from skillz_experiments.evaluation._evaluator import evaluate
 from skillz_experiments.harness import ClaudeOptions, Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
@@ -282,7 +282,9 @@ class Provider(FakeProvider):
                 self.budget.claim()
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         assert case.journey is not None
         for _ in range(self.contract.calls(case.kind, case.journey.max_turns)):
             self.budget.claim(holdout=holdout)

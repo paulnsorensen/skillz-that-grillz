@@ -19,7 +19,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import parse
-from skillz_experiments._evaluator import task_tokens
+from skillz_experiments.evaluation._evaluator import task_tokens
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, run
@@ -729,8 +729,9 @@ class _Probe(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
-        del holdout
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del holdout, checks
         improved = "improved" in candidate.files["SKILL.md"]
         low = self.IMPROVED if improved else 100
         usage = {"input_tokens": low, "cached_input_tokens": 0, "output_tokens": 0}

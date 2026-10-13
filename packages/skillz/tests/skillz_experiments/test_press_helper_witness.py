@@ -16,7 +16,7 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._evaluation import witnessed_events
-from skillz_experiments._evaluator import _activation, evaluate  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.evaluation._evaluator import _activation, evaluate  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments._protocol import LEDGER_KEY
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness import _codex

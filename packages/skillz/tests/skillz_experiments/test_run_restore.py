@@ -98,7 +98,9 @@ class _Fake(FakeProvider):
             self.budget.claim()
         return self.state.preflight(None)
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         if self.budget is not None:
             self.budget.claim(holdout=holdout)
         return self.state.evaluate(candidate, case, holdout)
@@ -120,8 +122,9 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: State) -> C
         del self
         return state.preflight(recorded)
 
-    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
-        del self
+    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del self, checks
         return state.evaluate(candidate, case, holdout)
 
     def invoke(self: Harness, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
@@ -320,8 +323,9 @@ def test_a_resume_with_another_installed_codex_version_stops_as_environment_diff
         del self
         return {"codex_version": installed["version"], "isolation": "passed", "live_calls": 0}
 
-    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
-        del self
+    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del self, checks
         return state.evaluate(candidate, case, holdout)
 
     def invoke(self: Harness, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
@@ -565,7 +569,9 @@ class _Spending(FakeProvider):
         _ = self.budget.remaining()
         return self.state.preflight(None)
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         self.budget.claim(holdout=holdout)
         if not holdout:
             time.sleep(min(self.delay, self.budget.remaining()))
