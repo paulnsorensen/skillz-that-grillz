@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import threading
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast, final
@@ -41,6 +42,7 @@ class Search:
         self.noise = noise
         self.lock = threading.Lock()
         self.search_calls = 0
+        self.search_log: list[tuple[str, str, str]] = []
         self.proposals = 0
         self.improved_validated = 0
         self.evaluate_fault: Callable[[int], Exception | None] = lambda _number: None
@@ -64,6 +66,7 @@ class Search:
         self.prompts: list[str] = []
         self.edit_offset: int | None = None
         self.refuse = False
+        self.fixed_number: int | None = None
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -102,6 +105,7 @@ class Provider(FakeProvider):
             with state.lock:
                 state.search_calls += 1
                 number = state.search_calls
+                state.search_log.append((candidate.identity, case.split, case.identifier))
                 if state.exhaust_after_improved is not None and state.improved_validated >= state.exhaust_after_improved:
                     raise BudgetExhausted("global invocation budget exhausted")
                 if state.abort_after_improved is not None and state.improved_validated >= state.abort_after_improved:
@@ -173,7 +177,7 @@ class Provider(FakeProvider):
             return {"answer": {name: "".join(f"{line}\nimproved {number}\n" if index < edits else f"{line}\n"
                                              for index, line in enumerate(text.splitlines()))
                                for name, text in parent.items()}}
-        return {"answer": {name: f"improved {number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
+        return {"answer": {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
 
 
 def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
@@ -322,7 +326,178 @@ def test_a_resumed_search_spends_at_most_the_remaining_share(
     assert 0 < spent < planned - margin
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert result["phase"] == "complete"
-    assert allowances == [planned - margin, planned - spent - margin]
+    # GEPA counts each reused outcome as a metric call, so the grant adds the `spent` reused outcomes back.
+    assert allowances == [planned - margin, planned - margin]
+
+
+def _search_pairs(record: dict[str, object]) -> list[tuple[str, str, str]]:
+    """Return the (candidate identity, split, case) of each recorded search evaluation that scored."""
+    return [(cast(str, item["search_candidate"]), cast(str, item["split"]), cast(str, item["case_id"]))
+            for item in cast(list[dict[str, object]], record["outcomes"])
+            if item.get("arm") == "search" and item.get("split") in ("train", "validation")
+            and "search_candidate" in item and item.get("status") != "evaluation-failed"]
+
+
+def _interrupt(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+               approvals: Callable[..., tuple[str, int]]) -> tuple[Path, Path, Search, int]:
+    """Stop a run on its third search call. Return the target, the run directory, the provider state, and the planned calls."""
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.evaluate_fault = lambda number: (
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == 3 else None)
+    with pytest.raises(EnvironmentDiffers):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    return target, out, state, cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
+
+
+@pytest.mark.ac("gh-279:AC-1")
+def test_a_resumed_search_makes_no_call_for_a_candidate_and_case_that_the_record_holds(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, _ = _interrupt(tmp_path, make_target, write_draft, approvals)
+    recorded = _search_pairs(read(out / "run.json"))
+    assert recorded
+    state.search_log.clear()
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    assert result["phase"] == "complete"
+    assert not set(recorded) & set(state.search_log)
+    # The record keeps each reused outcome once.
+    assert Counter(_search_pairs(read(out / "run.json")))[recorded[0]] == 1
+
+
+@pytest.mark.ac("gh-279:AC-2")
+def test_a_resumed_search_gets_the_metric_calls_that_the_record_left_plus_the_outcomes_it_reuses(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    grants: list[int] = []
+    real = _session.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
+        grants.append(cast(int, kwargs["metric_calls"]))
+        return real(*args, **kwargs)  # pyright: ignore[reportAny]
+
+    monkeypatch.setattr(_session, "pareto_search", spy)
+    target, out, state, planned = _interrupt(tmp_path, make_target, write_draft, approvals)
+    record = read(out / "run.json")
+    spent = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
+                for item in cast(list[dict[str, object]], record["outcomes"]))
+    reusable = len(_search_pairs(record))
+    margin = overshoot(len(_validation(out)))
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    # GEPA counts a reused outcome as a metric call, so the engine bound adds each reusable outcome to the share that the record left.
+    assert grants == [planned - margin, planned - margin - spent + reusable]
+    assert len(state.search_log) <= planned - spent
+
+
+@pytest.mark.ac("gh-279:AC-3")
+def test_a_run_without_an_interrupt_calls_the_model_once_for_each_recorded_search_outcome(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    grants: list[int] = []
+    real = _session.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
+
+    def spy(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
+        grants.append(cast(int, kwargs["metric_calls"]))
+        return real(*args, **kwargs)  # pyright: ignore[reportAny]
+
+    monkeypatch.setattr(_session, "pareto_search", spy)
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert grants == [_allowance(out)]
+    assert Counter(state.search_log) == Counter(_search_pairs(read(out / "run.json")))
+
+
+def test_a_resume_evaluates_a_recorded_failed_evaluation_again(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, _ = _interrupt(tmp_path, make_target, write_draft, approvals)
+    record = read(out / "run.json")
+    failed = next(item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("arm") == "search")
+    failed |= {"status": "evaluation-failed", "score": 0.0, "failure": "provider fell over"}
+    write(out / "run.json", record)
+    pair = (cast(str, failed["search_candidate"]), cast(str, failed["split"]), cast(str, failed["case_id"]))
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    assert pair in state.search_log
+
+
+def test_a_second_interrupt_and_resume_calls_no_pair_that_either_earlier_process_recorded(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, _ = _interrupt(tmp_path, make_target, write_draft, approvals)
+    state.evaluate_fault = lambda number: (
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == 6 else None)
+    with pytest.raises(EnvironmentDiffers):
+        _ = run(target, out, MODEL, live=True, factory=state.factory)
+    recorded = _search_pairs(read(out / "run.json"))
+    assert len(recorded) > 2
+    state.search_log.clear()
+    state.evaluate_fault = lambda _number: None
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    assert result["phase"] == "complete"
+    validated = {pair for pair in recorded if pair[1] == "validation"}
+    assert validated and not validated & set(state.search_log)
+    # A reused outcome stays in the record once. Only a real call adds one.
+    final = Counter(_search_pairs(read(out / "run.json")))
+    assert all(final[pair] >= count for pair, count in Counter(recorded).items())
+    assert sum(final.values()) == len(recorded) + len(state.search_log)
+
+
+def test_a_resume_after_a_validated_proposal_calls_no_validation_pair_that_the_record_holds(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.abort_after_improved = len(_validation(out))
+    with pytest.raises(CodedError, match="the process stopped"):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    recorded = _search_pairs(read(out / "run.json"))
+    validated = {pair for pair in recorded if pair[1] == "validation"}
+    assert len({identity for identity, _, _ in validated}) >= 2
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    assert state.search_log and not validated & set(state.search_log)
+    assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
+
+
+@pytest.mark.ac("gh-279:AC-2")
+def test_a_resume_with_recorded_outcomes_that_the_search_never_asks_for_again_makes_no_live_call_above_the_share_that_the_record_left(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.abort_after_improved = len(_validation(out))
+    with pytest.raises(CodedError, match="the process stopped"):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    record = read(out / "run.json")
+    planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"])
+    margin = overshoot(len(_validation(out)))
+    # A live model proposes new candidates on resume, so the outcomes of an old candidate are never asked for again.
+    ghosts = 3 * margin
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    outcomes.extend({"arm": "search", "split": "train", "case_id": f"ghost-{number}", "score": 0.0,
+                     "search_candidate": "ghost"} for number in range(ghosts))
+    write(out / "run.json", record)
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    assert state.search_log
+    total = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
+                for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]))
+    # The last iteration can pass the search ceiling by at most the overshoot margin, so the total stays within the plan.
+    assert total <= planned
+
+
+def test_a_resumed_identical_proposal_keeps_the_gain_of_the_candidate_that_the_interrupt_cut_short(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.abort_after_improved = 1
+    with pytest.raises(CodedError, match="the process stopped"):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    state.fixed_number = 1
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    record = read(out / "run.json")
+    observations = _session.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)))
+    # The first window ends at the interrupt. The second window holds the same proposal, which now completes its validation.
+    assert len(observations) >= 2 and observations[1] is not None and observations[1] > 0
 
 
 def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before_the_abort(
