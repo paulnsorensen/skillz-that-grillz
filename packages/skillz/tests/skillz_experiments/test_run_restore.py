@@ -255,6 +255,7 @@ def test_editable_errors_are_coded_and_stop_before_a_provider_exists(
         (target / "scripts/echo.py").unlink()
     elif variant == "prompt-components-missing":
         document["editable"] = ["scripts/echo.py"]
+        edit = "prose+cli"
     elif variant == "helper-missing":
         edit = "prose+cli"
     else:
@@ -469,6 +470,20 @@ def test_a_record_that_lacks_a_field_names_it_in_the_error(
     write(out / "run.json", record)
     with pytest.raises(ValueError, match=f"run record lacks {key}"):
         _ = run(target, out, MODEL, live=True, factory=state.factory())
+
+
+def test_a_task_case_without_the_helper_input_stops_as_cases_invalid(tmp_path: Path, make_target: Maker) -> None:
+    target, out, state = make_target(tmp_path, helper=True), tmp_path / "run", State()
+    out.mkdir(mode=0o700)
+    cases = [{"id": f"{family}-{index}", "family": family, "kind": "task", "request": f"request-{family}-{index}-end",
+              "files": {"fixture.md" if family != "b" else "other.md": "hello\n"}, "expected": {}, "source": "skill"}
+             for family in "abc" for index in range(3)]
+    _ = (out / "cases.draft.json").write_text(json.dumps(cases))
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "cases-invalid"
+    assert "b-0, b-1, b-2" in str(caught.value) and "fixture.md" in str(caught.value)
+    assert state.evaluated == [] and not (out / "run.json").exists()
 
 
 def test_a_draft_with_a_small_holdout_stops_with_cases_too_few(

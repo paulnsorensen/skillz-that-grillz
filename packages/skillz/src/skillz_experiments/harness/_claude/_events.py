@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import time
 from collections.abc import Collection
@@ -228,12 +229,36 @@ def _bash_control_passed(events: list[dict[str, object]], command_marker: str, c
     return False
 
 
+APPROVAL_BLOCK = re.compile(r"(?:requires|needs) approval", re.IGNORECASE)
+
+
+def approval_blocked(events: list[dict[str, object]]) -> bool:
+    """Return True when a Bash tool result says that the command needs approval, so the sandbox never ran it."""
+    uses: set[str] = set()
+    for event in events:
+        message = event.get("message")
+        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
+        for block in cast(list[object], content) if isinstance(content, list) else []:
+            item = mapping(block)
+            if item.get("type") == "tool_use" and item.get("name") == "Bash" and isinstance(item.get("id"), str):
+                uses.add(cast(str, item["id"]))
+            elif item.get("type") == "tool_result" and item.get("tool_use_id") in uses and APPROVAL_BLOCK.search(json.dumps(item)):
+                return True
+    return False
+
+
+APPROVAL_MESSAGE = ("the preflight Bash commands hit an approval block: Claude Code asked for approval of a Bash command, "
+                    "so the sandbox probe did not run")
+
+
 def read_failure(events: list[dict[str, object]], sealed_token: str, sealed: str, control_token: str,
                   control_file: str) -> str | None:
     """Judge the read probe. It needs evidence that Bash ran: a command on the sealed path, and the workspace token."""
     text = json.dumps(events)
     if sealed_token in text:
         return "read isolation failed: a host file is readable"
+    if approval_blocked(events):
+        return f"read probe has no evidence: {APPROVAL_MESSAGE}"
     commands = [cast(str, mapping(item["item"])["command"]) for item in event_trace(events)]
     if not any(sealed in command for command in commands):
         return "read probe has no evidence: no Bash command read the sealed host file"
@@ -275,6 +300,8 @@ def write_failure(events: list[dict[str, object]], files: list[str], wrote: bool
     """
     if wrote:
         return "write isolation failed: the task model can write to .agents or .claude"
+    if approval_blocked(events):
+        return f"write probe has no evidence: {APPROVAL_MESSAGE}"
     attempts = [mapping(item["item"]) for item in event_trace(events)]
     for file in files:
         if not any(cast(str, item["command"]).startswith("printf") and file in cast(str, item["command"])

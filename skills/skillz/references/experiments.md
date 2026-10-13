@@ -61,6 +61,9 @@ The runner records the observed `codex --version` string as `codex_version` in `
 A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
+The `doctor` runs `claude --version` with the environment of the run, as `_executable_environment` builds it. The `claude` row fails when the executable is not on `PATH`. It also fails when `--version` exits nonzero or does not finish.
+A skill inventory call that exits nonzero with no control response stops the run with `host-not-ready`. This applies to every inventory call. Any other inventory failure, such as a response with no valid command list, stops with `preflight-leak`.
+The sandbox preflight probes the loopback addresses `127.0.0.1` and `localhost`. It also probes a direct name lookup and a non-loopback TCP address. The probe version is `NETWORK_PROBE` `loopback-dns-nonloopback-v3`. Domain and proxy policy beyond these probes stays unverified. Do not treat the preflight as proof of full network isolation.
 Do not create or request provider credentials. The runner needs no API key.
 A fresh run first runs the free host checks of `doctor`. They make no model call.
 A failed check stops the run with `host-not-ready` before the case draft. The stop lists every check and its fix.
@@ -69,8 +72,12 @@ A `claude` role with its own `command` gets the host checks on that executable.
 The `credential` check names the kind: `subscription login`, `api key`, `unverified (macOS Keychain)`, or `missing`.
 Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" doctor --harness claude` to see the checks without a run.
 Claude Code's own sandbox confines Bash commands.
-`--edit prose` is the default and changes only Markdown files.
-`--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
+`--edit prose+cli` is the default. It also changes the helper scripts and the own wedge sources of the skill, in the same single search.
+A skill with no editable helper script, no own wedge source, and no usable `@new-cli` falls back to `--edit prose`.
+The fallback also applies when the `@new-cli` site layer fails or lacks cyclopts. The runner writes one note on stderr with the reason, and the run does not stop.
+A resume without `--edit` keeps the mode of the first run.
+`--edit prose` changes only Markdown files.
+A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 `--repeats` sets the repeats for each holdout case. The default is 3.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
@@ -131,6 +138,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
+| `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `proposal-build-failed` | The host build of an accepted proposal fails with an error that is not a build rejection, such as a full disk. The paid reflection stays in the record. | Fix the cause in the message, then run again in the same directory. |
@@ -145,14 +153,15 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `target-not-built` | `wedge.toml` lists a target, and its `scripts/NAME.pyz` is missing, is a symlink, or is not a file. | Run `wedge bundle` for the skill, then run again. |
 | `wedge-config-invalid` | The `wedge.toml` of the skill is not a valid wedge config. The message gives the cause. | Fix `wedge.toml`, then run again. |
 | `editable-build-file` | The contract `editable` list names `wedge.toml`, `uv.lock`, or a `.pyz` file. | Remove the name from `editable`. |
+| `editable-needs-cli` | `--edit prose` meets explicit non-Markdown names in the contract `editable` list. | Run with `--edit prose+cli`, or remove those names from `editable`. |
 | `site-layer-failed` | The host cannot populate the site layer for `--edit prose+cli`. The cause is a missing `uv`, a missing network, or a dependency closure that `uv` refuses. | Install `uv`, restore the network, or use `--edit prose`. Then run again. |
 | `build-failed` | The host build of an own target fails. During the search, the candidate scores 0 and the feedback shows the reason. | Read the feedback. |
-| `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose`. Then run again. |
+| `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
-| `helper-frozen` | The contract helper names a frozen file. | Name an editable helper, or use `--edit prose`. |
+| `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
 | `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
-| `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
+| `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
 | `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
 | `contract-kinds` | The skill contract has no `task` kind and more than one kind, or the `journey` kind and the `journey` grader are not paired. | Read `The autoimprove contract` and `Journeys` below. |
@@ -222,6 +231,7 @@ Each case has these fields:
   To ship a refused name such as `AGENTS.md`, store it with a `.fixture` suffix, for example `AGENTS.md.fixture`.
   A suffix does not clear a hidden part, so store a file such as `.env` under a name without the leading dot.
   The runner writes fixtures verbatim, so the request must tell the task to rename the file.
+  When the contract declares a helper, each `task` case must list the contract helper input in `files`.
 - `expected`: the reference answer as JSON. A `task` case needs it.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
 
@@ -374,7 +384,7 @@ The run directory keeps the frozen files in `frozen/`. A changed frozen file sto
 
 ### Editable sources
 
-Only `--edit prose+cli` edits sources. `--edit prose` keeps every own target frozen.
+`--edit prose+cli`, the default, edits sources. `--edit prose` and the prose fallback keep every own target frozen.
 The runner adds the sources of an own target in this order:
 
 1. The target whose `.pyz` the contract helper names.
@@ -468,6 +478,8 @@ The helper file stays in the skill. Ask the user whether to delete it.
 ### Fromargs aim
 
 Under `--edit prose+cli`, the reflection prompt names fromargs as the default for edits to wedged Python sources.
+The fromargs rule goes only to a run that offers a `@wedge/` source or `@new-cli`.
+The proposer can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 It cites the fromargs rules: one parser, JSON errors on stderr, and stdout only for results.
 A usage error exits with code 2. A failed input contract exits with code 3.
 A non-Python helper keeps its language.

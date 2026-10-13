@@ -147,15 +147,18 @@ Only the candidate skill, Claude Code's own commands and built-in plugins, and t
 Before the first live task, a live isolation preflight runs. It runs once per run, not once per `run` command.
 The preflight asks Claude Code to run `cat` on a sealed host file and on a workspace file.
 It passes only when a Bash command read the sealed path, the host read failed, and the workspace read returned its token.
-The same call also asks Claude to run three exact Bash commands against a loopback listener that the runner owns.
-One command opens a TCP connection. Two `curl` commands send an HTTP request to `127.0.0.1` and to `localhost`.
+The same call also asks Claude to run five exact Bash commands. Three use a loopback listener that the runner owns. Two must fail.
+One command opens a direct TCP connection to the listener. Two `curl` commands send an HTTP request to `127.0.0.1` and to `localhost`.
 The `curl` commands use `--noproxy ''`, so a configured sandbox proxy carries them.
+One command opens a direct TCP connection to a non-loopback address (`1.1.1.1:443`). One `curl --noproxy '*'` command looks up `example.com` without a proxy.
+A connection that opens, or a lookup that resolves (any curl exit code except 6), fails the preflight.
+A host that resolves names only through the sandbox proxy shows exit 6 for this direct lookup. That is the wanted denial.
 The host must provide `/usr/bin/curl` and `/usr/bin/python3`. Without them, the preflight fails with no evidence.
 The runner judges the listener, not the model reply. A client that sends the probe token fails the preflight.
 A client that resets its connection also fails it. A stray client that sends nothing, or sends other bytes, does not count.
 A command that differs from the generated command, a missing output, or a malformed output also fails it.
-Both failures use the code `network-isolation-failed`.
-The probe does not cover name lookup or a non-loopback address. Treat these as a residual gap.
+All these failures use the code `network-isolation-failed`.
+The environment key carries the probe version, so a change of the probe set starts a new preflight.
 The run record keeps the pass and its live calls under `preflight`.
 Each Claude role makes one live preflight per run. Each one counts against the approved call budget.
 A resumed `run` reuses the recorded pass and makes no new live call.
@@ -201,7 +204,7 @@ The environment hash includes this setting, so a resume on a host with the other
 The preflight evidence records `unix_socket_filter` as `on` or `off`.
 A failure in the live preflight can cost its one call, but it never reaches a task call.
 The macOS path is unverified live. Verify it before you authorize private data.
-The network probes cover only direct loopback TCP and the proxy HTTP path on the live Bash path. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
+On the live Bash path, the network probes cover direct loopback TCP and the proxy HTTP path. They also cover a direct name lookup and a direct non-loopback TCP connection. They do not prove full network isolation. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
 Manual macOS checklist:
 
 1. On a macOS host with `sandbox-exec`, run the full live preflight with a real model.

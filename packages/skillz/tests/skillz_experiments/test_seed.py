@@ -9,6 +9,8 @@ from typing import cast
 import pytest
 
 from skillz_experiments._cases import CodedError
+from skillz_experiments._intake import DRAFT_NAME, load_draft
+from skillz_experiments._seed import seed_cases
 from skillz_experiments.run import Stop, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -71,11 +73,31 @@ def test_a_task_entry_without_files_seeds_an_empty_fixture(tmp_path: Path, make_
     assert _seed_cases(target, tmp_path)[0]["files"] == {}
 
 
-def test_the_entry_family_is_kept_when_it_is_nonempty_text(tmp_path: Path, make_target: Maker) -> None:
+def test_a_task_entry_keeps_no_default_family_and_the_entry_family_wins(tmp_path: Path, make_target: Maker) -> None:
     target = make_target(tmp_path)
-    _evals(target, [_entry("a", family="billing"), _entry("d")])
+    _evals(target, [_entry("a", family="billing"), _entry("d", assertions=["x"])])
     seed = _seed_cases(target, tmp_path)
     assert seed[0]["family"] == "billing" and "family" not in seed[1]
+
+
+@pytest.mark.ac("gh-292:AC-1")
+def test_a_seeded_trigger_and_near_miss_draft_loads_with_family_equal_to_id(tmp_path: Path, make_target: Maker) -> None:
+    target = make_target(tmp_path)
+    _evals(target, [_entry("trig"), _entry("miss", expected_skill=None)])
+    seed = _seed_cases(target, tmp_path)
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps(seed), encoding="utf-8")
+    assert [(case.kind, case.identifier, case.family) for case in load_draft(path)] == [
+        ("trigger", "trig", "trig"), ("near-miss", "miss", "miss")]
+
+
+@pytest.mark.ac("gh-292:AC-1")
+def test_the_repository_skill_seed_loads_as_a_draft(tmp_path: Path) -> None:
+    seed = seed_cases(Path(__file__).resolve().parents[4] / "skills/skillz")
+    assert seed
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps(seed), encoding="utf-8")
+    assert [case.identifier for case in load_draft(path)] == [case["id"] for case in seed]
 
 
 def test_no_evals_file_keeps_the_old_stop(tmp_path: Path, make_target: Maker) -> None:

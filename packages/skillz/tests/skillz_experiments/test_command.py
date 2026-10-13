@@ -237,7 +237,7 @@ def test_resume_judge_model_must_match_the_first_run(
 
 def test_judge_model_flag_reaches_run_through_the_command_line(
         judged: JudgedRun, capsys: pytest.CaptureFixture[str]) -> None:
-    base = ["run", "--target", str(judged.target), "--out", str(judged.out), "--model", "task-model",
+    base = ["run", "--target", str(judged.target), "--out", str(judged.out), "--model", "task-model", "--edit", "prose",
             "--approve-cases", judged.case_hash, "--approve-budget", str(judged.calls)]
     assert main([*base, "--judge-model", "judge-model"]) == 1
     assert json.loads(capsys.readouterr().err)["code"] == "live-required"

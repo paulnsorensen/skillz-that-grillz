@@ -110,6 +110,9 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
         Argument array of your own harness command for --harness command: --command EXECUTABLE ARG...
     judge_model
         Model of the judge calls. Task and reflection calls use --model. Defaults to --model.
+    edit
+        prose+cli (default) also edits helper scripts and own wedge sources. prose edits only Markdown.
+        With no --edit, a skill with no editable script uses prose.
     effort
         Claude Code effort level for every role (claude harness only).
     sandbox_read
