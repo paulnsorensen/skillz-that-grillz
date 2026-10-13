@@ -6,7 +6,7 @@
       "id": 1,
       "name": "wedge-supported",
       "prompt": "/skillz wedge evals/files/wedge-supported-skill.md. The repo has a pyproject.toml, a committed uv.lock, and only pure-Python dependencies. We need it today. Just copy scripts/records.pyz into the skill and add full: bool to its handler.",
-      "expected_output": "Emits the offload brief and asks which candidates to implement. Defines deterministic inputs and ordering; uses fromargs.App and data-returning handlers; reserves --full for fromargs; generates launcher and lock instead of hand-copying an archive beside a launcher (wedge bundle is the opt-in direct mode); verifies the installed launcher from another working directory.",
+      "expected_output": "Emits the offload brief, asks which candidates to implement, and stops for approval before it writes any CLI or archive. The plan for after approval defines deterministic inputs and ordering, uses fromargs.App and data-returning handlers, reserves --full for fromargs, and generates launcher and lock instead of hand-copying an archive beside a launcher (wedge bundle is the opt-in direct mode). It also verifies the installed launcher from another working directory.",
       "family": "wedge",
       "assertions": [
         "The response emits an offload brief that names the per-region row count in the fixture skill as a candidate.",

@@ -62,7 +62,7 @@ A version below the minimum, or output that the runner cannot parse, stops with 
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
 The `doctor` runs `claude --version` with the environment of the run, as `_executable_environment` builds it. The `claude` row fails when the executable is not on `PATH`. It also fails when `--version` exits nonzero or does not finish.
-In the fresh-run `doctor` path, a skill inventory call that exits nonzero with no control response stops the run with `host-not-ready`. Outside that path, an inventory failure stops with `preflight-leak`.
+A skill inventory call that exits nonzero with no control response stops the run with `host-not-ready`. This applies to every inventory call. Any other inventory failure, such as a response with no valid command list, stops with `preflight-leak`.
 The sandbox preflight probes the loopback addresses `127.0.0.1` and `localhost`. It also probes a direct name lookup and a non-loopback TCP address. The probe version is `NETWORK_PROBE` `loopback-dns-nonloopback-v3`. Domain and proxy policy beyond these probes stays unverified. Do not treat the preflight as proof of full network isolation.
 Do not create or request provider credentials. The runner needs no API key.
 A fresh run first runs the free host checks of `doctor`. They make no model call.

@@ -204,7 +204,7 @@ The environment hash includes this setting, so a resume on a host with the other
 The preflight evidence records `unix_socket_filter` as `on` or `off`.
 A failure in the live preflight can cost its one call, but it never reaches a task call.
 The macOS path is unverified live. Verify it before you authorize private data.
-The network probes cover only direct loopback TCP and the proxy HTTP path on the live Bash path. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
+On the live Bash path, the network probes cover direct loopback TCP and the proxy HTTP path. They also cover a direct name lookup and a direct non-loopback TCP connection. They do not prove full network isolation. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
 Manual macOS checklist:
 
 1. On a macOS host with `sandbox-exec`, run the full live preflight with a real model.
