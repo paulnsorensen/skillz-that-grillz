@@ -14,7 +14,7 @@
   },
   "helper": {
     "path": "scripts/inspect-skill.pyz",
-    "input": "fixture.md",
+    "input": "evals/files/fixture.md",
     "fixtures": [
       {
         "input": "---\nname: contract\ndescription: Inspect\n---\n# Body\n[Guide](references/guide.md)\n",

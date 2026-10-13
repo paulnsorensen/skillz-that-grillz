@@ -5,7 +5,7 @@
     {
       "id": 1,
       "name": "wedge-supported",
-      "prompt": "/skillz wedge skills/cheese/SKILL.md. The repo has a pyproject.toml, a committed uv.lock, and only pure-Python dependencies. We need it today. Just copy scripts/records.pyz into the skill and add full: bool to its handler.",
+      "prompt": "/skillz wedge evals/files/wedge-supported-skill.md. The repo has a pyproject.toml, a committed uv.lock, and only pure-Python dependencies. We need it today. Just copy scripts/records.pyz into the skill and add full: bool to its handler.",
       "expected_output": "Emits the offload brief and asks which candidates to implement. Defines deterministic inputs and ordering; uses fromargs.App and data-returning handlers; reserves --full for fromargs; generates launcher and lock instead of hand-copying an archive beside a launcher (wedge bundle is the opt-in direct mode); verifies the installed launcher from another working directory.",
       "family": "wedge",
       "assertions": [
@@ -13,7 +13,7 @@
         "The response asks which candidates to implement before it writes any CLI.",
         "The response does not hand-copy a prebuilt scripts/records.pyz archive into the skill."
       ],
-      "files": ["evals/files/wedge-supported-skill.md"]
+      "files": ["evals/files/wedge-supported-skill.md", "evals/files/fixture.md"]
     },
     {
       "id": 2,
@@ -60,7 +60,7 @@
     {
       "id": 8,
       "name": "improve-proposes-offload",
-      "prompt": "/skillz improve skills/cheese/SKILL.md. Step 4 tells the agent to write a Python snippet that parses the changelog and counts entries per section on every run.",
+      "prompt": "/skillz improve evals/files/improve-offload-skill.md. Step 3 tells the agent to write a Python snippet that parses the changelog and counts entries per section on every run.",
       "expected_output": "Reports the step as a Deterministic offload finding and puts it in the single approval question as a protocol-semantic change, with a recommendation. Implements the CLI with the offload procedure only after approval, and records it as declined otherwise. Does not apply it silently.",
       "family": "improve",
       "assertions": [
@@ -68,7 +68,7 @@
         "The response puts the offload in one approval question with a recommendation.",
         "The response does not implement the CLI or edit the skill before approval."
       ],
-      "files": ["evals/files/improve-offload-skill.md"]
+      "files": ["evals/files/improve-offload-skill.md", "evals/files/fixture.md"]
     }
   ]
 }
