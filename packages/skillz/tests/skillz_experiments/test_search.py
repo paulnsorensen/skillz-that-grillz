@@ -32,8 +32,8 @@ def test_search_runs_several_pareto_iterations_and_picks_by_validation_mean() ->
         proposed.append(text)
         return {key: text for key in components}
 
-    search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], ["val1", "val2"], evaluate, propose,
-           metric_calls=80)
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], ["val1", "val2"], evaluate, propose,
+                  metric_calls=80) is False
     assert proposed[:4] == ["bad", "mid", "top", "late"]
     assert "bad" not in validated
     assert set(validated) >= {"v0", "mid", "top", "late"}
@@ -55,7 +55,7 @@ def test_search_skips_a_minibatch_the_parent_already_scores_perfectly() -> None:
         evaluated.append(candidate["SKILL.md"])
         return 1.0, {}
 
-    search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=12)
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=12) is False
     assert proposed == []
     assert evaluated and set(evaluated) == {"v0"}
 
@@ -75,15 +75,30 @@ def test_search_offers_and_evaluates_exactly_the_seed_components(edit: Edit) -> 
         offered.update(components)
         return {key: "changed" for key in components}
 
-    assert search(seed, edit, ["t1", "t2"], ["v"], evaluate, propose, metric_calls=30) is None
+    assert search(seed, edit, ["t1", "t2"], ["v"], evaluate, propose, metric_calls=30) is False
     assert offered == set(seed)
     assert evaluated and all(names == set(seed) for names in evaluated)
     assert MAX_CONCURRENT_CALLS == 2
 
 
+@pytest.mark.ac("gh-240:AC-4")
+@pytest.mark.parametrize("after", [0, 2])
+def test_search_stops_before_the_next_iteration_when_stalled_returns_true(after: int) -> None:
+    proposed: list[str] = []
+
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                components: list[str]) -> dict[str, str]:
+        proposed.append("called")
+        return {key: f"p{len(proposed)}" for key in components}
+
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], lambda _c, _e: (0.0, {}), propose,
+                  metric_calls=80, stalled=lambda: len(proposed) >= after) is True
+    assert len(proposed) == after
+
+
 def test_search_rejects_an_empty_seed() -> None:
     with pytest.raises(ValueError, match="no editable components"):
-        search({}, "prose", ["t"], ["v"], lambda c, e: (0.0, {}), lambda c, f, k: {}, metric_calls=5)
+        _ = search({}, "prose", ["t"], ["v"], lambda c, e: (0.0, {}), lambda c, f, k: {}, metric_calls=5)
 
 
 def test_search_rejects_an_unknown_edit() -> None:

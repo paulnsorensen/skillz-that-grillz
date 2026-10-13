@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from skillz_experiments.search import Progress
+from skillz_experiments.search import Progress, assess
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 
@@ -12,7 +12,8 @@ STE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technic
        "and at most 25 words per descriptive sentence. "
        "Return complete component contents. Do not alter independent checks or permissions.")
 STATUS = (" Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
-          "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%).\n")
+          "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%). "
+          "Proposals since the last validation gain: 0.\n")
 START = Progress(spent=0, planned=100, proposal=1)
 PROSE = "Improve only the supplied skill text components. Preserve the helper CLI contract. " + STE + STATUS
 CLI_HEAD = ("Improve the supplied skill text and helper script components. "
@@ -107,11 +108,20 @@ def test_the_last_proposal_sentence_starts_at_85_percent() -> None:
 @pytest.mark.ac("gh-239:AC-5")
 def test_the_status_block_is_pinned_for_a_late_search() -> None:
     middle = (" Make at most 2 edits across all components. An edit is one block of consecutive changed lines. "
-              "Run status: this is proposal 7. Search calls spent: 72 of 120 (60%).")
+              "Run status: this is proposal 7. Search calls spent: 72 of 120 (60%). "
+              "Proposals since the last validation gain: 0.")
     last = ("Run status: this is proposal 9. Search calls spent: 110 of 120 (91%). "
+            "Proposals since the last validation gain: 0. "
             "This may be the last proposal, so prefer one small, safe change.")
     assert _status(Progress(spent=72, planned=120, proposal=7)).endswith(middle)
     assert _status(Progress(spent=110, planned=120, proposal=9)).endswith(last)
+
+
+def test_the_status_block_states_the_stall_count_and_ends_with_the_stall_advice() -> None:
+    advice = assess([0.2] + [0.0] * 5, band=0.0).advice
+    stalled = ("Search calls spent: 110 of 120 (91%). Proposals since the last validation gain: 5. "
+               + "This may be the last proposal, so prefer one small, safe change. " + advice)
+    assert advice and _status(Progress(spent=110, planned=120, proposal=9, stalled=5, advice=advice)).endswith(stalled)
 
 
 @pytest.mark.ac("gh-239:AC-5")

@@ -2,7 +2,7 @@
 
 These records explain the design of `/skillz autoimprove`, which generalizes the skillz experiment runner at `packages/skillz/src/skillz_experiments/`.
 The approved spec is `specs/skillz-autoimprove.md` in the durable cheese corpus.
-The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10. ADR-011 to ADR-013 come from a second Mold session on 2026-10-10, recorded in `specs/skillz-experiments-module-layout.md`. ADR-015 closes issue #153.
+The user settled each decision in a Mold session on 2026-10-03. ADR-008 to ADR-010 come from a Mold session on 2026-10-10. ADR-011 to ADR-013 come from a second Mold session on 2026-10-10, recorded in `specs/skillz-experiments-module-layout.md`. ADR-015 closes issue #153. ADR-016 records issue #240 (W4.3).
 
 ## Records
 
@@ -127,4 +127,14 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** Keep 20 words for every sentence (the search aims below a gate that the skill does not enforce). Use 25 words for every sentence (loses the procedural tier).
 - **Consequences:** The proposer seam is `request(edit, candidate, feedback, components, *, cheaper)` and `accept(answer, components)` in `search/_proposer.py`. The `search` facade exports them unchanged as `request` and `accept`. The consumers alias them at the import site. `run/_session.py` keeps the model call, the fault latch, and the outcome record. A prompt text change alters the frozen experiment inputs, so a run from before the change cannot resume.
 
-_Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-12 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout; ADR-014 run compatibility fingerprint; ADR-015 reflection sentence limit)_
+### ADR-016: Stop a stalled search by default  [status: accepted]
+- **Context:** Issue #240 (W4.3). A GEPA search spent its whole allowance even when no proposal improved the validation mean. GEPA 0.1.4 accepts `stop_callbacks`. The cap-evolve `assess` function grades a stall at 3, 5, and 8 proposals. The borrow ids are C9, R4, and G1.
+- **Decision:** `search/_convergence.py` exports the pure function `assess(observations, *, band) -> Signal(level, streak, advice)`. The band is `Statistics.min_gain`.
+  The levels are `warn` at a streak of 3, `shift` at 5, and `stop` at 8. Fewer than 4 known observations give `ok`. The stop is on by default. No flag turns it off.
+  `run/` rebuilds one observation per proposal from the record. The reflection outcome records the `proposed` candidate identity. A gain is a rise of that candidate's validation mean over every earlier candidate, the seed included.
+  An evaluation failure before the candidate completes the validation cases makes an observation unknown, and an unknown observation does not change the streak. The prompt states the streak, and it adds advice at `warn` and `shift`.
+  A stop records the search reason `converged-stalled`. Budget reasons keep their precedence.
+- **Alternatives:** An opt-in stop flag. A fixed band constant. A measured noise band (R5, deferred).
+- **Consequences:** A stalled run keeps its remaining search calls and still runs the holdout gate. With the default `min_gain` of 0, any rise counts as a gain. A resumed run that already reached `stop` skips GEPA. The user chose the thresholds and the default-on stop in the Mold pass of 2026-10-11. The user accepted the band and the observation rule on 2026-10-12.
+
+_Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, and the issue #168 and #169 research · Updated: 2026-10-12 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout; ADR-014 run compatibility fingerprint; ADR-015 reflection sentence limit; ADR-016 stall stop)_

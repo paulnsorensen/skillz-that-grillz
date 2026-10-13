@@ -133,6 +133,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
+| `proposal-build-failed` | The host build of an accepted proposal fails with an error that is not a build rejection, such as a full disk. The paid reflection stays in the record. | Fix the cause in the message, then run again in the same directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. In a journey, the stop also covers a skill inventory change between turns. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
 | `harness-changed` | The harness executable, script, or role file differs from the frozen record, or a resume drops `--harness-config` or `--command`. | Restore the frozen harness and pass the same options, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
@@ -476,12 +477,35 @@ The budget is `floor(1 + 5 * 0.5 * (1 + cos(pi * p)))`. It falls from 6 edits at
 An edit is one block of consecutive changed lines, found with `difflib.SequenceMatcher` over the lines of one component.
 The count adds the blocks of all changed components.
 The run-status block gives the proposal number, the search calls spent of the allowance, and the whole percent (integer math, rounded down).
+It also gives the stall streak from `### Stall stop`.
 The budget sentence reads "1 edit" when the budget is 1.
 From `p = 0.85` it adds: "This may be the last proposal, so prefer one small, safe change."
 The numbers come from the run record. They never come from case content.
 The budget is advisory. The runner never rejects a proposal for its size.
 `summary` and `report.json` carry `search.proposal_over_budget`: the count of proposals above the budget stated in their prompt, including proposals that the leakage check later rejects.
 The count shows whether enforcement is worth the wasted reflection calls.
+
+### Stall stop
+
+The search stops early when its proposals stop improving the validation mean.
+Each proposal gives one observation after GEPA scores its candidate.
+An observation is a gain when the candidate's validation mean is above the best earlier mean by more than `min_gain`.
+The seed counts as an earlier candidate.
+A proposal that the leakage check or the build rejects gives no gain.
+A candidate that does not complete the validation cases also gives no gain.
+An observation is unknown when an evaluation of its candidate fails before the candidate completes the validation cases.
+A host build error stops the run with `proposal-build-failed`, and its proposal also gives an unknown observation.
+A gain sets the streak to 0. Each other known observation adds 1. An unknown observation changes nothing.
+The run-status block states the streak: "Proposals since the last validation gain: N."
+From a streak of 3, the prompt advises a different kind of change.
+From a streak of 5, it advises a different component or section.
+At a streak of 8, the search stops, and `search.reason` is `converged-stalled`. The holdout gate still runs.
+Fewer than 4 known observations never give advice or a stop.
+The stall stop is always on. A budget stop keeps its own reason.
+A search that uses its allowance without a stop ends with `validation-mean`.
+The runner rebuilds the observations from the run record, so a resumed run gets the same streak.
+A resumed run that already reached a streak of 8 skips the search.
+ADR-016 in `docs/agents/decisions/skillz-autoimprove.md` records the thresholds.
 
 ## Export
 

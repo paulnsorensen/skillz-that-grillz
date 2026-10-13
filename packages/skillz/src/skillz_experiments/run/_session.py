@@ -36,7 +36,7 @@ from skillz_experiments.harness import (
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Denylist, Edit, overshoot
-from skillz_experiments.search import Progress
+from skillz_experiments.search import Progress, Signal, assess
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search import check as check_leakage
@@ -414,17 +414,9 @@ class Session:
         case = self._search_cases.get(cast(str, example))
         if case is None:
             raise ValueError("holdout must not enter optimization")
-        rule = self._leak_rule(components)
-        if rule is not None:
-            return 0.0, {"task_correct": 0.0, "request": case.request, "rejected": LEAKAGE_REJECTED,
-                         "reason": LEAKAGE_REJECTED, "rule": rule}
-        try:
-            candidate = self._built(self.seed.changed(components))
-        except ValueError as error:
-            rejected: dict[str, object] = {"task_correct": 0.0, "request": case.request, "rejected": str(error)}
-            if isinstance(error, CodedError):
-                rejected["reason"] = error.code
-            return 0.0, rejected
+        candidate = self._admit(components)
+        if not isinstance(candidate, Candidate):
+            return 0.0, {"task_correct": 0.0, "request": case.request} | candidate
         try:
             result = self.evaluate_case(candidate, case, "search")
         except CodedError:
@@ -443,18 +435,26 @@ class Session:
             feedback["grader_scores"] = result["scores"]
         return score, feedback
 
+    def _admit(self, components: dict[str, str]) -> Candidate | dict[str, object]:
+        """Return the built candidate of `components`, or the rejection that the leakage check or the build gives."""
+        rule = self._leak_rule(components)
+        if rule is not None:
+            return {"rejected": LEAKAGE_REJECTED, "reason": LEAKAGE_REJECTED, "rule": rule}
+        try:
+            return self._built(self.seed.changed(components))
+        except ValueError as error:
+            rejected: dict[str, object] = {"rejected": str(error)}
+            if isinstance(error, CodedError):
+                rejected["reason"] = error.code
+            return rejected
+
     def _validation_outcomes(self) -> list[dict[str, object]]:
         """Return the outcomes of search candidates on validation cases."""
-        return [item for item in self.outcomes if item.get("arm") == "search" and item.get("split") == "validation"
-                and "search_candidate" in item]
+        return [item for item in self.outcomes if _is_search_validation(item)]
 
     def _validation_means(self, validation: list[str]) -> dict[str, float]:
         """Return the mean score of each search candidate that has a score on every validation case."""
-        scores: dict[str, dict[str, float]] = {}
-        for item in self._validation_outcomes():
-            scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
-        return {identity: math.fsum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
-                if set(by_case) == set(validation)}
+        return _complete_means(_add_validation_scores({}, self.outcomes), set(validation))
 
     def _validation_tokens(self, validation: list[str], identities: tuple[str, ...]) -> dict[str, float | None]:
         """Return the mean task tokens of each listed candidate that has an outcome on every validation case.
@@ -508,8 +508,9 @@ class Session:
                  components: list[str]) -> dict[str, str]:
         self._raise_fault()
         with self.lock:
+            stall = self._stall()
             progress = Progress(spent=len(self._search_outcomes()), planned=self._search_ceiling(),
-                                proposal=1 + len(self._reflections()))
+                                proposal=1 + len(self._reflections()), stalled=stall.streak, advice=stall.advice)
         prompt, schema = reflection_request(self.edit, candidate, feedback, components, progress=progress,
                                             cheaper=self.statistics.token_rule)
         try:
@@ -534,11 +535,36 @@ class Session:
             self.checkpoint()
         if refusal is not None:
             raise refusal
+        try:
+            admitted = self._admit(proposal)
+        except Exception as error:
+            # GEPA catches every proposer exception, retries once, and then skips the proposal. The latch ends the run at the next fault check.
+            fault = CodedError("proposal-build-failed", f"the proposal build failed: {error}; fix the cause in that error, then resume")
+            with self.lock:
+                # The stall signal reads this proposal as unknown, because its candidate never got a score.
+                outcome["status"] = "proposal-build-failed"
+                self.checkpoint()
+            self._latch(fault)
+            raise fault from error
+        if isinstance(admitted, Candidate):
+            with self.lock:
+                outcome["proposed"] = admitted.identity
+                self.checkpoint()
         return proposal
+
+    def _stall(self) -> Signal:
+        """Return the stall signal that the recorded outcomes give. The caller holds the lock."""
+        validation = {case.identifier for case in self.cases_for("validation")}
+        return assess(stall_observations(self.outcomes, validation), band=self.statistics.min_gain)
+
+    def _stalled(self) -> bool:
+        """Return whether the stall signal is at `stop`. GEPA calls this before each iteration."""
+        with self.lock:
+            return self._stall().level == "stop"
 
     def _reflections(self) -> list[dict[str, object]]:
         """Return the recorded reflection calls, one per proposal."""
-        return [item for item in self.outcomes if item.get("arm") == "search" and item.get("split") == "reflection"]
+        return [item for item in self.outcomes if _is_reflection(item)]
 
     def _over_budget(self) -> int:
         """Return the proposals above the edit budget stated in their prompt."""
@@ -619,14 +645,18 @@ class Session:
         spent = len(self._search_outcomes())
         allowance = self._search_ceiling() - spent
         reason = "search-share-spent-best-validated"
-        if allowance >= 1:
+        if allowance >= 1 and self._stalled():
+            # A run that stalled before a resume skips GEPA, which scores the seed again before its first stop check.
+            reason = "converged-stalled"
+        elif allowance >= 1:
             # Search and reflection calls leave the gate its estimated time. Preflight and the gate use all of it.
             self.budget.reserve_time(_number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
             try:
-                pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
-                              self._evaluate_example, self._propose, metric_calls=allowance)
+                stopped = pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
+                                        self._evaluate_example, self._propose, metric_calls=allowance,
+                                        stalled=self._stalled)
                 self._raise_fault()
-                reason = "validation-mean"
+                reason = "converged-stalled" if stopped else "validation-mean"
             except BudgetExhausted:
                 self.take_budget_stop()
                 reason = "budget-exhausted-best-validated"
@@ -765,6 +795,75 @@ def _mean_tokens(counts: Sequence[int | None]) -> float | None:
         return math.fsum(known) / len(known)
     except OverflowError:
         return None
+
+
+def stall_observations(outcomes: Sequence[Mapping[str, object]], validation: set[str]) -> list[float | None]:
+    """Return one stall observation per recorded proposal, oldest first.
+
+    The search outcomes after a reflection and before the next one belong to its `proposed` candidate. The observation
+    is the rise of that candidate's validation mean over the best mean of every earlier candidate, the seed included.
+    It is None when an evaluation of the candidate failed or the host build of the proposal failed. It is 0.0 when the
+    proposal has no identity or its candidate does not complete the validation set.
+    """
+    marks = [index for index, item in enumerate(outcomes) if _is_reflection(item)]
+    seen = _add_validation_scores({}, outcomes[:marks[0]] if marks else [])
+    observations: list[float | None] = []
+    for start, end in zip(marks, [*marks[1:], len(outcomes)]):
+        best = max(_complete_means(seen, validation).values(), default=0.0)
+        window = outcomes[start + 1:end]
+        reflection = outcomes[start]
+        observations.append(None if reflection.get("status") == "proposal-build-failed"
+                            else _observation(window, reflection.get("proposed"), validation, best))
+        _ = _add_validation_scores(seen, window)
+    return observations
+
+
+def _observation(window: Sequence[Mapping[str, object]], identity: object, validation: set[str],
+                 best: float) -> float | None:
+    """Return the observation of one proposal from the outcomes in its window.
+
+    Only the evaluations of the proposed candidate count, up to the end of its validation set. GEPA can score the
+    candidate again as the next parent before the next reflection. That later score does not change the observation.
+    """
+    scores: dict[str, float] = {}
+    for item in window:
+        if identity is None or set(scores) == validation:
+            break
+        if item.get("search_candidate") != identity:
+            continue
+        if item.get("status") == "evaluation-failed":
+            return None
+        if item.get("split") == "validation":
+            scores[cast(str, item["case_id"])] = _unit_score(item["score"])
+    if set(scores) != validation:
+        return 0.0
+    return max(0.0, math.fsum(scores.values()) / len(scores) - best)
+
+
+def _is_reflection(item: Mapping[str, object]) -> bool:
+    return item.get("arm") == "search" and item.get("split") == "reflection"
+
+
+def _is_search_validation(item: Mapping[str, object]) -> bool:
+    return item.get("arm") == "search" and item.get("split") == "validation" and "search_candidate" in item
+
+
+def _add_validation_scores(scores: dict[str, dict[str, float]],
+                           items: Sequence[Mapping[str, object]]) -> dict[str, dict[str, float]]:
+    """Add each search validation score in `items` to `scores` by candidate and case, and return `scores`.
+
+    A later score for a case replaces the earlier one.
+    """
+    for item in items:
+        if _is_search_validation(item):
+            scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
+    return scores
+
+
+def _complete_means(scores: Mapping[str, Mapping[str, float]], validation: set[str]) -> dict[str, float]:
+    """Return the mean score of each candidate that has a score on every validation case."""
+    return {identity: math.fsum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
+            if set(by_case) == validation}
 
 
 _PHASES = ("prepared", "searched", "gated", "complete")

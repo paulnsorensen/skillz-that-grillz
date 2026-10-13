@@ -41,10 +41,13 @@ class Progress:
     """Where the search stands. The numbers come from the session record, never from case content.
 
     `planned` is the search's real allowance: the planned calls less the last iteration's overshoot margin.
+    `stalled` and `advice` come from the stall signal.
     """
     spent: int
     planned: int
     proposal: int
+    stalled: int = 0
+    advice: str = ""
 
     @property
     def fraction(self) -> float:
@@ -66,9 +69,11 @@ class Progress:
         text = (f"Make at most {count} {'edit' if count == 1 else 'edits'} across all components. "
                 "An edit is one block of consecutive changed lines. "
                 f"Run status: this is proposal {self.proposal}. Search calls spent: {self.spent} of {self.planned} "
-                f"({self.percent}%).")
+                f"({self.percent}%). Proposals since the last validation gain: {self.stalled}.")
         if self.fraction >= LAST_PROPOSAL_FROM:
             text += " This may be the last proposal, so prefer one small, safe change."
+        if self.advice:
+            text += " " + self.advice
         return text
 
 
