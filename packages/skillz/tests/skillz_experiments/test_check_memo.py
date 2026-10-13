@@ -13,7 +13,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._evaluation import helper_failure, transient
+from skillz_experiments._evaluation import TIMEOUT_REJECTION, helper_failure, transient
 from skillz_experiments.evaluation import CheckMemo, evaluate
 from typing_extensions import override
 from fake_provider import FakeProvider
@@ -154,3 +154,21 @@ def test_the_memo_does_not_reuse_a_sandbox_timeout_and_reuses_the_later_pass(tmp
             _ = evaluate(task, task, _candidate(), case, checks=memo)
     assert (timed_out["status"], timed_out["rejection"]) == ("candidate-contract-rejected", "helper fixture 0 times out")
     assert (task.checks, task.invokes) == (2, 2)
+
+
+@pytest.mark.ac("gh-247:AC-1")
+def test_the_memo_checks_a_helper_that_always_times_out_at_most_twice(tmp_path: Path) -> None:
+    timeout = TIMEOUT_REJECTION.format(index=0)
+    task, memo = Task(passed=False, reason=timeout), CheckMemo()
+    results = [evaluate(task, task, _candidate(), case, checks=memo) for case in _cases(tmp_path) * 4]
+    assert task.checks == 2 and task.invokes == 0
+    assert {(item["status"], item["rejection"]) for item in results} == {("candidate-contract-rejected", timeout)}
+
+
+@pytest.mark.parametrize(("rejection", "is_transient"), [
+    (TIMEOUT_REJECTION.format(index=0), True), (TIMEOUT_REJECTION.format(index=12), True),
+    ("the helper times out", False), ("helper fixture x times out", False),
+    (TIMEOUT_REJECTION.format(index=0) + " again", False), (None, False)])
+def test_transient_matches_only_the_timeout_rejection_that_helper_failure_builds(
+        rejection: str | None, is_transient: bool) -> None:
+    assert transient(rejection) is is_transient

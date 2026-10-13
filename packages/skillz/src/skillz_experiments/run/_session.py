@@ -21,6 +21,7 @@ from skillz_experiments._budget import (
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
+from skillz_experiments._evaluation import transient
 from skillz_experiments.evaluation import CheckMemo, task_tokens
 from skillz_experiments._records import open_record, read, write
 from skillz_experiments._wedge_targets import Rebuilder, reopen
@@ -54,7 +55,7 @@ LEAKAGE_REJECTED = "candidate-leakage-rejected"
 SCORING_FILES = ("evaluation/_evaluator.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
 
 
-def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
+def _failed_outcome(case: Case, candidate: Candidate, error: Exception | str, *, arm: str = "search",
                     repeat: int | None = None) -> dict[str, object]:
     """Return the outcome that records a failed evaluation as a zero score. A holdout failure names its arm and repeat."""
     outcome: dict[str, object] = {"arm": arm, "split": case.split, "case_id": case.identifier, "score": 0.0,
@@ -808,8 +809,18 @@ class Session:
                         self.outcomes.append(_failed_outcome(case, arms[arm], error, arm=arm, repeat=repeat))
                         self.checkpoint()
                     return
-                if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
-                    raise _baseline_rejected(cast(str | None, result.get("rejection")))
+                if result.get("status") != "candidate-contract-rejected":
+                    return
+                rejection = cast(str | None, result.get("rejection"))
+                if transient(rejection):
+                    # A sandbox timeout is not final. The recorded outcome becomes a failed one in place, so it
+                    # leaves `done` and a resume scores the task again.
+                    with self.lock:
+                        result.clear()
+                        result.update(_failed_outcome(case, arms[arm], str(rejection), arm=arm, repeat=repeat))
+                        self.checkpoint()
+                elif arm == "baseline":
+                    raise _baseline_rejected(rejection)
 
             need = sum(case_calls(self.contract, case) for _, case, _ in todo)
             if self.budget.maximum - self.budget.calls < need:
