@@ -22,7 +22,6 @@ from typing_extensions import override
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract, Grader
-from skillz_experiments._evaluation import TIMEOUT_REJECTION
 from skillz_experiments._cli import main
 from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._claude import ClaudeCode
@@ -58,7 +57,6 @@ class State:
     fail_holdout: bool = False
     reject_baseline: bool = False
     reject_winner: bool = False
-    crash_winner: bool = False
     rejection: str | None = None
     preflight_delay: float = 0.0
     claims: bool = False
@@ -76,7 +74,7 @@ class State:
         with self.lock:
             self.evaluated.append((case.identifier, holdout))
         improved = "improved" in candidate.files["SKILL.md"]
-        if holdout and (self.fail_holdout or (self.crash_winner and improved)):
+        if holdout and self.fail_holdout:
             raise ProviderCrash("provider fell over")
         result: dict[str, object] = {"score": float(improved), "candidate_hash": candidate.identity,
                                      "case_hash": case.identifier} | self.extra
@@ -450,7 +448,8 @@ def test_a_rejected_baseline_reports_its_reason_as_the_stop_detail_on_every_run(
             _ = run(target, out, MODEL, live=True, approve_cases=case_hash if attempt == 0 else None,
                     approve_budget=calls if attempt == 0 else None, factory=state.factory())
         assert caught.value.code == "baseline-contract-rejected"
-        assert caught.value.data.get("detail") == rejection and ("detail" in caught.value.data) == (rejection is not None)
+        assert caught.value.data.get("detail") == rejection
+        assert ("detail" in caught.value.data) == (rejection is not None)
 
 
 def _holdout(out: Path, arm: str) -> list[dict[str, object]]:
@@ -458,42 +457,14 @@ def _holdout(out: Path, arm: str) -> list[dict[str, object]]:
             if item.get("split") == "holdout" and item.get("arm") == arm]
 
 
-def test_a_baseline_timeout_in_the_gate_is_a_failed_evaluation_that_a_resume_retries(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    target, out = make_target(tmp_path), tmp_path / "run"
-    timeout = TIMEOUT_REJECTION.format(index=0)
-    state = State(reject_baseline=True, crash_winner=True, rejection=timeout)
-    _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
-    with pytest.raises(ProviderCrash):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory())
-    failed = _holdout(out, "baseline")
-    assert failed and all((item["status"], item["failure"]) == ("evaluation-failed", timeout) for item in failed)
-    state.reject_baseline = state.crash_winner = False
-    _ = run(target, out, MODEL, live=True, factory=state.factory())
-    record = read(out / "run.json")
-    scored = [item for item in _holdout(out, "baseline") if item.get("status") != "evaluation-failed"]
-    assert record["phase"] == "complete" and "gate" in record
-    assert sorted((item["case_id"], item["repeat"]) for item in scored) == sorted(
-        (item["case_id"], item["repeat"]) for item in failed)
-
-
-def test_a_winner_timeout_in_the_gate_is_a_failed_evaluation_not_a_zero_score(
-        tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
-    target, out = make_target(tmp_path), tmp_path / "run"
-    timeout = TIMEOUT_REJECTION.format(index=0)
-    _ = approved_run(target, out, factory=State(reject_winner=True, rejection=timeout).factory())
-    winner = _holdout(out, "winner")
-    assert winner and all((item["status"], item["failure"]) == ("evaluation-failed", timeout) for item in winner)
-
-
-def test_a_non_timeout_winner_rejection_still_scores_zero(
+def test_a_winner_rejection_in_the_gate_keeps_its_rejected_status(
         tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     state = State(reject_winner=True, rejection="helper fixture 0 fails on stdout")
     _ = approved_run(target, out, factory=state.factory())
     winner = _holdout(out, "winner")
     assert winner and all(item["status"] == "candidate-contract-rejected" for item in winner)
+
 
 def test_a_rejected_seed_stops_before_any_search_call(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,

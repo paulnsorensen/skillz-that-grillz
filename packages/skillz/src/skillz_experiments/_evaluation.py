@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 import shlex
 from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
@@ -141,13 +140,6 @@ def fixture_failure(fixture: Mapping[str, object], returncode: int, stdout: str,
     return None if lines and _same_json(lines[-1], fixture["error"]) else "stderr"
 
 
-SANDBOX_TIMEOUT = 124
-"""The exit code of a sandbox run that exceeds its time limit."""
-TIMEOUT_REJECTION = "helper fixture {index} times out"
-"""The rejection of a helper fixture that the sandbox stops at its time limit. This rejection is transient."""
-_TIMEOUT = re.compile(re.escape(TIMEOUT_REJECTION).replace(re.escape("{index}"), "[0-9]+"))
-
-
 def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> str | None:
     """Run each declared helper fixture in the sandbox. Return the first failure, or None when all pass."""
     helper = rules.helper
@@ -158,17 +150,10 @@ def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> str | 
         _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
         code, stdout, stderr = sandbox.sandbox(workspace, [
             "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
-        if code == SANDBOX_TIMEOUT and fixture["returncode"] != SANDBOX_TIMEOUT:
-            return TIMEOUT_REJECTION.format(index=index)
         stream = fixture_failure(fixture, code, stdout, stderr)
         if stream is not None:
             return f"helper fixture {index} fails on {stream}"
     return None
-
-
-def transient(rejection: str | None) -> bool:
-    """Return whether `rejection` comes from a sandbox timeout, so a later check can pass."""
-    return rejection is not None and _TIMEOUT.fullmatch(rejection) is not None
 
 
 def _paths(relative: str, workspace: str | None) -> set[str]:
