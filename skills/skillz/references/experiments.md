@@ -133,6 +133,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
+| `proposal-build-failed` | The host build of an accepted proposal fails with an error that is not a build rejection, such as a full disk. The paid reflection stays in the record. | Fix the cause in the message, then run again in the same directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. In a journey, the stop also covers a skill inventory change between turns. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
 | `harness-changed` | The harness executable, script, or role file differs from the frozen record, or a resume drops `--harness-config` or `--command`. | Restore the frozen harness and pass the same options, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
@@ -320,7 +321,23 @@ Never report a delta without its SE and case count.
 `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion counts and rates of the gate. It makes no model call.
 The keys `false_promotions_2se` and `false_promotions_one_holdout` are integer counts; each rate is its count divided by `trials`.
 The counts cover `promote` only. They do not cover `promote-cheaper`.
-The `skillz-pytest` job fails when `false_promotions_2se` rises above the threshold in `packages/skillz/ratchets.json`.
+`--simulate --metric NAME` prints only that one number, with no JSON. It computes only the figure that it names, so a selector costs well under the full report. Without `--metric`, the output keeps its earlier keys. The power keys follow them.
+The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, `rate_one_holdout`, and the power names below.
+Each metric in `packages/skillz/ratchets.json` names its own selector in its `command`, so `ratchet.py measure -- <command>` reads one deterministic number.
+The `skillz-pytest` job fails when a metric in that file passes its threshold. It checks every metric in the file.
+The one-holdout count is a reference ratchet. It models the select-and-gate rule of skill-creator, not the production gate. Its threshold is 1623.
+It stays in `ratchets.json` because the value is exact for the seed and costs about half a second. A rise above 1623 fails the job. A fall passes, and nothing tightens the threshold until a person runs `ratchet.py tighten`.
+
+#### Gate power
+
+The false-promotion count alone passes a gate that never promotes. The power figures close that gap.
+For each true effect of 0.1, 0.2, and 0.3, the simulation draws each candidate case chance as `clip(gauss(base + effect, 0.10))`. The clip to [0, 1] removes part of the shift near the ceiling.
+So the realised mean gain is below the nominal effect, at about 0.097, 0.188, and 0.271. The simulation then runs the production gate, with the SE floor.
+It uses the seed, the 10 cases, the 3 repeats, and the 2000 trials of the false-promotion simulation. It skips the validation search.
+The keys `true_promotions_effect_10`, `_20`, and `_30` are integer counts of `promote`. The keys `power_effect_10`, `_20`, and `_30` are the rates, each its count divided by `trials`.
+Power is ratcheted. The metrics `gate-power-effect-10`, `-20`, and `-30` in `ratchets.json` use `direction: higher`, with the thresholds 191, 628, and 1240.
+The figures are exact for the seed. A power gain passes, and nothing raises the threshold until a person runs `ratchet.py tighten`. A later change cannot buy fewer false promotions with lost power without a person lowering a threshold in review.
+A rule that never promotes has power 0, so it fails these ratchets.
 
 ## Wedge targets
 
@@ -450,6 +467,45 @@ Every reflection prompt asks for ASD-STE100 prose.
 The limit is 20 words per procedural sentence and 25 words per descriptive sentence.
 This matches the inspector tiers and the prose workflow. ADR-015 records the choice (issue #153).
 The prompt text lives in `search/_proposer.py`. A change to it starts a new run.
+
+### Edit budget and run status
+
+Every reflection prompt states an edit budget and a run-status block after its instructions.
+The progress `p` is the search calls spent over the search allowance, clamped to 0 through 1.
+The allowance is `estimate.metric_calls` less the overshoot margin of the last search iteration. It is the GEPA call budget. The last iteration can pass it by up to the overshoot margin.
+The budget is `floor(1 + 5 * 0.5 * (1 + cos(pi * p)))`. It falls from 6 edits at `p = 0` to 1 edit at `p = 1`.
+An edit is one block of consecutive changed lines, found with `difflib.SequenceMatcher` over the lines of one component.
+The count adds the blocks of all changed components.
+The run-status block gives the proposal number, the search calls spent of the allowance, and the whole percent (integer math, rounded down).
+It also gives the stall streak from `### Stall stop`.
+The budget sentence reads "1 edit" when the budget is 1.
+From `p = 0.85` it adds: "This may be the last proposal, so prefer one small, safe change."
+The numbers come from the run record. They never come from case content.
+The budget is advisory. The runner never rejects a proposal for its size.
+`summary` and `report.json` carry `search.proposal_over_budget`: the count of proposals above the budget stated in their prompt, including proposals that the leakage check later rejects.
+The count shows whether enforcement is worth the wasted reflection calls.
+
+### Stall stop
+
+The search stops early when its proposals stop improving the validation mean.
+Each proposal gives one observation after GEPA scores its candidate.
+An observation is a gain when the candidate's validation mean is above the best earlier mean by more than `min_gain`.
+The seed counts as an earlier candidate.
+A proposal that the leakage check or the build rejects gives no gain.
+A candidate that does not complete the validation cases also gives no gain.
+An observation is unknown when an evaluation of its candidate fails before the candidate completes the validation cases.
+A host build error stops the run with `proposal-build-failed`, and its proposal also gives an unknown observation.
+A gain sets the streak to 0. Each other known observation adds 1. An unknown observation changes nothing.
+The run-status block states the streak: "Proposals since the last validation gain: N."
+From a streak of 3, the prompt advises a different kind of change.
+From a streak of 5, it advises a different component or section.
+At a streak of 8, the search stops, and `search.reason` is `converged-stalled`. The holdout gate still runs.
+Fewer than 4 known observations never give advice or a stop.
+The stall stop is always on. A budget stop keeps its own reason.
+A search that uses its allowance without a stop ends with `validation-mean`.
+The runner rebuilds the observations from the run record, so a resumed run gets the same streak.
+A resumed run that already reached a streak of 8 skips the search.
+ADR-016 in `docs/agents/decisions/skillz-autoimprove.md` records the thresholds.
 
 ## Export
 

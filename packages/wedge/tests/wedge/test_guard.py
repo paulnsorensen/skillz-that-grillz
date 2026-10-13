@@ -8,7 +8,7 @@ from wedge._guard import ClosureEntry, GuardError, guard_closure
 from wedge._resolve import parse_requirements
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_platform_marker_is_rejected() -> None:
     entries = [
         ClosureEntry(
@@ -21,7 +21,7 @@ def test_platform_marker_is_rejected() -> None:
         guard_closure(entries)
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_non_pure_wheel_is_rejected() -> None:
     entries = [
         ClosureEntry(
@@ -33,19 +33,19 @@ def test_non_pure_wheel_is_rejected() -> None:
         guard_closure(entries)
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_pure_marker_free_closure_passes() -> None:
     entries = [ClosureEntry(name="rich", wheel="rich-14.2.0-py3-none-any.whl")]
     guard_closure(entries)
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_compressed_universal_pure_wheel_passes() -> None:
     # PEP 425 compressed tag set: shiv publishes only this universal wheel.
     guard_closure([ClosureEntry(name="shiv", wheel="shiv-1.0.8-py2.py3-none-any.whl")])
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 @pytest.mark.parametrize(
     "wheel",
     [
@@ -61,12 +61,12 @@ def test_wheel_without_a_pure_py3_tag_is_rejected(wheel: str) -> None:
         guard_closure([ClosureEntry(name="x", wheel=wheel)])
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_build_tagged_pure_wheel_passes() -> None:
     guard_closure([ClosureEntry(name="x", wheel="x-1.0-1-py3-none-any.whl")])
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 @pytest.mark.parametrize(
     "line",
     ["-e ./packages/shared", "shared @ git+https://example.com/shared@abc123", "./vendor/pkg"],
@@ -77,7 +77,7 @@ def test_unpinned_requirement_is_rejected(line: str) -> None:
         _ = parse_requirements(text)
 
 
-@pytest.mark.ac("AC-W7")
+@pytest.mark.ac("wedge-skill-packaging:AC-W7")
 def test_pinned_requirements_parse_with_markers() -> None:
     text = (
         "# header comment\n"

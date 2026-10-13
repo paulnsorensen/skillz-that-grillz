@@ -30,7 +30,7 @@ def _run_pyz(pyz: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-@pytest.mark.ac("AC-W3")
+@pytest.mark.ac("wedge-skill-packaging:AC-W3")
 def test_pyz_runs_under_a_clean_interpreter_with_no_project_on_path(built_pyz: Path) -> None:
     result = _run_pyz(built_pyz, "--json", "wheels", "list")
     assert result.returncode == 0, result.stderr
@@ -39,7 +39,7 @@ def test_pyz_runs_under_a_clean_interpreter_with_no_project_on_path(built_pyz: P
     assert payload
 
 
-@pytest.mark.ac("AC-W3")
+@pytest.mark.ac("wedge-skill-packaging:AC-W3")
 def test_pyz_self_heals_a_merged_argument(built_pyz: Path) -> None:
     result = _run_pyz(built_pyz, "age", "brie", "--weeks", "2 --dry-run")
     assert result.returncode == 0, result.stderr

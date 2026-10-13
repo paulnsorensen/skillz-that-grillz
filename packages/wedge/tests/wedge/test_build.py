@@ -28,7 +28,7 @@ class _HashLike(Protocol):
     def hexdigest(self) -> str: ...
 
 
-@pytest.mark.ac("AC-W2")
+@pytest.mark.ac("wedge-skill-packaging:AC-W2")
 def test_build_is_byte_identical_across_checkouts(
     tmp_path: Path,
     copy_repo_subset: Callable[[Path], Path],
@@ -60,7 +60,7 @@ def test_build_is_byte_identical_across_checkouts(
 
 
 
-@pytest.mark.ac("AC-W2")
+@pytest.mark.ac("wedge-skill-packaging:AC-W2")
 def test_content_digest_ignores_compression_but_not_contents(
     tmp_path: Path,
     copy_repo_subset: Callable[[Path], Path],
@@ -79,7 +79,7 @@ def test_content_digest_ignores_compression_but_not_contents(
         _ = content_sha256(result.path)
 
 
-@pytest.mark.ac("AC-W2")
+@pytest.mark.ac("wedge-skill-packaging:AC-W2")
 def test_build_ignores_source_modes_and_umask(
     tmp_path: Path,
     copy_repo_subset: Callable[[Path], Path],
@@ -105,7 +105,7 @@ def test_build_ignores_source_modes_and_umask(
     assert result_a.key == result_b.key
     assert result_a.content_sha256 == result_b.content_sha256
 
-@pytest.mark.ac("AC-W2")
+@pytest.mark.ac("wedge-skill-packaging:AC-W2")
 def test_build_ignores_an_edited_uv_cache(
     tmp_path: Path,
     copy_repo_subset: Callable[[Path], Path],
@@ -166,7 +166,7 @@ def _archive_fingerprints(path: Path) -> dict[str, tuple[str, str]]:
     return {name: (content.hexdigest(), metadata.hexdigest()) for name, (content, metadata) in groups.items()}
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 @pytest.mark.parametrize("collision", ["file", "directory"])
 def test_build_rejects_local_source_over_installed_dependency(
     tmp_path: Path,
@@ -197,7 +197,7 @@ def test_build_rejects_local_source_over_installed_dependency(
         _ = build(skill, tmp_path / "out")
 
 
-@pytest.mark.ac("AC-W6")
+@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_copy_source_rejects_existing_file_without_overwriting(tmp_path: Path) -> None:
     source = tmp_path / "source.py"
     _ = source.write_text("new\n")
@@ -213,7 +213,7 @@ def test_copy_source_rejects_existing_file_without_overwriting(tmp_path: Path) -
     assert destination.read_text() == "installed\n"
 
 
-@pytest.mark.ac("AC-W2")
+@pytest.mark.ac("wedge-skill-packaging:AC-W2")
 def test_build_source_paths_preserve_namespace_and_exclude_unselected(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
@@ -235,7 +235,7 @@ def test_build_source_paths_preserve_namespace_and_exclude_unselected(
     assert "site-packages/fromargs/_fromargs.py" not in names
 
 
-@pytest.mark.ac("AC-W2")
+@pytest.mark.ac("wedge-skill-packaging:AC-W2")
 def test_source_selections_stage_different_trees(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path]
 ) -> None:
