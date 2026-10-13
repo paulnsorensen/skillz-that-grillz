@@ -137,21 +137,21 @@ def _command_role(work: Path) -> dict[str, object]:
 def _basic(work: Path, harness: str, model: str) -> Setup:
     del model
     target, draft = _echo(work)
-    return Setup(target, draft, _builtin(harness), ("--harness", harness))
+    return Setup(target, draft, _builtin(harness), ("--harness", harness, "--edit", "prose"))
 
 
 def _command_harness(work: Path, harness: str, model: str) -> Setup:
     del harness, model
     target, draft = _echo(work)
     command = _bridge(work)
-    flags = ("--harness", "command", *(f"--command={part}" for part in command))
+    flags = ("--harness", "command", *(f"--command={part}" for part in command), "--edit", "prose")
     return Setup(target, draft, {"schema_version": 1} | _command_role(work), flags)
 
 
 def _command_grader(work: Path, harness: str, model: str) -> Setup:
     del model
     target, draft = _copy(work, {"grader": "command", "argv": ["/usr/bin/python3", "-I", "-c", COPY_CHECK]})
-    return Setup(target, draft, _builtin(harness), ("--harness", harness))
+    return Setup(target, draft, _builtin(harness), ("--harness", harness, "--edit", "prose"))
 
 
 def _hybrid_mixed(work: Path, harness: str, model: str) -> Setup:
@@ -167,7 +167,7 @@ def _hybrid_mixed(work: Path, harness: str, model: str) -> Setup:
     config: dict[str, object] = {"schema_version": 1, "adapter": "codex", "roles": {"judge": _command_role(work)}}
     path = work / "harness.json"
     _ = path.write_text(json.dumps(config), encoding="utf-8")
-    return Setup(target, draft, config, ("--harness-config", str(path)), ("--min-gain", "0"))
+    return Setup(target, draft, config, ("--harness-config", str(path), "--edit", "prose"), ("--min-gain", "0"))
 
 
 def _prose_cli(work: Path, harness: str, model: str) -> Setup:
@@ -201,7 +201,7 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
     def case(name: str) -> dict[str, object]:
         return {"kind": "journey", "request": "Echo what I tell you.", "brief": f"Say `{name}` once, then stop.",
                 "max_turns": 2, "files": {"fixture.md": f"{name}\n"}, "expected": {"request": name}}
-    return Setup(target, _cases(case), _builtin(harness), ("--harness", harness),
+    return Setup(target, _cases(case), _builtin(harness), ("--harness", harness, "--edit", "prose"),
                  expect=None if harness == "claude" else "journey-unsupported")
 
 
