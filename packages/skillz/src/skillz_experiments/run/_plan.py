@@ -154,6 +154,11 @@ def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, fro
     if pinned:
         raise CodedError("editable-frozen", f"the contract editable list names {', '.join(pinned)}; each is a frozen file "
                          + "(binary, not UTF-8, or over the text limit), so no proposal can edit it")
+    if edit == "prose":
+        code_names = [name for name in contract.editable if not name.endswith(".md")]
+        if code_names:
+            raise CodedError("editable-needs-cli", f"the contract editable list names {', '.join(code_names)}, which "
+                             + "are not Markdown; run with --edit prose+cli or remove them from editable")
     if helper is not None and helper not in files and (plan is None or plan.helper_target(contract) is None):
         if helper in frozen:
             raise CodedError("helper-frozen", f"the contract helper {helper} is a frozen file (binary, not UTF-8, "

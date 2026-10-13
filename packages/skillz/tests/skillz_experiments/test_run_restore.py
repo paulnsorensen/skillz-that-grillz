@@ -255,6 +255,7 @@ def test_editable_errors_are_coded_and_stop_before_a_provider_exists(
         (target / "scripts/echo.py").unlink()
     elif variant == "prompt-components-missing":
         document["editable"] = ["scripts/echo.py"]
+        edit = "prose+cli"
     elif variant == "helper-missing":
         edit = "prose+cli"
     else:
