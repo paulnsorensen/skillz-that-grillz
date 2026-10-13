@@ -70,6 +70,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
              statistics_given: Mapping[str, float] | None = None, judge_model: str | None) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
+    The case approval covers the resolved statistics, so a changed or dropped flag stops at the case approval.
+
     A fresh run with a built-in harness first runs the free host checks, so a host problem stops the run
     before the user drafts or approves any case.
     """
@@ -104,16 +106,16 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if held < HOLDOUT_MINIMUM:
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
                          + "add task cases in more families to the draft, then call run again")
-    expected = case_hash(cases, split_seed)
+    expected = case_hash(cases, split_seed, resolved.data())
     if resolve_harness or configuration is not None:
         chosen = configuration if configuration is not None else Configuration.split(adapter, model, judge_model, options)
         chosen.check_read_roots(out)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
-                   {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
+                   {"question": approval_question(cases, split_seed, contract, resolved.data()), "case_hash": expected,
                     "seed": split_seed, "statistics": resolved.data(),
                     **({} if configuration is not None else {"claude_options": options.data()})})
-    freeze(out / "cases.json", cases, split_seed, expected)
+    freeze(out / "cases.json", cases, split_seed, expected, resolved.data())
     scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
     skeleton = Candidate.capture(target, [], contract)

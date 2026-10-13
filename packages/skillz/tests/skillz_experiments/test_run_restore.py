@@ -577,7 +577,7 @@ def test_a_resume_with_less_time_than_the_reserve_still_reaches_the_gate(
     assert run(target, out, MODEL, live=True, factory=factory)["phase"] == "complete"
     recorded = read(out / "run.json")
     assert cast(dict[str, object], recorded["search"])["reason"] == "budget-exhausted-seed-retained"
-    assert cast(dict[str, object], recorded["gate"])["reason"] == "winner-equals-baseline"
+    assert "reason" not in cast(dict[str, object], recorded["gate"])
 
 
 def test_a_slow_search_stops_at_the_gate_reserve_and_the_run_still_completes(

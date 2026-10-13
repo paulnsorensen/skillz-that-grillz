@@ -6,7 +6,7 @@ import pytest
 
 from gate_rules import always_promote, never_promote
 from skillz_experiments import _cli
-from skillz_experiments.gate import POWER_EFFECTS, Power, Verdict, simulate, simulate_power
+from skillz_experiments.gate import POWER_EFFECTS, Power, Verdict, simulate, simulate_cheaper, simulate_power
 
 
 @pytest.mark.parametrize("effect", POWER_EFFECTS)
@@ -110,3 +110,38 @@ def test_every_numeric_report_key_but_the_fixed_ones_is_a_metric_selector() -> N
     selectors = set(get_args(_cli.Metric))
     assert set(printed) - selectors == {"trials", "cases", "live_calls"}
     assert selectors <= set(printed)
+
+
+@pytest.mark.parametrize("loss, margin, rate", [
+    (0.05, 0.0, 0.0005),
+    (0.05, 0.02, 0.0035),
+    (0.05, 0.05, 0.016),
+    (0.0, 0.05, 0.0285),
+    (0.05, 1.0, 0.346),  # a margin far above the loss shows what an unbounded promote-cheaper rule would do
+])
+def test_a_cheaper_promotion_rate_is_pinned_per_loss_and_margin(loss: float, margin: float, rate: float) -> None:
+    result = simulate_cheaper(loss, margin)
+    assert (result.loss, result.margin, result.trials, result.cases) == (loss, margin, 2000, 10)
+    assert result.rate == rate == result.promotions / result.trials
+
+
+def test_a_cheaper_simulation_is_deterministic_and_its_rate_matches_the_count() -> None:
+    runs = [simulate_cheaper(0.0, 0.05, trials=50) for _ in range(2)]
+    assert runs[0] == runs[1]
+    assert runs[0].rate == runs[0].promotions / 50
+
+
+@pytest.mark.parametrize("kwargs, message", [
+    ({"trials": 0}, "at least 1 trial"),
+    ({"cases": 1}, "at least 2 cases"),
+    ({"loss": -0.01}, "loss and a margin"),
+    ({"margin": -0.01}, "loss and a margin"),
+])
+def test_a_cheaper_simulation_refuses_a_bad_shape_or_a_negative_loss_or_margin(
+        kwargs: dict[str, float], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _ = simulate_cheaper(**cast(dict[str, int], kwargs))
+
+
+def test_the_cheaper_selector_returns_the_simulated_rate() -> None:
+    assert _cli.self_test(simulate=True, metric="cheaper_loss_5_margin_5") == simulate_cheaper(0.05, 0.05).rate

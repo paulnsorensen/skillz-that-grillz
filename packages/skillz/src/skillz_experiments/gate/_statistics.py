@@ -55,9 +55,11 @@ def _budget_map(name: str, value: object) -> dict[str, float]:
 class Statistics:
     """Resolved promotion thresholds. The defaults reproduce the built-in 2*SE rule.
 
-    Every field except `min_token_saving` only tightens the rule. `min_token_saving` also adds `promote-cheaper`.
-    That verdict needs no observed loss and claims no gain. The SE multiplier stays 2. `min_gain` and
-    `min_lower_bound` are floors of at least 0.
+    Every field except `min_token_saving` and `max_quality_loss` only tightens `promote`. Those two fields set only
+    `promote-cheaper`, and a larger `max_quality_loss` loosens it. That verdict claims no gain. It needs the delta
+    to be at least 0 and `delta - 2*se` to be at least `-max_quality_loss`, so `max_quality_loss` bounds the
+    plausible quality loss. While `max_quality_loss` is None, `promote-cheaper` is off.
+    The SE multiplier stays 2. `min_gain` and `min_lower_bound` are floors of at least 0.
     A field with `flag` metadata also has a CLI flag. A field with `nullable` metadata may be None, which
     turns its rule off. A field with `map` metadata holds a name-to-number map and is contract-only.
     `max_token_increase_per_gain` and `min_token_saving` set the token rule, which is off while both are None.
@@ -79,6 +81,7 @@ class Statistics:
         "flag": True, "nullable": True, "check": _saving, "rule": "null or a number above 0 and below 1"})
     min_coverage: float = field(default=0.6, metadata={
         "flag": True, "check": _coverage, "rule": "a number from 0 to 1"})
+    max_quality_loss: float | None = field(default=None, metadata={"flag": True, "nullable": True})
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "family_budgets", MappingProxyType(dict(sorted(self.family_budgets.items()))))

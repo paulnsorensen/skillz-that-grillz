@@ -236,7 +236,7 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
 
     result = approved_run(target, out, factory=factory)
     gate = cast(dict[str, object], result["gate"])
-    assert gate["verdict"] == "inconclusive" and gate["reason"] == "winner-equals-baseline"
+    assert gate["verdict"] == "inconclusive" and "reason" not in gate
     assert gate["reasons"] == ["winner-equals-baseline"]
     assert gate["skipped_families"] == []
     assert gate["n_shared"] == 0 and gate["cases"] == len(split_ids(out, "holdout"))

@@ -117,42 +117,42 @@ def test_cap_with_a_cheaper_winner_stays_a_promote_and_reports_a_negative_change
 # --- promote-cheaper boundary -----------------------------------------------------------------------------
 
 def test_saving_exactly_at_the_share_promotes_cheaper_for_a_binary_exact_ratio() -> None:
-    result = verdict(BAND, thresholds=Statistics(min_token_saving=0.5), tokens=_same(4, (100, 50)))
+    result = verdict(BAND, thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.5), tokens=_same(4, (100, 50)))
     assert result.verdict == "promote-cheaper"
 
 
 def test_saving_just_under_the_share_does_not_promote_cheaper() -> None:
-    result = verdict(BAND, thresholds=Statistics(min_token_saving=0.5), tokens=_same(4, (100, 51)))
+    result = verdict(BAND, thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.5), tokens=_same(4, (100, 51)))
     assert result.verdict == "inconclusive"
 
 
 def test_saving_exactly_at_the_share_promotes_cheaper_for_a_decimal_ratio() -> None:
     """A saving within float noise of the share counts as reaching it and promotes cheaper."""
     # A drop from 100 to 90 saves exactly 10%. 90/100 - 1 is -0.09999999999999998, which sits below 0.1.
-    result = verdict(BAND, thresholds=Statistics(min_token_saving=0.1), tokens=_same(4, (100, 90)))
+    result = verdict(BAND, thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.1), tokens=_same(4, (100, 90)))
     assert result.verdict == "promote-cheaper"
 
 
 def test_saving_exactly_at_two_token_se_does_not_promote_cheaper() -> None:
     tokens = _tokens((100, 25), (100, 75))  # changes -0.75 and -0.25: mean -0.5, SE 0.25
-    probe = verdict(_deltas(0.1, -0.1), thresholds=Statistics(min_token_saving=0.2), tokens=tokens)
+    probe = verdict(_deltas(0.1, -0.1), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=tokens)
     assert (probe.token_delta, probe.token_se) == (-0.5, 0.25)  # precondition: -delta == 2 * SE exactly
     assert probe.verdict == "inconclusive"
 
 
 def test_saving_just_past_two_token_se_promotes_cheaper() -> None:
     tokens = _tokens((100, 30), (100, 70))  # changes -0.7, -0.3: mean -0.5, SE 0.2, 2 SE 0.4
-    result = verdict(_deltas(0.1, -0.1), thresholds=Statistics(min_token_saving=0.2), tokens=tokens)
+    result = verdict(_deltas(0.1, -0.1), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=tokens)
     assert result.verdict == "promote-cheaper"
 
 
 def test_saving_of_everything_is_a_valid_change_of_minus_one() -> None:
-    result = verdict(BAND, thresholds=Statistics(min_token_saving=0.9), tokens=_same(4, (100, 0)))
+    result = verdict(BAND, thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.9), tokens=_same(4, (100, 0)))
     assert (result.verdict, result.token_delta) == ("promote-cheaper", -1.0)
 
 
 def test_a_single_case_has_no_band_so_it_never_promotes_cheaper() -> None:
-    result = verdict(_deltas(0.0), thresholds=Statistics(min_token_saving=0.1), tokens=_same(1, (100, 10)))
+    result = verdict(_deltas(0.0), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.1), tokens=_same(1, (100, 10)))
     assert result.verdict == "inconclusive" and result.token_se == 0.0
     assert result.reasons == ()
 
@@ -161,14 +161,14 @@ def test_a_single_case_has_no_band_so_it_never_promotes_cheaper() -> None:
 
 def test_delta_exactly_plus_two_se_is_in_the_band_and_may_promote_cheaper() -> None:
     cheap = _same(2, (100, 10))
-    result = verdict(_deltas(3.0, 1.0), thresholds=Statistics(min_token_saving=0.2), tokens=cheap)
+    result = verdict(_deltas(3.0, 1.0), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=cheap)
     assert (result.delta, result.se) == (2.0, 1.0)  # precondition: delta == 2 * SE
     assert result.verdict == "promote-cheaper"
 
 
 def test_delta_exactly_minus_two_se_is_in_the_band_but_a_loss_never_promotes_cheaper() -> None:
     cheap = _same(2, (100, 10))
-    result = verdict(_deltas(-3.0, -1.0), thresholds=Statistics(min_token_saving=0.2), tokens=cheap)
+    result = verdict(_deltas(-3.0, -1.0), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=cheap)
     assert (result.delta, result.se) == (-2.0, 1.0)
     assert (result.verdict, result.reasons) == ("inconclusive", ())
 
@@ -180,52 +180,52 @@ def test_delta_just_past_two_se_is_a_promote_and_a_costly_one_rejects() -> None:
 
 
 def test_all_zero_deltas_are_inconclusive_before_floors_and_may_promote_cheaper() -> None:
-    result = verdict(_deltas(0.0, 0.0, 0.0), thresholds=Statistics(min_token_saving=0.2), tokens=_same(3, (100, 50)))
+    result = verdict(_deltas(0.0, 0.0, 0.0), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=_same(3, (100, 50)))
     assert (result.verdict, result.delta, result.se) == ("promote-cheaper", 0.0, 0.0)
 
 
 def test_all_zero_deltas_with_unknown_usage_name_the_reason() -> None:
-    result = verdict(_deltas(0.0, 0.0, 0.0), thresholds=Statistics(min_token_saving=0.2), tokens=_same(3, (0, 0)))
+    result = verdict(_deltas(0.0, 0.0, 0.0), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=_same(3, (0, 0)))
     assert (result.verdict, result.reasons) == ("inconclusive", ("unknown-usage",))
 
 
 def test_equal_negative_deltas_reject_whatever_the_tokens() -> None:
-    result = verdict(_deltas(-1.0, -1.0, -1.0), thresholds=Statistics(min_token_saving=0.2),
+    result = verdict(_deltas(-1.0, -1.0, -1.0), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2),
                      tokens=_same(3, (100, 1)))
     assert (result.verdict, result.reasons) == ("reject", ())
 
 
 def test_a_negative_delta_inside_the_band_never_promotes_cheaper() -> None:
-    result = verdict(_deltas(-0.2, 0.1, -0.2, 0.1), thresholds=Statistics(min_token_saving=0.2),
+    result = verdict(_deltas(-0.2, 0.1, -0.2, 0.1), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2),
                      tokens=_same(4, (100, 40)))
     assert (result.verdict, result.reasons) == ("inconclusive", ()) and result.delta < 0
 
 
 def test_a_large_mean_loss_inside_the_band_never_promotes_cheaper() -> None:
-    result = verdict(_deltas(-0.9, 0.1), thresholds=Statistics(min_token_saving=0.2), tokens=_same(2, (100, 10)))
+    result = verdict(_deltas(-0.9, 0.1), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=_same(2, (100, 10)))
     assert result.delta == pytest.approx(-0.4) and result.verdict == "inconclusive"
 
 
 def test_a_mean_delta_of_exactly_zero_with_a_spread_promotes_cheaper() -> None:
-    result = verdict(_deltas(0.3, -0.3), thresholds=Statistics(min_token_saving=0.2), tokens=_same(2, (100, 10)))
+    result = verdict(_deltas(0.3, -0.3), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=_same(2, (100, 10)))
     assert (result.delta, result.se > 0, result.verdict) == (0.0, True, "promote-cheaper")
 
 
 def test_a_small_gain_inside_the_band_promotes_cheaper() -> None:
-    result = verdict(_deltas(0.3, -0.2), thresholds=Statistics(min_token_saving=0.2), tokens=_same(2, (100, 10)))
+    result = verdict(_deltas(0.3, -0.2), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=_same(2, (100, 10)))
     assert result.delta > 0 and result.verdict == "promote-cheaper"
 
 
 def test_an_active_token_rule_with_no_tokens_is_unknown_usage() -> None:
-    for thresholds in (Statistics(max_token_increase_per_gain=1.0), Statistics(min_token_saving=0.2)):
+    for thresholds in (Statistics(max_token_increase_per_gain=1.0), Statistics(max_quality_loss=10.0, min_token_saving=0.2)):
         promoted = verdict(_deltas(1.0, 1.0), thresholds=thresholds)
         assert (promoted.verdict, promoted.reasons) == ("inconclusive", ("unknown-usage",))
 
 
 def test_a_floor_failure_is_not_a_band_result_even_with_a_big_saving() -> None:
-    result = verdict(_deltas(1.0, 1.0, 1.0), thresholds=Statistics(min_lower_bound=5.0, min_token_saving=0.2),
+    result = verdict(_deltas(1.0, 1.0, 1.0), thresholds=Statistics(max_quality_loss=10.0, min_lower_bound=5.0, min_token_saving=0.2),
                      tokens=_same(3, (100, 10)))
-    assert (result.verdict, result.reasons) == ("inconclusive", ("lower-bound",))
+    assert (result.verdict, result.reasons) == ("inconclusive", ("min-lower-bound",))
 
 
 # --- family and reason order ------------------------------------------------------------------------------
@@ -268,7 +268,7 @@ def test_one_hostile_case_among_good_ones_makes_the_whole_change_unknown(pair: P
     for hostile_at in (0, 3):
         pairs: list[Pair] = [good] * 4
         pairs[hostile_at] = pair
-        for thresholds in (Statistics(max_token_increase_per_gain=1.0), Statistics(min_token_saving=0.2)):
+        for thresholds in (Statistics(max_token_increase_per_gain=1.0), Statistics(max_quality_loss=10.0, min_token_saving=0.2)):
             for deltas in (_deltas(1.0, 1.0, 1.0, 1.0), BAND):
                 result = verdict(deltas, thresholds=thresholds, tokens=_tokens(*pairs))
                 assert (result.token_delta, result.token_se) == (None, None)
@@ -292,12 +292,12 @@ def test_a_tiny_but_positive_baseline_is_known() -> None:
 
 
 def test_empty_tokens_with_empty_deltas_do_not_crash() -> None:
-    result = verdict({}, thresholds=Statistics(min_token_saving=0.2, max_token_increase_per_gain=1.0), tokens={})
+    result = verdict({}, thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2, max_token_increase_per_gain=1.0), tokens={})
     assert result.verdict == "inconclusive" and result.token_delta is None
 
 
 def test_the_non_finite_delta_path_never_promotes_cheaper_and_never_crashes_on_hostile_tokens() -> None:
-    result = verdict(_deltas(math.nan, 0.0), thresholds=Statistics(min_token_saving=0.2),
+    result = verdict(_deltas(math.nan, 0.0), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2),
                      tokens=_tokens((None, 1), (5, math.nan)))
     assert (result.verdict, result.token_delta) == ("inconclusive", None)
     assert math.isnan(result.delta)
@@ -311,14 +311,14 @@ def test_the_non_finite_delta_path_never_promotes_cheaper_and_never_crashes_on_h
     {"c0": (1.0, 1.0), "c1": (1.0, 1.0), "c2": (1.0, 1.0)},  # superset
     {}])
 def test_tokens_with_different_case_ids_raise_value_error(tokens: dict[str, Pair]) -> None:
-    for thresholds in (DEFAULT_STATISTICS, Statistics(min_token_saving=0.2)):
+    for thresholds in (DEFAULT_STATISTICS, Statistics(max_quality_loss=10.0, min_token_saving=0.2)):
         with pytest.raises(ValueError, match="tokens need deltas keyed by the same case ids"):
             _ = verdict(_deltas(1.0, 1.0), thresholds=thresholds, tokens=tokens)
 
 
 def test_tokens_with_sequence_deltas_raise_value_error() -> None:
     with pytest.raises(ValueError, match="tokens need deltas keyed"):
-        _ = verdict((1.0, 1.0), thresholds=Statistics(min_token_saving=0.2), tokens=_same(2, (1, 1)))
+        _ = verdict((1.0, 1.0), thresholds=Statistics(max_quality_loss=10.0, min_token_saving=0.2), tokens=_same(2, (1, 1)))
 
 
 # --- charged tokens: hostile usage ------------------------------------------------------------------------
@@ -440,31 +440,31 @@ def test_holdout_tokens_average_repeats_and_ignore_other_arms_and_splits() -> No
     outcomes = [_holdout("baseline", "h1", 0, 100), _holdout("baseline", "h1", 1, 200),
                 _holdout("winner", "h1", 0, 10), _holdout("winner", "h1", 1, 30),
                 _holdout("search", "h1", 0, 999999), _holdout("baseline", "h1", 0, 888888, split="train")]
-    session = _stub(Statistics(min_token_saving=0.2), outcomes)
+    session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
     assert session._holdout_tokens() == {"h1": (150.0, 20.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
 
 
 def test_holdout_tokens_with_one_unknown_repeat_make_that_arm_unknown() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100), _holdout("baseline", "h1", 1, None),
                 _holdout("winner", "h1", 0, 10), _holdout("winner", "h1", 1, 30)]
-    session = _stub(Statistics(min_token_saving=0.2), outcomes)
+    session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
     assert session._holdout_tokens() == {"h1": (None, 20.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
 
 
 def test_holdout_tokens_with_a_missing_arm_are_unknown_for_that_arm() -> None:
-    session = _stub(Statistics(min_token_saving=0.2), [_holdout("baseline", "h1", 0, 100)])
+    session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), [_holdout("baseline", "h1", 0, 100)])
     assert session._holdout_tokens() == {"h1": (100.0, None)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
 
 
 def test_holdout_tokens_fall_back_to_usage_when_task_usage_is_absent() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100, 5, task=False), _holdout("winner", "h1", 0, 10, 5, task=False)]
-    session = _stub(Statistics(min_token_saving=0.2), outcomes)
+    session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
     assert session._holdout_tokens() == {"h1": (105.0, 15.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
 
 
 def test_holdout_tokens_charge_only_the_uncached_input() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100, 5, cached=40), _holdout("winner", "h1", 0, 100, 5, cached=90)]
-    session = _stub(Statistics(min_token_saving=0.2), outcomes)
+    session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
     assert session._holdout_tokens() == {"h1": (65.0, 15.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
 
 
@@ -485,7 +485,7 @@ def _keep(statistics: Statistics, *rounds: tuple[str, float, list[object]]) -> o
     return cast(dict[str, object], kept)["identity"] if isinstance(kept, dict) else None
 
 
-SAVE = Statistics(min_token_saving=0.2)
+SAVE = Statistics(max_quality_loss=10.0, min_token_saving=0.2)
 
 
 def test_keep_if_best_a_cheaper_tie_displaces_and_a_later_cheapest_tie_displaces_again() -> None:
@@ -644,7 +644,7 @@ def _prepared(tmp_path: Path, make_target: Callable[..., Path], write_draft: Cal
               approvals: Callable[..., tuple[str, int]], flags: dict[str, float] | None) -> tuple[Path, Path]:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics=flags)
     with pytest.raises(Stop) as prepared:
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics=flags)
     assert prepared.value.code == "live-required"
@@ -655,7 +655,7 @@ def test_resuming_with_a_token_flag_added_to_a_run_frozen_without_one_differs(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = _prepared(tmp_path, make_target, write_draft, approvals, None)
-    for flags in ({"min_token_saving": 0.5}, {"max_token_increase_per_gain": 0.0}):
+    for flags in ({"min_token_saving": 0.5, "max_quality_loss": 1.0}, {"max_token_increase_per_gain": 0.0}):
         with pytest.raises(CodedError) as caught:
             _ = run(target, out, MODEL, statistics=flags)
         assert caught.value.code == "run-config-differs"
@@ -673,18 +673,31 @@ def test_resuming_a_frozen_token_run_with_zero_cap_flag_changed_to_a_different_c
     assert same.value.code == "live-required"
 
 
-@pytest.mark.parametrize("mutate", ["drop-max", "drop-min", "string-min", "one-min", "bool-min", "nan-max"])
-def test_a_frozen_record_with_a_bad_token_key_is_tampered(
+FROZEN_FLAGS = {"min_token_saving": 0.5, "max_quality_loss": 1.0}
+
+
+@pytest.mark.parametrize("mutate", ["drop-max", "drop-min"])
+def test_a_frozen_record_that_lacks_a_token_key_stops_as_schema_old(
         mutate: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
-    target, out = _prepared(tmp_path, make_target, write_draft, approvals, {"min_token_saving": 0.5})
+    target, out = _prepared(tmp_path, make_target, write_draft, approvals, FROZEN_FLAGS)
     record = read(out / "run.json")
     frozen = cast(dict[str, object], record["statistics"])
-    if mutate == "drop-max":
-        del frozen["max_token_increase_per_gain"]
-    elif mutate == "drop-min":
-        del frozen["min_token_saving"]
-    elif mutate == "string-min":
+    del frozen["max_token_increase_per_gain" if mutate == "drop-max" else "min_token_saving"]
+    write(out / "run.json", record)
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL)
+    assert caught.value.code == "run-schema-old"
+
+
+@pytest.mark.parametrize("mutate", ["string-min", "one-min", "bool-min", "nan-max"])
+def test_a_frozen_record_with_a_malformed_token_key_is_tampered(
+        mutate: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = _prepared(tmp_path, make_target, write_draft, approvals, FROZEN_FLAGS)
+    record = read(out / "run.json")
+    frozen = cast(dict[str, object], record["statistics"])
+    if mutate == "string-min":
         frozen["min_token_saving"] = "0.5"
     elif mutate == "one-min":
         frozen["min_token_saving"] = 1.0
@@ -741,7 +754,7 @@ def _gate_of(tmp_path: Path, make_target: Callable[..., Path], write_draft: Call
              flags: dict[str, float] | None) -> dict[str, object]:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics=flags)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=provider,
                  statistics=flags)
     return cast(dict[str, object], result["gate"])

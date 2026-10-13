@@ -780,7 +780,7 @@ class Session:
         if winner.identity == self.seed.identity:
             tie = gate_verdict({case.identifier: 0.0 for case in holdout}, thresholds=self.statistics, families=families)
             outcome = Verdict("inconclusive", 0.0, 0.0, tie.cases, ("winner-equals-baseline",), tie.skipped_families)
-            self.record["gate"] = {**outcome.data(), "repeats": repeats, "reason": "winner-equals-baseline"}
+            self.record["gate"] = {**outcome.data(), "repeats": repeats}
         else:
             _ = self.budget.remaining()
             if any(item.get("arm") == "baseline" and item.get("status") == "candidate-contract-rejected"

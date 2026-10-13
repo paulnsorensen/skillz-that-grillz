@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import random
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -142,14 +142,20 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str = "task") -> li
                        c.files, c.expected, c.journey, split=assigned[c.family]) for c in cases]
 
 
-def case_hash(cases: Sequence[IntakeCase], seed: int) -> str:
-    """Return a stable sha256 over the seed and the canonical frozen content."""
-    return digest({"seed": seed, "cases": [case.data() for case in sorted(cases, key=lambda c: c.identifier)]})
+def case_hash(cases: Sequence[IntakeCase], seed: int, statistics: Mapping[str, object] | None = None) -> str:
+    """Return a stable sha256 over the seed, the canonical frozen content, and any resolved statistics."""
+    body: dict[str, object] = {"seed": seed, "cases": [case.data() for case in sorted(cases, key=lambda c: c.identifier)]}
+    if statistics is not None:
+        body["statistics"] = dict(statistics)
+    return digest(body)
 
 
-def approval_question(cases: Sequence[IntakeCase], seed: int, contract: Contract | None = None) -> str:
+def approval_question(cases: Sequence[IntakeCase], seed: int, contract: Contract | None = None,
+                      statistics: Mapping[str, object] | None = None) -> str:
     """Return the one approval question. It lists every case and binds approval to the case hash."""
     lines = [f"Approve these {len(cases)} cases (seed {seed})? Trigger and near-miss cases stay pending, not scored."]
+    if statistics is not None:
+        lines.append(f"statistics: {', '.join(f'{name} {value}' for name, value in statistics.items())}")
     if contract is not None:
         lines.append(f"contract: source {contract.source}; kinds {', '.join(sorted(contract.kinds))}")
     for case in sorted(cases, key=lambda c: c.identifier):
@@ -159,13 +165,14 @@ def approval_question(cases: Sequence[IntakeCase], seed: int, contract: Contract
             request = request[:REQUEST_PREVIEW - 3] + "..."
         lines.append(f"- {case.identifier} | family {case.family} | split {case.split} | kind {case.kind} "
                      + f"| source {case.source} | {status} | {request}")
-    lines.append(f"case hash: {case_hash(cases, seed)}")
+    lines.append(f"case hash: {case_hash(cases, seed, statistics)}")
     return "\n".join(lines)
 
 
-def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str) -> None:
+def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str,
+           statistics: Mapping[str, object] | None = None) -> None:
     """Write the approved cases to `out` in the `load_cases` format. Pending cases go under `pending`."""
-    expected = case_hash(cases, seed)
+    expected = case_hash(cases, seed, statistics)
     if approved_hash != expected:
         raise CodedError("cases-unapproved", "the approved hash does not match the cases; ask for approval again")
     scored: list[dict[str, object]] = []
