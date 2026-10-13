@@ -100,12 +100,15 @@ class GateRunnerTest(unittest.TestCase):
             self.assertTrue(any("wedge bundle" in event for event in readers))
             self.assertTrue(all("--no-sync" in event for event in readers if event.startswith("uv run") and "--no-project" not in event))
             pytest_events = [event for event in readers if " pytest " in event]
-            self.assertEqual(len(pytest_events), 4)
+            self.assertEqual(len(pytest_events), 5)
+            e2e = "packages/skillz/tests/skillz_experiments/e2e"
+            self.assertEqual(sum(f"pytest {e2e} " in event for event in pytest_events), 1)
+            self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in pytest_events))
             self.assertTrue(all(" -n 3 " in event for event in pytest_events))
             caches = [Path(event.split("cache_dir=")[1]) for event in pytest_events]
             bases = [Path(event.split("--basetemp ")[1].split()[0]) for event in pytest_events]
-            self.assertEqual(len(set(caches)), 4)
-            self.assertEqual(len(set(bases)), 4)
+            self.assertEqual(len(set(caches)), 5)
+            self.assertEqual(len(set(bases)), 5)
             self.assertTrue(all(cache.is_absolute() and base.is_absolute() for cache, base in zip(caches, bases)))
             self.assertTrue(all(str(base).startswith("/tmp/") for base in bases))
             socket = bases[0].resolve() / "popen-gw0" / "test_a_sandbox_read_root_that_0" / "h" / "inner" / "s"
