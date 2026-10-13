@@ -22,6 +22,7 @@ pytestmark = pytest.mark.usefixtures("host_login")
 
 MODEL = "local-test"
 NOTE = "this run uses --edit prose"
+REASON = "prose+cli needs a helper script to edit"
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
 Approver = Callable[..., tuple[str, int]]
@@ -35,7 +36,10 @@ def _drop_new_cli(plan: TargetPlan, directory: Path) -> tuple[TargetPlan, dict[s
 
 def _prepare(target: Path, out: Path, write_draft: Drafter, capsys: pytest.CaptureFixture[str],
              **flags: object) -> tuple[dict[str, object], int]:
-    """Give both approvals, then stop at `live-required`. Return the run record and the count of fallback notes of the last call."""
+    """Give both approvals, then stop at `live-required`.
+
+    Return the run record and the count of fallback notes of the last call. A note counts only when it names its reason.
+    """
     _ = write_draft(out)
     with pytest.raises(Stop) as cases:
         _ = run(target, out, MODEL, live=True, **flags)  # pyright: ignore[reportArgumentType]
@@ -47,7 +51,8 @@ def _prepare(target: Path, out: Path, write_draft: Drafter, capsys: pytest.Captu
     with pytest.raises(Stop) as ready:
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, **flags)  # pyright: ignore[reportArgumentType]
     assert ready.value.code == "live-required"
-    return read(out / "run.json"), capsys.readouterr().err.count(NOTE)
+    lines = capsys.readouterr().err.splitlines()
+    return read(out / "run.json"), sum(NOTE in line and REASON in line for line in lines)
 
 
 @pytest.mark.ac("gh-302:AC-5")

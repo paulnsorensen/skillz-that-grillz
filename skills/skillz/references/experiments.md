@@ -74,7 +74,7 @@ Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" doctor --harness claude` to
 Claude Code's own sandbox confines Bash commands.
 `--edit prose+cli` is the default. It also changes the helper scripts and the own wedge sources of the skill, in the same single search.
 A skill with no editable helper script, no own wedge source, and no usable `@new-cli` falls back to `--edit prose`.
-The fallback also applies when the `@new-cli` site layer fails. The runner writes one note on stderr, and the run does not stop.
+The fallback also applies when the `@new-cli` site layer fails or lacks cyclopts. The runner writes one note on stderr with the reason, and the run does not stop.
 A resume without `--edit` keeps the mode of the first run.
 `--edit prose` changes only Markdown files.
 A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.

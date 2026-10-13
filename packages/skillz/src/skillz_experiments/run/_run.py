@@ -17,6 +17,7 @@ from skillz_experiments._budget import (
 )
 from skillz_experiments._candidate import NEW_CLI, Candidate, store_frozen
 from skillz_experiments._cases import CodedError, Split, digest, load_cases
+from skillz_experiments._contract import Contract
 from skillz_experiments._intake import (
     DRAFT_NAME,
     HOLDOUT_MINIMUM,
@@ -31,7 +32,7 @@ from skillz_experiments._intake import (
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._seed import check_coverage, seed_cases
-from skillz_experiments._wedge_targets import plan_targets, seal, settle
+from skillz_experiments._wedge_targets import TargetPlan, plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
     ClaudeOptions,
@@ -66,10 +67,14 @@ DEFAULT_SEED = 20261006
 DEFAULT_REPEATS = 3
 
 
-def _note_prose_fallback() -> None:
-    """Tell the caller on stderr that an omitted `--edit` fell back to `prose`."""
-    print("skillz-experiment: the skill has no editable helper script, wedge source, or @new-cli; "
-          + "this run uses --edit prose", file=sys.stderr)
+def _fall_back_to_prose(target: Path, skeleton: Candidate, contract: Contract,
+                        error: CodedError) -> tuple[TargetPlan, Candidate]:
+    """Plan an omitted `--edit` as `prose` after `prose+cli` found nothing to edit, and say why on stderr."""
+    print(f"skillz-experiment: {error}; this run uses --edit prose", file=sys.stderr)
+    wedge = plan_targets(target, skeleton.files, contract, "prose")
+    files = skeleton.files | wedge.sources
+    frozen = skeleton.frozen | wedge.frozen
+    return wedge, Candidate(files, tuple(editable_files(files, contract, "prose", frozen.keys(), wedge)), contract, frozen=frozen)
 
 
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit | None, repeats: int, seed: int | None,
@@ -129,7 +134,6 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
     skeleton = Candidate.capture(target, [], contract)
     mode: Edit = edit or "prose+cli"
-    fell_back = False
     wedge = plan_targets(target, skeleton.files, contract, mode)
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
@@ -138,12 +142,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     except CodedError as error:
         if edit is not None or error.code != "helper-missing":
             raise
-        mode, fell_back = "prose", True
-        _note_prose_fallback()
-        wedge = plan_targets(target, skeleton.files, contract, mode)
-        files = skeleton.files | wedge.sources
-        frozen = skeleton.frozen | wedge.frozen
-        seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
+        mode = "prose"
+        wedge, seed_candidate = _fall_back_to_prose(target, skeleton, contract, error)
     plan = size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
     shown = plan_estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
@@ -160,14 +160,10 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         try:
             seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
         except CodedError as error:
-            if edit is not None or fell_back or error.code != "helper-missing":
+            if edit is not None or error.code != "helper-missing":
                 raise
-            mode = "prose"
-            _note_prose_fallback()
-            wedge, layers = plan_targets(target, skeleton.files, contract, mode), {}
-            files = skeleton.files | wedge.sources
-            frozen = skeleton.frozen | wedge.frozen
-            seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
+            mode, layers = "prose", {}
+            wedge, seed_candidate = _fall_back_to_prose(target, skeleton, contract, error)
     seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {

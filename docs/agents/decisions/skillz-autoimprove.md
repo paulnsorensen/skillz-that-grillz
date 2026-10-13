@@ -60,9 +60,10 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Amendment 2026-10-10 (wedge first-class, C4):** The stdlib-script rule no longer holds for Python helpers. fromargs is the default for an edit to a wedged Python source, and the `prose+cli` reflection prompt says so. The host builds an own target over a site layer. The `@new-cli` component adds a new fromargs target.
   Two cases keep another helper. A non-Python helper keeps its language. A Python helper may be a stdlib `argparse` helper only when the skill has no `wedge.toml` that can build a fromargs target.
   `audit-facts` reports own targets as editable or frozen, and it flags foreign `.pyz` bundles.
-- **Amendment 2026-10-13 (gh-302):** The old `prose+cli` rule that kept each script's interface and output format fixed is withdrawn. The prompt can change the command-line interface of a script when every caller and every skill text reference changes to match.
+- **Amendment 2026-10-13 (gh-302):** This amendment withdraws the old `prose+cli` rule that kept each script's interface and output format fixed. The prompt can change the command-line interface of a script when every caller and every skill text reference changes to match.
   The fromargs rule goes only to runs that offer a `@wedge/` source or `@new-cli`.
   `prose+cli` is the default edit mode. A skill with no editable script falls back to `prose`, also when `settle` drops `@new-cli`. The explicit modes keep their stops: `--edit prose+cli` stops with `helper-missing`, and `--edit prose` keeps `editable-needs-cli`.
+  The fallback catches only `helper-missing`. A run with no `--edit` on a skill with an own wedge target can stop with `site-layer-failed` or `build-failed` when the host has no `uv` or network. Use `--edit prose` on such a host.
 
 ### ADR-006: Replace --restricted with project setting sources and a free skill inventory  [status: accepted]
 - **Context:** Issue #168. On Claude Code 2.1.289 and later, `--restricted` drops project skills, so the candidate never loads. `disableBundledSkills` keeps Claude Code's own commands and `@builtin` plugins in the init event, and account skills load with the login. Ubuntu's `bwrap-userns-restrict` profile blocks the nested user namespace of the Unix-socket filter, and the documented sysctl does not lift it.
