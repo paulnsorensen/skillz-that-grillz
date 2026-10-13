@@ -72,7 +72,8 @@ def _case(value: object, position: int) -> DraftCase:
     if set(item) - _FIELDS:
         raise ValueError(f"case {name}: unknown fields {', '.join(sorted(set(item) - _FIELDS))}")
     if _REQUIRED - set(item):
-        raise ValueError(f"case {name}: missing fields {', '.join(sorted(_REQUIRED - set(item)))}")
+        raise CodedError("cases-invalid", f"case {name}: missing fields {', '.join(sorted(_REQUIRED - set(item)))}; add each "
+                         + "field (a trigger or near-miss seed case takes family = id; a task case needs an explicit family)")
     try:
         kind, source = item["kind"], item["source"]
         if kind not in KINDS:
