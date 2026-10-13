@@ -545,7 +545,7 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
     record = read(out / "run.json")
     assert "best_validated" in record
     assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
-    assert cast(dict[str, object], record["gate"])["reason"] == "winner-equals-baseline"
+    assert "reason" not in cast(dict[str, object], record["gate"])
 
 
 def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
@@ -1001,7 +1001,9 @@ def test_a_provider_fault_on_every_winner_repeat_of_one_holdout_case_drops_that_
 def test_a_dropped_holdout_case_below_min_coverage_makes_the_gate_low_coverage(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
-    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    target, out, state, _, _ = _start(tmp_path, make_target, write_draft, approvals)
+    flags = {"min_coverage": 1.0}
+    case_hash, calls = approvals(target, out, statistics=flags)
     victim: list[str] = []
 
     def fault(improved: bool, case: str) -> Exception | None:
@@ -1012,7 +1014,7 @@ def test_a_dropped_holdout_case_below_min_coverage_makes_the_gate_low_coverage(
 
     state.holdout_case_fault = fault
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                 factory=state.factory, statistics={"min_coverage": 1.0})
+                 factory=state.factory, statistics=flags)
     gate = cast(dict[str, object], read(out / "run.json")["gate"])
     assert result["phase"] == "complete" and victim
     assert victim[0] not in [case for ids in cast(dict[str, list[str]], gate["moves"]).values() for case in ids]

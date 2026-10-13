@@ -43,6 +43,7 @@ def _family_rule(deltas: Mapping[str, float], families: Mapping[str, str] | None
     """Return the breached families and the skipped families, each sorted by family name.
 
     The rule skips a family with fewer than 2 holdout cases, whatever its budget. A family with no budget is off.
+    A family that `family_budgets` names but that has no holdout case counts as skipped too.
     """
     if families is None:
         return [], ()
@@ -63,7 +64,8 @@ def _family_rule(deltas: Mapping[str, float], families: Mapping[str, str] | None
         se = statistics.stdev(values) / math.sqrt(len(values))
         if (values[0] < -budget) if se == 0 else (statistics.fmean(values) + 2 * se < -budget):
             breached.append(name)
-    return breached, tuple(skipped)
+    skipped.extend(name for name in thresholds.family_budgets if name not in grouped)
+    return breached, tuple(sorted(skipped))
 
 
 def _token_change(tokens: Mapping[str, tuple[float | None, float | None]]) -> tuple[float, float] | None:
@@ -131,8 +133,9 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     a score `promote` whose mean token change exceeds `max_token_increase_per_gain * delta` becomes `reject`
     with reason `token-cost`;
     a score `inconclusive` (the delta is inside the band, from -2*se to 2*se) becomes `promote-cheaper` when
-    `min_token_saving` is set, the delta is at least 0, the tokens drop by more than twice the token SE, and the
-    drop is at least `min_token_saving`. The floors do not gate `promote-cheaper`.
+    `min_token_saving` is set, the delta is at least 0, `delta - 2*se` is at least `-max_quality_loss`, the tokens
+    drop by more than twice the token SE, and the drop is at least `min_token_saving`. A None `max_quality_loss`
+    turns `promote-cheaper` off. The floors do not gate `promote-cheaper`.
     Unknown usage turns a `promote` into `inconclusive` with reason `unknown-usage`. It adds the same reason to
     a band result when `min_token_saving` is set. An active token rule with no `tokens` is unknown usage.
     `token_delta` and `token_se` report the change while the rule runs and the usage is known.
@@ -187,7 +190,7 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
         if not delta >= thresholds.min_gain:
             reasons.append("min-gain")
         if not delta > 2 * se + thresholds.min_lower_bound:
-            reasons.append("lower-bound")
+            reasons.append("min-lower-bound")
         if reasons:
             name = "inconclusive"
     if active and not low:
@@ -201,7 +204,9 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
         elif in_band and saving is not None:
             if token_delta is None or token_se is None:
                 reasons.append("unknown-usage")
-            elif delta >= 0 and _exceeds(-token_delta, 2 * token_se) and _reaches(-token_delta, saving):
+            elif (thresholds.max_quality_loss is not None and delta >= 0
+                  and _reaches(delta - 2 * se, -thresholds.max_quality_loss)
+                  and _exceeds(-token_delta, 2 * token_se) and _reaches(-token_delta, saving)):
                 name = "promote-cheaper"
     if breached:
         name = "reject"

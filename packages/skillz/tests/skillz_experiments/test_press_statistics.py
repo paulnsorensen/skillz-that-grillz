@@ -128,7 +128,7 @@ def test_float_edge_lower_bound_just_below_the_margin_passes_and_just_above_bloc
     same = [0.3, 0.3, 0.3]
     delta = verdict(same).delta
     assert verdict(same, thresholds=Statistics(min_lower_bound=math.nextafter(delta, 0.0))).verdict == "promote"
-    assert verdict(same, thresholds=Statistics(min_lower_bound=math.nextafter(delta, 1.0))).reasons == ("lower-bound",)
+    assert verdict(same, thresholds=Statistics(min_lower_bound=math.nextafter(delta, 1.0))).reasons == ("min-lower-bound",)
 
 
 def test_floors_never_rescue_a_reject_or_an_inconclusive_and_never_add_reasons() -> None:
@@ -149,7 +149,7 @@ def test_a_failed_floor_keeps_the_real_delta_and_se() -> None:
 
 def test_a_promote_that_misses_only_one_floor_names_only_that_floor() -> None:
     assert verdict(SPREAD, thresholds=Statistics(min_gain=3.0)).reasons == ("min-gain",)
-    assert verdict(SPREAD, thresholds=Statistics(min_lower_bound=3.0)).reasons == ("lower-bound",)
+    assert verdict(SPREAD, thresholds=Statistics(min_lower_bound=3.0)).reasons == ("min-lower-bound",)
 
 
 def test_a_nan_min_gain_does_not_silently_disable_the_floor() -> None:
@@ -173,7 +173,7 @@ def test_an_empty_contract_block_resolves_to_defaults() -> None:
 def _prepare_only(target: Path, out: Path, write_draft: Callable[..., list[str]],
                   approvals: Callable[..., tuple[str, int]], *, statistics: dict[str, float] | None = None) -> None:
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics=statistics)
     with pytest.raises(Stop) as prepared:
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics=statistics)
     assert prepared.value.code == "live-required"
@@ -215,7 +215,7 @@ def test_a_tampered_frozen_floor_is_the_one_the_gate_uses(
 
 
 @pytest.mark.parametrize("shape", [
-    ..., {}, {"min_gain": 0.0}, {"min_gain": "x", "min_lower_bound": 0.0}, {"min_gain": -1.0, "min_lower_bound": 0.0},
+    ..., {"min_gain": "x", "min_lower_bound": 0.0}, {"min_gain": -1.0, "min_lower_bound": 0.0},
     {"min_gain": True, "min_lower_bound": 0.0}, {"min_gain": 10**400, "min_lower_bound": 0.0},
     {"min_gain": 0.0, "min_lower_bound": 0.0, "extra": 1.0}, []])
 def test_a_malformed_frozen_statistics_map_stops_as_tampered(
@@ -227,6 +227,18 @@ def test_a_malformed_frozen_statistics_map_stops_as_tampered(
     with pytest.raises(Stop) as caught:
         _ = run(target, out, MODEL, live=True, factory=_Provider)
     assert caught.value.code == "run-record-tampered"
+
+
+@pytest.mark.parametrize("shape", [{}, {"min_gain": 0.0}, {"min_gain": 0.0, "min_lower_bound": 0.0}])
+def test_a_well_formed_frozen_map_that_lacks_newer_fields_stops_as_schema_old(
+        shape: object, tmp_path: Path, make_target: Callable[..., Path],
+        write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _prepare_only(target, out, write_draft, approvals)
+    _tamper(out, shape)
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=_Provider)
+    assert caught.value.code == "run-schema-old"
 
 
 def test_a_resume_flag_equal_to_the_contract_resolved_value_is_accepted_and_others_differ(

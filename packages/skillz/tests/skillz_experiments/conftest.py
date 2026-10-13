@@ -7,7 +7,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import NamedTuple, cast
 
 import pytest
@@ -145,14 +145,18 @@ def _write_draft(out: Path, families: int = 5, per_family: int = 2) -> list[str]
     return [str(case["id"]) for case in cases]
 
 
-def _approvals(target: Path, out: Path, model: str = "local-test", *, edit: Edit = "prose") -> tuple[str, int]:
-    """Walk the two stops. Return the case hash and the call count that the user approves."""
+def _approvals(target: Path, out: Path, model: str = "local-test", *, edit: Edit = "prose",
+               statistics: Mapping[str, float] | None = None) -> tuple[str, int]:
+    """Walk the two stops. Return the case hash and the call count that the user approves.
+
+    The approval covers the resolved statistics, so pass the flags that the later calls pass.
+    """
     with pytest.raises(Stop) as cases:
-        _ = run(target, out, model, live=True, edit=edit)
+        _ = run(target, out, model, live=True, edit=edit, statistics=statistics)
     assert cases.value.code == "cases-unapproved"
     case_hash = cast(str, cases.value.data["case_hash"])
     with pytest.raises(Stop) as budget:
-        _ = run(target, out, model, live=True, approve_cases=case_hash, edit=edit)
+        _ = run(target, out, model, live=True, approve_cases=case_hash, edit=edit, statistics=statistics)
     assert budget.value.code == "budget-unapproved"
     estimate = cast(dict[str, int], budget.value.data["estimate"])
     return case_hash, estimate["calls"]

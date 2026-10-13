@@ -48,8 +48,8 @@ def _deltas(*values: float) -> dict[str, float]:
 
 
 CAP = Statistics(max_token_increase_per_gain=1.0)
-SAVE = Statistics(min_token_saving=0.2)
-BOTH = Statistics(max_token_increase_per_gain=1.0, min_token_saving=0.2)
+SAVE = Statistics(min_token_saving=0.2, max_quality_loss=10.0)
+BOTH = Statistics(max_token_increase_per_gain=1.0, min_token_saving=0.2, max_quality_loss=10.0)
 # Four cases that gain 1 each (SE 0, score promote) and cost +50%, +50%, +50%, +50%.
 PROMOTING = _deltas(1.0, 1.0, 1.0, 1.0)
 BAND = _deltas(0.1, -0.1, 0.1, -0.1)  # mean 0, SE > 0: inside the band
@@ -127,21 +127,21 @@ def test_promote_cheaper_needs_both_the_share_and_two_token_se() -> None:
     result = verdict(BAND, thresholds=SAVE, tokens=noisy)
     assert result.token_delta == pytest.approx(-0.25) and result.verdict == "inconclusive"
     exact = _tokens(*[(100, 75)] * 4)  # SE 0, saving exactly the share
-    assert verdict(BAND, thresholds=Statistics(min_token_saving=0.25), tokens=exact).verdict == "promote-cheaper"
+    assert verdict(BAND, thresholds=Statistics(min_token_saving=0.25, max_quality_loss=10.0), tokens=exact).verdict == "promote-cheaper"
 
 
 def test_equal_token_changes_use_the_shared_value_and_a_flat_change_is_not_cheaper() -> None:
     flat = _tokens(*[(100, 100)] * 4)
-    assert verdict(BAND, thresholds=Statistics(min_token_saving=0.01), tokens=flat).verdict == "inconclusive"
+    assert verdict(BAND, thresholds=Statistics(min_token_saving=0.01, max_quality_loss=10.0), tokens=flat).verdict == "inconclusive"
     up = _tokens(*[(100, 120)] * 4)
     assert verdict(BAND, thresholds=SAVE, tokens=up).verdict == "inconclusive"
 
 
 def test_floors_do_not_gate_promote_cheaper_but_a_floor_failure_is_outside_the_band() -> None:
     cheap = _tokens(*[(100, 50)] * 4)
-    strict = Statistics(min_gain=0.5, min_lower_bound=0.5, min_token_saving=0.2)
+    strict = Statistics(min_gain=0.5, min_lower_bound=0.5, min_token_saving=0.2, max_quality_loss=10.0)
     assert verdict(BAND, thresholds=strict, tokens=cheap).verdict == "promote-cheaper"
-    demoted = verdict(PROMOTING, thresholds=Statistics(min_gain=5.0, min_token_saving=0.2), tokens=cheap)
+    demoted = verdict(PROMOTING, thresholds=Statistics(min_gain=5.0, min_token_saving=0.2, max_quality_loss=10.0), tokens=cheap)
     assert (demoted.verdict, demoted.reasons) == ("inconclusive", ("min-gain",))
 
 
@@ -154,9 +154,9 @@ def test_a_family_breach_beats_promote_cheaper() -> None:
     deltas = {"a1": -1.0, "a2": -1.0, "b1": 1.0, "b2": 1.0}  # mean 0, SE > 0: inside the band
     families = {"a1": "a", "a2": "a", "b1": "b", "b2": "b"}
     cheap = {key: (100.0, 50.0) for key in deltas}
-    control = verdict(deltas, thresholds=Statistics(min_token_saving=0.2), families=families, tokens=cheap)
+    control = verdict(deltas, thresholds=Statistics(min_token_saving=0.2, max_quality_loss=10.0), families=families, tokens=cheap)
     assert control.verdict == "promote-cheaper"
-    result = verdict(deltas, thresholds=Statistics(family_budget=0.0, min_token_saving=0.2),
+    result = verdict(deltas, thresholds=Statistics(family_budget=0.0, min_token_saving=0.2, max_quality_loss=10.0),
                      families=families, tokens=cheap)
     assert (result.verdict, result.reasons) == ("reject", ("family-regression:a",))
 
@@ -377,10 +377,10 @@ def test_the_reflection_prompt_is_unchanged_without_a_token_field_and_gains_one_
 def test_the_record_holds_both_token_keys_and_round_trips() -> None:
     assert DEFAULT_STATISTICS.data()["max_token_increase_per_gain"] is None
     assert DEFAULT_STATISTICS.data()["min_token_saving"] is None
-    full = Statistics(max_token_increase_per_gain=0.5, min_token_saving=0.25)
+    full = Statistics(max_token_increase_per_gain=0.5, min_token_saving=0.25, max_quality_loss=10.0)
     assert Statistics.parse(cast(object, json.loads(json.dumps(full.data())))) == full
     assert not DEFAULT_STATISTICS.token_rule and full.token_rule
-    assert Statistics(min_token_saving=0.5).token_rule and Statistics(max_token_increase_per_gain=0.0).token_rule
+    assert Statistics(min_token_saving=0.5, max_quality_loss=10.0).token_rule and Statistics(max_token_increase_per_gain=0.0).token_rule
 
 
 def test_a_record_without_the_token_keys_is_refused() -> None:
@@ -391,7 +391,7 @@ def test_a_record_without_the_token_keys_is_refused() -> None:
 
 
 def test_the_flag_registry_lists_both_token_flags() -> None:
-    assert {"max_token_increase_per_gain", "min_token_saving"} <= set(Statistics.flags())
+    assert {"max_token_increase_per_gain", "min_token_saving", "max_quality_loss"} <= set(Statistics.flags())
 
 
 @pytest.mark.parametrize("value", [0.0, 1.0, -0.1, 1.5, True, "0.5", math.nan, math.inf, 10**400])
@@ -411,17 +411,19 @@ def test_max_token_increase_per_gain_accepts_only_a_finite_number_of_at_least_0(
 
 
 def test_a_contract_accepts_both_token_fields_and_null() -> None:
-    contract = parse(_document(statistics={"max_token_increase_per_gain": 2, "min_token_saving": 0.5}), "skill")
+    contract = parse(_document(statistics={"max_token_increase_per_gain": 2, "min_token_saving": 0.5,
+                                           "max_quality_loss": 0.1}), "skill")
     resolved = resolve_statistics(contract, {})
     assert (resolved.max_token_increase_per_gain, resolved.min_token_saving) == (2.0, 0.5)
-    nulled = parse(_document(statistics={"max_token_increase_per_gain": None, "min_token_saving": None}), "skill")
+    nulled = parse(_document(statistics={"max_token_increase_per_gain": None, "min_token_saving": None,
+                                         "max_quality_loss": None}), "skill")
     assert not resolve_statistics(nulled, {}).token_rule
     assert Statistics.declared({"min_token_saving": 0.999}) == {"min_token_saving": 0.999}
     assert Statistics.declared({"max_token_increase_per_gain": 0}) == {"max_token_increase_per_gain": 0.0}
 
 
 def test_a_flag_beats_the_contract_token_value() -> None:
-    contract = parse(_document(statistics={"min_token_saving": 0.5}), "skill")
+    contract = parse(_document(statistics={"min_token_saving": 0.5, "max_quality_loss": 0.1}), "skill")
     assert resolve_statistics(contract, {"min_token_saving": 0.1}).min_token_saving == 0.1
     assert resolve_statistics(contract, {}).min_token_saving == 0.5
 
@@ -511,7 +513,7 @@ def _finish(tmp_path: Path, make_target: Callable[..., Path], write_draft: Calla
             statistics: dict[str, float] | None, name: str = "run") -> dict[str, object]:
     target, out = make_target(tmp_path) if not (tmp_path / "echo-skill").exists() else tmp_path / "echo-skill", tmp_path / name
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics=statistics)
     return run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=provider,
                statistics=statistics)
 
@@ -584,11 +586,12 @@ def test_a_cheaper_winner_without_a_holdout_gain_promotes_cheaper_only_with_min_
     capped = _gate(_finish(tmp_path, make_target, write_draft, approvals, _priced(**cheap),
                            {"max_token_increase_per_gain": 1.0}, "capped"))
     assert capped["verdict"] == "inconclusive" and capped["token_delta"] == pytest.approx(-0.5)
-    on = _gate(_finish(tmp_path, make_target, write_draft, approvals, _priced(**cheap), {"min_token_saving": 0.3}, "on"))
+    on = _gate(_finish(tmp_path, make_target, write_draft, approvals, _priced(**cheap),
+                        {"min_token_saving": 0.3, "max_quality_loss": 1.0}, "on"))
     assert (on["verdict"], on["reasons"]) == ("promote-cheaper", [])
     assert on["token_delta"] == pytest.approx(-0.5)
     shallow = _gate(_finish(tmp_path, make_target, write_draft, approvals, _priced(HOLDOUT_GAIN=0.0, IMPROVED=90),
-                            {"min_token_saving": 0.3}, "shallow"))
+                            {"min_token_saving": 0.3, "max_quality_loss": 1.0}, "shallow"))
     assert shallow["verdict"] == "inconclusive"
 
 
@@ -596,7 +599,8 @@ def test_the_reflection_prompt_carries_the_token_sentence_while_a_token_field_is
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     provider = _priced()
-    _ = _finish(tmp_path, make_target, write_draft, approvals, provider, {"min_token_saving": 0.5})
+    _ = _finish(tmp_path, make_target, write_draft, approvals, provider,
+                 {"min_token_saving": 0.5, "max_quality_loss": 1.0})
     assert provider.prompts and all(SENTENCE in prompt for prompt in provider.prompts)
 
 
@@ -605,12 +609,12 @@ def test_a_resume_flag_must_match_the_frozen_token_fields(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
-    flags = {"max_token_increase_per_gain": 1.0, "min_token_saving": 0.5}
+    flags = {"max_token_increase_per_gain": 1.0, "min_token_saving": 0.5, "max_quality_loss": 1.0}
+    case_hash, calls = approvals(target, out, statistics=flags)
     with pytest.raises(Stop) as prepared:
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics=flags)
     assert prepared.value.code == "live-required"
-    for name, other in (("max_token_increase_per_gain", 2.0), ("min_token_saving", 0.25)):
+    for name, other in (("max_token_increase_per_gain", 2.0), ("min_token_saving", 0.25), ("max_quality_loss", 0.5)):
         with pytest.raises(CodedError) as caught:
             _ = run(target, out, MODEL, statistics={name: other})
         assert caught.value.code == "run-config-differs" and "--" + name.replace("_", "-") in str(caught.value)
@@ -619,3 +623,77 @@ def test_a_resume_flag_must_match_the_frozen_token_fields(
     assert same.value.code == "live-required"
     frozen = cast(dict[str, object], read(out / "run.json")["statistics"])
     assert (frozen["max_token_increase_per_gain"], frozen["min_token_saving"]) == (1.0, 0.5)
+
+
+def test_a_completed_run_checks_the_token_flags_against_the_frozen_values(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    flags = {"max_token_increase_per_gain": 1.0, "min_token_saving": 0.5, "max_quality_loss": 1.0}
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out, statistics=flags)
+    done = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_priced(),
+               statistics=flags)
+    for name, other in (("max_token_increase_per_gain", 2.0), ("min_token_saving", 0.25), ("max_quality_loss", 0.5)):
+        with pytest.raises(CodedError) as caught:
+            _ = run(target, out, MODEL, statistics={name: other})
+        assert caught.value.code == "run-config-differs" and "--" + name.replace("_", "-") in str(caught.value)
+    assert run(target, out, MODEL, statistics={"min_token_saving": 0.5}) == done
+    assert run(target, out, MODEL) == done
+
+
+def test_the_quality_loss_margin_gates_promote_cheaper_at_the_boundary() -> None:
+    cheap = _tokens(*[(100, 50)] * 4)
+    se = verdict(BAND, tokens=cheap).se
+    edge = 2 * se  # BAND has delta 0, so delta - 2*se is exactly -edge
+    at = verdict(BAND, thresholds=Statistics(min_token_saving=0.2, max_quality_loss=edge), tokens=cheap)
+    assert at.verdict == "promote-cheaper"
+    above = verdict(BAND, thresholds=Statistics(min_token_saving=0.2, max_quality_loss=edge * 1.01), tokens=cheap)
+    assert above.verdict == "promote-cheaper"
+    below = verdict(BAND, thresholds=Statistics(min_token_saving=0.2, max_quality_loss=edge * 0.99), tokens=cheap)
+    assert (below.verdict, below.reasons) == ("inconclusive", ())
+    zero = verdict(BAND, thresholds=Statistics(min_token_saving=0.2, max_quality_loss=0.0), tokens=cheap)
+    assert zero.verdict == "inconclusive"
+
+
+def test_a_null_quality_loss_margin_turns_promote_cheaper_off() -> None:
+    cheap = _tokens(*[(100, 50)] * 4)
+    result = verdict(BAND, thresholds=Statistics(min_token_saving=0.2), tokens=cheap)
+    assert (result.verdict, result.reasons) == ("inconclusive", ())
+
+
+def test_min_token_saving_without_a_quality_loss_margin_is_a_configuration_error(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]]) -> None:
+    target = make_target(tmp_path)
+    _ = write_draft(tmp_path / "run")
+    with pytest.raises(ValueError, match="--min-token-saving needs --max-quality-loss"):
+        _ = run(target, tmp_path / "run", MODEL, statistics={"min_token_saving": 0.3})
+    contract = parse(_document(statistics={"min_token_saving": 0.3}), "skill")
+    with pytest.raises(ValueError, match="--max-quality-loss"):
+        _ = resolve_statistics(contract, {})
+    assert resolve_statistics(contract, {"max_quality_loss": 0.0}).max_quality_loss == 0.0
+    assert resolve_statistics(parse(_document(), "skill"), {"max_quality_loss": 0.1}).min_token_saving is None
+
+
+def test_the_cli_rejects_a_negative_quality_loss_margin(
+        tmp_path: Path, make_target: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    code = main(["run", "--target", str(target), "--out", str(tmp_path / "run"), "--model", MODEL,
+                 "--max-quality-loss=-0.1"])
+    captured = capsys.readouterr()
+    assert code != 0
+    assert "max-quality-loss" in captured.out + captured.err
+    assert not (tmp_path / "run" / "run.json").exists()
+
+
+def test_the_cli_passes_the_quality_loss_margin_to_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake(*_args: object, **kwargs: object) -> dict[str, object]:
+        seen.update(kwargs)
+        return {}
+
+    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    base = ["run", "--target", str(tmp_path / "skill"), "--out", str(tmp_path / "run"), "--model", MODEL]
+    assert main([*base, "--min-token-saving=0.25", "--max-quality-loss=0.02"]) == 0
+    assert seen["statistics"] == {"min_token_saving": 0.25, "max_quality_loss": 0.02}

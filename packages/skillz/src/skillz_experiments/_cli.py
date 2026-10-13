@@ -11,7 +11,9 @@ import fromargs
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._facts import audit_facts
-from skillz_experiments.gate import POWER_EFFECTS, simulate as simulate_gate, simulate_power
+from skillz_experiments.gate import (
+    CHEAPER_SCENARIOS, POWER_EFFECTS, simulate as simulate_gate, simulate_cheaper, simulate_power,
+)
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
@@ -24,7 +26,8 @@ RunHarness = Literal["claude", "codex", "command"]
 Metric = Literal[
     "false_promotions_2se", "false_promotions_one_holdout", "rate_2se", "rate_one_holdout",
     "true_promotions_effect_10", "true_promotions_effect_20", "true_promotions_effect_30",
-    "power_effect_10", "power_effect_20", "power_effect_30"]
+    "power_effect_10", "power_effect_20", "power_effect_30",
+    "cheaper_loss_5_margin_0", "cheaper_loss_5_margin_2", "cheaper_loss_5_margin_5", "cheaper_loss_0_margin_5"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -93,7 +96,8 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                 sandbox_seconds: int | None = None, min_gain: float | None = None,
                 min_lower_bound: float | None = None, family_budget: float | None = None,
                 max_token_increase_per_gain: float | None = None,
-                min_token_saving: float | None = None, min_coverage: float | None = None) -> dict[str, object]:
+                min_token_saving: float | None = None, min_coverage: float | None = None,
+                max_quality_loss: float | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
     Parameters
@@ -125,10 +129,13 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
     min_coverage
         Least share of planned holdout cases scored on both arms, from 0 to 1. Below it the gate is inconclusive.
         0 turns the rule off. Overrides the contract value.
+    max_quality_loss
+        Largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. At least 0.
+        `--min-token-saving` needs it. Overrides the contract value.
     """
     flags = {"min_gain": min_gain, "min_lower_bound": min_lower_bound, "family_budget": family_budget,
              "max_token_increase_per_gain": max_token_increase_per_gain, "min_token_saving": min_token_saving,
-             "min_coverage": min_coverage}
+             "min_coverage": min_coverage, "max_quality_loss": max_quality_loss}
     statistics = {name: value for name, value in flags.items() if value is not None}
     with _coded():
         adapter, configuration = _run_harness(model, target, harness, harness_config, command, out)
@@ -175,7 +182,14 @@ def _simulation_report() -> dict[str, object]:
         label = round(effect * 100)
         report[f"true_promotions_effect_{label}"] = power.promotions
         report[f"power_effect_{label}"] = power.rate
+    for loss, margin in CHEAPER_SCENARIOS:
+        report[_cheaper_key(loss, margin)] = simulate_cheaper(loss, margin).rate
     return report
+
+
+def _cheaper_key(loss: float, margin: float) -> str:
+    """Name a `promote-cheaper` rate by its true loss and margin in hundredths of a score."""
+    return f"cheaper_loss_{round(loss * 100)}_margin_{round(margin * 100)}"
 
 
 def _simulation_figure(metric: Metric) -> int | float:
@@ -186,6 +200,9 @@ def _simulation_figure(metric: Metric) -> int | float:
             return simulate_power(effect).promotions
         if metric == f"power_effect_{label}":
             return simulate_power(effect).rate
+    for loss, margin in CHEAPER_SCENARIOS:
+        if metric == _cheaper_key(loss, margin):
+            return simulate_cheaper(loss, margin).rate
     return cast(int | float, getattr(simulate_gate(), metric))
 
 
