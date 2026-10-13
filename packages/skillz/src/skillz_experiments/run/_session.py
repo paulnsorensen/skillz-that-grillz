@@ -77,6 +77,17 @@ def _unit_score(value: object) -> float:
     return min(1.0, max(0.0, float(cast(float, value))))
 
 
+def _feedback(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
+    """Return the GEPA score and feedback of one search outcome."""
+    score = _unit_score(result["score"])
+    feedback: dict[str, object] = {"task_correct": score, "request": case.request}
+    if "failure" in result:
+        feedback["failure"] = result["failure"]
+    if "scores" in result:
+        feedback["grader_scores"] = result["scores"]
+    return score, feedback
+
+
 def is_inside(path: Path, root: Path) -> bool:
     """Return whether `path` resolves, through any symlink, to `root` or below it."""
     return path.resolve().is_relative_to(root.resolve())
@@ -203,7 +214,9 @@ class Session:
         self._denylist = Denylist.build(self._search_cases.values())
         self._leak_rules: dict[str, str | None] = {}
         # Recorded search outcomes that a resumed search reuses, one per earlier call. `search` fills it.
-        self._replay: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+        self._reusable: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+        # The live search evaluations of the running search. Reused outcomes do not count.
+        self._live = 0
         # Set before the provider gets `self.checkpoint`, which reads it.
         self._leak_rejections = self._recorded_rejections()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
@@ -422,7 +435,9 @@ class Session:
         recorded = self._reuse(candidate, case)
         if recorded is not None:
             self._keep_if_best(candidate, case)
-            return self._feedback(recorded, case)
+            return _feedback(recorded, case)
+        with self.lock:
+            self._live += 1
         try:
             result = self.evaluate_case(candidate, case, "search")
         except CodedError:
@@ -433,22 +448,12 @@ class Session:
                 self.outcomes.append(result)
                 self.checkpoint()
         self._keep_if_best(candidate, case)
-        return self._feedback(result, case)
-
-    @staticmethod
-    def _feedback(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
-        score = _unit_score(result["score"])
-        feedback: dict[str, object] = {"task_correct": score, "request": case.request}
-        if "failure" in result:
-            feedback["failure"] = result["failure"]
-        if "scores" in result:
-            feedback["grader_scores"] = result["scores"]
-        return score, feedback
+        return _feedback(result, case)
 
     def _reuse(self, candidate: Candidate, case: Case) -> dict[str, object] | None:
         """Return the next recorded outcome of `candidate` on `case`, or None. Each recorded outcome serves one evaluation."""
         with self.lock:
-            queue = self._replay.get((candidate.identity, case.split, case.identifier))
+            queue = self._reusable.get((candidate.identity, case.split, case.identifier))
             return queue.pop(0) if queue else None
 
     def _recorded_for_reuse(self) -> int:
@@ -457,12 +462,18 @@ class Session:
         A failed evaluation stays out, so a resume tries it again.
         """
         with self.lock:
-            self._replay.clear()
+            self._reusable.clear()
+            self._live = 0
             for item in self._search_outcomes():
                 if "search_candidate" in item and item.get("status") != "evaluation-failed":
                     key = (cast(str, item["search_candidate"]), cast(str, item["split"]), cast(str, item["case_id"]))
-                    self._replay.setdefault(key, []).append(item)
-            return sum(len(queue) for queue in self._replay.values())
+                    self._reusable.setdefault(key, []).append(item)
+            return sum(len(queue) for queue in self._reusable.values())
+
+    def _share_spent(self, allowance: int) -> bool:
+        """Return whether the live search evaluations of this search reach `allowance`. GEPA checks it before each iteration."""
+        with self.lock:
+            return self._live >= allowance
 
     def _admit(self, components: dict[str, str]) -> Candidate | dict[str, object]:
         """Return the built candidate of `components`, or the rejection that the leakage check or the build gives."""
@@ -680,12 +691,13 @@ class Session:
         elif allowance >= 1:
             # Search and reflection calls leave the gate its estimated time. Preflight and the gate use all of it.
             self.budget.reserve_time(_number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
-            # The restarted search replays the recorded calls first. GEPA counts a reused outcome as a metric call, so add them back.
-            reused = self._recorded_for_reuse()
+            # GEPA counts a reused outcome as a metric call, so the engine bound adds the reusable outcomes.
+            # The search can ask for fewer of them, so the live evaluations alone end the search at the allowance.
+            reusable = self._recorded_for_reuse()
             try:
                 stopped = pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
-                                        self._evaluate_example, self._propose, metric_calls=allowance + reused,
-                                        stalled=self._stalled)
+                                        self._evaluate_example, self._propose, metric_calls=allowance + reusable,
+                                        stalled=self._stalled, spent=lambda: self._share_spent(allowance))
                 self._raise_fault()
                 reason = "converged-stalled" if stopped else "validation-mean"
             except BudgetExhausted:
@@ -843,20 +855,24 @@ def stall_observations(outcomes: Sequence[Mapping[str, object]], validation: set
         best = max(_complete_means(seen, validation).values(), default=0.0)
         window = outcomes[start + 1:end]
         reflection = outcomes[start]
+        proposed = reflection.get("proposed")
+        earlier = seen.get(proposed, {}) if isinstance(proposed, str) else {}
         observations.append(None if reflection.get("status") == "proposal-build-failed"
-                            else _observation(window, reflection.get("proposed"), validation, best))
+                            else _observation(window, proposed, validation, best, earlier))
         _ = _add_validation_scores(seen, window)
     return observations
 
 
 def _observation(window: Sequence[Mapping[str, object]], identity: object, validation: set[str],
-                 best: float) -> float | None:
+                 best: float, earlier: Mapping[str, float]) -> float | None:
     """Return the observation of one proposal from the outcomes in its window.
 
     Only the evaluations of the proposed candidate count, up to the end of its validation set. GEPA can score the
     candidate again as the next parent before the next reflection. That later score does not change the observation.
+    `earlier` holds the validation scores of the candidate from before the window. A resume reuses those scores, so
+    the window does not repeat them.
     """
-    scores: dict[str, float] = {}
+    scores = dict(earlier)
     for item in window:
         if identity is None or set(scores) == validation:
             break

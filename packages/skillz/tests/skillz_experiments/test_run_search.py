@@ -66,6 +66,7 @@ class Search:
         self.prompts: list[str] = []
         self.edit_offset: int | None = None
         self.refuse = False
+        self.fixed_number: int | None = None
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -176,7 +177,7 @@ class Provider(FakeProvider):
             return {"answer": {name: "".join(f"{line}\nimproved {number}\n" if index < edits else f"{line}\n"
                                              for index, line in enumerate(text.splitlines()))
                                for name, text in parent.items()}}
-        return {"answer": {name: f"improved {number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
+        return {"answer": {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
 
 
 def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
@@ -376,12 +377,15 @@ def test_a_resumed_search_gets_the_metric_calls_that_the_record_left_plus_the_ou
 
     monkeypatch.setattr(_session, "pareto_search", spy)
     target, out, state, planned = _interrupt(tmp_path, make_target, write_draft, approvals)
-    spent = len(_search_pairs(read(out / "run.json")))
+    record = read(out / "run.json")
+    spent = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
+                for item in cast(list[dict[str, object]], record["outcomes"]))
+    reusable = len(_search_pairs(record))
     margin = overshoot(len(_validation(out)))
     state.search_log.clear()
     _ = run(target, out, MODEL, live=True, factory=state.factory)
-    # GEPA counts a reused outcome as a metric call. The grant adds each reused outcome to the share that the record left.
-    assert grants == [planned - margin, planned - margin - spent + spent]
+    # GEPA counts a reused outcome as a metric call, so the engine bound adds each reusable outcome to the share that the record left.
+    assert grants == [planned - margin, planned - margin - spent + reusable]
     assert len(state.search_log) <= planned - spent
 
 
@@ -453,6 +457,48 @@ def test_a_resume_after_a_validated_proposal_calls_no_validation_pair_that_the_r
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     assert state.search_log and not validated & set(state.search_log)
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
+
+
+@pytest.mark.ac("gh-279:AC-2")
+def test_a_resume_with_recorded_outcomes_that_the_search_never_asks_for_again_makes_no_live_call_above_the_share_that_the_record_left(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.abort_after_improved = len(_validation(out))
+    with pytest.raises(CodedError, match="the process stopped"):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    record = read(out / "run.json")
+    planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"])
+    margin = overshoot(len(_validation(out)))
+    # A live model proposes new candidates on resume, so the outcomes of an old candidate are never asked for again.
+    ghosts = 3 * margin
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    outcomes.extend({"arm": "search", "split": "train", "case_id": f"ghost-{number}", "score": 0.0,
+                     "search_candidate": "ghost"} for number in range(ghosts))
+    write(out / "run.json", record)
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    assert state.search_log
+    total = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
+                for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]))
+    # The last iteration can pass the search ceiling by at most the overshoot margin, so the total stays within the plan.
+    assert total <= planned
+
+
+def test_a_resumed_identical_proposal_keeps_the_gain_of_the_candidate_that_the_interrupt_cut_short(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.abort_after_improved = 1
+    with pytest.raises(CodedError, match="the process stopped"):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    state.fixed_number = 1
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    record = read(out / "run.json")
+    observations = _session.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)))
+    # The first window ends at the interrupt. The second window holds the same proposal, which now completes its validation.
+    assert len(observations) >= 2 and observations[1] is not None and observations[1] > 0
+
 
 def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before_the_abort(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
