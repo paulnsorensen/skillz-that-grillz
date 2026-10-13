@@ -61,11 +61,9 @@ The runner records the observed `codex --version` string as `codex_version` in `
 A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
-The `doctor` runs `claude --version` through the executable and environment of the run.
-A broken version-manager shim fails the `claude` row of `doctor`.
-When the skill inventory call exits nonzero with no control response, the run stops with `host-not-ready`, not `preflight-leak`.
-The sandbox preflight also probes name lookup and a non-loopback address. A probe that succeeds stops the run with `network-isolation-failed`.
-A Bash approval block stops the run with its own message.
+The `doctor` runs `claude --version` with `PATH=/usr/bin:/bin`, not the environment of the run. The `claude` row always passes, so it does not detect a broken version-manager shim.
+In the fresh-run `doctor` path, a skill inventory call that exits nonzero with no control response stops the run with `host-not-ready`. Outside that path, an inventory failure stops with `preflight-leak`.
+The sandbox preflight probes only the loopback addresses `127.0.0.1` and `localhost`. It does not probe name lookup or a non-loopback address. Do not treat it as proof of full network isolation.
 Do not create or request provider credentials. The runner needs no API key.
 A fresh run first runs the free host checks of `doctor`. They make no model call.
 A failed check stops the run with `host-not-ready` before the case draft. The stop lists every check and its fix.
@@ -136,7 +134,6 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
-| `cases-invalid` | A drafted case lacks a required field. The message names the case id and the field. | Add the field to the case, then run again. A trigger or near-miss seed case uses its case id as the family. A task case needs an explicit family. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `proposal-build-failed` | The host build of an accepted proposal fails with an error that is not a build rejection, such as a full disk. The paid reflection stays in the record. | Fix the cause in the message, then run again in the same directory. |
@@ -154,9 +151,9 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `editable-needs-cli` | `--edit prose` meets explicit non-Markdown names in the contract `editable` list. | Run with `--edit prose+cli`, or remove those names from `editable`. |
 | `site-layer-failed` | The host cannot populate the site layer for `--edit prose+cli`. The cause is a missing `uv`, a missing network, or a dependency closure that `uv` refuses. | Install `uv`, restore the network, or use `--edit prose`. Then run again. |
 | `build-failed` | The host build of an own target fails. During the search, the candidate scores 0 and the feedback shows the reason. | Read the feedback. |
-| `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose`. Then run again. |
+| `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
-| `helper-frozen` | The contract helper names a frozen file. | Name an editable helper, or use `--edit prose`. |
+| `helper-frozen` | The contract helper names a frozen file. | Name an editable helper, or use `--edit prose` and remove non-Markdown names from `editable`. |
 | `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
