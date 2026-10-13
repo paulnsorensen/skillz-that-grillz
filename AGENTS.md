@@ -40,4 +40,7 @@ of truth for repo-local skills (tooling for work on this repository only).
   with a relative symlink in `.claude/skills/`. Set `metadata.internal: true`
   so `npx skills add` does not publish them. Keep them out of the README table.
 - Use `/skillz-self-update` to refresh cross-harness research and maintain the published `/skillz` skill. Do not use `/skillz self-update`.
+- A ticket's PR adds `docs/agents/criteria/gh-<n>.md` (its Acceptance list, one row per criterion) and marks each test
+  `@pytest.mark.ac("gh-<n>:AC-<m>")`. `just build` fails on an untested `test` criterion or an unknown marker;
+  see `docs/agents/criteria/index.md`.
 - Conventional Commits format for all commits

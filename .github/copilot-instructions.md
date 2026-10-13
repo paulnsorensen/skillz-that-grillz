@@ -10,8 +10,9 @@ This repo is a skill-authoring and skill-packaging toolbelt. It contains:
   lists them.
 - Repo-local skills under `.agents/skills/`. They are tooling for this repo
   only.
-- Python packages under `lib/`: `wedge`, `fromargs` (published to PyPI), and
-  `skillz_experiments`.
+- A uv workspace of Python packages under `packages/`: `packages/wedge`
+  (`wedge`), `packages/skillz` (`skillz_experiments` and `skillz_inspect`,
+  bundled into `/skillz`), and `packages/fromargs` (published to PyPI).
 - The public composite GitHub Action `actions/wedge`. It packages a skill CLI
   as a content-addressed `.pyz` for other repositories.
 
@@ -20,10 +21,10 @@ requires an MCP server.
 
 ## What to find, in priority order
 
-1. **Correctness bugs in `lib/` and `actions/`.** Wrong results, crashes on
+1. **Correctness bugs in `packages/` and `actions/`.** Wrong results, crashes on
    valid input, and silent success on failure. Include a concrete input that
    triggers the bug.
-2. **Evaluation and scoring bypasses.** Code in `lib/src/skillz_experiments/`
+2. **Evaluation and scoring bypasses.** Code in `packages/skillz/src/skillz_experiments/`
    scores candidate skills. Flag any path that lets a candidate get credit
    without doing the work, such as a helper that runs with the wrong input.
 3. **Contract drift.** A change that makes a skill, README, CHANGELOG, or ADR

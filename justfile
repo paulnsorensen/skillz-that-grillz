@@ -9,23 +9,8 @@ ci: (_gate "check")
 
 [private]
 [no-exit-message]
-[script("bash")]
 _gate mode:
-    set -uo pipefail
-    step() { local n=$1; shift; local o
-        if o=$("$@" 2>&1); then echo "✓ $n"
-        else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
-    if [ "{{mode}}" = "fix" ]; then
-        step markdown    just lint-md-fix
-        step yaml-fmt    just lint-yaml-fmt-fix
-    else
-        step markdown    just lint-md
-        step yaml-fmt    just lint-yaml-fmt
-    fi
-    step yaml  just lint-yaml
-    step typecheck  just typecheck
-    step py-dead-code  just lint-py-dead-code
-    step test  just test
+    python3 .github/scripts/run_gate.py {{mode}}
 
 # List all available commands
 list:
@@ -33,18 +18,7 @@ list:
 
 # Run tests (skill validators + self-tests — mirrors CI)
 test:
-    uv run --locked --all-groups python .github/scripts/test_validate_skills.py
-    uv run --locked --all-groups python .github/scripts/test_validate_evals.py
-    uv run --locked --all-groups python .github/scripts/validate_skills.py
-    uv run --locked --all-groups python .github/scripts/test_check_skillz_references.py
-    uv run --locked --all-groups python .github/scripts/check_skillz_references.py
-    uv run --locked --all-groups python .github/scripts/test_check_dead_code.py
-    uv run --no-project --python 3.11 python -B -m unittest discover -s skills/skillz/engine/tests -p 'test_*.py'
-    uv run --locked --project lib/fromargs basedpyright --project lib/fromargs
-    just test-fromargs
-    uv run --locked --extra experiments --project lib pytest lib/tests/wedge lib/tests/skillz_experiments -q
-    uv run --locked --project lib wedge check --root lib/examples/skills --root lib/examples/consumer/skills
-    uv run --locked --project lib wedge bundle skills/skillz skills/skillz/wedge --check
+    python3 .github/scripts/run_gate.py test
 
 # Type-check source and hidden .github/scripts; Pyright excludes hidden paths by default.
 typecheck:
@@ -57,11 +31,31 @@ lint-py-dead-code:
 
 # Run fromargs' pytest suite, optionally pinned to one Python version.
 test-fromargs python="":
-    uv run --locked {{ if python != "" { "--python " + python } else { "" } }} --project lib/fromargs pytest lib/fromargs/tests -q
+    python3 .github/scripts/run_gate.py fromargs {{python}}
+
+# Run agent-session-analytics' pytest suite, optionally pinned to one Python version.
+test-agent-session-analytics python="":
+    python3 .github/scripts/run_gate.py agent-session-analytics {{python}}
 
 # Mutation-test the fromargs acceptance suite (not part of build/ci).
 mutate-fromargs:
-    uv run --locked --project lib/fromargs python lib/fromargs/tests/e2e/mutate.py
+    uv run --locked --project packages/fromargs python packages/fromargs/tests/e2e/mutate.py
+
+# Opt-in live smoke runs of the experiment stack and session analytics (not part of build/ci). They need SKILLZ_LIVE=1.
+# HARNESS is claude or codex. SCENARIO is basic (default), all, or a comma list; see packages/skillz/tests/skillz_live.
+# SKILLZ_LIVE_DRY=1 stops each run at its budget question and makes no model call. The basic run uses at most 88 calls.
+# Each attempt appends one JSON line to .live-smoke/runs.jsonl (gitignored).
+[script("bash")]
+live-smoke $harness $model $scenario="basic":
+    set -euo pipefail
+    if [ "${SKILLZ_LIVE:-}" != 1 ]; then
+        echo "error: live-smoke makes real model calls; set SKILLZ_LIVE=1 to run it" >&2
+        exit 2
+    fi
+    SKILLZ_LIVE_HARNESS="$harness" SKILLZ_LIVE_MODEL="$model" SKILLZ_LIVE_SCENARIO="$scenario" \
+        uv run --locked --extra experiments --project packages/skillz \
+        pytest packages/skillz/tests/skillz_live -m live -v -rs \
+        --basetemp "${XDG_CACHE_HOME:-$HOME/.cache}/skillz-live-smoke" -p no:cacheprovider
 
 # Print the CHANGELOG section for one fromargs version; fail when it is missing or empty.
 [script("bash")]
@@ -71,9 +65,24 @@ fromargs-release-notes $version:
         index($0, "## [" v "]") == 1 { on = 1; next }
         on && /^(## |\[[^]]+\]: )/ { exit }
         on { print }
-    ' lib/fromargs/CHANGELOG.md | sed '/./,$!d')
+    ' packages/fromargs/CHANGELOG.md | sed '/./,$!d')
     if [ -z "${notes//[[:space:]]/}" ]; then
-        echo "error: lib/fromargs/CHANGELOG.md has no section for $version" >&2
+        echo "error: packages/fromargs/CHANGELOG.md has no section for $version" >&2
+        exit 1
+    fi
+    printf '%s\n' "$notes"
+
+# Print the CHANGELOG section for one agent-session-analytics version; fail when it is missing or empty.
+[script("bash")]
+agent-session-analytics-release-notes $version:
+    set -euo pipefail
+    notes=$(awk -v v="$version" '
+        index($0, "## [" v "]") == 1 { on = 1; next }
+        on && /^(## |\[[^]]+\]: )/ { exit }
+        on { print }
+    ' packages/agent-session-analytics/CHANGELOG.md | sed '/./,$!d')
+    if [ -z "${notes//[[:space:]]/}" ]; then
+        echo "error: packages/agent-session-analytics/CHANGELOG.md has no section for $version" >&2
         exit 1
     fi
     printf '%s\n' "$notes"

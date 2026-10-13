@@ -1,0 +1,157 @@
+name: publish agent-session-analytics
+
+on:
+  push:
+    tags: ["agent-session-analytics-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build and check agent-session-analytics
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag is on main
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} points at ${GITHUB_SHA}, which is not an ancestor of origin/main. Refusing to publish a release from an unreviewed branch."
+            exit 1
+          fi
+
+      - name: Verify tag version matches pyproject.toml
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#agent-session-analytics-v}"
+          project_version="$(grep -m1 '^version = ' packages/agent-session-analytics/pyproject.toml | sed -E 's/version = "(.*)"/\1/')"
+          if [ "$tag_version" != "$project_version" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} names version ${tag_version}, but packages/agent-session-analytics/pyproject.toml has ${project_version}."
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          set -euo pipefail
+          mkdir -p notes
+          just agent-session-analytics-release-notes "${GITHUB_REF_NAME#agent-session-analytics-v}" > notes/release-notes.md
+          cat notes/release-notes.md
+
+      - name: Install DuckDB CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
+            -o /tmp/duckdb_cli.zip
+          sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
+
+      - name: Run agent-session-analytics tests
+        env:
+          REQUIRE_DUCKDB: "1"
+        run: just test-agent-session-analytics
+
+      - name: Build agent-session-analytics
+        run: uv build --package agent-session-analytics --no-sources --out-dir dist
+
+      - name: Check package metadata
+        run: uvx twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-session-analytics-dist
+          path: dist/
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agent-session-analytics-notes
+          path: notes/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-session-analytics-dist
+          path: dist
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+
+      - name: Publish to PyPI
+        run: uv publish dist/*
+
+  github-release:
+    name: publish github release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-session-analytics-dist
+          path: dist
+
+      - name: Download release notes
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agent-session-analytics-notes
+          path: notes
+
+      - name: Create GitHub release
+        # Re-running the workflow must not fail on an existing release.
+        # `--latest=false` keeps the skills release as the repository's latest release.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |-
+          set -euo pipefail
+          tag_sha=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+            echo "error: tag $TAG resolves to $tag_sha, not the workflow commit $GITHUB_SHA." >&2
+            exit 1
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping."
+            exit 0
+          fi
+          gh release create "$TAG" dist/* \
+            --verify-tag \
+            --latest=false \
+            --title "agent-session-analytics ${TAG#agent-session-analytics-v}" \
+            --notes-file notes/release-notes.md

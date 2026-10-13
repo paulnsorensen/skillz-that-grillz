@@ -1,7 +1,28 @@
+project = "../.."
+repo = "paulnsorensen/skillz-that-grillz"
+
+[[target]]
 name = "skillz-experiment"
 entry = "skillz_experiments._cli:main"
-source = "../../lib/src/skillz_experiments"
-project = "../.."
-include = ["../../lib/fromargs/src/fromargs"]
-groups = ["experiments"]
-repo = "paulnsorensen/skillz-that-grillz"
+source = "../../packages/skillz/src/skillz_experiments"
+include = ["../../packages/fromargs/src/fromargs", "../../packages/wedge/src/wedge"]
+groups = ["experiments", "wedge"]
+
+[[target]]
+name = "inspect-skill"
+entry = "skillz_inspect:main"
+source = "../../packages/skillz/src/skillz_inspect"
+include = ["../../packages/fromargs/src/fromargs"]
+
+[[target]]
+name = "wedge"
+entry = "wedge:main"
+source = "../../packages/wedge/src/wedge"
+include = ["../../packages/fromargs/src/fromargs"]
+groups = ["wedge"]
+
+[[target]]
+name = "agent-session-analytics"
+entry = "agent_session_analytics:main"
+source = "../../packages/agent-session-analytics/src/agent_session_analytics"
+include = ["../../packages/fromargs/src/fromargs"]

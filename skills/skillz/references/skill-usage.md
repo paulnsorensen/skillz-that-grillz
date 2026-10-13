@@ -3,12 +3,12 @@
 - target_param: `{TARGET}` (a skill name or agent type)
 - target_kind: `skill` or `agent`, from the dispatch prompt
 - start table: set `{START_TABLE}` and `{NAME_COLUMN}` from `target_kind`, as the
-  Substitution section of `engine/references/query-conventions.md` defines
+  Substitution section of the `conventions` input defines
 - harness: `harness='all'` by default (`skill_invocations` and `agent_spawns` are claude-dominant — note that)
 - owner: skillz
 
 Measures invocation patterns for `{TARGET}`. Run in one fresh read-only context.
-Schema: `engine/references/canonical-schema.md` in this `skillz` skill.
+Schema: the `schema` input.
 Replace each placeholder before you run a query.
 
 ## 0. Source coverage

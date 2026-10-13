@@ -1,0 +1,9 @@
+---
+name: culture
+description: Interview the user about team habits and write culture notes. Never write source code.
+---
+# Culture
+
+Ask one question at a time about the team and its habits.
+Write the answers to `culture.md` after the interview.
+Do not write source files.

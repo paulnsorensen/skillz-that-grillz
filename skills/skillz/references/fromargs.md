@@ -65,13 +65,21 @@ Self-healing repairs only a uniquely verified shell-merged argument.
 It does not guess ambiguous values or split free-text strings and paths.
 Write correct invocations; treat repair notes as diagnostics, not a workflow dependency.
 
+## In-run edits
+
+During an experiment run with `--edit prose+cli`, an edit to a wedged Python source keeps these rules.
+Use one fromargs parser. Return JSON errors on stderr. Exit with code 2 for a usage error and code 3 for a failed input contract. Write only results to stdout.
+A non-Python helper keeps its language.
+A Python helper may be a stdlib `argparse` helper only when the skill has no `wedge.toml` that can build a fromargs target.
+To add a fromargs target in a run, use the `@new-cli` component; the experiments reference describes it.
+
 ## Worked example
 
 Input → Output: `gouda\nbrie\nedam\nbrie\n` → counts sorted by frequency and value.
 
 With the template copied into a target skill, run it in the target's uv project.
 Set `TARGET_PROJECT` to the project that has fromargs as a locked dependency.
-In the skillz-that-grillz repository only, use `$REPO_ROOT/lib`.
+In the skillz-that-grillz repository only, use `$REPO_ROOT`.
 
 ```bash
 uv run --locked --project "$TARGET_PROJECT" python "$SKILL_DIR/records.py" counts "$INPUT"
@@ -92,5 +100,5 @@ uv run --script "$SKILL_DIR/records.py" counts "$INPUT"
 
 ## Sources
 
-The [fromargs README](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/lib/fromargs/README.md) defines the library contract.
+The [fromargs README](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/packages/fromargs/README.md) defines the library contract.
 The [Agent Skills script guide](https://agentskills.io/skill-creation/using-scripts) explains explicit inputs, concise help, bounded output, and actionable errors.

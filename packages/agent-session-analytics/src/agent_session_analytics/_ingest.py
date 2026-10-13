@@ -1,0 +1,1299 @@
+"""Ingest multi-harness coding-agent session logs into one DuckDB database.
+
+Each harness has a *normalizing adapter* that discovers its native session
+logs and emits one canonical row shape — the same JSON envelope Claude already
+uses (type / message.content[] / timestamp / sessionId / cwd / …) plus a
+``harness`` tag. The adapters write their canonical rows to a staging dir; the
+flattening SQL then loads the union and threads ``harness`` through every
+session-scoped table, so a single query can compare sources.
+
+Adapters are discovery-gated and best-effort: a harness with no accessible logs
+records a "no accessible logs" finding (see references/harness-coverage.md) and
+is skipped non-fatally. "Done" is full coverage of what is reachable, not
+parsing the unparseable.
+
+Engine: DuckDB CLI — no Python duckdb module required. Skips ingestion if the
+database is less than 1 hour old and carries the current schema version.
+"""
+
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import re
+import shutil
+import sys
+import time
+from collections.abc import Iterator
+from contextlib import ExitStack
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, cast
+
+from agent_session_analytics._db import (
+    DB_DIR,
+    DB_PATH,
+    DB_TMP_PATH,
+    SCHEMA_VERSION,
+    STAGE_DIR,
+    IngestError,
+    configured_path,
+    db_is_fresh,
+    query_rows,
+    require_duckdb,
+    run_sql,
+    sql_quote,
+    validate_settings,
+)
+from agent_session_analytics._emitters import DERIVED_TABLES, DerivedTable
+
+if TYPE_CHECKING:
+    from typing import TypeAlias
+
+_JsonValue: TypeAlias = "None | bool | int | float | str | list[_JsonValue] | dict[str, _JsonValue]"
+
+
+# Canonical raw-entry columns the flattening SQL reads. Adapters emit a subset;
+# read_json(union_by_name) fills the rest with NULL.
+RAW_COLUMNS = {
+    "harness": "VARCHAR",
+    "type": "VARCHAR",
+    "subtype": "VARCHAR",
+    "timestamp": "VARCHAR",
+    "sessionId": "VARCHAR",
+    "uuid": "VARCHAR",
+    "parentUuid": "VARCHAR",
+    "message": "JSON",
+    "version": "VARCHAR",
+    "gitBranch": "VARCHAR",
+    "slug": "VARCHAR",
+    "cwd": "VARCHAR",
+    "hookCount": "INTEGER",
+    "hookInfos": "JSON",
+    "hookErrors": "JSON",
+    "preventedContinuation": "BOOLEAN",
+    "stopReason": "VARCHAR",
+    "hasOutput": "BOOLEAN",
+    "level": "VARCHAR",
+    "isSidechain": "BOOLEAN",
+    "userType": "VARCHAR",
+    "filename": "VARCHAR",
+    "parentSessionId": "VARCHAR",
+}
+
+
+# --------------------------------------------------------------------------
+# Harness adapters
+#
+# Each adapter is (name, discover, normalize):
+#   discover()      -> list of source paths, or [] when no logs are reachable.
+#   normalize(path) -> yields canonical raw-entry dicts (already harness-tagged).
+# An adapter that finds nothing is non-fatal — the run logs it and continues.
+# --------------------------------------------------------------------------
+
+
+def _iter_jsonl(path: str) -> Iterator[_JsonValue]:
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield cast(_JsonValue, json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+
+def claude_discover() -> list[str]:
+    root = os.path.join(configured_path("CLAUDE_CONFIG_DIR", "~/.claude"), "projects")
+    if not os.path.isdir(root):
+        return []
+    out: list[str] = []
+    for dirpath, _dirs, files in os.walk(root):
+        out.extend(os.path.join(dirpath, f) for f in files if f.endswith(".jsonl"))
+    return out
+
+
+def claude_normalize(path: str) -> Iterator[dict[str, _JsonValue]]:
+    """Claude logs are already in the canonical envelope; just tag them."""
+    for entry in _iter_jsonl(path):
+        if not isinstance(entry, dict):
+            continue
+        entry["harness"] = "claude"
+        yield entry
+
+
+def codex_discover() -> list[str]:
+    root = os.path.join(configured_path("CODEX_HOME", "~/.codex"), "sessions")
+    if not os.path.isdir(root):
+        return []
+    out: list[str] = []
+    for dirpath, _dirs, files in os.walk(root):
+        out.extend(os.path.join(dirpath, f) for f in files if f.endswith(".jsonl"))
+    return out
+
+
+def _codex_payload_is_error(payload: _JsonValue) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    status = payload.get("status")
+    if isinstance(status, str) and status.casefold() in ("error", "failed", "failure"):
+        return True
+    for key in ("isError", "is_error"):
+        value = payload.get(key)
+        if value is True or (isinstance(value, str) and value.casefold() == "true"):
+            return True
+    code = payload.get("exit_code")
+    return isinstance(code, int) and not isinstance(code, bool) and code != 0
+
+
+def _codex_content_block_payloads(blocks: list[_JsonValue]) -> Iterator[dict[str, _JsonValue]]:
+    if not blocks:
+        return
+    texts: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "input_text":
+            continue
+        block_text = block.get("text")
+        if not isinstance(block_text, str):
+            continue
+        texts.append(block_text)
+    if not texts:
+        return
+    header = texts[0]
+    if not re.fullmatch(
+        r"Script completed\nWall time(?:\s*:\s*|\s+)[^\n]*\nOutput:\n",
+        header,
+    ):
+        return
+    for block_text in texts[1:]:
+        try:
+            payload = cast(_JsonValue, json.loads(block_text.strip()))
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            yield payload
+
+
+def _codex_structured_payloads(out: _JsonValue) -> Iterator[dict[str, _JsonValue]]:
+    if isinstance(out, dict):
+        yield out
+        return
+    if isinstance(out, list):
+        yield from _codex_content_block_payloads(out)
+        return
+    if not isinstance(out, str):
+        return
+    text = out.strip()
+    try:
+        parsed = cast(_JsonValue, json.loads(text))
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        yield parsed
+        return
+    if isinstance(parsed, list):
+        yield from _codex_content_block_payloads(parsed)
+        return
+    marker = re.search(
+        r"^Script completed\n(?:Wall time(?:\s*:\s*|\s+)[^\n]*\n)?Output:\s*(.+)\s*\Z",
+        out,
+        re.DOTALL,
+    )
+    if not marker:
+        return
+    decoder = json.JSONDecoder()
+    text = marker.group(1)
+    position = 0
+    while position < len(text):
+        while position < len(text) and text[position].isspace():
+            position += 1
+        if position == len(text):
+            return
+        try:
+            parsed, end = cast(tuple[_JsonValue, int], decoder.raw_decode(text, position))
+        except ValueError:
+            return
+        if isinstance(parsed, dict):
+            yield parsed
+        elif isinstance(parsed, list):
+            yield from (item for item in parsed if isinstance(item, dict))
+        position = end
+
+
+def _codex_output_is_error(out: _JsonValue) -> str:
+    """Detect structured or legacy failure signals in a Codex tool output."""
+    if any(
+        _codex_payload_is_error(payload) for payload in _codex_structured_payloads(out)
+    ):
+        return "true"
+    if isinstance(out, str):
+        match = re.search(r"Process exited with code (-?\d+)\b", out)
+        if match and any(int(digit) != 0 for digit in match.group(1).lstrip("-")):
+            return "true"
+    return "false"
+
+
+def _codex_command(name: _JsonValue, parsed: _JsonValue, raw_input: _JsonValue) -> str | None:
+    """The executed command string for codex shell-ish tools, or None.
+
+    Mirrors claude's ``input.command`` so ``tool_uses.bash_cmd`` populates:
+    ``exec_command`` carries it in ``cmd``; legacy ``shell`` carries an argv
+    array (the ``-lc``/``-c`` payload is the real command); the ``exec``
+    custom tool's argument IS the raw code string.
+    """
+    if name == "exec_command" and isinstance(parsed, dict):
+        cmd = parsed.get("cmd")
+        return cmd if isinstance(cmd, str) else None
+    if name == "shell" and isinstance(parsed, dict):
+        cmd = parsed.get("command")
+        if isinstance(cmd, str):
+            return cmd
+        if isinstance(cmd, list) and cmd:
+            if len(cmd) == 3 and cmd[1] in ("-lc", "-c"):
+                return str(cmd[2])
+            return " ".join(str(c) for c in cmd)
+        return None
+    if name == "exec" and isinstance(raw_input, str):
+        return raw_input
+    return None
+
+
+def _codex_token_usage(
+    payload: dict[str, _JsonValue], last_total: _JsonValue
+) -> tuple[dict[str, _JsonValue] | None, _JsonValue]:
+    """Map a token_count payload to (Claude-style usage, total_token_usage).
+
+    Returns usage None when last_token_usage is null or when total_token_usage
+    repeats the previous event (Codex re-emits it). The returned total is the
+    latest total seen on any token_count event, with or without usage.
+    """
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return None, last_total
+    total = info.get("total_token_usage")
+    new_total = last_total if total is None else total
+    last = info.get("last_token_usage")
+    if not isinstance(last, dict):
+        return None, new_total
+    if total is not None and total == last_total:
+        return None, new_total
+    usage: dict[str, _JsonValue] = {
+        "input_tokens": last.get("input_tokens"),
+        "output_tokens": last.get("output_tokens"),
+        "cache_read_input_tokens": last.get("cached_input_tokens"),
+    }
+    return usage, new_total
+
+
+def _codex_parent_session(payload: dict[str, _JsonValue]) -> str | None:
+    """Parent thread id of a sub-agent rollout, or None.
+
+    A sub-agent session_meta carries ``source.subagent.thread_spawn``; other
+    sessions carry a plain string or no ``source``.
+    """
+    source = payload.get("source")
+    subagent = source.get("subagent") if isinstance(source, dict) else None
+    spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+    parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+    return parent if isinstance(parent, str) and parent else None
+
+
+def _codex_is_subagent(payload: dict[str, _JsonValue]) -> bool:
+    """Return True when session_meta marks an agent-run rollout.
+
+    Any ``source.subagent`` value counts: ``thread_spawn`` children, and
+    ``other`` (for example ``guardian``) or ``review`` runs that name no parent.
+    """
+    source = payload.get("source")
+    return isinstance(source, dict) and "subagent" in source
+
+
+def _codex_event(payload: dict[str, _JsonValue]) -> dict[str, _JsonValue] | None:
+    """Map one non-token ``event_msg`` payload to canonical fields, or None to drop it.
+
+    An ``item_completed`` ``UserMessage`` item becomes a user entry with its
+    text blocks. ``task_complete`` becomes an assistant entry with subtype
+    ``task_complete`` and ``last_agent_message`` as its one text block (no block
+    when the turn ended without one). ``turn_aborted`` becomes a system entry
+    with subtype ``turn_aborted`` and the abort reason in ``stopReason``.
+    """
+    ptype = payload.get("type")
+    if ptype == "item_completed":
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "UserMessage":
+            return None
+        content = item.get("content")
+        blocks: list[_JsonValue] = [
+            {"type": "text", "text": block["text"]}
+            for block in (content if isinstance(content, list) else [])
+            if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+        ]
+        return {"type": "user", "message": {"content": blocks}} if blocks else None
+    if ptype == "task_complete":
+        last = payload.get("last_agent_message")
+        blocks = [{"type": "text", "text": last}] if isinstance(last, str) else []
+        return {"type": "assistant", "subtype": "task_complete", "message": {"content": blocks}}
+    if ptype == "turn_aborted":
+        reason = payload.get("reason")
+        return {
+            "type": "system",
+            "subtype": "turn_aborted",
+            "stopReason": reason if isinstance(reason, str) else None,
+        }
+    return None
+
+
+def codex_normalize(path: str) -> Iterator[dict[str, object]]:
+    """Codex rollout JSONL -> canonical envelope.
+
+    session_meta carries id + cwd; a response_item/function_call becomes an
+    assistant tool_use block; a function_call_output OR custom_tool_call_output
+    becomes a user tool_result block (dropping the custom outputs was the ~50%
+    result-join gap — issue #704). Codex tool names (shell / apply_patch /
+    custom tools) are kept verbatim, and ``input.command`` is normalized to the
+    executed command string for shell-ish tools so ``bash_cmd`` extracts.
+    ``tool_search_output`` items have no matching call item and are dropped.
+    A forked rollout holds two ``session_meta`` records (own id first, parent
+    second); the first id, ``cwd``, and ``cli_version`` describe the file. A
+    token row before any id falls back to the file path, so ids stay unique.
+    ``session_meta.cli_version`` stamps ``version`` on every entry. A
+    sub-agent rollout names its parent in the first ``session_meta``; that id
+    stamps ``parentSessionId`` on every entry. Any ``source.subagent`` value
+    stamps ``isSidechain`` true on every entry, as Cursor does for sub-agent
+    files, so agent-run rollouts without a parent id stay identifiable. Each
+    non-duplicate
+    ``token_count`` event with a ``last_token_usage`` becomes one
+    ``token_usage`` entry (unique ``message.id``, empty content). Only
+    model_turns reads it, as one row; no other table sees it. User prompts,
+    ``task_complete``, and ``turn_aborted`` events map through _codex_event;
+    ``response_item`` user messages (preambles and injected context) stay out.
+    """
+    session_id = None
+    parent_session_id = None
+    is_subagent = False
+    cwd = None
+    cli_version = None
+    model = None
+    last_total = None
+    token_turns = 0
+    for entry in _iter_jsonl(path):
+        if not isinstance(entry, dict):
+            continue
+        ts = entry.get("timestamp")
+        payload = entry.get("payload")
+        etype = entry.get("type")
+        if etype == "session_meta" and isinstance(payload, dict):
+            if session_id is None:
+                parent_session_id = _codex_parent_session(payload)
+                is_subagent = _codex_is_subagent(payload)
+            session_id = session_id or payload.get("id")
+            cwd = cwd or payload.get("cwd")
+            cli_version = cli_version or payload.get("cli_version") or None
+            continue
+        if etype == "turn_context" and isinstance(payload, dict):
+            cwd = payload.get("cwd") or cwd
+            model = payload.get("model") or model
+            continue
+        if (
+            etype == "event_msg"
+            and isinstance(payload, dict)
+            and payload.get("type") == "token_count"
+        ):
+            usage, last_total = _codex_token_usage(payload, last_total)
+            if usage is None:
+                continue
+            token_turns += 1
+            yield {
+                "harness": "codex",
+                "type": "token_usage",
+                "timestamp": ts,
+                "sessionId": session_id,
+                "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
+                "version": cli_version,
+                "cwd": cwd,
+                "message": {
+                    "id": f"codex-tokens:{session_id or path}:{token_turns}",
+                    "model": model or "unknown",
+                    "content": [],
+                    "usage": usage,
+                },
+            }
+            continue
+        if etype == "event_msg" and isinstance(payload, dict):
+            event = _codex_event(payload)
+            if event is not None:
+                yield {
+                    "harness": "codex",
+                    "timestamp": ts,
+                    "sessionId": session_id,
+                    "parentSessionId": parent_session_id,
+                    "isSidechain": is_subagent,
+                    "version": cli_version,
+                    "cwd": cwd,
+                    **event,
+                }
+            continue
+        if etype != "response_item" or not isinstance(payload, dict):
+            continue
+        ptype = payload.get("type")
+        if ptype in ("function_call", "custom_tool_call"):
+            raw_input = payload.get("arguments") or payload.get("input")
+            try:
+                parsed: _JsonValue = (
+                    cast(_JsonValue, json.loads(raw_input)) if isinstance(raw_input, str) else raw_input
+                )
+            except (json.JSONDecodeError, TypeError):
+                parsed = {"raw": raw_input}
+            if not isinstance(parsed, dict):
+                parsed = {"raw": parsed}
+            name = payload.get("name")
+            command = _codex_command(name, parsed, raw_input)
+            if command is not None:
+                parsed["command"] = command
+            yield {
+                "harness": "codex",
+                "type": "assistant",
+                "timestamp": ts,
+                "sessionId": session_id,
+                "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
+                "version": cli_version,
+                "cwd": cwd,
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": payload.get("call_id"),
+                            "name": name,
+                            "input": parsed,
+                        }
+                    ]
+                },
+            }
+        elif ptype in ("function_call_output", "custom_tool_call_output"):
+            out = payload.get("output")
+            is_error = _codex_output_is_error(out)
+            if isinstance(out, dict):
+                out = json.dumps(out)
+            yield {
+                "harness": "codex",
+                "type": "user",
+                "timestamp": ts,
+                "sessionId": session_id,
+                "parentSessionId": parent_session_id,
+                "isSidechain": is_subagent,
+                "version": cli_version,
+                "cwd": cwd,
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": payload.get("call_id"),
+                            "content": out,
+                            "is_error": is_error,
+                        }
+                    ]
+                },
+            }
+
+
+def _pi_family_discover(config_dir: str) -> list[str]:
+    root = os.path.expanduser(config_dir)
+    if not os.path.isdir(root):
+        return []
+    out: list[str] = []
+    for dirpath, _dirs, files in os.walk(root):
+        out.extend(os.path.join(dirpath, f) for f in files if f.endswith(".jsonl"))
+    return out
+
+
+_PI_FAMILY_STOP_REASONS = {
+    "stop": "end_turn",
+    "toolUse": "tool_use",
+    "length": "max_tokens",
+}
+
+
+def _pi_family_turn_meta(msg: dict[str, _JsonValue]) -> dict[str, _JsonValue]:
+    """Map Pi-family turn metadata to canonical Claude field names."""
+    usage = msg.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    snapshot = msg.get("contextSnapshot")
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    stop = msg.get("stopReason")
+    if isinstance(stop, str):
+        stop = _PI_FAMILY_STOP_REASONS.get(stop, stop)
+    elif isinstance(stop, (list, dict)):
+        stop = None
+    model = msg.get("model")
+    if model and msg.get("provider"):
+        model = f"{msg['provider']}/{model}"
+    meta: dict[str, _JsonValue] = {
+        "model": model,
+        "stop_reason": stop,
+        "error_message": msg.get("errorMessage"),
+        "usage": {
+            "input_tokens": usage.get("input"),
+            "output_tokens": usage.get("output"),
+            "cache_read_input_tokens": usage.get("cacheRead"),
+        },
+        "duration_ms": msg.get("duration"),
+        "ttft_ms": msg.get("ttft"),
+        "prompt_tokens": snapshot.get("promptTokens"),
+    }
+    return {key: value for key, value in meta.items() if value is not None}
+
+
+def omp_discover() -> list[str]:
+    return _pi_family_discover("~/.omp/agent/sessions")
+
+
+def pi_discover() -> list[str]:
+    return _pi_family_discover("~/.pi/agent/sessions")
+
+
+def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]:
+    """Pi-family session JSONL -> canonical envelope.
+
+    The ``session`` header entry carries id + cwd, threaded onto every row.
+    ``message`` entries: assistant ``toolCall`` blocks become tool_use blocks
+    (other blocks pass through); role ``toolResult`` becomes a user tool_result
+    block joined on ``toolCallId``, with the msg-level ``isError`` boolean as
+    the error flag; role ``user`` passes through with its ``attribution``, if
+    present. Tool names (``bash``, ``read``,
+    ``mcp__<server>_<tool>``) are kept verbatim.
+    """
+    session_id = None
+    cwd = None
+    for entry in _iter_jsonl(path):
+        if not isinstance(entry, dict):
+            continue
+        etype = entry.get("type")
+        if etype == "session":
+            session_id = entry.get("id") or session_id
+            cwd = entry.get("cwd") or cwd
+            continue
+        if etype != "message":
+            continue
+        msg = entry.get("message")
+        if not isinstance(msg, dict):
+            continue
+        ts = entry.get("timestamp")
+        role = msg.get("role")
+        if role == "assistant":
+            blocks: list[dict[str, _JsonValue]] = []
+            content = msg.get("content")
+            for block in content if isinstance(content, list) else []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "toolCall":
+                    args = block.get("arguments")
+                    if isinstance(args, str):
+                        try:
+                            args = cast(_JsonValue, json.loads(args))
+                        except json.JSONDecodeError:
+                            args = {"raw": args}
+                    if not isinstance(args, dict):
+                        args = {"raw": args}
+                    args = cast(dict[str, _JsonValue], args)
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": block.get("id"),
+                            "name": block.get("name"),
+                            "input": args,
+                        }
+                    )
+                else:
+                    blocks.append(block)
+            yield {
+                "harness": harness,
+                "type": "assistant",
+                "timestamp": ts,
+                "sessionId": session_id,
+                "cwd": cwd,
+                "message": {"content": blocks, **_pi_family_turn_meta(msg)},
+            }
+        elif role == "toolResult":
+            content = msg.get("content")
+            parts: list[str] = []
+            for block in content if isinstance(content, list) else []:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    block_text = block.get("text", "")
+                    if isinstance(block_text, str):
+                        parts.append(block_text)
+            text = "\n".join(parts)
+            yield {
+                "harness": harness,
+                "type": "user",
+                "timestamp": ts,
+                "sessionId": session_id,
+                "cwd": cwd,
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": msg.get("toolCallId"),
+                            "content": text,
+                            "is_error": "true" if msg.get("isError") else "false",
+                        }
+                    ]
+                },
+            }
+        elif role == "user":
+            attribution = msg.get("attribution")
+            yield {
+                "harness": harness,
+                "type": "user",
+                "timestamp": ts,
+                "sessionId": session_id,
+                "cwd": cwd,
+                "message": {
+                    "content": msg.get("content"),
+                    **({"attribution": attribution} if attribution is not None else {}),
+                },
+            }
+
+
+def omp_normalize(path: str) -> Iterator[dict[str, object]]:
+    return _pi_family_normalize(path, "omp")
+
+
+def pi_normalize(path: str) -> Iterator[dict[str, object]]:
+    return _pi_family_normalize(path, "pi")
+
+
+def cursor_discover() -> list[str]:
+    root = os.path.join(configured_path("CURSOR_HOME", "~/.cursor"), "projects")
+    if not os.path.isdir(root):
+        return []
+    out: list[str] = []
+    for dirpath, _dirs, files in os.walk(root):
+        if "agent-transcripts" not in dirpath.split(os.sep):
+            continue
+        out.extend(os.path.join(dirpath, f) for f in files if f.endswith(".jsonl"))
+    return out
+
+
+_CURSOR_TIMESTAMP_RE = re.compile(
+    r"<timestamp>\w+, (\w+ \d+, \d+, \d+:\d+ [AP]M) \(UTC([+-]\d+)\)</timestamp>"
+)
+
+
+def _cursor_parse_timestamp(text: str) -> str | None:
+    """Parse a <timestamp>Weekday, Mon D, YYYY, H:MM AM (UTC±N)</timestamp> tag to ISO-8601 UTC."""
+    m = _CURSOR_TIMESTAMP_RE.search(text)
+    if not m:
+        return None
+    dt_str, offset = m.groups()
+    try:
+        # The UTC offset is applied manually below, so parse a wall-clock time
+        # and tag it UTC; a %z-aware parse would double-count the offset.
+        dt = datetime.strptime(dt_str, "%b %d, %Y, %I:%M %p").replace(tzinfo=UTC)
+    except ValueError:
+        return None
+    dt -= timedelta(hours=int(offset))
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _cursor_session_id(path: str) -> str:
+    return os.path.splitext(os.path.basename(path))[0]
+
+
+def _cursor_resolve_slug(slug: str, fs_root: str = "/") -> str:
+    """Decode a dash-encoded absolute path, preferring the longest existing dir.
+
+    Cursor project slugs replace path separators with dashes
+    (``Users-paul-Dev-easy-cheese``). A directory whose own name contains a
+    dash is ambiguous if every dash is treated as a separator. Walk
+    left-to-right and at each step take the longest prefix of remaining
+    segments that exists under ``fs_root``; fall back to a naive split for
+    any unresolved tail.
+    """
+    parts = [p for p in slug.split("-") if p]
+    if not parts:
+        return "/"
+    prefix = fs_root.rstrip("/")
+    i = 0
+    while i < len(parts):
+        matched = None
+        j = i
+        for j in range(len(parts), i, -1):
+            candidate = "-".join(parts[i:j])
+            trial = f"{prefix}/{candidate}" if prefix else f"/{candidate}"
+            if os.path.isdir(trial):
+                matched = trial
+                break
+        if matched is None:
+            rest = "/".join(parts[i:])
+            return f"{prefix}/{rest}" if prefix else f"/{rest}"
+        prefix = matched
+        i = j
+    return prefix or "/"
+
+
+def _cursor_project_cwd(path: str) -> str:
+    """Decode the project-slug directory into a cwd via filesystem resolve."""
+    root = os.path.join(configured_path("CURSOR_HOME", "~/.cursor"), "projects")
+    rel = os.path.relpath(path, root)
+    slug = rel.split(os.sep, 1)[0]
+    return _cursor_resolve_slug(slug)
+
+
+def _cursor_lineage(path: str) -> tuple[bool, str | None]:
+    """Return (is_sidechain, parent_uuid) from an agent-transcripts path."""
+    parts = os.path.normpath(path).split(os.sep)
+    try:
+        i = parts.index("agent-transcripts")
+    except ValueError:
+        return False, None
+    if i + 3 < len(parts) and parts[i + 2] == "subagents":
+        return True, parts[i + 1]
+    return False, None
+
+
+def _cursor_remap_mcp(name: _JsonValue, tool_input: dict[str, _JsonValue]) -> _JsonValue:
+    if name != "CallMcpTool":
+        return name
+    server = tool_input.get("server")
+    tool_name = tool_input.get("toolName")
+    if isinstance(server, str) and server and isinstance(tool_name, str) and tool_name:
+        return f"mcp__{server}__{tool_name}"
+    return name
+
+
+def _cursor_stop_reason(entry: dict[str, _JsonValue]) -> _JsonValue:
+    status = entry.get("status")
+    err = entry.get("error")
+    if status == "error" and isinstance(err, str) and "abort" in err.lower():
+        return "aborted"
+    return status
+
+
+def cursor_normalize(path: str) -> Iterator[dict[str, object]]:
+    """Cursor agent-transcript JSONL -> canonical envelope.
+
+    One file per transcript (session id = the uuid filename); subagent
+    transcripts live in a sibling ``subagents/`` dir with their own uuid/file.
+    ``cwd`` is decoded from the project-slug directory name (longest existing
+    path wins). Subagent files set ``isSidechain`` + ``parentUuid``. There are
+    no per-call timestamps or tool_result blocks: the most recent <timestamp>
+    seen in a user turn is carried forward onto later tool_use rows, and
+    tool_use ids are synthesized (``session:line:block``) since results can
+    never be joined. ``CallMcpTool`` calls with both ``server`` and
+    ``toolName`` are remapped to ``mcp__<server>__<toolName>`` so they land
+    in ``mcp_calls``; incomplete wrappers keep the native name.
+    """
+    session_id = _cursor_session_id(path)
+    cwd = _cursor_project_cwd(path)
+    is_sidechain, parent_uuid = _cursor_lineage(path)
+    timestamp = None
+    for line_no, entry in enumerate(_iter_jsonl(path)):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") == "turn_ended":
+            yield {
+                "harness": "cursor",
+                "type": "assistant",
+                "timestamp": timestamp,
+                "sessionId": session_id,
+                "cwd": cwd,
+                "isSidechain": is_sidechain,
+                "parentUuid": parent_uuid,
+                "message": {"stop_reason": _cursor_stop_reason(entry)},
+            }
+            continue
+        role = entry.get("role")
+        msg = entry.get("message")
+        if not isinstance(msg, dict):
+            continue
+        blocks = msg.get("content")
+        if not isinstance(blocks, list):
+            continue
+        if role == "user":
+            for block in blocks:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    block_text = block.get("text") or ""
+                    if not isinstance(block_text, str):
+                        continue
+                    ts = _cursor_parse_timestamp(block_text)
+                    if ts:
+                        timestamp = ts
+            continue
+        if role != "assistant":
+            continue
+        out_blocks: list[dict[str, _JsonValue]] = []
+        for block_idx, block in enumerate(blocks):
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = block.get("name")
+            tool_input = block.get("input")
+            if not isinstance(tool_input, dict):
+                tool_input = {}
+            name = _cursor_remap_mcp(name, tool_input)
+            out_blocks.append(
+                {
+                    "type": "tool_use",
+                    "id": f"{session_id}:{line_no}:{block_idx}",
+                    "name": name,
+                    "input": tool_input,
+                }
+            )
+        if out_blocks:
+            yield {
+                "harness": "cursor",
+                "type": "assistant",
+                "timestamp": timestamp,
+                "sessionId": session_id,
+                "cwd": cwd,
+                "isSidechain": is_sidechain,
+                "parentUuid": parent_uuid,
+                "message": {"content": out_blocks},
+            }
+
+
+def copilot_discover() -> list[str]:
+    # GitHub Copilot CLI persists no local session transcript we can find
+    # (~/.copilot holds skills/ + mcp-config.json only). See harness-coverage.md.
+    return []
+
+
+ADAPTERS = [
+    ("claude", claude_discover, claude_normalize),
+    ("codex", codex_discover, codex_normalize),
+    ("omp", omp_discover, omp_normalize),
+    ("pi", pi_discover, pi_normalize),
+    ("cursor", cursor_discover, cursor_normalize),
+    ("copilot", copilot_discover, None),
+]
+
+
+# --------------------------------------------------------------------------
+# Pipeline
+# --------------------------------------------------------------------------
+
+
+def _log(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def _derived_path(table: str) -> str:
+    return os.path.join(STAGE_DIR, "derived", f"{table}.jsonl")
+
+
+def stage_harnesses() -> list[str]:
+    """Run every adapter; write canonical rows to per-harness staging JSONL.
+
+    The same pass writes narrow pre-flattened rows for each derived table
+    (see _emitters). Returns the list of harness names that produced at least
+    one row. Adapters that discover no logs (or have no normalizer) are
+    reported and skipped.
+    """
+    if os.path.isdir(STAGE_DIR):
+        shutil.rmtree(STAGE_DIR)
+    os.makedirs(os.path.join(STAGE_DIR, "derived"), exist_ok=True)
+
+    loaded: list[str] = []
+    with ExitStack() as stack:
+        sinks = [
+            (table, stack.enter_context(open(_derived_path(table.name), "w", encoding="utf-8")))
+            for table in DERIVED_TABLES
+        ]
+        for name, discover, normalize in ADAPTERS:
+            sources = discover()
+            if not sources or normalize is None:
+                _log(f"  {name}: no accessible logs — skipped")
+                continue
+            out_path = os.path.join(STAGE_DIR, f"{name}.jsonl")
+            count = 0
+            with open(out_path, "w", encoding="utf-8") as out:
+                for src in sources:
+                    emitters = [(table.make_emitter(name, src), sink) for table, sink in sinks]
+                    for entry in normalize(src):
+                        _ = out.write(json.dumps(entry) + "\n")
+                        count += 1
+                        for emit, sink in emitters:
+                            for row in emit(cast(dict[str, object], entry)):
+                                _ = sink.write(json.dumps(row) + "\n")
+            if count:
+                loaded.append(name)
+                _log(f"  {name}: {count} canonical entries")
+            else:
+                os.remove(out_path)
+                _log(f"  {name}: no accessible logs — skipped")
+    return loaded
+
+
+def _read_derived(table: DerivedTable) -> str:
+    """Return the SQL source that reads one table's staged rows with typed columns."""
+    columns = "{" + ", ".join(f"{k}: '{v}'" for k, v in table.columns.items()) + "}"
+    return (
+        f"read_json('{sql_quote(_derived_path(table.name))}', "
+        f"format='newline_delimited', ignore_errors=true, columns={columns})"
+    )
+
+
+def columns_struct() -> str:
+    return "{" + ", ".join(f"{k}: '{v}'" for k, v in RAW_COLUMNS.items()) + "}"
+
+
+def _do_ingest_and_swap() -> float:
+    _log("Discovering + normalizing harness sessions...")
+    loaded = stage_harnesses()
+    if not loaded:
+        raise IngestError("No accessible sessions from any harness. Nothing to ingest.")
+
+    if os.path.exists(DB_TMP_PATH):
+        if os.path.isdir(DB_TMP_PATH):
+            raise IngestError(f"{DB_TMP_PATH} is a directory, expected a file.")
+        os.remove(DB_TMP_PATH)
+
+    _log("Loading canonical rows into DuckDB...")
+    t0 = time.time()
+    stage_glob = os.path.join(STAGE_DIR, "*.jsonl")
+
+    # Step 1: union every harness's canonical JSONL into raw_entries.
+    # The JSON parser holds a few wide messages per thread (up to 9 MB each,
+    # measured). One thread cuts peak memory from 4.5 GB to 2.5 GB and costs no
+    # wall time. Each run is its own DuckDB process, so the setting stays local.
+    run_sql(f"""
+        SET threads = 1;
+        CREATE TABLE raw_entries AS
+        SELECT *
+        FROM read_json(
+            '{sql_quote(stage_glob)}',
+            format='newline_delimited',
+            union_by_name=true,
+            ignore_errors=true,
+            columns={columns_struct()}
+        );
+    """)
+
+    # The next four tables read the narrow rows that stage_harnesses() wrote,
+    # not raw_entries.message. JSON columns hold the raw value at each path.
+    # json_extract_string(col, '$') returns the same text that
+    # json_extract_string(message, '<path>') returned.
+    tables = {table.name: table for table in DERIVED_TABLES}
+
+    # Step 2: tool_uses (flattened from assistant content blocks).
+    _log("  Creating tool_uses...")
+    run_sql(f"""
+        CREATE TABLE tool_uses AS
+        SELECT
+            harness,
+            json_extract_string(tool_name, '$') AS tool_name,
+            json_extract_string(tool_use_id, '$') AS tool_use_id,
+            json_extract(input, '$[0]') AS input,
+            json_extract_string(bash_cmd, '$') AS bash_cmd,
+            json_extract_string(skill_name, '$') AS skill_name,
+            json_extract_string(skill_args, '$') AS skill_args,
+            json_extract_string(agent_type, '$') AS agent_type,
+            json_extract_string(agent_desc, '$') AS agent_desc,
+            json_extract_string(agent_mode, '$') AS agent_mode,
+            json_extract_string(grep_pattern, '$') AS grep_pattern,
+            json_extract_string(file_path, '$') AS file_path,
+            json_extract_string(query, '$') AS query,
+            timestamp, sessionId, cwd, gitBranch
+        FROM {_read_derived(tables["tool_uses"])};
+    """)
+
+    # Step 3: tool_results (from user message content blocks).
+    # Claude omits is_error on most successful results (measured: ~99.5% of
+    # absent-flag blocks carry non-error content), so an absent flag backfills
+    # to explicit 'false' rather than a NULL every string compare treats as
+    # success silently. is_error_explicit preserves whether the source block
+    # carried the flag, so coverage stays measurable (issue #704).
+    # The staging pass already cut content to 500 characters.
+    _log("  Creating tool_results...")
+    run_sql(f"""
+        CREATE TABLE tool_results AS
+        SELECT
+            harness,
+            json_extract_string(tool_use_id, '$') AS tool_use_id,
+            content,
+            coalesce(json_extract_string(is_error, '$'), 'false') AS is_error,
+            json_extract_string(is_error, '$') IS NOT NULL AS is_error_explicit,
+            timestamp, sessionId
+        FROM {_read_derived(tables["tool_results"])};
+    """)
+
+    # Step 4: stop_events. The staging pass kept only the listed stop reasons.
+    _log("  Creating stop_events...")
+    run_sql(f"""
+        CREATE TABLE stop_events AS
+        SELECT harness, stop_reason, timestamp, sessionId, cwd, gitBranch
+        FROM {_read_derived(tables["stop_events"])};
+    """)
+
+    # Step 4b: model_turns (one row per assistant turn that names a model).
+    # Claude writes one raw entry per content block of a message, and repeats
+    # `usage` on each entry, so entries group by `message.id`: tool calls sum,
+    # usage takes one value. omp and other harnesses carry no `message.id` and
+    # keep one row per entry (the staging pass gives each a unique row_key).
+    # TRY_CAST keeps one malformed metric from aborting the whole ingest.
+    # Latency and prompt_tokens are omp-only.
+    # Codex token rows carry no content, so tool_calls stays NULL (not measured).
+    # context_tokens is the prompt size the model read: Claude's input_tokens
+    # excludes cache reads and creation, so they are added; Codex's
+    # input_tokens already includes cached tokens.
+    _log("  Creating model_turns...")
+    run_sql(f"""
+        CREATE TABLE model_turns AS
+        WITH fragments AS (
+            SELECT
+                harness, sessionId, cwd, timestamp,
+                coalesce(json_extract_string(message_id, '$'), row_key) AS turn_key,
+                json_extract_string(model, '$') AS model_name,
+                json_extract_string(stop_reason, '$') AS stop_reason_text,
+                json_extract_string(error_message, '$') AS error_text,
+                TRY_CAST(input_tokens AS BIGINT) AS in_tokens,
+                TRY_CAST(output_tokens AS BIGINT) AS out_tokens,
+                TRY_CAST(cache_read_tokens AS BIGINT) AS cache_read,
+                TRY_CAST(cache_creation_tokens AS BIGINT) AS cache_creation,
+                TRY_CAST(prompt_tokens AS BIGINT) AS prompt,
+                TRY_CAST(duration_ms AS DOUBLE) AS duration,
+                TRY_CAST(ttft_ms AS DOUBLE) AS ttft,
+                tool_calls
+            FROM {_read_derived(tables["model_turns"])}
+        )
+        SELECT
+            harness,
+            any_value(model_name) AS model,
+            arg_max(stop_reason_text, timestamp) AS stop_reason,
+            max(error_text) AS error_message,
+            max(in_tokens) AS input_tokens,
+            max(out_tokens) AS output_tokens,
+            max(cache_read) AS cache_read_tokens,
+            max(cache_creation) AS cache_creation_tokens,
+            CASE WHEN harness = 'claude'
+                THEN max(in_tokens)
+                    + coalesce(max(cache_read), 0)
+                    + coalesce(max(cache_creation), 0)
+                ELSE max(in_tokens)
+            END AS context_tokens,
+            max(prompt) AS prompt_tokens,
+            max(duration) AS duration_ms,
+            max(ttft) AS ttft_ms,
+            CAST(sum(tool_calls) AS BIGINT) AS tool_calls,
+            min(timestamp) AS timestamp, sessionId, any_value(cwd) AS cwd
+        FROM fragments
+        GROUP BY harness, sessionId, turn_key;
+    """)
+
+    # Step 4c: user_turns (one row per real user prompt; see _emitters).
+    # turn_index counts real prompts per harness and session, ordered by
+    # timestamp, then by source file and position in that file.
+    _log("  Creating user_turns...")
+    run_sql(f"""
+        CREATE TABLE user_turns AS
+        SELECT
+            harness, sessionId, timestamp,
+            row_number() OVER (
+                PARTITION BY harness, sessionId
+                ORDER BY TRY_CAST(timestamp AS TIMESTAMPTZ) NULLS LAST, source, ordinal
+            ) - 1 AS turn_index,
+            text, prev_assistant_text
+        FROM {_read_derived(tables["user_turns"])};
+    """)
+
+    # Step 5: agent_spawns.
+    _log("  Creating agent_spawns...")
+    run_sql("""
+        CREATE TABLE agent_spawns AS
+        SELECT
+            harness,
+            coalesce(agent_type, 'general-purpose') AS agent_type,
+            agent_desc AS description,
+            agent_mode AS mode,
+            tool_use_id AS anchor_id,
+            timestamp, sessionId, cwd
+        FROM tool_uses
+        WHERE tool_name IN ('Agent', 'Task');
+    """)
+
+    # Step 6: skill_invocations.
+    _log("  Creating skill_invocations...")
+    run_sql("""
+        CREATE TABLE skill_invocations AS
+        SELECT
+            harness, skill_name, skill_args AS args, tool_use_id AS anchor_id,
+            timestamp, sessionId, cwd
+        FROM tool_uses
+        WHERE tool_name = 'Skill';
+    """)
+
+    # Step 7: mcp_calls.
+    _log("  Creating mcp_calls...")
+    run_sql("""
+        CREATE TABLE mcp_calls AS
+        SELECT * FROM tool_uses WHERE tool_name LIKE 'mcp__%';
+    """)
+
+    # Step 8: sessions summary.
+    _log("  Creating sessions...")
+    run_sql("""
+        CREATE TABLE sessions AS
+        SELECT
+            harness, sessionId,
+            min(timestamp) AS first_seen,
+            max(timestamp) AS last_seen,
+            cwd AS project,
+            gitBranch AS branch,
+            arg_max(version, timestamp) FILTER (WHERE version IS NOT NULL) AS version,
+            max(parentSessionId) AS parent_session_id,
+            count(*) FILTER (WHERE type IS DISTINCT FROM 'token_usage') AS entry_count
+        FROM raw_entries
+        WHERE sessionId IS NOT NULL
+          AND timestamp IS NOT NULL
+        GROUP BY harness, sessionId, cwd, gitBranch;
+    """)
+
+    # Step 9: stop_hooks (claude-only fields, harness threaded through).
+    _log("  Creating stop_hooks...")
+    run_sql("""
+        CREATE TABLE stop_hooks AS
+        SELECT
+            harness, timestamp, sessionId, hookCount, hookInfos, hookErrors,
+            preventedContinuation, stopReason, hasOutput, level
+        FROM raw_entries
+        WHERE type = 'system' AND subtype = 'stop_hook_summary';
+    """)
+
+    # Step 10: permission_denials.
+    _log("  Creating permission_denials...")
+    run_sql("""
+        CREATE TABLE permission_denials AS
+        SELECT harness, content, sessionId, timestamp
+        FROM tool_results
+        WHERE content LIKE 'Permission to use % has been denied%'
+           OR content LIKE 'Hook PreToolUse:% denied this tool%'
+           OR content LIKE '%The user doesn''t want to proceed%';
+    """)
+
+    # Step 11: interrupt_events (one row per structured interrupt marker; the
+    # staging pass applies the marker rule, see _emitters).
+    _log("  Creating interrupt_events...")
+    run_sql(f"""
+        CREATE TABLE interrupt_events AS
+        SELECT harness, sessionId, timestamp
+        FROM {_read_derived(tables["interrupt_events"])};
+    """)
+
+    _log("  Creating indexes...")
+    run_sql("""
+        CREATE INDEX idx_tool_uses_name ON tool_uses(tool_name);
+        CREATE INDEX idx_tool_uses_session ON tool_uses(sessionId);
+        CREATE INDEX idx_tool_uses_harness ON tool_uses(harness);
+        CREATE INDEX idx_tool_results_error ON tool_results(is_error);
+        CREATE INDEX idx_sessions_id ON sessions(sessionId);
+    """)
+
+    run_sql(
+        f"""
+        CREATE TABLE schema_info AS SELECT {SCHEMA_VERSION} AS version;
+    """
+    )
+
+    os.replace(DB_TMP_PATH, DB_PATH)
+    return time.time() - t0
+
+
+def _summary() -> dict[str, object]:
+    counts = query_rows(
+        """
+        SELECT
+            (SELECT count(*) FROM tool_uses) AS tool_uses,
+            (SELECT count(*) FROM tool_results) AS tool_results,
+            (SELECT count(DISTINCT harness) FROM tool_uses) AS harnesses,
+            (SELECT count(*) FROM agent_spawns) AS agent_spawns,
+            (SELECT count(*) FROM skill_invocations) AS skill_invocations,
+            (SELECT count(*) FROM mcp_calls) AS mcp_calls,
+            (SELECT count(*) FROM sessions) AS sessions,
+            (SELECT count(*) FROM permission_denials) AS permission_denials;
+    """
+    )
+    # Coverage (issue #704): measurement quality per harness, so consumers can
+    # see how much of the call volume has joined results and how many error
+    # flags were explicit in the source vs backfilled. A low results_joined_pct
+    # means per-tool error rates for that harness are floors.
+    coverage = query_rows(
+        """
+        WITH result_ids AS (SELECT DISTINCT tool_use_id FROM tool_results)
+        SELECT
+            u.harness,
+            count(*) AS tool_uses,
+            round(100.0 * avg(CASE WHEN r.tool_use_id IS NOT NULL THEN 1 ELSE 0 END), 1)
+                AS results_joined_pct,
+            (SELECT count(*) FROM tool_results tr WHERE tr.harness = u.harness)
+                AS tool_results,
+            (SELECT round(100.0 * avg(CASE WHEN tr.is_error_explicit THEN 1 ELSE 0 END), 1)
+               FROM tool_results tr WHERE tr.harness = u.harness)
+                AS explicit_error_flag_pct
+        FROM tool_uses u
+        LEFT JOIN result_ids r ON u.tool_use_id = r.tool_use_id
+        GROUP BY u.harness
+        ORDER BY u.harness;
+    """
+    )
+    return {"counts": counts[0] if counts else {}, "coverage": coverage}
+
+
+def build_database(*, force: bool = False) -> float | None:
+    """Build or refresh the database; return the build seconds, or None when it is cached.
+
+    A database that is newer than the TTL and carries the current schema
+    version is left alone unless ``force`` is set. An `IngestError` reports
+    every expected failure, including a failed directory, lock, or stage step.
+    """
+    _ = os.umask(0o077)
+    require_duckdb()
+    validate_settings()  # Reject a bad environment value before the slow stage step.
+
+    if not force and db_is_fresh():
+        return None
+
+    try:
+        os.makedirs(DB_DIR, exist_ok=True)
+        lock_fd = os.open(f"{DB_PATH}.lock", os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            # A waiting run checks freshness again: the lock holder may have just rebuilt.
+            if not force and db_is_fresh():
+                return None
+            try:
+                return _do_ingest_and_swap()
+            finally:
+                shutil.rmtree(STAGE_DIR, ignore_errors=True)
+        finally:
+            os.close(lock_fd)
+    except OSError as error:
+        raise IngestError(f"Cannot build the session database: {error}") from error
+
+
+def ingest(force: bool = False) -> dict[str, object]:
+    """Build or refresh the database; return a JSON-ready summary."""
+    elapsed = build_database(force=force)
+    if elapsed is None:
+        return _cached()
+    return {
+        "status": "ingested",
+        "database": DB_PATH,
+        "schema_version": SCHEMA_VERSION,
+        "elapsed_seconds": round(elapsed, 1),
+        **_summary(),
+    }
+
+
+def _cached() -> dict[str, object]:
+    age_minutes = (time.time() - os.path.getmtime(DB_PATH)) / 60
+    return {
+        "status": "cached",
+        "database": DB_PATH,
+        "schema_version": SCHEMA_VERSION,
+        "age_minutes": round(age_minutes),
+        "note": "database is newer than the one-hour cache; pass --force to re-ingest",
+    }

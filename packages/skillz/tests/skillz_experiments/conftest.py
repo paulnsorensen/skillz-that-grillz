@@ -1,0 +1,230 @@
+"""Shared fixtures for the skillz experiment tests."""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+from collections.abc import Callable, Iterator, Sequence
+from typing import NamedTuple, cast
+
+import pytest
+
+from skillz_experiments._budget import Budget
+from skillz_experiments.harness._command import Command
+from skillz_experiments.harness._roles import Role
+from skillz_experiments.harness._transport import Transport
+from skillz_experiments.run import _run
+from skillz_experiments.harness import Configuration
+from skillz_experiments.harness._claude import _options, _sandbox, _transport
+from skillz_experiments._intake import DRAFT_NAME
+from skillz_experiments.search import Edit
+from skillz_experiments.run import Stop, run
+from skillz_experiments.run._session import Factory
+
+FIXTURES = Path(__file__).parent / "fixtures"
+_REAL_NESTED_USERNS_BLOCKED = _sandbox.nested_userns_blocked
+
+
+@pytest.fixture(scope="session")
+def harness_bin(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Make stub `claude` and `codex` executables once per session."""
+    directory = tmp_path_factory.mktemp("harness-bin")
+    for name in ("claude", "codex"):
+        stub = directory / name
+        _ = stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+    return directory
+
+
+@pytest.fixture(autouse=True)
+def harness_on_path(harness_bin: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Put the stub harness executables on PATH, so `run` does not depend on the host's `claude` or `codex`.
+
+    `run` resolves the built-in harness before the first approval stop. A test that checks
+    `harness-missing` sets its own PATH.
+    """
+    monkeypatch.setenv("PATH", f"{harness_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+@pytest.fixture(autouse=True)
+def nested_userns_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report that the host allows a nested user namespace, so the sandbox settings do not depend on the host's AppArmor.
+
+    A test of the blocked case patches `_sandbox.nested_userns_blocked` itself.
+    """
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: False)
+
+
+@pytest.fixture
+def real_nested_userns_probe(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[], bool]]:
+    """Restore the real, cached `nested_userns_blocked` for a test of the probe itself, and clear its cache around the test."""
+    monkeypatch.setattr(_transport, "nested_userns_blocked", _REAL_NESTED_USERNS_BLOCKED)
+    cache_clear = cast(Callable[[], None], getattr(_REAL_NESTED_USERNS_BLOCKED, "cache_clear"))
+    cache_clear()
+    yield _REAL_NESTED_USERNS_BLOCKED
+    cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report a ready host to `run`, so the stub harness executables pass the free host checks.
+
+    The doctor tests call `_doctor.doctor` directly.
+    """
+    def ready(selections: Sequence[tuple[str, str | None]]) -> dict[str, object]:
+        return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
+    monkeypatch.setattr(_run, "host_report", ready)
+
+@pytest.fixture
+def umask_022() -> Iterator[None]:
+    """Run a privacy test under the common umask, so only the explicit file and directory modes make it private."""
+    previous = os.umask(0o022)
+    try:
+        yield
+    finally:
+        _ = os.umask(previous)
+
+
+@pytest.fixture
+def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Give each test a fake host login and a private temp dir, so no test touches the real `~/.claude`.
+
+    The last PATH entry holds a stub `bwrap`, so the host-tool check passes on a Linux host without bubblewrap.
+    Tests that run the real OS sandbox skip without it, and a real `bwrap` earlier on PATH still wins.
+    The stub fails like a broken sandbox, so a test that runs it by mistake stops.
+    """
+    fallback = tmp_path / "fallback-bin"
+    fallback.mkdir()
+    bwrap = fallback / "bwrap"
+    _ = bwrap.write_text("#!/bin/sh\necho 'bwrap: test stub, no OS sandbox' >&2\nexit 1\n")
+    bwrap.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{os.environ.get('PATH', '')}{os.pathsep}{fallback}")
+    credential = tmp_path / "host-home/.claude/.credentials.json"
+    credential.parent.mkdir(parents=True)
+    _ = credential.write_text("{}")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setenv("HOME", str(credential.parents[1]))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ())
+    monkeypatch.setattr(_options, "SOCKET_DENY", ())  # pytest roots live under /tmp, which production denies
+    return credential
+
+
+def _make_target(tmp_path: Path, *, helper: bool = False) -> Path:
+    """Copy the echo skill and give it a one-kind contract, so every drafted task case scores with `echo`."""
+    target = tmp_path / "echo-skill"
+    _ = shutil.copytree(FIXTURES / "echo-skill", target)
+    _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
+    contract: dict[str, object] = {
+        "schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
+        "kinds": {"echo": {"grader": "exact-json"}}, "editable": []}
+    if helper:
+        (target / "scripts").mkdir()
+        _ = (target / "scripts/echo.py").write_text("import json\nprint(json.dumps({'ok': True}))\n")
+        contract["helper"] = {"path": "scripts/echo.py", "input": "fixture.md",
+                              "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]}
+    _ = (target / "evals/autoimprove.json").write_text(json.dumps(contract))
+    return target
+
+
+def _write_draft(out: Path, families: int = 5, per_family: int = 2) -> list[str]:
+    """Write a case draft and return the case ids."""
+    cases: list[dict[str, object]] = []
+    for family in range(families):
+        for index in range(per_family):
+            name = f"t{family}-{index}"
+            cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"request-{name}-end",
+                          "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"})
+    out.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _ = (out / DRAFT_NAME).write_text(json.dumps(cases), encoding="utf-8")
+    return [str(case["id"]) for case in cases]
+
+
+def _approvals(target: Path, out: Path, model: str = "local-test", *, edit: Edit = "prose") -> tuple[str, int]:
+    """Walk the two stops. Return the case hash and the call count that the user approves."""
+    with pytest.raises(Stop) as cases:
+        _ = run(target, out, model, live=True, edit=edit)
+    assert cases.value.code == "cases-unapproved"
+    case_hash = cast(str, cases.value.data["case_hash"])
+    with pytest.raises(Stop) as budget:
+        _ = run(target, out, model, live=True, approve_cases=case_hash, edit=edit)
+    assert budget.value.code == "budget-unapproved"
+    estimate = cast(dict[str, int], budget.value.data["estimate"])
+    return case_hash, estimate["calls"]
+
+
+def _approved_run(target: Path, out: Path, *, model: str = "local-test", factory: Factory | None = None,
+                 configuration: Configuration | None = None) -> dict[str, object]:
+    """Write a draft when none exists, give both approvals, then run to the end."""
+    if not (out / DRAFT_NAME).exists():
+        _ = _write_draft(out)
+    case_hash, calls = _approvals(target, out, model)
+    return run(target, out, model, live=True, approve_cases=case_hash, approve_budget=calls, factory=factory,
+               configuration=configuration)
+
+
+@pytest.fixture
+def make_target() -> Callable[..., Path]:
+    """Hand the `run` test helper `make_target` to a test."""
+    return _make_target
+
+
+@pytest.fixture
+def write_draft() -> Callable[..., list[str]]:
+    """Hand the `run` test helper `write_draft` to a test."""
+    return _write_draft
+
+
+@pytest.fixture
+def approvals() -> Callable[..., tuple[str, int]]:
+    """Hand the `run` test helper `approvals` to a test."""
+    return _approvals
+
+
+@pytest.fixture
+def approved_run() -> Callable[..., dict[str, object]]:
+    """Hand the `run` test helper `approved_run` to a test."""
+    return _approved_run
+
+
+class JudgedRun(NamedTuple):
+    """An intake target whose two approvals are given and whose built-in roles all run through the command wrapper."""
+
+    target: Path
+    out: Path
+    case_hash: str
+    calls: int
+    settings: Path
+
+    @property
+    def log(self) -> Path:
+        return self.settings.parent / "requests.jsonl"
+
+    def start(self, *, live: bool = True, judge_model: str | None = None) -> dict[str, object]:
+        """Call `run` with the approvals. The wrapper logs the model of every request."""
+        return run(self.target, self.out, "task-model", live=live, approve_cases=self.case_hash,
+                   approve_budget=self.calls, judge_model=judge_model)
+
+
+@pytest.fixture
+def judged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> JudgedRun:
+    """Hand a `JudgedRun` to a test. Write `mode` into `settings` to change how the wrapper answers."""
+    wrapper = tmp_path / "wrapper.py"
+    _ = shutil.copyfile(FIXTURES / "command_wrapper.py", wrapper)
+    settings = tmp_path / "settings.json"
+    _ = settings.write_text(json.dumps({"mode": "normal", "log": str(tmp_path / "requests.jsonl")}))
+
+    def create(self: Role, budget: Budget, checkpoint: Callable[[], None], *_unused: object) -> Transport:
+        return Command((sys.executable, str(wrapper), str(settings)), self.model, budget, checkpoint)
+
+    monkeypatch.setattr(Role, "create", create)
+    target, out = _make_target(tmp_path), tmp_path / "run"
+    (target / "evals/autoimprove.json").unlink()
+    _ = _write_draft(out)
+    case_hash, calls = _approvals(target, out, "task-model")
+    return JudgedRun(target, out, case_hash, calls, settings)

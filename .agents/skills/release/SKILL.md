@@ -22,8 +22,8 @@ A tag push publishes to PyPI after one approval, and PyPI never accepts the same
 
 ## Release contract
 
-- `lib/fromargs/CHANGELOG.md` is the only source of release notes. `just fromargs-release-notes <version>` prints one section and fails when it is missing or empty.
-- `.github/workflows/publish-fromargs.yml` runs on a `fromargs-v*` tag. Its build job requires the tag commit on `main` and the tag version equal to `lib/fromargs/pyproject.toml`.
+- `packages/fromargs/CHANGELOG.md` is the only source of release notes. `just fromargs-release-notes <version>` prints one section and fails when it is missing or empty.
+- `.github/workflows/publish-fromargs.yml` runs on a `fromargs-v*` tag. Its build job requires the tag commit on `main` and the tag version equal to `packages/fromargs/pyproject.toml`.
 - The `publish` job waits for the `pypi` environment approval, then uploads with trusted publishing.
 - The `github-release` job creates the GitHub release with `--latest=false`. It fails when the tag moved after the build.
 - The wedge bundles and the `cheese-cave` example lock embed the fromargs source, so a version change needs a rebuild.
@@ -31,34 +31,32 @@ A tag push publishes to PyPI after one approval, and PyPI never accepts the same
 ## 1. Preflight
 
 1. Switch to `main`, pull with `--ff-only`, and require a clean tree.
-2. Read the `## [Unreleased]` section of `lib/fromargs/CHANGELOG.md`. Stop when it is empty.
+2. Read the `## [Unreleased]` section of `packages/fromargs/CHANGELOG.md`. Stop when it is empty.
 3. Choose the version. Use the argument when the user gives one. Otherwise, propose the next minor version for a `0.x` release with a **Breaking** entry, and the next patch version for other changes. Confirm the proposed version with the user.
 4. Stop when the tag `fromargs-v<version>` exists on `origin` or `https://pypi.org/pypi/fromargs/<version>/json` returns 200.
 
 ## 2. Prepare the release PR
 
 1. Create the branch `chore/fromargs-release-<version>`.
-2. In `lib/fromargs/CHANGELOG.md`, move the `Unreleased` entries under `## [<version>] - <YYYY-MM-DD>` with today's date. Keep an empty `## [Unreleased]` heading.
+2. In `packages/fromargs/CHANGELOG.md`, move the `Unreleased` entries under `## [<version>] - <YYYY-MM-DD>` with today's date. Keep an empty `## [Unreleased]` heading.
 3. Update the link references at the end of the CHANGELOG. `[Unreleased]` compares `fromargs-v<version>...HEAD`. Add `[<version>]` to compare the previous tag with `fromargs-v<version>`.
-4. Set `version = "<version>"` in `lib/fromargs/pyproject.toml`.
-5. When the minor version changes, set the `fromargs` range in `pyproject.toml` and `lib/pyproject.toml` to `>=<major>.<minor>.0,<<major>.<next minor>`.
-6. Relock with the uv version that the workflow pins in its `setup-uv` step, so the lockfile `revision` stays compatible with CI:
+4. Set `version = "<version>"` in `packages/fromargs/pyproject.toml`.
+5. When the minor version changes, set the `fromargs` range in `pyproject.toml` and `packages/wedge/pyproject.toml` to `>=<major>.<minor>.0,<<major>.<next minor>`.
+6. Relock the workspace with the uv version that the workflow pins in its `setup-uv` step, so the lockfile `revision` stays compatible with CI:
 
    ```bash
-   uvx uv@<ci-uv-version> lock --project .
-   uvx uv@<ci-uv-version> lock --project lib
-   uvx uv@<ci-uv-version> lock --project lib/fromargs
+   uvx uv@<ci-uv-version> lock
    ```
 
 7. Rebuild the artifacts that embed fromargs:
 
    ```bash
-   uv run --locked --project lib wedge lock --root lib/examples/skills
-   uv run --locked --project lib wedge bundle skills/skillz skills/skillz/wedge
+   uv run --locked --project packages/wedge wedge lock --root packages/wedge/examples/skills
+   uv run --locked --project packages/wedge wedge bundle skills/skillz
    ```
 
 8. Run `just fromargs-release-notes <version>` and read the output. It must show the complete new section.
-9. Run `uv build --project lib/fromargs --out-dir <temp dir>` and `uvx twine check <temp dir>/*`.
+9. Run `uv build --package fromargs --no-sources --out-dir <temp dir>` and `uvx twine check <temp dir>/*`.
 10. Run `just build`. Stop on a new failure. Compare any failure with a clean `main` checkout before you call it a baseline failure.
 11. Commit the named files as `chore(fromargs): release <version>`. Push the branch and open a PR against `main`. Put the release notes and the post-merge steps in the PR body.
 

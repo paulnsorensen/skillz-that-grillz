@@ -89,3 +89,22 @@
 
 - 2026-10-04 · 5f96f7f0ac775c0b · merged · decisions/skillz-autoimprove.md · Record the deferred Claude live-network verification gap from PR #118. All three frozen retrieval probes return the page at rank 1.
 - 2026-10-05 · skillz-wedge-offload · updated · decisions/wedge-skill-packaging.md · #151: /wedge moved into /skillz wedge; one offload procedure for wedge and improve; fromargs by default, PEP 723 `uv run --script` when not wedged; builder at skills/skillz/wedge/; ADR-009 nested-in-skill defaults rule. Reverses the 2026-10-01 skillz-wedge split.
+
+
+- 2026-10-10 · d18eff71e7d8b81a · new-page · research/behavioral-bdd-gherkin.md · Curated BDD altitude, candidate comparison, and regression evidence; no existing topic owner.
+- 2026-10-10 · d18eff71e7d8b81a · new-page · research/skill-behavior-specifications-for-evals.md · Curated upstream intent documents, evaluation methods, and schema differences; existing runner decisions remain unchanged.
+- 2026-10-10 · skillz-journey-evals · updated · decisions/skillz-autoimprove.md · ADR-008 to ADR-010: journey case kind, declared task tool surface, and a separate journey budget of 1000 calls and 28800 seconds.
+
+
+
+- 2026-10-10 · ed696930d458e9fa · new-page · parallel-quality-gate.md · Record bounded gate lanes, dev-only pytest workers, short isolated temporary roots, and incomplete Mac verification. No measured speedup.
+
+
+
+- 2026-10-10 · rebase-43a9dbe-parallel-gate · merged · parallel-quality-gate.md · Replace separate lib environments with one shared packages workspace preparation. Record the user-selected Linux CI verification route.
+
+
+
+- 2026-10-10 · ci-38102417849-bounded-wait · merged · parallel-quality-gate.md · Record the Linux descendant-state race and approved bounded test observation. Preserve the runtime timeout and final assertion.
+- 2026-10-11 · issue-211-nono-removal · updated · decisions/skillz-autoimprove.md, sources/codex-skill-discovery-isolation.md, ideas/session-driven-skill-optimization.md · Mark ADR-007 superseded after the removal of the nono backend and the `--isolation` option. Note that the Codex adapter requires 0.154.0 or newer.
+

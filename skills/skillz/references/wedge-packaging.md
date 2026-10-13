@@ -1,17 +1,17 @@
 # Build and install with wedge
 
-Read this before you wedge a CLI in the target skill.
+Read this before you wedge a CLI in the packaged skill.
 These instructions describe the current builder, not a general Python packager.
 
 ## Prerequisites and limits
 
-The target skill needs a uv project.
+The packaged skill needs a uv project.
 That project has a `pyproject.toml` and a committed `uv.lock`.
 The non-dev dependencies in that lock form the archive's closure.
 A dependency group named in `groups` joins that closure.
 A local package that is not on an index, such as fromargs, enters through `include`.
 
-Run the builder from `wedge/scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory; it carries wedge and its shiv dependency.
+Run the builder from `scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory; it carries wedge and its shiv dependency.
 The builder also invokes `uv`, so `uv` must be on `PATH`.
 Every dependency must be a pure-Python `py3-none-any` wheel without a platform marker.
 A compressed universal tag such as `py2.py3-none-any` also passes.
@@ -20,18 +20,18 @@ The runtime requires Python 3.11 or later.
 An installed launcher does not require uv or a project environment.
 
 Do not add unrelated dependencies to a shared project to make packaging pass.
-Do not change the `lib/fromargs` closure of the skillz-that-grillz repository.
+Do not change the `packages/fromargs` closure of the skillz-that-grillz repository.
 When the layout or a dependency is not supported, ship the CLI unpackaged and state the reason.
 Installing the wedge command alone does not create the required project.
 
 ## Manifest and source
 
-Copy the bundled manifest and Python template into the target skill.
+Copy the bundled manifest and Python template into the packaged skill.
 Set `repo` explicitly to the release repository as `owner/name`.
 The template's placeholder fails validation until you replace it.
 
 ```text
-target-skill/
+packaged-skill/
   SKILL.md
   wedge.toml
   records.py
@@ -41,9 +41,10 @@ target-skill/
 ```
 
 The manifest accepts eight keys: `name`, `entry`, `source`, `source_paths`, `project`, `repo`, `include`, and `groups`.
+It also accepts `[[target]]` tables, described below.
 The template sets `name`, `entry`, `source`, `project`, and `repo`.
 `entry = "records:main"` names the callable in `records.py`.
-Every path resolves relative to the target skill, not the working directory.
+Every path resolves relative to the packaged skill, not the working directory.
 `project` names the directory with `pyproject.toml` and `uv.lock`.
 `source` and each `include` entry must resolve inside `project`.
 Choose a single module file or an importable package directory, not its generic `src` parent.
@@ -66,10 +67,35 @@ A parent directory that holds a `SKILL.md` is a skill, so it gives no shared def
 Wedge reads one `wedge.toml` per directory, so each extra CLI gets its own directory below the skill.
 Place each manifest at `<skill>/<cli>/wedge.toml`, with its source beside it.
 Add one `../` to `project` and to each `source` and `include` path.
-The `wedge/` directory of the `skillz` skill in this repository shows this layout.
 A nested CLI reads no shared defaults.
 
-Keep reusable source inside the target skill when possible.
+A direct-mode manifest can instead hold several CLIs through `[[target]]` tables.
+Use either one directory per CLI or `[[target]]` tables; both layouts work.
+The root `skills/skillz/wedge.toml` in this repository shows the `[[target]]` layout.
+Each table sets `name`, `entry`, `source` or `source_paths`, `include`, and `groups`.
+Keys outside the tables, such as `project` and `repo`, act as defaults for every table.
+A table value replaces the default.
+Do not set top-level `name` or `entry` beside a `[[target]]` table; wedge rejects that mix.
+Target names must differ.
+`wedge bundle` writes `scripts/<name>.pyz` for each target, and `bundle --check` checks each one.
+`wedge build` also builds every target.
+`lock`, `publish` (release mode), and `check` reject `[[target]]` tables.
+`publish` skips each target that is a direct bundle.
+
+Code can also reuse one third-party install across builds through the site layer in `wedge._build`.
+`populate_site_layer` installs the locked closure once and may use the network.
+`open_site_layer` reopens that layer later and refuses changed inputs.
+`resolve_target` and `stage_sources` stage the first-party files of one target, with an optional overlay of edited files.
+`build_from_layer` copies the layer and the staged files into a fresh tree and runs shiv with no network.
+The layer key covers the wedge format version, the `uv.lock` digest, the groups, and the target Python.
+First-party source never enters the layer, and a build leaves the layer unchanged.
+The output matches a fresh `build` byte for byte.
+
+The skillz experiment runner also generates targets. Its `@new-cli` component appends one `[[target]]` table to the `wedge.toml` of a candidate.
+The generated table sets `groups = []` and builds from the site layer of the project with no groups.
+The experiments reference describes the component.
+
+Keep reusable source inside the packaged skill when possible.
 Ship source and manifest with the generated launcher and lock.
 In this default mode, the archive belongs in release assets, not version control.
 A `.pyz` beside a launcher fails `wedge check`, so never hand-copy one into a launcher skill.
@@ -78,8 +104,8 @@ That mode commits `scripts/NAME.pyz` and uses no lock or launcher.
 
 ## Local verification
 
-Set `WEDGE` to `wedge/scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory.
-Set `SKILL_DIR` to the absolute target skill directory.
+Set `WEDGE` to `scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory.
+Set `SKILL_DIR` to the absolute packaged skill directory.
 Set `OUT_DIR` to a temporary build-output directory.
 
 ```bash
@@ -103,7 +129,7 @@ Compare `.<name>.content_sha256` with the lock's `content_sha256`.
 `check` checks input freshness and generated metadata without building.
 It does not prove that the remote archive exists or that the command works.
 
-Copy or install the target skill into a separate directory.
+Copy or install the packaged skill into a separate directory.
 Read `.<name>.path` from the `build` output and use it as `BUILT_PYZ`.
 Resolve `INSTALLED_SKILL_DIR` from that installation's loaded `SKILL.md`, never the caller's working directory.
 
@@ -145,6 +171,6 @@ The skillz-that-grillz repository already has that workflow.
 
 ## Sources
 
-The [wedge implementation](https://github.com/paulnsorensen/skillz-that-grillz/tree/main/lib/src/wedge) defines the supported builder and launcher.
+The [wedge implementation](https://github.com/paulnsorensen/skillz-that-grillz/tree/main/packages/wedge/src/wedge) defines the supported builder and launcher.
 The [Agent Skills specification](https://agentskills.io/specification) defines portable skill resources and progressive loading.
 The [Anthropic engineering guide](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills) explains bundled executable code for repeatable work.

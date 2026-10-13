@@ -8,7 +8,7 @@ sources:
 ---
 # fromargs CLI library decisions
 
-These records explain the design of `fromargs`, an independent Python distribution at `lib/fromargs/`, with import code at `lib/fromargs/src/fromargs/`. It holds the self-healing Cyclopts CLI helpers from easy-cheese PR 716. The approved spec is `fromargs-cli-library` in the durable cheese spec store. The research behind it is [Agent-friendly CLI design](../agent-friendly-cli-design.md).
+These records explain the design of `fromargs`, an independent Python distribution at `packages/fromargs/`, with import code at `packages/fromargs/src/fromargs/`. It holds the self-healing Cyclopts CLI helpers from easy-cheese PR 716. The approved spec is `fromargs-cli-library` in the durable cheese spec store. The research behind it is [Agent-friendly CLI design](../agent-friendly-cli-design.md).
 
 ## Records
 
@@ -48,12 +48,12 @@ These records explain the design of `fromargs`, an independent Python distributi
 
 **Static-analysis constraint:** `_AppKwargs` fields remain live because `Unpack` forwards their string-keyed values to Cyclopts. Vulture cannot see string-keyed reads. The repo Vulture gate exempts the fields of every module-level `TypedDict` class, including subclasses of a module-level `TypedDict`. The rule is structural, not name-based: the gate matches by source file, annotation line, and field name.[^typed-dict-gate] Function-local `TypedDict` classes are not recognized, so Vulture reports their fields. Global field-name ignores can hide unrelated unused values. Keep the structural filter instead.
 
-[^typed-dict-gate]: lib/fromargs/src/fromargs/_app.py:32-69,102-109; .github/scripts/check_dead_code.py:44-147,164-174
+[^typed-dict-gate]: packages/fromargs/src/fromargs/_app.py:32-69,102-109; .github/scripts/check_dead_code.py:44-147,164-174
 
 ### ADR-006: Publish fromargs to PyPI from `fromargs-v*` tags  [status: accepted]
 
 - **Context:** `fromargs` lives in a monorepo alongside skills that release under plain `v[0-9]*` tags (`release.yml`). A PyPI package needs its own version, its own tag namespace, and its own build and publish steps, without changing the existing skill release flow.
-- **Decision:** A tag matching `fromargs-v*` triggers `.github/workflows/publish-fromargs.yml`. The workflow verifies the tag is an ancestor of `origin/main`, verifies the tag's version matches `lib/fromargs/pyproject.toml`'s `version`, runs the fromargs test suite, builds the sdist and wheel with `uv build`, checks them with `twine check`, then publishes with `uv publish` through PyPI trusted publishing. Only the publish job holds `id-token: write`, scoped to the `pypi` GitHub environment. No PyPI token is stored as a secret.
+- **Decision:** A tag matching `fromargs-v*` triggers `.github/workflows/publish-fromargs.yml`. The workflow verifies the tag is an ancestor of `origin/main`, verifies the tag's version matches `packages/fromargs/pyproject.toml`'s `version`, runs the fromargs test suite, builds the sdist and wheel with `uv build`, checks them with `twine check`, then publishes with `uv publish` through PyPI trusted publishing. Only the publish job holds `id-token: write`, scoped to the `pypi` GitHub environment. No PyPI token is stored as a secret.
 - **Alternatives:** Reuse `release.yml`'s `v[0-9]*` trigger for fromargs too. We rejected it: `fromargs-v*` never matches `v[0-9]*`, and conflating the two triggers would fire a PyPI publish on every skill-only tag. A stored `PYPI_API_TOKEN` secret. We rejected it in favor of trusted publishing, which needs no long-lived credential in the repository.
 - **Consequences:** The PyPI project must have a trusted publisher configured before the first `fromargs-v*` tag is pushed: owner `paulnsorensen`, repository `skillz-that-grillz`, workflow filename `publish-fromargs.yml`, environment name `pypi`. The `pypi` GitHub environment must also exist in repository settings. Until both are set up, a tag push fails at the `uv publish` step with an authentication error, not a partial publish. The workflow's own "Verify tag is on main" step is a mistake guard, not a trust boundary: it runs from the tagged commit's own copy of the workflow file, so a side-branch commit that deletes the check before being tagged would still run under `environment: pypi` with `id-token: write`. Before the first tag is pushed, the `pypi` GitHub environment must be configured with a deployment-tag policy restricted to `fromargs-v*` and a required reviewer, and a tag ruleset must restrict who can create a `fromargs-v*` tag. Those two settings, not the ancestor check, are the actual trust boundary.
 
@@ -61,8 +61,8 @@ These records explain the design of `fromargs`, an independent Python distributi
 
 _Source: .cheese/age/fromargs-cli-library.md:18-31, the Cure fixes, and the 2026-09-26 release-lane decision · Updated: 2026-09-26_
 
-[^1]: lib/fromargs/src/fromargs/_argv.py:27-38; lib/fromargs/tests/test_argv.py:33-49
-[^2]: lib/fromargs/src/fromargs/_run.py:121-135
-[^3]: lib/fromargs/tests/test_run.py:402-448
+[^1]: packages/fromargs/src/fromargs/_argv.py:27-38; packages/fromargs/tests/test_argv.py:33-49
+[^2]: packages/fromargs/src/fromargs/_run.py:121-135
+[^3]: packages/fromargs/tests/test_run.py:402-448
 
 [^4]: GitHub environment `pypi` and [ruleset `24035194`](https://github.com/paulnsorensen/skillz-that-grillz/rules/24035194), read back through the GitHub API on 2026-09-26; [successful publish run](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/36233610069); [PyPI `fromargs` 0.1.0](https://pypi.org/project/fromargs/0.1.0/).

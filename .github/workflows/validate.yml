@@ -27,14 +27,14 @@ jobs:
         uses: ./actions/wedge
         with:
           command: check
-          roots: lib/examples/skills lib/examples/consumer/skills
+          roots: packages/wedge/examples/skills packages/wedge/examples/consumer/skills
 
       - name: Verify action output
         env:
           RESULT: ${{ steps.wedge.outputs.result }}
         run: |
           set -euo pipefail
-          jq -e '.ok == true and (.checked | index("lib/examples/consumer/skills/hello"))' <<<"$RESULT"
+          jq -e '.ok == true and (.checked | index("packages/wedge/examples/consumer/skills/hello"))' <<<"$RESULT"
   gate:
     name: gate (just ci)
     runs-on: ubuntu-latest
@@ -48,7 +48,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        # `just test` runs the lib pytest suite through `uv run`.
+        # `just test` runs the workspace pytest suites through `uv run`.
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.11.32"
@@ -63,9 +63,9 @@ jobs:
         # Pin the tools it shells out to so CI matches a developer's machine:
         #   npm: markdownlint-cli2
         #   pip: yamllint
-        #   uv: pinned by the Install uv step; lib pytest from its uv.lock
+        #   uv: pinned by the Install uv step; workspace pytest from the root uv.lock
         #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
-        #   release binary: duckdb CLI (the skillz engine test suite)
+        #   release binary: duckdb CLI (the agent-session-analytics and analytics-pack tests)
         run: |
           set -euo pipefail
           npm install -g markdownlint-cli2@0.22.1
@@ -101,6 +101,36 @@ jobs:
 
       - name: Run fromargs tests
         run: just test-fromargs ${{ matrix.python }}
+
+  agent-session-analytics-tests:
+    name: agent-session-analytics tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.32"
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+
+      - name: Install DuckDB CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
+            -o /tmp/duckdb_cli.zip
+          sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
+
+      - name: Run agent-session-analytics tests
+        env:
+          REQUIRE_DUCKDB: "1"
+        run: just test-agent-session-analytics ${{ matrix.python }}
 
   pr-title:
     name: conventional commits pr title
