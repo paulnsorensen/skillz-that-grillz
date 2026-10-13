@@ -417,6 +417,43 @@ def test_a_resume_evaluates_a_recorded_failed_evaluation_again(
     assert pair in state.search_log
 
 
+def test_a_second_interrupt_and_resume_calls_no_pair_that_either_earlier_process_recorded(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, _ = _interrupt(tmp_path, make_target, write_draft, approvals)
+    state.evaluate_fault = lambda number: (
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == 6 else None)
+    with pytest.raises(EnvironmentDiffers):
+        _ = run(target, out, MODEL, live=True, factory=state.factory)
+    recorded = _search_pairs(read(out / "run.json"))
+    assert len(recorded) > 2
+    state.search_log.clear()
+    state.evaluate_fault = lambda _number: None
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    assert result["phase"] == "complete"
+    validated = {pair for pair in recorded if pair[1] == "validation"}
+    assert validated and not validated & set(state.search_log)
+    # A reused outcome stays in the record once. Only a real call adds one.
+    final = Counter(_search_pairs(read(out / "run.json")))
+    assert all(final[pair] >= count for pair, count in Counter(recorded).items())
+    assert sum(final.values()) == len(recorded) + len(state.search_log)
+
+
+def test_a_resume_after_a_validated_proposal_calls_no_validation_pair_that_the_record_holds(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.abort_after_improved = len(_validation(out))
+    with pytest.raises(CodedError, match="the process stopped"):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    recorded = _search_pairs(read(out / "run.json"))
+    validated = {pair for pair in recorded if pair[1] == "validation"}
+    assert len({identity for identity, _, _ in validated}) >= 2
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    assert state.search_log and not validated & set(state.search_log)
+    assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
+
 def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before_the_abort(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
