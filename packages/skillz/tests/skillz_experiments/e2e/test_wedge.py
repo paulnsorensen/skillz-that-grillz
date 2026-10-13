@@ -9,7 +9,8 @@ from typing import cast
 
 import pytest
 
-from support import BUNDLE, CLI, Scenario, build_wedge, call_cli, make_scenario, run_scenario, snapshot
+from support import (BUNDLE, CLI, Scenario, build_wedge, call_cli, make_scenario, read_cases, read_events,
+                     read_record, run_scenario, snapshot)
 
 SOURCE = (
     "import json, sys\n"
@@ -23,13 +24,11 @@ SOURCE = (
 
 
 def assert_promoted(scenario: Scenario, result: dict[str, object]) -> None:
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    record = read_record(scenario.out)
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["delta"], gate["se"], gate["n_shared"],
             gate["cases"], gate["repeats"]) == ("promote", 1.0, 0.0, 6, 6, 3)
-    cases = cast(list[dict[str, object]], cast(dict[str, object], json.loads(
-        (scenario.out / "cases.json").read_text()))["cases"])
-    held = {cast(str, case["id"]) for case in cases if case["split"] == "holdout"}
+    held = {cast(str, case["id"]) for case in read_cases(scenario.out) if case["split"] == "holdout"}
     assert len(held) == 6
     outcomes = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
                 if cast(dict[str, object], item).get("split") == "holdout"]
@@ -42,11 +41,8 @@ def assert_promoted(scenario: Scenario, result: dict[str, object]) -> None:
 
 
 def archive_witnesses(scenario: Scenario) -> set[str]:
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
-    winner = cast(str, record["winner_hash"])
-    events = (cast(dict[str, object], json.loads(line))
-              for line in (scenario.out / "vendor.jsonl").read_text().splitlines())
-    return {cast(str, event["archive_sha256"]) for event in events
+    winner = read_record(scenario.out)["winner_hash"]
+    return {cast(str, event["archive_sha256"]) for event in read_events(scenario.out)
             if event.get("role") == "task" and event.get("candidate") == winner
             and "archive_sha256" in event}
 
@@ -86,16 +82,6 @@ def uv_bin_dir() -> Path:
     return path.parent
 
 
-def target_bin(scenario: Scenario, harness: str) -> Path:
-    uv = uv_bin_dir() / "uv"
-    if harness == "command":
-        return uv.parent
-    directory = scenario.out / "bin"
-    directory.mkdir()
-    (directory / "uv").symlink_to(uv)
-    return directory
-
-
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-1")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-6")
@@ -110,7 +96,7 @@ def test_external_wedge_rebuilds_and_exports_real_behavior(
     home = tmp_path / "home"
     home.mkdir()
     result = run_scenario(scenario, home, helper=True, mode="targets", harness=harness,
-                          cli=cli, bin_dir=target_bin(scenario, harness))
+                          cli=cli, bin_dir=uv_bin_dir())
     assert_promoted(scenario, result)
     assert snapshot(scenario.target) == before
     assert snapshot(tmp_path / "proj") == external

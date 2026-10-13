@@ -11,44 +11,34 @@ from typing import cast
 
 import pytest
 
-from support import CLI, FIXTURES, PYTHON, call_cli, export_and_apply, make_scenario
-
-
-def _events(path: Path) -> list[dict[str, object]]:
-    if not path.exists():
-        return []
-    return [cast(dict[str, object], json.loads(line)) for line in path.read_text().splitlines()]
+from support import CLI, call_cli, command_adapter, export_and_apply, make_scenario, read_events
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-8")
 def test_approval_refusals_start_no_inference(tmp_path: Path) -> None:
     scenario = make_scenario(tmp_path)
-    log = scenario.out / "vendor.jsonl"
-    settings = scenario.out / "vendor-settings.json"
-    _ = settings.write_text(json.dumps({"mode": "normal", "log": str(log)}))
-    command = [part for value in (str(PYTHON), str(FIXTURES / "command.py"), str(settings))
-               for part in ("--command", value)]
+    command = command_adapter(scenario)
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
             "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose", *command]
 
     code, _, error = call_cli(args, tmp_path)
     assert code == 1 and json.loads(error)["code"] == "cases-missing"
-    assert not any(event["role"] in ("task", "judge", "reflection") for event in _events(log))
+    assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
 
     _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
     code, cases, error = call_cli(args, tmp_path)
     assert code == 1 and json.loads(error)["code"] == "cases-unapproved"
-    assert not any(event["role"] in ("task", "judge", "reflection") for event in _events(log))
+    assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
 
     code, _, error = call_cli([*args, "--approve-cases", "0" * 64], tmp_path)
     assert code == 1 and json.loads(error)["code"] == "cases-unapproved"
-    assert not any(event["role"] in ("task", "judge", "reflection") for event in _events(log))
+    assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
 
     case_hash = cast(str, cases["case_hash"])
     code, budget, error = call_cli([*args, "--approve-cases", case_hash], tmp_path)
     assert code == 1 and json.loads(error)["code"] == "budget-unapproved"
     assert cast(dict[str, int], budget["estimate"])["calls"] > 0
-    assert not any(event["role"] in ("task", "judge", "reflection") for event in _events(log))
+    assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
 
 
 def _record(path: Path) -> dict[str, object] | None:
@@ -83,14 +73,9 @@ def _advance(process: subprocess.Popen[str], pause_dir: Path, checkpoint: Path,
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-8")
 def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp_path: Path) -> None:
     scenario = make_scenario(tmp_path)
-    log = scenario.out / "vendor.jsonl"
     pause_dir = tmp_path / "pause"
     pause_dir.mkdir()
-    settings = scenario.out / "vendor-settings.json"
-    _ = settings.write_text(json.dumps({"mode": "normal", "log": str(log),
-                                        "pause_dir": str(pause_dir)}))
-    command = [part for value in (str(PYTHON), str(FIXTURES / "command.py"), str(settings))
-               for part in ("--command", value)]
+    command = command_adapter(scenario, pause_dir=str(pause_dir))
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
             "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose", *command]
     _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
@@ -120,7 +105,7 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
                      if item.get("split") == "holdout" and item.get("status") != "evaluation-failed"]
         assert completed
         first_calls = cast(int, before["calls"])
-        prior_events = _events(log)
+        prior_events = read_events(scenario.out)
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
@@ -159,12 +144,12 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
                           for event in prior_events)
         prior_done = sum(item.get("case_id") == case["id"] for item in completed)
         final_tasks = sum(event.get("role") == "task" and event.get("visible_input") == source
-                          for event in _events(log))
+                          for event in read_events(scenario.out))
         assert final_tasks == 6 + prior_tasks - prior_done
-    previous = _events(log)
+    previous = read_events(scenario.out)
     code, repeated, error = call_cli(approved, tmp_path)
     assert (code, error, repeated["gate"]) == (0, "", result["gate"])
-    assert _events(log) == previous
+    assert read_events(scenario.out) == previous
     applied = export_and_apply(scenario, tmp_path)
     assert "Uppercase fixture.md." in (applied / "SKILL.md").read_text()
     assert (scenario.target / "SKILL.md").read_text() == scenario.original

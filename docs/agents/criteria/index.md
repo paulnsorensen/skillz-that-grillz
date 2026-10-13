@@ -35,6 +35,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-238](./gh-238.md) — gh-238: move the reflection prompt into search/_proposer.py (W4.1)
 - [gh-239](./gh-239.md) — gh-239: annealed edit budget and run-status block in the reflection prompt (W4.2)
 - [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
+- [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
 - [skillz-wedge-first-class](./skillz-wedge-first-class.md) — skillz-wedge-first-class: wedge first-class in autoimprove
 - [wedge-skill-packaging](./wedge-skill-packaging.md) — wedge-skill-packaging: wedge skill packaging
 <!-- HALLOUMINATE:INDEX-END -->

@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from vendor_common import is_isolation_probe
+
 
 def main() -> int:
     args = sys.argv[1:]
@@ -21,8 +23,7 @@ def main() -> int:
     while values and "=" in values[0] and not values[0].startswith("/"):
         name, value = values.pop(0).split("=", 1)
         environment[name] = value
-    if (values[:2] == ["/usr/bin/python3", "-c"] and len(values) == 3
-            and "read isolation failed" in values[2] and "network isolation failed" in values[2]):
+    if is_isolation_probe(values):
         print("isolation-ok")
         return 0
     result = subprocess.run(values, cwd=workspace, env=environment or os.environ.copy(),

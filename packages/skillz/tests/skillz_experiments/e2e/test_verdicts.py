@@ -10,7 +10,9 @@ from typing import cast
 
 import pytest
 
-from support import BUNDLE, CLI, FIXTURES, export_and_apply, make_scenario, run_scenario, snapshot
+from support import (BUNDLE, CLI, FIXTURES, carries_answer, export_and_apply, make_scenario, read_cases,
+                     read_record, run_scenario, snapshot)
+from test_wedge import assert_promoted
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-1")
@@ -27,13 +29,11 @@ def test_command_prose_promotes_after_actual_file_transformation(tmp_path: Path,
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["delta"], gate["se"], gate["cases"], gate["repeats"]) == (
         "promote", 1.0, 0.0, 6, 3)
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    record = read_record(scenario.out)
     held = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
             if cast(dict[str, object], item).get("split") == "holdout"]
     assert len(held) == 36
-    cases = cast(list[dict[str, object]], cast(dict[str, object], json.loads(
-        (scenario.out / "cases.json").read_text()))["cases"])
-    identifiers = {case["id"] for case in cases if case["split"] == "holdout"}
+    identifiers = {case["id"] for case in read_cases(scenario.out) if case["split"] == "holdout"}
     assert len(identifiers) == 6
     for identifier in identifiers:
         for arm, score in (("baseline", 0.0), ("winner", 1.0)):
@@ -47,8 +47,8 @@ def test_command_prose_promotes_after_actual_file_transformation(tmp_path: Path,
     for path in scenario.export.iterdir():
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
         text = path.read_text()
-        assert all(cast(str, cast(dict[str, object], case["expected"])["text"]) not in text
-                   for case in scenario.draft)
+        assert not any(carries_answer(cast(str, cast(dict[str, object], case["expected"])["text"]), text)
+                       for case in scenario.draft)
     workspace = tmp_path / "replay"
     staged = workspace / ".agents/skills/transform-skill"
     staged.parent.mkdir(parents=True)
@@ -73,7 +73,10 @@ def test_command_helper_executes_winning_export(tmp_path: Path, harness: str, cl
     scenario = make_scenario(tmp_path, helper=True)
     original_tree = snapshot(scenario.target)
     result = run_scenario(scenario, tmp_path, helper=True, harness=harness, cli=cli)
-    assert cast(dict[str, object], result["gate"])["verdict"] == "promote"
+    assert_promoted(scenario, result)
+    held = [cast(dict[str, object], item) for item in cast(list[object], read_record(scenario.out)["outcomes"])
+            if cast(dict[str, object], item).get("split") == "holdout"]
+    assert all(item["loaded"] and item["helper_executed"] for item in held)
     assert snapshot(scenario.target) == original_tree
     applied = export_and_apply(scenario, tmp_path, cli=cli)
     fixture = applied / "fixture.md"
@@ -95,9 +98,9 @@ def test_changed_winner_ties_on_holdout(tmp_path: Path, harness: str) -> None:
             cast(dict[str, str], case["files"])["fixture.md"] = source
     result = run_scenario(scenario, tmp_path, harness=harness, extra_flags=("--seed", "1"))
     gate = cast(dict[str, object], result["gate"])
-    assert (gate["verdict"], gate["delta"], gate["se"], gate["repeats"]) == (
-        "inconclusive", 0.0, 0.0, 3)
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    assert (gate["verdict"], gate["reasons"], gate["delta"], gate["se"], gate["cases"], gate["repeats"]) == (
+        "inconclusive", [], 0.0, 0.0, 6, 3)
+    record = read_record(scenario.out)
     assert cast(dict[str, object], record["search"])["retained_seed"] is False
     assert cast(dict[str, str], record["winner"])["SKILL.md"] != scenario.original
     held = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
@@ -123,10 +126,10 @@ def test_protected_family_regression_rejects(tmp_path: Path, harness: str) -> No
     scenario.draft.append(extra)
     result = run_scenario(scenario, tmp_path, harness=harness, mode="regress", extra_flags=("--seed", "1", "--family-budget", "0"))
     gate = cast(dict[str, object], result["gate"])
-    assert gate["verdict"] == "reject"
-    assert gate["reasons"] == ["family-regression:f9"]
-    assert gate["cases"] == 6 and gate["repeats"] == 3
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    assert (gate["verdict"], gate["reasons"], gate["cases"], gate["repeats"]) == (
+        "reject", ["family-regression:f9"], 6, 3)
+    assert cast(float, gate["delta"]) > 0 and cast(float, gate["se"]) > 0
+    record = read_record(scenario.out)
     assert cast(dict[str, object], record["search"])["retained_seed"] is False
     held = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
             if cast(dict[str, object], item).get("split") == "holdout"]
@@ -151,7 +154,7 @@ def test_changed_winner_is_globally_worse_on_holdout(tmp_path: Path, harness: st
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"], gate["delta"], gate["se"], gate["cases"],
             gate["n_shared"], gate["repeats"]) == ("reject", [], -1.0, 0.0, 6, 6, 3)
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    record = read_record(scenario.out)
     assert cast(dict[str, object], record["search"])["retained_seed"] is False
     assert cast(dict[str, str], record["winner"])["SKILL.md"] != scenario.original
     held = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])

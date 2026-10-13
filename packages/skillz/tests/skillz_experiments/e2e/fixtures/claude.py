@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -22,7 +23,7 @@ def settings() -> dict[str, str]:
 
 def log(entry: dict[str, object]) -> None:
     with Path(settings()["log"]).open("a") as stream:
-        _ = stream.write(json.dumps(entry) + "\n")
+        _ = stream.write(json.dumps(entry | {"config_dir": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
 
 
 def init(skill: str | None) -> None:

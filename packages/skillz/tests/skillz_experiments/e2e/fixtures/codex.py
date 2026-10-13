@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import sys
 from pathlib import Path
 from typing import cast
 
-from vendor_common import USAGE, judge, propose, task, task_usage
+from vendor_common import USAGE, is_isolation_probe, judge, propose, task, task_usage
 
 
 def settings() -> dict[str, str]:
@@ -18,20 +19,22 @@ def settings() -> dict[str, str]:
 
 def log(entry: dict[str, object]) -> None:
     with Path(settings()["log"]).open("a") as stream:
-        _ = stream.write(json.dumps(entry) + "\n")
+        _ = stream.write(json.dumps(entry | {"codex_home": os.environ.get("CODEX_HOME")}) + "\n")
 
 
 def sandbox(argv: list[str]) -> int:
     values = argv[argv.index("--") + 1:]
-    if values[:2] == ["/usr/bin/env", "-i"]:
-        values = values[2:]
+    if values[:2] != ["/usr/bin/env", "-i"]:
+        raise ValueError("codex sandbox command must start with /usr/bin/env -i")
+    values = values[2:]
+    environment: dict[str, str] = {}
     while values and "=" in values[0] and not values[0].startswith("/"):
-        _ = values.pop(0)
-    if (values[:2] == ["/usr/bin/python3", "-c"] and len(values) == 3
-            and "read isolation failed" in values[2] and "network isolation failed" in values[2]):
+        name, value = values.pop(0).split("=", 1)
+        environment[name] = value
+    if is_isolation_probe(values):
         print("isolation-ok")
         return 0
-    result = subprocess.run(values, cwd=Path.cwd(), capture_output=True, text=True, check=False)
+    result = subprocess.run(values, cwd=Path.cwd(), env=environment, capture_output=True, text=True, check=False)
     _ = sys.stdout.write(result.stdout)
     _ = sys.stderr.write(result.stderr)
     return result.returncode

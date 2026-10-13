@@ -9,16 +9,13 @@ from typing import cast
 
 import pytest
 
-from support import Scenario, make_scenario, run_scenario
+from support import Scenario, make_scenario, read_cases, read_events, read_record, run_scenario
 
 
 def raw_holdout(scenario: Scenario) -> tuple[float, float, float | None, int]:
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
-    cases = cast(list[dict[str, object]], cast(dict[str, object], json.loads(
-        (scenario.out / "cases.json").read_text()))["cases"])
-    task_logs = [cast(dict[str, object], json.loads(line)) for line in
-                 (scenario.out / "vendor.jsonl").read_text().splitlines()
-                 if cast(dict[str, object], json.loads(line))["role"] == "task"]
+    record = read_record(scenario.out)
+    cases = read_cases(scenario.out)
+    task_logs = [entry for entry in read_events(scenario.out) if entry["role"] == "task"]
     differences: list[float] = []
     token_changes: list[float] = []
     witnessed = 0
@@ -58,8 +55,8 @@ def test_unknown_winner_usage_blocks_promotion(tmp_path: Path, harness: str) -> 
     delta, se, token_delta, witnessed = raw_holdout(scenario)
     assert (delta, se, token_delta, witnessed) == (1.0, 0.0, None, 36)
     assert (gate["verdict"], gate["reasons"], gate["delta"], gate["se"],
-            gate["token_delta"], gate["token_se"]) == (
-        "inconclusive", ["unknown-usage"], delta, se, None, None)
+            gate["token_delta"], gate["token_se"], gate["cases"], gate["repeats"]) == (
+        "inconclusive", ["unknown-usage"], delta, se, None, None, 6, 3)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
@@ -72,8 +69,8 @@ def test_costly_winner_rejects_after_scored_gain(tmp_path: Path, harness: str) -
     delta, se, token_delta, witnessed = raw_holdout(scenario)
     assert (delta, se, token_delta, witnessed) == (1.0, 0.0, 1.0, 36)
     assert (gate["verdict"], gate["reasons"], gate["delta"], gate["se"],
-            gate["token_delta"], gate["token_se"]) == (
-        "reject", ["token-cost"], delta, se, token_delta, 0.0)
+            gate["token_delta"], gate["token_se"], gate["cases"], gate["repeats"]) == (
+        "reject", ["token-cost"], delta, se, token_delta, 0.0, 6, 3)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
@@ -95,7 +92,8 @@ def test_cheaper_tied_winner_needs_opt_in(tmp_path: Path, flags: tuple[str, ...]
     delta, se, token_delta, witnessed = raw_holdout(scenario)
     assert (delta, se, token_delta, witnessed) == (0.0, 0.0, -0.5, 36)
     assert (gate["verdict"], gate["token_delta"]) == expected
-    assert gate["reasons"] == [] and gate["se"] == se
+    assert gate["reasons"] == [] and gate["se"] == se and gate["delta"] == delta
+    assert (gate["cases"], gate["repeats"]) == (6, 3)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
@@ -109,8 +107,8 @@ def test_gain_floors_block_positive_evidence(tmp_path: Path, flag: str, reason: 
     gate = cast(dict[str, object], result["gate"])
     delta, se, token_delta, witnessed = raw_holdout(scenario)
     assert (delta, se, token_delta, witnessed) == (1.0, 0.0, 0.0, 36)
-    assert (gate["verdict"], gate["reasons"], gate["delta"], gate["se"], gate["cases"]) == (
-        "inconclusive", [reason], delta, se, 6)
+    assert (gate["verdict"], gate["reasons"], gate["delta"], gate["se"], gate["cases"],
+            gate["repeats"]) == ("inconclusive", [reason], delta, se, 6, 3)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")

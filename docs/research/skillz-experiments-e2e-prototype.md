@@ -34,6 +34,15 @@ The six missing W1 runs remain explicit.
 The mixed manifest has enough task cases to satisfy the current kind-specific minimum.
 It does not repair the minimal mixed-count defect.
 
+## Criteria trace scope
+
+The criteria file `docs/agents/criteria/skillz-experiments-end-to-end.md` traces the selected prototype scope.
+A marker proves a test link, not complete coverage of the original plan.
+AC-1 remains partial because W1 needs the source-alias repair.
+This report records all remaining gaps.
+The prototype does not select AC-9's new evidence policy.
+The original planning-only AC-12 does not apply to this implementation request.
+
 ## Mutation and lifecycle evidence
 
 Target tests apply every declared patch to a disposable copy.

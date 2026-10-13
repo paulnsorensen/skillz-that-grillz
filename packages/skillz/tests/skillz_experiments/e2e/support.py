@@ -7,9 +7,12 @@ import os
 import shutil
 import stat
 import subprocess
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+
+from skillz_experiments.harness._claude import _sandbox
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -17,6 +20,8 @@ ROOT = Path(__file__).resolve().parents[5]
 CLI = ROOT / ".venv/bin/skillz-experiment"
 BUNDLE = ROOT / "skills/skillz/scripts/skillz-experiment.pyz"
 PYTHON = Path("/usr/bin/python3")
+CLAUDE_CREDENTIAL: dict[str, object] = {"claudeAiOauth": {"accessToken": "test", "refreshToken": "test"}}
+CODEX_CREDENTIAL: dict[str, object] = {"auth_mode": "chatgpt", "tokens": {"access_token": "test"}}
 
 
 def snapshot(root: Path) -> dict[str, tuple[int, int, str]]:
@@ -45,6 +50,17 @@ class Scenario:
     original: str
 
 
+def host_path_tools() -> list[str]:
+    """Name each tool that the host check finds through PATH on this platform."""
+    return [name for name, _, _ in _sandbox.host_tools() if not name.startswith("/")]
+
+
+def write_credential(path: Path, content: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _ = path.write_text(json.dumps(content))
+    path.chmod(0o600)
+
+
 def make_vendor_bin(scenario: Scenario, home: Path, harness: str, mode: str) -> Path:
     directory = scenario.out / "bin"
     directory.mkdir(exist_ok=True)
@@ -55,25 +71,26 @@ def make_vendor_bin(scenario: Scenario, home: Path, harness: str, mode: str) -> 
             target = directory / name
             _ = shutil.copyfile(source, target)
             target.chmod(0o755)
+        for name in host_path_tools():
+            stub = directory / name
+            if not stub.exists():
+                _ = stub.write_text(f"#!/bin/sh\necho '{name}: e2e stub, not the real tool' >&2\nexit 1\n")
+                stub.chmod(0o755)
+        missing = [name for name in host_path_tools() if shutil.which(name, path=str(directory)) is None]
+        assert not missing, f"the vendor bin must stub every PATH tool the host check needs: {missing}"
         for name, source in (("fake_claude.py", FIXTURES.parents[1] / "fixtures/fake_claude.py"),
                              ("vendor_common.py", FIXTURES / "vendor_common.py"),
                              ("journey.py", FIXTURES / "journey.py"),
                              ("targets.py", FIXTURES / "targets.py")):
             (directory / name).symlink_to(source)
-        credential = home / ".claude/.credentials.json"
-        credential.parent.mkdir(exist_ok=True)
-        _ = credential.write_text(json.dumps({"claudeAiOauth": {"accessToken": "test", "refreshToken": "test"}}))
-        credential.chmod(0o600)
+        write_credential(home / ".claude/.credentials.json", CLAUDE_CREDENTIAL)
     elif harness == "codex":
         target = directory / "codex"
         _ = shutil.copyfile(FIXTURES / "codex.py", target)
         target.chmod(0o755)
         (directory / "vendor_common.py").symlink_to(FIXTURES / "vendor_common.py")
         (directory / "targets.py").symlink_to(FIXTURES / "targets.py")
-        credential = home / ".codex/auth.json"
-        credential.parent.mkdir(exist_ok=True)
-        _ = credential.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": {"access_token": "test"}}))
-        credential.chmod(0o600)
+        write_credential(home / ".codex/auth.json", CODEX_CREDENTIAL)
     else:
         raise ValueError(f"vendor fixture is not ready for {harness}")
     return directory
@@ -113,13 +130,16 @@ def make_scenario(base: Path, *, helper: bool = False) -> Scenario:
     return Scenario(target, out, base / "export", draft, original)
 
 
-def call_cli(args: list[str], home: Path, *, cli: Path = CLI, bin_dir: Path | None = None) -> tuple[int, dict[str, object], str]:
+def call_cli(args: list[str], home: Path, *, cli: Path = CLI, bin_dirs: Sequence[Path] = (),
+             env_overrides: Mapping[str, str] | None = None) -> tuple[int, dict[str, object], str]:
+    """Run the CLI with the host credential variables removed unless the caller overrides them."""
     env = os.environ.copy()
     env["HOME"] = str(home)
     _ = env.pop("CODEX_HOME", None)
     _ = env.pop("CLAUDE_CONFIG_DIR", None)
-    if bin_dir is not None:
-        env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
+    env.update(env_overrides or {})
+    if bin_dirs:
+        env["PATH"] = os.pathsep.join([*map(str, bin_dirs), env["PATH"]])
     command = [str(cli), *args]
     if cli.suffix == ".pyz":
         installed = home / "installed/skillz-experiment.pyz"
@@ -134,35 +154,71 @@ def call_cli(args: list[str], home: Path, *, cli: Path = CLI, bin_dir: Path | No
     return result.returncode, data, result.stderr
 
 
+def command_adapter(scenario: Scenario, **settings: object) -> list[str]:
+    """Write the fixture settings and return the `--command` arguments that run the adapter."""
+    path = scenario.out / "vendor-settings.json"
+    _ = path.write_text(json.dumps({"mode": "normal", "log": str(scenario.out / "vendor.jsonl")} | settings))
+    return [item for value in (str(PYTHON), str(FIXTURES / "command.py"), str(path))
+            for item in ("--command", value)]
+
+
 def run_scenario(scenario: Scenario, home: Path, *, helper: bool = False, harness: str = "command",
                  mode: str = "normal", cli: Path = CLI, extra_flags: tuple[str, ...] = (),
-                 bin_dir: Path | None = None) -> dict[str, object]:
+                 bin_dir: Path | None = None, env_overrides: Mapping[str, str] | None = None) -> dict[str, object]:
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
             "--model", "offline-test", "--harness", harness, "--live",
             "--edit", "prose+cli" if helper else "prose", *extra_flags]
+    path_dirs = [] if bin_dir is None else [bin_dir]
     if harness == "command":
-        settings = scenario.out / "vendor-settings.json"
-        _ = settings.write_text(json.dumps({"mode": mode, "log": str(scenario.out / "vendor.jsonl")}))
-        command = [item for value in (str(PYTHON), str(FIXTURES / "command.py"), str(settings))
-                   for item in ("--command", value)]
+        command = command_adapter(scenario, mode=mode)
     else:
-        bin_dir = make_vendor_bin(scenario, home, harness, mode)
+        path_dirs.insert(0, make_vendor_bin(scenario, home, harness, mode))
         command = []
-    code, first, error = call_cli(args + command, home, cli=cli, bin_dir=bin_dir)
+    code, first, error = call_cli(args + command, home, cli=cli, bin_dirs=path_dirs, env_overrides=env_overrides)
     assert code == 1 and json.loads(error)["code"] == "cases-missing", (first, error)
+    if harness == "claude":
+        rows = cast(list[dict[str, str]], cast(dict[str, object], first["doctor"])["checks"])
+        tools = [row for row in rows if row["check"].startswith("tool:")]
+        assert tools and all(row["status"] == "pass" for row in tools), tools
     _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
-    code, cases, error = call_cli(args + command, home, cli=cli, bin_dir=bin_dir)
+    code, cases, error = call_cli(args + command, home, cli=cli, bin_dirs=path_dirs, env_overrides=env_overrides)
     assert code == 1 and json.loads(error)["code"] == "cases-unapproved", (cases, error)
     case_hash = cast(str, cases["case_hash"])
     code, budget, error = call_cli(args + ["--approve-cases", case_hash] + command, home,
-                                   cli=cli, bin_dir=bin_dir)
+                                   cli=cli, bin_dirs=path_dirs, env_overrides=env_overrides)
     assert code == 1 and json.loads(error)["code"] == "budget-unapproved", (budget, error)
     calls = cast(dict[str, int], budget["estimate"])["calls"]
     code, result, error = call_cli(args + ["--approve-cases", case_hash, "--approve-budget", str(calls)] + command,
-                                   home, cli=cli, bin_dir=bin_dir)
+                                   home, cli=cli, bin_dirs=path_dirs, env_overrides=env_overrides)
     assert code == 0, (result, error)
     assert result["phase"] == "complete"
     return result
+
+
+
+
+def read_record(out: Path) -> dict[str, object]:
+    return cast(dict[str, object], json.loads((out / "run.json").read_text()))
+
+
+def read_cases(out: Path) -> list[dict[str, object]]:
+    return cast(list[dict[str, object]], cast(dict[str, object], json.loads((out / "cases.json").read_text()))["cases"])
+
+
+def read_events(out: Path) -> list[dict[str, object]]:
+    """Return the vendor log; it is empty until the first vendor call."""
+    log = out / "vendor.jsonl"
+    if not log.exists():
+        return []
+    return [cast(dict[str, object], json.loads(line)) for line in log.read_text().splitlines()]
+
+
+def carries_answer(expected: str, text: str) -> bool:
+    return expected.strip() in text
+
+
+def _files(root: Path) -> set[str]:
+    return {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
 
 
 def export_and_apply(scenario: Scenario, home: Path, *, cli: Path = CLI) -> Path:
@@ -174,4 +230,8 @@ def export_and_apply(scenario: Scenario, home: Path, *, cli: Path = CLI) -> Path
     command = subprocess.run(["patch", "-p1", "-i", str(patch)], cwd=applied,
                              capture_output=True, text=True, check=False)
     assert command.returncode == 0, command.stderr
+    winner = cast(dict[str, str], read_record(scenario.out)["winner"])
+    for name, content in winner.items():
+        assert (applied / name).read_text() == content, name
+    assert _files(applied) == _files(scenario.target) | set(winner)
     return applied

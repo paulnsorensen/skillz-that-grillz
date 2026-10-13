@@ -8,7 +8,8 @@ from typing import cast
 
 import pytest
 
-from support import CLI, FIXTURES, PYTHON, Scenario, call_cli, export_and_apply, make_scenario, make_vendor_bin, run_scenario, snapshot
+from support import (CLI, FIXTURES, Scenario, call_cli, command_adapter, export_and_apply, make_scenario,
+                     make_vendor_bin, read_cases, read_events, read_record, run_scenario, snapshot)
 
 BUNDLE = Path(__file__).resolve().parents[5] / "skills/skillz/scripts/skillz-experiment.pyz"
 
@@ -53,7 +54,7 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
 
 
 def _record(scenario: Scenario) -> dict[str, object]:
-    return cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    return read_record(scenario.out)
 
 
 def _holdout(record: dict[str, object]) -> list[dict[str, object]]:
@@ -65,9 +66,7 @@ def _assert_gate(scenario: Scenario, record: dict[str, object], kinds: set[str])
     gate = cast(dict[str, object], record["gate"])
     assert (gate["verdict"], gate["delta"], gate["se"]) == ("promote", 1.0, 0.0)
     assert gate["repeats"] == 3
-    cases = cast(list[dict[str, object]], cast(dict[str, object], json.loads(
-        (scenario.out / "cases.json").read_text()))["cases"])
-    held = {cast(str, case["id"]): cast(str, case["kind"]) for case in cases if case["split"] == "holdout"}
+    held = {cast(str, case["id"]): cast(str, case["kind"]) for case in read_cases(scenario.out) if case["split"] == "holdout"}
     assert set(held.values()) == kinds
     outcomes = _holdout(record)
     assert gate["cases"] == len(held)
@@ -91,7 +90,7 @@ def test_claude_journey_promotes_from_actual_conversation_and_export(
     record = _record(scenario)
     _assert_gate(scenario, record, {"journey"})
     assert cast(dict[str, object], result["gate"])["verdict"] == "promote"
-    log = [cast(dict[str, object], json.loads(line)) for line in (scenario.out / "vendor.jsonl").read_text().splitlines()]
+    log = read_events(scenario.out)
     assert {"task", "reflection", "simulator", "judge"} <= {entry["role"] for entry in log}
     simulator_prompts = [cast(str, entry["prompt"]) for entry in log if entry["role"] == "simulator"]
     judge_prompts = [cast(str, entry["prompt"]) for entry in log if entry["role"] == "judge"]
@@ -99,10 +98,10 @@ def test_claude_journey_promotes_from_actual_conversation_and_export(
                                      for prompt in simulator_prompts)
     assert judge_prompts and all('"reference"' in prompt and '"transcript"' in prompt
                                  for prompt in judge_prompts)
-    held = {cast(str, case["id"]) for case in cast(list[dict[str, object]], cast(dict[str, object], json.loads(
-        (scenario.out / "cases.json").read_text()))["cases"]) if case["split"] == "holdout"}
+    held = {cast(str, case["id"]) for case in read_cases(scenario.out) if case["split"] == "holdout"}
     reflection = "\n".join(cast(str, entry["prompt"]) for entry in log if entry["role"] == "reflection")
-    assert all(f"maple-{case_id[1:]}" not in reflection for case_id in held)
+    assert held and all(f"maple-{case_id[1:]}" not in reflection and f"MAPLE-{case_id[1:]}" not in reflection
+                        for case_id in held)
     applied = export_and_apply(scenario, tmp_path, cli=cli)
     source = "unseen\n"
     if helper:
@@ -116,6 +115,8 @@ def test_claude_journey_promotes_from_actual_conversation_and_export(
         assert "Uppercase fixture.md." in (applied / "SKILL.md").read_text()
     export_text = "\n".join(path.read_text() for path in scenario.export.iterdir() if path.is_file())
     assert not any(cast(str, item["brief"]) in export_text for item in scenario.draft)
+    assert not any(f"maple-{case_id[1:]}" in export_text or f"MAPLE-{case_id[1:]}" in export_text
+                   for case_id in held)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-7")
@@ -127,9 +128,7 @@ def test_mixed_manifest_scores_both_kinds_in_sealed_holdout(tmp_path: Path, cli:
     assert snapshot(scenario.target) == before
     record = _record(scenario)
     _assert_gate(scenario, record, {"task", "journey"})
-    cases = cast(list[dict[str, object]], cast(dict[str, object], json.loads(
-        (scenario.out / "cases.json").read_text()))["cases"])
-    held_kinds = [case["kind"] for case in cases if case["split"] == "holdout"]
+    held_kinds = [case["kind"] for case in read_cases(scenario.out) if case["split"] == "holdout"]
     assert held_kinds.count("task") >= 6 and held_kinds.count("journey") >= 2
     applied = export_and_apply(scenario, tmp_path, cli=cli)
     assert "Uppercase fixture.md." in (applied / "SKILL.md").read_text()
@@ -144,7 +143,7 @@ def test_failed_journey_command_gate_never_calls_judge(tmp_path: Path) -> None:
     scored = [item for item in outcomes if item.get("case_id") is not None]
     assert scored and all(item.get("status") == "gate-failed" and
                           cast(dict[str, object], item["scores"])["judge"] is None for item in scored)
-    log = [cast(dict[str, object], json.loads(line)) for line in (scenario.out / "vendor.jsonl").read_text().splitlines()]
+    log = read_events(scenario.out)
     assert "task" in {entry["role"] for entry in log}
     assert not any(entry["role"] == "judge" for entry in log)
 
@@ -157,25 +156,19 @@ def test_unsupported_journey_refuses_before_task_inference(tmp_path: Path, harne
             "--model", "offline-test", "--harness", harness, "--live", "--edit", "prose"]
     bin_dir = None
     if harness == "command":
-        settings = scenario.out / "vendor-settings.json"
-        _ = settings.write_text(json.dumps({"mode": "normal", "log": str(scenario.out / "vendor.jsonl")}))
-        args += [item for value in (str(PYTHON), str(FIXTURES / "command.py"), str(settings))
-                 for item in ("--command", value)]
+        args += command_adapter(scenario)
     else:
         bin_dir = make_vendor_bin(scenario, tmp_path, harness, "normal")
-    code, _, error = call_cli(args, tmp_path, bin_dir=bin_dir)
+    code, _, error = call_cli(args, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
     assert code == 1 and json.loads(error)["code"] == "cases-missing"
     _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
-    code, cases, error = call_cli(args, tmp_path, bin_dir=bin_dir)
+    code, cases, error = call_cli(args, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
     assert code == 1 and json.loads(error)["code"] == "cases-unapproved"
     approved = ["--approve-cases", cast(str, cases["case_hash"])]
-    code, budget, error = call_cli(args + approved, tmp_path, bin_dir=bin_dir)
+    code, budget, error = call_cli(args + approved, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
     assert code == 1 and json.loads(error)["code"] == "budget-unapproved"
     approved += ["--approve-budget", str(cast(dict[str, int], budget["estimate"])["calls"])]
-    code, result, error = call_cli(args + approved, tmp_path, bin_dir=bin_dir)
+    code, result, error = call_cli(args + approved, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
     assert code == 1 and json.loads(error)["code"] == "journey-unsupported", result
-    log_path = scenario.out / "vendor.jsonl"
-    if log_path.exists():
-        log = [cast(dict[str, object], json.loads(line)) for line in log_path.read_text().splitlines()]
-        assert not any("Ask which value to transform" in json.dumps(entry) for entry in log
-                       if entry.get("role") == "task")
+    assert not any("Ask which value to transform" in json.dumps(entry) for entry in read_events(scenario.out)
+                   if entry.get("role") == "task")

@@ -8,11 +8,8 @@ from typing import cast
 
 import pytest
 
-from support import BUNDLE, CLI, FIXTURES, PYTHON, call_cli, make_scenario, run_scenario
+from support import BUNDLE, CLI, call_cli, carries_answer, command_adapter, make_scenario, read_events, read_record, run_scenario
 
-
-def _events(path: Path) -> list[dict[str, object]]:
-    return [cast(dict[str, object], json.loads(line)) for line in path.read_text().splitlines()]
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
@@ -20,7 +17,7 @@ def _events(path: Path) -> list[dict[str, object]]:
 def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, cli: Path) -> None:
     scenario = make_scenario(tmp_path)
     result = run_scenario(scenario, tmp_path, cli=cli)
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     validation = [item for item in outcomes if item.get("arm") == "search"
                   and item.get("split") == "validation"]
@@ -46,8 +43,7 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
         "promote", 1.0, 0.0, 6, 3
     )
 
-    log = scenario.out / "vendor.jsonl"
-    events = _events(log)
+    events = read_events(scenario.out)
     reflections = [cast(dict[str, object], item["request"]) for item in events
                    if item["role"] == "reflection"]
     assert reflections
@@ -74,24 +70,28 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
     for case in scenario.draft:
         if case["id"] in held_ids:
             expected = cast(str, cast(dict[str, object], case["expected"])["text"])
-            assert all(expected not in cast(str, item["prompt"]) for item in reflections)
+            assert not any(carries_answer(expected, cast(str, item["prompt"])) for item in reflections)
 
-    command = [part for value in (str(PYTHON), str(FIXTURES / "command.py"),
-                                 str(scenario.out / "vendor-settings.json"))
-               for part in ("--command", value)]
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
-            "--model", "offline-test", "--harness", "command", "--live", *command]
+            "--model", "offline-test", "--harness", "command", "--live", *command_adapter(scenario)]
     code, repeated, error = call_cli(args, tmp_path, cli=cli)
     assert (code, error, repeated["gate"]) == (0, "", result["gate"])
-    assert _events(log) == events
+    assert read_events(scenario.out) == events
 
     code, _, error = call_cli([*args, "--min-gain", "0.2"], tmp_path, cli=cli)
     assert code == 1
     failure = cast(dict[str, object], json.loads(error))
     assert failure["code"] == "run-config-differs"
     assert "min-gain differs from the frozen record" in cast(str, failure["error"])
-    assert _events(log) == events
+    assert read_events(scenario.out) == events
 
+
+@pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
+def test_leak_predicate_trips_on_the_json_escaped_answer() -> None:
+    escaped = json.dumps({"prompt": "context\nanswer-text\nmore"})
+    assert carries_answer("answer-text\n", escaped)
+    assert carries_answer("answer-text\n", "answer-text")
+    assert not carries_answer("answer-text\n", json.dumps({"prompt": "clean"}))
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
 def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Path) -> None:
@@ -107,10 +107,10 @@ def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Pat
     assert search["retained_seed"] is True
     assert (gate["verdict"], gate["reason"]) == ("inconclusive", "winner-equals-baseline")
 
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     assert not any(item.get("split") == "holdout" for item in outcomes)
-    events = _events(scenario.out / "vendor.jsonl")
+    events = read_events(scenario.out)
     tasks = [item for item in events if item["role"] == "task"]
     assert tasks
     assert {item["candidate"] for item in tasks} == {record["seed_hash"]}
@@ -122,8 +122,8 @@ def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Pat
     assert (code, error, exported["installed"]) == (0, "", False)
     report = cast(dict[str, object], json.loads((scenario.export / "report.json").read_text()))
     assert cast(dict[str, object], report["search"])["leakage_rejections"] == {"expected-answer": 1}
-    assert source.upper().strip() not in (scenario.out / "run.json").read_text()
-    assert source.upper().strip() not in (scenario.export / "report.json").read_text()
+    assert not carries_answer(source.upper(), (scenario.out / "run.json").read_text())
+    assert not carries_answer(source.upper(), (scenario.export / "report.json").read_text())
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
@@ -135,10 +135,10 @@ def test_invalid_helper_proposal_keeps_the_seed_without_task_inference(tmp_path:
     assert search["retained_seed"] is True
     assert (gate["verdict"], gate["reason"]) == ("inconclusive", "winner-equals-baseline")
 
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     assert not any(item.get("split") == "holdout" for item in outcomes)
-    tasks = [item for item in _events(scenario.out / "vendor.jsonl") if item["role"] == "task"]
+    tasks = [item for item in read_events(scenario.out) if item["role"] == "task"]
     assert tasks
     assert {item["candidate"] for item in tasks} == {record["seed_hash"]}
 
@@ -157,11 +157,11 @@ def test_edit_budget_is_advisory_and_counts_oversized_proposals(tmp_path: Path) 
     assert search["retained_seed"] is False
     assert (gate["verdict"], gate["delta"], gate["se"]) == ("promote", 1.0, 0.0)
 
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    record = read_record(scenario.out)
     reflections = [item for item in cast(list[dict[str, object]], record["outcomes"])
                    if item.get("split") == "reflection"]
     assert [item.get("over_budget") for item in reflections] == [True]
-    events = _events(scenario.out / "vendor.jsonl")
+    events = read_events(scenario.out)
     requests = [cast(dict[str, object], item["request"]) for item in events
                 if item["role"] == "reflection"]
     assert len(requests) == 1

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from support import BUNDLE, CLI, Scenario, build_wedge, call_cli, make_scenario, run_scenario, snapshot
-from test_wedge import archive_witnesses, assert_promoted, target_bin
+from test_wedge import archive_witnesses, assert_promoted, uv_bin_dir
 from fixtures.targets import NEW_MODULE
 
 
@@ -53,7 +53,7 @@ def test_new_cli_rebuilds_executes_and_exports_from_real_cli(
     home = tmp_path / "home"
     home.mkdir()
     result = run_scenario(scenario, home, helper=True, mode="targets", harness=harness,
-                          cli=cli, bin_dir=target_bin(scenario, harness))
+                          cli=cli, bin_dir=uv_bin_dir())
     assert_promoted(scenario, result)
     assert snapshot(scenario.target) == before
 
@@ -75,7 +75,7 @@ def test_new_cli_rebuilds_executes_and_exports_from_real_cli(
     assert set(built) == {"alpha", "transform-cli"}
     generated = Path(built["transform-cli"]["path"])
     generated_digest = built["transform-cli"]["content_sha256"]
-    assert generated_digest != initial_digest
+    assert built["alpha"]["content_sha256"] == initial_digest
     assert archive_witnesses(scenario) == {generated_digest}
     _ = (home / "fixture.md").write_text("held value\n")
     executed = subprocess.run(["/usr/bin/python3", "-I", str(generated), "fixture.md"], cwd=home,

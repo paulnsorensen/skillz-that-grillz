@@ -8,6 +8,24 @@ from typing import cast
 
 
 USAGE = {"input_tokens": 120, "cached_input_tokens": 20, "output_tokens": 20}
+DATA_MARKER = "\nUNTRUSTED DATA (JSON):\n"
+PROBE_PHRASES = ("read isolation failed", "network isolation failed")
+
+
+class PromptFormatError(ValueError):
+    """The prompt does not carry the untrusted-data block that production writes."""
+
+
+def is_isolation_probe(argv: list[str]) -> bool:
+    return (argv[:2] == ["/usr/bin/python3", "-c"] and len(argv) == 3
+            and all(phrase in argv[2] for phrase in PROBE_PHRASES))
+
+
+def untrusted_payload(prompt: str) -> dict[str, object]:
+    _, marker, data = prompt.partition(DATA_MARKER)
+    if not marker:
+        raise PromptFormatError("prompt has no untrusted-data block")
+    return cast(dict[str, object], json.loads(data))
 
 
 def task_usage(workspace: Path, skill_name: str, mode: str) -> dict[str, int] | None:
@@ -89,7 +107,7 @@ def task(workspace: Path, skill_name: str, mode: str = "normal") -> tuple[dict[s
 
 
 def judge(prompt: str, fields: list[str]) -> dict[str, int]:
-    payload = cast(dict[str, object], json.loads(prompt.split("\nUNTRUSTED DATA (JSON):\n", 1)[1]))
+    payload = untrusted_payload(prompt)
     answer = cast(str, payload["answer"])
     reference = payload["reference"]
     score = 100 if json.loads(answer) == reference else 0

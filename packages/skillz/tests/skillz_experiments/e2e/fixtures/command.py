@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import cast
 
-from vendor_common import USAGE, execute, judge, propose, task, task_usage
+from vendor_common import USAGE, execute, is_isolation_probe, judge, propose, task, task_usage
 
 
 def respond(request: dict[str, object], mode: str = "normal", observed: str = "") -> dict[str, object]:
@@ -18,8 +18,7 @@ def respond(request: dict[str, object], mode: str = "normal", observed: str = ""
     response: dict[str, object] = {"schema_version": 1, "operation": operation}
     if operation == "sandbox":
         argv = cast(list[str], request["argv"])
-        if (argv[:2] == ["/usr/bin/python3", "-c"] and len(argv) == 3
-                and "read isolation failed" in argv[2] and "network isolation failed" in argv[2]):
+        if is_isolation_probe(argv):
             code, stdout, stderr = 0, "isolation-ok\n", ""
         else:
             code, stdout, stderr = execute(argv, workspace)

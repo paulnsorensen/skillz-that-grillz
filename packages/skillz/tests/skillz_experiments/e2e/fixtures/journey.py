@@ -50,9 +50,10 @@ def handle(workspace: Path, skill_name: str, message: str, turn: int) -> tuple[s
 
 
 def simulate(prompt: str, fields: list[str]) -> dict[str, object]:
+    from vendor_common import untrusted_payload
     if fields != ["reply", "done"]:
         raise ValueError("unexpected simulator schema")
-    data = cast(dict[str, object], json.loads(prompt.split("\nUNTRUSTED DATA (JSON):\n", 1)[1]))
+    data = untrusted_payload(prompt)
     brief = cast(str, data["brief"])
     transcript = cast(list[dict[str, str]], data["transcript"])
     if not transcript or transcript[-1]["role"] != "assistant":
@@ -64,9 +65,10 @@ def simulate(prompt: str, fields: list[str]) -> dict[str, object]:
 
 
 def judge(prompt: str, fields: list[str]) -> dict[str, int]:
+    from vendor_common import untrusted_payload
     if fields != ["score_percent"]:
         raise ValueError("unexpected judge schema")
-    data = cast(dict[str, object], json.loads(prompt.split("\nUNTRUSTED DATA (JSON):\n", 1)[1]))
+    data = untrusted_payload(prompt)
     reference = cast(dict[str, str], data["reference"])
     files = cast(dict[str, str], data["output_files"])
     transcript = cast(list[dict[str, str]], data["transcript"])

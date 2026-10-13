@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from support import BUNDLE, CLI, FIXTURES, call_cli, export_and_apply, make_scenario, snapshot
+from support import BUNDLE, CLI, FIXTURES, call_cli, export_and_apply, make_scenario, read_events, read_record, snapshot
 
 
 def configured_wrapper(out: Path, home: Path, cli: Path, mode: str) -> tuple[Path, Path]:
@@ -69,7 +69,7 @@ def run_gemini(tmp_path: Path, cli: Path, *, helper: bool) -> tuple[dict[str, ob
 def test_gemini_wrapper_promotes_and_exports_from_actual_task_trace(tmp_path: Path, cli: Path,
                                                                     helper: bool) -> None:
     result, out, directory, applied = run_gemini(tmp_path, cli, helper=helper)
-    record = cast(dict[str, object], json.loads((out / "run.json").read_text()))
+    record = read_record(out)
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["delta"], gate["se"], gate["cases"], gate["repeats"]) == (
         "promote", 1.0, 0.0, 6, 3)
@@ -84,7 +84,7 @@ def test_gemini_wrapper_promotes_and_exports_from_actual_task_trace(tmp_path: Pa
         for case_id in held_ids for repeat in range(3)}
     assert {item["score"] for item in held if item["arm"] == "baseline"} == {0.0}
     assert {item["score"] for item in held if item["arm"] == "winner"} == {1.0}
-    log = [cast(dict[str, object], json.loads(line)) for line in (out / "vendor.jsonl").read_text().splitlines()]
+    log = read_events(out)
     assert {"task", "reflection"} <= {entry["role"] for entry in log}
     task_calls = [entry for entry in log if entry["role"] == "task"]
     assert any(entry["candidate"] == record["winner_hash"] for entry in task_calls)
@@ -124,12 +124,12 @@ def test_malformed_gemini_answer_charges_calls_without_a_trace(tmp_path: Path) -
     code, result, error = call_cli(args + ["--approve-cases", case_hash, "--approve-budget", str(calls)],
                                    private)
     assert code == 1 and json.loads(error)["code"] == "search-failed", (result, error)
-    record = cast(dict[str, object], json.loads((scenario.out / "run.json").read_text()))
+    record = read_record(scenario.out)
     assert record["failure_code"] == "search-failed" and record["calls"] == 12
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     failed = [item for item in outcomes if item.get("case_id") is not None]
     assert failed and all(item["status"] == "evaluation-failed" for item in failed)
     path = Path(cast(str, failed[0]["failure"]).split("private stderr tail: ", 1)[1])
     assert json.loads(path.read_text())["error"] == "RuntimeError: gemini answer is not a JSON object"
-    log = (scenario.out / "vendor.jsonl").read_text().splitlines()
+    log = read_events(scenario.out)
     assert len(log) == record["calls"]

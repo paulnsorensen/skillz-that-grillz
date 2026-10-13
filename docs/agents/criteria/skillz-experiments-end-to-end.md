@@ -1,13 +1,6 @@
 # Skillz experiments end-to-end prototype criteria
 
-Source: `docs/research/skillz-experiments-e2e-plan.md`; prototype implementation authorized on 2026-10-12.
-
-These rows trace the selected prototype scope.
-A marker proves a test link, not complete coverage of the original plan.
-AC-1 remains partial because W1 needs the source-alias repair.
-The implementation report records all remaining gaps.
-The prototype does not select AC-9's new evidence policy.
-The original planning-only AC-12 does not apply to this implementation request.
+Source: spec skillz-experiments-end-to-end (docs/research/skillz-experiments-e2e-plan.md; prototype scope authorized 2026-10-12)
 
 | id | kind | criterion | verified by |
 | --- | --- | --- | --- |
