@@ -463,8 +463,10 @@ def test_the_prose_prompt_is_unchanged_byte_for_byte() -> None:
     assert prompt == PROSE_HEAD + '\n{"candidate": {"SKILL.md": "x"}, "feedback": {}}'
 
 
-def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
-    prompt, _ = reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START)
+@pytest.mark.ac("gh-302:AC-3")
+def test_the_prose_cli_prompt_names_fromargs_and_its_contract_for_a_wedge_source() -> None:
+    components = ["SKILL.md", "@wedge/src/demo/cli.py"]
+    prompt, _ = reflection_request("prose+cli", {name: "x" for name in components}, {}, components, progress=START)
     head = prompt.split("\n", 1)[0]
     assert ("The fromargs package is the default for a wedged Python source. Use one parser. "
             "Print JSON errors on stderr. "
@@ -473,6 +475,16 @@ def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
     assert "stdlib `argparse` helper" in head and "standard library" not in head
     assert "references/fromargs.md" not in head
     assert "ASD-STE100" in head and NEW_CLI not in head
+
+
+@pytest.mark.ac("gh-302:AC-4")
+def test_the_prose_cli_prompt_for_a_target_without_a_wedge_names_no_runner_build_terms() -> None:
+    components = ["SKILL.md", "scripts/check.py"]
+    prompt, _ = reflection_request("prose+cli", {name: "x" for name in components}, {}, components, progress=START)
+    head = prompt.split("\n", 1)[0].lower()
+    assert "wedge" not in head and "fromargs" not in head and "exit with code" not in head
+    assert "you may change a script's command-line interface" in head
+    assert "a non-python helper keeps its language." in head
 
 
 def test_the_new_cli_sentence_appears_only_when_the_component_is_offered() -> None:

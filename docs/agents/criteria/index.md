@@ -36,6 +36,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-239](./gh-239.md) — gh-239: annealed edit budget and run-status block in the reflection prompt (W4.2)
 - [gh-240](./gh-240.md) — gh-240: detect search stalls and stop GEPA through stop_callbacks (W4.3)
 - [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
+- [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
 - [skillz-wedge-first-class](./skillz-wedge-first-class.md) — skillz-wedge-first-class: wedge first-class in autoimprove
 - [wedge-skill-packaging](./wedge-skill-packaging.md) — wedge-skill-packaging: wedge skill packaging
 <!-- HALLOUMINATE:INDEX-END -->

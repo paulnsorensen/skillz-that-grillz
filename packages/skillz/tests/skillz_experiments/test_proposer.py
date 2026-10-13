@@ -17,13 +17,16 @@ STATUS = (" Make at most 6 edits across all components. An edit is one block of 
 START = Progress(spent=0, planned=100, proposal=1)
 PROSE = "Improve only the supplied skill text components. Preserve the helper CLI contract. " + STE + STATUS
 CLI_HEAD = ("Improve the supplied skill text and helper script components. "
-             "Keep each script's command-line contract and output format. "
+             "You may change a script's command-line interface when the change helps the skill. "
+             "When you change an interface, update every caller and every skill text reference to match. "
+             "A non-Python helper keeps its language. "
+             "Write only skill content into a component. "
+             "Do not put facts about this prompt, the search, or the host into a component. "
              "The fromargs package is the default for a wedged Python source. "
              "Use one parser. "
              "Print JSON errors on stderr. "
              "Exit with code 2 for a usage error and code 3 for a failed input contract. "
              "Print only results on stdout. "
-             "A non-Python helper keeps its language. "
              "A Python helper may use a stdlib `argparse` helper only when the skill has no wedge.toml "
              "that can build a fromargs target. "
              "The @new-cli component adds one new fromargs wedge target as TOML with the keys name and module. "
@@ -46,6 +49,8 @@ def test_the_prose_request_text_and_schema_are_pinned() -> None:
 
 
 @pytest.mark.ac("gh-238:AC-1")
+@pytest.mark.ac("gh-302:AC-1")
+@pytest.mark.ac("gh-302:AC-2")
 def test_the_prose_and_cli_request_text_and_schema_are_pinned() -> None:
     components = ["SKILL.md", "@new-cli"]
     prompt, schema = reflection_request("prose+cli", {name: "t" for name in components}, {}, components, progress=START)
