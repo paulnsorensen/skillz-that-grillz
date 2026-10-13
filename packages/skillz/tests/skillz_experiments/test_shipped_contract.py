@@ -37,3 +37,17 @@ def test_shipped_seed_yields_task_cases_that_load_as_a_draft(tmp_path: Path) -> 
     loaded = load_draft(draft)
     assert [case.identifier for case in loaded] == [cast(str, case["id"]) for case in tasks]
     assert all(case.family and case.files and case.expected is not None for case in loaded)
+
+
+@pytest.mark.ac("gh-299:AC-8")
+def test_shipped_task_cases_name_fixtures_that_exist_and_carry_assertions() -> None:
+    evals = cast(
+        dict[str, list[dict[str, object]]],
+        json.loads((SKILL / "evals" / "evals.json").read_text(encoding="utf-8")),
+    )
+    tasks = [case for case in evals["evals"] if case.get("family")]
+    assert tasks
+    for case in tasks:
+        assert case["assertions"], case["name"]
+        for fixture in cast(list[str], case["files"]):
+            assert (SKILL / fixture).is_file(), fixture
