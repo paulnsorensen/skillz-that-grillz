@@ -536,6 +536,7 @@ def test_a_task_cannot_write_create_or_delete_inside_a_companion_and_the_workspa
     assert foreign_journey_dir.exists()
     assert not leftovers()
 
+
 @pytest.mark.ac("gh-285:AC-1")
 def test_a_failing_simulator_still_removes_a_read_only_workspace_and_the_process(
         tmp_path: Path, foreign_journey_dir: Path) -> None:

@@ -218,8 +218,9 @@ Each case has these fields:
 - `request`: the user request that the case sends.
 - `files`: a map of path to text, for the starting fixture. A `task` case needs it.
   `text_map` refuses a path whose first part is `home`, `tmp`, `output`, `capture`, `answer.json`, `response-schema.json`, `AGENTS.md`, or `CLAUDE.md`.
-  It also refuses `AGENTS.md` at any depth and any path with a part that starts with a dot.
-  To ship such a file, store it with a `.fixture` suffix, for example `AGENTS.md.fixture`.
+  It also refuses `AGENTS.md` at any depth and any path that has a part that starts with a dot.
+  To ship a refused name such as `AGENTS.md`, store it with a `.fixture` suffix, for example `AGENTS.md.fixture`.
+  A suffix does not clear a hidden part, so store a file such as `.env` under a name without the leading dot.
   The runner writes fixtures verbatim, so the request must tell the task to rename the file.
 - `expected`: the reference answer as JSON. A `task` case needs it.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
