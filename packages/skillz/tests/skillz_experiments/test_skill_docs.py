@@ -124,3 +124,11 @@ PROSE_FILES = [SKILL, *sorted((SKILL_DIR / "references").glob("*.md"))]
 @pytest.mark.parametrize("path", PROSE_FILES, ids=[str(path.relative_to(SKILL_DIR)) for path in PROSE_FILES])
 def test_skill_prose_has_no_sentence_over_limit(path: Path, inspector: ModuleType, limits: tuple[int, int]) -> None:
     assert _long(path, inspector, limits[1]) == []
+
+
+@pytest.mark.ac("gh-298:AC-1")
+def test_experiments_documents_code_enforced_fixture_and_case_rules() -> None:
+    text = EXPERIMENTS.read_text()
+    for needle in ("text_map", "answer.json", "AGENTS.md", "CLAUDE.md", ".fixture", "expected_output", "assertions", "evals/files/"):
+        assert needle in text, needle
+    assert re.search(r"holdout split alone needs (6|six) scored cases", text)
