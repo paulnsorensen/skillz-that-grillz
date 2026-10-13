@@ -32,5 +32,6 @@ skillz-that-grillz = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests/skillz_experiments", "tests/skillz_inspect"]
-markers = ["ac(id): ties a test to an acceptance-criterion ID"]
+markers = ["ac(id): ties a test to an acceptance-criterion ID",
+           "live: makes real model calls; runs only with SKILLZ_LIVE=1 (just live-smoke)"]
 addopts = "--strict-markers"
