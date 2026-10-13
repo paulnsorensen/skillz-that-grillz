@@ -25,7 +25,7 @@ def test_prose_with_explicit_non_markdown_editable_names_stops_and_names_each() 
     assert caught.value.code == "editable-needs-cli"
     message = str(caught.value)
     assert "scripts/run.py" in message and "scripts/other.py" in message
-    assert "SKILL.md" not in message.replace("--edit prose+cli", "")
+    assert "SKILL.md" not in message
     assert "prose+cli" in message
 
 
