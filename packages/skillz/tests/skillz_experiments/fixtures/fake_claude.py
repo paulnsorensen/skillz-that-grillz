@@ -87,7 +87,8 @@ def network_probe(prompt: str, mode: str) -> list[str]:
     `net-open` and `net-http-open` reach the listener over TCP and over HTTP. `net-lie` prints the denial
     under a command that is not the generated one. `net-lie-connect` connects and still prints the denial.
     `net-skipped` runs no command, `net-garbled` prints no token, and `net-no-curl` reports exit 127.
-    `net-exit-<code>` reports that exit code for each curl command.
+    `net-exit-<code>` reports that exit code for each proxied curl command. `net-dns-open` resolves the public name,
+    and `net-external-open` connects to the non-loopback address; both report the open result.
     """
     texts: list[str] = []
     for index, command in enumerate(cast(list[str], re.findall(r"`(/usr/bin/(?:python3 -c|curl) [^`]*)`", prompt))):
@@ -96,21 +97,29 @@ def network_probe(prompt: str, mode: str) -> list[str]:
         if "AF_UNIX" in command:
             texts.append(unix_probe(index, command, mode))
             continue
-        direct = "connect_ex" in command
-        port = int(cast(re.Match[str], re.search(r"(?:connect_ex\(\('127\.0\.0\.1',|:)(\d+)[)/]", command)).group(1))
+        direct = "connect_ex" in command and "'127.0.0.1'" in command
+        lookup = "--noproxy '*'" in command
+        external = "'1.1.1.1'" in command
         token = cast(re.Match[str], re.search(r"([0-9a-f]{32})", command)).group(1)
-        reached = (direct and mode in {"net-open", "net-lie-connect"}
-                   and _reach(port, token)) or (not direct and mode == "net-http-open"
-                                                and _reach(port, f"GET /{token} HTTP/1.1\r\n\r\n"))
-        if mode == "net-garbled":
-            text = "garbled"
-        elif direct:
-            text = ("open-" if reached and mode == "net-open" else "denied-") + token
+        if external or lookup:
+            reached = mode == ("net-external-open" if external else "net-dns-open")
+            text = ("open-" if reached else "denied-") + token if external else f"exit-{0 if reached else 6}-{token}"
+            text = "garbled" if mode == "net-garbled" else "exit-127-" + token if lookup and mode == "net-no-curl" else text
+            shown = f"echo {text} # probe" if mode == "net-lie" else command
         else:
-            forced = re.fullmatch(r"net-exit-(\d+)", mode)
-            code = int(forced.group(1)) if forced else 127 if mode == "net-no-curl" else 0 if reached else 7
-            text = f"exit-{code}-{token}"
-        shown = f"echo {text} # {'connect_ex' if direct else 'curl'}" if mode == "net-lie" else command
+            port = int(cast(re.Match[str], re.search(r"(?:connect_ex\(\('127\.0\.0\.1',|:)(\d+)[)/]", command)).group(1))
+            reached = (direct and mode in {"net-open", "net-lie-connect"}
+                       and _reach(port, token)) or (not direct and mode == "net-http-open"
+                                                    and _reach(port, f"GET /{token} HTTP/1.1\r\n\r\n"))
+            if mode == "net-garbled":
+                text = "garbled"
+            elif direct:
+                text = ("open-" if reached and mode == "net-open" else "denied-") + token
+            else:
+                forced = re.fullmatch(r"net-exit-(\d+)", mode)
+                code = int(forced.group(1)) if forced else 127 if mode == "net-no-curl" else 0 if reached else 7
+                text = f"exit-{code}-{token}"
+            shown = f"echo {text} # {'connect_ex' if direct else 'curl'}" if mode == "net-lie" else command
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"n{index}", "name": "Bash",
               "input": {"command": shown}}]}})
         emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"n{index}",
@@ -160,7 +169,7 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     """Answer an `initialize` control request. `inventory-broken` sends no command list.
 
     `inventory-error` sends an error response, `inventory-auth` fails to log in, and `inventory-hang` never answers.
-    `inventory-nonzero` sends a valid list and still exits 1.
+    `inventory-nonzero` sends a valid list and still exits 1. `inventory-crash` exits 3 with stderr and no control response.
 
     `builtin-echo` also lists `echo-skill` as a Claude Code command, so the echo candidate name collides with it.
     """
@@ -169,6 +178,9 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     commands += [cast(dict[str, object], {"name": name, "description": "", "builtin": True}) for name in builtin]
     if mode == "inventory-hang":
         time.sleep(30)
+    if mode == "inventory-crash":
+        print("claude: shim crashed", file=sys.stderr)
+        return 3
     if mode == "inventory-auth":
         print("Invalid API key - Please run /login", file=sys.stderr)
         return 1
@@ -327,6 +339,12 @@ def main() -> int:
                                   "environment": dict(os.environ), "config_entries": config_entries(),
                                   "captured": captured, "staged": staged_modes(),
                                   "mcp_config": Path(argv[argv.index("--mcp-config") + 1]).read_text() if "--mcp-config" in argv else None}) + "\n")
+    if argv == ["--version"]:
+        if mode == "version-broken":
+            print("claude: broken shim", file=sys.stderr)
+            return 3
+        print("2.1.296 (Claude Code)")
+        return 0
     config = cast(dict[str, object], json.loads(settings or "{}"))
     if listing:
         return inventory(mode, config)

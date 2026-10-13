@@ -308,3 +308,18 @@ def test_two_claude_executables_prefix_their_checks_with_the_executable(monkeypa
     report = _doctor.host_report([("claude", "/a/claude"), ("claude", "/b/claude")])
     assert [row["check"] for row in cast(list[dict[str, object]], report["checks"])] == [
         "claude(/a/claude):claude", "claude(/b/claude):claude"]
+
+
+@pytest.mark.ac("gh-295:AC-5")
+def test_a_broken_claude_shim_fails_the_claude_row_through_the_run_executable_and_environment(
+        host_bin: Callable[[str], Path]) -> None:
+    executable = host_bin("version-broken")
+    report = _doctor.doctor("claude")
+    row = rows(report)["claude"]
+    assert report["ok"] is False and row["status"] == "fail" and row["fix"]
+    assert "exited 3" in cast(str, row["detail"]) and "broken shim" in cast(str, row["detail"])
+    first = cast(dict[str, object], json.loads(executable.with_name("claude.log").read_text().splitlines()[0]))
+    environment = cast(dict[str, str], first["environment"])
+    assert first["argv"] == ["--version"]
+    assert environment["PATH"].startswith(f"{executable.parent}:")
+    assert environment["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1" and environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] == "1"
