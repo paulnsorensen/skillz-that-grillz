@@ -84,6 +84,7 @@ class _Field:
                 pending = 0
         return body if self.value.endswith("-") or not body else body + "\n"
 
+
 @dataclass
 class _Context:
     checks: list[dict[str, object]] = field(default_factory=lambda: [])

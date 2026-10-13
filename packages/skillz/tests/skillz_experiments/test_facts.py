@@ -10,7 +10,7 @@ from typing import cast
 import pytest
 
 from skillz_experiments._cli import main
-from skillz_experiments._facts import ALLOWED_KEYS, SCHEMA_VERSION
+from skillz_experiments._facts import ALLOWED_KEYS, SCHEMA_VERSION, _frontmatter  # pyright: ignore[reportPrivateUsage]
 
 LAYOUT = Path(__file__).resolve().parents[4] / "skills/skillz/references/harness-layout.md"
 DESCRIPTION = "Does a demo thing. Use when asked. Do NOT use for other things."
@@ -240,11 +240,15 @@ BLOCK_TEXT = "\n  Does a thing.\n  Use when asked.\n\n  Then more text.\n\n"
 ])
 def test_block_scalar_description_is_read_in_full(
         tmp_path: Path, capsys: pytest.CaptureFixture[str], header: str, expected: str) -> None:
-    checks = run(make(tmp_path, skill(description=header + BLOCK_TEXT)), capsys)
+    text = skill(description=header + BLOCK_TEXT)
+    lines = text.splitlines()
+    assert _frontmatter(lines, lines.index("---", 1))["description"].text() == expected
+    checks = run(make(tmp_path, text), capsys)
     assert find(checks, "description.length")["detail"] == f"{len(expected)} of at most 1024 characters"
     assert find(checks, "description.length")["line"] == 3
     assert find(checks, "model-policy.model-invoked")["status"] == "pass"
     assert find(checks, "frontmatter.known-keys")["status"] == "pass"
+
 
 def test_allowed_keys_match_the_harness_layout_matrix() -> None:
     text = LAYOUT.read_text()
