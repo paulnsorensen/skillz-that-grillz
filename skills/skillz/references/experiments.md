@@ -196,12 +196,15 @@ Each seed case has `source: skill`, the entry `name` as `id`, and the `prompt` a
 An entry with `expected_skill: null` is a `near-miss` case.
 An entry with no `assertions` is a `trigger` case. Every other entry is a `task` case.
 A `task` case holds the fixtures in `files`, keyed by their listed paths, and an `expected` object.
-Each fixture path starts with `evals/files/`.
+The `expected` object holds `expected_output`, which defaults to an empty string, and `assertions`, which the entry must give.
+Each fixture path starts with `evals/files/`. A path outside `evals/files/` stops the seed.
+The runner stages each fixture at its `evals/files/` path in the workspace, so the request must name that directory.
 When the entry lists no fixture, `files` is empty. Draft the starting fixture that the request needs.
 A seed case has a `family` only when the entry has a nonempty-text `family` key. Otherwise set the `family` by the rule below.
 Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged. You can extend `files`, `expected`, and `family`.
 When the draft drops a seed case or changes its `id`, `kind`, or `request`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from `evals/evals.json`.
 Then add cases until the draft meets the minimums below. Journeys stay hand-authored.
+The holdout split alone needs 6 scored cases, and a family never crosses splits, so a contract needs about 10 or more `task` cases.
 A skill with no `evals/evals.json` has no `seed_cases`. Draft every case from the `facts`.
 
 Each case has these fields:
@@ -214,6 +217,11 @@ Each case has these fields:
 - `kind`: `trigger`, `near-miss`, or `task`.
 - `request`: the user request that the case sends.
 - `files`: a map of path to text, for the starting fixture. A `task` case needs it.
+  `text_map` refuses a path whose first part is `home`, `tmp`, `output`, `capture`, `answer.json`, `response-schema.json`, `AGENTS.md`, or `CLAUDE.md`.
+  It also refuses `AGENTS.md` at any depth and any path that has a part that starts with a dot.
+  To ship a refused name such as `AGENTS.md`, store it with a `.fixture` suffix, for example `AGENTS.md.fixture`.
+  A suffix does not clear a hidden part, so store a file such as `.env` under a name without the leading dot.
+  The runner writes fixtures verbatim, so the request must tell the task to rename the file.
 - `expected`: the reference answer as JSON. A `task` case needs it.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
 
