@@ -55,7 +55,6 @@ def test_shipped_task_cases_name_fixtures_that_exist_and_carry_assertions() -> N
             assert (SKILL / fixture).is_file(), fixture
 
 
-@pytest.mark.ac("gh-299:AC-8")
 def test_shipped_helper_input_is_staged_with_every_task_case(tmp_path: Path) -> None:
     helper = load_contract(SKILL).helper
     assert helper is not None

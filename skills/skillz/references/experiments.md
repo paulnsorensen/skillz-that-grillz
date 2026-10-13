@@ -61,7 +61,7 @@ The runner records the observed `codex --version` string as `codex_version` in `
 A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
-The `doctor` runs `claude --version` with `PATH=/usr/bin:/bin`, not the environment of the run. The `claude` row always passes, so it does not detect a broken version-manager shim.
+The `doctor` runs `claude --version` with `PATH=/usr/bin:/bin`, not the environment of the run. The `claude` row fails when the executable is not on `PATH`. When an executable is on `PATH`, the row passes whatever `--version` returns, so it does not detect a broken version-manager shim.
 In the fresh-run `doctor` path, a skill inventory call that exits nonzero with no control response stops the run with `host-not-ready`. Outside that path, an inventory failure stops with `preflight-leak`.
 The sandbox preflight probes only the loopback addresses `127.0.0.1` and `localhost`. It does not probe name lookup or a non-loopback address. Do not treat it as proof of full network isolation.
 Do not create or request provider credentials. The runner needs no API key.
@@ -134,6 +134,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
+| `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `proposal-build-failed` | The host build of an accepted proposal fails with an error that is not a build rejection, such as a full disk. The paid reflection stays in the record. | Fix the cause in the message, then run again in the same directory. |
@@ -153,7 +154,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `build-failed` | The host build of an own target fails. During the search, the candidate scores 0 and the feedback shows the reason. | Read the feedback. |
 | `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
-| `helper-frozen` | The contract helper names a frozen file. | Name an editable helper, or use `--edit prose` and remove non-Markdown names from `editable`. |
+| `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
 | `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
@@ -226,6 +227,7 @@ Each case has these fields:
   To ship a refused name such as `AGENTS.md`, store it with a `.fixture` suffix, for example `AGENTS.md.fixture`.
   A suffix does not clear a hidden part, so store a file such as `.env` under a name without the leading dot.
   The runner writes fixtures verbatim, so the request must tell the task to rename the file.
+  When the contract declares a helper, each `task` case must list the contract helper input in `files`.
 - `expected`: the reference answer as JSON. A `task` case needs it.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
 
