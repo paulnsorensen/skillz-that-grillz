@@ -42,6 +42,7 @@ FILE_MENTION = re.compile(
 IMPLICIT_OFF = re.compile(r"^\s*allow_implicit_invocation:\s*false\s*(?:#.*)?$")
 INTERNAL = re.compile(r"^internal:\s*[\"']?true[\"']?\s*(?:#.*)?$")
 BARE_VARIABLE = re.compile(r"\s*(?:\$ARGUMENTS|\$\{CLAUDE_SKILL_DIR\})\s*")
+BLOCK_HEADERS = frozenset({">", ">-", "|", "|-"})
 
 PASS, FAIL, NOT_APPLICABLE = "pass", "fail", "not-applicable"
 
@@ -53,6 +54,8 @@ class _Field:
     block: list[tuple[int, str]] = field(default_factory=lambda: [])
 
     def text(self) -> str:
+        if self.value in BLOCK_HEADERS:
+            return self._block_scalar()
         if self.value[:1] in (">", "|"):
             return ("\n" if self.value[0] == "|" else " ").join(text for _, text in self.block)
         parts = [self.value, *(text for _, text in self.block if self.value[:1] in ("'", '"') or not text.startswith("#"))]
@@ -62,6 +65,24 @@ class _Field:
             return quoted[2] if quoted else joined
         return " ".join(part for part in (COMMENT.sub("", part) for part in parts) if part)
 
+    def _block_scalar(self) -> str:
+        rows = [text for _, text in self.block]
+        while rows and not rows[-1].strip():
+            _ = rows.pop()
+        indent = min((len(row) - len(row.lstrip()) for row in rows if row.strip()), default=0)
+        rows = [row[indent:] for row in rows]
+        if self.value[0] == "|":
+            body = "\n".join(rows)
+        else:
+            body = ""
+            pending = 0
+            for row in rows:
+                if not row.strip():
+                    pending += 1
+                    continue
+                body += ("\n" * pending if pending else " " if body else "") + row
+                pending = 0
+        return body if self.value.endswith("-") or not body else body + "\n"
 
 @dataclass
 class _Context:
@@ -89,6 +110,8 @@ def _frontmatter(lines: list[str], end: int) -> dict[str, _Field]:
         if match:
             current = _Field(number, match[2].strip())
             fields[match[1]] = current
+        elif current is not None and current.value in BLOCK_HEADERS and (not line.strip() or line[0] in " \t"):
+            current.block.append((number, line.rstrip()))
         elif line.strip() and line[0] in " \t" and current is not None:
             current.block.append((number, line.strip()))
     return fields

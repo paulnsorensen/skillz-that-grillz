@@ -228,6 +228,24 @@ def test_repository_checks_are_not_applicable_outside_a_repository(
         assert find(checks, check)["status"] == "not-applicable"
 
 
+BLOCK_TEXT = "\n  Does a thing.\n  Use when asked.\n\n  Then more text.\n\n"
+
+
+@pytest.mark.ac("gh-293:AC-1")
+@pytest.mark.parametrize(("header", "expected"), [
+    (">", "Does a thing. Use when asked.\nThen more text.\n"),
+    (">-", "Does a thing. Use when asked.\nThen more text."),
+    ("|", "Does a thing.\nUse when asked.\n\nThen more text.\n"),
+    ("|-", "Does a thing.\nUse when asked.\n\nThen more text."),
+])
+def test_block_scalar_description_is_read_in_full(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str], header: str, expected: str) -> None:
+    checks = run(make(tmp_path, skill(description=header + BLOCK_TEXT)), capsys)
+    assert find(checks, "description.length")["detail"] == f"{len(expected)} of at most 1024 characters"
+    assert find(checks, "description.length")["line"] == 3
+    assert find(checks, "model-policy.model-invoked")["status"] == "pass"
+    assert find(checks, "frontmatter.known-keys")["status"] == "pass"
+
 def test_allowed_keys_match_the_harness_layout_matrix() -> None:
     text = LAYOUT.read_text()
     matrix = re.search(r"^## Frontmatter matrix.*?(?=^## )", text, re.M | re.S)
