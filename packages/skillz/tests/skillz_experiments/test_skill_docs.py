@@ -131,4 +131,6 @@ def test_experiments_documents_code_enforced_fixture_and_case_rules() -> None:
     text = EXPERIMENTS.read_text()
     for needle in ("text_map", "answer.json", "AGENTS.md", "CLAUDE.md", ".fixture", "expected_output", "assertions", "evals/files/"):
         assert needle in text, needle
+    for phrase in ("defaults to an empty string", "stops the seed", "at any depth", "must name that directory", "starts with a dot"):
+        assert phrase in text, phrase
     assert re.search(r"holdout split alone needs (6|six) scored cases", text)
