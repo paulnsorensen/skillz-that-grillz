@@ -10,6 +10,7 @@ import os
 import shutil
 import stat
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import cast
@@ -34,6 +35,20 @@ REQUEST = "Help me plan the work."
 TOKENS = {"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}
 PASS_GATE = '{"score": 1}'
 pytestmark = pytest.mark.usefixtures("host_login")
+
+
+@pytest.fixture
+def journey_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A per-test temp root, so a skillz-journey-* directory from another process cannot reach the leftover checks."""
+    root = tmp_path / "journey-tmp"
+    root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(root))
+    monkeypatch.setenv("TMPDIR", str(root))
+    return root
+
+
+def leftovers(root: Path) -> list[Path]:
+    return list(root.glob("skillz-journey-*"))
 
 WRAPPER = '''#!/usr/bin/env python3
 import importlib.util, json, os, subprocess, sys, time
@@ -506,16 +521,33 @@ def test_journey_that_needs_more_calls_than_the_search_share_is_refused_before_a
 # AC-7: companions stay read-only for the task, and the journey leaves nothing behind.
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
-def test_a_task_cannot_write_create_or_delete_inside_a_companion_and_the_workspace_is_still_removed(tmp_path: Path) -> None:
+def test_a_task_cannot_write_create_or_delete_inside_a_companion_and_the_workspace_is_still_removed(
+        tmp_path: Path, journey_tmp: Path) -> None:
     executable, result, _, _ = drive(tmp_path, {"tamper": True}, 2, surface=SURFACE)
     tamper = cast(dict[str, str], next(row for row in rows(executable) if "start" in row)["tamper"])
     assert tamper == {"write_existing": "PermissionError", "create_in_root": "PermissionError",
                       "create_nested": "PermissionError", "delete": "PermissionError"}
     assert not Path(cast(str, result["workspace"])).exists()
-    assert not list(Path(os.environ.get("TMPDIR", "/tmp")).glob("skillz-journey-*"))
+    assert not leftovers(journey_tmp)
 
 
-def test_a_failing_simulator_still_removes_a_read_only_workspace_and_the_process(tmp_path: Path) -> None:
+@pytest.mark.ac("gh-285:AC-1")
+def test_the_leftover_check_ignores_a_foreign_directory_in_the_real_temp_dir_and_still_sees_a_real_leftover(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    real_tmp = Path(tempfile.gettempdir())
+    foreign = Path(tempfile.mkdtemp(prefix="skillz-journey-", dir=real_tmp))
+    try:
+        root = tmp_path / "journey-tmp"
+        root.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(root))
+        assert foreign.exists() and not leftovers(root)
+        real = Path(tempfile.mkdtemp(prefix="skillz-journey-"))
+        assert real.parent == root and leftovers(root) == [real]
+    finally:
+        shutil.rmtree(foreign, ignore_errors=True)
+
+
+def test_a_failing_simulator_still_removes_a_read_only_workspace_and_the_process(tmp_path: Path, journey_tmp: Path) -> None:
     executable = install(tmp_path, {"turns": [{"spawn": True}]})
     rules = contract(SURFACE)
     case, candidate = journey_case(tmp_path, rules, SURFACE_FILES, 3)
@@ -530,7 +562,7 @@ def test_a_failing_simulator_still_removes_a_read_only_workspace_and_the_process
     finally:
         session.close()
     assert len(pids(executable)) == 2 and all_gone(pids(executable))
-    assert not [path for path in Path(os.environ.get("TMPDIR", "/tmp")).glob("skillz-journey-*")]
+    assert not leftovers(journey_tmp)
 
 
 # AC-7 and AC-8: no surface means the exact pre-change argv.
