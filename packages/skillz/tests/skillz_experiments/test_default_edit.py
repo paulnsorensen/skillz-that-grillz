@@ -9,11 +9,11 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._candidate import NEW_CLI
+from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read
 from skillz_experiments._contract import load_contract
-from skillz_experiments._wedge_targets import WEDGE_PREFIX, TargetPlan, plan_targets
+from skillz_experiments._wedge_targets import TargetPlan, plan_targets
 from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments.run import Stop, _run, _session, run
 from test_new_cli import Recorder, layered_world
@@ -103,7 +103,7 @@ def test_a_resume_without_edit_keeps_the_recorded_mode(
     assert read(out / "run.json")["edit"] == mode
     other = "prose" if mode == "prose+cli" else "prose+cli"
     with pytest.raises(CodedError, match="differs from the frozen record"):
-        _ = run(target, out, MODEL, edit=other)  # pyright: ignore[reportArgumentType]
+        _ = run(target, out, MODEL, edit=other)
     session = _session.Session(out, MODEL, "claude", Recorder().factory, None, statistics=DEFAULT_STATISTICS)
     try:
         assert session.edit == mode
