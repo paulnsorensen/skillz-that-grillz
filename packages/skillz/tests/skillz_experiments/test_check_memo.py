@@ -13,6 +13,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
+from skillz_experiments._evaluation import helper_failure, transient
 from skillz_experiments.evaluation import CheckMemo, evaluate
 from typing_extensions import override
 from fake_provider import FakeProvider
@@ -116,3 +117,40 @@ def test_concurrent_evaluations_of_a_new_identity_check_it_once(tmp_path: Path) 
         results = [future.result(timeout=10) for future in futures]
     assert task.checks == 1
     assert {item["rejection"] for item in results} == {"slow rejection"}
+
+
+@final
+class _Sandbox:
+    """A sandbox that exits every helper run with one code."""
+
+    def __init__(self, code: int) -> None:
+        self.code = code
+
+    def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
+        del workspace, argv
+        return self.code, "", ""
+
+
+@pytest.mark.parametrize(("code", "reason", "is_transient"), [
+    (124, "helper fixture 0 times out", True), (3, "helper fixture 0 fails on returncode", False)])
+def test_only_a_sandbox_timeout_gives_a_transient_helper_rejection(
+        tmp_path: Path, code: int, reason: str, is_transient: bool) -> None:
+    rules = parse({"schema_version": 1, "status": "approved", "skill": SKILL, "invocation": f"${SKILL} run",
+                   "kinds": {"echo": {"grader": "exact-json"}},
+                   "helper": {"path": "scripts/echo.py", "input": "input.md",
+                              "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]}}, "skill")
+    rejection = helper_failure(_Sandbox(code), tmp_path, rules)
+    assert (rejection, transient(rejection)) == (reason, is_transient)
+
+
+@pytest.mark.ac("gh-247:AC-1")
+def test_the_memo_does_not_reuse_a_sandbox_timeout_and_reuses_the_later_pass(tmp_path: Path) -> None:
+    task, memo = Task(passed=False, reason="helper fixture 0 times out"), CheckMemo()
+    first, *rest = _cases(tmp_path)
+    timed_out = evaluate(task, task, _candidate(), first, checks=memo)
+    task.passed, task.reason = True, None
+    for case in rest:
+        with pytest.raises(ModelCalled):
+            _ = evaluate(task, task, _candidate(), case, checks=memo)
+    assert (timed_out["status"], timed_out["rejection"]) == ("candidate-contract-rejected", "helper fixture 0 times out")
+    assert (task.checks, task.invokes) == (2, 2)

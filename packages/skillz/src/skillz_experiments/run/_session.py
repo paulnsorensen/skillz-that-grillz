@@ -787,9 +787,10 @@ class Session:
             self.record["gate"] = {**outcome.data(), "repeats": repeats}
         else:
             _ = self.budget.remaining()
-            if any(item.get("arm") == "baseline" and item.get("status") == "candidate-contract-rejected"
-                   for item in self.outcomes):
-                raise _baseline_rejected()
+            rejected = next((item for item in self.outcomes if item.get("arm") == "baseline"
+                             and item.get("status") == "candidate-contract-rejected"), None)
+            if rejected is not None:
+                raise _baseline_rejected(cast(str | None, rejected.get("rejection")))
             arms = {"baseline": self.seed, "winner": winner}
             done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in self.outcomes
                     if item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
@@ -808,7 +809,7 @@ class Session:
                         self.checkpoint()
                     return
                 if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
-                    raise _baseline_rejected()
+                    raise _baseline_rejected(cast(str | None, result.get("rejection")))
 
             need = sum(case_calls(self.contract, case) for _, case, _ in todo)
             if self.budget.maximum - self.budget.calls < need:

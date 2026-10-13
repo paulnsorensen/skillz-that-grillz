@@ -140,6 +140,12 @@ def fixture_failure(fixture: Mapping[str, object], returncode: int, stdout: str,
     return None if lines and _same_json(lines[-1], fixture["error"]) else "stderr"
 
 
+SANDBOX_TIMEOUT = 124
+"""The exit code of a sandbox run that exceeds its time limit."""
+TIMED_OUT = " times out"
+"""The suffix of a helper rejection that a sandbox timeout caused. Such a rejection is transient."""
+
+
 def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> str | None:
     """Run each declared helper fixture in the sandbox. Return the first failure, or None when all pass."""
     helper = rules.helper
@@ -150,10 +156,17 @@ def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> str | 
         _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
         code, stdout, stderr = sandbox.sandbox(workspace, [
             "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
+        if code == SANDBOX_TIMEOUT and fixture["returncode"] != SANDBOX_TIMEOUT:
+            return f"helper fixture {index}{TIMED_OUT}"
         stream = fixture_failure(fixture, code, stdout, stderr)
         if stream is not None:
             return f"helper fixture {index} fails on {stream}"
     return None
+
+
+def transient(rejection: str | None) -> bool:
+    """Return whether `rejection` comes from a sandbox timeout, so a later check can pass."""
+    return rejection is not None and rejection.endswith(TIMED_OUT)
 
 
 def _paths(relative: str, workspace: str | None) -> set[str]:

@@ -5,6 +5,7 @@ import threading
 from typing import Protocol, final
 
 from skillz_experiments._candidate import Candidate
+from skillz_experiments._evaluation import transient
 
 
 class Checker(Protocol):
@@ -20,9 +21,11 @@ class Checker(Protocol):
 class CheckMemo:
     """Map each candidate identity to its `check_candidate` result and rejection reason.
 
-    One session owns one memo. The memo is never written to disk. The run contract is frozen, so one identity always
-    gets the same result in a run. One lock covers the check and the read of `rejection`, because a transport keeps
-    the reason of its last check in shared state.
+    One session owns one memo. The memo is never written to disk. The run contract is frozen, so one identity gets
+    the same result in a run, except when a helper fixture times out in the sandbox. The memo keeps no such
+    transient rejection, so a later evaluation of that identity checks again. One lock covers the check and the read
+    of `rejection`, because a transport keeps the reason of its last check in shared state. A cached result needs no
+    lock.
     """
 
     def __init__(self) -> None:
@@ -31,10 +34,14 @@ class CheckMemo:
 
     def check(self, task: Checker, candidate: Candidate) -> tuple[bool, str | None]:
         """Return whether `candidate` passes the contract check, and the rejection reason when it fails."""
+        found = self._results.get(candidate.identity)
+        if found is not None:
+            return found
         with self._lock:
             found = self._results.get(candidate.identity)
             if found is None:
                 passed = task.check_candidate(candidate)
                 found = (passed, None if passed else task.rejection)
-                self._results[candidate.identity] = found
+                if not transient(found[1]):
+                    self._results[candidate.identity] = found
             return found
