@@ -202,6 +202,8 @@ class Session:
         # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
         self._denylist = Denylist.build(self._search_cases.values())
         self._leak_rules: dict[str, str | None] = {}
+        # Recorded search outcomes that a resumed search reuses, one per earlier call. `search` fills it.
+        self._replay: dict[tuple[str, str, str], list[dict[str, object]]] = {}
         # Set before the provider gets `self.checkpoint`, which reads it.
         self._leak_rejections = self._recorded_rejections()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
@@ -417,6 +419,10 @@ class Session:
         candidate = self._admit(components)
         if not isinstance(candidate, Candidate):
             return 0.0, {"task_correct": 0.0, "request": case.request} | candidate
+        recorded = self._reuse(candidate, case)
+        if recorded is not None:
+            self._keep_if_best(candidate, case)
+            return self._feedback(recorded, case)
         try:
             result = self.evaluate_case(candidate, case, "search")
         except CodedError:
@@ -427,6 +433,10 @@ class Session:
                 self.outcomes.append(result)
                 self.checkpoint()
         self._keep_if_best(candidate, case)
+        return self._feedback(result, case)
+
+    @staticmethod
+    def _feedback(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
         score = _unit_score(result["score"])
         feedback: dict[str, object] = {"task_correct": score, "request": case.request}
         if "failure" in result:
@@ -434,6 +444,25 @@ class Session:
         if "scores" in result:
             feedback["grader_scores"] = result["scores"]
         return score, feedback
+
+    def _reuse(self, candidate: Candidate, case: Case) -> dict[str, object] | None:
+        """Return the next recorded outcome of `candidate` on `case`, or None. Each recorded outcome serves one evaluation."""
+        with self.lock:
+            queue = self._replay.get((candidate.identity, case.split, case.identifier))
+            return queue.pop(0) if queue else None
+
+    def _recorded_for_reuse(self) -> int:
+        """Load the scored search outcomes of the record into the reuse queues. Return their count.
+
+        A failed evaluation stays out, so a resume tries it again.
+        """
+        with self.lock:
+            self._replay.clear()
+            for item in self._search_outcomes():
+                if "search_candidate" in item and item.get("status") != "evaluation-failed":
+                    key = (cast(str, item["search_candidate"]), cast(str, item["split"]), cast(str, item["case_id"]))
+                    self._replay.setdefault(key, []).append(item)
+            return sum(len(queue) for queue in self._replay.values())
 
     def _admit(self, components: dict[str, str]) -> Candidate | dict[str, object]:
         """Return the built candidate of `components`, or the rejection that the leakage check or the build gives."""
@@ -651,9 +680,11 @@ class Session:
         elif allowance >= 1:
             # Search and reflection calls leave the gate its estimated time. Preflight and the gate use all of it.
             self.budget.reserve_time(_number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
+            # The restarted search replays the recorded calls first. GEPA counts a reused outcome as a metric call, so add them back.
+            reused = self._recorded_for_reuse()
             try:
                 stopped = pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
-                                        self._evaluate_example, self._propose, metric_calls=allowance,
+                                        self._evaluate_example, self._propose, metric_calls=allowance + reused,
                                         stalled=self._stalled)
                 self._raise_fault()
                 reason = "converged-stalled" if stopped else "validation-mean"
