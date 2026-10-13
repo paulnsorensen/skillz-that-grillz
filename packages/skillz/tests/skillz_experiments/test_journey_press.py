@@ -10,7 +10,9 @@ import os
 import shutil
 import stat
 import subprocess
+import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 
@@ -505,17 +507,35 @@ def test_journey_that_needs_more_calls_than_the_search_share_is_refused_before_a
 
 # AC-7: companions stay read-only for the task, and the journey leaves nothing behind.
 
+@pytest.fixture
+def foreign_journey_dir() -> Iterator[Path]:
+    """Hold a `skillz-journey-*` dir in the shared temp dir, as a concurrent worker or session does (gh-285)."""
+    shared = Path(os.environ.get("TMPDIR", "/tmp"))
+    with tempfile.TemporaryDirectory(prefix="skillz-journey-", dir=shared) as directory:
+        yield Path(directory)
+
+
+def leftover_journey_dirs() -> list[Path]:
+    """List journey dirs in this test's own temp dir. `host_login` points `tempfile` there; other processes share `/tmp`."""
+    return list(Path(tempfile.gettempdir()).glob("skillz-journey-*"))
+
+
+@pytest.mark.ac("gh-285:AC-1")
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
-def test_a_task_cannot_write_create_or_delete_inside_a_companion_and_the_workspace_is_still_removed(tmp_path: Path) -> None:
+def test_a_task_cannot_write_create_or_delete_inside_a_companion_and_the_workspace_is_still_removed(
+        tmp_path: Path, foreign_journey_dir: Path) -> None:
     executable, result, _, _ = drive(tmp_path, {"tamper": True}, 2, surface=SURFACE)
     tamper = cast(dict[str, str], next(row for row in rows(executable) if "start" in row)["tamper"])
     assert tamper == {"write_existing": "PermissionError", "create_in_root": "PermissionError",
                       "create_nested": "PermissionError", "delete": "PermissionError"}
-    assert not Path(cast(str, result["workspace"])).exists()
-    assert not list(Path(os.environ.get("TMPDIR", "/tmp")).glob("skillz-journey-*"))
+    workspace = Path(cast(str, result["workspace"]))
+    assert not workspace.exists() and workspace.parents[1] == Path(tempfile.gettempdir())
+    assert not leftover_journey_dirs() and foreign_journey_dir.is_dir()
 
 
-def test_a_failing_simulator_still_removes_a_read_only_workspace_and_the_process(tmp_path: Path) -> None:
+@pytest.mark.ac("gh-285:AC-1")
+def test_a_failing_simulator_still_removes_a_read_only_workspace_and_the_process(
+        tmp_path: Path, foreign_journey_dir: Path) -> None:
     executable = install(tmp_path, {"turns": [{"spawn": True}]})
     rules = contract(SURFACE)
     case, candidate = journey_case(tmp_path, rules, SURFACE_FILES, 3)
@@ -530,7 +550,7 @@ def test_a_failing_simulator_still_removes_a_read_only_workspace_and_the_process
     finally:
         session.close()
     assert len(pids(executable)) == 2 and all_gone(pids(executable))
-    assert not [path for path in Path(os.environ.get("TMPDIR", "/tmp")).glob("skillz-journey-*")]
+    assert not leftover_journey_dirs() and foreign_journey_dir.is_dir()
 
 
 # AC-7 and AC-8: no surface means the exact pre-change argv.
