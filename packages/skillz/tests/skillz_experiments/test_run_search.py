@@ -70,6 +70,7 @@ class Search:
         self.memos: list[object] = []
         self.fixed_number: int | None = None
         self.hypothesis_of: Callable[[int], str | None] = lambda _number: None
+        self.omit_hypothesis = False
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -185,6 +186,8 @@ class Provider(FakeProvider):
                                for name, text in parent.items()} | {"@hypothesis": self.state.hypothesis_of(number)}}
         texts = {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix
                  for name in cast(list[str], schema["required"]) if name != "@hypothesis"}
+        if self.state.omit_hypothesis:
+            return {"answer": texts}
         return {"answer": texts | {"@hypothesis": self.state.hypothesis_of(number)}}
 
 
@@ -220,6 +223,7 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
 def _core(result: dict[str, object]) -> dict[str, object]:
     """Return the search fields that the attempt record did not add."""
     search = cast(dict[str, object], result["search"])
+    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped"}
     return {key: search[key] for key in ("reason", "retained_seed", "leakage_rejections", "proposal_over_budget")}
 
 
@@ -1612,8 +1616,7 @@ def test_a_real_run_records_fixed_and_broke_inside_the_minibatch_and_a_later_par
     for item, minibatch in listed:
         ids = cast(list[str], item["fixed"]) + cast(list[str], item["broke"])
         assert set(ids) <= set(minibatch) and set(ids) <= train
-    earlier = [item["candidate"] for item in attempts if item["candidate"] is not None]
-    assert any(item["parent"] in earlier[:number] for number, item in enumerate(attempts) if item["parent"] is not None)
+    assert any(item["parent"] in {earlier["candidate"] for earlier in attempts[:number]} for number, item in enumerate(attempts))
 
 
 def test_the_protect_set_follows_the_seed_when_a_validated_candidate_is_worse_than_the_seed(
@@ -1665,3 +1668,41 @@ def test_the_export_summary_redacts_the_hypothesis_and_uncoded_rejection_text_bu
     assert "hypothesis-sentinel" not in json.dumps(result) and "uncoded-sentinel" not in json.dumps(result)
     rows = _attempts(result)
     assert rows and all("hypothesis" not in row and row["rejected"] == "rejected" for row in rows)
+    recorded = _recorded_attempts(out)
+    assert len(rows) == len(recorded)
+    for row, full in zip(rows, recorded):
+        assert set(row) == {"index", "parent", "candidate", "fixed", "broke", "validation_delta", "accepted", "rejected"}
+        assert row == {key: full[key] for key in row if key != "rejected"} | {"rejected": "rejected"}
+
+
+def test_the_export_keeps_a_coded_rejection_and_maps_a_one_word_uncoded_text_to_rejected(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    real = Candidate.changed
+    seen: list[int] = []
+
+    def failing(self: Candidate, components: dict[str, str]) -> Candidate:
+        if any("improved" in text for text in components.values()):
+            seen.append(1)
+            raise CodedError("hidden-file", "coded text") if len(seen) % 2 else ValueError("sentinelword")
+        return real(self, components)
+
+    monkeypatch.setattr(Candidate, "changed", failing)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert "sentinelword" in (out / "run.json").read_text(encoding="utf-8")
+    report = (Path(cast(str, export(out, tmp_path / "export")["export"])) / "report.json").read_text(encoding="utf-8")
+    assert "sentinelword" not in report and "sentinelword" not in json.dumps(result)
+    assert {row["rejected"] for row in _attempts(result)} == {"hidden-file", "rejected"}
+
+
+def test_a_spent_call_whose_answer_has_no_hypothesis_key_records_a_null_hypothesis_and_an_attempt(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.omit_hypothesis = True
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    reflections, attempts = _reflections_of(out), _recorded_attempts(out)
+    assert reflections and len(attempts) == len(reflections)
+    assert all(item["hypothesis"] is None and item["hypothesis_dropped"] is None for item in reflections)
+    assert all(item["hypothesis"] is None for item in attempts) and any(item["accepted"] for item in attempts)

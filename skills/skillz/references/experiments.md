@@ -159,7 +159,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
 | `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
-| `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
+| `reserved-name` | A skill file name starts with `@wedge/`, or it is `@new-cli` or `@hypothesis`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
@@ -539,7 +539,8 @@ It drops a value that is not text as `hypothesis-not-text`.
 The leakage check reads the hypothesis in its own call. A leak drops the hypothesis and records the rule. The proposal stays admitted.
 The key `@hypothesis` never enters a component. It never counts in `leakage_rejections`.
 `search.text_dropped` counts the dropped hypotheses for each rule.
-The export `report.json` drops the hypothesis of each attempt. It maps an uncoded `rejected` text to `rejected`. `run.json` keeps both.
+The export `report.json` and the `run` summary keep these attempt fields: `index`, `parent`, `candidate`, `fixed`, `broke`, `validation_delta`, `accepted`, and `rejected`.
+They drop `hypothesis` and `components`. They map an uncoded `rejected` text to `rejected`. `run.json` keeps all fields.
 
 ### Stall stop
 

@@ -600,6 +600,8 @@ class Session:
                                           "minibatch": _case_ids(feedback), "hypothesis": hypothesis,
                                           "hypothesis_dropped": hypothesis_dropped,
                                           "rejected": None if refusal is None else "reflection-shape"}
+            if refusal is not None:
+                outcome["rejected_coded"] = True
             if edits > progress.budget():
                 # The budget is advisory. The count shows whether enforcement is worth the wasted reflection calls.
                 outcome["over_budget"] = True
@@ -616,6 +618,7 @@ class Session:
                 # The stall signal reads this proposal as unknown, because its candidate never got a score.
                 outcome["status"] = "proposal-build-failed"
                 outcome["rejected"] = "proposal-build-failed"
+                outcome["rejected_coded"] = True
                 self.checkpoint()
             self._latch(fault)
             raise fault from error
@@ -624,6 +627,7 @@ class Session:
                 outcome["proposed"] = admitted.identity
             else:
                 outcome["rejected"] = str(admitted.get("reason") or admitted["rejected"])
+                outcome["rejected_coded"] = admitted.get("reason") is not None
             self.checkpoint()
         return proposal
 

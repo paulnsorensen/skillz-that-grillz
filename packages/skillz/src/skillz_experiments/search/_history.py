@@ -77,7 +77,7 @@ def _mean(scores: Mapping[str, float] | None, cases: Sequence[str]) -> float | N
 
 
 def attempts(outcomes: Sequence[Mapping[str, object]], seed: tuple[str, str],
-             validation: Sequence[str] = ()) -> list[dict[str, object]]:
+             validation: Sequence[str]) -> list[dict[str, object]]:
     """Return one attempt per recorded reflection, oldest first. `seed` is (digest of the seed component texts, seed identity).
 
     `validation` holds the validation case ids. The validation change needs a newest score on every one of them for the child and the parent.
@@ -114,7 +114,8 @@ def attempts(outcomes: Sequence[Mapping[str, object]], seed: tuple[str, str],
             delta = None if was is None or now is None else now - was
         found.append({"index": index, "parent": parent, "candidate": child, "components": _text(item.get("components_digest")),
                       "hypothesis": _text(item.get("hypothesis")), "fixed": fixed, "broke": broke,
-                      "validation_delta": delta, "accepted": child is not None, "rejected": _text(item.get("rejected"))})
+                      "validation_delta": delta, "accepted": child is not None, "rejected": _text(item.get("rejected")),
+                      "rejected_coded": item.get("rejected_coded") is True})
     return found
 
 
@@ -156,7 +157,7 @@ def render(history: Sequence[Mapping[str, object]], protect: Sequence[str] = ())
     lines = [_line(attempt) for attempt in reversed(history[-SHOWN:])]
     keep = [_flat(name) for name in protect[:MAX_PROTECTED]]
 
-    omitted = f"{len(history)} earlier attempts omitted for length." if history else "No attempt yet."
+    omitted = f"{len(history)} earlier attempt{'' if len(history) == 1 else 's'} omitted for length." if history else "No attempt yet."
 
     def compose() -> str:
         parts = [INTRO + (" ".join(lines) if lines else omitted)]

@@ -132,7 +132,7 @@ class Candidate:
                     raise CodedError("hidden-file", f"{posix} is a hidden file; remove it")
                 name = relative(posix)
                 if not is_skill_file(name):
-                    raise CodedError("reserved-name", f"{name} is reserved for wedge sources and the new-target component; rename the file")
+                    raise CodedError("reserved-name", f"{name} is reserved for wedge sources, the new-target component, and the hypothesis component; rename the file")
                 if name in (LOCATION, *exclude):
                     continue
                 if path.stat().st_size > FROZEN_FILE_LIMIT:

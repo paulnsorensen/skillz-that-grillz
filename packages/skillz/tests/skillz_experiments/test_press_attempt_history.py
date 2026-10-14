@@ -115,12 +115,12 @@ def test_attempts_newest_outcome_failed_uses_older_scored_outcome_for_train_and_
 def test_attempts_every_outcome_of_the_case_failed_is_unscored() -> None:
     outcomes = [_score("seed-id", "train", "a", 0.5), _reflection(),
                 _score("child-1", "train", "a", 0.0, status="evaluation-failed")]
-    assert attempts(outcomes, SEED)[0]["fixed"] == [] and attempts(outcomes, SEED)[0]["broke"] == []
+    assert attempts(outcomes, SEED, [])[0]["fixed"] == [] and attempts(outcomes, SEED, [])[0]["broke"] == []
 
 
 def test_attempts_equal_scores_are_neither_fixed_nor_broke() -> None:
     outcomes = [_score("seed-id", "train", "a", 0.5), _reflection(), _score("child-1", "train", "a", 0.5)]
-    assert attempts(outcomes, SEED)[0]["fixed"] == [] and attempts(outcomes, SEED)[0]["broke"] == []
+    assert attempts(outcomes, SEED, [])[0]["fixed"] == [] and attempts(outcomes, SEED, [])[0]["broke"] == []
 
 
 def test_attempts_malformed_outcomes_are_ignored_without_crashing() -> None:
@@ -130,7 +130,7 @@ def test_attempts_malformed_outcomes_are_ignored_without_crashing() -> None:
         {"arm": "search", "split": "train", "case_id": "a", "search_candidate": "seed-id", "score": "1"},
         {"arm": "search", "split": "train", "case_id": 7, "search_candidate": "seed-id", "score": 1.0},
         _reflection(minibatch="a", hypothesis=7, rejected=["x"], proposed=None)]
-    bare, attempt = attempts(outcomes, SEED)
+    bare, attempt = attempts(outcomes, SEED, [])
     assert bare["candidate"] is None and bare["accepted"] is False
     assert attempt["fixed"] == [] and attempt["broke"] == [] and attempt["hypothesis"] is None
     assert attempt["rejected"] is None and attempt["candidate"] is None

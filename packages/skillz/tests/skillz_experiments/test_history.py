@@ -35,7 +35,8 @@ def test_an_evaluated_proposal_records_fixed_and_broke_and_a_duplicate_resolves_
     assert attempt["fixed"] == ["a"] and attempt["broke"] == ["b"]
     assert attempt == {"index": 1, "parent": "seed-id", "candidate": "child-1", "components": "digest-1",
                        "hypothesis": "say it shorter", "fixed": ["a"], "broke": ["b"],
-                       "validation_delta": pytest.approx(0.2), "accepted": True, "rejected": None}
+                       "validation_delta": pytest.approx(0.2), "accepted": True, "rejected": None,
+                       "rejected_coded": False}
 
 
 @pytest.mark.ac("gh-241:AC-1")
@@ -51,7 +52,7 @@ def test_the_parent_of_a_later_proposal_resolves_through_the_earlier_proposal() 
     outcomes = [_score("seed-id", "train", "a", 0.1), _reflection(),
                 _reflection(parent="digest-1", components_digest="digest-2", proposed="child-2", minibatch=["a"]),
                 _score("child-1", "train", "a", 0.5), _score("child-2", "train", "a", 0.25)]
-    second = attempts(outcomes, SEED)[1]
+    second = attempts(outcomes, SEED, [])[1]
     assert second["index"] == 2 and second["parent"] == "child-1"
     assert second["broke"] == ["a"] and second["fixed"] == []
 
@@ -62,7 +63,7 @@ def test_a_legacy_outcome_and_an_unresolved_parent_give_empty_lists_and_a_reject
     outcomes = [_score("seed-id", "train", "a", 0.1), _score("child-1", "train", "a", 0.9), legacy,
                 _reflection(parent="unknown"),
                 _reflection(proposed=None, rejected="candidate-leakage-rejected", hypothesis=None)]
-    first, second, third = attempts(outcomes, SEED)
+    first, second, third = attempts(outcomes, SEED, [])
     for attempt in (first, second):
         assert attempt["fixed"] == [] and attempt["broke"] == [] and attempt["validation_delta"] is None
     assert first["parent"] is None and first["components"] is None
@@ -96,7 +97,7 @@ def test_a_failed_validation_case_counts_as_zero_and_scores_are_clamped() -> Non
 
 
 def test_a_reflection_with_neither_candidate_nor_rejection_prints_result_unknown() -> None:
-    (attempt,) = attempts([_reflection(proposed=None)], SEED)
+    (attempt,) = attempts([_reflection(proposed=None)], SEED, [])
     text = render([attempt])
     assert "result unknown." in text and "result admitted" not in text
     assert "result admitted." in render([{"index": 1, "candidate": "c", "rejected": None}])
@@ -105,7 +106,7 @@ def test_a_reflection_with_neither_candidate_nor_rejection_prints_result_unknown
 def test_a_history_that_fits_no_line_says_how_many_attempts_it_omitted() -> None:
     history: list[dict[str, object]] = [{"index": 1, "candidate": "c", "rejected": None, "fixed": [], "broke": []}]
     text = render(history, [f"{n:03d}" + "p" * 137 for n in range(30)])
-    assert "1 earlier attempts omitted for length." in text and "No attempt yet." not in text
+    assert "1 earlier attempt omitted for length." in text and "No attempt yet." not in text
     assert "No attempt yet." in render([])
 
 

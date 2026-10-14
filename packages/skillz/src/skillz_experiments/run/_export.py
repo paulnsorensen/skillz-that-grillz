@@ -124,7 +124,6 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
     return result
 
 
-_CODE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 _ATTEMPT_KEYS = ("index", "parent", "candidate", "fixed", "broke", "validation_delta", "accepted")
 
 
@@ -139,7 +138,8 @@ def _export_search(value: object) -> object:
     for row in cast(list[dict[str, object]], search["attempts"]):
         reason = row.get("rejected")
         redacted = {key: row.get(key) for key in _ATTEMPT_KEYS}
-        redacted["rejected"] = None if reason is None else reason if isinstance(reason, str) and _CODE.fullmatch(reason) else "rejected"
+        coded = row.get("rejected_coded") is True and isinstance(reason, str)
+        redacted["rejected"] = None if reason is None else reason if coded else "rejected"
         rows.append(redacted)
     redacted_search: dict[str, object] = search | {"attempts": rows}
     return redacted_search
