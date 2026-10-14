@@ -50,9 +50,10 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
     feedback = cast(dict[str, object], json.loads(first_prompt.split("\n", 1)[1]))
     assert feedback["candidate"] == {"SKILL.md": scenario.original}
     shown = cast(list[dict[str, object]], cast(dict[str, object], feedback["feedback"])["SKILL.md"])
+    assert set(cast(dict[str, object], feedback["feedback"])) == {"SKILL.md"}
     train = {cast(str, case["id"]) for case in read_cases(scenario.out) if case["split"] == "train"}
-    assert len(shown) == 2 and len({item["case"] for item in shown}) == 2 and {item["case"] for item in shown} <= train
-    assert [{key: value for key, value in item.items() if key != "case"} for item in shown] == [
+    assert len(shown) == 2 and len({item["case_id"] for item in shown}) == 2 and {item["case_id"] for item in shown} <= train
+    assert [{key: value for key, value in item.items() if key != "case_id"} for item in shown] == [
         {"task_correct": 0.0, "request": "Transform fixture.md according to this skill.",
          "grader_scores": {"command": 0.0}}
     ] * 2

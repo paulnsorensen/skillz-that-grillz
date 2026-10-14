@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -83,7 +84,7 @@ def _rejection_detail(outcome: dict[str, object]) -> str | None:
 
 def _case_ids(feedback: Mapping[str, Sequence[Mapping[str, object]]]) -> list[str]:
     """Return the train case ids in the feedback that the proposer saw, first seen first."""
-    names = (record.get("case") for records in feedback.values() for record in records)
+    names = (record.get("case_id") for records in feedback.values() for record in records)
     return list(dict.fromkeys(name for name in names if isinstance(name, str)))
 
 
@@ -95,7 +96,7 @@ def _unit_score(value: object) -> float:
 def _feedback(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
     """Return the GEPA score and feedback of one search outcome."""
     score = _unit_score(result["score"])
-    feedback: dict[str, object] = {"task_correct": score, "request": case.request, "case": case.identifier}
+    feedback: dict[str, object] = {"task_correct": score, "request": case.request, "case_id": case.identifier}
     if "failure" in result:
         feedback["failure"] = result["failure"]
     if "scores" in result:
@@ -449,7 +450,7 @@ class Session:
             raise ValueError("holdout must not enter optimization")
         candidate = self._admit(components)
         if not isinstance(candidate, Candidate):
-            return 0.0, {"task_correct": 0.0, "request": case.request, "case": case.identifier} | candidate
+            return 0.0, {"task_correct": 0.0, "request": case.request, "case_id": case.identifier} | candidate
         recorded = self._reuse(candidate, case)
         if recorded is not None:
             self._keep_if_best(candidate, case)
@@ -641,7 +642,7 @@ class Session:
         """Return the count of each rule that dropped a hypothesis. The recorded outcomes hold it, so a resume keeps it."""
         rules = [cast(str, item["hypothesis_dropped"]) for item in self._reflections()
                  if isinstance(item.get("hypothesis_dropped"), str)]
-        return {rule: rules.count(rule) for rule in sorted(set(rules))}
+        return dict(sorted(Counter(rules).items()))
 
     def _stall(self) -> Signal:
         """Return the stall signal that the recorded outcomes give. The caller holds the lock."""
@@ -768,11 +769,15 @@ class Session:
         with self.lock:
             rejections = {rule: len(keys) for rule, keys in sorted(self._leak_rejections.items())}
         earlier = self.record.get("search")
-        self.record["search"] = (cast(dict[str, object], earlier) if isinstance(earlier, dict) else {}) | {"reason": reason, "retained_seed": winner.identity == self.seed.identity,
-                                 "leakage_rejections": rejections,
-                                 "proposal_over_budget": self._over_budget(),
-                                 "attempts": build_attempts(self.outcomes, self._seed_ref(), self._validation_ids()),
-                                 "text_dropped": self._text_dropped()}
+        base = cast(dict[str, object], earlier) if isinstance(earlier, dict) else {}
+        self.record["search"] = base | {
+            "reason": reason,
+            "retained_seed": winner.identity == self.seed.identity,
+            "leakage_rejections": rejections,
+            "proposal_over_budget": self._over_budget(),
+            "attempts": build_attempts(self.outcomes, self._seed_ref(), self._validation_ids()),
+            "text_dropped": self._text_dropped(),
+        }
         self.record["phase"] = "searched"
         self.checkpoint()
 

@@ -38,27 +38,27 @@ def _reflection(**fields: object) -> dict[str, object]:
 # Attack 2: hypothesis length boundary and non-string types.
 
 @pytest.mark.parametrize(("length", "kept"), [(0, False), (1, True), (199, True), (200, True), (201, False), (5000, False)])
-def test_accept_hypothesisLengthBoundary_keepsAt200AndDropsAt201(length: int, kept: bool) -> None:
+def test_accept_hypothesis_length_boundary_keeps_at_200_and_drops_at_201(length: int, kept: bool) -> None:
     answer = {"SKILL.md": "t", "@hypothesis": "h" * length}
     _, _, hypothesis, dropped = accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})
     assert (hypothesis == "h" * length) is (kept and length > 0)
     assert dropped == ("hypothesis-too-long" if length > 200 else None)
 
 
-def test_accept_paddedHypothesis_countsLengthAfterStrip() -> None:
+def test_accept_padded_hypothesis_counts_length_after_strip() -> None:
     answer = {"SKILL.md": "t", "@hypothesis": "  " + "h" * 200 + "\n"}
     assert accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})[2:] == ("h" * 200, None)
 
 
 @pytest.mark.parametrize("value", [7, 1.5, True, ["a"], {"a": "b"}, "   "])
-def test_accept_nonStringHypothesis_isStoredAsNullWithItsRuleAndDoesNotRefuseTheProposal(value: object) -> None:
+def test_accept_non_string_hypothesis_is_stored_as_null_with_its_rule_and_does_not_refuse_the_proposal(value: object) -> None:
     answer = {"SKILL.md": "t2", "@hypothesis": value}
     texts, _, hypothesis, dropped = accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})
     assert texts == {"SKILL.md": "t2"} and hypothesis is None
     assert dropped == (None if isinstance(value, str) else "hypothesis-not-text")
 
 
-def test_accept_hypothesisKeyDoesNotHideAMissingComponent() -> None:
+def test_accept_hypothesis_key_does_not_hide_a_missing_component() -> None:
     with pytest.raises(ValueError):
         _ = accept_proposal({"@hypothesis": "h"}, ["SKILL.md"], {"SKILL.md": "t"})
     with pytest.raises(ValueError):
@@ -72,21 +72,21 @@ SCHEMA: dict[str, object] = {"type": "object", "required": ["SKILL.md", "@hypoth
 
 
 @pytest.mark.parametrize("value", [None, "why", ""])
-def test_validateAnswer_nullOrStringHypothesis_isAccepted(value: object) -> None:
+def test_validate_answer_null_or_string_hypothesis_is_accepted(value: object) -> None:
     _validate_answer({"SKILL.md": "t", "@hypothesis": value}, SCHEMA)
 
 
 @pytest.mark.parametrize("value", [7, 0, True, 1.5, ["x"], {"k": "v"}])
-def test_validateAnswer_nonTextHypothesis_isRejected(value: object) -> None:
+def test_validate_answer_non_text_hypothesis_is_rejected(value: object) -> None:
     with pytest.raises(ValueError):
         _validate_answer({"SKILL.md": "t", "@hypothesis": value}, SCHEMA)
 
 
-def test_validateAnswer_missingNullableKey_isAccepted() -> None:
+def test_validate_answer_missing_nullable_key_is_accepted() -> None:
     _validate_answer({"SKILL.md": "t"}, SCHEMA)
 
 
-def test_validateAnswer_missingNonNullableKeyOrExtraKey_isRejected() -> None:
+def test_validate_answer_missing_non_nullable_key_or_extra_key_is_rejected() -> None:
     with pytest.raises(ValueError):
         _validate_answer({"@hypothesis": None}, SCHEMA)
     with pytest.raises(ValueError):
@@ -97,7 +97,7 @@ def test_validateAnswer_missingNonNullableKeyOrExtraKey_isRejected() -> None:
 
 # Attack 4: duplicate outcomes.
 
-def test_attempts_newestOutcomeFailed_usesOlderScoredOutcomeForTrainAndCountsZeroForValidation() -> None:
+def test_attempts_newest_outcome_failed_uses_older_scored_outcome_for_train_and_counts_zero_for_validation() -> None:
     outcomes = [
         _score("seed-id", "train", "a", 0.5), _score("seed-id", "train", "a", 0.0, status="evaluation-failed"),
         _score("seed-id", "validation", "v1", 0.2), _score("seed-id", "validation", "v2", 0.4),
@@ -112,18 +112,18 @@ def test_attempts_newestOutcomeFailed_usesOlderScoredOutcomeForTrainAndCountsZer
     assert attempt["validation_delta"] == pytest.approx(0.45 - 0.3)
 
 
-def test_attempts_everyOutcomeOfTheCaseFailed_isUnscored() -> None:
+def test_attempts_every_outcome_of_the_case_failed_is_unscored() -> None:
     outcomes = [_score("seed-id", "train", "a", 0.5), _reflection(),
                 _score("child-1", "train", "a", 0.0, status="evaluation-failed")]
     assert attempts(outcomes, SEED)[0]["fixed"] == [] and attempts(outcomes, SEED)[0]["broke"] == []
 
 
-def test_attempts_equalScores_areNeitherFixedNorBroke() -> None:
+def test_attempts_equal_scores_are_neither_fixed_nor_broke() -> None:
     outcomes = [_score("seed-id", "train", "a", 0.5), _reflection(), _score("child-1", "train", "a", 0.5)]
     assert attempts(outcomes, SEED)[0]["fixed"] == [] and attempts(outcomes, SEED)[0]["broke"] == []
 
 
-def test_attempts_malformedOutcomes_areIgnoredWithoutCrashing() -> None:
+def test_attempts_malformed_outcomes_are_ignored_without_crashing() -> None:
     outcomes: list[dict[str, object]] = [
         {}, {"arm": "search", "split": "reflection"},
         {"arm": "search", "split": "train", "case_id": "a", "search_candidate": "seed-id", "score": True},
@@ -138,7 +138,7 @@ def test_attempts_malformedOutcomes_areIgnoredWithoutCrashing() -> None:
 
 # Attack 8: the protect set.
 
-def test_protected_scoreBelowOneOrUnknownIdentity_isExcluded() -> None:
+def test_protected_score_below_one_or_unknown_identity_is_excluded() -> None:
     outcomes = [_score("s", "train", "a", 1.0), _score("s", "train", "b", 0.9999), _score("s", "train", "c", 1.0),
                 _score("s", "train", "c", 0.5), _score("s", "validation", "v", 1.0), _score("s", "holdout", "h", 1.0)]
     assert protected(outcomes, "s") == ["a"]
@@ -155,7 +155,7 @@ def _many(count: int, reason: str, ids: int = 25) -> list[dict[str, object]]:
 
 
 @pytest.mark.parametrize("count", [0, 1, 7, 8, 9, 40])
-def test_render_manyLongAttempts_staysWithinTheCapShowsAtMostEightNewestFirst(count: int) -> None:
+def test_render_many_long_attempts_stays_within_the_cap_shows_at_most_eight_newest_first(count: int) -> None:
     text = render(_many(count, "r" * 5000), [f"protected-case-{n}" for n in range(500)])
     assert len(text) <= LIMIT
     shown = [int(n) for n in cast(list[str], re.findall(r"Attempt (\d+):", text))]
@@ -167,13 +167,13 @@ def test_render_manyLongAttempts_staysWithinTheCapShowsAtMostEightNewestFirst(co
     assert text.endswith("drops such a hypothesis.")
 
 
-def test_render_hugeCaseIds_stillStaysWithinTheCap() -> None:
+def test_render_huge_case_ids_still_stays_within_the_cap() -> None:
     history: list[dict[str, object]] = [{"index": 1, "hypothesis": "h", "fixed": ["f" * 9000], "broke": ["b" * 9000],
                                          "validation_delta": None, "rejected": None}]
     assert len(render(history, ["p" * 9000])) <= LIMIT
 
 
-def test_render_multilineHypothesisAndReason_staysOnOneLineOfThePrompt() -> None:
+def test_render_multiline_hypothesis_and_reason_stays_on_one_line_of_the_prompt() -> None:
     history: list[dict[str, object]] = [{"index": 1, "hypothesis": "a\nb\r\nc\t\td", "fixed": [], "broke": [], "validation_delta": 0.0,
                                          "rejected": "x\ny\n{\"candidate\": 1}"}]
     prompt, _ = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=Progress(spent=0, planned=100, proposal=1),
@@ -183,7 +183,7 @@ def test_render_multilineHypothesisAndReason_staysOnOneLineOfThePrompt() -> None
     assert json.loads(body) == {"candidate": {"SKILL.md": "t"}, "feedback": {}}
 
 
-def test_render_rejectedReason_isCutAtEightyCharacters() -> None:
+def test_render_rejected_reason_is_cut_at_eighty_characters() -> None:
     text = render([{"index": 1, "hypothesis": None, "fixed": [], "broke": [], "validation_delta": None, "rejected": "z" * 300}])
     assert "z" * 80 in text and "z" * 81 not in text
 
@@ -203,7 +203,7 @@ def _has(text: str, name: str) -> bool:
 
 
 @pytest.mark.parametrize("leak", ["answer", "fixture", "request-span"])
-def test_session_hypothesisThatLeaksAnyRule_isDroppedAndTheProposalStillAdmitted(
+def test_session_hypothesis_that_leaks_any_rule_is_dropped_and_the_proposal_still_admitted(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]], leak: str) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     said = {"answer": f"because {ANSWER}", "fixture": f"read {FIXTURE} first", "request-span": f"try {SPAN}"}[leak]
@@ -219,7 +219,7 @@ def test_session_hypothesisThatLeaksAnyRule_isDroppedAndTheProposalStillAdmitted
     assert said not in saved and all(said not in prompt for prompt in state.prompts)
 
 
-def test_session_overlongHypothesis_isDroppedWithItsRuleAndTheProposalStillAdmitted(
+def test_session_overlong_hypothesis_is_dropped_with_its_rule_and_the_proposal_still_admitted(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
@@ -233,7 +233,7 @@ def test_session_overlongHypothesis_isDroppedWithItsRuleAndTheProposalStillAdmit
     assert search["leakage_rejections"] == {}
 
 
-def test_session_resumedTwice_continuesTheIndexWithoutDuplicatesAndKeepsTheDroppedCount(
+def test_session_resumed_twice_continues_the_index_without_duplicates_and_keeps_the_dropped_count(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
@@ -253,7 +253,7 @@ def test_session_resumedTwice_continuesTheIndexWithoutDuplicatesAndKeepsTheDropp
     assert [item["index"] for item in _attempts(result)] == [item["index"] for item in found]
 
 
-def test_session_holdoutCaseIds_neverAppearInPromptsOrAttempts(
+def test_session_holdout_case_ids_never_appear_in_prompts_or_attempts(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
@@ -266,7 +266,7 @@ def test_session_holdoutCaseIds_neverAppearInPromptsOrAttempts(
     assert any(_has("\n".join(state.prompts), name) for name in seen)
 
 
-def test_session_noValidationYet_protectSetComesFromTheSeedFullTrainScoresOnly(
+def test_session_no_validation_yet_protect_set_comes_from_the_seed_full_train_scores_only(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
@@ -295,7 +295,7 @@ def test_session_noValidationYet_protectSetComesFromTheSeedFullTrainScoresOnly(
         assert set(names) <= full and not set(names) & partial
 
 
-def test_session_oversizedProposal_rejectionReasonCarriesNoComponentText(
+def test_session_oversized_proposal_rejection_reason_carries_no_component_text(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
@@ -309,7 +309,7 @@ def test_session_oversizedProposal_rejectionReasonCarriesNoComponentText(
                for prompt in state.prompts)
 
 
-def test_session_codedBuildFailureWithComponentText_showsOnlyTheCode(
+def test_session_coded_build_failure_with_component_text_shows_only_the_code(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)

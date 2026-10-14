@@ -1160,7 +1160,7 @@ def test_a_leaking_proposal_scores_zero_without_a_task_or_judge_call_and_is_coun
     assert rejected
     for score, feedback in rejected:
         assert score == 0.0
-        assert set(feedback) == {"task_correct", "request", "case", "rejected", "reason", "rule"} and feedback["rule"] == rule
+        assert set(feedback) == {"task_correct", "request", "case_id", "rejected", "reason", "rule"} and feedback["rule"] == rule
         assert ANSWER not in json.dumps({key: value for key, value in feedback.items() if key != "request"})
     record = read(out / "run.json")
     outcomes = cast(list[dict[str, object]], record["outcomes"])
@@ -1537,9 +1537,17 @@ def test_a_shape_refusal_records_an_attempt_with_no_candidate_and_the_fixed_code
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.refuse = True
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    (stopped,) = _reflections_of(out)
+    assert stopped["rejected"] == "reflection-shape"
+    state.invoke_fault = lambda _number: None
+    result = run(target, out, MODEL, live=True, factory=state.factory)
     attempts = _attempts(result)
-    assert len(attempts) == 8
+    first = attempts[0]
+    assert first["index"] == 1 and first["candidate"] is None and first["rejected"] == "reflection-shape"
+    assert len(attempts) > 1
     assert all(item["candidate"] is None and item["rejected"] == "reflection-shape" and item["accepted"] is False for item in attempts)
     assert all(item["rejected"] == "reflection-shape" and item["components_digest"] is None for item in _reflections_of(out))
 
@@ -1549,8 +1557,16 @@ def test_an_admit_rejection_records_an_attempt_with_no_candidate_and_its_reason(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.suffix = " " + ANSWER
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    (stopped,) = _reflections_of(out)
+    assert stopped["rejected"] == "candidate-leakage-rejected"
+    state.invoke_fault = lambda _number: None
+    result = run(target, out, MODEL, live=True, factory=state.factory)
     attempts = _attempts(result)
+    first = attempts[0]
+    assert first["index"] == 1 and first["candidate"] is None and first["rejected"] == "candidate-leakage-rejected"
     assert attempts and all(item["candidate"] is None and item["rejected"] == "candidate-leakage-rejected" for item in attempts)
     assert all(item["rejected"] == "candidate-leakage-rejected" for item in _reflections_of(out))
 
