@@ -45,7 +45,7 @@ The exported patch uses the same paths as `skills/skillz`.
 Each family sets the agent turns that its flow needs: 3 for `named-harness` and `failed-run`, 4 for the others.
 A journey costs at most `max_turns * 2 + 1` calls: agent turns, simulator replies, and one judge call.
 At `--repeats 2`, the estimate is 411 calls and about 3.6 hours.
-`test_skillz_autoimprove_journeys.py` pins that estimate.
+`test_skillz_autoimprove_journeys.py` pins the call count of 411.
 
 ## Known gaps
 

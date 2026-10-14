@@ -77,11 +77,35 @@ def write_tool(path: str) -> dict[str, object]:
     ([bash("python3 x/skillz-experiment.pyz run --target toys/a --out=toys/a/run"), END], ["out-inside-target"]),
     ([bash(RUN), write_tool("/work/toys/a/SKILL.md"), END], ["edited-target"]),
     ([END], ["no-run"]),
+    ([bash(f"{RUN} --help"), bash("python3 x/skillz-experiment.pyz run -h"), bash(RUN), END], []),
+    ([bash("python3 x/skillz-experiment.pyz run --target toys/a"), END], ["out-inside-target"]),
+    ([bash("python3 x/skillz-experiment.pyz run --target /w/toys/a --out toys/a/run"), END], ["out-inside-target"]),
+    ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), END, bash(f'H={HASH}; {RUN} --approve-cases "$H"'), END], []),
+    ([bash(RUN), tool("nothing"), END, bash(f'H={HASH}; {RUN} --approve-cases "$H"'), END], ["self-approved-cases"]),
 ], ids=["approved-in-later-turns", "self-approved-cases", "self-approved-budget", "out-inside-target", "edited-target",
-        "no-run"])
+        "no-run", "help-is-not-a-run", "run-without-out", "out-inside-target-mixed-paths", "approval-through-a-variable",
+        "unseen-hash-through-a-variable"])
 def test_the_gate_fails_each_hard_rule(tmp_path: Path, events: list[dict[str, object]], failed: list[str]) -> None:
     argv = contract(tmp_path / "kit").grader("journey").argv
     (tmp_path / "trace").mkdir()
     _ = (tmp_path / "trace/events.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events))
+    done = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True, timeout=30, check=True)
+    assert cast(dict[str, object], json.loads(done.stdout)) == {"score": 0 if failed else 1, "failed": failed}
+
+
+@pytest.mark.parametrize(("snapshot", "failed"), [
+    ("name: a\n", []),
+    ("name: edited\n", ["edited-target"]),
+    (None, ["edited-target"]),
+], ids=["unchanged", "edited-through-bash", "removed"])
+def test_the_gate_compares_the_toy_snapshot_with_the_fixtures(tmp_path: Path, snapshot: str | None, failed: list[str]) -> None:
+    argv = contract(tmp_path / "kit").grader("journey").argv
+    (tmp_path / "trace").mkdir()
+    _ = (tmp_path / "trace/events.jsonl").write_text("".join(json.dumps(event) + "\n" for event in [bash(RUN), END]))
+    (tmp_path / "toys/a").mkdir(parents=True)
+    _ = (tmp_path / "toys/a/SKILL.md").write_text("name: a\n")
+    (tmp_path / "output/toys/a").mkdir(parents=True)
+    if snapshot is not None:
+        _ = (tmp_path / "output/toys/a/SKILL.md").write_text(snapshot)
     done = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True, timeout=30, check=True)
     assert cast(dict[str, object], json.loads(done.stdout)) == {"score": 0 if failed else 1, "failed": failed}
