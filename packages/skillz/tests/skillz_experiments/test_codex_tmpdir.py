@@ -13,7 +13,7 @@ import pytest
 
 from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import make_workspace
-from skillz_experiments.harness._codex import Codex, configuration, task_tmpdir
+from skillz_experiments.harness._codex import Codex, configuration, private_task_tmpdir, task_tmpdir
 from skillz_experiments.harness._isolation import SOCKET_PATH_LIMIT
 
 FAKE = '#!/bin/sh\n/usr/bin/env\nfor argument in "$@"; do echo "ARG=$argument"; done\n'
@@ -89,15 +89,15 @@ def test_sandbox_and_environment_use_the_task_tmpdir(tmp_path: Path, adapter: Co
     code, stdout, _ = adapter.sandbox(workspace, ["/usr/bin/true"])
     assert code == 0
     assert f"ARG=TMPDIR={tmp_path}/tmp" in stdout
-    assert f"TMPDIR={tmp_path}/tmp" in stdout
+    assert f"TMPDIR={tmp_path}/tmp" in stdout.splitlines()
     assert f"{tmp_path}/workspace/tmp" not in stdout
     assert (tmp_path / "tmp").is_dir()
 
 
 @pytest.mark.ac("gh-305:AC-4")
 def test_task_tmpdir_fits_the_af_unix_limit() -> None:
-    w = Path("/tmp/skillz-task-abcdefgh/workspace")
-    assert task_tmpdir(w) == Path("/tmp/skillz-task-abcdefgh/tmp")
+    w = Path(tempfile.gettempdir()) / "skillz-task-abcdefgh" / "workspace"
+    assert task_tmpdir(w) == w.parent / "tmp"
     assert len(str(task_tmpdir(w) / "u.sock").encode()) <= SOCKET_PATH_LIMIT
     assert len(str(task_tmpdir(w)).encode()) < len(str(w / "tmp").encode())
 
@@ -109,3 +109,23 @@ def test_task_tmpdir_refuses_a_workspace_without_a_private_parent() -> None:
         _ = task_tmpdir(shared)
     with pytest.raises(ValueError):
         _ = configuration(shared, Path("/usr/bin/codex"), [])
+
+
+@pytest.mark.ac("gh-305:AC-5")
+def test_private_task_tmpdir_refuses_an_unprivate_directory(tmp_path: Path) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "tmp").mkdir(mode=0o755)
+    (shared / "tmp").chmod(0o755)
+    with pytest.raises(ValueError):
+        _ = private_task_tmpdir(shared / "workspace")
+    linked = tmp_path / "linked"
+    linked.mkdir()
+    (linked / "elsewhere").mkdir()
+    (linked / "tmp").symlink_to(linked / "elsewhere")
+    with pytest.raises(ValueError):
+        _ = private_task_tmpdir(linked / "workspace")
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    made = private_task_tmpdir(fresh / "workspace")
+    assert made == fresh / "tmp" and stat.S_IMODE(made.lstat().st_mode) == 0o700

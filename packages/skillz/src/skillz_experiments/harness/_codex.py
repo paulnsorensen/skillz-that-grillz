@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 import time
 from collections.abc import Callable, Mapping
@@ -98,6 +99,16 @@ def task_tmpdir(workspace: Path) -> Path:
     return workspace.parent / "tmp"
 
 
+def private_task_tmpdir(workspace: Path) -> Path:
+    """Create the task TMPDIR and refuse it unless it is a real directory that only this user owns."""
+    tmpdir = task_tmpdir(workspace)
+    tmpdir.mkdir(mode=0o700, exist_ok=True)
+    status = tmpdir.lstat()
+    if not stat.S_ISDIR(status.st_mode) or status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) != 0o700:
+        raise ValueError(f"the Codex task TMPDIR {tmpdir} must be a private directory owned by this user")
+    return tmpdir
+
+
 def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> list[str]:
     tmpdir = task_tmpdir(workspace)
     filesystem = {":root": "deny", ":minimal": "read", ":slash_tmp": "deny",
@@ -166,8 +177,7 @@ class Codex:
         self.authentication_home.cleanup()
 
     def _environment(self, workspace: Path) -> dict[str, str]:
-        tmpdir = task_tmpdir(workspace)
-        tmpdir.mkdir(mode=0o700, exist_ok=True)
+        tmpdir = private_task_tmpdir(workspace)
         return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                 "TMPDIR": str(tmpdir), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
 
