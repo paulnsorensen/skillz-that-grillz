@@ -16,7 +16,8 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._evaluation import witnessed_events
-from skillz_experiments._evaluator import _activation, evaluate  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.evaluation._evaluator import _activation, evaluate  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments._protocol import LEDGER_KEY
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness import _codex
@@ -386,7 +387,7 @@ def test_a_codex_task_stages_no_stub_no_ledger_and_reports_no_witness(tmp_path: 
     adapter = Codex("m", Budget(5, 60, 0), lambda: None)
     try:
         invoked = adapter.invoke("p", candidate(), case)
-        result = evaluate(adapter, adapter, candidate(), case)
+        result = evaluate(adapter, adapter, candidate(), case, checks=CheckMemo())
     finally:
         adapter.close()
     assert seen["source"] == HELPER_SOURCE and seen["names"] == ["x.py"] and seen["ledger"] is False

@@ -197,8 +197,9 @@ class _Provider(FakeProvider):
         self.calls += 1
         return {'environment_hash': 'e1', 'isolation': 'passed'}
 
-    def evaluate(self, candidate: object, case: object, *, holdout: bool = False) -> dict[str, object]:
-        del candidate, case, holdout
+    def evaluate(self, candidate: object, case: object, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del candidate, case, holdout, checks
         self.calls += 1
         raise RuntimeError('stop here')
 

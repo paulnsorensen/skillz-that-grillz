@@ -16,7 +16,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import parse
-from skillz_experiments._evaluator import task_tokens
+from skillz_experiments.evaluation._evaluator import task_tokens
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
@@ -484,7 +484,9 @@ class _Priced(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         improved = "improved" in candidate.files["SKILL.md"]
         gain = self.HOLDOUT_GAIN if holdout and self.HOLDOUT_GAIN is not None else self.GAIN
         result: dict[str, object] = {"score": gain if improved else 0.0, "candidate_hash": candidate.identity,

@@ -13,6 +13,7 @@ from skillz_experiments._contract import Contract, resolve
 from skillz_experiments._evaluation import executed, grade, usage, witnessed_events
 from skillz_experiments._budget import Budget
 from skillz_experiments._protocol import LEDGER_KEY
+from skillz_experiments.evaluation._memo import Checker, CheckMemo
 
 
 @dataclass(frozen=True)
@@ -33,12 +34,11 @@ SIMULATOR_INSTRUCTION = (
     + "has finished. " + _graders.UNTRUSTED)
 
 
-class _Responder(Protocol):
+class _Responder(Checker, Protocol):
     """The members of a harness transport that `evaluate` uses. The harness slice declares the full contract."""
 
     budget: Budget
 
-    def check_candidate(self, candidate: Candidate) -> bool: ...
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
 
@@ -93,10 +93,12 @@ def _prompt(rules: Contract, candidate: Candidate, instruction: str, case: Case)
 
 
 def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate, case: Case, *, holdout: bool = False,
-             simulator: _Responder | None = None) -> dict[str, object]:
+             simulator: _Responder | None = None, checks: CheckMemo) -> dict[str, object]:
+    """Score `candidate` on `case`. `checks` reuses one contract check per candidate identity across a session."""
     rules = resolve(candidate.contract)
-    if not task.check_candidate(candidate):
-        return {"score": 0.0, "status": "candidate-contract-rejected", "loaded": False,
+    passed, rejection = checks.check(task, candidate)
+    if not passed:
+        return {"score": 0.0, "status": "candidate-contract-rejected", "rejection": rejection, "loaded": False,
                 "helper_executed": False, "usage": usage([]), "candidate_hash": candidate.identity,
                 "case_hash": digest(case.identifier)}
     grader = rules.grader(case.kind)

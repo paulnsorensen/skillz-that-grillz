@@ -13,10 +13,10 @@ import skillz_experiments
 
 PACKAGE = Path(skillz_experiments.__file__).parent
 PREFIX = "skillz_experiments"
-SLICES = ("run", "search", "gate", "harness", "wrapper")
+SLICES = ("run", "search", "gate", "harness", "wrapper", "evaluation")
 LEAF_SLICES = ("search", "gate")
 FORBIDDEN_FROM_LEAVES = ("run", "harness")
-REMOVED_FLAT_FILES = ("_workflow.py", "_search.py", "_gate.py", "_harness.py", "_claude.py")
+REMOVED_FLAT_FILES = ("_workflow.py", "_search.py", "_gate.py", "_harness.py", "_claude.py", "_evaluator.py")
 
 
 def _modules() -> list[Path]:
@@ -48,6 +48,7 @@ def _slice_modules(imported: set[str], slice_name: str) -> set[str]:
 
 
 @pytest.mark.ac("gh-223:AC-1")
+@pytest.mark.ac("gh-247:AC-4")
 def test_each_slice_has_a_facade_and_the_flat_modules_are_gone() -> None:
     for slice_name in SLICES:
         assert (PACKAGE / slice_name / "__init__.py").is_file(), slice_name
