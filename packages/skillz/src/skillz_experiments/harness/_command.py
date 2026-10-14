@@ -64,6 +64,10 @@ def _events(result: dict[str, object]) -> list[dict[str, object]]:
 
 def _validate_answer(value: object, schema: dict[str, object]) -> None:
     kind = schema.get("type")
+    if kind == ["string", "null"]:
+        if value is not None and type(value) is not str:
+            raise ValueError("harness answer type does not match the response schema")
+        return
     if kind == "object":
         item = mapping(value)
         properties = mapping(schema["properties"])

@@ -11,9 +11,16 @@ STE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technic
        "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
        "and at most 25 words per descriptive sentence. "
        "Return complete component contents. Do not alter independent checks or permissions.")
-STATUS = (" Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
-          "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%). "
-          "Proposals since the last validation gain: 0.\n")
+ASK = " Add an @hypothesis text of at most 200 characters that states why the change helps, or null. "
+RULES = ("Do not re-introduce a change that broke a case. "
+         + "Do not copy a case id into any component or into @hypothesis. "
+         + "The case-id check rejects a component that names one and drops such a hypothesis.")
+NO_ATTEMPT = ("Attempt history, newest first. "
+              + "Each attempt lists its hypothesis, the train cases it fixed, and the train cases it broke. "
+              + "No attempt yet. " + RULES)
+STATUS = (ASK + NO_ATTEMPT + " Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
+          + "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%). "
+          + "Proposals since the last validation gain: 0.\n")
 START = Progress(spent=0, planned=100, proposal=1)
 PROSE = "Improve only the supplied skill text components. Preserve the helper CLI contract. " + STE + STATUS
 CLI_HEAD = ("Improve the supplied skill text and helper script components. "
@@ -44,8 +51,9 @@ PROSE_CLI = CLI_HEAD + STE + STATUS
 def test_the_prose_request_text_and_schema_are_pinned() -> None:
     prompt, schema = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)
     assert prompt == PROSE + '{"candidate": {"SKILL.md": "t"}, "feedback": {}}'
-    assert schema == {"type": "object", "properties": {"SKILL.md": {"type": "string"}},
-                      "required": ["SKILL.md"], "additionalProperties": False}
+    assert schema == {"type": "object",
+                      "properties": {"SKILL.md": {"type": "string"}, "@hypothesis": {"type": ["string", "null"]}},
+                      "required": ["SKILL.md", "@hypothesis"], "additionalProperties": False}
 
 
 @pytest.mark.ac("gh-238:AC-1")
@@ -56,8 +64,9 @@ def test_the_prose_and_cli_request_text_and_schema_are_pinned() -> None:
     prompt, schema = reflection_request("prose+cli", {name: "t" for name in components}, {}, components, progress=START)
     assert prompt == PROSE_CLI + '{"candidate": {"SKILL.md": "t", "@new-cli": "t"}, "feedback": {}}'
     assert schema == {"type": "object",
-                      "properties": {"SKILL.md": {"type": "string"}, "@new-cli": {"type": "string"}},
-                      "required": components, "additionalProperties": False}
+                      "properties": {"SKILL.md": {"type": "string"}, "@new-cli": {"type": "string"},
+                                     "@hypothesis": {"type": ["string", "null"]}},
+                      "required": [*components, "@hypothesis"], "additionalProperties": False}
 
 
 @pytest.mark.ac("gh-238:AC-2")
@@ -74,8 +83,8 @@ def test_an_answer_that_is_not_an_object_is_refused() -> None:
 
 
 def test_a_matching_answer_is_returned_unchanged_with_its_edit_count() -> None:
-    assert accept_proposal({"SKILL.md": "x"}, ["SKILL.md"], {"SKILL.md": "t"}) == ({"SKILL.md": "x"}, 1)
-    assert accept_proposal({"SKILL.md": "t"}, ["SKILL.md"], {"SKILL.md": "t"}) == ({"SKILL.md": "t"}, 0)
+    assert accept_proposal({"SKILL.md": "x"}, ["SKILL.md"], {"SKILL.md": "t"}) == ({"SKILL.md": "x"}, 1, None, None)
+    assert accept_proposal({"SKILL.md": "t"}, ["SKILL.md"], {"SKILL.md": "t"}) == ({"SKILL.md": "t"}, 0, None, None)
 
 
 def _status(progress: Progress) -> str:
@@ -140,7 +149,7 @@ def test_the_percent_is_exact_integer_math_rounded_down(spent: int, planned: int
 def test_an_edit_is_one_block_of_changed_lines_summed_over_the_components() -> None:
     before = {"a": "one\ntwo\nthree\nfour\nfive\n", "b": "x\ny\n"}
     after = {"a": "ONE\ntwo\nthree\nFOUR\nFIVE\nsix\n", "b": "x\ny\n"}
-    assert accept_proposal(after, ["a", "b"], before) == (after, 2)
+    assert accept_proposal(after, ["a", "b"], before) == (after, 2, None, None)
     assert accept_proposal({"a": "one\ntwo\n", "b": "y\n"}, ["a", "b"], before)[1] == 2
 
 
@@ -149,5 +158,62 @@ def test_an_oversized_proposal_is_still_returned() -> None:
     lines = [f"line {number}" for number in range(20)]
     before = {"SKILL.md": "\n".join(lines)}
     after = {"SKILL.md": "\n".join(f"{line}\nnew" for line in lines)}
-    proposal, edits = accept_proposal(after, ["SKILL.md"], before)
+    proposal, edits, _, _ = accept_proposal(after, ["SKILL.md"], before)
     assert proposal == after and edits > Progress(spent=0, planned=100, proposal=1).budget()
+
+
+def _attempt(index: int, **fields: object) -> dict[str, object]:
+    base: dict[str, object] = {"index": index, "parent": "p", "candidate": f"c{index}", "components": f"d{index}", "hypothesis": f"idea {index}",
+            "fixed": [], "broke": [], "validation_delta": None, "accepted": True, "rejected": None}
+    return base | fields
+
+
+def _section(history: list[dict[str, object]], protect: tuple[str, ...] = ()) -> str:
+    prompt, _ = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START, history=history, protect=protect)
+    return prompt.split("\n", 1)[0].split(ASK, 1)[1].split(" Make at most", 1)[0]
+
+
+@pytest.mark.ac("gh-241:AC-2")
+def test_the_prompt_lists_the_newest_eight_attempts_newest_first_with_hypothesis_fixed_broke_and_the_protect_set() -> None:
+    history = [_attempt(number, fixed=[f"f{number}"], broke=[f"b{number}"], validation_delta=0.25) for number in range(1, 11)]
+    section = _section(history, ("t1", "t2"))
+    order = [section.index(f"Attempt {number}:") for number in range(10, 2, -1)]
+    assert order == sorted(order) and "Attempt 2:" not in section and "Attempt 1:" not in section
+    assert "Attempt 10: hypothesis idea 10; fixed f10; broke b10; validation change +0.250; result admitted." in section
+    assert "Keep these train cases passing, because the current best passes them: t1, t2." in section
+    assert len(section) <= 4000
+
+
+@pytest.mark.ac("gh-241:AC-2")
+def test_the_history_section_stays_within_4000_characters_and_keeps_the_rules() -> None:
+    history = [_attempt(number, hypothesis="h" * 200, fixed=["x" * 30] * 40, rejected="r" * 300) for number in range(1, 9)]
+    section = _section(history, tuple(f"case-{number:03d}" * 5 for number in range(30)))
+    assert len(section) <= 4000 and section.endswith(RULES)
+    assert "Attempt 8:" in section
+
+
+@pytest.mark.ac("gh-241:AC-2")
+def test_the_history_section_and_the_hypothesis_ask_are_pinned_and_obey_the_ste_limits() -> None:
+    assert _section([]) == NO_ATTEMPT
+    for sentence in (ASK + NO_ATTEMPT).split(". "):
+        assert len(sentence.split()) <= 20, sentence
+    assert "the train cases it fixed, and the train cases it broke" in NO_ATTEMPT
+    assert RULES in NO_ATTEMPT and "Do not re-introduce a change that broke a case." in RULES
+    assert "Do not copy a case id into any component or into @hypothesis." in RULES
+
+
+@pytest.mark.ac("gh-241:AC-5")
+def test_an_answer_without_a_hypothesis_is_accepted_with_none() -> None:
+    assert accept_proposal({"SKILL.md": "x"}, ["SKILL.md"], {"SKILL.md": "t"}) == ({"SKILL.md": "x"}, 1, None, None)
+    assert accept_proposal({"SKILL.md": "x", "@hypothesis": None}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == (None, None)
+    assert accept_proposal({"SKILL.md": "x", "@hypothesis": "it helps"}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == ("it helps", None)
+
+
+@pytest.mark.ac("gh-241:AC-7")
+def test_the_schema_requires_a_nullable_hypothesis_without_a_length_limit_and_accept_drops_a_long_one() -> None:
+    _, schema = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)
+    properties = schema["properties"]
+    assert isinstance(properties, dict) and properties["@hypothesis"] == {"type": ["string", "null"]}
+    assert schema["required"] == ["SKILL.md", "@hypothesis"]
+    assert accept_proposal({"SKILL.md": "x", "@hypothesis": "h" * 200}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == ("h" * 200, None)
+    assert accept_proposal({"SKILL.md": "x", "@hypothesis": "h" * 201}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == (None, "hypothesis-too-long")

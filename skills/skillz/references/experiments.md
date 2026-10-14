@@ -512,6 +512,31 @@ The budget is advisory. The runner never rejects a proposal for its size.
 `summary` and `report.json` carry `search.proposal_over_budget`: the count of proposals above the budget stated in their prompt, including proposals that the leakage check later rejects.
 The count shows whether enforcement is worth the wasted reflection calls.
 
+### Attempt history
+
+The runner records one attempt for each reflection call. `search.attempts` holds them, oldest first.
+An attempt has `index`, `parent`, `candidate`, `components`, `hypothesis`, `fixed`, `broke`, `validation_delta`, `accepted`, and `rejected`.
+`parent` and `candidate` are candidate identities. `components` is a digest of the proposed component texts. No attempt holds case text or component text.
+`fixed` lists the train case ids that the proposal scores higher than its parent. `broke` lists the ids that it scores lower.
+The lists cover the train cases that the proposer saw in its feedback. For a case with more than one outcome, the newest outcome that did not fail counts.
+`validation_delta` is the validation mean of the candidate minus the validation mean of its parent.
+An attempt with no train score yet has empty lists and a null `validation_delta`. The runner fills these fields from later outcomes.
+`accepted` is true when the proposal produced a candidate. `rejected` holds the reason when it did not:
+`reflection-shape`, the leakage or build reason of the host check, or `proposal-build-failed`. A rejected attempt has a null `candidate`.
+The runner rebuilds the attempts from the recorded outcomes. A resume keeps them and continues the index.
+A run that started before this record is not supported.
+
+The reflection prompt lists the newest 8 attempts, newest first, within 4000 characters.
+It also lists the protect set: the train case ids on which the best validated candidate scores 1.0.
+The prompt tells the proposer not to re-introduce a change that broke a case.
+It also tells the proposer not to copy a shown case id into a component or into `@hypothesis`.
+
+The reflection answer carries an `@hypothesis` key. Its value is a text of at most 200 characters, or null.
+A missing or null value is stored as null. A hypothesis over 200 characters is dropped as `hypothesis-too-long`.
+The leakage check reads the hypothesis in its own call. A leak drops the hypothesis and records the rule. The proposal stays admitted.
+The key `@hypothesis` never enters a component. It never counts in `leakage_rejections`.
+`search.text_dropped` counts the dropped hypotheses for each rule.
+
 ### Stall stop
 
 The search stops early when its proposals stop improving the validation mean.

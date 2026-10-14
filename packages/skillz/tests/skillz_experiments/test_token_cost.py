@@ -357,6 +357,11 @@ TODAY_PROSE = ("Improve only the supplied skill text components. Preserve the he
                "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
                "and at most 25 words per descriptive sentence. "
                "Return complete component contents. Do not alter independent checks or permissions.")
+HYPOTHESIS_ASK = (" Add an @hypothesis text of at most 200 characters that states why the change helps, or null. "
+                  + "Attempt history, newest first. Each attempt lists its hypothesis, the train cases it fixed, "
+                  + "and the train cases it broke. No attempt yet. Do not re-introduce a change that broke a case. "
+                  + "Do not copy a case id into any component or into @hypothesis. "
+                  + "The case-id check rejects a component that names one and drops such a hypothesis.")
 STATUS = (" Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
           "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%). "
           "Proposals since the last validation gain: 0.\n")
@@ -366,10 +371,10 @@ START = Progress(spent=0, planned=100, proposal=1)
 def test_the_reflection_prompt_is_unchanged_without_a_token_field_and_gains_one_sentence_with_one() -> None:
     body = json.dumps({"candidate": {"SKILL.md": "x"}, "feedback": {}}, default=str)
     plain, schema = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START)
-    assert plain == TODAY_PROSE + STATUS + body
+    assert plain == TODAY_PROSE + HYPOTHESIS_ASK + STATUS + body
     assert reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START, cheaper=False) == (plain, schema)
     cheaper, same_schema = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START, cheaper=True)
-    assert cheaper == TODAY_PROSE + SENTENCE + STATUS + body
+    assert cheaper == TODAY_PROSE + SENTENCE + HYPOTHESIS_ASK + STATUS + body
     assert same_schema == schema
 
 
