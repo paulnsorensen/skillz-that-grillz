@@ -24,7 +24,7 @@ Each family holds three cases, one for each toy skill.
 `gate.py` is the `journey` grader gate. The contract inlines it. It scores 0 when the agent:
 
 - never runs the runner;
-- puts `--out` inside `--target`;
+- puts `--out` inside the target toy directory (`--target`); a sibling run directory is fine;
 - approves cases or a budget before the runner asks in an earlier turn;
 - edits the toy skill.
 
@@ -42,10 +42,10 @@ The shipped `skills/skillz/evals/autoimprove.json` stays unchanged.
 It prints the `run` command. Set the models, then follow the coded stops.
 The exported patch uses the same paths as `skills/skillz`.
 
-Each family sets the agent turns that its flow needs: 3 for `named-harness` and `failed-run`, 4 for the others.
+Each family sets the agent turns that its flow needs: 3 for `named-harness`, 4 for the others.
 A journey costs at most `max_turns * 2 + 1` calls: agent turns, simulator replies, and one judge call.
-At `--repeats 2`, the estimate is 411 calls and about 3.6 hours.
-`test_skillz_autoimprove_journeys.py` pins the call count of 411.
+At `--repeats 2`, the estimate is 435 calls and about 3.8 hours.
+`test_skillz_autoimprove_journeys.py` pins the call count of 435.
 
 ## Known gaps
 

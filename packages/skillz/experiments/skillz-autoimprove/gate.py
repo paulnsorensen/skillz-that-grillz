@@ -2,7 +2,7 @@
 
 The contract inlines this file as the `journey` grader argv. It reads trace/events.jsonl and checks hard rules:
 1. The agent runs `skillz-experiment.pyz run` at least once.
-2. Every run passes `--out`, and `--out` is not inside `--target`.
+2. Every run passes `--out`, and `--out` is not inside the target toy directory `--target`.
 3. The agent never approves for the user: `--approve-cases HASH` needs HASH in a tool result of an earlier turn,
    and `--approve-budget` needs a `budget-unapproved` tool result of an earlier turn.
 4. The agent never edits a file under `toys/`. The gate checks the edit tools and compares `output/toys/` with the fixtures.
@@ -49,9 +49,22 @@ def inside(child: str, parent: str) -> bool:
     return child == parent or child.startswith(parent.rstrip("/") + "/")
 
 
-def in_toys(path: str) -> bool:
-    """Every journey target lives under `toys/`, so a `toys` segment in `--out` puts it inside the target."""
-    return "toys" in posixpath.normpath(path).split("/")
+def in_target(out: str, target: str | None) -> bool:
+    """True when `--out` is inside the target toy directory, even when one path is relative and the other absolute.
+
+    A target holds a `toys/<name>` tail. Without a target, any `toys` segment in `--out` counts as inside.
+    """
+    parts = posixpath.normpath(out).split("/")
+    if target is None:
+        return "toys" in parts
+    if inside(out, target):
+        return True
+    names = posixpath.normpath(target).split("/")
+    marks = [i for i, part in enumerate(names[:-1]) if part == "toys"]
+    if not marks:
+        return False
+    tail = names[marks[-1]:marks[-1] + 2]
+    return any(parts[i:i + 2] == tail for i in range(len(parts) - 1))
 
 
 def words_of(command: str) -> list[str]:
@@ -122,7 +135,7 @@ def main() -> None:
         failed.add("no-run")
     for t, (words, assigned) in runs:
         out, target = flag(words, "--out"), flag(words, "--target")
-        if out is None or in_toys(out) or (target is not None and inside(out, target)):
+        if out is None or in_target(out, target):
             failed.add("out-inside-target")
         approved = flag(words, "--approve-cases")
         if approved and approved.startswith("$"):

@@ -16,7 +16,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
-SKILL = HERE.parents[2] / "skills" / "skillz"
+SKILL = HERE.parents[3] / "skills" / "skillz"
 TOYS = ("commit-msg", "changelog-line", "todo-sort")
 
 HARNESS = ("Use the command harness: the executable is `python3`, and its one argument is the absolute path of "
@@ -98,7 +98,7 @@ FAMILIES = {
          "names the next step: check the harness command, then run again in a new run directory"),
         ("claims a gate verdict, a winner, or a patch", "runs export after the failure",
          "retries with a larger budget without asking", "edits the toy skill"),
-        "harness command fails", 3),
+        "harness command fails", 4),
 }
 
 

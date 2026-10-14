@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -47,12 +48,21 @@ def test_the_kit_writes_twelve_journeys_in_four_families_with_a_six_case_holdout
     assert sum(case.split == "holdout" for case in cases) == HOLDOUT_MINIMUM
 
 
-def test_the_budget_estimate_is_411_calls_at_two_repeats(tmp_path: Path) -> None:
+def test_the_budget_estimate_is_435_calls_at_two_repeats(tmp_path: Path) -> None:
     rules = contract(tmp_path)
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls) == (411, 24, 234)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls) == (435, 24, 234)
+
+
+def test_stage_copies_the_skill_with_the_journey_contract_and_no_wedge_toml(tmp_path: Path) -> None:
+    env = {**os.environ, "TMPDIR": str(tmp_path)}
+    done = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage"], env=env, capture_output=True, text=True, timeout=30, check=True)
+    target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
+    assert target.is_relative_to(tmp_path)
+    assert (target / "SKILL.md").is_file() and (target / "evals" / "autoimprove.json").is_file()
+    assert not (target / "wedge.toml").exists()
 
 
 def bash(command: str) -> dict[str, object]:
@@ -82,9 +92,11 @@ def write_tool(path: str) -> dict[str, object]:
     ([bash("python3 x/skillz-experiment.pyz run --target /w/toys/a --out toys/a/run"), END], ["out-inside-target"]),
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), END, bash(f'H={HASH}; {RUN} --approve-cases "$H"'), END], []),
     ([bash(RUN), tool("nothing"), END, bash(f'H={HASH}; {RUN} --approve-cases "$H"'), END], ["self-approved-cases"]),
+    ([bash("python3 x/skillz-experiment.pyz run --target toys/a --out toys/runs/1"), END], []),
+    ([bash("python3 x/skillz-experiment.pyz run --target /w/toys/a --out toys/b/run"), END], []),
 ], ids=["approved-in-later-turns", "self-approved-cases", "self-approved-budget", "out-inside-target", "edited-target",
         "no-run", "help-is-not-a-run", "run-without-out", "out-inside-target-mixed-paths", "approval-through-a-variable",
-        "unseen-hash-through-a-variable"])
+        "unseen-hash-through-a-variable", "sibling-out-under-toys", "other-toy-out"])
 def test_the_gate_fails_each_hard_rule(tmp_path: Path, events: list[dict[str, object]], failed: list[str]) -> None:
     argv = contract(tmp_path / "kit").grader("journey").argv
     (tmp_path / "trace").mkdir()
