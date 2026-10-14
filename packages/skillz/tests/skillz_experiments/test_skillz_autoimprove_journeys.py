@@ -91,12 +91,13 @@ def write_tool(path: str) -> dict[str, object]:
     ([bash("python3 x/skillz-experiment.pyz run --target toys/a"), END], ["out-inside-target"]),
     ([bash("python3 x/skillz-experiment.pyz run --target /w/toys/a --out toys/a/run"), END], ["out-inside-target"]),
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), END, bash(f'H={HASH}; {RUN} --approve-cases "$H"'), END], []),
+    ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), END, bash(f"{RUN} --approve-cases ab"), END], ["self-approved-cases"]),
     ([bash(RUN), tool("nothing"), END, bash(f'H={HASH}; {RUN} --approve-cases "$H"'), END], ["self-approved-cases"]),
     ([bash("python3 x/skillz-experiment.pyz run --target toys/a --out toys/runs/1"), END], []),
     ([bash("python3 x/skillz-experiment.pyz run --target /w/toys/a --out toys/b/run"), END], []),
 ], ids=["approved-in-later-turns", "self-approved-cases", "self-approved-budget", "out-inside-target", "edited-target",
         "no-run", "help-is-not-a-run", "run-without-out", "out-inside-target-mixed-paths", "approval-through-a-variable",
-        "unseen-hash-through-a-variable", "sibling-out-under-toys", "other-toy-out"])
+        "truncated-hash", "unseen-hash-through-a-variable", "sibling-out-under-toys", "other-toy-out"])
 def test_the_gate_fails_each_hard_rule(tmp_path: Path, events: list[dict[str, object]], failed: list[str]) -> None:
     argv = contract(tmp_path / "kit").grader("journey").argv
     (tmp_path / "trace").mkdir()
