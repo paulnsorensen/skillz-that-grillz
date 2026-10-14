@@ -16,17 +16,19 @@ from pathlib import Path
 from typing import cast
 
 from skillz_experiments._protocol import USAGE_KEYS, VERSION
-from skillz_experiments.harness._codex import configuration
+from skillz_experiments.harness._codex import configuration, task_tmpdir
 
 
 def _environment(workspace: Path, codex_home: Path) -> dict[str, str]:
-    return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"), "TMPDIR": str(workspace / "tmp"),
+    tmpdir = task_tmpdir(workspace)
+    tmpdir.mkdir(mode=0o700, exist_ok=True)
+    return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"), "TMPDIR": str(tmpdir),
             "LANG": "C.UTF-8", "CODEX_HOME": str(codex_home)}
 
 
 def _sandbox(request: dict[str, object], codex: Path, codex_home: Path) -> dict[str, object]:
     workspace = Path(str(request["workspace"]))
-    safe = ["PATH=/usr/bin:/bin", f"HOME={workspace / 'home'}", f"TMPDIR={workspace / 'tmp'}", "LANG=C.UTF-8"]
+    safe = ["PATH=/usr/bin:/bin", f"HOME={workspace / 'home'}", f"TMPDIR={task_tmpdir(workspace)}", "LANG=C.UTF-8"]
     command = [str(codex), "sandbox", *configuration(workspace, codex, []), "-P", "skillz", "--include-managed-config",
                "-C", str(workspace), "--", "/usr/bin/env", "-i", *safe, *cast(list[str], request["argv"])]
     result = subprocess.run(command, cwd=workspace, env=_environment(workspace, codex_home), capture_output=True,
