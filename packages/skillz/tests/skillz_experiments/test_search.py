@@ -12,7 +12,7 @@ from skillz_experiments.search import Edit, search
 
 
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
-def test_search_runs_several_pareto_iterations_and_picks_by_validation_mean() -> None:
+def test_search_runs_several_pareto_iterations_and_validates_only_gated_candidates() -> None:
     train_scores = {"v0": 0.2, "bad": 0.0, "mid": 0.5, "top": 0.6, "late": 0.9}
     validation_scores = {"v0": 0.2, "mid": 0.7, "top": 0.8, "late": 0.3}
     proposals = iter(["bad", "mid", "top", "late"])
