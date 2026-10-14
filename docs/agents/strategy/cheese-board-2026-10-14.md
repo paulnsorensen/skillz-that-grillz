@@ -8,6 +8,12 @@ Report: `.cheese/notes/cheese-board-2026-10-14.md` (local, git-ignored). Workflo
 
 `--val-policy` (#245) and `--merge` (#246) join the D-6 run compatibility fingerprint. Cross-run attempt history (#243) never mixes runs with a different validation policy or merge setting. IN-12 and IN-14 override D-6 and stay in the spec lane. IN-21 answers only how `compare()` reads a stored run that has no `val_policy` or `merge` field. This decision is final.
 
+
+
+IN-6 (#242) keeps the issue's vetoable decisions D-2 and D-4. D-2: the proposer can return an optional `@notes` string (at most 500 characters), the run appends it to `record["search"]["journal"]`, and the prompt shows the newest notes up to 2000 characters. D-4: the leakage check also runs on `@notes` text, and a leaking note is dropped and counted in `record["search"]["text_dropped"]`. The IN-6 spec waits for IN-1 (#241) to merge, because it reads the final `search/_history.py` API.
+
+IN-5 (#272) reads its AC-1 to AC-19 text from the cheese spec `skillz-pragmatic-autoimprove.md` (§Acceptance). The #311 assertion is `workspace.parents[1] == tempfile.gettempdir()`, from PR #289.
+
 ## Themes
 
 - **TH-1 A search that learns**: Finish the W4 memory chain on one stable history seam, then add the W5 mechanics on top, so the search stops repeating rejected edits.

@@ -6,7 +6,7 @@
 - [ideas/](./ideas/index.md) — ideas
 - [research/](./research/index.md) — research
 - [sources/](./sources/index.md) — sources
-- [strategy/](./strategy/index.md)
+- [strategy/](./strategy/index.md) — strategy
 - [agent-friendly-cli-design](./agent-friendly-cli-design.md) — Agent-friendly CLI design
 - [log](./log.md) — Ingest Log
 - [parallel-quality-gate](./parallel-quality-gate.md) — Parallel quality gate
