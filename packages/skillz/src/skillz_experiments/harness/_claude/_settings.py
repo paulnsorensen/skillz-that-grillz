@@ -34,7 +34,8 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
     Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
     `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter, which cannot start where the host blocks
-    a nested user namespace; the live preflight then probes a host socket.
+    a nested user namespace; the live preflight then probes a host socket. The `Bash` allow rule stops the approval
+    prompt, which `-p` turns into a denial, so the sandbox alone confines each command. The live preflight proves it.
     """
     runtime = [*RUNTIME_READ, *(MACOS_READ if sys.platform == "darwin" else ())]
     temporary = unique([tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())])
@@ -48,7 +49,7 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
                     "filesystem": {"denyRead": ["/"], "denyWrite": protected,
                                    "allowRead": unique([str(workspace), str(workspace.resolve()), *runtime])}},
         "disableBundledSkills": True, "disableAllHooks": True,
-        "permissions": {"allow": ["Skill"],
+        "permissions": {"allow": ["Skill", "Bash"],
                         "deny": [*[f"Read(/{root}/**)" for root in unique([*PERMISSION_DENY_ROOTS, str(Path.home()), *hidden])],
                                  *[f"Read(/{root}/{CONFIG_PREFIX}*/**)" for root in temporary]]}}
     if overrides:
