@@ -35,7 +35,8 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import Denylist, Edit, overshoot
+from skillz_experiments.search import HYPOTHESIS, Denylist, Edit, overshoot
+from skillz_experiments.search import is_reflection as _is_reflection
 from skillz_experiments.search import Progress, Signal, assess
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
@@ -568,7 +569,7 @@ class Session:
             stall = self._stall()
             progress = Progress(spent=len(self._search_outcomes()), planned=self._search_ceiling(),
                                 proposal=1 + len(self._reflections()), stalled=stall.streak, advice=stall.advice)
-            history = build_attempts(self.outcomes, self._seed_ref())
+            history = build_attempts(self.outcomes, self._seed_ref(), self._validation_ids())
             protect = protected_cases(self.outcomes, self._best_identity())
         prompt, schema = reflection_request(self.edit, candidate, feedback, components, progress=progress,
                                             cheaper=self.statistics.token_rule, history=history, protect=protect)
@@ -588,7 +589,7 @@ class Session:
             refusal = error
         if hypothesis is not None:
             # The hypothesis never enters the components, so a leak drops the hypothesis and keeps the proposal.
-            leak = check_leakage(self._denylist, {}, {"@hypothesis": hypothesis})
+            leak = check_leakage(self._denylist, {}, {HYPOTHESIS: hypothesis})
             if leak is not None:
                 hypothesis, hypothesis_dropped = None, leak.rule
         with self.lock:
@@ -629,10 +630,12 @@ class Session:
         """Return the digest of the seed component texts and the seed identity. The digest names the parent of a first proposal."""
         return digest({name: self.seed.files[name] for name in self.seed.editable}), self.seed.identity
 
+    def _validation_ids(self) -> list[str]:
+        return [case.identifier for case in self.cases_for("validation")]
+
     def _best_identity(self) -> str:
-        """Return the identity of the best validated candidate, or the seed when none is kept."""
-        kept = self.record.get("best_validated")
-        return text_field(cast(dict[str, object], kept), "identity") if isinstance(kept, dict) else self.seed.identity
+        """Return the identity of the best validated candidate, or the seed when the seed is best."""
+        return self._best_validated(self._validation_ids()).identity
 
     def _text_dropped(self) -> dict[str, int]:
         """Return the count of each rule that dropped a hypothesis. The recorded outcomes hold it, so a resume keeps it."""
@@ -768,7 +771,7 @@ class Session:
         self.record["search"] = (cast(dict[str, object], earlier) if isinstance(earlier, dict) else {}) | {"reason": reason, "retained_seed": winner.identity == self.seed.identity,
                                  "leakage_rejections": rejections,
                                  "proposal_over_budget": self._over_budget(),
-                                 "attempts": build_attempts(self.outcomes, self._seed_ref()),
+                                 "attempts": build_attempts(self.outcomes, self._seed_ref(), self._validation_ids()),
                                  "text_dropped": self._text_dropped()}
         self.record["phase"] = "searched"
         self.checkpoint()
@@ -938,10 +941,6 @@ def _observation(window: Sequence[Mapping[str, object]], identity: object, valid
     if set(scores) != validation:
         return 0.0
     return max(0.0, math.fsum(scores.values()) / len(scores) - best)
-
-
-def _is_reflection(item: Mapping[str, object]) -> bool:
-    return item.get("arm") == "search" and item.get("split") == "reflection"
 
 
 def _is_search_validation(item: Mapping[str, object]) -> bool:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from skillz_experiments.search import attempts, protected
+from skillz_experiments.search._history import render
 
 SEED = ("digest-seed", "seed-id")
 
@@ -30,7 +31,7 @@ def test_an_evaluated_proposal_records_fixed_and_broke_and_a_duplicate_resolves_
         _score("child-1", "train", "b", 0.0), _score("child-1", "train", "c", 0.5),
         _score("child-1", "validation", "v", 0.6),
     ]
-    (attempt,) = attempts(outcomes, SEED)
+    (attempt,) = attempts(outcomes, SEED, ["v"])
     assert attempt["fixed"] == ["a"] and attempt["broke"] == ["b"]
     assert attempt == {"index": 1, "parent": "seed-id", "candidate": "child-1", "components": "digest-1",
                        "hypothesis": "say it shorter", "fixed": ["a"], "broke": ["b"],
@@ -41,7 +42,7 @@ def test_an_evaluated_proposal_records_fixed_and_broke_and_a_duplicate_resolves_
 def test_an_unscored_child_has_empty_lists_and_a_null_validation_delta() -> None:
     outcomes = [_score("seed-id", "train", "a", 0.5), _score("seed-id", "validation", "v", 0.4), _reflection(),
                 _score("child-1", "train", "a", 0.0, status="evaluation-failed")]
-    (attempt,) = attempts(outcomes, SEED)
+    (attempt,) = attempts(outcomes, SEED, ["v"])
     assert attempt["fixed"] == [] and attempt["broke"] == [] and attempt["validation_delta"] is None
 
 
@@ -74,3 +75,41 @@ def test_the_protect_set_holds_the_train_cases_with_a_full_newest_score() -> Non
                 _score("best", "train", "c", 1.0), _score("best", "train", "c", 0.0, status="evaluation-failed"),
                 _score("best", "validation", "v", 1.0), _score("other", "train", "d", 1.0)]
     assert protected(outcomes, "best") == ["a", "c"]
+
+
+@pytest.mark.ac("gh-241:AC-1")
+def test_a_partial_validation_set_gives_no_validation_delta() -> None:
+    outcomes = [_score("seed-id", "validation", "v1", 0.4), _score("seed-id", "validation", "v2", 0.4), _reflection(),
+                _score("child-1", "validation", "v1", 1.0)]
+    (attempt,) = attempts(outcomes, SEED, ["v1", "v2"])
+    assert attempt["validation_delta"] is None
+
+
+@pytest.mark.ac("gh-241:AC-1")
+def test_a_failed_validation_case_counts_as_zero_and_scores_are_clamped() -> None:
+    outcomes = [_score("seed-id", "validation", "v1", 0.5), _score("seed-id", "validation", "v2", 0.5), _reflection(),
+                _score("child-1", "validation", "v1", 1.0), _score("child-1", "validation", "v2", 0.9, status="evaluation-failed")]
+    (attempt,) = attempts(outcomes, SEED, ["v1", "v2"])
+    assert attempt["validation_delta"] == pytest.approx(0.5 - 0.5)
+    outcomes = [_score("seed-id", "validation", "v1", 0.0), _reflection(), _score("child-1", "validation", "v1", 7.0)]
+    assert attempts(outcomes, SEED, ["v1"])[0]["validation_delta"] == pytest.approx(1.0)
+
+
+def test_a_reflection_with_neither_candidate_nor_rejection_prints_result_unknown() -> None:
+    (attempt,) = attempts([_reflection(proposed=None)], SEED)
+    text = render([attempt])
+    assert "result unknown." in text and "result admitted" not in text
+    assert "result admitted." in render([{"index": 1, "candidate": "c", "rejected": None}])
+
+
+def test_a_history_that_fits_no_line_says_how_many_attempts_it_omitted() -> None:
+    history: list[dict[str, object]] = [{"index": 1, "candidate": "c", "rejected": None, "fixed": [], "broke": []}]
+    text = render(history, [f"{n:03d}" + "p" * 137 for n in range(30)])
+    assert "1 earlier attempts omitted for length." in text and "No attempt yet." not in text
+    assert "No attempt yet." in render([])
+
+
+def test_a_case_id_with_a_newline_stays_on_one_line_of_the_history() -> None:
+    history: list[dict[str, object]] = [{"index": 1, "candidate": "c", "rejected": None, "fixed": ["a\nb"], "broke": ["c\r\nd"]}]
+    text = render(history, ["p\nq"])
+    assert "\n" not in text and "fixed a b;" in text and "broke c d;" in text and "p q." in text

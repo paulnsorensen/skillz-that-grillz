@@ -1428,6 +1428,11 @@ def _attempts(result: dict[str, object]) -> list[dict[str, object]]:
     return cast(list[dict[str, object]], cast(dict[str, object], result["search"])["attempts"])
 
 
+def _recorded_attempts(out: Path) -> list[dict[str, object]]:
+    """Return the full attempts of run.json. The exported summary redacts the hypothesis and uncoded rejection text."""
+    return cast(list[dict[str, object]], cast(dict[str, object], read(out / "run.json")["search"])["attempts"])
+
+
 def _reflections_of(out: Path) -> list[dict[str, object]]:
     return [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if item.get("split") == "reflection"]
 
@@ -1453,9 +1458,11 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
     assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped"}
-    assert cast(dict[str, object], read(out / "run.json")["search"]) == search
-    attempts = _attempts(result)
-    assert [item["index"] for item in attempts] == list(range(1, state.proposals + 1))
+    saved = cast(dict[str, object], read(out / "run.json")["search"])
+    assert set(saved) == set(search) and {key: saved[key] for key in saved if key != "attempts"} == {
+        key: search[key] for key in search if key != "attempts"}
+    attempts = _recorded_attempts(out)
+    assert [item["index"] for item in _attempts(result)] == [item["index"] for item in attempts] == list(range(1, state.proposals + 1))
     assert attempts[0]["parent"] == read(out / "run.json")["seed_hash"] and attempts[0]["candidate"] is not None
     assert all(item["hypothesis"] is None and item["rejected"] is None for item in attempts)
 
@@ -1493,7 +1500,7 @@ def test_a_resumed_run_keeps_earlier_attempts_continues_the_index_and_keeps_the_
     before = _reflections_of(out)
     assert len(before) == 2 and before[0]["hypothesis_dropped"] == "case-id"
     result = run(target, out, MODEL, live=True, factory=state.factory)
-    attempts = _attempts(result)
+    attempts = _recorded_attempts(out)
     assert len(attempts) > 2 and [item["index"] for item in attempts] == list(range(1, len(attempts) + 1))
     assert attempts[0]["hypothesis"] is None and attempts[0]["candidate"] == before[0]["proposed"]
     assert attempts[1]["hypothesis"] == "idea 2"
@@ -1570,3 +1577,72 @@ def test_a_proposal_build_failure_records_its_attempt_and_the_attempt_survives_t
     first = _attempts(result)[0]
     assert first["index"] == 1 and first["candidate"] is None and first["rejected"] == "proposal-build-failed"
     assert len(_attempts(result)) > 1
+
+
+@pytest.mark.ac("gh-241:AC-1")
+def test_a_real_run_records_fixed_and_broke_inside_the_minibatch_and_a_later_parent_is_an_earlier_candidate(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    attempts, reflections = _recorded_attempts(out), _reflections_of(out)
+    train = {str(case["id"]) for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"]) if case["split"] == "train"}
+    listed = [(item, cast(list[str], reflection["minibatch"])) for item, reflection in zip(attempts, reflections)
+              if item["fixed"] or item["broke"]]
+    assert listed, "no attempt holds a fixed or broke id"
+    for item, minibatch in listed:
+        ids = cast(list[str], item["fixed"]) + cast(list[str], item["broke"])
+        assert set(ids) <= set(minibatch) and set(ids) <= train
+    earlier = [item["candidate"] for item in attempts if item["candidate"] is not None]
+    assert any(item["parent"] in earlier[:number] for number, item in enumerate(attempts) if item["parent"] is not None)
+
+
+def test_the_protect_set_follows_the_seed_when_a_validated_candidate_is_worse_than_the_seed(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    real = Provider.evaluate
+
+    def evaluate(self: Provider, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        result = real(self, candidate, case, holdout=holdout, checks=checks)
+        if holdout:
+            return result
+        improved, even = "improved" in candidate.files["SKILL.md"], sum(map(ord, case.identifier)) % 2 == 0
+        if case.split == "train":
+            result["score"] = 1.0 if even != improved else 0.5
+        elif case.split == "validation":
+            result["score"] = 0.5 if improved else 1.0
+        return result
+
+    monkeypatch.setattr(Provider, "evaluate", evaluate)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    marker = "Keep these train cases passing, because the current best passes them: "
+    kept = [prompt.split("\n", 1)[0] for prompt in state.prompts if marker in prompt.split("\n", 1)[0]]
+    assert len(kept) >= 2
+    for head in kept:
+        names = head.split(marker, 1)[1].split(".", 1)[0].split(", ")
+        assert names and all(sum(map(ord, name)) % 2 == 0 for name in names)
+
+
+def test_the_export_summary_redacts_the_hypothesis_and_uncoded_rejection_text_but_run_json_keeps_them(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.hypothesis_of = lambda number: f"hypothesis-sentinel {number}"
+    real = Candidate.changed
+
+    def failing(self: Candidate, components: dict[str, str]) -> Candidate:
+        if any("improved" in text for text in components.values()):
+            raise ValueError("uncoded-sentinel text")
+        return real(self, components)
+
+    monkeypatch.setattr(Candidate, "changed", failing)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    saved = (out / "run.json").read_text(encoding="utf-8")
+    assert "hypothesis-sentinel" in saved and "uncoded-sentinel text" in saved
+    report = (Path(cast(str, export(out, tmp_path / "export")["export"])) / "report.json").read_text(encoding="utf-8")
+    assert "hypothesis-sentinel" not in report and "uncoded-sentinel" not in report
+    assert "hypothesis-sentinel" not in json.dumps(result) and "uncoded-sentinel" not in json.dumps(result)
+    rows = _attempts(result)
+    assert rows and all("hypothesis" not in row and row["rejected"] == "rejected" for row in rows)

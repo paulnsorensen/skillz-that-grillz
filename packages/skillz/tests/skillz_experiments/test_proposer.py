@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from skillz_experiments._candidate import is_skill_file
+from skillz_experiments.harness._command import _validate_answer  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.search import Progress, assess
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
@@ -207,6 +209,25 @@ def test_an_answer_without_a_hypothesis_is_accepted_with_none() -> None:
     assert accept_proposal({"SKILL.md": "x"}, ["SKILL.md"], {"SKILL.md": "t"}) == ({"SKILL.md": "x"}, 1, None, None)
     assert accept_proposal({"SKILL.md": "x", "@hypothesis": None}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == (None, None)
     assert accept_proposal({"SKILL.md": "x", "@hypothesis": "it helps"}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == ("it helps", None)
+
+
+@pytest.mark.ac("gh-241:AC-5")
+def test_a_command_answer_without_a_hypothesis_passes_the_schema_check_and_records_none() -> None:
+    _, schema = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)
+    answer = {"SKILL.md": "x"}
+    _validate_answer(answer, schema)
+    assert accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})[2:] == (None, None)
+    with pytest.raises(ValueError):
+        _validate_answer({"@hypothesis": None}, schema)
+
+
+def test_a_hypothesis_of_another_type_than_text_is_dropped_with_its_rule() -> None:
+    for value in (7, ["a"], {"a": "b"}):
+        assert accept_proposal({"SKILL.md": "x", "@hypothesis": value}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == (None, "hypothesis-not-text")
+
+
+def test_the_hypothesis_name_is_not_an_editable_skill_file() -> None:
+    assert not is_skill_file("@hypothesis") and is_skill_file("SKILL.md")
 
 
 @pytest.mark.ac("gh-241:AC-7")

@@ -19,7 +19,7 @@ from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search._history import LIMIT, SHOWN, render
 from skillz_experiments._cases import Case
-from test_run_search import ANSWER, FIXTURE, MODEL, SPAN, Provider, _attempts, _leak_start, _reflections_of, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import ANSWER, FIXTURE, MODEL, SPAN, Provider, _attempts, _leak_start, _recorded_attempts, _reflections_of, _start  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -51,10 +51,11 @@ def test_accept_paddedHypothesis_countsLengthAfterStrip() -> None:
 
 
 @pytest.mark.parametrize("value", [7, 1.5, True, ["a"], {"a": "b"}, "   "])
-def test_accept_nonStringHypothesis_isStoredAsNullAndDoesNotRefuseTheProposal(value: object) -> None:
+def test_accept_nonStringHypothesis_isStoredAsNullWithItsRuleAndDoesNotRefuseTheProposal(value: object) -> None:
     answer = {"SKILL.md": "t2", "@hypothesis": value}
     texts, _, hypothesis, dropped = accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})
-    assert texts == {"SKILL.md": "t2"} and hypothesis is None and dropped is None
+    assert texts == {"SKILL.md": "t2"} and hypothesis is None
+    assert dropped == (None if isinstance(value, str) else "hypothesis-not-text")
 
 
 def test_accept_hypothesisKeyDoesNotHideAMissingComponent() -> None:
@@ -81,9 +82,11 @@ def test_validateAnswer_nonTextHypothesis_isRejected(value: object) -> None:
         _validate_answer({"SKILL.md": "t", "@hypothesis": value}, SCHEMA)
 
 
-def test_validateAnswer_missingRequiredKeyOrExtraKey_isRejected() -> None:
-    with pytest.raises(ValueError):
-        _validate_answer({"SKILL.md": "t"}, SCHEMA)
+def test_validateAnswer_missingNullableKey_isAccepted() -> None:
+    _validate_answer({"SKILL.md": "t"}, SCHEMA)
+
+
+def test_validateAnswer_missingNonNullableKeyOrExtraKey_isRejected() -> None:
     with pytest.raises(ValueError):
         _validate_answer({"@hypothesis": None}, SCHEMA)
     with pytest.raises(ValueError):
@@ -94,7 +97,7 @@ def test_validateAnswer_missingRequiredKeyOrExtraKey_isRejected() -> None:
 
 # Attack 4: duplicate outcomes.
 
-def test_attempts_newestOutcomeFailed_usesOlderScoredOutcomeForTrainAndValidation() -> None:
+def test_attempts_newestOutcomeFailed_usesOlderScoredOutcomeForTrainAndCountsZeroForValidation() -> None:
     outcomes = [
         _score("seed-id", "train", "a", 0.5), _score("seed-id", "train", "a", 0.0, status="evaluation-failed"),
         _score("seed-id", "validation", "v1", 0.2), _score("seed-id", "validation", "v2", 0.4),
@@ -103,10 +106,10 @@ def test_attempts_newestOutcomeFailed_usesOlderScoredOutcomeForTrainAndValidatio
         _score("child-1", "validation", "v1", 0.6), _score("child-1", "validation", "v1", 0.0, status="evaluation-failed"),
         _score("child-1", "validation", "v2", 0.8), _score("child-1", "validation", "v2", 0.9),
     ]
-    (attempt,) = attempts(outcomes, SEED)
+    (attempt,) = attempts(outcomes, SEED, ["v1", "v2"])
     assert attempt["fixed"] == ["a"] and attempt["broke"] == []
-    # parent mean (0.2 + 0.4) / 2, child mean (0.6 + 0.9) / 2
-    assert attempt["validation_delta"] == pytest.approx(0.75 - 0.3)
+    # parent mean (0.2 + 0.4) / 2, child mean (0.0 for the failed v1 + 0.9) / 2
+    assert attempt["validation_delta"] == pytest.approx(0.45 - 0.3)
 
 
 def test_attempts_everyOutcomeOfTheCaseFailed_isUnscored() -> None:
@@ -225,7 +228,7 @@ def test_session_overlongHypothesis_isDroppedWithItsRuleAndTheProposalStillAdmit
     search = cast(dict[str, object], result["search"])
     assert state.proposals >= 2
     assert search["text_dropped"] == {"hypothesis-too-long": state.proposals - 1}
-    first, *rest = _attempts(result)
+    first, *rest = _recorded_attempts(out)
     assert first["hypothesis"] == "w" * 200 and all(item["hypothesis"] is None and item["candidate"] for item in rest)
     assert search["leakage_rejections"] == {}
 
@@ -242,12 +245,12 @@ def test_session_resumedTwice_continuesTheIndexWithoutDuplicatesAndKeepsTheDropp
         _ = run(target, out, MODEL, live=True, factory=state.factory)
     assert len(_reflections_of(out)) == 3
     result = run(target, out, MODEL, live=True, factory=state.factory)
-    found = _attempts(result)
+    found = _recorded_attempts(out)
     assert [item["index"] for item in found] == list(range(1, len(found) + 1)) and len(found) > 4
     candidates = [item["candidate"] for item in found if item["candidate"] is not None]
     assert len(candidates) == len(set(candidates))
     assert cast(dict[str, object], result["search"])["text_dropped"] == {"hypothesis-too-long": 1}
-    assert cast(dict[str, object], read(out / "run.json")["search"])["attempts"] == found
+    assert [item["index"] for item in _attempts(result)] == [item["index"] for item in found]
 
 
 def test_session_holdoutCaseIds_neverAppearInPromptsOrAttempts(
@@ -298,8 +301,8 @@ def test_session_oversizedProposal_rejectionReasonCarriesNoComponentText(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.suffix = "ORIGINALMARKER"
     state.padding = 300_000
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    found = _attempts(result)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    found = _recorded_attempts(out)
     assert found and all(item["candidate"] is None for item in found)
     assert {item["rejected"] for item in found} == {"proposal exceeds component size limit"}
     assert all("ORIGINALMARKER" not in prompt.split("\n", 1)[0] and "improved 1 xxx" not in prompt.split("\n", 1)[0]

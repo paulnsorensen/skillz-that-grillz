@@ -71,7 +71,10 @@ def _validate_answer(value: object, schema: dict[str, object]) -> None:
     if kind == "object":
         item = mapping(value)
         properties = mapping(schema["properties"])
-        if set(item) != set(properties):
+        nullable = {name for name, child in properties.items()
+                    if isinstance(kind_of := mapping(child).get("type"), list) and "null" in cast(list[object], kind_of)}
+        missing = set(properties) - set(item)
+        if set(item) - set(properties) or missing - nullable:
             raise ValueError("harness answer fields do not match the response schema")
         for name, child in item.items():
             _validate_answer(child, mapping(properties[name]))

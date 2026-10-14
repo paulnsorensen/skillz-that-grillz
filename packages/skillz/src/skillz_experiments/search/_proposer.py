@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
+from skillz_experiments._candidate import HYPOTHESIS, NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import mapping
 from skillz_experiments._new_cli import prompt_rule
 from skillz_experiments.search._engine import Edit
@@ -39,9 +39,9 @@ _FROMARGS_RULE = ("The fromargs package is the default for a wedged Python sourc
                   "A Python helper may use a stdlib `argparse` helper only when the skill has no wedge.toml "
                   "that can build a fromargs target. ")
 
-HYPOTHESIS = "@hypothesis"
 MAX_HYPOTHESIS = 200
 HYPOTHESIS_TOO_LONG = "hypothesis-too-long"
+HYPOTHESIS_NOT_TEXT = "hypothesis-not-text"
 
 MAX_EDITS = 6
 MIN_EDITS = 1
@@ -110,7 +110,7 @@ def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequen
     head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions."
     if cheaper:
         head += " Prefer fewer tokens when correctness is equal."
-    head += " Add an @hypothesis text of at most 200 characters that states why the change helps, or null. " + render(history, protect)
+    head += " Add an " + HYPOTHESIS + " text of at most " + str(MAX_HYPOTHESIS) + " characters that states why the change helps, or null. " + render(history, protect)
     head += " " + progress.status()
     return head + "\n" + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
@@ -129,12 +129,12 @@ def accept(answer: object, components: list[str], candidate: Mapping[str, str]) 
     """Return `answer` as a component map, its edit count against `candidate`, its hypothesis, and why the hypothesis dropped.
 
     Raise `ValueError` when its keys differ from `components` or a value is not text. The size never rejects it.
-    A missing, null, or non-text hypothesis is None. One over `MAX_HYPOTHESIS` characters is None with `HYPOTHESIS_TOO_LONG`.
+    A missing or null hypothesis is None. A non-text one is None with `HYPOTHESIS_NOT_TEXT`. One over `MAX_HYPOTHESIS` characters is None with `HYPOTHESIS_TOO_LONG`.
     """
     proposal = dict(mapping(answer))
     said = proposal.pop(HYPOTHESIS, None)
     hypothesis = (said.strip() or None) if isinstance(said, str) else None
-    dropped = None
+    dropped = None if said is None or isinstance(said, str) else HYPOTHESIS_NOT_TEXT
     if hypothesis is not None and len(hypothesis) > MAX_HYPOTHESIS:
         hypothesis, dropped = None, HYPOTHESIS_TOO_LONG
     if set(proposal) != set(components) or not all(isinstance(value, str) for value in proposal.values()):
