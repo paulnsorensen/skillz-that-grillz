@@ -18,6 +18,7 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._codex import Codex
+from skillz_experiments.harness._command import _validate_answer  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
@@ -187,6 +188,7 @@ class Provider(FakeProvider):
         texts = {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix
                  for name in cast(list[str], schema["required"]) if name != "@hypothesis"}
         if self.state.omit_hypothesis:
+            _validate_answer(texts, schema)
             return {"answer": texts}
         return {"answer": texts | {"@hypothesis": self.state.hypothesis_of(number)}}
 
@@ -1607,7 +1609,7 @@ def test_a_real_run_records_fixed_and_broke_inside_the_minibatch_and_a_later_par
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     attempts, reflections = _recorded_attempts(out), _reflections_of(out)
     train = {str(case["id"]) for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"]) if case["split"] == "train"}
     listed = [(item, cast(list[str], reflection["minibatch"])) for item, reflection in zip(attempts, reflections)
@@ -1617,6 +1619,12 @@ def test_a_real_run_records_fixed_and_broke_inside_the_minibatch_and_a_later_par
         ids = cast(list[str], item["fixed"]) + cast(list[str], item["broke"])
         assert set(ids) <= set(minibatch) and set(ids) <= train
     assert any(item["parent"] in {earlier["candidate"] for earlier in attempts[:number]} for number, item in enumerate(attempts))
+    rows = _attempts(result)
+    assert len(rows) == len(attempts) and any(row["candidate"] is not None for row in rows)
+    for row, full in zip(rows, attempts):
+        assert set(row) == {"index", "parent", "candidate", "fixed", "broke", "validation_delta", "accepted", "rejected"}
+        mapped = None if full["rejected"] is None else full["rejected"] if full["rejected_coded"] else "rejected"
+        assert row == {key: full[key] for key in row if key != "rejected"} | {"rejected": mapped}
 
 
 def test_the_protect_set_follows_the_seed_when_a_validated_candidate_is_worse_than_the_seed(

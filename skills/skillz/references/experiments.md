@@ -515,7 +515,8 @@ The count shows whether enforcement is worth the wasted reflection calls.
 ### Attempt history
 
 The runner records one attempt for each reflection call. `search.attempts` holds them, oldest first.
-An attempt has `index`, `parent`, `candidate`, `components`, `hypothesis`, `fixed`, `broke`, `validation_delta`, `accepted`, and `rejected`.
+An attempt has `index`, `parent`, `candidate`, `components`, `hypothesis`, `fixed`, `broke`, `validation_delta`, `accepted`, `rejected`, and `rejected_coded`.
+`rejected_coded` is true when `rejected` is a known code.
 `parent` and `candidate` are candidate identities. `components` is a digest of the proposed component texts. No attempt holds case text or component text.
 `fixed` lists the train case ids that the proposal scores higher than its parent. `broke` lists the ids that it scores lower.
 The lists cover the train cases that the proposer saw in its feedback. For a case with more than one outcome, the newest outcome that did not fail counts.
@@ -540,7 +541,7 @@ The leakage check reads the hypothesis in its own call. A leak drops the hypothe
 The key `@hypothesis` never enters a component. It never counts in `leakage_rejections`.
 `search.text_dropped` counts the dropped hypotheses for each rule.
 The export `report.json` and the `run` summary keep these attempt fields: `index`, `parent`, `candidate`, `fixed`, `broke`, `validation_delta`, `accepted`, and `rejected`.
-They drop `hypothesis` and `components`. They map an uncoded `rejected` text to `rejected`. `run.json` keeps all fields.
+They drop `hypothesis`, `components`, and `rejected_coded`. They map an uncoded `rejected` text to `rejected`. `run.json` keeps all fields.
 
 ### Stall stop
 
