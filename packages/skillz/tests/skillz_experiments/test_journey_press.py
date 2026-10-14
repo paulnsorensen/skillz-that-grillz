@@ -22,6 +22,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, load_cases
 from skillz_experiments._contract import Contract, Surface, parse
 from skillz_experiments.evaluation._evaluator import Reply, Transcript, evaluate
+from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
@@ -354,7 +355,7 @@ def test_malformed_simulator_reply_is_rejected_without_a_hang_and_the_process_gr
     try:
         with pytest.raises(ValueError, match="invalid simulator response"):
             _ = evaluate(session.transports["task"], session.transports["judge"], candidate, case,
-                         simulator=Simulator())  # pyright: ignore[reportArgumentType]
+                         simulator=Simulator(), checks=CheckMemo())  # pyright: ignore[reportArgumentType]
     finally:
         session.close()
     assert time.monotonic() - started < 30 and all_gone(pids(executable))
@@ -458,7 +459,7 @@ def evaluate_journey(tmp_path: Path, scenario: dict[str, object], argv: list[str
     judge = Judge([dict(answer) for answer in answers])
     judge.budget = task.budget
     try:
-        return executable, evaluate(task, judge, candidate, case), judge, task
+        return executable, evaluate(task, judge, candidate, case, checks=CheckMemo()), judge, task
     finally:
         session.close()
 
@@ -644,12 +645,12 @@ def test_a_journey_case_needs_the_journey_grader_and_a_conversing_task_transport
     journey, candidate = journey_case(tmp_path, contract(), {"SKILL.md": SKILL_TEXT}, 2)
     stub = Judge([])
     with pytest.raises(CodedError) as caught:
-        _ = evaluate(stub, stub, candidate, journey)
+        _ = evaluate(stub, stub, candidate, journey, checks=CheckMemo())
     assert caught.value.code == "journey-unsupported" and stub.prompts == []
     journey_grader = contract().kinds["journey"]
     plain = dataclasses.replace(contract(), kinds={"journey": dataclasses.replace(journey_grader, type="exact-json")})
     with pytest.raises(ValueError, match="journey grader"):
-        _ = evaluate(stub, stub, Candidate({"SKILL.md": SKILL_TEXT}, ("SKILL.md",), contract=plain), journey)
+        _ = evaluate(stub, stub, Candidate({"SKILL.md": SKILL_TEXT}, ("SKILL.md",), contract=plain), journey, checks=CheckMemo())
 
 
 def test_contract_calls_scale_with_max_turns_only_for_a_journey_kind() -> None:

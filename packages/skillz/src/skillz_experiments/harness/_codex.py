@@ -15,7 +15,7 @@ from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted,
 from skillz_experiments._contract import resolve
 from skillz_experiments.harness._discovery import discover
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments.evaluation import answer_schema, evaluate
+from skillz_experiments.evaluation import CheckMemo, answer_schema, evaluate
 from skillz_experiments._budget import Budget
 from skillz_experiments._runtime import process
 from skillz_experiments.harness._check import Check, credential_row, failed
@@ -283,8 +283,8 @@ class Codex:
             self.rejection = helper_failure(self, workspace, rules)
             return self.rejection is None
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
-        return evaluate(self, self, candidate, case, holdout=holdout)
+    def evaluate(self, candidate: Candidate, case: Case, *, checks: CheckMemo, holdout: bool = False) -> dict[str, object]:
+        return evaluate(self, self, candidate, case, holdout=holdout, checks=checks)
 
 
 def _events(stdout: str) -> list[dict[str, object]]:

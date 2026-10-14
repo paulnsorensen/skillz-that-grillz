@@ -51,7 +51,7 @@ HarnessName = str
 LEAKAGE_REJECTED = "candidate-leakage-rejected"
 
 # The modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
-SCORING_FILES = ("evaluation/_evaluator.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
+SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
 
 
 def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
@@ -70,6 +70,12 @@ def _baseline_rejected(detail: str | None = None) -> Stop:
     return Stop("baseline-contract-rejected", "original candidate fails the frozen native/helper contract",
                 {"next": "fix the skill or its contract, then start a new run in a new directory"}
                 | cast(dict[str, object], {} if detail is None else {"detail": detail}))
+
+
+def _rejection_detail(outcome: dict[str, object]) -> str | None:
+    """Return the rejection reason of `outcome` when it is a string. A value read back from run.json can be any type."""
+    detail = outcome.get("rejection")
+    return detail if isinstance(detail, str) else None
 
 
 def _unit_score(value: object) -> float:
@@ -97,7 +103,7 @@ class _Provider(Protocol):
     def preflight(self) -> dict[str, object]: ...
     def close(self) -> None: ...
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
-                 checks: CheckMemo | None = None) -> dict[str, object]: ...
+                 checks: CheckMemo) -> dict[str, object]: ...
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
     def check_name(self, candidate: Candidate) -> None: ...
@@ -790,7 +796,7 @@ class Session:
             rejected = next((item for item in self.outcomes if item.get("arm") == "baseline"
                              and item.get("status") == "candidate-contract-rejected"), None)
             if rejected is not None:
-                raise _baseline_rejected(cast(str | None, rejected.get("rejection")))
+                raise _baseline_rejected(_rejection_detail(rejected))
             arms = {"baseline": self.seed, "winner": winner}
             done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in self.outcomes
                     if item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
@@ -809,7 +815,7 @@ class Session:
                         self.checkpoint()
                     return
                 if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
-                    raise _baseline_rejected(cast(str | None, result.get("rejection")))
+                    raise _baseline_rejected(_rejection_detail(result))
 
             need = sum(case_calls(self.contract, case) for _, case, _ in todo)
             if self.budget.maximum - self.budget.calls < need:

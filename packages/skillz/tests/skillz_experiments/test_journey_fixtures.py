@@ -17,6 +17,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, Journey, Split, load_cases
 from skillz_experiments._contract import Contract, load_contract
 from skillz_experiments.evaluation._evaluator import evaluate
+from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.harness import ClaudeOptions, Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
@@ -136,7 +137,7 @@ def journey(tmp_path: Path, name: str, mode: str, answers: list[dict[str, object
         MODEL, Budget(40, 2400, 0), lambda: None, None, contract.surface, candidate.files)
     judge = Judge(answers)
     try:
-        result = evaluate(session.transports["task"], judge, candidate, frozen_case(target, contract, tmp_path))
+        result = evaluate(session.transports["task"], judge, candidate, frozen_case(target, contract, tmp_path), checks=CheckMemo())
     finally:
         session.close()
     return result, judge, executable

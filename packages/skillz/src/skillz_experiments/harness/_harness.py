@@ -220,7 +220,7 @@ class Harness:
         return self.transports["task"].rejection
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
-                 checks: CheckMemo | None = None) -> dict[str, object]:
+                 checks: CheckMemo) -> dict[str, object]:
         self._unchanged()
         return evaluate(self.transports["task"], self.transports["judge"], candidate, case, holdout=holdout,
                         simulator=self.transports.get("simulator"), checks=checks)

@@ -93,10 +93,10 @@ def _prompt(rules: Contract, candidate: Candidate, instruction: str, case: Case)
 
 
 def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate, case: Case, *, holdout: bool = False,
-             simulator: _Responder | None = None, checks: CheckMemo | None = None) -> dict[str, object]:
+             simulator: _Responder | None = None, checks: CheckMemo) -> dict[str, object]:
     """Score `candidate` on `case`. `checks` reuses one contract check per candidate identity across a session."""
     rules = resolve(candidate.contract)
-    passed, rejection = (checks or CheckMemo()).check(task, candidate)
+    passed, rejection = checks.check(task, candidate)
     if not passed:
         return {"score": 0.0, "status": "candidate-contract-rejected", "rejection": rejection, "loaded": False,
                 "helper_executed": False, "usage": usage([]), "candidate_hash": candidate.identity,

@@ -1,7 +1,6 @@
 """The session memo of the candidate contract check: one check per candidate identity, with its rejection reason."""
 from __future__ import annotations
 
-import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -11,14 +10,12 @@ import pytest
 
 from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, load_cases
-from skillz_experiments._contract import Contract, parse
+from skillz_experiments._cases import Case
 from skillz_experiments._evaluation import helper_failure
 from skillz_experiments.evaluation import CheckMemo, evaluate
 from typing_extensions import override
 from fake_provider import FakeProvider
-
-SKILL = "memo-skill"
+from memo_fixtures import cases as _cases, contract as _contract
 
 
 class ModelCalled(RuntimeError):
@@ -56,21 +53,12 @@ class Task(FakeProvider):
         raise ModelCalled("model call reached")
 
 
-def _rules() -> Contract:
-    return parse({"schema_version": 1, "status": "approved", "skill": SKILL, "invocation": f"${SKILL} run",
-                  "kinds": {"echo": {"grader": "exact-json"}}}, "skill")
-
-
 def _candidate(text: str = "seed") -> Candidate:
-    return Candidate({"SKILL.md": text}, ("SKILL.md",), contract=_rules())
+    return Candidate({"SKILL.md": text}, ("SKILL.md",), contract=_contract())
 
 
-def _cases(tmp_path: Path) -> list[Case]:
-    items = [{"id": name, "family": name, "split": "train", "kind": "echo", "request": "Echo.", "files": {},
-              "expected": {"echo": "hello"}, "provenance": "test", "provider_approved": True} for name in ("a", "b", "c")]
-    path = tmp_path / "cases.json"
-    _ = path.write_text(json.dumps({"schema_version": 1, "cases": items}))
-    return load_cases(path, _rules().grader_types())
+def _echo_cases(tmp_path: Path) -> list[Case]:
+    return _cases(tmp_path, _contract())
 
 
 @pytest.mark.ac("gh-247:AC-1")
@@ -78,28 +66,20 @@ def test_one_memo_checks_each_candidate_identity_once(tmp_path: Path) -> None:
     task, memo = Task(passed=True), CheckMemo()
     first, second = _candidate(), _candidate("other")
     for candidate in (first, second, first, second):
-        for case in _cases(tmp_path):
+        for case in _echo_cases(tmp_path):
             with pytest.raises(ModelCalled):
                 _ = evaluate(task, task, candidate, case, checks=memo)
     assert task.checks == 2
     assert task.invokes == 12
 
 
-@pytest.mark.ac("gh-247:AC-1")
-def test_without_a_memo_each_evaluation_checks_again(tmp_path: Path) -> None:
-    task = Task(passed=False, reason="helper fixture failed")
-    for case in _cases(tmp_path):
-        _ = evaluate(task, task, _candidate(), case)
-    assert task.checks == 3
-
-
 @pytest.mark.ac("gh-247:AC-2")
 @pytest.mark.parametrize("reason", ["helper fixture failed", None])
 def test_a_rejected_candidate_scores_zero_on_every_case_with_the_same_reason(tmp_path: Path, reason: str | None) -> None:
     task, memo = Task(passed=False, reason=reason), CheckMemo()
-    results = [evaluate(task, task, _candidate(), case, checks=memo) for case in _cases(tmp_path)]
+    results = [evaluate(task, task, _candidate(), case, checks=memo) for case in _echo_cases(tmp_path)]
     task.rejection = "a later check changed the transport"
-    results.append(evaluate(task, task, _candidate(), _cases(tmp_path)[0], checks=memo))
+    results.append(evaluate(task, task, _candidate(), _echo_cases(tmp_path)[0], checks=memo))
     assert [(item["score"], item["status"], item["rejection"]) for item in results] == [
         (0.0, "candidate-contract-rejected", reason)] * 4
     assert (task.checks, task.invokes) == (1, 0)
@@ -109,7 +89,7 @@ def test_a_rejected_candidate_scores_zero_on_every_case_with_the_same_reason(tmp
 def test_concurrent_evaluations_of_a_new_identity_check_it_once(tmp_path: Path) -> None:
     hold = threading.Event()
     task, memo = Task(passed=False, reason="slow rejection", hold=hold), CheckMemo()
-    cases = _cases(tmp_path)
+    cases = _echo_cases(tmp_path)
     with ThreadPoolExecutor(max_workers=len(cases)) as pool:
         futures = [pool.submit(evaluate, task, task, _candidate(), case, checks=memo) for case in cases]
         _ = threading.Event().wait(0.2)
@@ -133,13 +113,10 @@ class _Sandbox:
 
 @pytest.mark.ac("gh-247:AC-1")
 def test_the_memo_keeps_a_sandbox_timeout_rejection_for_the_whole_run(tmp_path: Path) -> None:
-    rules = parse({"schema_version": 1, "status": "approved", "skill": SKILL, "invocation": f"${SKILL} run",
-                   "kinds": {"echo": {"grader": "exact-json"}},
-                   "helper": {"path": "scripts/echo.py", "input": "input.md",
-                              "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]}}, "skill")
-    timeout = helper_failure(_Sandbox(124), tmp_path, rules)
+    timeout = helper_failure(_Sandbox(124), tmp_path, _contract(helper=True))
     task, memo = Task(passed=False, reason=timeout), CheckMemo()
-    results = [evaluate(task, task, _candidate(), case, checks=memo) for case in _cases(tmp_path) * 4]
-    assert timeout is not None and len(results) > 1
+    results = [evaluate(task, task, _candidate(), case, checks=memo) for case in _echo_cases(tmp_path) * 4]
+    assert timeout is not None and timeout.strip()
+    assert [item["score"] for item in results] == [0.0] * 12
     assert (task.checks, task.invokes) == (1, 0)
     assert {(item["status"], item["rejection"]) for item in results} == {("candidate-contract-rejected", timeout)}

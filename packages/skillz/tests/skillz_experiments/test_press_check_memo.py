@@ -20,8 +20,8 @@ import pytest
 
 from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, load_cases
-from skillz_experiments._contract import Contract, parse
+from skillz_experiments._cases import Case
+from skillz_experiments._contract import Contract
 from skillz_experiments._records import read
 from skillz_experiments.evaluation import CheckMemo, evaluate
 from skillz_experiments.harness import Configuration
@@ -32,6 +32,7 @@ from skillz_experiments.run import run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
 from fake_provider import FakeProvider
+from memo_fixtures import SKILL, cases as _cases, contract as _contract
 
 if TYPE_CHECKING:
     from .conftest import JudgedRun
@@ -39,25 +40,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("host_login")
 
 FAKE_CLAUDE = Path(__file__).parent / "fixtures/fake_claude.py"
-SKILL = "echo-skill"
 WAIT = 10.0
-
-
-def _contract(*, helper: bool) -> Contract:
-    data: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": SKILL,
-                               "invocation": f"${SKILL} run", "kinds": {"echo": {"grader": "exact-json"}}}
-    if helper:
-        data["helper"] = {"path": "scripts/echo.py", "input": "input.md",
-                          "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]}
-    return parse(data, "skill")
-
-
-def _cases(tmp_path: Path, contract: Contract) -> list[Case]:
-    items = [{"id": name, "family": name, "split": "train", "kind": "echo", "request": "Echo.", "files": {},
-              "expected": {"echo": "hello"}, "provenance": "test", "provider_approved": True} for name in ("a", "b", "c")]
-    path = tmp_path / "cases.json"
-    _ = path.write_text(json.dumps({"schema_version": 1, "cases": items}))
-    return load_cases(path, contract.grader_types())
 
 
 @pytest.mark.ac("gh-247:AC-2")
@@ -205,8 +188,7 @@ class Searcher(FakeProvider):
         return True
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
-                 checks: CheckMemo | None = None) -> dict[str, object]:
-        assert checks is not None
+                 checks: CheckMemo) -> dict[str, object]:
         passed, _ = checks.check(self, candidate)
         assert passed
         for _ in range(self.contract.calls(case.kind)):
