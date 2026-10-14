@@ -1,0 +1,7 @@
+{
+  "skill_name": "todo-sort",
+  "evals": [
+    {"name": "sort-trigger", "prompt": "sort my todos by priority", "expected_skill": "todo-sort"},
+    {"name": "calendar-near-miss", "prompt": "plan my week in my calendar", "expected_skill": null}
+  ]
+}
