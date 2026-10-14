@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from support import BUNDLE, CLI, Scenario, build_wedge, call_cli, make_scenario, run_scenario, snapshot
-from test_wedge import archive_witnesses, assert_promoted, uv_bin_dir
+from support import (HARNESS_RUNS, Scenario, archive_witnesses, assert_promoted, build_wedge, call_cli,
+                     make_scenario, run_scenario, snapshot, uv_bin_dir)
 from fixtures.targets import NEW_MODULE
 
 
@@ -44,10 +44,9 @@ def _world(base: Path) -> tuple[Scenario, str]:
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-6")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-10")
-@pytest.mark.parametrize("cli", [CLI, BUNDLE], ids=["source", "bundle"])
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
+@pytest.mark.parametrize("harness, cli", HARNESS_RUNS)
 def test_new_cli_rebuilds_executes_and_exports_from_real_cli(
-        tmp_path: Path, cli: Path, harness: str) -> None:
+        tmp_path: Path, harness: str, cli: Path) -> None:
     scenario, initial_digest = _world(tmp_path)
     before = snapshot(scenario.target)
     home = tmp_path / "home"

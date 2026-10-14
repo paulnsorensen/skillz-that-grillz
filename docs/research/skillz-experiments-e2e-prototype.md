@@ -18,17 +18,18 @@ Bundled scenarios copy the shipped archive outside the checkout and run Python w
 
 | Variant | Harnesses | Entrypoints | Status |
 | --- | --- | --- | --- |
-| P0: prose | Command, Claude, Codex | Source, bundle | Implemented |
-| H0: ordinary helper | Command, Claude, Codex | Source, bundle | Implemented |
-| W0: external wedge source | Command, Claude, Codex | Source, bundle | Implemented |
+| P0: prose | Command, Claude, Codex | Source for each harness; bundle for Command | Implemented |
+| H0: ordinary helper | Command, Claude, Codex | Source for each harness; bundle for Command | Implemented |
+| W0: external wedge source | Command, Claude, Codex | Source for each harness; bundle for Command | Implemented |
 | W1: skill-local wedge source | None | None | Source-alias repair remains open |
-| N0: generated target | Command, Claude, Codex | Source, bundle | Implemented |
+| N0: generated target | Command, Claude, Codex | Source for each harness; bundle for Command | Implemented |
 | J0: prose journey | Claude | Source, bundle | Implemented |
-| J1: helper journey | Claude | Source, bundle | Implemented |
-| M0: mixed tasks and journeys | Claude | Source, bundle | Implemented with a larger manifest |
+| J1: helper journey | Claude | Source | Implemented |
+| M0: mixed tasks and journeys | Claude | Source | Implemented with a larger manifest |
 
-This gives 30 positive runs from the original 36-run matrix.
-Four additional Gemini-wrapper runs cover P0 and H0 through both entrypoints.
+This gives 20 positive runs from the original 36-run matrix.
+Each flow keeps source runs for every harness and one bundle smoke run.
+Three additional Gemini-wrapper runs cover P0 and H0 through the source entrypoint and P0 through the bundle.
 A malformed Gemini response fails with the exact error and charged calls.
 The six missing W1 runs remain explicit.
 The mixed manifest has enough task cases to satisfy the current kind-specific minimum.
@@ -122,7 +123,7 @@ The existing component suites remain in the canonical gate.
 
 ## Verification
 
-The prototype contains 69 collected E2E tests.
+The prototype contains 59 collected E2E tests.
 `UV_CACHE_DIR=/tmp/skillz-e2e-uv-cache just build` passes on the integrated prototype.
 The gate includes acceptance traces, type checks, existing suites, E2E tests, and shipped-bundle parity.
 The PR body records the final non-autofix CI gate and fresh-context review results.

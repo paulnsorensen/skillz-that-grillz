@@ -9,8 +9,8 @@ from typing import cast
 
 import pytest
 
-from support import (BUNDLE, CLI, Scenario, build_wedge, call_cli, make_scenario, read_cases, read_events,
-                     read_record, run_scenario, snapshot)
+from support import (HARNESS_RUNS, Scenario, archive_witnesses, assert_promoted, build_wedge, call_cli,
+                     make_scenario, run_scenario, snapshot, uv_bin_dir)
 
 SOURCE = (
     "import json, sys\n"
@@ -20,31 +20,6 @@ SOURCE = (
     "    text = text\n"
     "    print(json.dumps({'text': text}))\n"
 )
-
-
-
-def assert_promoted(scenario: Scenario, result: dict[str, object]) -> None:
-    record = read_record(scenario.out)
-    gate = cast(dict[str, object], result["gate"])
-    assert (gate["verdict"], gate["delta"], gate["se"], gate["n_shared"],
-            gate["cases"], gate["repeats"]) == ("promote", 1.0, 0.0, 6, 6, 3)
-    held = {cast(str, case["id"]) for case in read_cases(scenario.out) if case["split"] == "holdout"}
-    assert len(held) == 6
-    outcomes = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
-                if cast(dict[str, object], item).get("split") == "holdout"]
-    assert len(outcomes) == 36
-    for case_id in held:
-        for arm, score in (("baseline", 0.0), ("winner", 1.0)):
-            selected = [item for item in outcomes if item["case_id"] == case_id and item["arm"] == arm]
-            assert sorted(cast(int, item["repeat"]) for item in selected) == [0, 1, 2]
-            assert {item["score"] for item in selected} == {score}
-
-
-def archive_witnesses(scenario: Scenario) -> set[str]:
-    winner = read_record(scenario.out)["winner_hash"]
-    return {cast(str, event["archive_sha256"]) for event in read_events(scenario.out)
-            if event.get("role") == "task" and event.get("candidate") == winner
-            and "archive_sha256" in event}
 
 
 def _world(base: Path) -> tuple[Scenario, str]:
@@ -70,26 +45,13 @@ def _world(base: Path) -> tuple[Scenario, str]:
     return Scenario(skill, scenario.out, scenario.export, scenario.draft, original), built["transform"]["content_sha256"]
 
 
-def uv_bin_dir() -> Path:
-    executable = shutil.which("uv")
-    assert executable is not None
-    path = Path(executable)
-    if path.parent.name == "shims":
-        selected = subprocess.run(["mise", "which", "uv"], capture_output=True,
-                                  text=True, check=True)
-        path = Path(selected.stdout.strip())
-    assert path.is_file()
-    return path.parent
-
-
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-1")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-6")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-10")
-@pytest.mark.parametrize("cli", [CLI, BUNDLE], ids=["source", "bundle"])
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
+@pytest.mark.parametrize("harness, cli", HARNESS_RUNS)
 def test_external_wedge_rebuilds_and_exports_real_behavior(
-        tmp_path: Path, cli: Path, harness: str) -> None:
+        tmp_path: Path, harness: str, cli: Path) -> None:
     scenario, initial_digest = _world(tmp_path)
     before = snapshot(scenario.target)
     external = snapshot(tmp_path / "proj")

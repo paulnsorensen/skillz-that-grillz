@@ -8,15 +8,11 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from vendor_common import USAGE, execute, judge, propose, task, task_usage
+from vendor_common import USAGE, append_log, execute, judge, log_entry, propose, settings, task, task_usage
 
 
 def emit(event: dict[str, object]) -> None:
     print(json.dumps(event), flush=True)
-
-
-def settings() -> dict[str, str]:
-    return cast(dict[str, str], json.loads(Path(__file__).with_name("vendor-settings.json").read_text()))
 
 
 def tool(identifier: str, argv: list[str], code: int, stdout: str, stderr: str) -> None:
@@ -59,17 +55,11 @@ def main() -> int:
         answer, role, usage = judge(source_prompt, fields), "judge", USAGE
     else:
         answer, role, usage = propose(source_prompt, fields, mode), "reflection", USAGE
-    archive = workspace / "archive.sha256"
     home = Path.home()
     home_entries = sorted(str(path.relative_to(home)) + ("@" if path.is_symlink() else "")
                           for path in home.rglob("*"))
-    with Path(settings()["log"]).open("a") as stream:
-        _ = stream.write(json.dumps({"role": role, "prompt": prompt,
-            "home": str(home), "home_entries": home_entries,
-            "candidate": markers[0].read_text() if markers else None,
-            "visible_input": (workspace / "fixture.md").read_text() if role == "task" else None,
-            "usage": usage, "answer": answer if role == "task" else None,
-            "archive_sha256": archive.read_text().strip() if role == "task" and archive.is_file() else None}) + "\n")
+    append_log(log_entry(role, prompt, workspace, markers[0] if markers else None, usage, answer)
+               | {"home": str(home), "home_entries": home_entries})
     emit({"type": "message", "role": "assistant",
           "content": "not JSON" if mode == "malformed-json" and role == "task" else json.dumps(answer)})
     stats: dict[str, object] = {}

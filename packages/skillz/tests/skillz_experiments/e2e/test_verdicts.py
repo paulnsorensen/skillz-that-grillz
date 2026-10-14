@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import stat
 import subprocess
@@ -10,9 +11,8 @@ from typing import cast
 
 import pytest
 
-from support import (BUNDLE, CLI, FIXTURES, carries_answer, export_and_apply, make_scenario, read_cases,
-                     read_record, run_scenario, snapshot)
-from test_wedge import assert_promoted
+from support import (FIXTURES, HARNESS_RUNS, HARNESSES, assert_promoted, carries_answer, export_and_apply, holdout,
+                     make_scenario, raw_holdout, read_record, run_scenario, snapshot)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-1")
@@ -20,27 +20,13 @@ from test_wedge import assert_promoted
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-10")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
-@pytest.mark.parametrize("cli", [CLI, BUNDLE], ids=["source", "bundle"])
+@pytest.mark.parametrize("harness, cli", HARNESS_RUNS)
 def test_command_prose_promotes_after_actual_file_transformation(tmp_path: Path, harness: str, cli: Path) -> None:
     scenario = make_scenario(tmp_path)
     original_tree = snapshot(scenario.target)
     result = run_scenario(scenario, tmp_path, harness=harness, cli=cli)
-    gate = cast(dict[str, object], result["gate"])
-    assert (gate["verdict"], gate["delta"], gate["se"], gate["cases"], gate["repeats"]) == (
-        "promote", 1.0, 0.0, 6, 3)
-    record = read_record(scenario.out)
-    held = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
-            if cast(dict[str, object], item).get("split") == "holdout"]
-    assert len(held) == 36
-    identifiers = {case["id"] for case in read_cases(scenario.out) if case["split"] == "holdout"}
-    assert len(identifiers) == 6
-    for identifier in identifiers:
-        for arm, score in (("baseline", 0.0), ("winner", 1.0)):
-            observed = [item for item in held if item["case_id"] == identifier and item["arm"] == arm]
-            assert sorted(cast(int, item["repeat"]) for item in observed) == [0, 1, 2]
-            assert {item["score"] for item in observed} == {score}
-            assert all(item["loaded"] and item["helper_executed"] for item in observed)
+    assert_promoted(scenario, result)
+    assert all(item["loaded"] and item["helper_executed"] for item in holdout(read_record(scenario.out)))
     assert snapshot(scenario.target) == original_tree
     applied = export_and_apply(scenario, tmp_path, cli=cli)
     assert "Uppercase fixture.md." in (applied / "SKILL.md").read_text()
@@ -67,16 +53,13 @@ def test_command_prose_promotes_after_actual_file_transformation(tmp_path: Path,
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-10")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
-@pytest.mark.parametrize("cli", [CLI, BUNDLE], ids=["source", "bundle"])
+@pytest.mark.parametrize("harness, cli", HARNESS_RUNS)
 def test_command_helper_executes_winning_export(tmp_path: Path, harness: str, cli: Path) -> None:
     scenario = make_scenario(tmp_path, helper=True)
     original_tree = snapshot(scenario.target)
     result = run_scenario(scenario, tmp_path, helper=True, harness=harness, cli=cli)
     assert_promoted(scenario, result)
-    held = [cast(dict[str, object], item) for item in cast(list[object], read_record(scenario.out)["outcomes"])
-            if cast(dict[str, object], item).get("split") == "holdout"]
-    assert all(item["loaded"] and item["helper_executed"] for item in held)
+    assert all(item["loaded"] and item["helper_executed"] for item in holdout(read_record(scenario.out)))
     assert snapshot(scenario.target) == original_tree
     applied = export_and_apply(scenario, tmp_path, cli=cli)
     fixture = applied / "fixture.md"
@@ -88,7 +71,7 @@ def test_command_helper_executes_winning_export(tmp_path: Path, harness: str, cl
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
+@pytest.mark.parametrize("harness", HARNESSES)
 def test_changed_winner_ties_on_holdout(tmp_path: Path, harness: str) -> None:
     scenario = make_scenario(tmp_path)
     held_families = {"f9", "f7", "f5", "f3", "f0", "f4"}
@@ -103,8 +86,7 @@ def test_changed_winner_ties_on_holdout(tmp_path: Path, harness: str) -> None:
     record = read_record(scenario.out)
     assert cast(dict[str, object], record["search"])["retained_seed"] is False
     assert cast(dict[str, str], record["winner"])["SKILL.md"] != scenario.original
-    held = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
-            if cast(dict[str, object], item).get("split") == "holdout"]
+    held = holdout(record)
     assert len(held) == 36
     assert {item["case_id"] for item in held} == {f"t{int(family[1:])}" for family in held_families}
     assert {item["score"] for item in held} == {1.0}
@@ -112,7 +94,7 @@ def test_changed_winner_ties_on_holdout(tmp_path: Path, harness: str) -> None:
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
+@pytest.mark.parametrize("harness", HARNESSES)
 def test_protected_family_regression_rejects(tmp_path: Path, harness: str) -> None:
     scenario = make_scenario(tmp_path)
     for case in scenario.draft:
@@ -128,11 +110,15 @@ def test_protected_family_regression_rejects(tmp_path: Path, harness: str) -> No
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"], gate["cases"], gate["repeats"]) == (
         "reject", ["family-regression:f9"], 6, 3)
-    assert cast(float, gate["delta"]) > 0 and cast(float, gate["se"]) > 0
+    delta, se, _, witnessed = raw_holdout(scenario)
+    # Per-case gains over the 6 held cases: two protected cases drop 1 -> 0, four others rise 0 -> 1.
+    assert witnessed == 36
+    assert delta == pytest.approx(1 / 3) and se == pytest.approx(math.sqrt(16 / 90))
+    assert gate["delta"] == pytest.approx(delta) and gate["se"] == pytest.approx(se)
+    assert gate["n_shared"] == 6
     record = read_record(scenario.out)
     assert cast(dict[str, object], record["search"])["retained_seed"] is False
-    held = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
-            if cast(dict[str, object], item).get("split") == "holdout"]
+    held = holdout(record)
     assert len(held) == 36
     protected = [item for item in held if item["case_id"] in {"t9", "t10"}]
     assert len(protected) == 12
@@ -141,7 +127,7 @@ def test_protected_family_regression_rejects(tmp_path: Path, harness: str) -> No
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
+@pytest.mark.parametrize("harness", HARNESSES)
 def test_changed_winner_is_globally_worse_on_holdout(tmp_path: Path, harness: str) -> None:
     scenario = make_scenario(tmp_path)
     held_families = {"f9", "f7", "f5", "f3", "f0", "f4"}
@@ -157,8 +143,7 @@ def test_changed_winner_is_globally_worse_on_holdout(tmp_path: Path, harness: st
     record = read_record(scenario.out)
     assert cast(dict[str, object], record["search"])["retained_seed"] is False
     assert cast(dict[str, str], record["winner"])["SKILL.md"] != scenario.original
-    held = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
-            if cast(dict[str, object], item).get("split") == "holdout"]
+    held = holdout(record)
     assert len(held) == 36
     assert {item["case_id"] for item in held} == {f"t{int(family[1:])}" for family in held_families}
     for identifier in {item["case_id"] for item in held}:

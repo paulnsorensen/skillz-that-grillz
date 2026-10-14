@@ -8,10 +8,9 @@ from typing import cast
 
 import pytest
 
-from support import (CLI, FIXTURES, Scenario, call_cli, command_adapter, export_and_apply, make_scenario,
-                     make_vendor_bin, read_cases, read_events, read_record, run_scenario, snapshot)
-
-BUNDLE = Path(__file__).resolve().parents[5] / "skills/skillz/scripts/skillz-experiment.pyz"
+from support import (BUNDLE, CLI, FIXTURES, Scenario, approve_and_run, assert_promoted, cli_error, command_adapter,
+                     export_and_apply, make_scenario, make_vendor_bin, read_cases, read_events, read_record,
+                     run_scenario, snapshot)
 
 
 def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
@@ -53,43 +52,18 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
     return Scenario(scenario.target, scenario.out, scenario.export, draft, scenario.original)
 
 
-def _record(scenario: Scenario) -> dict[str, object]:
-    return read_record(scenario.out)
-
-
-def _holdout(record: dict[str, object]) -> list[dict[str, object]]:
-    return [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
-            if cast(dict[str, object], item).get("split") == "holdout"]
-
-
-def _assert_gate(scenario: Scenario, record: dict[str, object], kinds: set[str]) -> None:
-    gate = cast(dict[str, object], record["gate"])
-    assert (gate["verdict"], gate["delta"], gate["se"]) == ("promote", 1.0, 0.0)
-    assert gate["repeats"] == 3
-    held = {cast(str, case["id"]): cast(str, case["kind"]) for case in read_cases(scenario.out) if case["split"] == "holdout"}
-    assert set(held.values()) == kinds
-    outcomes = _holdout(record)
-    assert gate["cases"] == len(held)
-    assert len(outcomes) == len(held) * 6
-    for name in held:
-        for arm, score in (("baseline", 0.0), ("winner", 1.0)):
-            selected = [item for item in outcomes if item["case_id"] == name and item["arm"] == arm]
-            assert sorted(cast(int, item["repeat"]) for item in selected) == [0, 1, 2]
-            assert {item["score"] for item in selected} == {score}
-
-
+@pytest.mark.ac("skillz-experiments-end-to-end:AC-1")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-7")
-@pytest.mark.parametrize("cli", [CLI, BUNDLE], ids=["source", "bundle"])
-@pytest.mark.parametrize("helper", [False, True], ids=["J0", "J1"])
+@pytest.mark.parametrize("helper, cli", [
+    pytest.param(False, CLI, id="J0-source"), pytest.param(True, CLI, id="J1-source"),
+    pytest.param(False, BUNDLE, id="J0-bundle")])
 def test_claude_journey_promotes_from_actual_conversation_and_export(
-        tmp_path: Path, cli: Path, helper: bool) -> None:
+        tmp_path: Path, helper: bool, cli: Path) -> None:
     scenario = journey_scenario(tmp_path, helper=helper)
     before = snapshot(scenario.target)
     result = run_scenario(scenario, tmp_path, helper=helper, harness="claude", mode="journey", cli=cli)
     assert snapshot(scenario.target) == before
-    record = _record(scenario)
-    _assert_gate(scenario, record, {"journey"})
-    assert cast(dict[str, object], result["gate"])["verdict"] == "promote"
+    assert_promoted(scenario, result, kinds=frozenset({"journey"}))
     log = read_events(scenario.out)
     assert {"task", "reflection", "simulator", "judge"} <= {entry["role"] for entry in log}
     simulator_prompts = [cast(str, entry["prompt"]) for entry in log if entry["role"] == "simulator"]
@@ -98,6 +72,13 @@ def test_claude_journey_promotes_from_actual_conversation_and_export(
                                      for prompt in simulator_prompts)
     assert judge_prompts and all('"reference"' in prompt and '"transcript"' in prompt
                                  for prompt in judge_prompts)
+    task_messages = [cast(str, entry["message"]) for entry in log if entry["role"] == "task"]
+    briefs = [cast(str, item["brief"]) for item in scenario.draft]
+    assert task_messages and not any(
+        brief in message or "Answer only the agent's question" in message or "reference" in message
+        or "MAPLE-" in message for message in task_messages for brief in briefs)
+    # The simulator reply may carry the label; the opening request must not.
+    assert not any("maple-" in message for message in task_messages if not message.startswith("Value: "))
     held = {cast(str, case["id"]) for case in read_cases(scenario.out) if case["split"] == "holdout"}
     reflection = "\n".join(cast(str, entry["prompt"]) for entry in log if entry["role"] == "reflection")
     assert held and all(f"maple-{case_id[1:]}" not in reflection and f"MAPLE-{case_id[1:]}" not in reflection
@@ -119,18 +100,17 @@ def test_claude_journey_promotes_from_actual_conversation_and_export(
                    for case_id in held)
 
 
+@pytest.mark.ac("skillz-experiments-end-to-end:AC-1")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-7")
-@pytest.mark.parametrize("cli", [CLI, BUNDLE], ids=["source", "bundle"])
-def test_mixed_manifest_scores_both_kinds_in_sealed_holdout(tmp_path: Path, cli: Path) -> None:
+def test_mixed_manifest_scores_both_kinds_in_sealed_holdout(tmp_path: Path) -> None:
     scenario = journey_scenario(tmp_path, mixed=True)
     before = snapshot(scenario.target)
-    _ = run_scenario(scenario, tmp_path, harness="claude", mode="journey", cli=cli)
+    result = run_scenario(scenario, tmp_path, harness="claude", mode="journey")
     assert snapshot(scenario.target) == before
-    record = _record(scenario)
-    _assert_gate(scenario, record, {"task", "journey"})
+    assert_promoted(scenario, result, kinds=frozenset({"task", "journey"}), cases=None)
     held_kinds = [case["kind"] for case in read_cases(scenario.out) if case["split"] == "holdout"]
     assert held_kinds.count("task") >= 6 and held_kinds.count("journey") >= 2
-    applied = export_and_apply(scenario, tmp_path, cli=cli)
+    applied = export_and_apply(scenario, tmp_path)
     assert "Uppercase fixture.md." in (applied / "SKILL.md").read_text()
 
 
@@ -138,7 +118,7 @@ def test_mixed_manifest_scores_both_kinds_in_sealed_holdout(tmp_path: Path, cli:
 def test_failed_journey_command_gate_never_calls_judge(tmp_path: Path) -> None:
     scenario = journey_scenario(tmp_path, failed_gate=True)
     _ = run_scenario(scenario, tmp_path, harness="claude", mode="journey")
-    record = _record(scenario)
+    record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     scored = [item for item in outcomes if item.get("case_id") is not None]
     assert scored and all(item.get("status") == "gate-failed" and
@@ -159,16 +139,7 @@ def test_unsupported_journey_refuses_before_task_inference(tmp_path: Path, harne
         args += command_adapter(scenario)
     else:
         bin_dir = make_vendor_bin(scenario, tmp_path, harness, "normal")
-    code, _, error = call_cli(args, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
-    assert code == 1 and json.loads(error)["code"] == "cases-missing"
-    _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
-    code, cases, error = call_cli(args, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
-    assert code == 1 and json.loads(error)["code"] == "cases-unapproved"
-    approved = ["--approve-cases", cast(str, cases["case_hash"])]
-    code, budget, error = call_cli(args + approved, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
-    assert code == 1 and json.loads(error)["code"] == "budget-unapproved"
-    approved += ["--approve-budget", str(cast(dict[str, int], budget["estimate"])["calls"])]
-    code, result, error = call_cli(args + approved, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
-    assert code == 1 and json.loads(error)["code"] == "journey-unsupported", result
+    code, result, error = approve_and_run(args, tmp_path, scenario, bin_dirs=[bin_dir] if bin_dir else ())
+    assert code == 1 and cli_error(error)["code"] == "journey-unsupported", result
     assert not any("Ask which value to transform" in json.dumps(entry) for entry in read_events(scenario.out)
                    if entry.get("role") == "task")

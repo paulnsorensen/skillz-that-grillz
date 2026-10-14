@@ -10,20 +10,15 @@ from pathlib import Path
 from typing import cast
 
 import fake_claude
-from vendor_common import USAGE, execute, judge, propose, task, task_usage
+from vendor_common import USAGE, append_log, execute, judge, log_entry, propose, settings, task, task_usage
 
 
 def emit(event: dict[str, object]) -> None:
     print(json.dumps(event), flush=True)
 
 
-def settings() -> dict[str, str]:
-    return cast(dict[str, str], json.loads(Path(__file__).with_name("vendor-settings.json").read_text()))
-
-
 def log(entry: dict[str, object]) -> None:
-    with Path(settings()["log"]).open("a") as stream:
-        _ = stream.write(json.dumps(entry | {"config_dir": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
+    append_log(entry | {"config_dir": os.environ.get("CLAUDE_CONFIG_DIR")})
 
 
 def init(skill: str | None) -> None:
@@ -70,12 +65,8 @@ def one_shot(argv: list[str]) -> int:
         answer, role = simulate(prompt, fields), "simulator"
     else:
         answer, role = propose(prompt, fields, mode), "reflection"
-    archive = Path.cwd() / "archive.sha256"
     usage = task_usage(Path.cwd(), skill, mode) if skill is not None else USAGE
-    log({"role": role, "prompt": prompt, "candidate": markers[0].read_text() if markers else None,
-         "visible_input": (Path.cwd() / "fixture.md").read_text() if role == "task" else None,
-         "usage": usage, "answer": answer if role == "task" else None,
-         "archive_sha256": archive.read_text().strip() if role == "task" and archive.is_file() else None})
+    log(log_entry(role, prompt, Path.cwd(), markers[0] if markers else None, usage, answer))
     event: dict[str, object] = {"type": "result", "subtype": "success", "is_error": False,
                                 "result": "done", "structured_output": answer}
     if usage is not None:

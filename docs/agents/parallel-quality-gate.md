@@ -18,7 +18,8 @@ The scheduler completes markdown and YAML format steps first.
 It then synchronizes all workspace packages, development groups, and extras once.
 The packages share the root `.venv` and `uv.lock`.
 Concurrent uv readers use `--no-sync` after that preparation.
-The wedge and fromargs pytest lanes start before the smaller test lanes.
+With the default `GATE_JOBS` value, the first four lanes are the skillz-e2e, wedge, skillz, and fromargs pytest lanes.
+The smaller test lanes start as these lanes finish.
 Each failed lane prints its captured diagnostics.
 The scheduler returns nonzero if any lane fails.[^4]
 
@@ -28,7 +29,7 @@ The scheduler returns nonzero if any lane fails.[^4]
 `TEST_WORKERS` sets the worker count for each pytest suite.
 Both settings default to four and require positive integers.
 These limits are separate.
-Two concurrent pytest lanes can each start four workers.[^5]
+The four first pytest lanes can each start four workers at the same time.[^5]
 
 ## Resource ownership
 

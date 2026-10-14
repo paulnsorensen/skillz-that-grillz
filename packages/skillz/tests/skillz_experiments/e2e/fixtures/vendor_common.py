@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -19,6 +21,37 @@ class PromptFormatError(ValueError):
 def is_isolation_probe(argv: list[str]) -> bool:
     return (argv[:2] == ["/usr/bin/python3", "-c"] and len(argv) == 3
             and all(phrase in argv[2] for phrase in PROBE_PHRASES))
+
+
+def settings() -> dict[str, str]:
+    return cast(dict[str, str], json.loads(Path(__file__).with_name("vendor-settings.json").read_text()))
+
+
+def parse_env_prefix(values: list[str]) -> tuple[dict[str, str], list[str]]:
+    """Split leading NAME=value assignments from the command that follows `env -i`."""
+    rest = list(values)
+    environment: dict[str, str] = {}
+    while rest and "=" in rest[0] and not rest[0].startswith("/"):
+        name, value = rest.pop(0).split("=", 1)
+        environment[name] = value
+    return environment, rest
+
+
+def log_entry(role: str, prompt: str, workspace: Path, marker: Path | None, usage: dict[str, int] | None,
+              answer: Mapping[str, object]) -> dict[str, object]:
+    """Build the vendor-log record; `env_names` lists names only, never values."""
+    archive = workspace / "archive.sha256"
+    task = role == "task"
+    return {"role": role, "prompt": prompt, "candidate": marker.read_text() if marker else None,
+            "visible_input": (workspace / "fixture.md").read_text() if task else None,
+            "usage": usage, "answer": answer if task else None,
+            "archive_sha256": archive.read_text().strip() if task and archive.is_file() else None,
+            "env_names": sorted(os.environ)}
+
+
+def append_log(entry: dict[str, object]) -> None:
+    with Path(settings()["log"]).open("a") as stream:
+        _ = stream.write(json.dumps(entry) + "\n")
 
 
 def untrusted_payload(prompt: str) -> dict[str, object]:
@@ -61,8 +94,6 @@ def propose(prompt: str, fields: list[str], mode: str = "normal", observed: str 
     if mode == "targets":
         from targets import propose_target
         propose_target(candidate, fields, answer)
-    elif mode == "unchanged":
-        answer = candidate
     elif mode == "leak-answer" and observed:
         answer["SKILL.md"] += "\n" + observed.upper()
     elif mode == "bad-helper" and "scripts/transform.py" in answer:

@@ -1,52 +1,16 @@
 """Joined gate verdicts from process output and task token telemetry."""
 from __future__ import annotations
 
-import json
-import math
-import statistics
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-from support import Scenario, make_scenario, read_cases, read_events, read_record, run_scenario
-
-
-def raw_holdout(scenario: Scenario) -> tuple[float, float, float | None, int]:
-    record = read_record(scenario.out)
-    cases = read_cases(scenario.out)
-    task_logs = [entry for entry in read_events(scenario.out) if entry["role"] == "task"]
-    differences: list[float] = []
-    token_changes: list[float] = []
-    witnessed = 0
-    for case in cases:
-        if case["split"] != "holdout":
-            continue
-        source = cast(dict[str, str], case["files"])["fixture.md"]
-        scores: dict[str, list[float]] = {}
-        tokens: dict[str, list[int]] = {}
-        for arm, marker in (("baseline", record["seed_hash"]), ("winner", record["winner_hash"])):
-            calls = [entry for entry in task_logs if entry["candidate"] == marker
-                     and entry["visible_input"] == source]
-            assert len(calls) == 3
-            witnessed += len(calls)
-            scores[arm] = [float(cast(dict[str, str], json.loads(
-                cast(dict[str, str], entry["answer"])["result_json"]))["text"] == source.upper())
-                for entry in calls]
-            usages = [cast(dict[str, int] | None, entry["usage"]) for entry in calls]
-            if all(usage is not None for usage in usages):
-                tokens[arm] = [usage["input_tokens"] - usage["cached_input_tokens"] + usage["output_tokens"]
-                               for usage in usages if usage is not None]
-        differences.append(statistics.fmean(scores["winner"]) - statistics.fmean(scores["baseline"]))
-        if len(tokens) == 2:
-            token_changes.append(statistics.fmean(tokens["winner"]) / statistics.fmean(tokens["baseline"]) - 1)
-    delta = statistics.fmean(differences)
-    se = statistics.stdev(differences) / math.sqrt(len(differences))
-    return delta, se, statistics.fmean(token_changes) if len(token_changes) == len(differences) else None, witnessed
+from support import HARNESSES, make_scenario, raw_holdout, run_scenario
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
+@pytest.mark.parametrize("harness", HARNESSES)
 def test_unknown_winner_usage_blocks_promotion(tmp_path: Path, harness: str) -> None:
     scenario = make_scenario(tmp_path)
     result = run_scenario(scenario, tmp_path, harness=harness, mode="unknown-usage",
@@ -60,7 +24,7 @@ def test_unknown_winner_usage_blocks_promotion(tmp_path: Path, harness: str) -> 
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
-@pytest.mark.parametrize("harness", ["command", "claude", "codex"])
+@pytest.mark.parametrize("harness", HARNESSES)
 def test_costly_winner_rejects_after_scored_gain(tmp_path: Path, harness: str) -> None:
     scenario = make_scenario(tmp_path)
     result = run_scenario(scenario, tmp_path, harness=harness, mode="costly",
@@ -77,8 +41,8 @@ def test_costly_winner_rejects_after_scored_gain(tmp_path: Path, harness: str) -
 @pytest.mark.parametrize("flags, expected", [
     ((), ("inconclusive", None)),
     (("--max-token-increase-per-gain", "1"), ("inconclusive", -0.5)),
-    (("--min-token-saving", "0.3"), ("promote-cheaper", -0.5)),
-    (("--min-token-saving", "0.6"), ("inconclusive", -0.5)),
+    (("--min-token-saving", "0.3", "--max-quality-loss", "0"), ("promote-cheaper", -0.5)),
+    (("--min-token-saving", "0.6", "--max-quality-loss", "0"), ("inconclusive", -0.5)),
 ])
 def test_cheaper_tied_winner_needs_opt_in(tmp_path: Path, flags: tuple[str, ...],
                                               expected: tuple[str, float | None]) -> None:
@@ -99,7 +63,7 @@ def test_cheaper_tied_winner_needs_opt_in(tmp_path: Path, flags: tuple[str, ...]
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
 @pytest.mark.parametrize("flag, reason", [
     ("--min-gain", "min-gain"),
-    ("--min-lower-bound", "lower-bound"),
+    ("--min-lower-bound", "min-lower-bound"),
 ])
 def test_gain_floors_block_positive_evidence(tmp_path: Path, flag: str, reason: str) -> None:
     scenario = make_scenario(tmp_path)

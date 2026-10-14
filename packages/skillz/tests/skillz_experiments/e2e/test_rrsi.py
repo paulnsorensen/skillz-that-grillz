@@ -11,7 +11,6 @@ import pytest
 from support import BUNDLE, CLI, call_cli, carries_answer, command_adapter, make_scenario, read_events, read_record, run_scenario
 
 
-
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
 @pytest.mark.parametrize("cli", [CLI, BUNDLE], ids=["source", "bundle"])
 def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, cli: Path) -> None:
@@ -86,12 +85,13 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
     assert read_events(scenario.out) == events
 
 
-@pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
+@pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
 def test_leak_predicate_trips_on_the_json_escaped_answer() -> None:
     escaped = json.dumps({"prompt": "context\nanswer-text\nmore"})
     assert carries_answer("answer-text\n", escaped)
     assert carries_answer("answer-text\n", "answer-text")
     assert not carries_answer("answer-text\n", json.dumps({"prompt": "clean"}))
+
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
 def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Path) -> None:
@@ -105,7 +105,7 @@ def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Pat
     gate = cast(dict[str, object], result["gate"])
     assert search["leakage_rejections"] == {"expected-answer": 1}
     assert search["retained_seed"] is True
-    assert (gate["verdict"], gate["reason"]) == ("inconclusive", "winner-equals-baseline")
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
 
     record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
@@ -133,7 +133,7 @@ def test_invalid_helper_proposal_keeps_the_seed_without_task_inference(tmp_path:
     search = cast(dict[str, object], result["search"])
     gate = cast(dict[str, object], result["gate"])
     assert search["retained_seed"] is True
-    assert (gate["verdict"], gate["reason"]) == ("inconclusive", "winner-equals-baseline")
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
 
     record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])

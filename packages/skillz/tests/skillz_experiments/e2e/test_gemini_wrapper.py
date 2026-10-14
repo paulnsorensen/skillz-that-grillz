@@ -8,7 +8,8 @@ from typing import cast
 
 import pytest
 
-from support import BUNDLE, CLI, FIXTURES, call_cli, export_and_apply, make_scenario, read_events, read_record, snapshot
+from support import (BUNDLE, CLI, FIXTURES, Scenario, approve_and_run, cli_error, export_and_apply, make_scenario,
+                     read_events, read_record, snapshot)
 
 
 def configured_wrapper(out: Path, home: Path, cli: Path, mode: str) -> tuple[Path, Path]:
@@ -36,25 +37,18 @@ def configured_wrapper(out: Path, home: Path, cli: Path, mode: str) -> tuple[Pat
     return config, directory
 
 
+def gemini_args(scenario: Scenario, config: Path, *, helper: bool) -> list[str]:
+    return ["run", "--target", str(scenario.target), "--out", str(scenario.out),
+            "--model", "offline-test", "--live", "--edit", "prose+cli" if helper else "prose",
+            "--harness-config", str(config)]
+
+
 def run_gemini(tmp_path: Path, cli: Path, *, helper: bool) -> tuple[dict[str, object], Path, Path, Path]:
     scenario = make_scenario(tmp_path, helper=helper)
     private = tmp_path / "private-home"
     config, directory = configured_wrapper(scenario.out, private, cli, "normal")
     before = snapshot(scenario.target)
-    args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
-            "--model", "offline-test", "--live", "--edit", "prose+cli" if helper else "prose",
-            "--harness-config", str(config)]
-    code, first, error = call_cli(args, private, cli=cli)
-    assert code == 1 and json.loads(error)["code"] == "cases-missing", (first, error)
-    _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
-    code, cases, error = call_cli(args, private, cli=cli)
-    assert code == 1 and json.loads(error)["code"] == "cases-unapproved", (cases, error)
-    case_hash = cast(str, cases["case_hash"])
-    code, budget, error = call_cli(args + ["--approve-cases", case_hash], private, cli=cli)
-    assert code == 1 and json.loads(error)["code"] == "budget-unapproved", (budget, error)
-    calls = cast(dict[str, int], budget["estimate"])["calls"]
-    code, result, error = call_cli(args + ["--approve-cases", case_hash, "--approve-budget", str(calls)],
-                                   private, cli=cli)
+    code, result, error = approve_and_run(gemini_args(scenario, config, helper=helper), private, scenario, cli=cli)
     assert code == 0 and result["phase"] == "complete", (result, error)
     assert snapshot(scenario.target) == before
     applied = export_and_apply(scenario, private, cli=cli)
@@ -64,10 +58,11 @@ def run_gemini(tmp_path: Path, cli: Path, *, helper: bool) -> tuple[dict[str, ob
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-3")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
-@pytest.mark.parametrize("cli", [CLI, BUNDLE], ids=["source", "bundle"])
-@pytest.mark.parametrize("helper", [False, True], ids=["P0", "H0"])
-def test_gemini_wrapper_promotes_and_exports_from_actual_task_trace(tmp_path: Path, cli: Path,
-                                                                    helper: bool) -> None:
+@pytest.mark.parametrize("helper, cli", [
+    pytest.param(False, CLI, id="P0-source"), pytest.param(True, CLI, id="H0-source"),
+    pytest.param(False, BUNDLE, id="P0-bundle")])
+def test_gemini_wrapper_promotes_and_exports_from_actual_task_trace(tmp_path: Path, helper: bool,
+                                                                    cli: Path) -> None:
     result, out, directory, applied = run_gemini(tmp_path, cli, helper=helper)
     record = read_record(out)
     gate = cast(dict[str, object], result["gate"])
@@ -104,26 +99,13 @@ def test_gemini_wrapper_promotes_and_exports_from_actual_task_trace(tmp_path: Pa
         assert not (applied / "scripts/transform.py").exists()
 
 
-@pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
+@pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
 def test_malformed_gemini_answer_charges_calls_without_a_trace(tmp_path: Path) -> None:
     scenario = make_scenario(tmp_path)
     private = tmp_path / "private-home"
     config, _ = configured_wrapper(scenario.out, private, CLI, "malformed-json")
-    args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
-            "--model", "offline-test", "--live", "--edit", "prose",
-            "--harness-config", str(config)]
-    code, _, error = call_cli(args, private)
-    assert code == 1 and json.loads(error)["code"] == "cases-missing"
-    _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
-    code, cases, error = call_cli(args, private)
-    assert code == 1 and json.loads(error)["code"] == "cases-unapproved"
-    case_hash = cast(str, cases["case_hash"])
-    code, budget, error = call_cli(args + ["--approve-cases", case_hash], private)
-    assert code == 1 and json.loads(error)["code"] == "budget-unapproved"
-    calls = cast(dict[str, int], budget["estimate"])["calls"]
-    code, result, error = call_cli(args + ["--approve-cases", case_hash, "--approve-budget", str(calls)],
-                                   private)
-    assert code == 1 and json.loads(error)["code"] == "search-failed", (result, error)
+    code, result, error = approve_and_run(gemini_args(scenario, config, helper=False), private, scenario)
+    assert code == 1 and cli_error(error)["code"] == "search-failed", (result, error)
     record = read_record(scenario.out)
     assert record["failure_code"] == "search-failed" and record["calls"] == 12
     outcomes = cast(list[dict[str, object]], record["outcomes"])

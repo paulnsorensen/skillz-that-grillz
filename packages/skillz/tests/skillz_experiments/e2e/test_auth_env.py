@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from support import (CLAUDE_CREDENTIAL, CODEX_CREDENTIAL, make_scenario, read_events, run_scenario, snapshot,
                      write_credential)
+
+SENTINEL_TOKENS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+                   "GEMINI_API_KEY")
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
@@ -23,7 +27,8 @@ def test_external_auth_override_does_not_replace_private_home(
     scenario = make_scenario(tmp_path)
     home = tmp_path / "home"
     home.mkdir()
-    overrides = {"CLAUDE_CONFIG_DIR": str(claude_config), "CODEX_HOME": str(codex_home)}
+    overrides = {"CLAUDE_CONFIG_DIR": str(claude_config), "CODEX_HOME": str(codex_home),
+                 **{name: f"sentinel-{name}" for name in SENTINEL_TOKENS}}
 
     result = run_scenario(scenario, home, harness=harness, env_overrides=overrides)
 
@@ -32,3 +37,6 @@ def test_external_auth_override_does_not_replace_private_home(
     assert seen and None not in seen, variable
     assert all(not Path(str(value)).is_relative_to(external) for value in seen), seen
     assert snapshot(external) == before
+    names = [cast(list[str], entry["env_names"]) for entry in read_events(scenario.out)]
+    assert names and all("PATH" in seen for seen in names), names
+    assert not any(set(SENTINEL_TOKENS) & set(seen) for seen in names), names

@@ -11,7 +11,8 @@ from typing import cast
 
 import pytest
 
-from support import CLI, call_cli, command_adapter, export_and_apply, make_scenario, read_events
+from skillz_experiments._intake import DRAFT_NAME
+from support import CLI, call_cli, cli_error, command_adapter, export_and_apply, make_scenario, read_events
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-8")
@@ -22,21 +23,21 @@ def test_approval_refusals_start_no_inference(tmp_path: Path) -> None:
             "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose", *command]
 
     code, _, error = call_cli(args, tmp_path)
-    assert code == 1 and json.loads(error)["code"] == "cases-missing"
+    assert code == 1 and cli_error(error)["code"] == "cases-missing"
     assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
 
-    _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
+    _ = (scenario.out / DRAFT_NAME).write_text(json.dumps(scenario.draft))
     code, cases, error = call_cli(args, tmp_path)
-    assert code == 1 and json.loads(error)["code"] == "cases-unapproved"
+    assert code == 1 and cli_error(error)["code"] == "cases-unapproved"
     assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
 
     code, _, error = call_cli([*args, "--approve-cases", "0" * 64], tmp_path)
-    assert code == 1 and json.loads(error)["code"] == "cases-unapproved"
+    assert code == 1 and cli_error(error)["code"] == "cases-unapproved"
     assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
 
     case_hash = cast(str, cases["case_hash"])
     code, budget, error = call_cli([*args, "--approve-cases", case_hash], tmp_path)
-    assert code == 1 and json.loads(error)["code"] == "budget-unapproved"
+    assert code == 1 and cli_error(error)["code"] == "budget-unapproved"
     assert cast(dict[str, int], budget["estimate"])["calls"] > 0
     assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
 
@@ -78,12 +79,12 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
     command = command_adapter(scenario, pause_dir=str(pause_dir))
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
             "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose", *command]
-    _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
+    _ = (scenario.out / DRAFT_NAME).write_text(json.dumps(scenario.draft))
     code, cases, error = call_cli(args, tmp_path)
-    assert code == 1 and json.loads(error)["code"] == "cases-unapproved"
+    assert code == 1 and cli_error(error)["code"] == "cases-unapproved"
     case_hash = cast(str, cases["case_hash"])
     code, budget, error = call_cli([*args, "--approve-cases", case_hash], tmp_path)
-    assert code == 1 and json.loads(error)["code"] == "budget-unapproved"
+    assert code == 1 and cli_error(error)["code"] == "budget-unapproved"
     calls = cast(dict[str, int], budget["estimate"])["calls"]
     approved = [*args, "--approve-cases", case_hash, "--approve-budget", str(calls)]
     env = os.environ.copy()
@@ -94,7 +95,7 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, start_new_session=True)
     try:
-        before, output, error = _advance(process, pause_dir, checkpoint, stop_at_holdout=True)
+        _, output, error = _advance(process, pause_dir, checkpoint, stop_at_holdout=True)
         assert process.poll() is None, (process.returncode, output, error)
         os.killpg(process.pid, signal.SIGKILL)
         _, error = process.communicate(timeout=5)

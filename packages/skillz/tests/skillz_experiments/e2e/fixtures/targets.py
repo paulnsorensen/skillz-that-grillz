@@ -23,7 +23,7 @@ def propose_target(candidate: dict[str, str], fields: list[str], answer: dict[st
         answer["@new-cli"] = NEW_VALUE
         answer["SKILL.md"] += "\nUse scripts/transform-cli.pyz for fixture.md.\n"
     for name in fields:
-        if name.startswith("@wedge/") or name == "scripts/transform.py":
+        if name.startswith("@wedge/"):
             answer[name] = candidate[name].replace("text = text", "text = text.upper()")
 
 

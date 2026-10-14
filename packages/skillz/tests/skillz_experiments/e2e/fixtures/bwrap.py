@@ -2,12 +2,11 @@
 """Synthetic OS boundary for orchestration tests; not isolation evidence."""
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-from vendor_common import is_isolation_probe
+from vendor_common import is_isolation_probe, parse_env_prefix
 
 
 def main() -> int:
@@ -18,15 +17,11 @@ def main() -> int:
         if item == "--bind" and args[index + 2] == "/run/skillz-capture":
             capture = Path(args[index + 1])
     start = max(index for index in range(len(args) - 1) if args[index:index + 2] == ["/usr/bin/env", "-i"])
-    values = args[start + 2:]
-    environment: dict[str, str] = {}
-    while values and "=" in values[0] and not values[0].startswith("/"):
-        name, value = values.pop(0).split("=", 1)
-        environment[name] = value
+    environment, values = parse_env_prefix(args[start + 2:])
     if is_isolation_probe(values):
         print("isolation-ok")
         return 0
-    result = subprocess.run(values, cwd=workspace, env=environment or os.environ.copy(),
+    result = subprocess.run(values, cwd=workspace, env=environment,
                             capture_output=True, text=True, check=False)
     _ = sys.stdout.write(result.stdout)
     if capture is not None:

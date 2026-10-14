@@ -10,27 +10,19 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from vendor_common import USAGE, is_isolation_probe, judge, propose, task, task_usage
-
-
-def settings() -> dict[str, str]:
-    return cast(dict[str, str], json.loads(Path(__file__).with_name("vendor-settings.json").read_text()))
+from vendor_common import (USAGE, append_log, execute as run_command, is_isolation_probe, judge, log_entry,
+                           parse_env_prefix, propose, settings, task, task_usage)
 
 
 def log(entry: dict[str, object]) -> None:
-    with Path(settings()["log"]).open("a") as stream:
-        _ = stream.write(json.dumps(entry | {"codex_home": os.environ.get("CODEX_HOME")}) + "\n")
+    append_log(entry | {"codex_home": os.environ.get("CODEX_HOME")})
 
 
 def sandbox(argv: list[str]) -> int:
     values = argv[argv.index("--") + 1:]
     if values[:2] != ["/usr/bin/env", "-i"]:
         raise ValueError("codex sandbox command must start with /usr/bin/env -i")
-    values = values[2:]
-    environment: dict[str, str] = {}
-    while values and "=" in values[0] and not values[0].startswith("/"):
-        name, value = values.pop(0).split("=", 1)
-        environment[name] = value
+    environment, values = parse_env_prefix(values[2:])
     if is_isolation_probe(values):
         print("isolation-ok")
         return 0
@@ -73,9 +65,9 @@ def execute(argv: list[str]) -> int:
             print(json.dumps({"type": "item.completed", "item": {"type": "command_execution",
                   "command": shlex.join(command), "exit_code": item["exit_code"]}}), flush=True)
         marker_command = ["cat", f".agents/skills/{markers[0].parent.name}/EXPERIMENT_MARKER"]
-        marker_result = subprocess.run(marker_command, cwd=workspace, capture_output=True, text=True, check=False)
+        marker_code, _, _ = run_command(marker_command, workspace)
         print(json.dumps({"type": "item.completed", "item": {"type": "command_execution",
-              "command": shlex.join(marker_command), "exit_code": marker_result.returncode}}), flush=True)
+              "command": shlex.join(marker_command), "exit_code": marker_code}}), flush=True)
     elif "score_percent" in fields:
         answer, role = judge(prompt, fields), "judge"
     else:
@@ -86,11 +78,7 @@ def execute(argv: list[str]) -> int:
     if usage is not None:
         event["usage"] = usage
     print(json.dumps(event), flush=True)
-    archive = workspace / "archive.sha256"
-    log({"role": role, "prompt": prompt, "candidate": markers[0].read_text() if markers else None,
-         "visible_input": (workspace / "fixture.md").read_text() if role == "task" else None,
-         "usage": usage, "answer": answer if role == "task" else None,
-         "archive_sha256": archive.read_text().strip() if role == "task" and archive.is_file() else None})
+    log(log_entry(role, prompt, workspace, markers[0] if markers else None, usage, answer))
     return 0
 
 
