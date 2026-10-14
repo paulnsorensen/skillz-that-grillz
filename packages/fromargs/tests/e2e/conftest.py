@@ -1,9 +1,9 @@
 """Collection-time helper for ``mutate.py``.
 
-``pytest -m`` cannot match a marker's *argument* (``@pytest.mark.ac("AC-3")``),
+``pytest -m`` cannot match a marker's *argument* (``@pytest.mark.ac("fromargs-cli-library:AC-3")``),
 only its name. To let the mutation runner select, per acceptance criterion,
 exactly the tests that must catch a broken build, this hook prints one
-``nodeid<TAB>AC-n`` line per collected test to stdout during a
+``nodeid<TAB><source>:AC-n`` line per collected test to stdout during a
 ``--collect-only`` pass -- but only when ``FROMARGS_AC_DUMP`` is set, so a
 normal test run stays silent.
 """

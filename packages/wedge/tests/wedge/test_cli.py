@@ -17,7 +17,7 @@ from wedge._cli import check_cmd, lock_cmd
 SKILLS = Path("skills")
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_positional_dirs_and_root_are_exclusive(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -28,7 +28,7 @@ def test_positional_dirs_and_root_are_exclusive(
         _ = check_cmd(skill_dir=[str(SKILLS / "hello")], root=[str(SKILLS)])
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_a_missing_root_is_an_error_even_when_another_root_finds_skills(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -39,7 +39,7 @@ def test_a_missing_root_is_an_error_even_when_another_root_finds_skills(
         _ = check_cmd(root=[str(SKILLS), "skills-typo"])
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_duplicate_skill_directories_collapse_to_one(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -52,7 +52,7 @@ def test_duplicate_skill_directories_collapse_to_one(
     assert checked["checked"] == [str(hello)]
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 @pytest.mark.parametrize("jobs", [0, -1])
 def test_jobs_below_one_is_an_error(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch, jobs: int
@@ -64,7 +64,7 @@ def test_jobs_below_one_is_an_error(
         _ = lock_cmd(root=[str(SKILLS)], jobs=jobs)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_writes_skill_named_executable_archive(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -78,7 +78,7 @@ def test_bundle_writes_skill_named_executable_archive(
     assert path.stat().st_mode & 0o111
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_check_rejects_corrupt_bundle_without_mutation(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -107,7 +107,7 @@ def test_bundle_check_rejects_corrupt_bundle_without_mutation(
         _ = bundle_cmd(skill_dir=[str(SKILLS / "hello")], check=True)
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_check_rejects_missing_bundle_without_mutation(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -125,7 +125,7 @@ def test_bundle_check_rejects_missing_bundle_without_mutation(
     assert not path.exists()
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_emits_clean_archive_that_runs_outside_checkout(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -157,7 +157,7 @@ def test_bundle_emits_clean_archive_that_runs_outside_checkout(
     assert Path(result["hello"]["path"]) == scripts / "hello.pyz"
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_check_returns_committed_path_without_mutation(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -173,7 +173,7 @@ def test_bundle_check_returns_committed_path_without_mutation(
     assert (path.read_bytes(), path.stat().st_mode, path.stat().st_mtime_ns) == before
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_check_rejects_stale_readable_bundle_without_mutation(
     tmp_path: Path,
     copy_consumer: Callable[[Path], Path],
@@ -198,7 +198,7 @@ def test_bundle_check_rejects_stale_readable_bundle_without_mutation(
     assert path.read_bytes() == mutated_bytes
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_rejects_symlinked_scripts_directory_without_touching_victim(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -219,7 +219,7 @@ def test_bundle_rejects_symlinked_scripts_directory_without_touching_victim(
     assert victim.read_bytes() == b"keep me"
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_rejects_symlinked_target_without_touching_victim(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -239,7 +239,7 @@ def test_bundle_rejects_symlinked_target_without_touching_victim(
     assert victim.read_bytes() == b"keep me"
 
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_isolates_scripts_file_error_and_continues_other_skills(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -263,7 +263,7 @@ def test_bundle_isolates_scripts_file_error_and_continues_other_skills(
     assert (world_scripts / "world.pyz").is_file()
     assert not list(world_scripts.glob(".*.pyz.*"))
 
-@pytest.mark.ac("AC-W9")
+@pytest.mark.ac("wedge-skill-packaging:AC-W9")
 def test_bundle_check_rejects_corrupt_deflate_for_every_skill_without_mutation(
     tmp_path: Path, copy_consumer: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:

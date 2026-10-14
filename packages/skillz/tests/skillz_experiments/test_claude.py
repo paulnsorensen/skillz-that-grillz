@@ -2198,3 +2198,109 @@ def test_contract_surface_undeclared_name_stops_the_preflight(
     finally:
         session.close()
     assert caught.value.code == "preflight-leak"
+
+
+@pytest.mark.ac("gh-295:AC-6")
+def test_a_nonzero_inventory_exit_with_no_control_response_is_host_not_ready(tmp_path: Path) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "inventory-crash"))
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = transport.inventory()
+    finally:
+        transport.close()
+    assert caught.value.code == "host-not-ready"
+    assert "exited 3" in str(caught.value) and "shim crashed" in str(caught.value)
+
+
+@pytest.mark.ac("gh-295:AC-6")
+@pytest.mark.parametrize("mode", ["inventory-error", "inventory-bad-row", "inventory-broken"])
+def test_a_real_leak_or_a_malformed_list_with_a_control_response_keeps_preflight_leak(tmp_path: Path, mode: str) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = transport.inventory()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+
+
+@pytest.mark.ac("gh-290:AC-9")
+def test_the_settings_floor_keeps_the_sandbox_hard_and_adds_no_bash_allow_rule(tmp_path: Path) -> None:
+    floor = _settings.settings(tmp_path / "workspace")
+    sandbox = cast(dict[str, object], floor["sandbox"])
+    assert sandbox["failIfUnavailable"] is True and sandbox["allowUnsandboxedCommands"] is False
+    allow = cast(dict[str, list[str]], floor["permissions"])["allow"]
+    # The live 2.1.296 spike did not run, so the floor stays without a Bash allow rule. See ADR-004 Amendment 2026-10-13.
+    assert allow == ["Skill"]
+
+
+def _approval_events(command: str, content: str) -> list[dict[str, object]]:
+    return [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "b1", "name": "Bash",
+                                                           "input": {"command": command}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b1", "is_error": True,
+                                                      "content": content}]}}]
+
+
+@pytest.mark.ac("gh-290:AC-10")
+def test_a_bash_approval_block_is_named_by_the_write_and_read_probes() -> None:
+    write = _approval_events("printf tok > /w/.agents/write-probe", "This command requires approval")
+    read = _approval_events("cat /sealed", "This command requires approval")
+    for message in (_events.write_failure(write, ["/w/.agents/write-probe"], False, False),
+                    _events.read_failure(read, "tok", "/sealed", "ctl", "/w/control.txt")):
+        assert message is not None and "approval block" in message and "no positive control" not in message
+    denied = _approval_events("printf tok > /w/.agents/write-probe", "denied")
+    assert "no positive control" in str(_events.write_failure(denied, ["/w/.agents/write-probe"], False, False))
+
+
+@pytest.mark.ac("gh-131:AC-12")
+def test_the_network_probe_key_moved_past_the_loopback_only_probe() -> None:
+    assert _transport.NETWORK_PROBE != "loopback-tcp-http-v2"
+
+
+@pytest.mark.ac("gh-131:AC-12")
+def test_preflight_sends_a_name_lookup_and_a_non_loopback_probe(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert f"/usr/bin/curl --noproxy '*' --max-time 5 -sS -o /dev/null http://{_sandbox.LOOKUP_NAME}/" in prompt
+    assert "connect_ex(('1.1.1.1',443))" in prompt
+
+
+@pytest.mark.ac("gh-131:AC-12")
+@pytest.mark.parametrize(("mode", "reason"), [("net-dns-open", "resolved a public name"),
+                                               ("net-external-open", "connected to a non-loopback address")])
+def test_a_successful_lookup_or_non_loopback_connection_fails_the_preflight(
+        tmp_path: Path, mode: str, reason: str, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+@pytest.mark.ac("gh-131:AC-12")
+def test_missing_lookup_or_non_loopback_output_fails_closed() -> None:
+    token = "a" * 32
+    direct, external, lookup, *proxied = _sandbox.network_commands(1234, token)
+
+    def events(*pairs: tuple[str, str]) -> list[dict[str, object]]:
+        result: list[dict[str, object]] = []
+        for index, (command, text) in enumerate(pairs):
+            result.append({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": f"c{index}", "name": "Bash", "input": {"command": command}}]}})
+            result.append({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"c{index}", "content": text}]}})
+        return result
+    complete = (direct, f"denied-{token}"), (external, f"denied-{token}"), (lookup, f"exit-6-{token}")
+    http = tuple((command, f"exit-7-{token}") for command in proxied)
+    assert _sandbox.network_failure(events(*complete, *http), 1234, token) is None
+    assert "non-loopback" in str(_sandbox.network_failure(events(complete[0], *http, complete[2]), 1234, token))
+    assert "name lookup" in str(_sandbox.network_failure(events(*complete[:2], *http), 1234, token))

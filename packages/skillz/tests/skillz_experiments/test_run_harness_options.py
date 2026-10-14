@@ -66,7 +66,7 @@ class _Driver:
         self.harness: list[str] = harness
 
     def call(self, *extra: str) -> tuple[int, dict[str, object], dict[str, object]]:
-        code = main(["run", "--target", str(self.target), "--out", str(self.out), "--model", "offline",
+        code = main(["run", "--target", str(self.target), "--out", str(self.out), "--model", "offline", "--edit", "prose",
                      *self.harness, "--live", *extra])
         captured = self.capsys.readouterr()
         err = cast(dict[str, object], json.loads(captured.err)) if captured.err else {}
@@ -140,7 +140,7 @@ def test_each_conflicting_harness_option_stops_before_any_work(
                "harness-command-alone": ["--harness", "command"],
                "config+harness-command": ["--harness-config", str(config), "--harness", "command"]}[case]
     out = tmp_path / "run"
-    code = main(["run", "--target", str(target), "--out", str(out), "--model", "offline", "--live", *options])
+    code = main(["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose", "--live", *options])
     err = cast(dict[str, object], json.loads(capsys.readouterr().err))
     expected = {"config+harness": "--harness-config cannot combine with --harness or --command",
                 "config+command": "--harness-config cannot combine with --harness or --command",
@@ -174,7 +174,7 @@ def test_a_config_or_script_inside_the_target_stops_before_work(
         command[1] = str(script)
         _ = config.write_text(json.dumps(document))
     out = tmp_path / "run"
-    code = main(["run", "--target", str(target), "--out", str(out), "--model", "offline", "--live",
+    code = main(["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose", "--live",
                  "--harness-config", str(config)])
     assert code != 0 and "outside the candidate" in json.loads(capsys.readouterr().err)["error"]
     assert not out.exists() and not log.exists()

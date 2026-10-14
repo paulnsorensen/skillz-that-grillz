@@ -1,4 +1,4 @@
-"""Guard the slice boundaries of `harness/` and `wrapper/`: barrels only, no adapter branching outside the slice.
+"""Guard the slice boundaries of `harness/`, `wrapper/`, and `evaluation/`: barrels only, no adapter branching outside the harness.
 
 The wrapper imports the harness only through its barrel. The harness never imports the wrapper.
 """
@@ -13,6 +13,7 @@ from typing import cast
 
 import pytest
 
+import skillz_experiments.evaluation as evaluation_barrel
 import skillz_experiments.harness as harness_barrel
 import skillz_experiments.wrapper as wrapper_barrel
 from skillz_experiments.harness._transport import Transport
@@ -21,7 +22,7 @@ from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._command import Command
 
 SOURCE = Path(__file__).resolve().parents[2] / "src/skillz_experiments"
-SLICES = ("harness", "wrapper")
+SLICES = ("harness", "wrapper", "evaluation")
 ADAPTER_CLASSES = {"ClaudeCode", "Codex", "Command"}
 BRANCH_TYPES = ADAPTER_CLASSES | {"Transport"}
 ADAPTER_NAMES = {"claude", "codex"}
@@ -207,8 +208,9 @@ def test_transport_and_the_credential_kinds_are_defined_only_in_the_harness_slic
     assert found == []
 
 
-def test_the_evaluator_imports_nothing_from_the_harness_slice_at_runtime() -> None:
-    found = [module for module, names in _imported(SOURCE / "_evaluator.py") if _reaches(module, names, "harness")]
+def test_the_evaluation_slice_imports_nothing_from_the_harness_slice_at_runtime() -> None:
+    found = [module for path in sorted((SOURCE / "evaluation").glob("*.py"))
+             for module, names in _imported(path) if _reaches(module, names, "harness")]
     assert found == []
 
 
@@ -230,7 +232,9 @@ def test_the_barrels_export_exactly_the_contract_names() -> None:
         "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "CONFIGURED_SELECTIONS", "doctor",
         "host_report", "ClaudeOptions", "Effort", "NONO_REMOVED", "check_selection", "command_profile",
         "configured_selection", "has_claude_sandbox", "refuses_claude_options", "stop_kind"}
-    assert set(wrapper_barrel.__all__) == {"respond", "Runtime", "IMAGE"}
+    assert set(wrapper_barrel.__all__) == {"register"}
+    assert set(evaluation_barrel.__all__) == {
+        "CheckMemo", "Reply", "Transcript", "answer_schema", "evaluate", "task_tokens"}
 
 
 @pytest.mark.parametrize(("code", "kind"), [

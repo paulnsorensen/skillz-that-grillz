@@ -13,6 +13,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._contract import _LEGACY_SKILLZ, parse  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments._intake import DRAFT_NAME, case_hash, load_draft, split_cases
 from skillz_experiments.gate._simulate import Simulation
 from skillz_experiments.gate import Statistics, simulate, verdict
 from skillz_experiments._records import read
@@ -84,19 +85,19 @@ def test_min_gain_above_the_delta_turns_a_promotion_inconclusive() -> None:
 def test_lower_bound_needs_the_delta_to_exceed_two_se_plus_the_floor() -> None:
     assert verdict(SPREAD, thresholds=Statistics(min_lower_bound=0.8)).verdict == "promote"
     result = verdict(SPREAD, thresholds=Statistics(min_lower_bound=0.9))
-    assert (result.verdict, result.reasons) == ("inconclusive", ("lower-bound",))
+    assert (result.verdict, result.reasons) == ("inconclusive", ("min-lower-bound",))
 
 
 def test_both_floors_report_both_reasons_in_order() -> None:
     result = verdict(SPREAD, thresholds=Statistics(min_gain=2.5, min_lower_bound=0.9))
-    assert (result.verdict, result.reasons) == ("inconclusive", ("min-gain", "lower-bound"))
+    assert (result.verdict, result.reasons) == ("inconclusive", ("min-gain", "min-lower-bound"))
 
 
 def test_the_floors_apply_to_a_zero_se_promotion_with_two_se_as_zero() -> None:
     same = [0.5, 0.5, 0.5]
     assert verdict(same, thresholds=Statistics(min_lower_bound=0.25)).verdict == "promote"
     at_bound = verdict(same, thresholds=Statistics(min_lower_bound=0.5))
-    assert (at_bound.verdict, at_bound.reasons) == ("inconclusive", ("lower-bound",))
+    assert (at_bound.verdict, at_bound.reasons) == ("inconclusive", ("min-lower-bound",))
     low = verdict(same, thresholds=Statistics(min_gain=0.75))
     assert (low.verdict, low.reasons) == ("inconclusive", ("min-gain",))
 
@@ -163,8 +164,9 @@ class _Provider(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
-        del holdout
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del holdout, checks
         return {"score": float("improved" in candidate.files["SKILL.md"]), "candidate_hash": candidate.identity,
                 "case_hash": case.identifier}
 
@@ -189,10 +191,12 @@ def test_a_contract_floor_is_frozen_and_the_gate_reports_its_reason(
     assert read(out / "run.json")["statistics"] == Statistics(min_gain=2.0).data()
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["delta"], gate["reasons"]) == ("inconclusive", 1.0, ["min-gain"])
+    assert result["statistics"] == Statistics(min_gain=2.0).data()
     destination = tmp_path / "export"
     _ = export(out, destination)
     report = cast(dict[str, object], json.loads((destination / "report.json").read_text()))
     assert cast(dict[str, object], report["gate"])["reasons"] == ["min-gain"]
+    assert report["statistics"] == Statistics(min_gain=2.0).data()
 
 
 def test_a_completed_run_with_a_different_statistics_flag_stops_with_run_config_differs(
@@ -225,18 +229,44 @@ def test_min_coverage_accepts_only_a_number_from_0_to_1(bad: object) -> None:
     assert Statistics.declared({"min_coverage": 1}) == {"min_coverage": 1.0}
 
 
-def test_a_flag_below_the_contract_value_wins_and_the_default_gate_has_no_reasons(
+def test_a_flag_below_the_contract_value_wins_when_the_approval_covers_it(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _declare(target, min_gain=2.0, min_lower_bound=0.5)
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
-                 statistics={"min_gain": 0.5, "min_lower_bound": 0.0})
+    flags = {"min_gain": 0.5, "min_lower_bound": 0.0}
+    approved, calls = approvals(target, out, statistics=flags)
+    result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=_Provider,
+                 statistics=flags)
     assert read(out / "run.json")["statistics"] == Statistics(min_gain=0.5).data()
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"]) == ("promote", [])
+
+
+def test_a_live_call_whose_statistics_differ_from_the_approved_ones_stops_before_any_run(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _declare(target, min_gain=2.0)
+    _ = write_draft(out)
+    approved, calls = approvals(target, out)
+    with pytest.raises(Stop) as lowered:
+        _ = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=_Provider,
+                statistics={"min_gain": 0.0})
+    assert lowered.value.code == "cases-unapproved"
+    assert lowered.value.data["statistics"] == Statistics(min_gain=0.0).data()
+    assert lowered.value.data["case_hash"] != approved
+    assert not (out / "run.json").exists()
+
+
+def test_the_approval_hash_covers_every_statistics_field(
+        tmp_path: Path, write_draft: Callable[..., list[str]]) -> None:
+    _ = write_draft(tmp_path)
+    cases = split_cases(load_draft(tmp_path / DRAFT_NAME), 1, "task")
+    base = Statistics().data()
+    hashes = {case_hash(cases, 1, base)} | {case_hash(cases, 1, {**base, name: 0.5}) for name in Statistics.names()}
+    assert len(hashes) == 1 + len(Statistics.names()) and case_hash(cases, 1) not in hashes
 
 
 def test_a_resume_with_a_different_statistics_flag_stops_with_run_config_differs(
@@ -244,9 +274,9 @@ def test_a_resume_with_a_different_statistics_flag_stops_with_run_config_differs
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    approved, calls = approvals(target, out, statistics={"min_gain": 0.5})
     with pytest.raises(Stop) as prepared:
-        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics={"min_gain": 0.5})
+        _ = run(target, out, MODEL, approve_cases=approved, approve_budget=calls, statistics={"min_gain": 0.5})
     assert prepared.value.code == "live-required"
     with pytest.raises(CodedError) as gain:
         _ = run(target, out, MODEL, statistics={"min_gain": 0.25})
@@ -262,7 +292,7 @@ def test_a_resume_with_a_different_statistics_flag_stops_with_run_config_differs
     assert none.value.code == "live-required"
 
 
-def test_approval_stops_echo_the_thresholds_and_a_dropped_flag_falls_back_to_the_default(
+def test_approval_stops_echo_the_thresholds_and_a_dropped_flag_stops_at_the_case_approval(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
@@ -270,13 +300,14 @@ def test_approval_stops_echo_the_thresholds_and_a_dropped_flag_falls_back_to_the
     with pytest.raises(Stop) as cases:
         _ = run(target, out, MODEL, statistics={"min_gain": 0.5})
     assert cases.value.code == "cases-unapproved" and cases.value.data["statistics"] == flagged
-    case_hash = cast(str, cases.value.data["case_hash"])
+    approved = cast(str, cases.value.data["case_hash"])
     with pytest.raises(Stop) as budget:
-        _ = run(target, out, MODEL, approve_cases=case_hash, statistics={"min_gain": 0.5})
+        _ = run(target, out, MODEL, approve_cases=approved, statistics={"min_gain": 0.5})
     assert budget.value.code == "budget-unapproved" and budget.value.data["statistics"] == flagged
     with pytest.raises(Stop) as dropped:
-        _ = run(target, out, MODEL, approve_cases=case_hash)
-    assert dropped.value.code == "budget-unapproved" and dropped.value.data["statistics"] == Statistics().data()
+        _ = run(target, out, MODEL, approve_cases=approved)
+    assert dropped.value.code == "cases-unapproved" and dropped.value.data["statistics"] == Statistics().data()
+    assert dropped.value.data["case_hash"] != approved
 
 
 @pytest.mark.parametrize("name", ["min_gain", "min_lower_bound"])
@@ -314,9 +345,9 @@ def test_a_negative_zero_or_int_flag_is_frozen_and_echoed_as_a_plain_float(
     with pytest.raises(Stop) as cases:
         _ = run(target, out, MODEL, statistics=given)
     assert json.dumps(cases.value.data["statistics"]) == json.dumps(Statistics(min_lower_bound=1.0).data())
-    case_hash, calls = approvals(target, out)
+    approved, calls = approvals(target, out, statistics=given)
     with pytest.raises(Stop) as prepared:
-        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics=given)
+        _ = run(target, out, MODEL, approve_cases=approved, approve_budget=calls, statistics=given)
     assert prepared.value.code == "live-required"
     expected = json.dumps(Statistics(min_lower_bound=1.0).data(), sort_keys=True)
     assert json.dumps(read(out / "run.json")["statistics"], sort_keys=True) == expected

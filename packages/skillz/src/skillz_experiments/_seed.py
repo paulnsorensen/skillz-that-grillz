@@ -34,6 +34,8 @@ class SeedHeader:
         case: dict[str, object] = {"id": self.identifier, "request": self.request, "kind": self.kind, "source": "skill"}
         if self.family is not None:
             case["family"] = self.family
+        elif self.kind != "task":
+            case["family"] = self.identifier
         return case
 
 

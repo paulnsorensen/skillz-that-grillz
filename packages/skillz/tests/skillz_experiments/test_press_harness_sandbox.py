@@ -197,8 +197,9 @@ class _Provider(FakeProvider):
         self.calls += 1
         return {'environment_hash': 'e1', 'isolation': 'passed'}
 
-    def evaluate(self, candidate: object, case: object, *, holdout: bool = False) -> dict[str, object]:
-        del candidate, case, holdout
+    def evaluate(self, candidate: object, case: object, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del candidate, case, holdout, checks
         self.calls += 1
         raise RuntimeError('stop here')
 
@@ -286,7 +287,7 @@ def test_nonoRecord_viaTheCli_exitsNonzeroWithTheCodeOnStderr(
     record['isolation'] = 'nono'
     write(out / 'run.json', record)
     _ = capsys.readouterr()
-    code = main(['run', '--target', str(target), '--out', str(out), '--model', 'm', '--live'])
+    code = main(['run', '--target', str(target), '--out', str(out), '--model', 'm', '--edit', 'prose', '--live'])
     err = cast(dict[str, str], json.loads(capsys.readouterr().err))
     assert code == 1 and err['code'] == 'nono-removed' and 'issues/211' in err['error']
 
@@ -323,7 +324,7 @@ def _ops(log: Path) -> list[str]:
 
 
 def _cli_run(capsys: pytest.CaptureFixture[str], target: Path, out: Path, *extra: str) -> tuple[int, str, dict[str, object]]:
-    code = main(['run', '--target', str(target), '--out', str(out), '--model', 'offline', '--live', *extra])
+    code = main(['run', '--target', str(target), '--out', str(out), '--model', 'offline', '--edit', 'prose', '--live', *extra])
     captured = capsys.readouterr()
     return code, captured.out, cast(dict[str, object], json.loads(captured.err)) if captured.err else {}
 
@@ -345,7 +346,7 @@ def test_inlineCommand_withRepeatedDashLeadingElements_buildsOneArgv(
 
     monkeypatch.setattr(_cli, 'run_workflow', fake)
     out = tmp_path / 'run'
-    code = main(['run', '--target', str(target), '--out', str(out), '--model', 'm', '--harness', 'command',
+    code = main(['run', '--target', str(target), '--out', str(out), '--model', 'm', '--edit', 'prose', '--harness', 'command',
                  f'--command={sys.executable}', '--command=-I', '--command=-c', '--command=--version'])
     assert code == 0 and seen[0] is not None
     assert seen[0].roles['task'].command[1:] == ('-I', '-c', '--version')
@@ -433,7 +434,7 @@ class _Driver:
         self.capsys, self.target, self.out, self.harness = capsys, target, out, harness
 
     def call(self, *extra: str) -> tuple[int, dict[str, object], dict[str, object]]:
-        code = main(['run', '--target', str(self.target), '--out', str(self.out), '--model', 'offline', *self.harness,
+        code = main(['run', '--target', str(self.target), '--out', str(self.out), '--model', 'offline', '--edit', 'prose', *self.harness,
                      '--live', *extra])
         captured = self.capsys.readouterr()
         return (code, cast(dict[str, object], json.loads(captured.out)) if captured.out else {},
@@ -923,8 +924,8 @@ def test_codexDoctor_withALoginAndNoApiKey_neverFailsTheCredentialRow(codex_on_p
 # ---------------------------------------------------------------- AC-5 isolation option gone
 
 @pytest.mark.parametrize('argv', [
-    ['run', '--target', 't', '--out', 'o', '--model', 'm', '--isolation', 'claude'],
-    ['run', '--target', 't', '--out', 'o', '--model', 'm', '--isolation=nono'],
+    ['run', '--target', 't', '--out', 'o', '--model', 'm', '--edit', 'prose', '--isolation', 'claude'],
+    ['run', '--target', 't', '--out', 'o', '--model', 'm', '--edit', 'prose', '--isolation=nono'],
     ['doctor', '--isolation', 'nono'],
     ['doctor', '--isolation=claude'],
 ])
@@ -957,7 +958,7 @@ def test_bundle_help_listsHarnessConfigAndCommandButNoIsolation() -> None:
 # ---------------------------------------------------------------- review fixes
 
 def _plain(target: Path, out: Path, *extra: str) -> list[str]:
-    return ['run', '--target', str(target), '--out', str(out), '--model', 'offline', *extra]
+    return ['run', '--target', str(target), '--out', str(out), '--model', 'offline', '--edit', 'prose', *extra]
 
 
 def test_noLiveConfigRun_stopsAtLiveRequired_andAResumeWithoutTheConfigIsHarnessChanged(

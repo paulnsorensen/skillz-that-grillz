@@ -90,7 +90,7 @@ def _run_launcher(
     )
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_wedge_pyz_env_runs_the_local_file(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -109,7 +109,7 @@ def test_wedge_pyz_env_runs_the_local_file(
 
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_launcher_runs_when_invoked_directly(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -129,7 +129,7 @@ def test_launcher_runs_when_invoked_directly(
     assert json.loads(result.stdout)
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_asset_from_another_zlib_build_runs(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -147,7 +147,7 @@ def test_asset_from_another_zlib_build_runs(
     assert json.loads(result.stdout)
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 @pytest.mark.parametrize("tamper", ["replace", "extra", "duplicate", "not-a-zip"])
 def test_tampered_wedge_pyz_is_refused(
     tmp_path: Path,
@@ -182,7 +182,7 @@ def test_tampered_wedge_pyz_is_refused(
     assert isinstance(error["error"], str) and "sha256" in error["error"]
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_download_via_localhost_is_cached_after_the_first_request(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -212,7 +212,7 @@ def test_download_via_localhost_is_cached_after_the_first_request(
     assert _asset_requests(handler_cls, lock) == 1
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_non_https_non_localhost_base_url_is_refused(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]
 ) -> None:
@@ -230,7 +230,7 @@ def test_non_https_non_localhost_base_url_is_refused(
     assert isinstance(error["error"], str) and "https" in error["error"]
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_corrupt_cache_is_replaced_by_verified_download(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -260,7 +260,7 @@ def test_corrupt_cache_is_replaced_by_verified_download(
     assert cached.read_bytes() == built_pyz.read_bytes()
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_corrupt_download_is_rejected_and_not_cached(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -293,7 +293,7 @@ def _launcher_digest(path: Path) -> str | None:
     return digest(path)
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_archive_with_a_method_zipimport_cannot_read_is_refused(
     tmp_path: Path, built_pyz: Path, copy_locked_fixture: Callable[[Path], Path]
 ) -> None:
@@ -316,7 +316,7 @@ def test_archive_with_a_method_zipimport_cannot_read_is_refused(
     assert "does not match the lock" in json.loads(result.stderr)["error"]
 
 
-@pytest.mark.ac("AC-W4")
+@pytest.mark.ac("wedge-skill-packaging:AC-W4")
 def test_launcher_digest_matches_the_builder(
     tmp_path: Path, built_pyz: Path, rewrite_pyz: Callable[..., Path]
 ) -> None:

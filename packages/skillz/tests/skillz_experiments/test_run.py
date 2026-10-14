@@ -17,9 +17,10 @@ from skillz_experiments._cli import main
 from skillz_experiments.gate import case_deltas, verdict
 from skillz_experiments._records import read, write
 from skillz_experiments.search import Edit
+from skillz_experiments.search import Progress
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
-from skillz_experiments.run._session import _reflection_request as reflection_request  # pyright: ignore[reportPrivateUsage]
 from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -49,7 +50,9 @@ class Provider(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         self.budget.claim(holdout=holdout)
         self.checkpoint()
         with self.recorder.lock:
@@ -186,7 +189,9 @@ class Failing(Provider):
     failed = False
 
     @override
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         if holdout and not Failing.failed:
             Failing.failed = True
             raise ProviderCrash("provider fell over")
@@ -235,7 +240,7 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
 
     result = approved_run(target, out, factory=factory)
     gate = cast(dict[str, object], result["gate"])
-    assert gate["verdict"] == "inconclusive" and gate["reason"] == "winner-equals-baseline"
+    assert gate["verdict"] == "inconclusive" and "reason" not in gate
     assert gate["reasons"] == ["winner-equals-baseline"]
     assert gate["skipped_families"] == []
     assert gate["n_shared"] == 0 and gate["cases"] == len(split_ids(out, "holdout"))
@@ -247,7 +252,8 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
 def test_every_reflection_request_requires_ste_prose_and_carries_the_candidate(
         edit: str, components: list[str], limits: tuple[int, int]) -> None:
     advisory, maximum = limits
-    prompt, schema = reflection_request(cast(Edit, edit), {name: "text" for name in components}, {}, components)
+    prompt, schema = reflection_request(cast(Edit, edit), {name: "text" for name in components}, {}, components,
+                                       progress=Progress(spent=0, planned=100, proposal=1))
     assert "ASD-STE100" in prompt and schema["required"] == components
     assert f"at most {advisory} words per procedural sentence" in prompt
     assert f"at most {maximum} words per descriptive sentence" in prompt

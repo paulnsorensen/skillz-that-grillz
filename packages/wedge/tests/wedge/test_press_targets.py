@@ -123,7 +123,7 @@ def _pyz_members(path: Path) -> list[str]:
 # ---------------------------------------------------------------- config attacks
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.parametrize(
     "bad_name",
     ["", " ", "../evil", "a/b", ".hidden", "-lead", "a b", "café", "a\\nb", "a\\u0000b", "a\\tb", "..", "a/../b"],
@@ -140,7 +140,7 @@ def test_load_targets_unsafe_target_name_is_a_config_error(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.parametrize(
     "body",
     [
@@ -162,7 +162,7 @@ def test_load_targets_target_that_is_not_a_table_array_is_a_config_error(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_load_targets_empty_table_with_only_defaults_names_the_missing_key(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -173,7 +173,7 @@ def test_load_targets_empty_table_with_only_defaults_names_the_missing_key(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_load_targets_table_without_entry_or_source_anywhere_is_a_config_error(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -187,7 +187,7 @@ def test_load_targets_table_without_entry_or_source_anywhere_is_a_config_error(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_load_targets_top_level_source_is_a_default_for_tables(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -199,7 +199,7 @@ def test_load_targets_top_level_source_is_a_default_for_tables(
     assert only.source == SOURCE
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.parametrize("key", ["bogus", "Name", "targets", "Target"])
 def test_load_targets_unknown_top_level_key_next_to_tables_is_a_config_error(
     tmp_path: Path, copy_repo_subset: CopySubset, key: str
@@ -211,7 +211,7 @@ def test_load_targets_unknown_top_level_key_next_to_tables_is_a_config_error(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.parametrize("key", ["project", "repo", "target", "bogus"])
 def test_load_targets_per_table_keys_outside_the_allowed_set_are_rejected(
     tmp_path: Path, copy_repo_subset: CopySubset, key: str
@@ -223,7 +223,7 @@ def test_load_targets_per_table_keys_outside_the_allowed_set_are_rejected(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.parametrize("owned", ["target", "name", "entry"])
 def test_load_targets_parent_defaults_cannot_set_target_name_or_entry(
     tmp_path: Path, copy_repo_subset: CopySubset, owned: str
@@ -237,7 +237,7 @@ def test_load_targets_parent_defaults_cannot_set_target_name_or_entry(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_load_targets_parent_defaults_flow_into_every_table_and_tables_override(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -253,7 +253,7 @@ def test_load_targets_parent_defaults_flow_into_every_table_and_tables_override(
     assert a.source == b.source == SOURCE
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_load_targets_dev_group_from_parent_defaults_names_the_shared_file(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -265,7 +265,7 @@ def test_load_targets_dev_group_from_parent_defaults_names_the_shared_file(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.parametrize(
     "extra",
     [
@@ -289,7 +289,7 @@ def test_load_targets_bad_per_target_override_is_a_config_error(
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_load_targets_duplicate_names_are_caught_even_with_distinct_other_fields(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -303,7 +303,7 @@ def test_load_targets_duplicate_names_are_caught_even_with_distinct_other_fields
 # ----------------------------------------------------------- path traversal
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.parametrize(
     ("source", "include"),
     [
@@ -330,7 +330,7 @@ def test_compute_key_target_path_leaving_the_project_is_a_config_error(
         _ = compute_key(skill, target)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.parametrize("selector", ["../cheese_cave.py", "/etc/hostname", "a/../../b", ""])
 def test_load_targets_source_paths_escape_is_rejected(
     tmp_path: Path, copy_repo_subset: CopySubset, selector: str
@@ -343,7 +343,7 @@ def test_load_targets_source_paths_escape_is_rejected(
         _ = compute_key(skill, targets[0])
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_compute_key_symlinked_source_or_selector_is_rejected(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -362,7 +362,7 @@ def test_compute_key_symlinked_source_or_selector_is_rejected(
         _ = compute_key(skill, target)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_bundle_many_one_bad_target_fails_the_skill_and_writes_nothing(
     tmp_path: Path, copy_repo_subset: CopySubset, installs: list[tuple[str, ...]]
 ) -> None:
@@ -377,7 +377,7 @@ def test_bundle_many_one_bad_target_fails_the_skill_and_writes_nothing(
     assert installs == []
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_resolve_paths_same_include_listed_twice_is_a_config_error(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -393,7 +393,7 @@ def test_resolve_paths_same_include_listed_twice_is_a_config_error(
 # ------------------------------------------------------------------ key attacks
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_compute_key_target_with_the_single_target_name_still_differs_from_single_form(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -411,7 +411,7 @@ def test_compute_key_target_with_the_single_target_name_still_differs_from_singl
     assert compute_key(skill, load_config(skill)) == single_key
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_compute_key_same_multi_target_file_in_two_checkouts_gives_equal_keys(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -426,7 +426,7 @@ def test_compute_key_same_multi_target_file_in_two_checkouts_gives_equal_keys(
     assert keys_one == keys_two and keys_one[0] != keys_one[1]
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_compute_key_every_target_key_changes_when_the_shared_source_changes(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -444,7 +444,7 @@ def test_compute_key_every_target_key_changes_when_the_shared_source_changes(
 # ---------------------------------------------------------------- build attacks
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_build_many_target_order_does_not_change_any_target_output(
     tmp_path: Path, copy_repo_subset: CopySubset, installs: list[tuple[str, ...]]
 ) -> None:
@@ -460,7 +460,7 @@ def test_build_many_target_order_does_not_change_any_target_output(
     assert len(installs) == 2
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_build_many_targets_with_one_site_install_once_and_other_groups_install_again(
     tmp_path: Path, copy_repo_subset: CopySubset, installs: list[tuple[str, ...]]
 ) -> None:
@@ -473,7 +473,7 @@ def test_build_many_targets_with_one_site_install_once_and_other_groups_install_
     assert sorted(installs) == [(), ("extra",)]
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_build_many_output_names_and_bytes_are_stable_across_mtime_mode_and_env(
     tmp_path: Path,
     copy_repo_subset: CopySubset,
@@ -504,7 +504,7 @@ def test_build_many_output_names_and_bytes_are_stable_across_mtime_mode_and_env(
         assert x.value.content_sha256[:12] in x.value.path.name
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_build_many_duplicate_name_across_skills_fails_both_and_spares_the_rest(
     tmp_path: Path, copy_repo_subset: CopySubset
@@ -524,7 +524,7 @@ def test_build_many_duplicate_name_across_skills_fails_both_and_spares_the_rest(
     assert _names(tmp_path / "out") == [outcomes[1].value.path.name]
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_bundle_many_the_same_skill_twice_in_one_call_fails_both_entries(
     tmp_path: Path, copy_repo_subset: CopySubset
@@ -538,7 +538,7 @@ def test_bundle_many_the_same_skill_twice_in_one_call_fails_both_entries(
     assert not (skill / "scripts").exists()
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_bundle_many_failing_shiv_for_one_target_leaves_no_partial_output(
     tmp_path: Path,
@@ -569,7 +569,7 @@ def test_bundle_many_failing_shiv_for_one_target_leaves_no_partial_output(
     assert os.access(scripts / "good.pyz", os.X_OK)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_bundle_many_failing_site_install_fails_every_target_and_creates_no_scripts(
     tmp_path: Path,
@@ -590,7 +590,7 @@ def test_bundle_many_failing_site_install_fails_every_target_and_creates_no_scri
     assert not (skill / "scripts").exists()
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_bundle_many_directory_or_symlink_in_the_way_fails_only_that_target_and_leaks_no_temp(
     tmp_path: Path, copy_repo_subset: CopySubset
@@ -610,7 +610,7 @@ def test_bundle_many_directory_or_symlink_in_the_way_fails_only_that_target_and_
     assert _names(scripts) == ["a.pyz", "b.pyz", "c.pyz"]
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_bundle_many_scripts_symlink_fails_every_target_and_writes_through_nothing(
     tmp_path: Path, copy_repo_subset: CopySubset
@@ -627,7 +627,7 @@ def test_bundle_many_scripts_symlink_fails_every_target_and_writes_through_nothi
     assert list(elsewhere.iterdir()) == []
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_bundle_many_overlong_target_name_is_an_error_outcome_not_a_crash(
     tmp_path: Path, copy_repo_subset: CopySubset
@@ -642,7 +642,7 @@ def test_bundle_many_overlong_target_name_is_an_error_outcome_not_a_crash(
     assert _names(skill / "scripts") == ["ok.pyz"]
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_bundle_check_reports_each_target_separately_and_writes_nothing(
     tmp_path: Path, copy_repo_subset: CopySubset
@@ -664,7 +664,7 @@ def test_bundle_check_reports_each_target_separately_and_writes_nothing(
     assert _tree_digest(scripts) == before
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
 def test_bundle_check_corrupt_bundle_is_an_error_not_an_exception(
     tmp_path: Path, copy_repo_subset: CopySubset
@@ -684,7 +684,7 @@ def test_bundle_check_corrupt_bundle_is_an_error_not_an_exception(
 # ------------------------------------------------------------------ site layer
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_site_layer_key_ignores_group_order_and_duplicates_but_not_membership(tmp_path: Path) -> None:
     _ = (tmp_path / "uv.lock").write_text("lock\n")
 
@@ -696,7 +696,7 @@ def test_site_layer_key_ignores_group_order_and_duplicates_but_not_membership(tm
     assert site_layer_key(tmp_path, ["a,b"]) != site_layer_key(tmp_path, ["a", "b"])
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_site_layer_key_changes_with_lock_bytes_python_and_format(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -715,7 +715,7 @@ def test_site_layer_key_changes_with_lock_bytes_python_and_format(
     assert site_layer_key(tmp_path, []) != base
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_site_layer_key_is_independent_of_project_location_and_pyproject(tmp_path: Path) -> None:
     for name in ("one", "two/deeper"):
         (tmp_path / name).mkdir(parents=True)
@@ -725,13 +725,13 @@ def test_site_layer_key_is_independent_of_project_location_and_pyproject(tmp_pat
     assert site_layer_key(tmp_path / "one", []) == site_layer_key(tmp_path / "two/deeper", [])
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_site_layer_key_missing_lock_is_a_file_error(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         _ = site_layer_key(tmp_path, [])
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_populate_site_layer_strips_volatile_files_and_keeps_third_party_only(
     tmp_path: Path, installs: list[tuple[str, ...]]
 ) -> None:
@@ -747,7 +747,7 @@ def test_populate_site_layer_strips_volatile_files_and_keeps_third_party_only(
     assert found == ["fakepkg", "fakepkg-1.0.dist-info", "fakepkg-1.0.dist-info/METADATA", "fakepkg/__init__.py"]
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 @pytest.mark.usefixtures("installs")
 def test_populate_site_layer_existing_destination_is_refused_and_left_alone(
     tmp_path: Path
@@ -765,7 +765,7 @@ def test_populate_site_layer_existing_destination_is_refused_and_left_alone(
     assert _names(dest) == ["keep"]
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_populate_site_layer_guard_failure_creates_no_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -784,7 +784,7 @@ def test_populate_site_layer_guard_failure_creates_no_directory(
     assert not (tmp_path / "layer").exists()
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_populate_site_layer_without_a_lock_fails_and_leaves_no_layer(tmp_path: Path) -> None:
     project = tmp_path / "proj"
     project.mkdir()
@@ -795,7 +795,7 @@ def test_populate_site_layer_without_a_lock_fails_and_leaves_no_layer(tmp_path: 
     assert not (tmp_path / "layer").exists()
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 @pytest.mark.usefixtures("installs")
 def test_populate_site_layer_failed_install_leaves_no_layer_and_a_retry_works(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -818,7 +818,7 @@ def test_populate_site_layer_failed_install_leaves_no_layer_and_a_retry_works(
     assert not list(tmp_path.glob(".layer.*")), "a failed populate must remove its staging directory"
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_output_has_no_bytecode_or_install_metadata_and_keeps_layer(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     (layer.path / "fakepkg" / "__pycache__").mkdir()
@@ -842,7 +842,7 @@ def test_build_from_layer_output_has_no_bytecode_or_install_metadata_and_keeps_l
     assert _tree_digest(layer.path) == before
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 @pytest.mark.parametrize("shadow", ["fakepkg", "fakepkg-1.0.dist-info", "dangling"])
 @pytest.mark.parametrize("kind", ["dir", "file"])
 def test_build_from_layer_first_party_shadowing_an_installed_path_is_rejected(
@@ -863,7 +863,7 @@ def test_build_from_layer_first_party_shadowing_an_installed_path_is_rejected(
     assert not list((tmp_path / "out").glob("*.pyz"))
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_symlinked_directory_or_nested_link_in_sources_is_rejected(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     outside = tmp_path / "outside"
@@ -883,7 +883,7 @@ def test_build_from_layer_symlinked_directory_or_nested_link_in_sources_is_rejec
     assert not list((tmp_path / "out").glob("*.pyz"))
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_symlinked_file_in_sources_is_rejected(tmp_path: Path) -> None:
     """A symlink at the top level of the sources tree is rejected, as in build()."""
     layer = _hand_layer(tmp_path / "layer")
@@ -898,7 +898,7 @@ def test_build_from_layer_symlinked_file_in_sources_is_rejected(tmp_path: Path) 
             assert archive.read("site-packages/leak.txt") == b"TOP SECRET\n"
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_unsafe_target_name_is_rejected_and_writes_outside_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -919,7 +919,7 @@ def test_build_from_layer_unsafe_target_name_is_rejected_and_writes_outside_noth
     assert list((tmp_path / "out").iterdir()) == []
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_rejects_group_mismatch_but_accepts_order_and_duplicates(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer", ("a", "b"))
     sources = _sources(tmp_path / "sources")
@@ -932,7 +932,7 @@ def test_build_from_layer_rejects_group_mismatch_but_accepts_order_and_duplicate
             _ = build_from_layer(layer, sources, _target(groups=groups), tmp_path / "out")
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_two_targets_one_layer_differ_only_by_their_own_name(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     sources = _sources(tmp_path / "sources")
@@ -948,7 +948,7 @@ def test_build_from_layer_two_targets_one_layer_differ_only_by_their_own_name(tm
     assert _tree_digest(layer.path) == before
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_source_creation_order_and_permissions_do_not_change_output(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     first = tmp_path / "s1"
@@ -968,7 +968,7 @@ def test_build_from_layer_source_creation_order_and_permissions_do_not_change_ou
     assert one.name == two.name and one.read_bytes() == two.read_bytes()
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_concurrent_builds_agree_and_never_write_the_layer(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     sources = _sources(tmp_path / "sources")
@@ -987,7 +987,7 @@ def test_build_from_layer_concurrent_builds_agree_and_never_write_the_layer(tmp_
     assert _tree_digest(layer.path) == before
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_missing_layer_or_sources_leaves_out_dir_empty(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     sources = _sources(tmp_path / "sources")
@@ -1001,7 +1001,7 @@ def test_build_from_layer_missing_layer_or_sources_leaves_out_dir_empty(tmp_path
     assert list((tmp_path / "out").iterdir()) == []
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_failing_shiv_leaves_out_dir_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1020,7 +1020,7 @@ def test_build_from_layer_failing_shiv_leaves_out_dir_empty(
     assert list((tmp_path / "out").iterdir()) == []
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_stage_sources_never_touches_the_layer_and_refuses_an_existing_destination(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -1046,7 +1046,7 @@ def _only_target(skill: Path) -> WedgeConfig:
     return target
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_stage_sources_overlay_replaces_checkout_files_and_leaves_the_rest(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -1070,7 +1070,7 @@ def test_stage_sources_overlay_replaces_checkout_files_and_leaves_the_rest(
     assert paths.source.read_text() == real_before
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_stage_sources_overlay_file_outside_the_target_sources_is_rejected(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -1087,7 +1087,7 @@ def test_stage_sources_overlay_file_outside_the_target_sources_is_rejected(
     assert not (tmp_path / "staged").exists(), "a rejected overlay stages nothing"
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_stage_sources_overlay_symlink_is_rejected(tmp_path: Path, copy_repo_subset: CopySubset) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
     paths = resolve_target(skill, _only_target(skill))
@@ -1110,7 +1110,7 @@ def _put(root: Path, relative: str, text: str) -> Path:
     return file
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_stage_sources_overlay_adds_files_under_the_roots(tmp_path: Path) -> None:
     project = (tmp_path / "proj").resolve()
     _ = _put(project, "app/__init__.py", "A = 1\n")
@@ -1128,7 +1128,7 @@ def test_stage_sources_overlay_adds_files_under_the_roots(tmp_path: Path) -> Non
     assert not (project / "app/extra").exists(), "the checkout never gains the added file"
 
 
-@pytest.mark.ac("AC-6")
+@pytest.mark.ac("skillz-wedge-first-class:AC-6")
 def test_stage_sources_overlay_only_stages_just_the_overlay_files(tmp_path: Path) -> None:
     project = (tmp_path / "proj").resolve()
     _ = _put(project, "app/__init__.py", "A = 1\n")
@@ -1144,7 +1144,7 @@ def test_stage_sources_overlay_only_stages_just_the_overlay_files(tmp_path: Path
     assert not (staged / "app/live_extra.py").exists(), "a live file outside the overlay is not staged"
     assert not (staged / "lib/base.py").exists(), "an include file outside the overlay is not staged"
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_stage_sources_overlay_file_outside_every_root_is_rejected(tmp_path: Path) -> None:
     project = (tmp_path / "proj").resolve()
     _ = _put(project, "app/__init__.py", "A = 1\n")
@@ -1158,7 +1158,7 @@ def test_stage_sources_overlay_file_outside_every_root_is_rejected(tmp_path: Pat
     assert not (tmp_path / "staged").exists()
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_stage_sources_overlay_file_outside_the_selectors_is_rejected(tmp_path: Path) -> None:
     project = (tmp_path / "proj").resolve()
     _ = _put(project, "src/a/one.py", "A = 1\n")
@@ -1175,7 +1175,7 @@ def test_stage_sources_overlay_file_outside_the_selectors_is_rejected(tmp_path: 
         _ = stage_sources(paths, tmp_path / "staged-2", outside)
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_stage_sources_overlay_replaces_a_source_inside_an_include_in_every_root(tmp_path: Path) -> None:
     project = (tmp_path / "proj").resolve()
     _ = _put(project, "pkg/cli.py", "V = 1\n")
@@ -1191,7 +1191,7 @@ def test_stage_sources_overlay_replaces_a_source_inside_an_include_in_every_root
     assert (staged / "pkg/util.py").read_text() == "U = 1\n"
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 @pytest.mark.parametrize("kind", ["file", "symlink"])
 def test_populate_site_layer_refuses_an_existing_key_file(
     tmp_path: Path, installs: list[tuple[str, ...]], kind: str
@@ -1213,7 +1213,7 @@ def test_populate_site_layer_refuses_an_existing_key_file(
     assert installs == []
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_a_populated_layer_reopens_and_refuses_changed_inputs(
     tmp_path: Path, installs: list[tuple[str, ...]]
 ) -> None:
@@ -1235,7 +1235,7 @@ def test_a_populated_layer_reopens_and_refuses_changed_inputs(
     assert installs == [("a",)]
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_a_layer_without_a_key_file_does_not_reopen(tmp_path: Path) -> None:
     project = tmp_path / "proj"
     project.mkdir()
@@ -1246,7 +1246,7 @@ def test_a_layer_without_a_key_file_does_not_reopen(tmp_path: Path) -> None:
         _ = open_site_layer(project, [], tmp_path / "layer")
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_refuses_a_layer_populated_from_another_lock(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     sources = _sources(tmp_path / "sources")
@@ -1258,7 +1258,7 @@ def test_build_from_layer_refuses_a_layer_populated_from_another_lock(tmp_path: 
     assert not (tmp_path / "out").exists(), "a refused layer creates nothing"
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_rejects_import_name_shadowing(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     _ = (layer.path / "six.py").write_text("X = 1\n")
@@ -1276,7 +1276,7 @@ def test_build_from_layer_rejects_import_name_shadowing(tmp_path: Path) -> None:
             _ = build_from_layer(layer, sources, _target(), tmp_path / "out")
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_a_first_party_top_level_bin_is_rejected_not_silently_stripped(
     tmp_path: Path, copy_repo_subset: CopySubset
 ) -> None:
@@ -1296,7 +1296,7 @@ def test_a_first_party_top_level_bin_is_rejected_not_silently_stripped(
         _ = stage_sources(reserved, tmp_path / "staged")
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_a_symlink_in_the_layer_is_rejected_before_shiv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     layer = _hand_layer(tmp_path / "layer")
     (layer.path / "fakepkg" / "alias.py").symlink_to(layer.path / "fakepkg" / "__init__.py")
@@ -1311,7 +1311,7 @@ def test_a_symlink_in_the_layer_is_rejected_before_shiv(tmp_path: Path, monkeypa
         _ = build_from_layer(layer, sources, _target(), tmp_path / "out")
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_never_writes_through_a_symlinked_output_directory(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     sources = _sources(tmp_path / "sources")
@@ -1325,7 +1325,7 @@ def test_build_from_layer_never_writes_through_a_symlinked_output_directory(tmp_
     assert list(elsewhere.iterdir()) == []
 
 
-@pytest.mark.ac("AC-4")
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 def test_build_from_layer_replaces_a_symlink_at_the_output_path_without_following_it(tmp_path: Path) -> None:
     layer = _hand_layer(tmp_path / "layer")
     sources = _sources(tmp_path / "sources")
@@ -1342,7 +1342,7 @@ def test_build_from_layer_replaces_a_symlink_at_the_output_path_without_followin
     assert sorted(p.name for p in (tmp_path / "out").iterdir()) == [first.name]
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_config_errors_name_the_target_table(tmp_path: Path, copy_repo_subset: CopySubset) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
     _write(skill, _table("good"), _table("bad", extra='groups = "oops"\n'))
@@ -1351,7 +1351,7 @@ def test_config_errors_name_the_target_table(tmp_path: Path, copy_repo_subset: C
         _ = load_targets(skill)
 
 
-@pytest.mark.ac("AC-3")
+@pytest.mark.ac("skillz-wedge-first-class:AC-3")
 def test_a_config_made_in_memory_gets_the_checks_of_a_parsed_one() -> None:
     for bad_name in ("../escape", "", "a/b"):
         with pytest.raises(ConfigError, match="safe filename component"):

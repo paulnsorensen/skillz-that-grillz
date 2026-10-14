@@ -56,7 +56,7 @@ def test_command_trace_rejects_spoofed_helper_names() -> None:
 def test_activation_requires_the_declared_root_helper_and_input() -> None:
     from skillz_experiments._candidate import Candidate
     from skillz_experiments._contract import Contract, Grader, Helper
-    from skillz_experiments._evaluator import _activation  # pyright: ignore[reportPrivateUsage]
+    from skillz_experiments.evaluation._evaluator import _activation  # pyright: ignore[reportPrivateUsage]
 
     rules = Contract("echo", "$echo run", {"echo": Grader("exact-json")}, Helper("run.py", "input.md"))
     candidate = Candidate({"SKILL.md": "skill", "run.py": "pass"}, ("SKILL.md",), rules)
@@ -169,7 +169,7 @@ def test_wedge_script_runs_isolated() -> None:
     from skillz_experiments._candidate import Candidate
     from skillz_experiments._cases import Case
     from skillz_experiments._contract import resolve
-    from skillz_experiments._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
+    from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
 
     candidate = Candidate({"SKILL.md": "s", "scripts/offload.py": "print(1)"}, ("SKILL.md",), None, "scripts/offload.py")
     prompt = _prompt(resolve(None), candidate, "", cast(Case, cast(object, SimpleNamespace(request="task"))))

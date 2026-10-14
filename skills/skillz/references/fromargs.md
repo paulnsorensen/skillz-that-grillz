@@ -68,6 +68,7 @@ Write correct invocations; treat repair notes as diagnostics, not a workflow dep
 ## In-run edits
 
 During an experiment run with `--edit prose+cli`, an edit to a wedged Python source keeps these rules.
+The edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 Use one fromargs parser. Return JSON errors on stderr. Exit with code 2 for a usage error and code 3 for a failed input contract. Write only results to stdout.
 A non-Python helper keeps its language.
 A Python helper may be a stdlib `argparse` helper only when the skill has no `wedge.toml` that can build a fromargs target.

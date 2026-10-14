@@ -56,6 +56,8 @@ class State:
     environment: str = "e1"
     fail_holdout: bool = False
     reject_baseline: bool = False
+    reject_winner: bool = False
+    rejection: str | None = None
     preflight_delay: float = 0.0
     claims: bool = False
     extra: dict[str, object] = field(default_factory=lambda: cast(dict[str, object], {}))
@@ -71,13 +73,15 @@ class State:
     def evaluate(self, candidate: Candidate, case: Case, holdout: bool) -> dict[str, object]:
         with self.lock:
             self.evaluated.append((case.identifier, holdout))
+        improved = "improved" in candidate.files["SKILL.md"]
         if holdout and self.fail_holdout:
             raise ProviderCrash("provider fell over")
-        improved = "improved" in candidate.files["SKILL.md"]
         result: dict[str, object] = {"score": float(improved), "candidate_hash": candidate.identity,
                                      "case_hash": case.identifier} | self.extra
-        if holdout and self.reject_baseline and not improved:
+        if holdout and (self.reject_winner if improved else self.reject_baseline):
             result["status"] = "candidate-contract-rejected"
+            if self.rejection is not None:
+                result["rejection"] = self.rejection
         return result
 
     def holdout_calls(self) -> int:
@@ -98,7 +102,9 @@ class _Fake(FakeProvider):
             self.budget.claim()
         return self.state.preflight(None)
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         if self.budget is not None:
             self.budget.claim(holdout=holdout)
         return self.state.evaluate(candidate, case, holdout)
@@ -120,8 +126,9 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: State) -> C
         del self
         return state.preflight(recorded)
 
-    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
-        del self
+    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del self, checks
         return state.evaluate(candidate, case, holdout)
 
     def invoke(self: Harness, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
@@ -255,6 +262,7 @@ def test_editable_errors_are_coded_and_stop_before_a_provider_exists(
         (target / "scripts/echo.py").unlink()
     elif variant == "prompt-components-missing":
         document["editable"] = ["scripts/echo.py"]
+        edit = "prose+cli"
     elif variant == "helper-missing":
         edit = "prose+cli"
     else:
@@ -319,8 +327,9 @@ def test_a_resume_with_another_installed_codex_version_stops_as_environment_diff
         del self
         return {"codex_version": installed["version"], "isolation": "passed", "live_calls": 0}
 
-    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
-        del self
+    def evaluate(self: Harness, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del self, checks
         return state.evaluate(candidate, case, holdout)
 
     def invoke(self: Harness, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
@@ -427,6 +436,36 @@ def test_resuming_a_rejected_baseline_never_promotes(
     assert record["phase"] == "searched" and "gate" not in record
 
 
+@pytest.mark.parametrize("rejection", ["helper fixture 0 fails on stdout", None])
+def test_a_rejected_baseline_reports_its_reason_as_the_stop_detail_on_every_run(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, rejection: str | None) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    state = State(reject_baseline=True, rejection=rejection)
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    for attempt in range(2):
+        with pytest.raises(Stop) as caught:
+            _ = run(target, out, MODEL, live=True, approve_cases=case_hash if attempt == 0 else None,
+                    approve_budget=calls if attempt == 0 else None, factory=state.factory())
+        assert caught.value.code == "baseline-contract-rejected"
+        assert caught.value.data.get("detail") == rejection
+        assert ("detail" in caught.value.data) == (rejection is not None)
+
+
+def _holdout(out: Path, arm: str) -> list[dict[str, object]]:
+    return [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+            if item.get("split") == "holdout" and item.get("arm") == arm]
+
+
+def test_a_winner_rejection_in_the_gate_keeps_its_rejected_status(
+        tmp_path: Path, make_target: Maker, approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    state = State(reject_winner=True, rejection="helper fixture 0 fails on stdout")
+    _ = approved_run(target, out, factory=state.factory())
+    winner = _holdout(out, "winner")
+    assert winner and all(item["status"] == "candidate-contract-rejected" for item in winner)
+
+
 def test_a_rejected_seed_stops_before_any_search_call(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
@@ -469,6 +508,20 @@ def test_a_record_that_lacks_a_field_names_it_in_the_error(
     write(out / "run.json", record)
     with pytest.raises(ValueError, match=f"run record lacks {key}"):
         _ = run(target, out, MODEL, live=True, factory=state.factory())
+
+
+def test_a_task_case_without_the_helper_input_stops_as_cases_invalid(tmp_path: Path, make_target: Maker) -> None:
+    target, out, state = make_target(tmp_path, helper=True), tmp_path / "run", State()
+    out.mkdir(mode=0o700)
+    cases = [{"id": f"{family}-{index}", "family": family, "kind": "task", "request": f"request-{family}-{index}-end",
+              "files": {"fixture.md" if family != "b" else "other.md": "hello\n"}, "expected": {}, "source": "skill"}
+             for family in "abc" for index in range(3)]
+    _ = (out / "cases.draft.json").write_text(json.dumps(cases))
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "cases-invalid"
+    assert "b-0, b-1, b-2" in str(caught.value) and "fixture.md" in str(caught.value)
+    assert state.evaluated == [] and not (out / "run.json").exists()
 
 
 def test_a_draft_with_a_small_holdout_stops_with_cases_too_few(
@@ -550,7 +603,9 @@ class _Spending(FakeProvider):
         _ = self.budget.remaining()
         return self.state.preflight(None)
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         self.budget.claim(holdout=holdout)
         if not holdout:
             time.sleep(min(self.delay, self.budget.remaining()))
@@ -577,7 +632,7 @@ def test_a_resume_with_less_time_than_the_reserve_still_reaches_the_gate(
     assert run(target, out, MODEL, live=True, factory=factory)["phase"] == "complete"
     recorded = read(out / "run.json")
     assert cast(dict[str, object], recorded["search"])["reason"] == "budget-exhausted-seed-retained"
-    assert cast(dict[str, object], recorded["gate"])["reason"] == "winner-equals-baseline"
+    assert "reason" not in cast(dict[str, object], recorded["gate"])
 
 
 def test_a_slow_search_stops_at_the_gate_reserve_and_the_run_still_completes(

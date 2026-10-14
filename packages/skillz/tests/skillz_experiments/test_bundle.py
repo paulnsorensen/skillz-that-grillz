@@ -48,7 +48,7 @@ def run_installed(tmp_path: Path, *arguments: str) -> subprocess.CompletedProces
     return subprocess.run(
         [sys.executable, "-I", "-S", str(installed / "scripts/skillz-experiment.pyz"), *arguments],
         cwd="/", env={"PATH": os.defpath, "SHIV_ROOT": str(tmp_path / "cache")},
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=180,  # the full --simulate report runs every pinned simulation
     )
 
 

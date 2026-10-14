@@ -11,16 +11,23 @@ import fromargs
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._facts import audit_facts
-from skillz_experiments.gate import simulate as simulate_gate
+from skillz_experiments.gate import (
+    CHEAPER_SCENARIOS, POWER_EFFECTS, simulate as simulate_gate, simulate_cheaper, simulate_power,
+)
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
 from skillz_experiments.run import Stop, export as export_run, run as run_workflow
 from skillz_experiments.harness import Configuration, Effort, configured_selection, doctor, stop_kind
-from skillz_experiments.wrapper import IMAGE as GEMINI_IMAGE, Runtime, respond as gemini_respond
+from skillz_experiments.wrapper import register as register_wrappers
 
 Harness = Literal["claude", "codex"]
 RunHarness = Literal["claude", "codex", "command"]
+Metric = Literal[
+    "false_promotions_2se", "false_promotions_one_holdout", "rate_2se", "rate_one_holdout",
+    "true_promotions_effect_10", "true_promotions_effect_20", "true_promotions_effect_30",
+    "power_effect_10", "power_effect_20", "power_effect_30",
+    "cheaper_loss_5_margin_0", "cheaper_loss_5_margin_2", "cheaper_loss_5_margin_5", "cheaper_loss_0_margin_5"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -89,7 +96,8 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                 sandbox_seconds: int | None = None, min_gain: float | None = None,
                 min_lower_bound: float | None = None, family_budget: float | None = None,
                 max_token_increase_per_gain: float | None = None,
-                min_token_saving: float | None = None, min_coverage: float | None = None) -> dict[str, object]:
+                min_token_saving: float | None = None, min_coverage: float | None = None,
+                max_quality_loss: float | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
     Parameters
@@ -102,6 +110,9 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
         Argument array of your own harness command for --harness command: --command EXECUTABLE ARG...
     judge_model
         Model of the judge calls. Task and reflection calls use --model. Defaults to --model.
+    edit
+        prose+cli (default) also edits helper scripts and own wedge sources. prose edits only Markdown.
+        With no --edit, a skill with no editable script uses prose.
     effort
         Claude Code effort level for every role (claude harness only).
     sandbox_read
@@ -121,10 +132,13 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
     min_coverage
         Least share of planned holdout cases scored on both arms, from 0 to 1. Below it the gate is inconclusive.
         0 turns the rule off. Overrides the contract value.
+    max_quality_loss
+        Largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. At least 0.
+        `--min-token-saving` needs it. Overrides the contract value.
     """
     flags = {"min_gain": min_gain, "min_lower_bound": min_lower_bound, "family_budget": family_budget,
              "max_token_increase_per_gain": max_token_increase_per_gain, "min_token_saving": min_token_saving,
-             "min_coverage": min_coverage}
+             "min_coverage": min_coverage, "max_quality_loss": max_quality_loss}
     statistics = {name: value for name, value in flags.items() if value is not None}
     with _coded():
         adapter, configuration = _run_harness(model, target, harness, harness_config, command, out)
@@ -159,19 +173,56 @@ def audit_facts_command(directory: Path) -> dict[str, object]:
     return audit_facts(directory)
 
 
+def _simulation_report() -> dict[str, object]:
+    result = simulate_gate()
+    report: dict[str, object] = {
+        "trials": result.trials, "cases": result.cases,
+        "false_promotions_2se": result.false_promotions_2se,
+        "false_promotions_one_holdout": result.false_promotions_one_holdout,
+        "rate_2se": result.rate_2se, "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
+    for effect in POWER_EFFECTS:
+        power = simulate_power(effect)
+        label = round(effect * 100)
+        report[f"true_promotions_effect_{label}"] = power.promotions
+        report[f"power_effect_{label}"] = power.rate
+    for loss, margin in CHEAPER_SCENARIOS:
+        report[_cheaper_key(loss, margin)] = simulate_cheaper(loss, margin).rate
+    return report
+
+
+def _cheaper_key(loss: float, margin: float) -> str:
+    """Name a `promote-cheaper` rate by its true loss and margin in hundredths of a score."""
+    return f"cheaper_loss_{round(loss * 100)}_margin_{round(margin * 100)}"
+
+
+def _simulation_figure(metric: Metric) -> int | float:
+    """Compute only the figure that `metric` names; it equals the same key of the full report."""
+    for effect in POWER_EFFECTS:
+        label = round(effect * 100)
+        if metric == f"true_promotions_effect_{label}":
+            return simulate_power(effect).promotions
+        if metric == f"power_effect_{label}":
+            return simulate_power(effect).rate
+    for loss, margin in CHEAPER_SCENARIOS:
+        if metric == _cheaper_key(loss, margin):
+            return simulate_cheaper(loss, margin).rate
+    return cast(int | float, getattr(simulate_gate(), metric))
+
+
 @app.command(name="self-test")
 def self_test(*, model: str | None = None, preflight_only: bool = False, simulate: bool = False,
-              harness_config: Path | None = None, max_invocations: int = 20,
-              max_seconds: float = 1200) -> dict[str, object]:
-    """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates (--simulate)."""
+              metric: Metric | None = None, harness_config: Path | None = None, max_invocations: int = 20,
+              max_seconds: float = 1200) -> dict[str, object] | int | float:
+    """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates and power (--simulate).
+
+    With --simulate, --metric NAME prints only that number, so `ratchet.py measure` can read it.
+    """
     if preflight_only == simulate:
         raise ValueError("choose exactly one of --preflight-only or --simulate")
+    if metric is not None and not simulate:
+        raise ValueError("--metric requires --simulate")
     if simulate:
-        result = simulate_gate()
-        return {"trials": result.trials, "cases": result.cases,
-                "false_promotions_2se": result.false_promotions_2se,
-                "false_promotions_one_holdout": result.false_promotions_one_holdout,
-                "rate_2se": result.rate_2se, "rate_one_holdout": result.rate_one_holdout, "live_calls": 0}
+        return _simulation_report() if metric is None else _simulation_figure(metric)
     if model is None:
         raise ValueError("--preflight-only requires --model")
     with _coded():
@@ -190,14 +241,7 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
         return result if warning is None else result | {"close_warning": warning}
 
 
-group = app.group("harness-wrapper", help="Reference wrappers for the command adapter. Each speaks JSON protocol version 1.")
-
-
-@group.command(name="gemini")
-def gemini_command(*, bin_dir: Path | None = None, runtime: Runtime | None = None, image: str = GEMINI_IMAGE) -> None:
-    """Run Gemini CLI with its native sandbox behind the command adapter. Read one request on stdin, answer on stdout."""
-    response = gemini_respond(sys.stdin.read(), bin_dir=bin_dir, runtime=runtime, image=image)
-    _ = sys.stdout.write(json.dumps(response) + "\n")
+register_wrappers(app.group("harness-wrapper", help="Reference wrappers for the command adapter. Each speaks JSON protocol version 1."))
 
 
 def main(argv: list[str] | None = None) -> int:

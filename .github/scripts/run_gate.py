@@ -15,6 +15,12 @@ ROOT = Path(__file__).resolve().parents[2]
 _ACTIVE: dict[subprocess.Popen[bytes], tuple[str, BinaryIO]] = {}
 _cancelled = False
 PACKAGE_MODES = frozenset({"fromargs", "agent-session-analytics"})
+LIVE_FLAG = "SKILLZ_LIVE"
+
+
+def _environment() -> dict[str, str]:
+    """Return the step environment without `SKILLZ_LIVE`, so no gate step makes a real model call."""
+    return {name: value for name, value in os.environ.items() if name != LIVE_FLAG}
 
 
 def _check_cancelled() -> None:
@@ -29,7 +35,7 @@ def _start(name: str, command: list[str]) -> bool:
     try:
         process = subprocess.Popen(
             command, cwd=ROOT, stdout=output, stderr=subprocess.STDOUT,
-            start_new_session=True,
+            start_new_session=True, env=_environment(),
         )
     except OSError as error:
         output.close()
@@ -129,6 +135,8 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("skill-validator", root + ["python", ".github/scripts/validate_skills.py"]),
         ("reference-tests", root + ["python", ".github/scripts/test_check_skillz_references.py"]),
         ("reference-check", root + ["python", ".github/scripts/check_skillz_references.py"]),
+        ("ac-trace-tests", root + ["python", ".github/scripts/test_check_ac_trace.py"]),
+        ("ac-trace", root + ["python", ".github/scripts/check_ac_trace.py"]),
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
         ("agent-session-analytics-pytest", analytics + ["pytest", "packages/agent-session-analytics/tests", "-q", "-n", str(test_workers),

@@ -17,7 +17,7 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import Case, CodedError, digest, relative, string
 from skillz_experiments._contract import resolve, Surface
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments._evaluator import answer_schema, Reply, Transcript
+from skillz_experiments.evaluation import answer_schema, Reply, Transcript
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import live, process
@@ -93,7 +93,7 @@ from skillz_experiments.harness._claude._settings import declared_names, Invento
 TOOLS = "Bash,Read,Skill"
 
 
-NETWORK_PROBE = "loopback-tcp-http-v2"
+NETWORK_PROBE = "loopback-dns-nonloopback-v3"
 
 
 READ_PROBE = "read-tool-outside-workspace-v1"
@@ -213,9 +213,7 @@ class ClaudeCode:
         return floor
 
     def _environment(self, workspace: Path) -> dict[str, str]:
-        environment = {"PATH": f"{self.executable.parent}:/usr/bin:/bin", "HOME": str(workspace / "home"),
-                       "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
-        environment |= {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1"}
+        environment = _executable_environment(self.executable) | {"HOME": str(workspace / "home"), "TMPDIR": str(workspace / "tmp")}
         return environment | {"CLAUDE_CONFIG_DIR": str(self.config_dir)}
 
     def _stage(self, workspace: Path, candidate: Candidate | None = None) -> None:
@@ -306,7 +304,12 @@ class ClaudeCode:
             reason = failure(result.returncode, result.stderr, events, [])
             if reason == AUTH_FAILED:
                 raise login_failed(LOGIN_HINT)
-            error = str(control_response(events).get("error", ""))[:200]
+            response = control_response(events)
+            if result.returncode != 0 and not response:
+                raise CodedError("host-not-ready", f"the Claude Code initialize request exited {result.returncode} with no control "
+                                 + f"response, so the skill inventory is unknown (stderr: {' '.join(result.stderr[:200].split())!r}); "
+                                 + "fix the claude executable, then run again")
+            error = str(response.get("error", ""))[:200]
             raise preflight_leak("the Claude Code initialize response has no valid command list, so the skill inventory "
                                   + f"is unknown (exit {result.returncode}; stderr: {' '.join(result.stderr[:200].split())!r}; "
                                   + f"control response error: {error!r})")
@@ -694,13 +697,24 @@ LIVE_PREFLIGHT = ("one model call after budget approval checks Bash reads, write
                   "a free check cannot prove them")
 
 
-def _version(executable: str) -> str:
+def _executable_environment(executable: Path) -> dict[str, str]:
+    """Return the environment parts that the run and the doctor share when they start `executable`."""
+    return {"PATH": f"{executable.parent}:/usr/bin:/bin", "LANG": "C.UTF-8",
+            "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1"}
+
+
+def _version(executable: str) -> Check:
+    """Run `claude --version` through the executable and environment of the run. A nonzero exit fails the row."""
+    fix = "reinstall Claude Code, then run `claude --version` once to see why it fails"
     try:
         result = subprocess.run([executable, "--version"], capture_output=True, text=True, timeout=15, check=False,
-                                env={"PATH": "/usr/bin:/bin"})
-    except (OSError, subprocess.TimeoutExpired):
-        return "unknown version"
-    return result.stdout.strip() or "unknown version"
+                                env=_executable_environment(Path(executable).absolute()))
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return Check("claude", "fail", f"`{executable} --version` did not finish: {error}", fix)
+    if result.returncode != 0:
+        return Check("claude", "fail", f"`{executable} --version` exited {result.returncode} (stderr: "
+                     + f"{' '.join(result.stderr[:200].split())!r})", fix)
+    return Check("claude", "pass", result.stdout.strip() or "unknown version")
 
 
 def _apparmor() -> Check:
@@ -774,7 +788,7 @@ def _claude_checks(named: str | None = None) -> list[Check]:
                       "install Claude Code, then run `claude` once and log in"),
                 credential_row(login_credential_kind())]
     tools = _tool_checks()
-    checks = [Check("claude", "pass", _version(executable)), *tools]
+    checks = [_version(executable), *tools]
     if sys.platform != "darwin":
         checks.append(_apparmor())
     return checks + _login_checks(executable, all(tool.status == "pass" for tool in tools))

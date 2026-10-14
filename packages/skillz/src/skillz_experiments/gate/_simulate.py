@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from skillz_experiments.gate._rules import Verdict, verdict
-from skillz_experiments.gate._statistics import holdout_deltas
+from skillz_experiments.gate._statistics import Statistics, holdout_deltas
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,25 @@ class Simulation:
     rate_one_holdout: float
     false_promotions_2se: int
     false_promotions_one_holdout: int
+
+
+POWER_EFFECTS = (0.1, 0.2, 0.3)
+
+
+@dataclass(frozen=True)
+class Power:
+    """Promote rate of the production gate when the candidate has a true effect.
+
+    The candidate chance on each case is `clip(gauss(base + effect, 0.10))`: `effect` shifts the baseline chance,
+    then the per-case spread and the clip to [0, 1] apply. The clip lowers the realised mean gain below `effect`.
+    `rate` equals `promotions / trials`.
+    """
+
+    effect: float
+    trials: int
+    cases: int
+    promotions: int
+    rate: float
 
 
 def _draws(rng: random.Random, chances: Sequence[float], repeats: int) -> list[list[float]]:
@@ -45,29 +64,37 @@ def _chances(rng: random.Random, base: Sequence[float], spread: float) -> list[f
     return [min(1.0, max(0.0, rng.gauss(chance, spread))) for chance in base]
 
 
+def _world(rng: random.Random, size: int, candidates: int, loss: float = 0.0) -> tuple[list[float], list[list[float]]]:
+    """Draw `size` baseline chances and, per candidate, chances that sit `loss` below them before the spread."""
+    base = [rng.betavariate(2, 2) for _ in range(size)]
+    shifted = [max(0.0, chance - loss) for chance in base] if loss else base
+    return base, [_chances(rng, shifted, 0.10) for _ in range(candidates)]
+
+
+def _selected(rng: random.Random, cases: int, repeats: int, candidates: int, loss: float = 0.0) -> tuple[list[float], list[float]]:
+    """Pick the best candidate on a validation set, then return the holdout chances of the baseline and that candidate."""
+    arms = candidates + 1
+    validation = max(1, (arms - 2) * cases // arms)
+    _, tries = _world(rng, validation, candidates, loss)
+    means = [statistics.fmean(_scores(rng, chances, repeats)) for chances in tries]
+    best = max(range(candidates), key=means.__getitem__)
+    base, tries = _world(rng, cases, candidates, loss)
+    return base, tries[best]
+
+
 def _trial(rng: random.Random, cases: int, repeats: int, candidates: int,
            rule: Callable[[list[float]], Verdict] | None) -> tuple[bool, bool]:
     """Run one null trial; return whether each gate falsely promotes."""
-    arms = candidates + 1
-    validation = max(1, (arms - 2) * cases // arms)
-
-    def world(size: int) -> tuple[list[float], list[list[float]]]:
-        base = [rng.betavariate(2, 2) for _ in range(size)]
-        return base, [_chances(rng, base, 0.10) for _ in range(candidates)]
-
-    _, tries = world(validation)
-    means = [statistics.fmean(_scores(rng, chances, repeats)) for chances in tries]
-    best = max(range(candidates), key=means.__getitem__)
-    base, tries = world(cases)
+    base, chosen = _selected(rng, cases, repeats, candidates)
     base_draws = _draws(rng, base, repeats)
-    win_draws = _draws(rng, tries[best], repeats)
+    win_draws = _draws(rng, chosen, repeats)
     if rule is None:
         result = _floored(base_draws, win_draws)
     else:
         result = rule([sum(w) / repeats - sum(b) / repeats for w, b in zip(win_draws, base_draws)])
     split = result.verdict == "promote"
 
-    base, tries = world(cases)
+    base, tries = _world(rng, cases, candidates)
     base_scores = _scores(rng, base, repeats)
     candidate_scores = [_scores(rng, chances, repeats) for chances in tries]
     best_mean = max(statistics.fmean(scores) for scores in candidate_scores)
@@ -99,12 +126,7 @@ def simulate(
     `rule` replaces the split gate's verdict function with one that sees only the deltas; tests inject a weakened gate with it.
     Raise `ValueError` when `trials < 1`, `cases < 2`, `repeats < 1`, or `candidates < 2`.
     """
-    if trials < 1:
-        raise ValueError("simulate needs at least 1 trial")
-    if cases < 2:
-        raise ValueError("simulate needs at least 2 cases")
-    if repeats < 1:
-        raise ValueError("simulate needs at least 1 repeat")
+    _check_shape("simulate", trials, cases, repeats)
     if candidates < 2:
         raise ValueError("simulate needs at least 2 candidates")
     rng = random.Random(seed)
@@ -114,3 +136,105 @@ def simulate(
         split += won_split
         single += won_single
     return Simulation(trials, cases, split / trials, single / trials, split, single)
+
+
+def simulate_power(
+    effect: float,
+    seed: int = 20261006,
+    trials: int = 2000,
+    cases: int = 10,
+    repeats: int = 3,
+    *,
+    rule: Callable[[list[float]], Verdict] | None = None,
+) -> Power:
+    """Estimate how often the gate promotes a candidate that truly beats the baseline by about `effect`.
+
+    The candidate chance on each case is `clip(gauss(base + effect, 0.10))`, so `effect` is the mean shift before the
+    per-case spread and the clip to [0, 1]. The clip removes part of the shift near the ceiling, so the realised mean
+    gain is lower than `effect`: about 0.097, 0.188, and 0.271 for 0.1, 0.2, and 0.3.
+    The run uses the seed, case count, repeats, baseline cases, and gate of `simulate`.
+    It skips the validation search, so each trial holds one baseline and one candidate on `cases` holdout cases.
+    `rule` replaces the verdict function, as in `simulate`; a rule that never promotes gets zero power.
+    Raise `ValueError` when `trials < 1`, `cases < 2`, `repeats < 1`, or `effect` is not above 0.
+    """
+    _check_shape("simulate_power", trials, cases, repeats)
+    if not effect > 0:
+        raise ValueError("simulate_power needs an effect above 0")
+    rng = random.Random(seed)
+    promotions = 0
+    for _ in range(trials):
+        base = [rng.betavariate(2, 2) for _ in range(cases)]
+        candidate = _chances(rng, [chance + effect for chance in base], 0.10)
+        base_draws = _draws(rng, base, repeats)
+        win_draws = _draws(rng, candidate, repeats)
+        if rule is None:
+            result = _floored(base_draws, win_draws)
+        else:
+            result = rule([sum(w) / repeats - sum(b) / repeats for w, b in zip(win_draws, base_draws)])
+        promotions += result.verdict == "promote"
+    return Power(effect, trials, cases, promotions, promotions / trials)
+
+
+def _check_shape(name: str, trials: int, cases: int, repeats: int) -> None:
+    if trials < 1:
+        raise ValueError(f"{name} needs at least 1 trial")
+    if cases < 2:
+        raise ValueError(f"{name} needs at least 2 cases")
+    if repeats < 1:
+        raise ValueError(f"{name} needs at least 1 repeat")
+
+
+CHEAPER_LOSS = 0.05
+CHEAPER_TOKEN_RATIO = 0.5
+CHEAPER_MIN_SAVING = 0.3
+CHEAPER_SCENARIOS = ((0.05, 0.0), (0.05, 0.02), (0.05, 0.05), (0.0, 0.05))
+"""The (true loss, `max_quality_loss` margin) pairs that `self-test --simulate` reports."""
+
+
+@dataclass(frozen=True)
+class Cheaper:
+    """The `promote-cheaper` rate of the production gate when the winner truly loses `loss` per case.
+
+    The winner costs `CHEAPER_TOKEN_RATIO` of the baseline task tokens on every case.
+    `margin` is `max_quality_loss`, and `min_token_saving` is `CHEAPER_MIN_SAVING`. `rate` equals `promotions / trials`.
+    """
+
+    loss: float
+    margin: float
+    trials: int
+    cases: int
+    promotions: int
+    rate: float
+
+
+def simulate_cheaper(
+    loss: float = CHEAPER_LOSS,
+    margin: float = 0.0,
+    seed: int = 20261006,
+    trials: int = 2000,
+    cases: int = 10,
+    repeats: int = 3,
+    candidates: int = 5,
+) -> Cheaper:
+    """Estimate how often the gate returns `promote-cheaper` for a winner that truly loses `loss` per case.
+
+    Each trial selects the best of `candidates` on a validation set, as `simulate` does, but every candidate chance
+    sits `loss` below the baseline chance before the per-case spread. The holdout uses the production deltas, the
+    SE floor, and the token rule. Raise `ValueError` for the shape errors of `simulate`, or a `loss` or `margin` below 0.
+    """
+    _check_shape("simulate_cheaper", trials, cases, repeats)
+    if candidates < 2:
+        raise ValueError("simulate_cheaper needs at least 2 candidates")
+    if not (loss >= 0 and margin >= 0):
+        raise ValueError("simulate_cheaper needs a loss and a margin of at least 0")
+    rng = random.Random(seed)
+    thresholds = Statistics(min_token_saving=CHEAPER_MIN_SAVING, max_quality_loss=margin)
+    promotions = 0
+    for _ in range(trials):
+        base, chosen = _selected(rng, cases, repeats, candidates, loss)
+        paired = holdout_deltas({f"{index:06d}": case for index, case in enumerate(_draws(rng, base, repeats))},
+                                {f"{index:06d}": case for index, case in enumerate(_draws(rng, chosen, repeats))})
+        tokens = {case_id: (100.0, 100.0 * CHEAPER_TOKEN_RATIO) for case_id in paired.deltas}
+        result = verdict(paired.deltas, thresholds=thresholds, tokens=tokens, se_floor=paired.se_floor, planned=cases)
+        promotions += result.verdict == "promote-cheaper"
+    return Cheaper(loss, margin, trials, cases, promotions, promotions / trials)

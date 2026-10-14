@@ -13,7 +13,7 @@ from skillz_experiments._candidate import Candidate, helper_script, make_workspa
 from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments._evaluator import answer_schema
+from skillz_experiments.evaluation import answer_schema
 from skillz_experiments._protocol import LEDGER_KEY, RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._budget import Budget
 from skillz_experiments._runtime import process

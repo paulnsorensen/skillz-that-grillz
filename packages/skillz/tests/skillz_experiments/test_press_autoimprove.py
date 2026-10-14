@@ -87,7 +87,9 @@ class _Fake(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         self.budget.claim(holdout=holdout)
         self.checkpoint()
         self.spy.enter()
@@ -421,9 +423,11 @@ def test_holdout_ids_requests_and_expected_values_never_reach_search_or_reflecti
     seen: dict[str, list[object]] = {}
 
     def spy_search(seed: dict[str, str], edit_mode: Edit, train: list[object], validation: list[object],
-                   evaluate: Evaluate, propose: Propose, *, metric_calls: int) -> object:
+                   evaluate: Evaluate, propose: Propose, *, metric_calls: int,
+                   stalled: Callable[[], bool] | None = None, spent: Callable[[], bool] | None = None) -> object:
         seen["train"], seen["validation"] = list(train), list(validation)
-        return search(seed, edit_mode, train, validation, evaluate, propose, metric_calls=metric_calls)
+        return search(seed, edit_mode, train, validation, evaluate, propose, metric_calls=metric_calls,
+                      stalled=stalled, spent=spent)
 
     monkeypatch.setattr(_session, "pareto_search", spy_search)
     spy = Spy()

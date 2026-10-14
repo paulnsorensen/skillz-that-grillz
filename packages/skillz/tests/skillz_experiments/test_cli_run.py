@@ -38,7 +38,7 @@ def test_run_accepts_only_claude_or_codex_and_launches_headless(tmp_path: Path, 
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI rejects other harness names. For claude and codex this checks adapter argv, not the run path."""
     for harness in ("other",):
-        code = main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "out"), "--model", "m",
+        code = main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "out"), "--model", "m", "--edit", "prose",
                      "--harness", harness])
         captured = capsys.readouterr()
         assert code == 2
@@ -92,7 +92,9 @@ class _Provider(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         self.budget.claim(holdout=holdout)
         self.checkpoint()
         return {"score": float("improved" in candidate.files["SKILL.md"]), "candidate_hash": candidate.identity,
@@ -126,7 +128,7 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
     stops: list[str] = []
 
     def call(*approvals: str) -> tuple[int, dict[str, object]]:
-        code = main(["run", "--target", str(target), "--out", str(out), "--model", "local-test", "--harness", "claude",
+        code = main(["run", "--target", str(target), "--out", str(out), "--model", "local-test", "--edit", "prose", "--harness", "claude",
                      "--live", *approvals])
         captured = capsys.readouterr()
         if code:
@@ -169,7 +171,7 @@ def test_missing_builtin_harness_stops_with_a_code_before_any_approval(
     _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
     shutil.rmtree(target / "evals")
     out = tmp_path / "run"
-    args = ["run", "--target", str(target), "--out", str(out), "--model", "m", "--harness", harness, "--live"]
+    args = ["run", "--target", str(target), "--out", str(out), "--model", "m", "--edit", "prose", "--harness", harness, "--live"]
     assert main(args) == 1
     _ = capsys.readouterr()
     draft = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-{family}-{index}",

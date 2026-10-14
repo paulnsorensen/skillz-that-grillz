@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from skillz_experiments.evaluation import CheckMemo
+
 import json
 import os
 import subprocess
@@ -132,7 +134,7 @@ def test_contract_staging_prompt_uses_the_declared_invocation(tmp_path: Path, mo
     rules = contract()
     task = FakeTask()
     case, candidate = case_and_candidate(tmp_path, "echo", rules)
-    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
+    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     prompt = task.prompts[0]
     assert prompt.startswith("$echo-skill run\n")
     assert ".agents/skills/echo-skill/SKILL.md" in prompt
@@ -147,7 +149,7 @@ def test_command_grader_scores_from_exit_code_and_json(tmp_path: Path, monkeypat
     rules = contract(GATE_SCRIPT[name])
     task = SandboxedTask()
     case, candidate = case_and_candidate(tmp_path, "gate", rules)
-    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
+    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     assert result["score"] == score and result["scores"] == {"command": score}
     assert "output_files" not in result
     workspace = task.workspaces[0]
@@ -161,8 +163,8 @@ def test_command_grader_finds_no_expected_value_anywhere_it_can_read(tmp_path: P
                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract(GATE_SCRIPT["no-leak"])
     case, candidate = case_and_candidate(tmp_path, "gate", rules)
-    clean = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case)
-    leaked = harness(monkeypatch, SandboxedTask({"expected.json": "EXPECTED_SENTINEL"}), FakeJudge()).evaluate(candidate, case)
+    clean = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    leaked = harness(monkeypatch, SandboxedTask({"expected.json": "EXPECTED_SENTINEL"}), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     assert clean["score"] == 1.0 and leaked["score"] == 0.0
 
 
@@ -173,7 +175,7 @@ def test_candidate_output_cannot_shadow_fixtures_or_modules_for_the_grader(tmp_p
     rules = contract(script, flags=())
     case, candidate = case_and_candidate(tmp_path, "gate", rules)
     task = SandboxedTask({"input.txt": "tampered\n", "json.py": "raise SystemExit(7)\n"})
-    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
+    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     assert result["score"] == 1.0
     assert task.workspaces[0]["output/input.txt"] == "tampered\n" and task.workspaces[0]["input.txt"] == "hello\n"
 
@@ -183,18 +185,18 @@ def test_command_grader_runs_a_python_argv_as_given_so_fixture_modules_import(tm
     helper = 'import json\nSCORE = 1\nif __name__ == "__main__":\n    print(json.dumps({"score": SCORE}))\n'
     rules = contract("import helper, json; print(json.dumps({'score': helper.SCORE}))", flags=())
     case, candidate = case_and_candidate(tmp_path, "gate", rules, files={"helper.py": helper})
-    assert harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case)["score"] == 1.0
+    assert harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())["score"] == 1.0
     module = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
                     "kinds": {"gate": {"grader": "command", "argv": [sys.executable, "-m", "helper"]}}}, "skill")
     case, candidate = case_and_candidate(tmp_path, "gate", module, files={"helper.py": helper})
-    assert harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case)["score"] == 1.0
+    assert harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())["score"] == 1.0
 
 
 def test_command_grader_needs_a_sandbox_and_output_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract()
     case, candidate = case_and_candidate(tmp_path, "gate", rules)
     with pytest.raises(ValueError, match="sandbox"):
-        _ = harness(monkeypatch, FakeTask(), FakeJudge()).evaluate(candidate, case)
+        _ = harness(monkeypatch, FakeTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     bare = SandboxedTask()
     original = bare.invoke
 
@@ -205,14 +207,14 @@ def test_command_grader_needs_a_sandbox_and_output_files(tmp_path: Path, monkeyp
 
     bare.invoke = without_files  # type: ignore[method-assign]
     with pytest.raises(ValueError, match="output_files"):
-        _ = harness(monkeypatch, bare, FakeJudge()).evaluate(candidate, case)
+        _ = harness(monkeypatch, bare, FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
 
 
 def test_hybrid_gate_failure_skips_the_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract(GATE_SCRIPT["fail"])
     case, candidate = case_and_candidate(tmp_path, "rewrite", rules)
     judge = FakeJudge()
-    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
+    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert judge.prompts == []
     assert result["score"] == 0.0 and result["scores"] == {"command": 0.0, "judge": None}
     assert result["judge_usage"] is None
@@ -222,7 +224,7 @@ def test_hybrid_gate_pass_uses_the_judge_score(tmp_path: Path, monkeypatch: pyte
     rules = contract(GATE_SCRIPT["pass"])
     case, candidate = case_and_candidate(tmp_path, "rewrite", rules)
     judge = FakeJudge(70)
-    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
+    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert len(judge.prompts) == 1
     assert result["score"] == 0.7 and result["scores"] == {"command": 1.0, "judge": 0.7}
     assert result["usage"] == {"input_tokens": 20, "cached_input_tokens": 0, "output_tokens": 4}
@@ -233,7 +235,7 @@ def test_judge_grader_uses_a_separate_invocation_and_hides_the_rubric(tmp_path: 
     rules = contract()
     task, judge = FakeTask(), FakeJudge(85)
     case, candidate = case_and_candidate(tmp_path, "style", rules)
-    result = harness(monkeypatch, task, judge).evaluate(candidate, case)
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
     assert "RUBRIC_SENTINEL" not in task.prompts[0] and "EXPECTED_SENTINEL" not in task.prompts[0]
     assert "RUBRIC_SENTINEL" in judge.prompts[0] and "rewritten" in judge.prompts[0]
     assert judge.schemas[0] is not None and "score_percent" in cast(dict[str, object], judge.schemas[0]["properties"])
@@ -245,7 +247,7 @@ def test_judge_grader_rejects_an_out_of_range_score(tmp_path: Path, monkeypatch:
     rules = contract()
     case, candidate = case_and_candidate(tmp_path, "style", rules)
     with pytest.raises(ValueError, match="judge"):
-        _ = harness(monkeypatch, FakeTask(), FakeJudge(percent)).evaluate(candidate, case)
+        _ = harness(monkeypatch, FakeTask(), FakeJudge(percent)).evaluate(candidate, case, checks=CheckMemo())
 
 
 class ScriptTask(FakeTask):
@@ -274,7 +276,7 @@ def test_wedge_script_prompt_requires_isolated_python(tmp_path: Path, monkeypatc
     task = ScriptTask(command)
     case, seed = case_and_candidate(tmp_path, "echo", rules)
     candidate = Candidate(seed.files | {"scripts/x.py": "print(1)\n"}, seed.editable, rules, script="scripts/x.py")
-    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case)
+    result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     assert "python3 -I .agents/skills/echo-skill/scripts/x.py" in task.prompts[0]
     assert result["loaded"] is True and result["helper_executed"] is executed
 
@@ -306,7 +308,7 @@ def test_the_capture_sees_the_task_output_and_its_files_reach_the_judge(tmp_path
     rules = capture_contract()
     task, judge = SandboxedTask(), FakeViewer(70)
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, task, judge).evaluate(candidate, case)
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
     assert judge.attachments == [{"page.png": PNG + b"rewritten\n", "notes/page.txt": b"rewritten\n"}]
     assert result["capture_files"] == ["notes/page.txt", "page.png"]
     assert result["score"] == 0.7 and result["scores"] == {"judge": 0.7}
@@ -344,7 +346,7 @@ def test_a_failed_capture_scores_zero_and_skips_the_judge(tmp_path: Path, monkey
     rules = capture_contract(script)
     judge = FakeViewer()
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
+    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert judge.prompts == [] and result["judge_usage"] is None
     assert result["status"] == "capture-failed" and isinstance(result["capture_failure"], str)
     assert result["score"] == 0.0 and result["scores"] == {"judge": None}
@@ -353,7 +355,7 @@ def test_a_failed_capture_scores_zero_and_skips_the_judge(tmp_path: Path, monkey
 def test_a_capture_rule_failure_keeps_its_own_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     script = "import pathlib; d = pathlib.Path('capture/.cache'); d.mkdir(); (d / 'a.txt').write_text('x')"
     case, candidate = case_and_candidate(tmp_path, "look", capture_contract(script))
-    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case)
+    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case, checks=CheckMemo())
     assert result["capture_failure"] == "the capture directory holds a hidden directory"
 
 
@@ -361,7 +363,7 @@ def test_a_capture_rule_failure_keeps_its_own_message(tmp_path: Path, monkeypatc
 def test_an_unreadable_capture_file_fails_the_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = capture_contract("import pathlib; p = pathlib.Path('capture/a.txt'); p.write_text('x'); p.chmod(0)")
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case)
+    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case, checks=CheckMemo())
     assert result["status"] == "capture-failed" and result["score"] == 0.0
 
 
@@ -369,7 +371,7 @@ def test_a_hybrid_kind_that_passes_the_gate_and_fails_the_capture_scores_zero(tm
                                                                               monkeypatch: pytest.MonkeyPatch) -> None:
     rules = capture_contract("raise SystemExit(1)", grader="hybrid")
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case)
+    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case, checks=CheckMemo())
     assert result["status"] == "capture-failed" and result["score"] == 0.0
     assert result["scores"] == {"command": 1.0, "judge": None}
 
@@ -379,7 +381,7 @@ def test_a_hybrid_kind_whose_gate_fails_skips_the_capture_and_the_judge(tmp_path
     rules = capture_contract(grader="hybrid", gate=GATE_SCRIPT["fail"])
     task, judge = SandboxedTask(), FakeViewer()
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, task, judge).evaluate(candidate, case)
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
     assert result["status"] == "gate-failed" and result["score"] == 0.0
     assert len(task.workspaces) == 1 and judge.prompts == [] and judge.attachments == []
 
@@ -392,7 +394,7 @@ def test_a_capture_exactly_at_a_limit_is_accepted(tmp_path: Path, monkeypatch: p
     rules = capture_contract(script)
     judge = FakeViewer()
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
+    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert "capture_failure" not in result and len(judge.attachments) == 1
 
 
@@ -401,7 +403,7 @@ def test_eight_pillars_and_scores_zero_and_one_hundred_are_accepted(tmp_path: Pa
     rules = capture_contract(capture=False, pillars=names)
     judge = FakeJudge(answer={name: 0 if n % 2 else 100 for n, name in enumerate(names)})
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case)
+    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert result["score"] == pytest.approx(0.5)
     assert cast(dict[str, float], cast(dict[str, object], result["scores"])["pillars"])["p0"] == 1.0
 
@@ -415,7 +417,7 @@ def test_a_capture_kind_needs_both_capabilities_before_any_call(tmp_path: Path, 
     case, candidate = case_and_candidate(tmp_path, "look", rules)
     runner, viewer = task(), judge()
     with pytest.raises(ValueError, match=message):
-        _ = harness(monkeypatch, runner, viewer).evaluate(candidate, case)
+        _ = harness(monkeypatch, runner, viewer).evaluate(candidate, case, checks=CheckMemo())
     assert runner.prompts == [] and viewer.prompts == []
 
 
@@ -424,7 +426,7 @@ def test_pillar_scores_are_required_and_the_kind_score_is_their_mean(tmp_path: P
     rules = capture_contract(capture=False, pillars=PILLARS)
     judge = FakeJudge(answer={"ui": 80, "ux": 70, "information_flow": 90})
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case)
+    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert result["score"] == pytest.approx(0.8)
     assert result["scores"] == {"judge": result["score"], "pillars": {"ui": 0.8, "ux": 0.7, "information_flow": 0.9}}
     schema = cast(dict[str, object], judge.schemas[0])
@@ -445,14 +447,14 @@ def test_a_judge_answer_without_exactly_the_pillars_fails(tmp_path: Path, monkey
     rules = capture_contract(capture=False, pillars=PILLARS)
     case, candidate = case_and_candidate(tmp_path, "look", rules)
     with pytest.raises(ValueError, match="judge"):
-        _ = harness(monkeypatch, FakeTask(), FakeJudge(answer=answer)).evaluate(candidate, case)
+        _ = harness(monkeypatch, FakeTask(), FakeJudge(answer=answer)).evaluate(candidate, case, checks=CheckMemo())
 
 
 def test_pillars_and_capture_work_together(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = capture_contract(pillars=PILLARS)
     judge = FakeViewer(answer={"ui": 60, "ux": 60, "information_flow": 90})
     case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case)
+    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert len(judge.attachments) == 1 and result["score"] == pytest.approx(0.7)
     assert cast(dict[str, object], result["scores"])["pillars"] == {"ui": 0.6, "ux": 0.6, "information_flow": 0.9}
 
@@ -529,7 +531,7 @@ def test_journey_grader_gate_pass_calls_the_judge_with_the_brief_and_the_transcr
     rules = journey_contract(JOURNEY_GATE)
     case, candidate = journey_case(tmp_path, rules)
     task, judge = JourneyTask(), FakeJudge(70)
-    result = harness(monkeypatch, task, judge).evaluate(candidate, case)
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
     assert result["score"] == 0.7 and result["scores"] == {"command": 1.0, "judge": 0.7}
     assert len(judge.prompts) == 1
     prompt = judge.prompts[0]
@@ -545,7 +547,7 @@ def test_journey_grader_gate_fail_skips_the_judge(tmp_path: Path, monkeypatch: p
     rules = journey_contract('import json;print(json.dumps({"score": 0}))')
     case, candidate = journey_case(tmp_path, rules)
     judge = FakeJudge(70)
-    result = harness(monkeypatch, JourneyTask(), judge).evaluate(candidate, case)
+    result = harness(monkeypatch, JourneyTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert judge.prompts == []
     assert result["score"] == 0 and result["status"] == "gate-failed" and result["scores"] == {"command": 0.0, "judge": None}
 
@@ -555,7 +557,7 @@ def test_journey_grader_gate_workspace_holds_fixtures_output_and_the_event_trace
     rules = journey_contract(JOURNEY_GATE)
     case, candidate = journey_case(tmp_path, rules)
     task = JourneyTask()
-    _ = harness(monkeypatch, task, FakeJudge(70)).evaluate(candidate, case)
+    _ = harness(monkeypatch, task, FakeJudge(70)).evaluate(candidate, case, checks=CheckMemo())
     workspace = task.workspaces[0]
     assert workspace["input.txt"] == "hello\n" and workspace["output/result.txt"] == "rewritten\n"
     events = [json.loads(line) for line in workspace["trace/events.jsonl"].splitlines()]
@@ -570,5 +572,5 @@ def test_journey_case_on_a_transport_without_conversant_raises_journey_unsupport
     rules = journey_contract(JOURNEY_GATE)
     case, candidate = journey_case(tmp_path, rules)
     with pytest.raises(CodedError) as caught:
-        _ = harness(monkeypatch, SandboxedTask(), FakeJudge(70)).evaluate(candidate, case)
+        _ = harness(monkeypatch, SandboxedTask(), FakeJudge(70)).evaluate(candidate, case, checks=CheckMemo())
     assert caught.value.code == "journey-unsupported"

@@ -41,6 +41,22 @@ test-agent-session-analytics python="":
 mutate-fromargs:
     uv run --locked --project packages/fromargs python packages/fromargs/tests/e2e/mutate.py
 
+# Opt-in live smoke runs of the experiment stack and session analytics (not part of build/ci). They need SKILLZ_LIVE=1.
+# HARNESS is claude or codex. SCENARIO is basic (default), all, or a comma list; see packages/skillz/tests/skillz_live.
+# SKILLZ_LIVE_DRY=1 stops each run at its budget question and makes no model call. The basic run uses at most 88 calls.
+# Each attempt appends one JSON line to .live-smoke/runs.jsonl (gitignored).
+[script("bash")]
+live-smoke $harness $model $scenario="basic":
+    set -euo pipefail
+    if [ "${SKILLZ_LIVE:-}" != 1 ]; then
+        echo "error: live-smoke makes real model calls; set SKILLZ_LIVE=1 to run it" >&2
+        exit 2
+    fi
+    SKILLZ_LIVE_HARNESS="$harness" SKILLZ_LIVE_MODEL="$model" SKILLZ_LIVE_SCENARIO="$scenario" \
+        uv run --locked --extra experiments --project packages/skillz \
+        pytest packages/skillz/tests/skillz_live -m live -v -rs \
+        --basetemp "${XDG_CACHE_HOME:-$HOME/.cache}/skillz-live-smoke" -p no:cacheprovider
+
 # Print the CHANGELOG section for one fromargs version; fail when it is missing or empty.
 [script("bash")]
 fromargs-release-notes $version:

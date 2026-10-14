@@ -14,7 +14,7 @@ from wedge._config import WedgeConfig
 FIXTURE_NAME = "cheese-cave"
 
 
-@pytest.mark.ac("AC-W2")
+@pytest.mark.ac("wedge-skill-packaging:AC-W2")
 def test_build_many_exports_each_skills_groups_and_splits_sites(
     tmp_path: Path,
     copy_repo_subset: Callable[[Path], Path],

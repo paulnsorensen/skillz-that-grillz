@@ -34,6 +34,8 @@ from skillz_experiments._new_cli import VALUE_LIMIT, expand_files, unused_helper
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
+from skillz_experiments.search import Progress
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments._wedge_targets import BuildFailed, plan_targets, settle
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override
@@ -141,7 +143,9 @@ class _Provider(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         self.budget.claim(holdout=holdout)
         self.checkpoint()
         self.recorder.seen.append(candidate)
@@ -449,16 +453,22 @@ PROSE_HEAD = ("Improve only the supplied skill text components. Preserve the hel
               "Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
               "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
               "and at most 25 words per descriptive sentence. "
-              "Return complete component contents. Do not alter independent checks or permissions.")
+              "Return complete component contents. Do not alter independent checks or permissions."
+              " Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
+              "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%). "
+              "Proposals since the last validation gain: 0.")
+START = Progress(spent=0, planned=100, proposal=1)
 
 
 def test_the_prose_prompt_is_unchanged_byte_for_byte() -> None:
-    prompt, _ = _session._reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    prompt, _ = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START)
     assert prompt == PROSE_HEAD + '\n{"candidate": {"SKILL.md": "x"}, "feedback": {}}'
 
 
-def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
-    prompt, _ = _session._reflection_request("prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+@pytest.mark.ac("gh-302:AC-3")
+def test_the_prose_cli_prompt_names_fromargs_and_its_contract_for_a_wedge_source() -> None:
+    components = ["SKILL.md", "@wedge/src/demo/cli.py"]
+    prompt, _ = reflection_request("prose+cli", {name: "x" for name in components}, {}, components, progress=START)
     head = prompt.split("\n", 1)[0]
     assert ("The fromargs package is the default for a wedged Python source. Use one parser. "
             "Print JSON errors on stderr. "
@@ -469,12 +479,22 @@ def test_the_prose_cli_prompt_names_fromargs_and_its_contract() -> None:
     assert "ASD-STE100" in head and NEW_CLI not in head
 
 
+@pytest.mark.ac("gh-302:AC-4")
+def test_the_prose_cli_prompt_for_a_target_without_a_wedge_names_no_runner_build_terms() -> None:
+    components = ["SKILL.md", "scripts/check.py"]
+    prompt, _ = reflection_request("prose+cli", {name: "x" for name in components}, {}, components, progress=START)
+    head = prompt.split("\n", 1)[0].lower()
+    assert "wedge" not in head and "fromargs" not in head and "exit with code" not in head
+    assert "you may change a script's command-line interface" in head
+    assert "a non-python helper keeps its language." in head
+
+
 def test_the_new_cli_sentence_appears_only_when_the_component_is_offered() -> None:
-    offered, _ = _session._reflection_request(
-        "prose+cli", {NEW_CLI: ""}, {}, ["SKILL.md", NEW_CLI])
+    offered, _ = reflection_request(
+        "prose+cli", {NEW_CLI: ""}, {}, ["SKILL.md", NEW_CLI], progress=START)
     assert f"The {NEW_CLI} component adds one new fromargs wedge target as TOML with the keys name and module." in offered
-    absent, _ = _session._reflection_request(
-        "prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"])
+    absent, _ = reflection_request(
+        "prose+cli", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START)
     assert "component adds one new" not in absent
 
 
@@ -731,7 +751,9 @@ class _Preferred(FakeProvider):
                 self.budget.claim()
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         for _ in range(self.state.contract.calls(case.kind)):
             self.budget.claim(holdout=holdout)
         self.checkpoint()

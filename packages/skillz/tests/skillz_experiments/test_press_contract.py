@@ -37,7 +37,7 @@ def run_intake(tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str])
               "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello"}, "source": "skill"}
              for family in range(5) for index in range(2)]
     _ = (out / "cases.draft.json").write_text(json.dumps(cases))
-    command = ["run", "--target", str(target), "--out", str(out), "--model", "offline"]
+    command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose"]
     code = main(command)
     captured = capsys.readouterr()
     error = cast(dict[str, object], json.loads(captured.err)) if captured.err.strip() else {}
@@ -213,7 +213,7 @@ def test_parse_keeps_placeholder_text_in_invocation_verbatim() -> None:
 
 def test_evaluator_prompt_expands_placeholders_once_and_never_in_the_request() -> None:
     from skillz_experiments._cases import Case
-    from skillz_experiments._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
+    from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
     rules = parse(BASE | {"invocation": "{skill} at {path} {skill}"}, "skill")
     candidate = Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=rules)
     case = Case("one", "one", "train", "Use {skill} and {path}.", {}, {"echo": 1}, "t", True)

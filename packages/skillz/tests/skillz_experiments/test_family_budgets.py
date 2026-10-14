@@ -147,7 +147,7 @@ def test_the_frozen_map_holds_both_keys_and_round_trips() -> None:
     base = Statistics()
     assert base.data() == {"min_gain": 0.0, "min_lower_bound": 0.0, "family_budget": None, "family_budgets": {},
                            "max_token_increase_per_gain": None, "min_token_saving": None,
-                           "min_coverage": 0.6}
+                           "min_coverage": 0.6, "max_quality_loss": None}
     full = Statistics(family_budget=0.25, family_budgets={"b": 1.0, "a": 2.0})
     assert Statistics.parse(cast(object, json.loads(json.dumps(full.data())))) == full
     assert list(cast(dict[str, float], full.data()["family_budgets"])) == ["a", "b"]
@@ -161,7 +161,7 @@ def test_a_record_without_the_family_keys_is_refused() -> None:
 
 def test_the_flag_registry_lists_the_scalar_flag_but_not_the_map() -> None:
     assert Statistics.flags() == ("min_gain", "min_lower_bound", "family_budget", "max_token_increase_per_gain",
-                                  "min_token_saving", "min_coverage")
+                                  "min_token_saving", "min_coverage", "max_quality_loss")
     assert "family_budgets" in Statistics.names()
 
 
@@ -229,7 +229,9 @@ class _Provider(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
         improved = "improved" in candidate.files["SKILL.md"]
         score = float(improved != (holdout and case.family in REGRESSING))
         return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier}
@@ -259,18 +261,18 @@ def test_a_tie_run_lists_every_one_case_family_as_skipped(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out, families=12, per_family=1)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics={"family_budget": 0.0})
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Tie,
                  statistics={"family_budget": 0.0})
     gate = cast(dict[str, object], result["gate"])
     skipped = cast(list[str], gate["skipped_families"])
-    assert gate["reason"] == "winner-equals-baseline"
+    assert gate["reasons"] == ["winner-equals-baseline"] and "reason" not in gate
     assert skipped and skipped == sorted(skipped) and len(skipped) == gate["cases"]
 
 def _prepare_only(target: Path, out: Path, write_draft: Callable[..., list[str]],
                   approvals: Callable[..., tuple[str, int]], *, statistics: dict[str, float] | None = None) -> None:
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics=statistics)
     with pytest.raises(Stop) as prepared:
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics=statistics)
     assert prepared.value.code == "live-required"
@@ -279,7 +281,7 @@ def _prepare_only(target: Path, out: Path, write_draft: Callable[..., list[str]]
 def _finish(target: Path, out: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]],
             statistics: dict[str, float] | None) -> dict[str, object]:
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics=statistics)
     return run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
                statistics=statistics)
 
@@ -316,7 +318,7 @@ def test_skipped_families_reach_summary_and_export(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out, families=12, per_family=1)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics={"family_budget": 0.0})
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
                  statistics={"family_budget": 0.0})
     gate = cast(dict[str, object], result["gate"])
@@ -453,3 +455,16 @@ def test_the_cli_passes_family_budget_to_run(tmp_path: Path, monkeypatch: pytest
     assert seen["statistics"] == {"family_budget": 0.25}
     assert main(base) == 0
     assert seen["statistics"] is None
+
+
+def test_a_completed_run_checks_a_family_budget_flag_against_the_frozen_value(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    out, target = tmp_path / "run", make_target(tmp_path)
+    done = _finish(target, out, write_draft, approvals, {"family_budget": 0.5})
+    with pytest.raises(CodedError) as other:
+        _ = run(target, out, MODEL, live=True, statistics={"family_budget": 0.0})
+    assert other.value.code == "run-config-differs"
+    assert "--family-budget" in str(other.value)
+    assert run(target, out, MODEL, live=True, statistics={"family_budget": 0.5}) == done
+    assert run(target, out, MODEL, live=True) == done
