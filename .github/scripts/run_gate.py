@@ -120,11 +120,17 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
     skillz = ["uv", "run", "--locked", "--no-sync", "--project", "packages/skillz"]
     fromargs = ["uv", "run", "--locked", "--no-sync", "--project", "packages/fromargs"]
     analytics = ["uv", "run", "--locked", "--no-sync", "--project", "packages/agent-session-analytics"]
+    # The slow process-level e2e suite runs as its own job, in parallel with the skillz unit tests.
+    skillz_e2e = "packages/skillz/tests/skillz_experiments/e2e"
     return [
+        ("skillz-e2e-pytest", skillz + ["pytest", skillz_e2e, "-q", "-n", str(test_workers),
+                                  "--dist", "worksteal", "--basetemp", str(cache_root / "e"),
+                                  "-o", f"cache_dir={cache_root / 'ec'}"]),
         ("wedge-pytest", wedge + ["pytest", "packages/wedge/tests", "-q", "-n", str(test_workers),
                             "--dist", "worksteal", "--basetemp", str(cache_root / "l"),
                             "-o", f"cache_dir={cache_root / 'lc'}"]),
-        ("skillz-pytest", skillz + ["pytest", "packages/skillz/tests", "-q", "-n", str(test_workers),
+        ("skillz-pytest", skillz + ["pytest", "packages/skillz/tests", "--ignore", skillz_e2e,
+                              "-q", "-n", str(test_workers),
                               "--dist", "worksteal", "--basetemp", str(cache_root / "s"),
                               "-o", f"cache_dir={cache_root / 'sc'}"]),
         ("fromargs-pytest", fromargs + ["pytest", "packages/fromargs/tests", "-q", "-n", str(test_workers),

@@ -48,6 +48,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
 - [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
+- [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
 - [skillz-wedge-first-class](./skillz-wedge-first-class.md) — skillz-wedge-first-class: wedge first-class in autoimprove
 - [wedge-skill-packaging](./wedge-skill-packaging.md) — wedge-skill-packaging: wedge skill packaging
 <!-- HALLOUMINATE:INDEX-END -->
