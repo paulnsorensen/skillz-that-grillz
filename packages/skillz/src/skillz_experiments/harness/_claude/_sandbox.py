@@ -73,17 +73,34 @@ def sandbox_fix(detail: str) -> str:
     return f"{INSTALL_BUBBLEWRAP}; {INSTALL_SOCAT}; {USERNS_FIX}"
 
 
+EXTERNAL_ADDRESS = ("1.1.1.1", 443)
+
+
+LOOKUP_NAME = "example.com"
+
+
+# Curl exit code for a name that does not resolve. Any attempt code instead means that the lookup worked.
+CURL_UNRESOLVED = 6
+
+
 def network_commands(port: int, token: str) -> list[str]:
     """Build the live Bash network attempts. Each command must run word for word.
 
     The first command is a direct loopback TCP attempt. It sends the token if it connects, and prints `denied-<token>`
-    if not. The other two send an HTTP request through any configured proxy. `--noproxy ''` clears `NO_PROXY`, so
+    if not. The second is a direct TCP attempt on a non-loopback address; it sends nothing and prints the same words.
+    The third is a direct name lookup (`--noproxy '*'` skips any proxy, so only the host resolver answers); it prints
+    `exit-<code>-<token>`. A host that resolves names only through the sandbox proxy shows exit 6 here, which is the
+    wanted denial. The last two send an HTTP request through any configured proxy. `--noproxy ''` clears `NO_PROXY`, so
     curl uses the sandbox proxy for loopback names too. They print `exit-<code>-<token>`. The listener judges the token.
     """
     curl = "/usr/bin/curl --noproxy '' --max-time 5 -sS -o /dev/null"
+    host, external = EXTERNAL_ADDRESS
     return ["/usr/bin/python3 -c \"import socket;c=socket.socket();c.settimeout(5);"
             + f"r=c.connect_ex(('127.0.0.1',{port}));r or c.send(b'{token}');"
             + f"print(('open-' if r==0 else 'denied-')+'{token}')\"",
+            "/usr/bin/python3 -c \"import socket;c=socket.socket();c.settimeout(5);"
+            + f"r=c.connect_ex(('{host}',{external}));print(('open-' if r==0 else 'denied-')+'{token}')\"",
+            f"/usr/bin/curl --noproxy '*' --max-time 5 -sS -o /dev/null http://{LOOKUP_NAME}/; echo exit-$?-{token}",
             *[f"{curl} http://{host}:{port}/{token}; echo exit-$?-{token}" for host in ("127.0.0.1", "localhost")]]
 
 
@@ -104,15 +121,29 @@ def _results(events: list[dict[str, object]], command: str) -> list[str]:
     return results
 
 
+def _exit_codes(events: list[dict[str, object]], command: str, token: str) -> list[int]:
+    return [int(code) for text in _results(events, command)
+            for code in cast(list[str], re.findall(rf"exit-(\d+)-{token}", text))]
+
+
 def network_failure(events: list[dict[str, object]], port: int, token: str) -> str | None:
     """Judge the network probe. Each exact command needs output that shows it ran."""
-    direct, *proxied = network_commands(port, token)
+    direct, external, lookup, *proxied = network_commands(port, token)
     outputs = _results(events, direct)
     if not any(f"denied-{token}" in text for text in outputs):
         return f"network probe has no evidence: the direct TCP command output is missing or malformed (output: {outputs!r:.200})"
+    outputs = _results(events, external)
+    if any(f"open-{token}" in text for text in outputs):
+        return "network isolation failed: the Bash probe connected to a non-loopback address"
+    if not any(f"denied-{token}" in text for text in outputs):
+        return f"network probe has no evidence: the non-loopback TCP command output is missing or malformed (output: {outputs!r:.200})"
+    codes = _exit_codes(events, lookup, token)
+    if any(code in CURL_ATTEMPTED for code in codes):
+        return "network isolation failed: the Bash probe resolved a public name"
+    if not codes or any(code != CURL_UNRESOLVED for code in codes):
+        return f"network probe has no evidence: the name lookup output is missing, or curl failed in another way (exit codes: {codes})"
     for command in proxied:
-        codes = [int(code) for text in _results(events, command)
-                 for code in cast(list[str], re.findall(rf"exit-(\d+)-{token}", text))]
+        codes = _exit_codes(events, command, token)
         if not codes or any(code not in CURL_ATTEMPTED for code in codes):
             return f"network probe has no evidence: the HTTP command output is missing, or curl did not attempt a request (exit codes: {codes})"
     return None

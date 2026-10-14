@@ -61,6 +61,9 @@ The runner records the observed `codex --version` string as `codex_version` in `
 A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
+The `doctor` runs `claude --version` with the environment of the run, as `_executable_environment` builds it. The `claude` row fails when the executable is not on `PATH`. It also fails when `--version` exits nonzero or does not finish.
+A skill inventory call that exits nonzero with no control response stops the run with `host-not-ready`. This applies to every inventory call. Any other inventory failure, such as a response with no valid command list, stops with `preflight-leak`.
+The sandbox preflight probes the loopback addresses `127.0.0.1` and `localhost`. It also probes a direct name lookup and a non-loopback TCP address. The probe version is `NETWORK_PROBE` `loopback-dns-nonloopback-v3`. Domain and proxy policy beyond these probes stays unverified. Do not treat the preflight as proof of full network isolation.
 Do not create or request provider credentials. The runner needs no API key.
 A fresh run first runs the free host checks of `doctor`. They make no model call.
 A failed check stops the run with `host-not-ready` before the case draft. The stop lists every check and its fix.
@@ -69,8 +72,12 @@ A `claude` role with its own `command` gets the host checks on that executable.
 The `credential` check names the kind: `subscription login`, `api key`, `unverified (macOS Keychain)`, or `missing`.
 Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" doctor --harness claude` to see the checks without a run.
 Claude Code's own sandbox confines Bash commands.
-`--edit prose` is the default and changes only Markdown files.
-`--edit prose+cli` also changes the helper scripts of the skill, in the same single search.
+`--edit prose+cli` is the default. It also changes the helper scripts and the own wedge sources of the skill, in the same single search.
+A skill with no editable helper script, no own wedge source, and no usable `@new-cli` falls back to `--edit prose`.
+The fallback also applies when the `@new-cli` site layer fails or lacks cyclopts. The runner writes one note on stderr with the reason, and the run does not stop.
+A resume without `--edit` keeps the mode of the first run.
+`--edit prose` changes only Markdown files.
+A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 `--repeats` sets the repeats for each holdout case. The default is 3.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
@@ -90,7 +97,7 @@ Parallel calls share it. The estimate and the holdout gate reserve include it.
 The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
 The stops that ask for approval echo the options as `claude_options`.
 These three options apply only to `--harness claude`. The first run records them.
-`--min-gain N` and `--min-lower-bound N` set the floors of the gate. `--family-budget N` sets the regression budget of every family. `--max-token-increase-per-gain N` and `--min-token-saving N` set the token rule. Each value must be at least 0. `--min-token-saving` must also be above 0 and below 1. `--min-coverage N` sets the least share of planned holdout cases that must be scored, from 0 to 1. "Set promotion thresholds" describes them.
+`--min-gain N` and `--min-lower-bound N` set the floors of the gate. `--family-budget N` sets the regression budget of every family. `--max-token-increase-per-gain N`, `--min-token-saving N`, and `--max-quality-loss N` set the token rule. Each value must be at least 0. `--min-token-saving` must also be above 0 and below 1, and it needs `--max-quality-loss`. `--min-coverage N` sets the least share of planned holdout cases that must be scored, from 0 to 1. "Set promotion thresholds" describes them.
 When the run directory already holds a run, the same command resumes it. A resume needs no `--edit`, `--repeats`, `--seed`, Claude option, or threshold flag.
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
@@ -131,27 +138,30 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
+| `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
+| `proposal-build-failed` | The host build of an accepted proposal fails with an error that is not a build rejection, such as a full disk. The paid reflection stays in the record. | Fix the cause in the message, then run again in the same directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. In a journey, the stop also covers a skill inventory change between turns. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
 | `harness-changed` | The harness executable, script, or role file differs from the frozen record, or a resume drops `--harness-config` or `--command`. | Restore the frozen harness and pass the same options, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
-| `run-config-differs` | A resume uses a different `--model`, `--judge-model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, `--min-coverage`, or target skill directory than the recorded run. The message names the field. | Run again with the recorded value, or start a new `--out`. |
+| `run-config-differs` | A resume uses a different `--model`, `--judge-model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, `--min-coverage`, `--max-quality-loss`, or target skill directory than the recorded run. A completed run checks each threshold flag that you pass in the same way. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |
 | `frozen-file-too-large` | A frozen file is over 16 MiB, or the frozen files together are over 64 MiB. The message names the file. | Remove the file from the skill, or shrink it, then run again. |
 | `target-not-built` | `wedge.toml` lists a target, and its `scripts/NAME.pyz` is missing, is a symlink, or is not a file. | Run `wedge bundle` for the skill, then run again. |
 | `wedge-config-invalid` | The `wedge.toml` of the skill is not a valid wedge config. The message gives the cause. | Fix `wedge.toml`, then run again. |
 | `editable-build-file` | The contract `editable` list names `wedge.toml`, `uv.lock`, or a `.pyz` file. | Remove the name from `editable`. |
+| `editable-needs-cli` | `--edit prose` meets explicit non-Markdown names in the contract `editable` list. | Run with `--edit prose+cli`, or remove those names from `editable`. |
 | `site-layer-failed` | The host cannot populate the site layer for `--edit prose+cli`. The cause is a missing `uv`, a missing network, or a dependency closure that `uv` refuses. | Install `uv`, restore the network, or use `--edit prose`. Then run again. |
 | `build-failed` | The host build of an own target fails. During the search, the candidate scores 0 and the feedback shows the reason. | Read the feedback. |
-| `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose`. Then run again. |
+| `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
-| `helper-frozen` | The contract helper names a frozen file. | Name an editable helper, or use `--edit prose`. |
+| `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
 | `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
-| `helper-missing` | `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. |
+| `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
 | `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
 | `contract-kinds` | The skill contract has no `task` kind and more than one kind, or the `journey` kind and the `journey` grader are not paired. | Read `The autoimprove contract` and `Journeys` below. |
@@ -166,7 +176,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-capture-unsupported` | A kind declares `capture`, and the harness is not `claude`. | Run with `--harness claude`, or remove `capture`. |
 | `contract-statistics-invalid` | The `statistics` value is not an object. Or it holds an unknown field, a negative value, or a value that is not a finite number (such as a bool or a string). Or `family_budgets` is not an object of numbers, or has an empty or blank name. Or `min_token_saving` is not `null` or a number above 0 and below 1. Or `min_coverage` is not a number from 0 to 1. | Fix the contract, then run again. |
 | `contract-family-unknown` | A `family_budgets` name matches no family in the case draft. The stop comes after the draft loads. | Fix the family name in the contract, or add the family to the draft. |
-| `run-schema-old` | The run directory comes from an older runner. | Start a new run directory. |
+| `run-schema-old` | The run directory comes from an older runner, or its recorded `statistics` lacks fields that a newer runner added. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
 
@@ -195,12 +205,15 @@ Each seed case has `source: skill`, the entry `name` as `id`, and the `prompt` a
 An entry with `expected_skill: null` is a `near-miss` case.
 An entry with no `assertions` is a `trigger` case. Every other entry is a `task` case.
 A `task` case holds the fixtures in `files`, keyed by their listed paths, and an `expected` object.
-Each fixture path starts with `evals/files/`.
+The `expected` object holds `expected_output`, which defaults to an empty string, and `assertions`, which the entry must give.
+Each fixture path starts with `evals/files/`. A path outside `evals/files/` stops the seed.
+The runner stages each fixture at its `evals/files/` path in the workspace, so the request must name that directory.
 When the entry lists no fixture, `files` is empty. Draft the starting fixture that the request needs.
 A seed case has a `family` only when the entry has a nonempty-text `family` key. Otherwise set the `family` by the rule below.
 Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged. You can extend `files`, `expected`, and `family`.
 When the draft drops a seed case or changes its `id`, `kind`, or `request`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from `evals/evals.json`.
 Then add cases until the draft meets the minimums below. Journeys stay hand-authored.
+The holdout split alone needs 6 scored cases, and a family never crosses splits, so a contract needs about 10 or more `task` cases.
 A skill with no `evals/evals.json` has no `seed_cases`. Draft every case from the `facts`.
 
 Each case has these fields:
@@ -213,6 +226,12 @@ Each case has these fields:
 - `kind`: `trigger`, `near-miss`, or `task`.
 - `request`: the user request that the case sends.
 - `files`: a map of path to text, for the starting fixture. A `task` case needs it.
+  `text_map` refuses a path whose first part is `home`, `tmp`, `output`, `capture`, `answer.json`, `response-schema.json`, `AGENTS.md`, or `CLAUDE.md`.
+  It also refuses `AGENTS.md` at any depth and any path that has a part that starts with a dot.
+  To ship a refused name such as `AGENTS.md`, store it with a `.fixture` suffix, for example `AGENTS.md.fixture`.
+  A suffix does not clear a hidden part, so store a file such as `.env` under a name without the leading dot.
+  The runner writes fixtures verbatim, so the request must tell the task to rename the file.
+  When the contract declares a helper, each `task` case must list the contract helper input in `files`.
 - `expected`: the reference answer as JSON. A `task` case needs it.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
 
@@ -250,7 +269,7 @@ A move is resolved when the absolute mean delta of the case exceeds `max(2·sqrt
 A resolved positive move is `fixed`, a resolved negative move is `broke`, and the rest are `unresolved`. Case ids are hashes, so no case text enters the record.
 
 - `promote`: the mean delta exceeds 2·SE and passes the floors. When the SE is 0, every case delta must be positive.
-- `promote-cheaper`: the mean delta is from 0 to 2·SE, and the task tokens drop by more than 2·`token_se` and by at least `min_token_saving`. See "The token rule".
+- `promote-cheaper`: the mean delta is from 0 to 2·SE, and `delta - 2·SE` is at least `-max_quality_loss`. The task tokens drop by more than 2·`token_se` and by at least `min_token_saving`. See "The token rule".
 - `reject`: the mean delta falls below -2·SE.
 - `inconclusive`: any other result, or fewer than two holdout cases, or a winner equal to the baseline.
 
@@ -270,7 +289,7 @@ A family needs at least two holdout cases. For that family, the gate takes the m
 The budget is the `family_budgets` value for that family, else `family_budget`. A family with no budget has no family rule.
 The family breaches when `mean + 2·SE_f` is below `-budget`. When SE_f is 0, the family breaches when `mean` is below `-budget`.
 A breach turns any verdict into `reject`. This also applies to `promote`. Each breach adds the reason `family-regression:<name>`, sorted by family name.
-The rule skips a family with fewer than two holdout cases, whatever its budget. `skipped_families` lists it, sorted by name. A skipped family never changes the verdict.
+The rule skips a family with fewer than two holdout cases, whatever its budget. A `family_budgets` name with no holdout case counts as skipped too. `skipped_families` lists each skipped family, sorted by name. A skipped family never changes the verdict.
 The gate object always holds `skipped_families`. Without a budget, the verdict stays the same.
 
 ### The token rule
@@ -288,8 +307,9 @@ Each token threshold treats two values as equal when they differ by a relative 1
 The score rule, the floors, and the family rule compare exactly. ADR-002 and the pinned false-promotion rates require this.
 
 - `token-cost`: a `promote` becomes `reject` when `token_delta` exceeds `max_token_increase_per_gain * delta`. The reason is `token-cost`.
-- `promote-cheaper`: this needs `min_token_saving`. The score result must be `inconclusive` with a mean delta from 0 to 2·SE.
+- `promote-cheaper`: this needs `min_token_saving` and `max_quality_loss`. The score result must be `inconclusive` with a mean delta from 0 to 2·SE.
   A mean delta below 0 never promotes cheaper. A result that a floor turned into `inconclusive` is outside the band.
+  `delta - 2·SE` must be at least `-max_quality_loss`. A `null` `max_quality_loss` turns the verdict off.
   `-token_delta` must exceed 2·`token_se` and must be at least `min_token_saving`.
   The floors do not apply, because the verdict claims no gain.
 - `unknown-usage`: a holdout outcome has unknown task tokens, or a case has a baseline mean of 0.
@@ -298,7 +318,7 @@ The score rule, the floors, and the family rule compare exactly. ADR-002 and the
   A band result with `min_token_saving` set gets the same reason and stays `inconclusive`.
 
 A family breach still turns any verdict, including `promote-cheaper`, into `reject`.
-A `promote-cheaper` winner counts as a promotion. Export it as you would a `promote` winner. The user decides whether to apply it.
+A `promote-cheaper` winner is advisory. Export it and report it, but do not apply it as you would a `promote` winner. The user decides whether to apply it.
 With a token field set, the winner choice breaks a validation-mean tie in favor of fewer mean task tokens. This holds for the best candidate and for the seed.
 A candidate with unknown task tokens, or equal task tokens, keeps the usual winner. In a tie, that is the incumbent.
 The reflection prompt then also says: "Prefer fewer tokens when correctness is equal."
@@ -309,19 +329,25 @@ Without a token field, the seed wins a tie.
 
 ### Reasons and reporting
 
-The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`. The coverage reason is `low-coverage`.
+The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `min-lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`. The coverage reason is `low-coverage`.
 A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
 The summary and the export report show `reasons`, `skipped_families`, `token_delta`, and `token_se` in the `gate` object. The token fields are `null` while the token rule is off or the usage is unknown.
+The summary and the export report also show `statistics`, the frozen thresholds of the run.
 The summary reports the delta, the SE, the case count, and the repeats.
 Small runs often report `inconclusive`. That result is honest: the data cannot separate the winner from noise.
 Report the verdict as it is. Never promote an `inconclusive` winner by hand.
-Apply a winner only after a `promote` or `promote-cheaper` verdict.
+Apply a winner only after a `promote` verdict. A `promote-cheaper` winner is advisory: report it and let the user decide.
 Never report a delta without its SE and case count.
 `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion counts and rates of the gate. It makes no model call.
 The keys `false_promotions_2se` and `false_promotions_one_holdout` are integer counts; each rate is its count divided by `trials`.
-The counts cover `promote` only. They do not cover `promote-cheaper`.
-`--simulate --metric NAME` prints only that one number, with no JSON. It computes only the figure that it names, so a selector costs well under the full report. Without `--metric`, the output keeps its earlier keys. The power keys follow them.
-The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, `rate_one_holdout`, and the power names below.
+The counts cover `promote` only.
+The `cheaper_loss_<loss>_margin_<margin>` keys are `promote-cheaper` rates. Each key names the true loss per case and the `max_quality_loss` margin, in hundredths of a score.
+In each, the selected winner costs half the task tokens and `min_token_saving` is 0.3. The seed, the 2000 trials, and the 10 cases match `rate_2se`.
+With a true loss of 0.05, the rates are 0.0005, 0.0035, and 0.016 at margins 0, 0.02, and 0.05. All three are below the 0.06 target of `promote`.
+Without the margin check, the same winner got `promote-cheaper` in 0.346 of the trials.
+`cheaper_loss_0_margin_5` is 0.0285. That winner has no true loss, and the verdict still fires.
+`--simulate --metric NAME` prints only that one number, with no JSON. It computes only the figure that it names, so a selector costs well under the full report. Without `--metric`, the output keeps its earlier keys. The power keys follow them, and the `cheaper_loss_*` keys come last.
+The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, `rate_one_holdout`, the four `cheaper_loss_*` names, and the power names below.
 Each metric in `packages/skillz/ratchets.json` names its own selector in its `command`, so `ratchet.py measure -- <command>` reads one deterministic number.
 The `skillz-pytest` job fails when a metric in that file passes its threshold. It checks every metric in the file.
 The one-holdout count is a reference ratchet. It models the select-and-gate rule of skill-creator, not the production gate. Its threshold is 1623.
@@ -358,7 +384,7 @@ The run directory keeps the frozen files in `frozen/`. A changed frozen file sto
 
 ### Editable sources
 
-Only `--edit prose+cli` edits sources. `--edit prose` keeps every own target frozen.
+`--edit prose+cli`, the default, edits sources. `--edit prose` and the prose fallback keep every own target frozen.
 The runner adds the sources of an own target in this order:
 
 1. The target whose `.pyz` the contract helper names.
@@ -452,6 +478,8 @@ The helper file stays in the skill. Ask the user whether to delete it.
 ### Fromargs aim
 
 Under `--edit prose+cli`, the reflection prompt names fromargs as the default for edits to wedged Python sources.
+The fromargs rule goes only to a run that offers a `@wedge/` source or `@new-cli`.
+The proposer can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 It cites the fromargs rules: one parser, JSON errors on stderr, and stdout only for results.
 A usage error exits with code 2. A failed input contract exits with code 3.
 A non-Python helper keeps its language.
@@ -476,12 +504,35 @@ The budget is `floor(1 + 5 * 0.5 * (1 + cos(pi * p)))`. It falls from 6 edits at
 An edit is one block of consecutive changed lines, found with `difflib.SequenceMatcher` over the lines of one component.
 The count adds the blocks of all changed components.
 The run-status block gives the proposal number, the search calls spent of the allowance, and the whole percent (integer math, rounded down).
+It also gives the stall streak from `### Stall stop`.
 The budget sentence reads "1 edit" when the budget is 1.
 From `p = 0.85` it adds: "This may be the last proposal, so prefer one small, safe change."
 The numbers come from the run record. They never come from case content.
 The budget is advisory. The runner never rejects a proposal for its size.
 `summary` and `report.json` carry `search.proposal_over_budget`: the count of proposals above the budget stated in their prompt, including proposals that the leakage check later rejects.
 The count shows whether enforcement is worth the wasted reflection calls.
+
+### Stall stop
+
+The search stops early when its proposals stop improving the validation mean.
+Each proposal gives one observation after GEPA scores its candidate.
+An observation is a gain when the candidate's validation mean is above the best earlier mean by more than `min_gain`.
+The seed counts as an earlier candidate.
+A proposal that the leakage check or the build rejects gives no gain.
+A candidate that does not complete the validation cases also gives no gain.
+An observation is unknown when an evaluation of its candidate fails before the candidate completes the validation cases.
+A host build error stops the run with `proposal-build-failed`, and its proposal also gives an unknown observation.
+A gain sets the streak to 0. Each other known observation adds 1. An unknown observation changes nothing.
+The run-status block states the streak: "Proposals since the last validation gain: N."
+From a streak of 3, the prompt advises a different kind of change.
+From a streak of 5, it advises a different component or section.
+At a streak of 8, the search stops, and `search.reason` is `converged-stalled`. The holdout gate still runs.
+Fewer than 4 known observations never give advice or a stop.
+The stall stop is always on. A budget stop keeps its own reason.
+A search that uses its allowance without a stop ends with `validation-mean`.
+The runner rebuilds the observations from the run record, so a resumed run gets the same streak.
+A resumed run that already reached a streak of 8 skips the search.
+ADR-016 in `docs/agents/decisions/skillz-autoimprove.md` records the thresholds.
 
 ## Export
 
@@ -533,8 +584,8 @@ Unknown fields and malformed values stop the run.
 ## Set promotion thresholds
 
 The `statistics` object in the contract tightens the `promote` rule. It never loosens it.
-Every field except `min_token_saving` only tightens the rule. Only `min_gain` and `min_lower_bound` are floors.
-`min_token_saving` adds the verdict `promote-cheaper`. That verdict needs no observed loss and claims no gain.
+Every field except `min_token_saving` and `max_quality_loss` only tightens `promote`. Only `min_gain` and `min_lower_bound` are floors.
+`min_token_saving` adds the verdict `promote-cheaper`. That verdict claims no gain and needs `max_quality_loss`. A larger `max_quality_loss` loosens it.
 A contract without it keeps its identity hash and the built-in rule.
 The object accepts these fields:
 
@@ -545,21 +596,26 @@ The object accepts these fields:
 - `max_token_increase_per_gain`: the largest token change that one unit of score gain can buy. The default is `null`, which turns this check off.
 - `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off.
 - `min_coverage`: the least share of planned holdout cases that must be scored on both arms, from 0 to 1. The default is 0.6. Below it the verdict is `inconclusive` with reason `low-coverage`. 0 turns the rule off.
+- `max_quality_loss`: the largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. The verdict needs `delta - 2·SE >= -max_quality_loss`. The default is `null`, which turns `promote-cheaper` off.
 
-Each number is finite and at least 0. `family_budget`, `max_token_increase_per_gain`, and `min_token_saving` may also be `null`.
+Each number is finite and at least 0. `family_budget`, `max_token_increase_per_gain`, `min_token_saving`, and `max_quality_loss` may also be `null`.
 `min_token_saving` must also be above 0 and below 1. `min_coverage` must also be at most 1. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
 A `family_budgets` value that is not an object, or that has an empty or blank name, stops the run with the same code.
 Each name must match a family in the case draft, else the run stops with `contract-family-unknown`.
 The SE multiplier stays 2. A negative threshold would loosen the rule, so the runner refuses it.
 
 Each field resolves in this order: the CLI flag, then the contract, then the built-in default.
-The flags are `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, and `--min-coverage`. A flag may set a value below the contract value.
-Every flag value except `--min-token-saving` must still be at least 0. The SE rule stays, so the gate stays at least as strict as the built-in rule, with two exceptions.
-`--min-token-saving` adds `promote-cheaper`.
+The flags are `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, `--min-coverage`, and `--max-quality-loss`. A flag may set a value below the contract value.
+Every flag value must be at least 0. `--min-token-saving` must be above 0 and below 1.
+The SE rule stays, so the gate stays at least as strict as the built-in rule, with two exceptions.
+`--min-token-saving` adds `promote-cheaper`, and it needs `--max-quality-loss`. A larger `--max-quality-loss` loosens only that verdict.
 `--min-coverage` below 0.6 lets the gate decide on fewer scored holdout cases. A value of 0 turns the coverage rule off.
+A `min_token_saving` without a `max_quality_loss` stops the run with an error that names both flags. Either value can come from the contract or from a flag.
 The first run freezes the resolved values in `run.json`.
 The flags repeat on every call until `run.json` exists. The approval stops echo the resolved values as `statistics`.
-A flag that you drop after an approval stop changes the frozen values.
+The case approval covers the resolved thresholds, as it covers the cases and the seed.
+A flag that you change or drop after the case approval stop changes the case hash. The run then stops with `cases-unapproved` and a new hash.
+Ask the user to approve the new values.
 A resume that passes a different value stops with `run-config-differs`. A resume that passes none keeps the frozen values.
 
 ## No contract

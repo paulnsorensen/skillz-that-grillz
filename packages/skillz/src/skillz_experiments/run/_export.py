@@ -106,7 +106,8 @@ def calls_upper_bound(record: dict[str, object], out: Path) -> int | None:
 def summary(record: dict[str, object], out: Path | None = None) -> dict[str, object]:
     """Return the run summary. With `out`, it reconciles the budget counter with the planned worst-case call count."""
     keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
-            "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility")
+            "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility",
+            "statistics")
     result = {key: record.get(key) for key in keys}
     result["usage_by_role"] = usage_by_role(record)
     if out is not None:

@@ -21,8 +21,15 @@ _OPTION_FLAGS = (("--effort", "effort"), ("--sandbox-read", "sandbox_read"), ("-
 
 
 def resolve_statistics(contract: Contract, given: Mapping[str, float]) -> Statistics:
-    """Return each threshold from the CLI flag, else the contract, else the built-in default."""
-    return Statistics.parse({**DEFAULT_STATISTICS.data(), **(contract.statistics or {}), **given})
+    """Return each threshold from the CLI flag, else the contract, else the built-in default.
+
+    `min_token_saving` without `max_quality_loss` raises `ValueError`: `promote-cheaper` needs a quality-loss bound.
+    """
+    resolved = Statistics.parse({**DEFAULT_STATISTICS.data(), **(contract.statistics or {}), **given})
+    if resolved.min_token_saving is not None and resolved.max_quality_loss is None:
+        raise ValueError("--min-token-saving needs --max-quality-loss (or the contract max_quality_loss): "
+                         + "promote-cheaper needs a quality-loss bound")
+    return resolved
 
 
 def statistics_flag(name: str) -> str:
@@ -30,14 +37,20 @@ def statistics_flag(name: str) -> str:
 
 
 def frozen_statistics(record: dict[str, object]) -> Statistics:
-    """Return the frozen thresholds. A map of the wrong shape is tampering.
+    """Return the frozen thresholds.
 
+    A well-formed map that lacks fields of a newer runner stops as `run-schema-old`. A malformed map is tampering.
     This checks shape only: the record does not bind the values to the contract or to the CLI flags.
     """
+    recorded = record.get("statistics")
     try:
-        return Statistics.parse(record.get("statistics"))
+        declared = Statistics.declared(recorded)
     except ValueError:
         raise Stop("run-record-tampered", "the recorded statistics are malformed; create a new run", {}) from None
+    if set(Statistics.names()) - set(declared):
+        raise CodedError("run-schema-old", "the run record lacks statistics fields of a newer runner; "
+                         + "start a new run with `skillz-experiment run`")
+    return Statistics.parse(recorded)
 
 
 def _config_differs(field: str) -> CodedError:

@@ -33,6 +33,16 @@ def write_draft(tmp_path: Path, cases: list[dict[str, object]]) -> Path:
     return path
 
 
+@pytest.mark.ac("gh-292:AC-2")
+def test_a_case_missing_a_required_field_stops_as_cases_invalid_naming_the_case_and_field(tmp_path: Path) -> None:
+    cases = draft()
+    del cases[0]["family"]
+    with pytest.raises(CodedError) as caught:
+        _ = load_draft(write_draft(tmp_path, cases))
+    assert caught.value.code == "cases-invalid"
+    assert "t0-0" in str(caught.value) and "family" in str(caught.value)
+
+
 def test_draft_assigns_seeded_family_disjoint_splits_and_one_question_without_model_calls(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def forbidden(*_args: object, **_kwargs: object) -> object:

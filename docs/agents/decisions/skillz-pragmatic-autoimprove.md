@@ -27,6 +27,7 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
 - **Alternatives:** A paired bootstrap interval (same power, slightly permissive at 6 cases). Mean delta above 0. The skill-creator rule.
 - **Consequences:** Small runs often report `inconclusive`. This record replaces the bootstrap in skillz-repeat-statistics curd B.
   Amended 2026-10-09: `min_token_saving` adds `promote-cheaper`, a separate opt-in verdict. It needs a mean delta of at least 0 and claims no gain. The 2*SE rule for `promote` stays.
+  Bound added 2026-10-13: `promote-cheaper` also needs `max_quality_loss` and `delta - 2*SE >= -max_quality_loss`. A null margin turns it off, and `min_token_saving` without a margin stops the run. `self-test --simulate` measures the rate of the production gate under a true loss of 0.05 per case, half the tokens, and `min_token_saving` 0.3 (seed 20261006, 2000 trials, 10 cases): 0.0005 at margin 0, 0.0035 at margin 0.02, 0.016 at margin 0.05. With no true loss and margin 0.05 the rate is 0.0285, so the verdict still fires. All stay below the `promote` target of 0.06. Without the margin check the rate was 0.346. `skillz-self-update` applies a patch only on `promote`. On `promote-cheaper` it reports the result and does not apply the patch.
 
 ### ADR-003: Run one multi-iteration GEPA search with Pareto parent selection  [status: accepted]
 
@@ -51,4 +52,4 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
   On resume, the elapsed time is the larger of the wall-clock span and the monotonic span. After a reboot, the monotonic span is negative, so the wall-clock span applies. Time in system suspend counts against the deadline.
   The wall clock can step back by up to 5 seconds. A larger step back stops the resume with `clock-skew`.
 
-_Source: Mold session 2026-10-06 · Updated: 2026-10-10 (ADR-001 credential and macOS memory rules, ADR-002 promote-cheaper amendment, ADR-005 gate time reservation and resume clock, ADR-005 amended by skillz-autoimprove ADR-010)_
+_Source: Mold session 2026-10-06 · Updated: 2026-10-13 (ADR-001 credential and macOS memory rules, ADR-002 promote-cheaper amendment and quality-loss bound, ADR-005 gate time reservation and resume clock, ADR-005 amended by skillz-autoimprove ADR-010)_

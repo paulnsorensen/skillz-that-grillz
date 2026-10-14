@@ -5,6 +5,7 @@ Phases: prepared, searched, gated, complete. `run.json` (schema 4) holds the che
 from __future__ import annotations
 
 import fcntl
+import sys
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -16,11 +17,13 @@ from skillz_experiments._budget import (
 )
 from skillz_experiments._candidate import NEW_CLI, Candidate, store_frozen
 from skillz_experiments._cases import CodedError, Split, digest, load_cases
+from skillz_experiments._contract import Contract
 from skillz_experiments._intake import (
     DRAFT_NAME,
     HOLDOUT_MINIMUM,
     approval_question,
     case_hash,
+    check_helper_input,
     freeze,
     intake_contract,
     load_draft,
@@ -29,7 +32,7 @@ from skillz_experiments._intake import (
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._seed import check_coverage, seed_cases
-from skillz_experiments._wedge_targets import plan_targets, seal, settle
+from skillz_experiments._wedge_targets import TargetPlan, plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
     ClaudeOptions,
@@ -64,11 +67,23 @@ DEFAULT_SEED = 20261006
 DEFAULT_REPEATS = 3
 
 
-def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit, repeats: int, seed: int | None,
+def _fall_back_to_prose(target: Path, skeleton: Candidate, contract: Contract,
+                        error: CodedError) -> tuple[TargetPlan, Candidate]:
+    """Plan an omitted `--edit` as `prose` after `prose+cli` found nothing to edit, and say why on stderr."""
+    print(f"skillz-experiment: {error}; this run uses --edit prose", file=sys.stderr)
+    wedge = plan_targets(target, skeleton.files, contract, "prose")
+    files = skeleton.files | wedge.sources
+    frozen = skeleton.frozen | wedge.frozen
+    return wedge, Candidate(files, tuple(editable_files(files, contract, "prose", frozen.keys(), wedge)), contract, frozen=frozen)
+
+
+def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit | None, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
              options: ClaudeOptions, configuration: Configuration | None = None,
              statistics_given: Mapping[str, float] | None = None, judge_model: str | None) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
+
+    The case approval covers the resolved statistics, so a changed or dropped flag stops at the case approval.
 
     A fresh run with a built-in harness first runs the free host checks, so a host problem stops the run
     before the user drafts or approves any case.
@@ -94,6 +109,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
                          + "the claude harness can show capture files to the judge; run with --harness claude")
     drafted = load_draft(draft)
+    check_helper_input(contract, drafted)
     check_coverage(target, drafted)
     cases = split_cases(drafted, split_seed, kind)
     unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})
@@ -104,23 +120,30 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if held < HOLDOUT_MINIMUM:
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
                          + "add task cases in more families to the draft, then call run again")
-    expected = case_hash(cases, split_seed)
+    expected = case_hash(cases, split_seed, resolved.data())
     if resolve_harness or configuration is not None:
         chosen = configuration if configuration is not None else Configuration.split(adapter, model, judge_model, options)
         chosen.check_read_roots(out)
     if approve_cases != expected:
         raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
-                   {"question": approval_question(cases, split_seed, contract), "case_hash": expected,
+                   {"question": approval_question(cases, split_seed, contract, resolved.data()), "case_hash": expected,
                     "seed": split_seed, "statistics": resolved.data(),
                     **({} if configuration is not None else {"claude_options": options.data()})})
-    freeze(out / "cases.json", cases, split_seed, expected)
+    freeze(out / "cases.json", cases, split_seed, expected, resolved.data())
     scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
     skeleton = Candidate.capture(target, [], contract)
-    wedge = plan_targets(target, skeleton.files, contract, edit)
+    mode: Edit = edit or "prose+cli"
+    wedge = plan_targets(target, skeleton.files, contract, mode)
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
-    seed_candidate = Candidate(files, tuple(editable_files(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
+    try:
+        seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
+    except CodedError as error:
+        if edit is not None or error.code != "helper-missing":
+            raise
+        mode = "prose"
+        wedge, seed_candidate = _fall_back_to_prose(target, skeleton, contract, error)
     plan = size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
     shown = plan_estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
@@ -134,7 +157,13 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if offered and wedge.capable is None:
         files = skeleton.files | wedge.sources
         frozen = skeleton.frozen | wedge.frozen
-        seed_candidate = Candidate(files, tuple(editable_files(files, contract, edit, frozen.keys(), wedge)), contract, frozen=frozen)
+        try:
+            seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
+        except CodedError as error:
+            if edit is not None or error.code != "helper-missing":
+                raise
+            mode, layers = "prose", {}
+            wedge, seed_candidate = _fall_back_to_prose(target, skeleton, contract, error)
     seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
@@ -142,7 +171,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "judge_model_flag": judge_model,
         **({"claude_options": options.data()} if resolve_harness else {}),
         **({"harness": configuration.identity()} if configuration is not None else {}),
-        "edit": edit, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
+        "edit": mode, "repeats": repeats, "split_seed": split_seed, "cases_hash": expected,
         "target_root": str(target.resolve()), "dataset_hash": digest(read(out / "cases.json")),
         "seed_hash": seed_candidate.identity, "seed": seed_candidate.files, "editable": list(seed_candidate.editable),
         "seed_frozen": seed_frozen, "own_targets": owned,
@@ -296,7 +325,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None,
                          judge_model)
         else:
-            frozen = _prepare(target, out, model, adapter, edit or "prose", repeats or DEFAULT_REPEATS, seed,
+            frozen = _prepare(target, out, model, adapter, edit, repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
                               options=requested, configuration=configuration,
                               statistics_given=statistics_given, judge_model=judge_model)

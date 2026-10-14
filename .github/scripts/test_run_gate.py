@@ -21,6 +21,8 @@ import os, pathlib, signal, sys, time
 args = sys.argv[1:]
 with open(os.environ['EVENT_LOG'], 'a') as log:
     log.write(pathlib.Path(sys.argv[0]).name + ' ' + ' '.join(args) + '\\n')
+    if 'SKILLZ_LIVE' in os.environ:
+        log.write('live-flag-leaked\\n')
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
     pathlib.Path(os.environ['CHILD_PID']).write_text(str(os.getpid()))
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -114,6 +116,17 @@ class GateRunnerTest(unittest.TestCase):
             socket = bases[0].resolve() / "popen-gw0" / "test_a_sandbox_read_root_that_0" / "h" / "inner" / "s"
             self.assertLess(len(os.fsencode(socket)), 104)
             self.assertTrue(all(not path.exists() for path in caches + bases))
+
+    def test_steps_never_see_the_live_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "SKILLZ_LIVE": "1"}
+            result = subprocess.run([sys.executable, str(RUNNER), "fix"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            self.assertTrue(any("packages/skillz/tests" in event for event in events))
+            self.assertNotIn("live-flag-leaked", events)
 
     def test_standalone_fromargs_uses_short_base_and_keeps_python_pin(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

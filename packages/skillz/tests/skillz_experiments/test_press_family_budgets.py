@@ -83,10 +83,17 @@ def test_verdict_zeroBudgetAndMeanZeroFamily_doesNotBreach() -> None:
 
 # --- overrides ---------------------------------------------------------------------------------------------
 
-def test_verdict_overrideForFamilyAbsentFromHoldout_isIgnoredAndNotSkipped() -> None:
-    result = verdict(CASES, thresholds=Statistics(family_budgets={"ghost": 0.0, "train-only": 0.0}),
+def test_verdict_overrideForFamilyAbsentFromHoldout_isListedAsSkippedAndNeverRejects() -> None:
+    result = verdict(CASES, thresholds=Statistics(family_budgets={"train-only": 0.0, "ghost": 0.0}),
                      families=FAMILIES)
-    assert (result.verdict, result.reasons, result.skipped_families) == ("promote", (), ())
+    assert (result.verdict, result.reasons, result.skipped_families) == ("promote", (), ("ghost", "train-only"))
+
+
+def test_verdict_absentOverrideAndLoneFamily_mergeIntoOneNameOrderedSkippedList() -> None:
+    deltas = {"s1": -9.0} | {f"p{i}": 5.0 + i for i in range(6)}
+    families = {key: "p" for key in deltas} | {"s1": "m"}
+    result = verdict(deltas, thresholds=Statistics(family_budgets={"z": 0.0, "a": 0.0, "p": 0.0}), families=families)
+    assert result.skipped_families == ("a", "m", "z")
 
 
 def test_verdict_familiesMapNamingCasesOutsideTheDeltas_neverCreatesFamilies() -> None:
@@ -159,7 +166,7 @@ def test_verdict_familyBreachFloorsAndScoreReject_listsEachReasonAndRejects() ->
     floors = Statistics(min_gain=99.0, min_lower_bound=99.0, family_budget=0.0)
     promoted = verdict(CASES, thresholds=floors, families=FAMILIES)
     assert promoted.verdict == "reject"
-    assert promoted.reasons == ("min-gain", "lower-bound", "family-regression:a")
+    assert promoted.reasons == ("min-gain", "min-lower-bound", "family-regression:a")
     losing = {key: -abs(value) - 1.0 for key, value in CASES.items()} | {"z1": -2.0, "z2": -3.0}
     families = FAMILIES | {"z1": "z", "z2": "z"}
     plain = verdict(losing, thresholds=Statistics(family_budget=0.0), families=families)
@@ -308,7 +315,7 @@ class _Provider(FakeProvider):
 def _prepare_only(target: Path, out: Path, write_draft: Callable[..., list[str]],
                   approvals: Callable[..., tuple[str, int]], statistics: dict[str, float] | None) -> None:
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics=statistics)
     with pytest.raises(Stop) as prepared:
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics=statistics)
     assert prepared.value.code == "live-required"
@@ -344,8 +351,8 @@ def test_run_frozenBudgetDroppedFromRecord_isNotSilentlyDisabled(
     _tamper(out, lambda stats: stats.pop("family_budget"))
     try:
         result = run(target, out, MODEL, live=True, factory=_Provider)
-    except Stop as stop:
-        assert stop.code == "run-record-tampered"
+    except CodedError as stop:
+        assert stop.code == "run-schema-old"
         return
     assert _gate(result)["verdict"] == "reject"
 
@@ -363,20 +370,31 @@ def test_run_frozenMapDroppedFromRecord_isNotSilentlyDisabled(
     _tamper(out, lambda stats: stats.pop("family_budgets"))
     try:
         result = run(target, out, MODEL, live=True, factory=_Provider)
-    except Stop as stop:
-        assert stop.code == "run-record-tampered"
+    except CodedError as stop:
+        assert stop.code == "run-schema-old"
         return
     assert _gate(result)["verdict"] == "reject"
 
 
-def test_run_resumeFlagAgainstOldShapeRecord_isRefusedAsTampered(
+def test_run_resumeFlagAgainstOldShapeRecord_isRefusedAsSchemaOld(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _prepare_only(target, out, write_draft, approvals, None)
     _tamper(out, lambda stats: (stats.pop("family_budget"), stats.pop("family_budgets")))
-    with pytest.raises(Stop) as caught:
+    with pytest.raises(CodedError) as caught:
         _ = run(target, out, MODEL, statistics={"family_budget": 0.0})
+    assert caught.value.code == "run-schema-old"
+
+
+def test_run_malformedMapInRecord_isTamperedNotSchemaOld(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _prepare_only(target, out, write_draft, approvals, None)
+    _tamper(out, lambda stats: (stats.pop("family_budget"), stats.update(min_gain=-1.0)))
+    with pytest.raises(Stop) as caught:
+        _ = run(target, out, MODEL, live=True, factory=_Provider)
     assert caught.value.code == "run-record-tampered"
 
 
@@ -386,7 +404,7 @@ def test_run_zeroFlagBudget_isNotTreatedAsOff(
     out = tmp_path / "run"
     _ = write_draft(out)
     target = make_target(tmp_path)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, statistics={"family_budget": 0.0})
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
                  statistics={"family_budget": 0.0})
     assert _gate(result)["verdict"] == "reject"

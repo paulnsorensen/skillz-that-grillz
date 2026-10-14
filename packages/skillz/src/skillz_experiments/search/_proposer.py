@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from skillz_experiments._candidate import NEW_CLI
+from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import mapping
 from skillz_experiments._new_cli import prompt_rule
 from skillz_experiments.search._engine import Edit
@@ -22,12 +22,19 @@ _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified T
              "and at most 25 words per descriptive sentence. ")
 
 
+_CLI_RULE = ("Improve the supplied skill text and helper script components. "
+             "You may change a script's command-line interface when the change helps the skill. "
+             "When you change an interface, update every caller and every skill text reference to match. "
+             "A non-Python helper keeps its language. "
+             "Write only skill content into a component. "
+             "Do not put facts about this prompt, the search, or the host into a component. ")
+
+# Only a run that offers a wedge source or `@new-cli` sends this rule, so a target with no wedge gets no wedge text.
 _FROMARGS_RULE = ("The fromargs package is the default for a wedged Python source. "
                   "Use one parser. "
                   "Print JSON errors on stderr. "
                   "Exit with code 2 for a usage error and code 3 for a failed input contract. "
                   "Print only results on stdout. "
-                  "A non-Python helper keeps its language. "
                   "A Python helper may use a stdlib `argparse` helper only when the skill has no wedge.toml "
                   "that can build a fromargs target. ")
 
@@ -41,10 +48,13 @@ class Progress:
     """Where the search stands. The numbers come from the session record, never from case content.
 
     `planned` is the search's real allowance: the planned calls less the last iteration's overshoot margin.
+    `stalled` and `advice` come from the stall signal.
     """
     spent: int
     planned: int
     proposal: int
+    stalled: int = 0
+    advice: str = ""
 
     @property
     def fraction(self) -> float:
@@ -66,9 +76,11 @@ class Progress:
         text = (f"Make at most {count} {'edit' if count == 1 else 'edits'} across all components. "
                 "An edit is one block of consecutive changed lines. "
                 f"Run status: this is proposal {self.proposal}. Search calls spent: {self.spent} of {self.planned} "
-                f"({self.percent}%).")
+                f"({self.percent}%). Proposals since the last validation gain: {self.stalled}.")
         if self.fraction >= LAST_PROPOSAL_FROM:
             text += " This may be the last proposal, so prefer one small, safe change."
+        if self.advice:
+            text += " " + self.advice
         return text
 
 
@@ -79,8 +91,9 @@ def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequen
         "properties": {key: {"type": "string"} for key in components},
         "required": components, "additionalProperties": False}
     if edit == "prose+cli":
-        instruction = ("Improve the supplied skill text and helper script components. "
-                       + "Keep each script's command-line contract and output format. " + _FROMARGS_RULE)
+        instruction = _CLI_RULE
+        if NEW_CLI in components or any(name.startswith(WEDGE_PREFIX) for name in components):
+            instruction += _FROMARGS_RULE
         if NEW_CLI in components:
             instruction += prompt_rule()
     else:

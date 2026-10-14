@@ -2,22 +2,19 @@
   "schema_version": 1,
   "status": "approved",
   "skill": "skillz",
-  "invocation": "$skillz audit",
+  "invocation": "$skillz",
   "kinds": {
     "task": {
       "grader": "judge",
-      "rubric": "Score the audit report of fixture.md against the findings in `reference`. When `reference` lists no findings, give 100 only to a report with no findings. Otherwise give 100 when the report names each reference finding, its location, and a correct fix, with no false finding. Subtract 100 divided by the number of reference findings for each missed finding, wrong location, wrong fix, or false finding. Do not go below 0. Give 0 when the report is missing or audits a different file."
+      "rubric": "Score the response to the task request against `reference`, which holds `expected_output` and a list of `assertions`. Treat `expected_output` and each assertion as one criterion. Give each criterion 100 when the response meets it and 0 when it does not or contradicts it. Score the response as the mean of the criteria, rounded to a whole number. Give 0 when the response is missing, ignores the task request, or acts on a different skill than the request names."
     },
     "inspection": {
       "grader": "exact-json"
-    },
-    "audit": {
-      "grader": "audit"
     }
   },
   "helper": {
     "path": "scripts/inspect-skill.pyz",
-    "input": "fixture.md",
+    "input": "evals/files/fixture.md",
     "fixtures": [
       {
         "input": "---\nname: contract\ndescription: Inspect\n---\n# Body\n[Guide](references/guide.md)\n",
