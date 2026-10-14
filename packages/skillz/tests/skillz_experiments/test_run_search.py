@@ -1547,7 +1547,8 @@ def test_a_shape_refusal_records_an_attempt_with_no_candidate_and_the_fixed_code
     attempts = _attempts(result)
     first = attempts[0]
     assert first["index"] == 1 and first["candidate"] is None and first["rejected"] == "reflection-shape"
-    assert len(attempts) > 1
+    recorded = len(_reflections_of(out))
+    assert recorded == 9 and [item["index"] for item in attempts] == list(range(1, recorded + 1))
     assert all(item["candidate"] is None and item["rejected"] == "reflection-shape" and item["accepted"] is False for item in attempts)
     assert all(item["rejected"] == "reflection-shape" and item["components_digest"] is None for item in _reflections_of(out))
 
@@ -1567,7 +1568,9 @@ def test_an_admit_rejection_records_an_attempt_with_no_candidate_and_its_reason(
     attempts = _attempts(result)
     first = attempts[0]
     assert first["index"] == 1 and first["candidate"] is None and first["rejected"] == "candidate-leakage-rejected"
-    assert attempts and all(item["candidate"] is None and item["rejected"] == "candidate-leakage-rejected" for item in attempts)
+    recorded = len(_reflections_of(out))
+    assert recorded > 1 and [item["index"] for item in attempts] == list(range(1, recorded + 1))
+    assert all(item["candidate"] is None and item["rejected"] == "candidate-leakage-rejected" for item in attempts)
     assert all(item["rejected"] == "candidate-leakage-rejected" for item in _reflections_of(out))
 
 

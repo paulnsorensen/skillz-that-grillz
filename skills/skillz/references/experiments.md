@@ -528,7 +528,8 @@ The runner rebuilds the attempts from the recorded outcomes. A resume keeps them
 The runner does not support a run that started before this record.
 
 The reflection prompt lists the newest 8 attempts, newest first, within 4000 characters.
-It also lists the protect set: the train case ids on which the best validated candidate, or the seed when none is validated, scores 1.0. It holds at most 30 ids.
+It also lists the protect set: the train case ids on which the best candidate by validation mean scores 1.0.
+The seed is the best candidate when it has the highest validation mean, including when no candidate is validated. The set holds at most 30 ids.
 The prompt tells the proposer not to re-introduce a change that broke a case.
 It also tells the proposer not to copy a shown case id into a component or into `@hypothesis`.
 
