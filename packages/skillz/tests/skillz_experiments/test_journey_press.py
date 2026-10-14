@@ -527,13 +527,18 @@ def test_journey_that_needs_more_calls_than_the_search_share_is_refused_before_a
 # AC-7: companions stay read-only for the task, and the journey leaves nothing behind.
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+@pytest.mark.ac("gh-311:AC-1")
+@pytest.mark.ac("gh-311:AC-2")
 def test_a_task_cannot_write_create_or_delete_inside_a_companion_and_the_workspace_is_still_removed(
         tmp_path: Path, foreign_journey_dir: Path) -> None:
     executable, result, _, _ = drive(tmp_path, {"tamper": True}, 2, surface=SURFACE)
     tamper = cast(dict[str, str], next(row for row in rows(executable) if "start" in row)["tamper"])
     assert tamper == {"write_existing": "PermissionError", "create_in_root": "PermissionError",
                       "create_nested": "PermissionError", "delete": "PermissionError"}
-    assert not Path(cast(str, result["workspace"])).exists()
+    workspace = Path(cast(str, result["workspace"]))
+    assert Path(tempfile.gettempdir()) != REAL_TMP
+    assert workspace.parents[1] == Path(tempfile.gettempdir())
+    assert not workspace.exists()
     assert foreign_journey_dir.exists()
     assert not leftovers()
 

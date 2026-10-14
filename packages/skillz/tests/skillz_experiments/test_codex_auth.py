@@ -14,6 +14,7 @@ from skillz_experiments._runtime import process
 TOKENS = ("OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-6")
 def test_codex_links_auth_json_and_sets_only_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     if Path("/etc/codex/skills").exists():
         pytest.skip("admin skill roots stop the Codex transport")

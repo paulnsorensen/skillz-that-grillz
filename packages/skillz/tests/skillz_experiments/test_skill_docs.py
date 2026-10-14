@@ -98,6 +98,7 @@ def test_no_contract_step_offers_judge_only_or_draft_contract() -> None:
     assert "until the user approves" in tail and '`"status": "approved"` only after the user approves' in tail
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-17")
 def test_autoimprove_docs_ask_at_most_three_questions_and_name_at_most_seven_concepts() -> None:
     text = EXPERIMENTS.read_text()
     concepts = re.findall(r"^- \*\*.+?\*\*:", _section(text, "Concepts"), re.M)

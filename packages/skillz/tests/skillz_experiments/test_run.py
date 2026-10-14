@@ -77,6 +77,7 @@ def split_ids(out: Path, split: str) -> list[str]:
 
 
 @pytest.mark.usefixtures("umask_022")
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-9")
 def test_run_gates_baseline_and_winner_on_unseen_holdout_with_three_repeats(tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     target, out, provider = make_target(tmp_path), tmp_path / "run", Recorder()
     seed_text = (target / "SKILL.md").read_text()
@@ -115,6 +116,7 @@ def test_run_gates_baseline_and_winner_on_unseen_holdout_with_three_repeats(tmp_
 
 
 @pytest.mark.parametrize("command", ["dataset", "baseline", "search", "evaluate"])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-18")
 def test_removed_commands_exit_with_a_coded_error_naming_run(command: str,
                                                            capsys: pytest.CaptureFixture[str]) -> None:
     assert main([command, "anything"]) == 1
@@ -122,6 +124,7 @@ def test_removed_commands_exit_with_a_coded_error_naming_run(command: str,
     assert error["code"] == "command-removed" and "`run`" in error["error"] and command in error["error"]
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-19")
 def test_old_schema_run_record_stops_with_a_coded_error(tmp_path: Path, make_target: Callable[..., Path]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     out.mkdir(mode=0o700)
