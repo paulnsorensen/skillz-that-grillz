@@ -69,6 +69,7 @@ def test_verdict_with_fewer_than_two_cases_is_inconclusive() -> None:
     assert verdict([]).verdict == "inconclusive"
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-10")
 def test_zero_se_promotes_only_when_every_case_delta_is_positive() -> None:
     assert verdict([0.1, 0.1, 0.1]).verdict == "promote"
     assert verdict([-0.1, -0.1]).verdict == "reject"
@@ -76,6 +77,7 @@ def test_zero_se_promotes_only_when_every_case_delta_is_positive() -> None:
 
 
 @pytest.mark.parametrize("cases", [6, 10, 20])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-11")
 def test_simulation_false_promotion_is_at_most_six_percent_and_below_one_holdout(
     cases: int,
 ) -> None:

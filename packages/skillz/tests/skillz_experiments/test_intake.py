@@ -43,6 +43,7 @@ def test_a_case_missing_a_required_field_stops_as_cases_invalid_naming_the_case_
     assert "t0-0" in str(caught.value) and "family" in str(caught.value)
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_draft_assigns_seeded_family_disjoint_splits_and_one_question_without_model_calls(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def forbidden(*_args: object, **_kwargs: object) -> object:
@@ -73,6 +74,16 @@ def test_draft_assigns_seeded_family_disjoint_splits_and_one_question_without_mo
     assert document["seed"] == 7 and document["approved_hash"] == case_hash(first, 7)
     pending = cast(list[dict[str, object]], document["pending"])
     assert sorted(str(item["id"]) for item in pending) == ["near-1", "trig-1"]
+
+
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-14")
+def test_session_cases_show_their_source_in_the_one_approval_question(tmp_path: Path) -> None:
+    cases = split_cases(load_draft(write_draft(tmp_path, draft())), 7)
+    lines = approval_question(cases, 7).splitlines()
+    for case in cases:
+        line = next(line for line in lines if line.startswith(f"- {case.identifier} |"))
+        assert f"| source {case.source} |" in line
+    assert {case.source for case in cases} == {"session", "skill"}
 
 
 def test_hash_mismatch_raises_cases_unapproved_and_writes_nothing(tmp_path: Path) -> None:

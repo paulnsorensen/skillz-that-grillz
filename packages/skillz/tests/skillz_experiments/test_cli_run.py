@@ -34,6 +34,7 @@ def _executable(path: Path, body: str) -> Path:
     return path
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-5")
 def test_run_accepts_only_claude_or_codex_and_launches_headless(tmp_path: Path, capsys: pytest.CaptureFixture[str],
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     """The CLI rejects other harness names. For claude and codex this checks adapter argv, not the run path."""
@@ -109,6 +110,7 @@ class _Provider(FakeProvider):
         return {"answer": {name: "improved" for name in cast(list[str], schema["required"])}}
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-17")
 def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_path: Path, capsys: pytest.CaptureFixture[str],
                                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     """Drive `main(["run", ...])` through its three stops to `complete`. Only the harness `create` step is faked."""

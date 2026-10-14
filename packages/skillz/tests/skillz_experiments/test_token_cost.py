@@ -318,6 +318,7 @@ def test_keep_if_best_keeps_the_first_candidate_for_equal_costlier_or_unknown_to
     assert _kept_after(SAVE, 100, None) == "one"
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
 def test_a_better_mean_still_beats_a_cheaper_tie() -> None:
     outcomes = _outcomes("one", 0.5, 10) + _outcomes("two", 0.6, 9000)
     session = _session(SAVE, outcomes[:2])

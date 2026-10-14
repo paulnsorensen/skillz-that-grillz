@@ -164,6 +164,7 @@ def snapshot(root: Path) -> dict[str, bytes | None]:
 # --- PA-1: approval bypass -------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("mutation", ["add-case", "edit-request", "move-to-train", "drop-holdout"])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_cases_json_edited_after_approval_stops_resume_before_any_provider(
         mutation: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -186,6 +187,7 @@ def test_cases_json_edited_after_approval_stops_resume_before_any_provider(
     assert spy.created == 0 and spy.evaluated == []
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_draft_edited_after_prepare_never_adds_a_case_to_the_run(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -200,6 +202,7 @@ def test_draft_edited_after_prepare_never_adds_a_case_to_the_run(
     assert {name for name, _held, _files in spy.evaluated} <= frozen_ids
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_draft_edited_before_the_record_needs_a_fresh_hash(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -218,6 +221,7 @@ def test_draft_edited_before_the_record_needs_a_fresh_hash(
     assert all("edited" not in cast(dict[str, object], case.get("expected", {})) for case in frozen(out))
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_case_approval_is_bound_to_the_seed(tmp_path: Path, make_target: Callable[..., Path],
                                             write_draft: Callable[..., list[str]],
                                             approvals: Callable[..., tuple[str, int]]) -> None:
@@ -231,6 +235,7 @@ def test_case_approval_is_bound_to_the_seed(tmp_path: Path, make_target: Callabl
 
 
 @pytest.mark.parametrize("field", ["request", "expected", "files", "family", "source", "id"])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_case_hash_changes_with_every_content_field(field: str) -> None:
     """PA-1: no field of an approved case can change without changing the hash."""
     def make() -> list[DraftCase]:
@@ -274,6 +279,7 @@ def _budget_mutations() -> dict[str, Callable[[dict[str, object]], None]]:
 
 
 @pytest.mark.parametrize("name", list(_budget_mutations()))
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
 def test_tampered_budget_never_exceeds_the_approved_ceiling_on_resume(
         name: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -292,6 +298,7 @@ def test_tampered_budget_never_exceeds_the_approved_ceiling_on_resume(
 
 
 @pytest.mark.parametrize("started", ["expired", "expired-wall", "expired-sleep", "future-wall", "future-wall-6"])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
 def test_resume_past_the_deadline_or_clock_reset_creates_no_provider(
         started: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -334,6 +341,7 @@ def test_resume_inside_the_budget_completes_when_the_clocks_agree_or_the_monoton
 
 
 @pytest.mark.parametrize("repeats", [1, 2, 10, 13, 16, 17, 40, 10**6, 10**18])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
 def test_repeats_never_silently_exceed_the_cap(
         repeats: int, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -358,6 +366,7 @@ def test_repeats_never_silently_exceed_the_cap(
 
 
 @pytest.mark.parametrize("approved", [None, 0, -1, -(10**9)])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
 def test_nonpositive_budget_approval_is_never_accepted(
         approved: int | None, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -373,6 +382,7 @@ def test_nonpositive_budget_approval_is_never_accepted(
 
 
 @pytest.mark.parametrize("repeats", [0, -1, -(10**9)])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
 def test_nonpositive_repeats_are_rejected(repeats: int, tmp_path: Path, make_target: Callable[..., Path]) -> None:
     """PA-3: repeats under 1 raise before any record exists."""
     target, out = make_target(tmp_path), tmp_path / "run"
@@ -381,6 +391,7 @@ def test_nonpositive_repeats_are_rejected(repeats: int, tmp_path: Path, make_tar
     assert not (out / "run.json").exists()
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
 def test_a_tight_budget_keeps_the_holdout_reserve_and_never_overspends(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -405,6 +416,7 @@ def test_a_tight_budget_keeps_the_holdout_reserve_and_never_overspends(
 # --- PA-4: holdout leakage -------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("edit", ["prose", "prose+cli"])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-9")
 def test_holdout_ids_requests_and_expected_values_never_reach_search_or_reflection(
         edit: str, tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
         monkeypatch: pytest.MonkeyPatch) -> None:
@@ -454,6 +466,7 @@ def test_holdout_ids_requests_and_expected_values_never_reach_search_or_reflecti
     assert not any(item in exported for item in secrets)
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_pending_cases_are_never_scored_even_in_the_holdout_family(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     """PA-5: trigger and near-miss cases stay pending and no provider call scores them."""
@@ -494,6 +507,7 @@ def _fuzz_draft(rng: random.Random) -> list[DraftCase]:
 
 
 @pytest.mark.parametrize("trial", range(150))
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_split_invariants_hold_for_random_drafts(trial: int) -> None:
     """PA-5: family never crosses splits, splits are deterministic and order-free, holdout reaches 6 when possible."""
     rng = random.Random(trial)
@@ -521,6 +535,7 @@ def test_split_invariants_hold_for_random_drafts(trial: int) -> None:
     assert case_hash(first, seed) == case_hash(list(reversed(first)), seed) != case_hash(first, seed + 1)
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_the_seed_actually_changes_the_split() -> None:
     """PA-5: the recorded seed drives the assignment, so a seed is not a constant."""
     cases = [DraftCase(f"c{f}-{i}", f"f{f}", "task", "r", "skill", {"a": "b"}, {}) for f in range(8) for i in range(3)]
@@ -536,6 +551,7 @@ def _dyadic(rng: random.Random) -> list[float]:
 
 
 @pytest.mark.parametrize("trial", range(200))
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-9")
 def test_gate_is_sign_symmetric_scale_invariant_and_order_free(trial: int) -> None:
     """PA-6: negating deltas swaps promote and reject; scaling by powers of two and shuffling change nothing."""
     rng = random.Random(trial)
@@ -557,6 +573,7 @@ def test_gate_is_sign_symmetric_scale_invariant_and_order_free(trial: int) -> No
 
 @pytest.mark.parametrize("values", [[math.nan] * 6, [math.inf] * 6, [math.inf, 0.0, 0.0, 0.0], [-math.inf] * 4,
                                     [0.5, 0.5, math.nan, 0.5]])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-9")
 def test_gate_never_promotes_non_finite_deltas(values: list[float]) -> None:
     """PA-6: non-finite deltas raise ValueError or stay inconclusive, never promote."""
     try:
@@ -566,6 +583,7 @@ def test_gate_never_promotes_non_finite_deltas(values: list[float]) -> None:
     assert outcome.verdict != "promote"
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-9")
 def test_gate_with_one_huge_outlier_does_not_promote() -> None:
     """PA-6: a single huge outlier among zeros is inconclusive."""
     assert verdict([1e9] + [0.0] * 9).verdict == "inconclusive"
@@ -573,6 +591,7 @@ def test_gate_with_one_huge_outlier_does_not_promote() -> None:
     assert verdict([1.0] * 9 + [-1e9]).verdict != "promote"
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-9")
 def test_case_deltas_average_repeats_of_different_lengths_and_reject_mismatched_cases() -> None:
     """PA-6: repeats of unequal length average per case; a missing or empty case is an error."""
     deltas = case_deltas({"a": [0.0, 0.0, 1.0], "b": [1.0]}, {"a": [1.0], "b": [0.0, 1.0]})
@@ -585,6 +604,7 @@ def test_case_deltas_average_repeats_of_different_lengths_and_reject_mismatched_
 
 
 @pytest.mark.parametrize("score", [math.nan, math.inf, 5.0, -3.0, 1e308])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-9")
 def test_a_winner_with_an_out_of_range_holdout_score_is_not_promoted_by_the_score_alone(
         score: float, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -605,6 +625,7 @@ def test_a_winner_with_an_out_of_range_holdout_score_is_not_promoted_by_the_scor
 
 # --- PA-7: concurrency -----------------------------------------------------------------------------------
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-16")
 def test_search_never_runs_more_than_two_calls_at_once_whatever_workers_asks() -> None:
     """PA-7: `workers=16` on the real GEPA path clamps to the two-call cap for evaluate and propose together."""
     lock = threading.Lock()
@@ -632,6 +653,7 @@ def test_search_never_runs_more_than_two_calls_at_once_whatever_workers_asks() -
     assert 1 <= state["peak"] <= MAX_CONCURRENT_CALLS
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-16")
 def test_a_full_run_keeps_at_most_two_provider_calls_in_flight(
         tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     """PA-7: search, reflection, and the holdout gate together stay at two concurrent calls."""
@@ -645,6 +667,7 @@ def test_a_full_run_keeps_at_most_two_provider_calls_in_flight(
 @pytest.mark.parametrize("argv", [["search", "--mode", "cli"], ["search", "--mode=prose", "--live"], ["evaluate", "--help"],
                                   ["dataset"], ["baseline", "--target", "x", "--out", "y"], ["search", "-h"],
                                   ["dataset", "--help", "--unknown"], ["evaluate", ""], ["baseline", "\x00"]])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-18")
 def test_removed_commands_with_any_arguments_exit_coded_and_name_run(
         argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
     """PA-8: extra flags never turn a removed command into a parser error or a traceback."""
@@ -658,6 +681,7 @@ def test_removed_commands_with_any_arguments_exit_coded_and_name_run(
 # --- PA-9: old schema ------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("version", [1, "missing", "4", 2, 3, 5, 0, True, [4], {"v": 4}, None, -4])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-19")
 def test_a_run_record_with_a_foreign_schema_stops_coded_and_creates_no_provider(
         version: object, tmp_path: Path, make_target: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
     """PA-9: only schema_version 4 opens; every other value, schema 3 included, stops with run-schema-old."""
@@ -679,6 +703,7 @@ def test_a_run_record_with_a_foreign_schema_stops_coded_and_creates_no_provider(
 
 
 @pytest.mark.parametrize("content", ["{", "[]", "null", "\"text\"", "\xff\xfe", ""])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-19")
 def test_a_corrupt_run_record_exits_with_an_error_not_a_traceback(
         content: str, tmp_path: Path, make_target: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
     """PA-9: a malformed `run.json` exits 1 with a JSON error on stderr."""
@@ -760,6 +785,8 @@ def _contract_for(target: Path, kinds: dict[str, object]) -> None:
 
 @pytest.mark.parametrize("stop", ["cases-missing", "cases-unapproved", "budget-unapproved", "live-required", "contract-unreadable",
                                   "contract-unreadable-dir", "contract-kinds", "contract-audit-unsupported"])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
 def test_every_stop_before_the_session_creates_no_provider(
         stop: str, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         monkeypatch: pytest.MonkeyPatch) -> None:
@@ -825,6 +852,7 @@ def _claude(tmp_path: Path) -> ClaudeCode:
 
 @linux_only
 @pytest.mark.usefixtures("umask_022")
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-1")
 def test_config_dir_is_private_outside_the_sandbox_and_holds_only_the_real_login(
         tmp_path: Path, host_login: Path) -> None:
     """PA-12: the temp config dir is private, unreadable by the sandbox rules, and holds one link to the real login."""
@@ -848,6 +876,7 @@ def test_config_dir_is_private_outside_the_sandbox_and_holds_only_the_real_login
 
 
 @linux_only
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-1")
 def test_a_predictable_attacker_symlink_cannot_capture_the_config_dir(tmp_path: Path) -> None:
     """PA-12: pre-planted symlinks named like the config dir are never used or deleted through."""
     scratch = Path(tempfile.gettempdir())
@@ -866,6 +895,7 @@ def test_a_predictable_attacker_symlink_cannot_capture_the_config_dir(tmp_path: 
 
 
 @linux_only
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-2")
 def test_close_after_the_login_inode_is_replaced_warns_with_credential_rotated_and_still_deletes_the_dir(
         tmp_path: Path, host_login: Path) -> None:
     """PA-12: an atomic rename over the login file is a resumable warning, and the temp dir still goes."""
@@ -883,6 +913,7 @@ def test_close_after_the_login_inode_is_replaced_warns_with_credential_rotated_a
 
 
 @linux_only
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-2")
 def test_close_after_the_link_is_repointed_raises_credential_changed_and_still_deletes_the_dir(
         tmp_path: Path) -> None:
     """PA-12: a link swapped to another file is detected, and the temp dir still goes."""
@@ -898,6 +929,7 @@ def test_close_after_the_link_is_repointed_raises_credential_changed_and_still_d
 
 
 @linux_only
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-2")
 def test_close_when_the_config_dir_became_a_symlink_never_deletes_through_it(tmp_path: Path) -> None:
     """PA-12: replacing the temp dir by a symlink to a victim leaves the victim intact."""
     session = _claude(tmp_path)
@@ -920,6 +952,7 @@ def test_close_when_the_config_dir_became_a_symlink_never_deletes_through_it(tmp
 @linux_only
 @pytest.mark.parametrize("name", ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "claude_code_oauth_token",
                                   "Anthropic_Api_Key", "GH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN ", "CLAUDE_API_KEY"])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-1")
 def test_no_token_variable_reaches_the_child_environment(
         name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """PA-12: whatever token variable the host sets, the child sees only the fixed allowlist."""
@@ -947,6 +980,7 @@ def test_no_token_variable_reaches_the_child_environment(
 
 @linux_only
 @pytest.mark.parametrize("kind", ["missing", "dangling", "directory"])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-1")
 def test_a_missing_login_stops_coded_and_leaves_no_temp_dir(
         kind: str, tmp_path: Path, host_login: Path) -> None:
     """PA-12: no usable login stops as login-missing before any temp dir exists."""

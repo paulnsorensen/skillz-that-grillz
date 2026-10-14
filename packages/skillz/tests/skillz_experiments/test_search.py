@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import threading
 from collections.abc import Mapping, Sequence
 from typing import cast
@@ -10,6 +11,7 @@ from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 from skillz_experiments.search import Edit, search
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
 def test_search_runs_several_pareto_iterations_and_picks_by_validation_mean() -> None:
     train_scores = {"v0": 0.2, "bad": 0.0, "mid": 0.5, "top": 0.6, "late": 0.9}
     validation_scores = {"v0": 0.2, "mid": 0.7, "top": 0.8, "late": 0.3}
@@ -39,6 +41,28 @@ def test_search_runs_several_pareto_iterations_and_picks_by_validation_mean() ->
     assert set(validated) >= {"v0", "mid", "top", "late"}
     best = max(set(validated), key=lambda text: validation_scores.get(text, 0.0))
     assert best == "top"
+
+
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
+def test_search_passes_pareto_parent_selection_to_gepa(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = importlib.import_module("gepa.optimize_anything")
+    seen: list[object] = []
+
+    def capture(*_args: object, **kwargs: object) -> None:
+        seen.append(kwargs["config"])
+
+    monkeypatch.setattr(api, "optimize_anything", capture)
+    def evaluate(_candidate: dict[str, str], _example: object) -> tuple[float, dict[str, object]]:
+        return 0.0, {}
+
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                components: list[str]) -> dict[str, str]:
+        return {key: "x" for key in components}
+
+    assert search({"SKILL.md": "v0"}, "prose", ["t1"], ["val1"], evaluate, propose, metric_calls=4) is False
+    assert len(seen) == 1
+    engine = cast(object, getattr(seen[0], "engine"))
+    assert cast(object, getattr(engine, "candidate_selection_strategy")) == "pareto"
 
 
 def test_search_skips_a_minibatch_the_parent_already_scores_perfectly() -> None:
