@@ -46,8 +46,9 @@ class _Provider(FakeProvider):
     def preflight(self) -> dict[str, object]:
         return {"isolation": "test-provider"}
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
-        del holdout
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del holdout, checks
         return {"score": float("improved" in candidate.files["SKILL.md"]), "candidate_hash": candidate.identity,
                 "case_hash": case.identifier}
 

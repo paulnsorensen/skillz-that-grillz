@@ -9,7 +9,7 @@ from typing import cast, final
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments._contract import Surface
-from skillz_experiments._evaluator import evaluate
+from skillz_experiments.evaluation import CheckMemo, evaluate
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, ClaudeLogin, ClaudeOptions,
@@ -219,10 +219,11 @@ class Harness:
         """Return why the last `check_candidate` call failed, when the task transport says so."""
         return self.transports["task"].rejection
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: CheckMemo) -> dict[str, object]:
         self._unchanged()
         return evaluate(self.transports["task"], self.transports["judge"], candidate, case, holdout=holdout,
-                        simulator=self.transports.get("simulator"))
+                        simulator=self.transports.get("simulator"), checks=checks)
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

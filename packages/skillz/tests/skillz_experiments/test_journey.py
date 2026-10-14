@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from skillz_experiments.evaluation import CheckMemo
+
 import json
 import shutil
 import stat
@@ -13,7 +15,7 @@ from typing_extensions import override
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript, task_tokens
+from skillz_experiments.evaluation._evaluator import SIMULATOR_SCHEMA, Conversant, Reply, Transcript, task_tokens
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._roles import Role
@@ -200,7 +202,7 @@ def test_simulator_prompt_holds_the_brief_the_request_and_replies_but_never_expe
     roles = {name: Role(name, "model", ("fake",), "fake-1") for name in ("task", "judge", "reflection")}
     session = Harness(Configuration(roles), Budget(40, 2400, reserve=0), lambda: None)
     case, candidate = journey_case(tmp_path, contract())
-    result = session.evaluate(candidate, case)
+    result = session.evaluate(candidate, case, checks=CheckMemo())
     prompt = judge.prompts[0]
     assert judge.schemas[0] == SIMULATOR_SCHEMA
     assert BRIEF in prompt and REQUEST in prompt and "ASSISTANT_SENTINEL one" in prompt
@@ -235,7 +237,7 @@ def test_simulator_tokens_are_recorded_apart_and_never_charged_as_task_tokens(
     roles = {name: Role(name, "model", ("fake",), "fake-1") for name in ("task", "judge", "reflection")}
     session = Harness(Configuration(roles), Budget(40, 2400, reserve=0), lambda: None)
     case, candidate = journey_case(tmp_path, contract())
-    result = session.evaluate(candidate, case)
+    result = session.evaluate(candidate, case, checks=CheckMemo())
     assert result["task_usage"] == TOKENS and task_tokens(result) == 12
     assert result["simulator_usage"] == TOKENS | {"input_tokens": sim_input}
     total = cast(dict[str, int | None], result["usage"])

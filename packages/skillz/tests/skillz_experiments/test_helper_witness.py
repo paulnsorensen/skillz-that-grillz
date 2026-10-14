@@ -12,7 +12,8 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._evaluation import witnessed_events
-from skillz_experiments._evaluator import evaluate
+from skillz_experiments.evaluation._evaluator import evaluate
+from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments._protocol import LEDGER_KEY
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness import Configuration
@@ -201,7 +202,7 @@ def graded(tmp_path: Path, mode: str, kind: str = "echo") -> dict[str, object]:
         "fake-model", Budget(5, 60, 0), lambda: None)
     try:
         task = adapter.transports["task"]
-        return evaluate(task, task, candidate(), case(tmp_path, kind))
+        return evaluate(task, task, candidate(), case(tmp_path, kind), checks=CheckMemo())
     finally:
         adapter.close()
 
@@ -255,7 +256,7 @@ def test_a_helper_that_cannot_be_staged_sends_an_empty_ledger_and_earns_no_credi
     try:
         task = adapter.transports["task"]
         assert task.invoke("p", candidate(), case(tmp_path))[LEDGER_KEY] == []
-        result = evaluate(task, task, candidate(), case(tmp_path))
+        result = evaluate(task, task, candidate(), case(tmp_path), checks=CheckMemo())
     finally:
         adapter.close()
     assert result["helper_executed"] is False and result["helper_witnessed"] is False
@@ -273,7 +274,7 @@ def invoked(tmp_path: Path, mode: str, monkeypatch: pytest.MonkeyPatch, after_st
         "fake-model", Budget(5, 60, 0), lambda: None)
     try:
         task = adapter.transports["task"]
-        return evaluate(task, task, candidate(), case(tmp_path))
+        return evaluate(task, task, candidate(), case(tmp_path), checks=CheckMemo())
     finally:
         adapter.close()
 
@@ -288,7 +289,7 @@ def test_a_staging_failure_is_reported_with_its_cause(tmp_path: Path, monkeypatc
         "fake-model", Budget(5, 60, 0), lambda: None)
     try:
         task = adapter.transports["task"]
-        result = evaluate(task, task, candidate(), case(tmp_path))
+        result = evaluate(task, task, candidate(), case(tmp_path), checks=CheckMemo())
     finally:
         adapter.close()
     assert result["helper_witnessed"] is False and result["helper_witness_error"] == "staging-failed"

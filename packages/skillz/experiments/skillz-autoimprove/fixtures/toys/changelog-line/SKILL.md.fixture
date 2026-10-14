@@ -1,0 +1,11 @@
+---
+name: changelog-line
+description: Turn a merged pull request title into one changelog line. Use for "add a changelog line". Do NOT use for release notes.
+---
+
+# changelog-line
+
+1. Read the pull request title and number.
+2. Put the line under Added, Changed, or Fixed.
+3. Write `- <sentence in past tense> (#<number>)`.
+4. Return the section name and the line.

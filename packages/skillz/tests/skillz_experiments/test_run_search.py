@@ -15,6 +15,7 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
+from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments._intake import intake_contract
@@ -66,6 +67,7 @@ class Search:
         self.prompts: list[str] = []
         self.edit_offset: int | None = None
         self.refuse = False
+        self.memos: list[object] = []
         self.fixed_number: int | None = None
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
@@ -95,8 +97,11 @@ class Provider(FakeProvider):
         if error is not None:
             raise error
 
-    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False) -> dict[str, object]:
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
         state = self.state
+        with state.lock:
+            state.memos.append(checks)
         improved = "improved" in candidate.files["SKILL.md"]
         if improved and not holdout:
             with state.lock:
@@ -1394,3 +1399,14 @@ def test_a_proposal_that_repeats_text_the_seed_already_holds_is_not_rejected(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert cast(dict[str, object], result["search"])["leakage_rejections"] == {}
     assert state.improved_calls > 0
+
+
+@pytest.mark.ac("gh-247:AC-1")
+def test_every_evaluation_in_a_session_gets_the_same_check_memo(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert len(state.memos) > 1
+    assert isinstance(state.memos[0], CheckMemo)
+    assert all(memo is state.memos[0] for memo in state.memos)
