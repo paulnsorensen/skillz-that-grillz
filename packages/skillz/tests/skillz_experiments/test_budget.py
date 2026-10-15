@@ -29,6 +29,7 @@ CHILD = ("import sys,time,pathlib; d=pathlib.Path(sys.argv[1]); n=sys.argv[2]; "
          + "(d/(n+'.end')).write_text(str(time.time()))")
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
 def test_estimate_and_single_approval_gate_the_opt_in_ceiling() -> None:
     sized = estimate(preflight_calls=2, train=4, validation=3, holdout=3, calls_per_evaluation=2, repeats=3,
                      search_calls=5, reflection_calls=4, retry_calls=1)
@@ -76,6 +77,7 @@ def test_estimate_refuses_counts_that_lower_the_total(sizes: dict[str, int]) -> 
         _ = estimate(**sizes, journey=False)
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-16")
 def test_process_runs_at_most_two_children_at_once(tmp_path: Path) -> None:
     errors: list[BaseException] = []
 

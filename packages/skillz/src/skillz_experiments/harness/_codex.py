@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 import time
 from collections.abc import Callable, Mapping
@@ -91,11 +92,30 @@ def _inline(values: dict[str, str]) -> str:
     return "{" + ",".join(f"{json.dumps(key)}={json.dumps(value)}" for key, value in values.items()) + "}"
 
 
+def task_tmpdir(workspace: Path) -> Path:
+    """Return the Codex TMPDIR beside the workspace, so it has no `.git` ancestor. Create nothing."""
+    if workspace.name != "workspace":
+        raise ValueError(f"a Codex workspace must be <private task directory>/workspace, not {workspace}")
+    return workspace.parent / "tmp"
+
+
+def private_task_tmpdir(workspace: Path) -> Path:
+    """Create the task TMPDIR and refuse it unless it is a real directory that only this user owns."""
+    tmpdir = task_tmpdir(workspace)
+    tmpdir.mkdir(mode=0o700, exist_ok=True)
+    status = tmpdir.lstat()
+    if not stat.S_ISDIR(status.st_mode) or status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) != 0o700:
+        raise ValueError(f"the Codex task TMPDIR {tmpdir} must be a private directory owned by this user")
+    return tmpdir
+
+
 def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> list[str]:
-    filesystem = {":root": "deny", ":minimal": "read", ":tmpdir": "deny", ":slash_tmp": "deny",
-                  str(workspace): "write", str(workspace / ".agents"): "read", str(executable): "read"}
+    tmpdir = task_tmpdir(workspace)
+    filesystem = {":root": "deny", ":minimal": "read", ":slash_tmp": "deny",
+                  str(workspace): "write", str(workspace / ".agents"): "read",
+                  str(tmpdir): "write", str(tmpdir / ".git"): "write", str(executable): "read"}
     environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
-                   "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
+                   "TMPDIR": str(tmpdir), "LANG": "C.UTF-8"}
     settings = [
         'permissions.skillz={extends=":workspace",filesystem=' + _inline(filesystem) + ',network={enabled=false}}',
         'default_permissions="skillz"',
@@ -157,8 +177,9 @@ class Codex:
         self.authentication_home.cleanup()
 
     def _environment(self, workspace: Path) -> dict[str, str]:
+        tmpdir = private_task_tmpdir(workspace)
         return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
-                "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
+                "TMPDIR": str(tmpdir), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
 
     def preflight(self) -> dict[str, object]:
         credential = self.credential_kind
@@ -178,7 +199,7 @@ class Codex:
             _ = sealed.write_text("sealed sentinel")
             (workspace / "escape").symlink_to(sealed)
             safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
-                    "TMPDIR=" + str(workspace / "tmp"), "LANG=C.UTF-8"]
+                    "TMPDIR=" + str(task_tmpdir(workspace)), "LANG=C.UTF-8"]
             with listening() as port:
                 script = probe(workspace, sealed, Path(__file__).resolve(), port)
                 command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
@@ -200,7 +221,7 @@ class Codex:
                 raise RuntimeError(f"Codex execution options preflight fails: {evidence['reason']}")
         return {"codex_version": observed, "model": self.model, "isolation": "passed", "credential": credential,
                 "host_skill_discovery": "isolated-home", "live_calls": 0,
-                "environment_hash": digest(configuration(Path("/TASK"), self.executable, []))}
+                "environment_hash": digest(configuration(Path("/TASK/workspace"), self.executable, []))}
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -243,7 +264,7 @@ class Codex:
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
-                "TMPDIR=" + str(workspace / "tmp"), "LANG=C.UTF-8"]
+                "TMPDIR=" + str(task_tmpdir(workspace)), "LANG=C.UTF-8"]
         command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
                    "-P", "skillz", "--include-managed-config", "-C", str(workspace), "--",
                    "/usr/bin/env", "-i", *safe, *argv]
@@ -275,7 +296,7 @@ class Codex:
     def check_candidate(self, candidate: Candidate) -> bool:
         self.rejection = None
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
-            workspace = make_workspace(Path(directory))
+            workspace = make_workspace(Path(directory) / "workspace")
             rules = resolve(candidate.contract)
             candidate.materialize(workspace / ".agents/skills" / rules.skill)
             if not self._discover(workspace, rules.skill):

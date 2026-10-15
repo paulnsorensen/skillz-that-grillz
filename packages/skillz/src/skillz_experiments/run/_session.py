@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -35,11 +36,14 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import Denylist, Edit, overshoot
+from skillz_experiments.search import HYPOTHESIS, Denylist, Edit, overshoot
+from skillz_experiments.search import is_reflection as _is_reflection
 from skillz_experiments.search import Progress, Signal, assess
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search import check as check_leakage
+from skillz_experiments.search import attempts as build_attempts
+from skillz_experiments.search import protected as protected_cases
 from skillz_experiments.search import search as pareto_search
 
 # Seconds that the wall clock may step back between prepare and resume, for example after an NTP step.
@@ -78,6 +82,12 @@ def _rejection_detail(outcome: dict[str, object]) -> str | None:
     return detail if isinstance(detail, str) else None
 
 
+def _case_ids(feedback: Mapping[str, Sequence[Mapping[str, object]]]) -> list[str]:
+    """Return the train case ids in the feedback that the proposer saw, first seen first."""
+    names = (record.get("case_id") for records in feedback.values() for record in records)
+    return list(dict.fromkeys(name for name in names if isinstance(name, str)))
+
+
 def _unit_score(value: object) -> float:
     """Clamp a provider score to 0..1. A NaN counts as 0."""
     return min(1.0, max(0.0, float(cast(float, value))))
@@ -86,7 +96,7 @@ def _unit_score(value: object) -> float:
 def _feedback(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
     """Return the GEPA score and feedback of one search outcome."""
     score = _unit_score(result["score"])
-    feedback: dict[str, object] = {"task_correct": score, "request": case.request}
+    feedback: dict[str, object] = {"task_correct": score, "request": case.request, "case_id": case.identifier}
     if "failure" in result:
         feedback["failure"] = result["failure"]
     if "scores" in result:
@@ -440,7 +450,7 @@ class Session:
             raise ValueError("holdout must not enter optimization")
         candidate = self._admit(components)
         if not isinstance(candidate, Candidate):
-            return 0.0, {"task_correct": 0.0, "request": case.request} | candidate
+            return 0.0, {"task_correct": 0.0, "request": case.request, "case_id": case.identifier} | candidate
         recorded = self._reuse(candidate, case)
         if recorded is not None:
             self._keep_if_best(candidate, case)
@@ -560,8 +570,10 @@ class Session:
             stall = self._stall()
             progress = Progress(spent=len(self._search_outcomes()), planned=self._search_ceiling(),
                                 proposal=1 + len(self._reflections()), stalled=stall.streak, advice=stall.advice)
+            history = build_attempts(self.outcomes, self._seed_ref(), self._validation_ids())
+            protect = protected_cases(self.outcomes, self._best_identity())
         prompt, schema = reflection_request(self.edit, candidate, feedback, components, progress=progress,
-                                            cheaper=self.statistics.token_rule)
+                                            cheaper=self.statistics.token_rule, history=history, protect=protect)
         try:
             result = self.provider.invoke(prompt, schema=schema)
         except CodedError as error:
@@ -570,13 +582,26 @@ class Session:
         refusal: ValueError | None = None
         proposal: dict[str, str] = {}
         edits = 0
+        hypothesis: str | None = None
+        hypothesis_dropped: str | None = None
         try:
-            proposal, edits = accept_proposal(result["answer"], components, candidate)
+            proposal, edits, hypothesis, hypothesis_dropped = accept_proposal(result["answer"], components, candidate)
         except ValueError as error:
             refusal = error
+        if hypothesis is not None:
+            # The hypothesis never enters the components, so a leak drops the hypothesis and keeps the proposal.
+            leak = check_leakage(self._denylist, {}, {HYPOTHESIS: hypothesis})
+            if leak is not None:
+                hypothesis, hypothesis_dropped = None, leak.rule
         with self.lock:
             outcome: dict[str, object] = {"arm": "search", "split": "reflection", "usage": result.get("usage"),
-                                          "latency_seconds": result.get("latency_seconds")}
+                                          "latency_seconds": result.get("latency_seconds"), "parent": digest(candidate),
+                                          "components_digest": None if refusal is not None else digest(proposal),
+                                          "minibatch": _case_ids(feedback), "hypothesis": hypothesis,
+                                          "hypothesis_dropped": hypothesis_dropped,
+                                          "rejected": None if refusal is None else "reflection-shape"}
+            if refusal is not None:
+                outcome["rejected_coded"] = True
             if edits > progress.budget():
                 # The budget is advisory. The count shows whether enforcement is worth the wasted reflection calls.
                 outcome["over_budget"] = True
@@ -592,14 +617,36 @@ class Session:
             with self.lock:
                 # The stall signal reads this proposal as unknown, because its candidate never got a score.
                 outcome["status"] = "proposal-build-failed"
+                outcome["rejected"] = "proposal-build-failed"
+                outcome["rejected_coded"] = True
                 self.checkpoint()
             self._latch(fault)
             raise fault from error
-        if isinstance(admitted, Candidate):
-            with self.lock:
+        with self.lock:
+            if isinstance(admitted, Candidate):
                 outcome["proposed"] = admitted.identity
-                self.checkpoint()
+            else:
+                outcome["rejected"] = str(admitted.get("reason") or admitted["rejected"])
+                outcome["rejected_coded"] = admitted.get("reason") is not None
+            self.checkpoint()
         return proposal
+
+    def _seed_ref(self) -> tuple[str, str]:
+        """Return the digest of the seed component texts and the seed identity. The digest names the parent of a first proposal."""
+        return digest({name: self.seed.files[name] for name in self.seed.editable}), self.seed.identity
+
+    def _validation_ids(self) -> list[str]:
+        return [case.identifier for case in self.cases_for("validation")]
+
+    def _best_identity(self) -> str:
+        """Return the identity of the best validated candidate, or the seed when the seed is best."""
+        return self._best_validated(self._validation_ids()).identity
+
+    def _text_dropped(self) -> dict[str, int]:
+        """Return the count of each rule that dropped a hypothesis. The recorded outcomes hold it, so a resume keeps it."""
+        rules = [cast(str, item["hypothesis_dropped"]) for item in self._reflections()
+                 if isinstance(item.get("hypothesis_dropped"), str)]
+        return dict(sorted(Counter(rules).items()))
 
     def _stall(self) -> Signal:
         """Return the stall signal that the recorded outcomes give. The caller holds the lock."""
@@ -725,9 +772,16 @@ class Session:
         self.record["winner"] = winner.files
         with self.lock:
             rejections = {rule: len(keys) for rule, keys in sorted(self._leak_rejections.items())}
-        self.record["search"] = {"reason": reason, "retained_seed": winner.identity == self.seed.identity,
-                                 "leakage_rejections": rejections,
-                                 "proposal_over_budget": self._over_budget()}
+        earlier = self.record.get("search")
+        base = cast(dict[str, object], earlier) if isinstance(earlier, dict) else {}
+        self.record["search"] = base | {
+            "reason": reason,
+            "retained_seed": winner.identity == self.seed.identity,
+            "leakage_rejections": rejections,
+            "proposal_over_budget": self._over_budget(),
+            "attempts": build_attempts(self.outcomes, self._seed_ref(), self._validation_ids()),
+            "text_dropped": self._text_dropped(),
+        }
         self.record["phase"] = "searched"
         self.checkpoint()
 
@@ -896,10 +950,6 @@ def _observation(window: Sequence[Mapping[str, object]], identity: object, valid
     if set(scores) != validation:
         return 0.0
     return max(0.0, math.fsum(scores.values()) / len(scores) - best)
-
-
-def _is_reflection(item: Mapping[str, object]) -> bool:
-    return item.get("arm") == "search" and item.get("split") == "reflection"
 
 
 def _is_search_validation(item: Mapping[str, object]) -> bool:

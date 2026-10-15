@@ -159,7 +159,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
 | `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
-| `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
+| `reserved-name` | A skill file name starts with `@wedge/`, or it is `@new-cli` or `@hypothesis`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
@@ -511,6 +511,37 @@ The numbers come from the run record. They never come from case content.
 The budget is advisory. The runner never rejects a proposal for its size.
 `summary` and `report.json` carry `search.proposal_over_budget`: the count of proposals above the budget stated in their prompt, including proposals that the leakage check later rejects.
 The count shows whether enforcement is worth the wasted reflection calls.
+
+### Attempt history
+
+The runner records one attempt for each reflection call. `search.attempts` holds them, oldest first.
+An attempt has `index`, `parent`, `candidate`, `components`, `hypothesis`, `fixed`, `broke`, `validation_delta`, `accepted`, `rejected`, and `rejected_coded`.
+`rejected_coded` is true when `rejected` is a known code.
+`parent` and `candidate` are candidate identities. `components` is a digest of the proposed component texts. No attempt holds case text or component text.
+`fixed` lists the train case ids that the proposal scores higher than its parent. `broke` lists the ids that it scores lower.
+The lists cover the train cases that the proposer saw in its feedback. For a case with more than one outcome, the newest outcome that did not fail counts.
+`validation_delta` is the validation mean of the candidate minus the validation mean of its parent.
+It is null unless both sides have a complete validation set. A failed validation case counts as 0.0.
+An attempt with no train score yet has empty lists and a null `validation_delta`. The runner fills these fields from later outcomes.
+`accepted` is true when the proposal produced a candidate. `rejected` holds the reason when it did not:
+`reflection-shape`, the leakage or build reason of the host check, or `proposal-build-failed`. A rejected attempt has a null `candidate`.
+The runner rebuilds the attempts from the recorded outcomes. A resume keeps them and continues the index.
+The runner does not support a run that started before this record.
+
+The reflection prompt lists the newest 8 attempts, newest first, within 4000 characters.
+It also lists the protect set: the train case ids on which the best candidate by validation mean scores 1.0.
+The seed is the best candidate when it has the highest validation mean, including when no candidate is validated. The set holds at most 30 ids.
+The prompt tells the proposer not to re-introduce a change that broke a case.
+It also tells the proposer not to copy a shown case id into a component or into `@hypothesis`.
+
+The reflection answer carries an `@hypothesis` key. Its value is a text of at most 200 characters, or null.
+The runner stores a missing or null value as null. It drops a hypothesis over 200 characters as `hypothesis-too-long`.
+It drops a value that is not text as `hypothesis-not-text`.
+The leakage check reads the hypothesis in its own call. A leak drops the hypothesis and records the rule. The proposal stays admitted.
+The key `@hypothesis` never enters a component. It never counts in `leakage_rejections`.
+`search.text_dropped` counts the dropped hypotheses for each rule.
+The export `report.json` and the `run` summary keep these attempt fields: `index`, `parent`, `candidate`, `fixed`, `broke`, `validation_delta`, `accepted`, and `rejected`.
+They drop `hypothesis`, `components`, and `rejected_coded`. They map an uncoded `rejected` text to `rejected`. `run.json` keeps all fields.
 
 ### Stall stop
 
