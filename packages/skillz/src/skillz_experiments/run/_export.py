@@ -15,6 +15,7 @@ from skillz_experiments.harness import stop_kind
 from skillz_experiments.run._claims import claims
 from skillz_experiments.run._patch import build_patch
 from skillz_experiments.run._plan import case_calls
+from skillz_experiments.run._replay import STDERR_LIMIT
 from skillz_experiments.run._session import engine_hash, field, is_inside, record_outcomes, text_field
 
 _TOKEN_FIELDS = {"input_tokens": "input_tokens", "cached_tokens": "cached_input_tokens", "output_tokens": "output_tokens"}
@@ -108,6 +109,10 @@ def calls_upper_bound(record: dict[str, object], frozen: tuple[Contract, list[Ca
     return total
 
 
+# The replay keys that the summary shows. The `detail` key holds git and build stderr, so it stays out of the report.
+REPLAY_KEYS = ("status", "reasons", "patch_digest", "cases", "mean_delta", "se", "per_case", "tolerance")
+
+
 def summary(record: dict[str, object], out: Path | None = None) -> dict[str, object]:
     """Return the run summary. With `out`, it reconciles the budget counter with the planned worst-case call count.
 
@@ -119,11 +124,19 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
             "statistics")
     result = {key: record.get(key) for key in keys}
     result["search"] = _export_search(record.get("search"))
+    replay = record.get("replay")
+    if isinstance(replay, dict):
+        result["replay"] = {key: value for key, value in cast(dict[str, object], replay).items() if key in REPLAY_KEYS}
     result["usage_by_role"] = usage_by_role(record)
     if out is not None:
         # Parse the contract and load the cases once. A record without a preflight count or a finished phase needs neither.
-        frozen = (_frozen(record, out) if type(record.get("preflight_calls")) is int or record.get("phase") == "complete"
-                  else None)
+        frozen = None
+        if type(record.get("preflight_calls")) is int or record.get("phase") == "complete":
+            try:
+                frozen = _frozen(record, out)
+            except ValueError as error:
+                # A contract or case file that no longer parses leaves the bound and the claims unknown.
+                result["claims_unavailable"] = f"the frozen contract or cases did not load: {str(error)[:STDERR_LIMIT]}"
         bound = calls_upper_bound(record, frozen)
         result["calls_upper_bound"] = bound
         calls = record.get("calls")

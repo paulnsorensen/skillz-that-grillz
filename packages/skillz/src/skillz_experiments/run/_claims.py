@@ -8,7 +8,12 @@ from typing import cast
 
 from skillz_experiments._cases import Case, mapping
 from skillz_experiments.gate import holdout_deltas
-from skillz_experiments.run._session import holdout_scores, record_outcomes
+from skillz_experiments.run._session import by_repeat_order, holdout_scores, record_outcomes
+
+ARMS = ("baseline", "winner")
+
+# The replay reasons that refute the export claim. Any other reason leaves it inconclusive.
+REPLAY_REFUTED = ("patch-apply-failed", "patch-bytes-differ", "replay-identity-differs", "replay-contract-rejected")
 
 
 def _status(checks: Mapping[str, str]) -> str:
@@ -16,11 +21,11 @@ def _status(checks: Mapping[str, str]) -> str:
     return "refuted" if "fail" in values else "inconclusive" if "unknown" in values else "supported"
 
 
-def _runner_claim(record: dict[str, object], holdout: Sequence[Case], bound: int | None) -> dict[str, object]:
-    outcomes = record_outcomes(record)
+def _runner_claim(record: dict[str, object], outcomes: Sequence[Mapping[str, object]],
+                  arms: Mapping[str, Mapping[str, Mapping[int, float]]], holdout: Sequence[Case],
+                  bound: int | None) -> dict[str, object]:
     repeats = cast(int, record.get("repeats"))
     same = record.get("winner_hash") == record.get("seed_hash")
-    arms = {arm: holdout_scores(outcomes, arm) for arm in ("baseline", "winner")}
     covered = all(set(range(repeats)) <= set(arms[arm].get(case.identifier, {})) for arm in arms for case in holdout)
     calls, budget = record.get("calls"), mapping(record.get("budget", {}))
     approved = budget.get("maximum")
@@ -40,22 +45,23 @@ def _runner_claim(record: dict[str, object], holdout: Sequence[Case], bound: int
 
 
 def _export_claim(record: dict[str, object]) -> dict[str, object]:
+    """Map the replay reasons to the export status: a refuting reason refutes, any other reason is inconclusive."""
     replay = record.get("replay")
     if not isinstance(replay, dict):
         return {"status": "inconclusive", "reasons": ["replay-missing"], "patch_digest": None,
                 "replay": {"cases": 0, "mean_delta": None, "se": None, "per_case": {}}}
     found = cast(dict[str, object], replay)
-    return {"status": found.get("status"), "reasons": found.get("reasons", []), "patch_digest": found.get("patch_digest"),
+    reasons = cast(list[str], found.get("reasons", []))
+    status = ("refuted" if any(reason in REPLAY_REFUTED for reason in reasons)
+              else "inconclusive" if reasons else "supported")
+    return {"status": status, "reasons": reasons, "patch_digest": found.get("patch_digest"),
             "replay": {key: found.get(key) for key in ("cases", "mean_delta", "se", "per_case")}}
 
 
-def _families(record: dict[str, object], holdout: Sequence[Case]) -> dict[str, object]:
+def _families(record: dict[str, object], arms: Mapping[str, Mapping[str, Mapping[int, float]]],
+              holdout: Sequence[Case]) -> dict[str, object]:
     """Return the holdout case count and the mean paired delta of each family. A paired delta is winner mean minus baseline mean."""
-    outcomes = record_outcomes(record)
-    scores = {arm: {case_id: [by_repeat[repeat] for repeat in sorted(by_repeat)]
-                    for case_id, by_repeat in holdout_scores(outcomes, arm).items()}
-              for arm in ("baseline", "winner")}
-    paired = holdout_deltas(scores["baseline"], scores["winner"]).deltas
+    paired = holdout_deltas(by_repeat_order(arms["baseline"]), by_repeat_order(arms["winner"])).deltas
     tie = record.get("winner_hash") == record.get("seed_hash")
     deltas: dict[str, list[float]] = {}
     counts: dict[str, int] = {}
@@ -71,7 +77,8 @@ def _families(record: dict[str, object], holdout: Sequence[Case]) -> dict[str, o
             for family, found in sorted(deltas.items())}
 
 
-def _improvement_claim(record: dict[str, object], holdout: Sequence[Case]) -> dict[str, object]:
+def _improvement_claim(record: dict[str, object], arms: Mapping[str, Mapping[str, Mapping[int, float]]],
+                       holdout: Sequence[Case]) -> dict[str, object]:
     gate = mapping(record.get("gate", {}))
     verdict = gate.get("verdict")
     reasons = [str(reason) for reason in cast(list[object], gate.get("reasons") or [])]
@@ -79,7 +86,7 @@ def _improvement_claim(record: dict[str, object], holdout: Sequence[Case]) -> di
     if verdict == "promote-cheaper":
         reasons.append("cheaper-not-better")
     return {"status": status, "verdict": verdict, "reasons": reasons, "delta": gate.get("delta"), "se": gate.get("se"),
-            "cases": gate.get("cases"), "repeats": record.get("repeats"), "families": _families(record, holdout)}
+            "cases": gate.get("cases"), "repeats": record.get("repeats"), "families": _families(record, arms, holdout)}
 
 
 def claims(record: dict[str, object], cases: Sequence[Case], bound: int | None) -> dict[str, object]:
@@ -89,7 +96,9 @@ def claims(record: dict[str, object], cases: Sequence[Case], bound: int | None) 
     `apply` is True only when all three claims hold. The improvement claim holds only for the verdict `promote`.
     """
     holdout = [case for case in cases if case.eligible and case.split == "holdout"]
-    runner = _runner_claim(record, holdout, bound)
-    export, improvement = _export_claim(record), _improvement_claim(record, holdout)
+    outcomes = record_outcomes(record)
+    arms = {arm: holdout_scores(outcomes, arm) for arm in ARMS}
+    runner = _runner_claim(record, outcomes, arms, holdout, bound)
+    export, improvement = _export_claim(record), _improvement_claim(record, arms, holdout)
     supported = all(part["status"] == "supported" for part in (runner, export, improvement))
     return {"runner": runner, "export": export, "improvement": improvement, "apply": supported}

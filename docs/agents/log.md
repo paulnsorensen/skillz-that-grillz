@@ -109,6 +109,6 @@
 - 2026-10-11 · issue-211-nono-removal · updated · decisions/skillz-autoimprove.md, sources/codex-skill-discovery-isolation.md, ideas/session-driven-skill-optimization.md · Mark ADR-007 superseded after the removal of the nono backend and the `--isolation` option. Note that the Codex adapter requires 0.154.0 or newer.
 
 
-- 2026-10-15 · 1406d6d87eb17d68 · new-page · decisions/skillz-autoimprove.md · ADR-017 records the three autoimprove claims, the replay phase, and the claims.apply rule (spec skillz-autoimprove-claims).
+- 2026-10-15 · 1406d6d87eb17d68 · updated · decisions/skillz-autoimprove.md · ADR-017 records the three autoimprove claims, the replay phase, and the claims.apply rule (spec skillz-autoimprove-claims).
 - 2026-10-15 · 1406d6d87eb17d68 · merged · ideas/session-driven-skill-optimization.md · Export section now states the replay on a clean copy and the three-claim report.
 

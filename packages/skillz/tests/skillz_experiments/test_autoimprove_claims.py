@@ -7,7 +7,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -22,6 +22,9 @@ from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateU
 from skillz_experiments.run._replay import drift
 from test_run_search import MODEL, Provider, Search
 
+if TYPE_CHECKING:
+    from .conftest import JudgedRun
+
 pytestmark = pytest.mark.usefixtures("host_login")
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -31,12 +34,13 @@ Approver = Callable[..., tuple[str, int]]
 STATUSES = {"supported", "refuted", "inconclusive"}
 
 
-def _finished(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+def _finished(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, suffix: str = "",
               ) -> tuple[Path, Path, Search, int, dict[str, object]]:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
     state = Search(target)
+    state.suffix = suffix
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert result["phase"] == "complete"
     return target, out, state, calls, read(out / "run.json")
@@ -50,10 +54,11 @@ def _rewind(out: Path, record: dict[str, object], keep: int = 0) -> dict[str, ob
     """Put a completed record back at the gated phase. `keep` scored replay outcomes stay, as an interrupted replay leaves them."""
     replays = _replays(record)
     dropped = replays[keep:]
+    cost = cast(dict[str, int], record["estimate"])["replay_calls"] // len(replays)
     record["outcomes"] = [item for item in cast(list[dict[str, object]], record["outcomes"]) if not any(item is gone for gone in dropped)]
     del record["replay"]
     record["phase"] = "gated"
-    record["calls"] = cast(int, record["calls"]) - len(dropped)
+    record["calls"] = cast(int, record["calls"]) - len(dropped) * cost
     write(out / "run.json", record)
     return record
 
@@ -65,6 +70,11 @@ def _resume(target: Path, out: Path, state: Search) -> dict[str, object]:
 
 def _replay_of(record: dict[str, object]) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny]
     return cast(dict[str, Any], record["replay"])  # pyright: ignore[reportExplicitAny]
+
+
+def _export_status(record: dict[str, object], out: Path) -> str:
+    """Return the export claim status that the report derives from the replay reasons."""
+    return cast(str, _claims(record, out)["export"]["status"])
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-1")
@@ -103,9 +113,9 @@ def test_the_replay_applies_the_exported_patch_with_git_to_a_clean_copy_outside_
     _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     winner = cast(dict[str, str], record["winner"])
-    assert record["winner_hash"] != record["seed_hash"] and _replay_of(record)["status"] == "supported"
+    assert record["winner_hash"] != record["seed_hash"] and _export_status(record, out) == "supported"
     patch_file = str(out / "replay" / "candidate.patch")
-    assert [item[1:] for item in seen if item[:2] == ["git", "apply"]] == [["apply", patch_file]]
+    assert [item[item.index("apply"):] for item in seen if item[:1] == ["git"] and "apply" in item] == [["apply", patch_file]]
     copy = out / "replay" / "skill"
     assert not copy.is_relative_to(target) and (out / "replay").stat().st_mode & 0o777 == 0o700
     for name, text in winner.items():
@@ -155,7 +165,7 @@ def test_a_patch_that_fails_differs_or_rebuilds_another_identity_refutes_the_exp
     state = Search(target)
     after = _resume(target, out, state)
     assert after["phase"] == "complete" and state.holdout_calls == 0
-    assert _replay_of(after)["status"] == "refuted" and _replay_of(after)["reasons"] == [fault]
+    assert _replay_of(after)["reasons"] == [fault]
     claim = cast(dict[str, object], summary(after, out)["claims"])
     assert cast(dict[str, object], claim["export"])["status"] == "refuted"
     assert cast(dict[str, object], claim["export"])["reasons"] == [fault]
@@ -164,8 +174,8 @@ def test_a_patch_that_fails_differs_or_rebuilds_another_identity_refutes_the_exp
 
 
 def _gated(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, keep: int = 0,
-           ) -> tuple[Path, Path, dict[str, object], dict[str, object]]:
-    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+           suffix: str = "") -> tuple[Path, Path, dict[str, object], dict[str, object]]:
+    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals, suffix)
     done = cast(dict[str, object], json.loads(json.dumps(record)))
     return target, out, done, _rewind(out, record, keep)
 
@@ -173,7 +183,7 @@ def _gated(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-4")
 def test_the_replay_scores_the_patched_copy_once_on_each_holdout_case_and_records_the_differences(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    target, out, done, rewound = _gated(tmp_path, make_target, write_draft, approvals)
+    target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
     state = Search(target)
     after = _resume(target, out, state)
     held = set(_holdout_scores(after, "winner"))
@@ -188,7 +198,7 @@ def test_the_replay_scores_the_patched_copy_once_on_each_holdout_case_and_record
     replay = _replay_of(after)
     assert replay["per_case"] == expected and replay["cases"] == len(held)
     assert replay["mean_delta"] == pytest.approx(statistics.fmean(expected.values()))
-    assert replay["status"] == "supported" and rewound["phase"] == "gated" and done["phase"] == "complete"
+    assert replay["reasons"] == [] and _export_status(after, out) == "supported"
 
 
 @pytest.mark.parametrize("cause", ["budget", "drift"])
@@ -205,8 +215,7 @@ def test_a_short_replay_budget_or_drifting_replay_scores_make_the_export_claim_i
         state.score_of = lambda text, _split: 0.0 if "improved" in text else None
     after = _resume(target, out, state)
     reason = "replay-budget-exhausted" if cause == "budget" else "replay-score-drift"
-    assert after["phase"] == "complete" and _replay_of(after)["status"] == "inconclusive"
-    assert _replay_of(after)["reasons"] == [reason]
+    assert after["phase"] == "complete" and _replay_of(after)["reasons"] == [reason]
     assert cast(int, after["calls"]) <= maximum
     if cause == "budget":
         assert state.holdout_calls == 0 and after["calls"] == maximum - 1 and not _replays(after)
@@ -229,7 +238,7 @@ def test_a_resume_in_the_replay_phase_does_not_repeat_a_scored_replay_outcome(
     assert state.holdout_calls == 2 and len(items) == 6
     assert all(any(item == old for item in items) for old in kept)
     assert len({item["case_id"] for item in items}) == 6
-    assert after["calls"] == done["calls"] and _replay_of(after)["status"] == "supported"
+    assert after["calls"] == done["calls"] and _export_status(after, out) == "supported"
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-7")
@@ -263,7 +272,8 @@ def test_a_completed_run_reports_the_three_claims_separately_each_with_one_statu
     _target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
     claims = _claims(record, out)
     assert set(claims) == {"runner", "export", "improvement", "apply"}
-    assert {claims[name]["status"] for name in ("runner", "export", "improvement")} == {"supported"} <= STATUSES
+    statuses = {name: claims[name]["status"] for name in ("runner", "export", "improvement")}
+    assert set(statuses.values()) <= STATUSES and set(statuses.values()) == {"supported"}
     assert claims["improvement"]["verdict"] == "promote" and claims["apply"] is True
     assert set(cast(dict[str, object], claims["runner"]["checks"])) == {"preflight", "holdout-isolated", "holdout-coverage", "calls-within-approval",
                                                "calls-within-bound"}
@@ -366,6 +376,20 @@ def test_the_judge_prompt_names_no_arm_and_no_candidate_identity() -> None:
     assert not any(word in prompt.lower() for word in ("baseline", "winner", "replay", "candidate_hash"))
 
 
+@pytest.mark.ac("skillz-autoimprove-claims:AC-12")
+def test_no_judge_prompt_of_a_real_run_holds_an_arm_name_or_a_candidate_hash(judged: JudgedRun) -> None:
+    result = judged.start()
+    record = read(judged.out / "run.json")
+    assert result["phase"] == "complete" and record["winner_hash"] and record["seed_hash"]
+    requests = [cast(dict[str, object], json.loads(line)) for line in judged.log.read_text().splitlines()]
+    prompts = [str(item["prompt"]) for item in requests if item["operation"] == "infer"
+               and "score_percent" in cast(list[str], cast(dict[str, object], item["response_schema"])["required"])]
+    assert prompts
+    forbidden = (cast(str, record["winner_hash"]), cast(str, record["seed_hash"]), "baseline", "winner", "replay")
+    for prompt in prompts:
+        assert not any(word in prompt.lower() for word in forbidden)
+
+
 @pytest.mark.ac("skillz-autoimprove-claims:AC-13")
 def test_experiments_reference_requires_example_before_draft_and_three_claims() -> None:
     text = (ROOT / "skills/skillz/references/experiments.md").read_text()
@@ -393,7 +417,7 @@ def test_the_replay_ignores_a_git_repository_above_the_run_directory(
     _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(tmp_path / "run" / "run.json")
     assert record["winner_hash"] != record["seed_hash"]
-    assert _replay_of(record)["status"] == "supported" and _replay_of(record)["reasons"] == []
+    assert _export_status(record, tmp_path / "run") == "supported" and _replay_of(record)["reasons"] == []
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-4")
@@ -412,7 +436,7 @@ def test_the_rerun_candidate_comes_from_the_patched_copy_not_from_the_recorded_w
     state = Search(target)
     after = _resume(target, out, state)
     replay = _replay_of(after)
-    assert replay["status"] == "refuted" and replay["reasons"] == ["replay-identity-differs"]
+    assert _export_status(after, out) == "refuted" and replay["reasons"] == ["replay-identity-differs"]
     assert replay["detail"]["expected"] == after["winner_hash"] != replay["detail"]["found"]
     assert state.holdout_calls == 0 and not _replays(after)
 
@@ -455,7 +479,7 @@ def test_one_replay_case_that_does_not_load_the_skill_makes_the_export_claim_inc
     target, out, done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
     _tag_replays(monkeypatch, _first_holdout(done), {"loaded": False})
     after = _resume(target, out, Search(target))
-    assert _replay_of(after)["status"] == "inconclusive" and _replay_of(after)["reasons"] == ["replay-not-loaded"]
+    assert _export_status(after, out) == "inconclusive" and _replay_of(after)["reasons"] == ["replay-not-loaded"]
     assert len(_replays(after)) == 6
     claims = _claims(after, out)
     assert claims["export"]["status"] == "inconclusive" and claims["runner"]["status"] == "supported"
@@ -469,7 +493,7 @@ def test_a_replay_case_that_the_contract_rejects_refutes_the_export_claim(
     target, out, done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
     _tag_replays(monkeypatch, _first_holdout(done), {"status": "candidate-contract-rejected"})
     after = _resume(target, out, Search(target))
-    assert _replay_of(after)["status"] == "refuted" and _replay_of(after)["reasons"] == ["replay-contract-rejected"]
+    assert _export_status(after, out) == "refuted" and _replay_of(after)["reasons"] == ["replay-contract-rejected"]
     claims = _claims(after, out)
     assert claims["export"]["status"] == "refuted" and claims["apply"] is False
 
@@ -482,7 +506,7 @@ def test_a_replay_evaluation_that_fails_leaves_a_case_unscored_and_the_export_cl
     state.holdout_fault = lambda number: OSError("provider fell over") if number == 1 else None
     after = _resume(target, out, state)
     replay = _replay_of(after)
-    assert after["phase"] == "complete" and replay["status"] == "inconclusive"
+    assert after["phase"] == "complete" and _export_status(after, out) == "inconclusive"
     assert replay["reasons"] == ["replay-evaluation-failed"] and replay["cases"] == 5
     failed = [item for item in cast(list[dict[str, object]], after["outcomes"])
               if item.get("arm") == "replay" and item.get("status") == "evaluation-failed"]
@@ -499,7 +523,7 @@ def test_a_wedge_source_outside_the_repository_fails_the_patch_and_keeps_the_err
     state = Search(target)
     after = _resume(target, out, state)
     replay = _replay_of(after)
-    assert replay["status"] == "refuted" and replay["reasons"] == ["patch-apply-failed"]
+    assert _export_status(after, out) == "refuted" and replay["reasons"] == ["patch-apply-failed"]
     assert replay["detail"]["code"] == "export-path-escapes" and "stderr" not in replay["detail"]
     assert replay["patch_digest"] is None and state.holdout_calls == 0
 
@@ -517,7 +541,7 @@ def test_a_rebuild_failure_is_inconclusive_with_its_code_and_not_a_refutation(
     state = Search(target)
     after = _resume(target, out, state)
     replay = _replay_of(after)
-    assert replay["status"] == "inconclusive" and replay["reasons"] == ["replay-build-failed"]
+    assert _export_status(after, out) == "inconclusive" and replay["reasons"] == ["replay-build-failed"]
     assert replay["detail"]["code"] == "build-failed" and state.holdout_calls == 0
     assert _claims(after, out)["export"]["status"] == "inconclusive"
 
@@ -535,7 +559,7 @@ def test_a_missing_git_stops_the_run_without_a_verdict_and_a_resume_completes_th
     stalled = read(out / "run.json")
     assert stalled["phase"] == "gated" and "replay" not in stalled
     after = _resume(target, out, Search(target))
-    assert after["phase"] == "complete" and _replay_of(after)["status"] == "supported"
+    assert after["phase"] == "complete" and _export_status(after, out) == "supported"
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-5")
@@ -560,7 +584,7 @@ def test_a_gated_run_that_resumes_after_the_deadline_concludes_the_replay_withou
     state = Search(target)
     after = _resume(target, out, state)
     replay = _replay_of(after)
-    assert after["phase"] == "complete" and replay["status"] == "inconclusive"
+    assert after["phase"] == "complete" and _export_status(after, out) == "inconclusive"
     assert replay["reasons"] == ["replay-budget-exhausted"] and replay["detail"] == {"shortfall": "deadline"}
     assert state.holdout_calls == 0 and after["calls"] == rewound["calls"] and not _replays(after)
 
@@ -574,11 +598,13 @@ def test_a_budget_stop_inside_a_replay_case_keeps_an_outcome_for_its_calls_and_d
     _tag_replays(monkeypatch, victim, {}, fault=BudgetExhausted("global invocation budget exhausted"))
     after = _resume(target, out, Search(target))
     replay = _replay_of(after)
-    assert after["phase"] == "complete" and replay["status"] == "inconclusive"
+    assert after["phase"] == "complete" and _export_status(after, out) == "inconclusive"
     assert replay["reasons"] == ["replay-budget-exhausted"] and replay["detail"] == {"shortfall": "calls"}
     failed = [item for item in cast(list[dict[str, object]], after["outcomes"])
               if item.get("arm") == "replay" and item.get("case_id") == victim]
     assert [item["status"] for item in failed] == ["evaluation-failed"]
+    # A case that meets the latched stop makes no call, so it records no outcome and adds nothing to the call bound.
+    assert {item["case_id"] for item in _replays(after) if item.get("status") == "evaluation-failed"} == {victim}
     claims = _claims(after, out)
     assert claims["runner"]["status"] == "supported" and claims["export"]["status"] == "inconclusive"
 
@@ -607,7 +633,7 @@ def test_the_gate_precheck_leaves_the_replay_reserve_unspent(
     enough = Search(target)
     after = _resume(target, out, enough)
     assert after["phase"] == "complete" and cast(int, after["calls"]) <= maximum
-    assert _replay_of(after)["status"] == "supported" and enough.holdout_calls == gate_need // cost + 6
+    assert _export_status(after, out) == "supported" and enough.holdout_calls == gate_need // cost + 6
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-10")
@@ -642,9 +668,59 @@ def test_a_tie_run_replays_nothing_and_never_applies(
     record = read(out / "run.json")
     assert record["phase"] == "complete" and record["winner_hash"] == record["seed_hash"]
     replay = _replay_of(record)
-    assert replay["status"] == "inconclusive" and replay["reasons"] == ["winner-equals-baseline"]
+    assert _export_status(record, out) == "inconclusive" and replay["reasons"] == ["winner-equals-baseline"]
     assert replay["patch_digest"] is None and not _replays(record) and state.holdout_calls == 0
     claims = _claims(record, out)
     assert claims["export"]["status"] == "inconclusive" and claims["improvement"]["status"] == "inconclusive"
     assert claims["runner"]["checks"]["holdout-coverage"] == "unknown" and claims["runner"]["status"] == "inconclusive"
     assert claims["apply"] is False
+
+
+@pytest.mark.ac("skillz-autoimprove-claims:AC-2")
+def test_a_winner_with_crlf_line_endings_replays_to_the_same_identity(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    _target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals,
+                                                      suffix="\r\nsecond line\r\n")
+    winner = cast(dict[str, str], record["winner"])
+    assert record["winner_hash"] != record["seed_hash"] and "\r\n" in winner["SKILL.md"]
+    assert _replay_of(record)["reasons"] == [] and _export_status(record, out) == "supported"
+
+
+@pytest.mark.ac("skillz-autoimprove-claims:AC-2")
+def test_a_user_git_attributes_file_does_not_change_the_replayed_bytes(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals, suffix="\nsecond line\n")
+    config = tmp_path / "user-config"
+    (config / "git").mkdir(parents=True)
+    _ = (config / "git" / "attributes").write_text("* text eol=crlf\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    after = _resume(target, out, Search(target))
+    assert _replay_of(after)["reasons"] == [] and _export_status(after, out) == "supported"
+
+
+@pytest.mark.ac("skillz-autoimprove-claims:AC-8")
+def test_the_report_omits_the_replay_detail_that_holds_git_stderr(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
+    _tamper_copy(monkeypatch, "prepare_copy", lambda copy: _overwrite(copy, "another seed\n"))
+    after = _resume(target, out, Search(target))
+    stderr = cast(str, _replay_of(after)["detail"]["stderr"])
+    assert stderr
+    destination = tmp_path / "exported"
+    _ = export(out, destination)
+    text = (destination / "report.json").read_text()
+    report = cast(dict[str, Any], json.loads(text))  # pyright: ignore[reportExplicitAny]
+    assert report["replay"]["reasons"] == ["patch-apply-failed"] and "detail" not in report["replay"]
+    assert stderr not in text
+
+
+@pytest.mark.ac("skillz-autoimprove-claims:AC-8")
+def test_a_completed_run_whose_contract_no_longer_parses_omits_the_claims_with_a_reason(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    _target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+    record["contract"] = {"schema_version": 0}
+    result = summary(record, out)
+    assert "claims" not in result and "contract" in cast(str, result["claims_unavailable"])
+    assert result["calls_upper_bound"] is None
