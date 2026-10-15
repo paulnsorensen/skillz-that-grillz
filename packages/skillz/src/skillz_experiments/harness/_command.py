@@ -16,7 +16,7 @@ from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments.evaluation import answer_schema
 from skillz_experiments._protocol import LEDGER_KEY, RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._budget import Budget
-from skillz_experiments._runtime import process
+from skillz_experiments._runtime import model_call, process
 from skillz_experiments.harness._check import Check
 from skillz_experiments.harness._isolation import listening, probe
 from skillz_experiments.harness._witness import LedgerError, Witness, ledger_entries, stage_witness
@@ -128,6 +128,7 @@ class Command:
     claude_sandbox: ClassVar[bool] = False
     refuses_claude_options: ClassVar[bool] = False
     rejection: str | None = None
+    role: str = "task"
 
     def __init__(self, command: tuple[str, ...], model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.command = command
@@ -152,8 +153,13 @@ class Command:
     def _request(self, operation: str, workspace: Path, **payload: object) -> dict[str, object]:
         request = {"schema_version": VERSION, "operation": operation, "workspace": str(workspace),
                    "model": self.model, **payload}
-        result = process(list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
-                         environment={"PATH": "/usr/bin:/bin"}, input_text=json.dumps(request))
+        environment = {"PATH": "/usr/bin:/bin"}
+        if operation == "infer":
+            result = model_call(self.budget, list(self.command), cwd=workspace.parent, environment=environment,
+                                input_text=json.dumps(request))
+        else:
+            result = process(list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
+                             environment=environment, input_text=json.dumps(request))
         if result.returncode:
             raise RuntimeError(_failure(result.stderr))
         if len(result.stdout) > 1_000_000:
@@ -244,24 +250,29 @@ class Command:
                 helper = helper_script(candidate, rules)
                 if helper is not None:
                     witness = stage_witness(workspace, candidate.skill, helper)
-            self.budget.claim(holdout=holdout)
+            self.budget.claim(holdout=holdout, role=self.role)
             self.checkpoint()
-            started = time.monotonic()
-            result = self._request("infer", workspace, prompt=prompt, response_schema=schema or answer_schema(), **skill)
-            answer = mapping(result["answer"])
-            _validate_answer(answer, schema or answer_schema())
-            events = _events(result)
-            outcome: dict[str, object] = {
-                "answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
-                "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
-            if helper is not None:
-                outcome[LEDGER_KEY] = []
-                if witness is None:
-                    outcome[WITNESS_ERROR_KEY] = "staging-failed"
-                else:
-                    try:
-                        outcome[LEDGER_KEY] = ledger_entries(witness)
-                    except LedgerError as fault:
-                        outcome[LEDGER_KEY] = fault.entries
-                        outcome[WITNESS_ERROR_KEY] = fault.cause
-            return outcome
+            with self.budget.timed(self.role):
+                return self._infer(workspace, prompt, schema, skill, helper, witness)
+
+    def _infer(self, workspace: Path, prompt: str, schema: dict[str, object] | None, skill: dict[str, object],
+               helper: str | None, witness: Witness | None) -> dict[str, object]:
+        started = time.monotonic()
+        result = self._request("infer", workspace, prompt=prompt, response_schema=schema or answer_schema(), **skill)
+        answer = mapping(result["answer"])
+        _validate_answer(answer, schema or answer_schema())
+        events = _events(result)
+        outcome: dict[str, object] = {
+            "answer": answer, "events": events, "usage": usage(events), "workspace": str(workspace),
+            "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
+        if helper is not None:
+            outcome[LEDGER_KEY] = []
+            if witness is None:
+                outcome[WITNESS_ERROR_KEY] = "staging-failed"
+            else:
+                try:
+                    outcome[LEDGER_KEY] = ledger_entries(witness)
+                except LedgerError as fault:
+                    outcome[LEDGER_KEY] = fault.entries
+                    outcome[WITNESS_ERROR_KEY] = fault.cause
+        return outcome
