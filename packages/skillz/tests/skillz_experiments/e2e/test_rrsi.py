@@ -28,7 +28,7 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
     assert {item["case_id"] for item in validation if item["search_candidate"] == winner} == validation_ids
     assert {item["score"] for item in validation if item["search_candidate"] == winner} == {1.0}
 
-    held = [item for item in outcomes if item.get("split") == "holdout"]
+    held = [item for item in outcomes if item.get("split") == "holdout" and item["arm"] != "replay"]
     held_ids = {cast(str, item["case_id"]) for item in held}
     assert len(held_ids) == 6
     assert {(item["arm"], item["case_id"], item["repeat"]) for item in held} == {

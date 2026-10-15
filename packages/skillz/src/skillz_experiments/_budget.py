@@ -48,20 +48,21 @@ class Estimate:
 
 def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, holdout: int = 0,
              calls_per_evaluation: int = 1, repeats: int = 1, search_calls: int = 0,
-             reflection_calls: int = 0, retry_calls: int = 0, journey: bool = False) -> Estimate:
+             reflection_calls: int = 0, retry_calls: int = 0, replay_calls: int = 0, journey: bool = False) -> Estimate:
     """Size a run before any model call.
 
     `train`, `validation`, and `holdout` are case counts per split.
     calls = preflight_calls + (train + validation + holdout) * calls_per_evaluation * repeats
-    + search_calls + reflection_calls + retry_calls.
+    + search_calls + reflection_calls + retry_calls + replay_calls.
     seconds = ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS).
     Raise `ValueError` when a count is negative or `calls_per_evaluation` or `repeats` is below 1.
     """
-    counts = (preflight_calls, train, validation, holdout, search_calls, reflection_calls, retry_calls)
+    counts = (preflight_calls, train, validation, holdout, search_calls, reflection_calls, retry_calls, replay_calls)
     if min(counts) < 0 or calls_per_evaluation < 1 or repeats < 1:
         raise ValueError("estimate needs nonnegative counts and at least 1 call per evaluation and 1 repeat")
     cases = train + validation + holdout
-    calls = preflight_calls + cases * calls_per_evaluation * repeats + search_calls + reflection_calls + retry_calls
+    calls = (preflight_calls + cases * calls_per_evaluation * repeats + search_calls + reflection_calls + retry_calls
+             + replay_calls)
     return Estimate(calls, _seconds(calls), journey)
 
 

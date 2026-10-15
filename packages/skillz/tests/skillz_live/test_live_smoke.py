@@ -206,13 +206,13 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
 
 
 SCENARIOS: dict[str, Scenario] = {
-    "basic": Scenario(_basic, 85),
-    "command-harness": Scenario(_command_harness, 85, bridge=True),
-    "command-grader": Scenario(_command_grader, 47),
-    "hybrid-mixed": Scenario(_hybrid_mixed, 85, bridge=True),
-    "prose-cli": Scenario(_prose_cli, 47),
-    "journey": Scenario(_journey, 199),
-    "resume": Scenario(_basic, 85, resume=True),
+    "basic": Scenario(_basic, 97),
+    "command-harness": Scenario(_command_harness, 97, bridge=True),
+    "command-grader": Scenario(_command_grader, 53),
+    "hybrid-mixed": Scenario(_hybrid_mixed, 97, bridge=True),
+    "prose-cli": Scenario(_prose_cli, 53),
+    "journey": Scenario(_journey, 229),
+    "resume": Scenario(_basic, 97, resume=True),
 }
 """Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it)."""
 NAMES = (*SCENARIOS, "analytics")

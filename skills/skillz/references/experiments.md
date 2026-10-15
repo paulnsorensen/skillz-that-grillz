@@ -110,7 +110,7 @@ Map each coded stop to its next step:
 | `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_cases` (only when `evals/evals.json` exists), `doctor` (the host checks) | Write the case draft. Start from `seed_cases` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
@@ -197,6 +197,8 @@ Lower `--repeats` or the number of holdout cases in the draft, then run again.
 ## Draft the cases
 
 Read the `facts` from the `cases-missing` stop, then the skill files that it lists.
+Before the case draft, write one representative example. State the request, the expected target behavior, and the observable checks that refute it.
+Show the example to the user with the case approval question.
 Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
 
 When `<skill>/evals/evals.json` exists, the stop holds `seed_cases`. Start the draft from it.
@@ -336,8 +338,21 @@ The summary and the export report also show `statistics`, the frozen thresholds 
 The summary reports the delta, the SE, the case count, and the repeats.
 Small runs often report `inconclusive`. That result is honest: the data cannot separate the winner from noise.
 Report the verdict as it is. Never promote an `inconclusive` winner by hand.
-Apply a winner only after a `promote` verdict. A `promote-cheaper` winner is advisory: report it and let the user decide.
+Report each of the three claims with its status and evidence: `runner`, `export`, and `improvement`.
+Never describe an `inconclusive` claim as an improvement.
+Apply a winner only when `claims.apply` is true. A `promote-cheaper` winner stays advisory: report it and let the user decide.
 Never report a delta without its SE and case count.
+
+The summary of a `complete` run and the export report hold a `claims` block.
+The block holds `runner`, `export`, `improvement`, and `apply`.
+`runner` has `status`, `checks`, and `calls`. The checks are `preflight`, `holdout-isolated`, `holdout-coverage`, `calls-within-approval`, and `calls-within-bound`.
+Each check is `pass`, `fail`, or `unknown`. The status is `refuted` on any `fail` and `inconclusive` on any `unknown`.
+`export` comes from `replay`. It holds `status`, `reasons`, `patch_digest`, and `replay` with `cases`, `mean_delta`, `se`, and `per_case`.
+The `export` claim is `inconclusive` with the reason `replay-missing` when a completed run has no replay. See "Replay" for the other reasons.
+`improvement` comes from the gate verdict: `promote` is `supported`, `reject` is `refuted`, and `inconclusive` is `inconclusive`.
+`promote-cheaper` is `inconclusive` with the reason `cheaper-not-better`.
+`improvement` also holds `verdict`, `reasons`, `delta`, `se`, `cases`, `repeats`, and `families`. Each family gives `cases` and `mean_delta`.
+`apply` is true only when all three claims are `supported` and the verdict is `promote`.
 `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion counts and rates of the gate. It makes no model call.
 The keys `false_promotions_2se` and `false_promotions_one_holdout` are integer counts; each rate is its count divided by `trials`.
 The counts cover `promote` only.
@@ -534,10 +549,33 @@ The runner rebuilds the observations from the run record, so a resumed run gets 
 A resumed run that already reached a streak of 8 skips the search.
 ADR-016 in `docs/agents/decisions/skillz-autoimprove.md` records the thresholds.
 
+### Replay
+
+The replay checks that the exported patch reproduces the evaluated winner. It writes the `replay` record to `run.json`.
+The phase `replayed` follows `gated` and precedes `complete`.
+The replay applies each patch with one `git apply` to a clean copy under the run directory.
+The `git apply` call runs in a hermetic environment: it uses the resolved ceiling and no global or system git config.
+The replay checks byte equality with the evaluated winner.
+It rebuilds the candidate from the copy and checks its identity.
+Then it scores the candidate once on each holdout case through the harness.
+The `replay` record holds `status`, `reasons`, `patch_digest`, `cases`, `per_case`, `mean_delta`, `se`, `tolerance`, and `detail`.
+The status is `refuted` for the reasons `patch-apply-failed`, `patch-bytes-differ`, `replay-identity-differs`, and `replay-contract-rejected`.
+The status is `inconclusive` for the reasons `winner-equals-baseline`, `replay-budget-exhausted`, `replay-evaluation-failed`, `replay-score-drift`, `replay-build-failed`, and `replay-not-loaded`.
+The reason `replay-not-loaded` marks a replay outcome with `loaded` false.
+The `detail` of `replay-budget-exhausted` holds `needed` and `left`, or a `shortfall` of `deadline` or `calls`.
+The `detail` of `replay-build-failed` holds a `code` and an `error`.
+Otherwise the status is `supported`.
+For each case, the delta `d` is the replay score minus the mean winner holdout score.
+The replay reports drift when `mean(d) + 2·SE < -min_gain`. An unset `min_gain` counts as 0.
+A missing git or a git timeout stops the run with the retryable code `replay-git-unavailable`. Fix git, then resume the run.
+A run in the phase `gated` or `replayed` that resumes after its deadline records `replay-budget-exhausted` without a model call.
+The gate keeps the unspent replay reserve for the replay.
+
 ## Export
 
 Run `export` only after the run reports the phase `complete`.
-
+Export refuses a patch whose digest differs from the replayed `patch_digest`. It writes nothing in that case.
+A completed run without a replay gives the `export` claim `inconclusive` with the reason `replay-missing`.
 ```sh
 python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export"
 ```
@@ -545,7 +583,7 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export
 Export is write-only. It writes `candidate.patch` and a redacted `report.json` to a new directory.
 Its result lists the written patch files under `patches`.
 It never applies or installs a patch, and it never changes the target skill.
-Show the user each patch and the verdict. The user decides whether to apply it.
+Show the user each patch and the three claims. Apply a patch only when `claims.apply` is true.
 `candidate.patch` is a plain unified diff with paths relative to the skill directory.
 Apply it from the skill directory with `git apply` or `patch -p1 -E`. Added and deleted skill files appear in it.
 The `-E` flag makes the macOS `patch` remove a deleted file instead of leaving it empty.
@@ -724,6 +762,7 @@ A journey case costs `max_turns * 2 + 1` calls for each evaluation.
 The plan sizes the holdout gate from the sum of its case costs. It sizes each search call at the mean cost of the train and validation cases.
 It sizes each holdout retry at the costliest holdout case.
 The reserve therefore covers one failed attempt of any case.
+The reserve also holds `replay_calls`: one pass of the winner over the holdout, recorded under the `replay` arm.
 A file that the seed MCP config runs is read-only.
 The run stops with `contract-surface` when `editable` or the helper names such a file.
 The default editable set leaves it out.
@@ -807,6 +846,7 @@ A role without outcomes has a `null` model. A run without a simulator role repor
 A `candidate-contract-rejected` outcome made no call, so it adds nothing to the bound.
 A run record from before `preflight_calls` has a `null` bound and no `usage_gap`.
 When `calls` exceeds the bound, they add `usage_gap`: `calls` minus the bound. This flags calls that no outcome explains.
+The bound counts each replay outcome with `case_calls`, like a holdout outcome.
 `cost_usd` stays `null`. The run prices no spend.
 
 Run records contain private local inputs.

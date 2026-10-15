@@ -11,7 +11,7 @@ from typing import cast
 
 import pytest
 
-from support import (FIXTURES, HARNESS_RUNS, HARNESSES, assert_promoted, carries_answer, export_and_apply, holdout,
+from support import (FIXTURES, HARNESS_RUNS, HARNESSES, assert_promoted, assert_replayed, carries_answer, export_and_apply, holdout,
                      make_scenario, raw_holdout, read_record, run_scenario, snapshot)
 
 
@@ -20,12 +20,14 @@ from support import (FIXTURES, HARNESS_RUNS, HARNESSES, assert_promoted, carries
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-10")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
+@pytest.mark.ac("skillz-autoimprove-claims:AC-4")
 @pytest.mark.parametrize("harness, cli", HARNESS_RUNS)
 def test_command_prose_promotes_after_actual_file_transformation(tmp_path: Path, harness: str, cli: Path) -> None:
     scenario = make_scenario(tmp_path)
     original_tree = snapshot(scenario.target)
     result = run_scenario(scenario, tmp_path, harness=harness, cli=cli)
     assert_promoted(scenario, result)
+    assert_replayed(scenario.out)
     assert all(item["loaded"] and item["helper_executed"] for item in holdout(read_record(scenario.out)))
     assert snapshot(scenario.target) == original_tree
     applied = export_and_apply(scenario, tmp_path, cli=cli)
@@ -53,12 +55,14 @@ def test_command_prose_promotes_after_actual_file_transformation(tmp_path: Path,
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-10")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
+@pytest.mark.ac("skillz-autoimprove-claims:AC-4")
 @pytest.mark.parametrize("harness, cli", HARNESS_RUNS)
 def test_command_helper_executes_winning_export(tmp_path: Path, harness: str, cli: Path) -> None:
     scenario = make_scenario(tmp_path, helper=True)
     original_tree = snapshot(scenario.target)
     result = run_scenario(scenario, tmp_path, helper=True, harness=harness, cli=cli)
     assert_promoted(scenario, result)
+    assert_replayed(scenario.out)
     assert all(item["loaded"] and item["helper_executed"] for item in holdout(read_record(scenario.out)))
     assert snapshot(scenario.target) == original_tree
     applied = export_and_apply(scenario, tmp_path, cli=cli)

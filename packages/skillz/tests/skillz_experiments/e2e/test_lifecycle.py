@@ -131,7 +131,7 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
     assert after["winner_hash"] == cast(dict[str, object], before["best_validated"])["identity"]
     assert first_calls <= cast(int, after["calls"]) <= calls
     held = [item for item in cast(list[dict[str, object]], after["outcomes"])
-            if item.get("split") == "holdout"]
+            if item.get("split") == "holdout" and item["arm"] != "replay"]
     triples = [(item["arm"], item["case_id"], item["repeat"]) for item in held]
     assert len(triples) == len(set(triples)) == 36
     assert all(item in held for item in completed)
@@ -146,7 +146,7 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
         prior_done = sum(item.get("case_id") == case["id"] for item in completed)
         final_tasks = sum(event.get("role") == "task" and event.get("visible_input") == source
                           for event in read_events(scenario.out))
-        assert final_tasks == 6 + prior_tasks - prior_done
+        assert final_tasks == 7 + prior_tasks - prior_done
     previous = read_events(scenario.out)
     code, repeated, error = call_cli(approved, tmp_path)
     assert (code, error, repeated["gate"]) == (0, "", result["gate"])

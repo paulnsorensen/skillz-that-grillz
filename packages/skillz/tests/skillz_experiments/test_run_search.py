@@ -971,7 +971,8 @@ def test_a_run_stopped_by_another_coded_error_still_resumes(
 
 def _failed_holdout(record: dict[str, object]) -> list[dict[str, object]]:
     return [item for item in cast(list[dict[str, object]], record["outcomes"])
-            if item.get("split") == "holdout" and item.get("status") == "evaluation-failed"]
+            if item.get("split") == "holdout" and item.get("arm") != "replay"
+            and item.get("status") == "evaluation-failed"]
 
 
 def test_a_provider_fault_on_every_winner_repeat_of_one_holdout_case_drops_that_case_and_the_gate_finishes(

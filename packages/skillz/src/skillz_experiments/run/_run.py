@@ -1,6 +1,6 @@
-"""One resumable autoimprove run: intake, one search, one holdout gate.
+"""One resumable autoimprove run: intake, one search, one holdout gate, one replay of the exported patch.
 
-Phases: prepared, searched, gated, complete. `run.json` (schema 4) holds the checkpoint of each phase.
+Phases: prepared, searched, gated, replayed, complete. `run.json` (schema 4) holds the checkpoint of each phase.
 """
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     shown = plan_estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
-        budget = approve(plan.sized, approve_budget, reserve=plan.holdout_calls, reserve_time=plan.reserve_seconds)
+        budget = approve(plan.sized, approve_budget, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
                                                      "statistics": resolved.data(), **shown_options}) from None
@@ -258,6 +258,8 @@ def _drive(session: Session) -> dict[str, object]:
             if session.phase == "searched":
                 session.gate()
             if session.phase == "gated":
+                session.replay()
+            if session.phase == "replayed":
                 session.finish()
         except EnvironmentDiffers:
             raise

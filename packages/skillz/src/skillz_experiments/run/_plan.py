@@ -47,13 +47,19 @@ class _Plan:
     holdout_calls: int
     retry_calls: int
     sized: Estimate
+    replay_calls: int = 0
     sandbox_gate: int = 0
     sandbox_total: int = 0
 
     @property
+    def reserve(self) -> int:
+        """Return the calls that the search leaves for the holdout gate and the replay."""
+        return self.holdout_calls + self.replay_calls
+
+    @property
     def reserve_seconds(self) -> int:
-        """Return the seconds that the holdout gate holds, never more than the whole run."""
-        return min(gate_seconds(self.holdout_calls) + self.sandbox_gate, self.sized.seconds)
+        """Return the seconds that the holdout gate and the replay hold, never more than the whole run."""
+        return min(gate_seconds(self.reserve) + self.sandbox_gate, self.sized.seconds)
 
 
 def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeOptions) -> int:
@@ -79,6 +85,8 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     `_Plan.metric_calls` and `reflection_calls` keep that unit. `holdout_calls` and `sized.calls` count model calls.
     `holdout_calls` is the gate reserve. It holds the gate and `HOLDOUT_RETRIES_PER_ARM` retries per arm,
     because a failed holdout call stays claimed.
+    `replay_calls` is one pass of the winner over the holdout cases, for the replay phase. It adds to `sized.calls`,
+    to the holdout reserve, and to the reserved seconds. The replay has no retry.
     `sandbox_seconds` is the sandbox time of one evaluation: the limit times the sandbox runs of the costliest scored kind.
     The sandbox time of every evaluation adds to the estimate and to the gate reserve, shared across parallel calls.
     The search shrinks until both the call cap and the time cap hold, sandbox time included.
@@ -88,13 +96,14 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     """
     max_calls, max_seconds = ceilings(journey)
     costs = list(holdout_costs) if holdout_costs is not None else [per_evaluation] * holdout
-    holdout_evaluations = 2 * holdout * repeats + 2 * HOLDOUT_RETRIES_PER_ARM
+    holdout_evaluations = 2 * holdout * repeats + 2 * HOLDOUT_RETRIES_PER_ARM + holdout
     retry_calls = 2 * HOLDOUT_RETRIES_PER_ARM * (max(costs) if costs else per_evaluation)
     holdout_pass = sum(costs)
     holdout_calls = 2 * holdout_pass * repeats + retry_calls
-    if PREFLIGHT_CALLS + holdout_calls > max_calls:
-        raise Stop("budget-unapproved", f"the preflight and the holdout gate alone need {PREFLIGHT_CALLS + holdout_calls} "
-                   + f"calls; the cap is {max_calls}{seconds_cap_note(journey)}; lower --repeats or the holdout size", {})
+    if PREFLIGHT_CALLS + holdout_calls + holdout_pass > max_calls:
+        raise Stop("budget-unapproved", f"the preflight, the holdout gate, and the replay alone need "
+                   + f"{PREFLIGHT_CALLS + holdout_calls + holdout_pass} calls; the cap is {max_calls}"
+                   + f"{seconds_cap_note(journey)}; lower --repeats or the holdout size", {})
 
     def sandbox_total(metric: int) -> int:
         return math.ceil((metric + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
@@ -102,6 +111,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     def size(metric: int) -> Estimate:
         return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=2 * holdout_pass, calls_per_evaluation=1,
                         repeats=repeats, search_calls=metric * per_evaluation, retry_calls=retry_calls,
+                        replay_calls=holdout_pass,
                         reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), journey=journey)
 
     def fits(metric: int) -> bool:
@@ -109,7 +119,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
         return sized.calls <= max_calls and sized.seconds + sandbox_total(metric) <= max_seconds
 
     if not fits(0):
-        raise Stop("budget-unapproved", "the preflight, the holdout gate, and their sandbox time alone need "
+        raise Stop("budget-unapproved", "the preflight, the holdout gate, the replay, and their sandbox time alone need "
                    + f"{size(0).seconds + sandbox_total(0)} seconds; the cap is {max_seconds}{seconds_cap_note(journey)}; "
                    + "lower --repeats, the holdout size, or --sandbox-seconds", {})
     metric = SEARCH_CASE_FACTOR * (train + validation)
@@ -121,7 +131,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
     sized, total = size(metric), sandbox_total(metric)
     return _Plan(metric, math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls, retry_calls,
-                 Estimate(sized.calls, sized.seconds + total, journey), sandbox_gate, total)
+                 Estimate(sized.calls, sized.seconds + total, journey), holdout_pass, sandbox_gate, total)
 
 
 def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions) -> _Plan:
@@ -222,5 +232,6 @@ def plan_estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, ob
                if plan.sized.journey else {})
     return {"calls": plan.sized.calls, "seconds": plan.sized.seconds, "search_calls": plan.metric_calls,
             "repeats": repeats, "holdout_cases": holdout_cases, "holdout_retry_calls": plan.retry_calls,
+            "replay_calls": plan.replay_calls,
             "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls,
             **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {}), **journey}
