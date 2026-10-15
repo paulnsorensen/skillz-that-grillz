@@ -340,7 +340,7 @@ Small runs often report `inconclusive`. That result is honest: the data cannot s
 Report the verdict as it is. Never promote an `inconclusive` winner by hand.
 Report each of the three claims with its status and evidence: `runner`, `export`, and `improvement`.
 Never describe an `inconclusive` claim as an improvement.
-Apply a winner only when `claims.apply` is true. A `promote-cheaper` winner stays advisory: report it and let the user decide.
+Apply a winner only when `claims.apply` is true. A `promote-cheaper` winner stays advisory: report it and do not apply it. The user may apply it by hand outside autoimprove.
 Never report a delta without its SE and case count.
 
 The summary of a `complete` run and the export report hold a `claims` block.
@@ -558,7 +558,9 @@ The `git apply` call runs in a hermetic environment: it uses the resolved ceilin
 The replay checks byte equality with the evaluated winner.
 It rebuilds the candidate from the copy and checks its identity.
 Then it scores the candidate once on each holdout case through the harness.
-The `replay` record holds `status`, `reasons`, `patch_digest`, `cases`, `per_case`, `mean_delta`, `se`, `tolerance`, and `detail`.
+The `replay` record in `run.json` holds `reasons`, `patch_digest`, `cases`, `per_case`, `mean_delta`, `se`, `tolerance`, and `detail`.
+The summary and the export report omit `detail`, because it can hold git and build error text.
+The report maps the reasons to the status of the `export` claim.
 The status is `refuted` for the reasons `patch-apply-failed`, `patch-bytes-differ`, `replay-identity-differs`, and `replay-contract-rejected`.
 The status is `inconclusive` for the reasons `winner-equals-baseline`, `replay-budget-exhausted`, `replay-evaluation-failed`, `replay-score-drift`, `replay-build-failed`, and `replay-not-loaded`.
 The reason `replay-not-loaded` marks a replay outcome with `loaded` false.
@@ -576,6 +578,7 @@ The gate keeps the unspent replay reserve for the replay.
 Run `export` only after the run reports the phase `complete`.
 Export refuses a patch whose digest differs from the replayed `patch_digest`. It writes nothing in that case.
 A completed run without a replay gives the `export` claim `inconclusive` with the reason `replay-missing`.
+
 ```sh
 python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export"
 ```

@@ -97,6 +97,12 @@ class Budget:
             raise ValueError("invalid holdout reservation")
         self._check_reserve_seconds(self.reserve_seconds)
 
+    @classmethod
+    def expired(cls, maximum: int, *, reserve: int, calls: int, approved: bool, journey: bool) -> Budget:
+        """Return a budget whose deadline passed one second ago. Every `remaining` call raises."""
+        return cls(maximum, 1.0, reserve=reserve, calls=calls, started=time.monotonic() - 1.0,
+                   approved=approved, journey=journey)
+
     def _caps(self) -> tuple[int, int]:
         if not self.approved:
             return UNAPPROVED_CALLS, UNAPPROVED_SECONDS

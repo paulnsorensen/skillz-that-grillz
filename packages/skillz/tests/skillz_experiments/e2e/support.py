@@ -17,6 +17,7 @@ from typing import cast
 import pytest
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments.harness._claude import _sandbox
+from skillz_experiments.run import summary
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -278,7 +279,8 @@ def assert_replayed(out: Path) -> None:
     """Assert the replay supports the export: no reason, and one loaded replay outcome per holdout case."""
     record = read_record(out)
     replay = cast(dict[str, object], record["replay"])
-    assert replay["status"] == "supported" and replay["reasons"] == []
+    export = cast(dict[str, object], cast(dict[str, object], summary(record, out)["claims"])["export"])
+    assert export["status"] == "supported" and replay["reasons"] == []
     items = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
              if cast(dict[str, object], item).get("arm") == "replay"]
     held = sorted(cast(str, case["id"]) for case in read_cases(out) if case["split"] == "holdout")

@@ -47,14 +47,17 @@ def _git(arguments: list[str], cwd: Path, ceiling: Path) -> str | None:
     """Run git in `cwd`. Return the bounded stderr when it fails, else None. Raise when git does not run.
 
     The ceiling keeps git out of any enclosing repository, so paths never resolve against one.
-    Git reads no global or system configuration, so a user setting cannot change the bytes that it writes.
+    Git reads no global or system configuration and no global or system attributes file,
+    so a user setting such as `eol=crlf` cannot change the bytes that it writes.
     """
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env["GIT_CEILING_DIRECTORIES"] = str(ceiling)
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_ATTR_NOSYSTEM"] = "1"
+    command = ["git", "-c", f"core.attributesFile={os.devnull}", *arguments]
     try:
-        done = subprocess.run(["git", *arguments], cwd=cwd, env=env, capture_output=True, text=True, check=False, timeout=120)
+        done = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, check=False, timeout=120)
     except (OSError, subprocess.SubprocessError) as error:
         raise CodedError("replay-git-unavailable", f"git did not run: {str(error)[:STDERR_LIMIT]}; resume the run") from error
     return None if done.returncode == 0 else (done.stderr.strip() or f"git exited with {done.returncode}")[:STDERR_LIMIT]
@@ -121,7 +124,7 @@ def components(directory: Path, seed: Candidate, patch: Patch, winner: object) -
             found[name] = seed.files[name]
         else:
             root = directory / ("repo" if name.startswith(WEDGE_PREFIX) else "skill")
-            found[name] = (root / relative(name.removeprefix(WEDGE_PREFIX))).read_text(encoding="utf-8")
+            found[name] = (root / relative(name.removeprefix(WEDGE_PREFIX))).read_bytes().decode("utf-8")
     return found
 
 
@@ -129,7 +132,7 @@ def drift(deltas: Sequence[float], tolerance: float) -> tuple[float, float, bool
     """Return the mean of `deltas`, its standard error, and whether the replay drifts below the winner.
 
     The standard error follows the repeat-mean rule of the gate: the sample stdev over the square root of the count,
-    and 0 for one value. The gate keeps its own copy, so this module computes it again and imports nothing from the gate.
+    and 0 for one value. This module computes it again, because the `gate/` package stays untouched to keep the scoring digest stable.
     Drift is `mean + 2 * SE < -tolerance`.
     """
     mean = math.fsum(deltas) / len(deltas)
