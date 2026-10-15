@@ -1170,6 +1170,7 @@ def test_codex_event_stream_with_deeply_nested_json_is_an_invalid_stream_not_a_r
 
 
 @pytest.mark.usefixtures("umask_022")
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-1")
 def test_linux_environment_links_only_the_credential_and_forwards_no_token(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_login: Path) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
@@ -1387,6 +1388,7 @@ def test_harness_close_closes_every_transport_and_raises_the_most_severe_error(
     assert not directory.exists()
 
 
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-3")
 def test_macos_uses_the_real_config_dir_and_preflight_rejects_foreign_init_entries(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None) -> None:
     del sandbox_passes
@@ -1418,6 +1420,7 @@ def test_macos_uses_the_real_config_dir_and_preflight_rejects_foreign_init_entri
 
 @pytest.mark.parametrize(("memory", "stage"), [("CLAUDE.md", "preflight"), ("rules", "preflight"),
                                                ("CLAUDE.md", "resume"), ("none", "resume")])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-3")
 def test_macos_stops_before_any_call_when_user_memory_would_load(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, memory: str, stage: str) -> None:
     """A first preflight and the free probe on every resume both check memory. An empty `rules` directory passes."""
@@ -1542,6 +1545,7 @@ def test_macos_checks_user_memory_before_every_invocation(
     ("socat-missing", "install socat", 0),
     ("live-sandbox-failure", "install bubblewrap", 1),
 ])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-4")
 def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, fix: str, task_calls: int) -> None:
     real_which = shutil.which
@@ -2230,7 +2234,9 @@ def test_the_settings_floor_keeps_the_sandbox_hard_and_allows_bash(tmp_path: Pat
     sandbox = cast(dict[str, object], floor["sandbox"])
     assert sandbox["failIfUnavailable"] is True and sandbox["allowUnsandboxedCommands"] is False
     allow = cast(dict[str, list[str]], floor["permissions"])["allow"]
-    # The live 2.1.296 preflight with this rule failed closed. See ADR-006 Amendment 2026-10-14.
+    # The rule lets the probes reach the sandbox. On the live 2.1.296 host the Bash read probe and the pathname Unix
+    # socket probe leaked, and the preflight detected both and stopped with `network-isolation-failed`.
+    # See ADR-006 Amendment 2026-10-14.
     assert allow == ["Skill", "Bash"]
 
 

@@ -99,6 +99,37 @@ def test_ingest_query_cache_hit_and_stage_cleanup(sandbox: Sandbox) -> None:
 
 
 @needs_duckdb
+def test_ingest_elapsed_seconds_includes_the_stage_step(sandbox: Sandbox) -> None:
+    _seed_claude(sandbox)
+    stage_delay = 2.0
+    # Slow the real stage step from outside; the CLI and DuckDB run unchanged.
+    script = (
+        "import sys, time\n"
+        "from agent_session_analytics import _ingest, main\n"
+        "real = _ingest.stage_harnesses\n"
+        "def slow():\n"
+        f"    time.sleep({stage_delay})\n"
+        "    return real()\n"
+        "_ingest.stage_harnesses = slow\n"
+        "sys.argv = ['agent-session-analytics', 'ingest', '--force']\n"
+        "sys.exit(main())\n"
+    )
+    started = time.monotonic()
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=sandbox.env,
+        cwd=sandbox.root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    wall = time.monotonic() - started
+    assert result.returncode == 0, result.stderr
+    elapsed = cast(float, _json(result.stdout)["elapsed_seconds"])
+    assert stage_delay <= elapsed <= wall + 0.1, (elapsed, wall)
+
+
+@needs_duckdb
 def test_codex_token_usage_reaches_model_turns_but_not_entry_count(sandbox: Sandbox) -> None:
     _codex_session(sandbox)
     result = sandbox.run("ingest", "--force")

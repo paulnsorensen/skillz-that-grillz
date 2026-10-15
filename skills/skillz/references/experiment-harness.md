@@ -325,6 +325,9 @@ The request adds `prompt` and `response_schema`.
 Use the selected model and requested workspace in a fresh context.
 Do not grant tools access to the request, evaluator, wrapper, configuration, or authentication files.
 The prompt and schema travel through stdin outside candidate files.
+The runner sends a JSON Schema subset in `response_schema`: `object`, `array`, `string`, `integer`, and `boolean`.
+A property can have the type `["string", "null"]`. A key can start with `@`, for example `@hypothesis`.
+The runner treats a missing nullable key as null. A missing key of any other type is an error.
 Judge requests contain no candidate and use a separate workspace.
 
 Return the structured answer and actual completed tool executions:

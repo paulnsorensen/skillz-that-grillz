@@ -11,6 +11,7 @@ from typing import cast
 
 USAGE = {"input_tokens": 120, "cached_input_tokens": 20, "output_tokens": 20}
 DATA_MARKER = "\nUNTRUSTED DATA (JSON):\n"
+HYPOTHESIS = "@hypothesis"
 PROBE_PHRASES = ("read isolation failed", "network isolation failed")
 
 
@@ -82,7 +83,7 @@ def execute(argv: list[str], workspace: Path) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
-def propose(prompt: str, fields: list[str], mode: str = "normal", observed: str = "") -> dict[str, str]:
+def propose(prompt: str, fields: list[str], mode: str = "normal", observed: str = "") -> dict[str, str | None]:
     data = cast(dict[str, object], json.loads(prompt.split("\n", 1)[1]))
     candidate = cast(dict[str, str], data["candidate"])
     answer = dict(candidate)
@@ -98,7 +99,7 @@ def propose(prompt: str, fields: list[str], mode: str = "normal", observed: str 
         answer["SKILL.md"] += "\n" + observed.upper()
     elif mode == "bad-helper" and "scripts/transform.py" in answer:
         answer["scripts/transform.py"] = candidate["scripts/transform.py"].replace("text = text", "raise RuntimeError('bad helper')")
-    return {name: answer[name] for name in fields}
+    return {name: None if name == HYPOTHESIS else answer[name] for name in fields}
 
 
 def task(workspace: Path, skill_name: str, mode: str = "normal") -> tuple[dict[str, str], list[dict[str, object]]]:

@@ -36,6 +36,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-238](./gh-238.md) — gh-238: move the reflection prompt into search/_proposer.py (W4.1)
 - [gh-239](./gh-239.md) — gh-239: annealed edit budget and run-status block in the reflection prompt (W4.2)
 - [gh-240](./gh-240.md) — gh-240: detect search stalls and stop GEPA through stop_callbacks (W4.3)
+- [gh-241](./gh-241.md) — gh-241: record per-proposal attempts and show broke/fixed history to the proposer (W4.4)
 - [gh-247](./gh-247.md) — gh-247: move the evaluator into evaluation/ and memoize check_candidate per candidate (W5.3)
 - [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
 - [gh-279](./gh-279.md) — gh-279: reuse recorded search outcomes on resume
@@ -48,7 +49,9 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
 - [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
+- [gh-311](./gh-311.md) — gh-311: assert where the journey press test creates its workspace
 - [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
+- [skillz-pragmatic-autoimprove](./skillz-pragmatic-autoimprove.md) — skillz-pragmatic-autoimprove: pragmatic autoimprove
 - [skillz-wedge-first-class](./skillz-wedge-first-class.md) — skillz-wedge-first-class: wedge first-class in autoimprove
 - [wedge-skill-packaging](./wedge-skill-packaging.md) — wedge-skill-packaging: wedge skill packaging
 <!-- HALLOUMINATE:INDEX-END -->

@@ -112,7 +112,7 @@ def test_candidate_forbidden_change(tmp_path: Path) -> None:
 def test_profile_denies_host_and_cleans_tool_environment(tmp_path: Path) -> None:
     from skillz_experiments.harness._codex import configuration
 
-    arguments = configuration(tmp_path, Path("/usr/bin/codex"), [])
+    arguments = configuration(tmp_path / "workspace", Path("/usr/bin/codex"), [])
     joined = " ".join(arguments)
     assert '":root"="deny"' in joined
     assert 'network={enabled=false}' in joined
