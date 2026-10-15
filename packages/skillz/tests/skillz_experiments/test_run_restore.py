@@ -29,7 +29,7 @@ from skillz_experiments.harness._roles import Role
 from skillz_experiments._records import read, write
 from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._budget import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
-from skillz_experiments.search import Edit
+from skillz_experiments.search import Edit, overshoot
 from skillz_experiments.run import Stop, export, run, summary
 from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM
 from skillz_experiments.run._session import Factory
@@ -631,7 +631,7 @@ def test_a_resume_with_less_time_than_the_reserve_still_reaches_the_gate(
     factory: Factory = lambda _model, spent, _checkpoint: _Spending(state, spent, 0.0)
     assert run(target, out, MODEL, live=True, factory=factory)["phase"] == "complete"
     recorded = read(out / "run.json")
-    assert cast(dict[str, object], recorded["search"])["reason"] == "budget-exhausted-seed-retained"
+    assert cast(dict[str, object], recorded["search"])["reason"] == "time-exhausted"
     assert "reason" not in cast(dict[str, object], recorded["gate"])
 
 
@@ -650,7 +650,14 @@ def test_a_slow_search_stops_at_the_gate_reserve_and_the_run_still_completes(
     result = run(target, out, MODEL, live=True, factory=factory)
     recorded = read(out / "run.json")
     assert result["phase"] == "complete" and "gate" in recorded
-    assert str(cast(dict[str, object], recorded["search"])["reason"]).startswith("budget-exhausted")
+    # How many 0.2 s calls fit before the deadline varies, so the stop reason follows the gh-319 AC-4 rule:
+    # a time stop with more than half of the search ceiling unspent is time-exhausted; otherwise it is a budget stop.
+    search = cast(dict[str, object], recorded["search"])
+    cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+    validation = sum(case["split"] == "validation" for case in cases)
+    ceiling = cast(int, cast(dict[str, object], recorded["estimate"])["metric_calls"]) - overshoot(validation)
+    expected = "time-exhausted" if 2 * cast(int, search["scored"]) < ceiling else "budget-exhausted"
+    assert str(search["reason"]).startswith(expected)
 
 
 def test_a_resume_in_the_searched_phase_gets_the_reserved_time_back(

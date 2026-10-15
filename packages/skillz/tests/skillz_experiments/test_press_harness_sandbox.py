@@ -170,7 +170,7 @@ def test_codexResume_onTheRecordedVersion_isNotAnEnvironmentStop(
     out = _codex_prepared(tmp_path, target, write_draft, codex_world)
     with pytest.raises(CodedError, match='model call reached') as caught:
         _ = run(target, out, 'm', adapter='codex', live=True)
-    assert caught.value.code == 'search-failed'
+    assert caught.value.code == 'search-faulted'
 
 
 def test_codexRun_recordsTheCredentialKindOfEveryBuiltInRoleInRunJson(

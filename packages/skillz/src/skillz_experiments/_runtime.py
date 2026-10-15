@@ -11,11 +11,62 @@ from contextlib import contextmanager
 from typing import cast, final
 from pathlib import Path
 
-from skillz_experiments._budget import MAX_CONCURRENT_CALLS, BudgetExhausted
+from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted, CallTimeout
 
 TERM_GRACE_SECONDS = 10.0
 
-_CHILDREN = threading.BoundedSemaphore(MAX_CONCURRENT_CALLS)
+
+@final
+class CallSlots:
+    """A counting semaphore whose permit limit can drop. `halve` never goes below 1."""
+
+    def __init__(self, limit: int) -> None:
+        self.maximum: int = limit
+        self.limit: int = limit
+        self._busy: int = 0
+        self._changed: threading.Condition = threading.Condition()
+
+    def acquire(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        with self._changed:
+            while self._busy >= self.limit:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                _ = self._changed.wait(left)
+            self._busy += 1
+            return True
+
+    def release(self) -> None:
+        with self._changed:
+            if self._busy <= 0:
+                raise ValueError("released a call slot that no call holds")
+            self._busy -= 1
+            self._changed.notify()
+
+    def halve(self) -> int:
+        """Halve the permit limit, to a minimum of 1, and return it. Running calls finish first."""
+        with self._changed:
+            self.limit = max(1, self.limit // 2)
+            return self.limit
+
+    def reset(self) -> None:
+        """Restore the starting limit, for a new run."""
+        with self._changed:
+            self.limit = self.maximum
+            self._changed.notify_all()
+
+
+_CHILDREN = CallSlots(MAX_CONCURRENT_CALLS)
+
+
+def halve_call_slots() -> int:
+    """Halve the concurrent model calls for the rest of the run. Return the new limit."""
+    return _CHILDREN.halve()
+
+
+def reset_call_slots() -> None:
+    _CHILDREN.reset()
 
 
 def _end(child: subprocess.Popen[str]) -> None:
@@ -36,30 +87,66 @@ def _end(child: subprocess.Popen[str]) -> None:
         _ = child.communicate()
 
 
-def process(command: list[str], *, cwd: Path, timeout: float,
-            environment: dict[str, str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    """Run a child under a call slot. Time spent waiting for the slot counts against `timeout`."""
-    waiting = time.monotonic()
-    if not _CHILDREN.acquire(timeout=max(timeout, 0)):
+@contextmanager
+def _slot(wait: float) -> Generator[None]:
+    """Hold a call slot for the block. Raise `BudgetExhausted` when none frees within `wait` seconds."""
+    if not _CHILDREN.acquire(timeout=max(wait, 0)):
         raise BudgetExhausted("deadline exhausted waiting for a call slot")
     try:
+        yield
+    finally:
+        _CHILDREN.release()
+
+
+def _spawn(command: list[str], cwd: Path, timeout: float, environment: dict[str, str],
+           input_text: str | None) -> subprocess.CompletedProcess[str]:
+    with subprocess.Popen(command, cwd=cwd, env=environment, text=True, stdin=subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          start_new_session=True) as child:
+        try:
+            stdout, stderr = child.communicate(input_text, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _end(child)
+            raise BudgetExhausted("process group terminated at deadline") from None
+        except BaseException:
+            _end(child)
+            raise
+        return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+
+
+def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
+            input_text: str | None = None, slotted: bool = False) -> subprocess.CompletedProcess[str]:
+    """Run a child under a call slot. Time spent waiting for the slot counts against `timeout`.
+
+    With `slotted`, the caller already holds the slot, and `timeout` limits the child alone.
+    """
+    if slotted:
+        return _spawn(command, cwd, timeout, environment, input_text)
+    waiting = time.monotonic()
+    with _slot(timeout):
         timeout -= time.monotonic() - waiting
         if timeout <= 0:
             raise BudgetExhausted("deadline exhausted waiting for a call slot")
-        with subprocess.Popen(command, cwd=cwd, env=environment, text=True, stdin=subprocess.PIPE,
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              start_new_session=True) as child:
-            try:
-                stdout, stderr = child.communicate(input_text, timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _end(child)
-                raise BudgetExhausted("process group terminated at deadline") from None
-            except BaseException:
-                _end(child)
+        return _spawn(command, cwd, timeout, environment, input_text)
+
+
+def model_call(budget: Budget, command: list[str], *, cwd: Path, environment: dict[str, str],
+               input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    """Run one model call under its per-call timeout: `budget.call_timeout()`, which the remaining search time caps.
+
+    The per-call clock starts after the call holds a slot. A slot wait that reaches the search deadline
+    raises `BudgetExhausted`, never `CallTimeout`.
+    A call that runs out its own timeout, while the search deadline is still open, raises `CallTimeout`.
+    A call that the deadline stops raises `BudgetExhausted`.
+    """
+    with _slot(budget.remaining()):
+        limit = budget.call_timeout()
+        try:
+            return process(command, cwd=cwd, timeout=limit, environment=environment, input_text=input_text, slotted=True)
+        except BudgetExhausted:
+            if budget.out_of_time():
                 raise
-            return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
-    finally:
-        _ = _CHILDREN.release()
+            raise CallTimeout(f"the model call exceeded its per-call timeout of {limit:g} seconds") from None
 
 
 @final
@@ -133,7 +220,7 @@ class Live:
                 if ends(line):
                     return collected, True
         finally:
-            _ = _CHILDREN.release()
+            _CHILDREN.release()
 
     def close(self) -> int:
         """End the child and its process group. Return the exit code."""

@@ -121,13 +121,14 @@ def test_profile_denies_host_and_cleans_tool_environment(tmp_path: Path) -> None
     assert 'skills.bundled.enabled=false' in joined
     assert "--sandbox" not in arguments
 
-def test_startup_failure_evidence_is_actionable_without_private_text() -> None:
+def test_startup_failure_evidence_keeps_stderr_only_in_the_private_excerpt() -> None:
     from skillz_experiments.harness._codex import failure_details
 
     evidence = failure_details(2, "error: unexpected argument '-P' found PRIVATE_PROMPT_SENTINEL", [])
     assert evidence["returncode"] == 2
     assert evidence["reason"] == "unsupported-cli-argument"
-    assert "PRIVATE_PROMPT_SENTINEL" not in str(evidence)
+    assert "PRIVATE_PROMPT_SENTINEL" in str(evidence["stderr_excerpt"])
+    assert "PRIVATE_PROMPT_SENTINEL" not in str({key: value for key, value in evidence.items() if key != "stderr_excerpt"})
     assert evidence["usage"] == {"input_tokens": None, "cached_input_tokens": None, "output_tokens": None}
 
 

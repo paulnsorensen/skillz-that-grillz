@@ -60,6 +60,24 @@ The `claude` harness reuses the Claude login. The `codex` harness reuses the Cha
 The runner records the observed `codex --version` string as `codex_version` in `run.json`.
 A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
+The `codex` harness retries a call that fails as `rate-limited`, at most 3 times, with a 2, 4, then 8 second backoff.
+A retry waits at least as long as a retry-after time that Codex reports: a duration (`30 seconds`, `1h30m`, `2 days`), a timestamp, or a `Retry-After` number of seconds.
+A reset hint that the runner cannot read counts as longer than the remaining time, so the call fails as `rate-limited` with no retry.
+A retry runs only within the remaining time.
+A retry does not spend the approved call budget. The run record and the `summary` count it in `retries`.
+Each rate limit halves the concurrent model calls for the rest of the run, to a minimum of 1.
+The private failure evidence file keeps a redacted stderr excerpt (at most 1 KiB), the error event messages, and any `retry_after_seconds`.
+Each model call (every harness) has a per-call timeout of 4 times the per-call estimate, capped by the remaining search time.
+The estimate is 60 seconds plus the sandbox seconds of one evaluation in the run plan.
+The clock starts after the call gets a call slot. A wait for a slot that reaches the search deadline is a budget stop, not a timeout.
+Each retry attempt gets the same limit.
+A task or judge call that exceeds it ends as an `evaluation-failed` outcome with `reason: timeout`.
+A reflection call that exceeds it records a reflection outcome with `status: timeout`, and the proposal ends with no candidate and no second reflection call.
+A reflection outcome with a status is no stall observation.
+When every feedback record is unscored, the run skips the reflection (`status: skipped`, `reason: no-scored-feedback`) and the proposal ends with no candidate.
+A call that the search deadline stops is a budget stop, not a timeout.
+The run record and the `summary` hold `calls_by_role` (counts that sum to `calls`) and `seconds_by_role` (wall seconds of `task`, `reflection`, `judge`, and `failed` calls).
+A record from before the roles exists puts its earlier calls under `unattributed`.
 Put the real Codex binary directory first on `PATH`, not a multicall version-manager shim.
 The `doctor` runs `claude --version` with the environment of the run, as `_executable_environment` builds it. The `claude` row fails when the executable is not on `PATH`. It also fails when `--version` exits nonzero or does not finish.
 A skill inventory call that exits nonzero with no control response stops the run with `host-not-ready`. This applies to every inventory call. Any other inventory failure, such as a response with no valid command list, stops with `preflight-leak`.
@@ -141,6 +159,8 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
+| `search-faulted` | At least 4 search evaluations finished in this session and more than half failed, or the 5 newest failed in a row. A resume starts a new count. The message gives the failed counts by reason. | Wait for the provider, then resume the run in the same directory. |
+| `holdout-faulted` | Provider faults left the gate with no holdout case that has a scored baseline and winner pair. The command exits nonzero. | Wait for the provider, then run again in the same directory. |
 | `proposal-build-failed` | The host build of an accepted proposal fails with an error that is not a build rejection, such as a full disk. The paid reflection stays in the record. | Fix the cause in the message, then run again in the same directory. |
 | `isolation-failed` | A Claude Code run loaded a skill that the candidate does not own, or its event stream hid the skill list. In a journey, the stop also covers a skill inventory change between turns. At most one sibling call (task plus judge) that was already running can finish after the fault. | Stop. Check the Claude config directory, then start a new run directory. |
 | `harness-changed` | The harness executable, script, or role file differs from the frozen record, or a resume drops `--harness-config` or `--command`. | Restore the frozen harness and pass the same options, or start a new run directory. |
@@ -261,7 +281,13 @@ A provider fault on one holdout repeat (`OSError`, `ValueError`, or `RuntimeErro
 A coded fault still stops the run. A resume runs each failed repeat again, and the newest outcome of a repeat wins. The spend stays inside the approved budget, else the run stops with `gate-budget-exhausted`.
 Only `evaluation-failed` leaves a repeat unscored. A rejected candidate, a capture failure, and a grader zero score 0.
 The gate drops a case with no scored repeat on an arm. `n_shared` is the number of cases that remain.
-A winner equal to the baseline scores no case, so its `n_shared` is 0.
+A winner equal to the baseline scores no case, so its `n_shared` is 0. That `inconclusive` verdict with `winner-equals-baseline` is legitimate when the search scored its evaluations.
+
+A failed search evaluation is unscored too.
+It adds no score to a validation mean, no stall observation, and no reflection feedback.
+A candidate with no scored validation case never beats the seed.
+GEPA still receives 0.0 for it, because GEPA needs a number. The session ignores that value when it picks the winner.
+`search.scored`, `search.failed`, and `search.failed_by_reason` in the summary and the export report count the search evaluations. The `reason` of a failure is `timeout`, the reason that the adapter names (such as `rate-limited`), or `error`.
 With fewer than 2 shared cases, the verdict is `inconclusive` and `se` is the SE floor.
 
 The gate record also holds `moves`: the case ids that `fixed`, `broke`, or left `unresolved`.
@@ -529,6 +555,8 @@ From a streak of 5, it advises a different component or section.
 At a streak of 8, the search stops, and `search.reason` is `converged-stalled`. The holdout gate still runs.
 Fewer than 4 known observations never give advice or a stop.
 The stall stop is always on. A budget stop keeps its own reason.
+When the search deadline, not the call cap, ends the search with more than half of the search call budget unspent, `search.reason` is `time-exhausted`.
+The `search` record then holds `seconds_by_role` for `task`, `reflection`, `judge`, and `failed`.
 A search that uses its allowance without a stop ends with `validation-mean`.
 The runner rebuilds the observations from the run record, so a resumed run gets the same streak.
 A resumed run that already reached a streak of 8 skips the search.

@@ -169,7 +169,7 @@ class Provider(FakeProvider):
             fault = self.state.invoke_fault(self.state.invokes)
         if fault is not None:
             raise fault
-        self.budget.claim(holdout=holdout)
+        self.budget.claim(holdout=holdout, role="reflection")
         with self.state.lock:
             self.state.proposals += 1
             number = self.state.proposals
@@ -183,6 +183,12 @@ class Provider(FakeProvider):
                                              for index, line in enumerate(text.splitlines()))
                                for name, text in parent.items()}}
         return {"answer": {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
+
+
+def _shape(search: object) -> dict[str, object]:
+    """Return the search record without its evaluation counts, which `test_search_faults.py` covers."""
+    return {key: value for key, value in cast(dict[str, object], search).items()
+            if key not in ("scored", "failed", "failed_by_reason")}
 
 
 def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
@@ -211,7 +217,7 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
     state.exhaust_after_improved = len(_validation(out))
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
-    assert search == {"reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _shape(search) == {"reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -521,7 +527,7 @@ def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before
     outcomes.extend([filler] * (planned - overshoot(len(validation)) - spent))
     write(out / "run.json", record)
     result = run(target, out, MODEL, live=True, factory=state.factory)
-    assert cast(dict[str, object], result["search"]) == {"reason": "search-share-spent-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _shape(result["search"]) == {"reason": "search-share-spent-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -537,7 +543,7 @@ def test_a_resume_with_a_real_allowance_keeps_the_pre_abort_candidate_over_worse
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert state.proposals > proposals_before
     # Every later proposal scores 0, so the stall stop ends the search.
-    assert cast(dict[str, object], result["search"]) == {"reason": "converged-stalled", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _shape(result["search"]) == {"reason": "converged-stalled", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved 1 " in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -549,7 +555,7 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     assert "best_validated" in record
-    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _shape(result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "reason" not in cast(dict[str, object], record["gate"])
 
 
@@ -561,7 +567,7 @@ def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     kept = cast(dict[str, object], read(out / "run.json")["best_validated"])
     assert kept["mean"] == pytest.approx(0.5)
-    assert cast(dict[str, object], result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _shape(result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
 
 
 def test_an_earlier_validated_candidate_stays_best_over_a_later_worse_one(
@@ -738,14 +744,15 @@ def test_a_changed_harness_raises_the_harness_changed_code() -> None:
     assert caught.value.code == "harness-changed"
 
 
-def test_a_search_where_every_evaluation_fails_stops_with_search_failed(
+def test_a_search_where_every_evaluation_fails_stops_with_search_faulted(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.evaluate_fault = lambda _number: RuntimeError("provider fell over")
     with pytest.raises(CodedError) as caught:
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    assert caught.value.code == "search-failed" and "new run directory" in str(caught.value)
+    assert caught.value.code == "search-faulted" and "resume the run in the same directory" in str(caught.value)
+    assert "new run directory" not in str(caught.value)
     assert read(out / "run.json")["phase"] == "prepared"
 
 
@@ -1309,13 +1316,18 @@ def test_refused_proposals_count_as_no_gain_and_stop_the_search_after_eight(
 @pytest.mark.ac("gh-240:AC-3")
 def test_proposals_whose_evaluations_all_fail_never_stop_the_search(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
-        approvals: Callable[..., tuple[str, int]]) -> None:
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    # The fault rule of gh-316 would stop this run first. Lift it, so that the test isolates the stall rule.
+    monkeypatch.setattr(_session, "FAULT_MIN_FINISHED", 10**9)
+    monkeypatch.setattr(_session, "FAULT_STREAK", 10**9)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     seed_calls = len(_validation(out))
     state.evaluate_fault = lambda number: RuntimeError("provider fell over") if number > seed_calls else None
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    heads = [prompt.split("\n", 1)[0] for prompt in state.prompts]
-    assert state.proposals > 8 and set(_stall_counts(heads)) == {0}
+    # All feedback is unscored, so each reflection is skipped unpaid (gh-316:AC-1); no proposal runs and none counts toward a stall.
+    skipped = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("split") == "reflection"]
+    assert state.proposals == 0 and state.prompts == []
+    assert skipped and {row["reason"] for row in skipped} == {"no-scored-feedback"}
     assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
 
 

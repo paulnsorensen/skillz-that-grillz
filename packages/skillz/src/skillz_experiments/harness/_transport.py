@@ -28,6 +28,8 @@ class Transport(Protocol):
 
     budget: Budget
     rejection: str | None
+    # The run role that this adapter serves. The harness sets it, and each claimed call and its seconds count under it.
+    role: str
 
     @property
     def credential_kind(self) -> str: ...

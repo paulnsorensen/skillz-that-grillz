@@ -143,6 +143,7 @@ class Harness:
         try:
             for name, role in configuration.roles.items():
                 transport = role.create(budget, checkpoint, out, self.login, surface if name == "task" else None, files)
+                transport.role = name
                 self.transports[name] = transport
                 if self.login is None:
                     self.login = transport.adopt_login()

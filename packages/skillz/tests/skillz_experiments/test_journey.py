@@ -109,6 +109,12 @@ def test_converse_stream_loop_stops_on_done_and_max_turns(
     assert sum(event.get("type") == "system" for event in events) == turns
 
 
+@pytest.mark.ac("gh-319:AC-3")
+def test_converse_times_every_journey_turn_under_the_call_role(tmp_path: Path) -> None:
+    _, _, _, budget = run(tmp_path, "ok", 2, [Reply("r1", False)])
+    assert budget.calls_by_role == {"task": 2} and budget.seconds_by_role.get("task", 0) > 0
+
+
 def test_converse_stream_loop_sends_the_stream_json_argv_and_user_message_lines(tmp_path: Path) -> None:
     executable, result, _, _ = run(tmp_path, "ok", 2, [Reply("second", False)])
     call = [cast(dict[str, object], json.loads(line)) for line in executable.with_name("claude.log").read_text().splitlines()][-1]

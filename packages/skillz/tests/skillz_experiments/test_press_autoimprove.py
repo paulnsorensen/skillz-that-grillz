@@ -967,7 +967,7 @@ def test_no_token_variable_reaches_the_child_environment(
         workspace = tmp_path / "workspace"
         for directory in ("home", "tmp", ".agents/skills"):
             (workspace / directory).mkdir(parents=True, exist_ok=True)
-        _code, _stderr, events = session._run(workspace, "hello", None, 30, [])
+        _code, _stderr, events = session._run(workspace, "hello", None, [])
         child = cast(dict[str, str], events[0])
         assert "sk-secret-value" not in json.dumps(child)
         assert not any(key.upper().replace(" ", "") == name.upper().replace(" ", "") for key in child)
