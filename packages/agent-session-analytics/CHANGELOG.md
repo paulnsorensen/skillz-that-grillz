@@ -33,6 +33,10 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 - The `user_turns` table: one row per real user prompt (claude, codex, omp, and pi) with `turn_index`, the full `text`, and `prev_assistant_text`. Blank prompts and agent-run Codex rollouts stay out.
 - The `interrupt_events` table: main-session Claude `[Request interrupted` markers and Codex `turn_aborted` events with reason `interrupted` outside agent-run rollouts. The staging pass builds it. It can overlap `permission_denials`.
 
+### Fixed
+
+- `ingest` `elapsed_seconds` now includes the stage step that discovers and normalizes the logs. It was the DuckDB load time only.
+
 ## [0.1.0] - 2026-10-11
 
 ### Added
