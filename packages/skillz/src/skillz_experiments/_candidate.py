@@ -24,12 +24,14 @@ FROZEN_TOTAL_LIMIT = 64 * 1024 * 1024
 WEDGE_PREFIX = "@wedge/"
 # The editable component that proposes one new wedge target. It is not a skill file: `materialize` never writes it.
 NEW_CLI = "@new-cli"
+# The reflection schema key of the proposer hypothesis. A contract cannot make it an editable component.
+HYPOTHESIS = "@hypothesis"
 _RUNTIME_OWNED = {"home", "tmp", ".agents", "answer.json", "response-schema.json"}
 
 
 def is_skill_file(name: str) -> bool:
-    """Return whether the candidate file `name` is a file of the skill: not a wedge source and not the `@new-cli` component."""
-    return not name.startswith(WEDGE_PREFIX) and name != NEW_CLI
+    """Return whether the candidate file `name` is a file of the skill: not a wedge source and not the `@new-cli` or `@hypothesis` component."""
+    return not name.startswith(WEDGE_PREFIX) and name not in {NEW_CLI, HYPOTHESIS}
 
 
 def _megabytes(size: int) -> str:
@@ -130,7 +132,7 @@ class Candidate:
                     raise CodedError("hidden-file", f"{posix} is a hidden file; remove it")
                 name = relative(posix)
                 if not is_skill_file(name):
-                    raise CodedError("reserved-name", f"{name} is reserved for wedge sources and the new-target component; rename the file")
+                    raise CodedError("reserved-name", f"{name} is reserved for wedge sources, the new-target component, and the hypothesis component; rename the file")
                 if name in (LOCATION, *exclude):
                     continue
                 if path.stat().st_size > FROZEN_FILE_LIMIT:
