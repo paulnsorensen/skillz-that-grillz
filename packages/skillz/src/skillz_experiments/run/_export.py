@@ -2,22 +2,20 @@
 """
 from __future__ import annotations
 
-import difflib
 import os
-import re
 from pathlib import Path
 from typing import cast
 
 from skillz_experiments._audit import identity as judge_identity
-from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX, candidate_files, is_skill_file
-from skillz_experiments._cases import CodedError, load_cases, mapping, relative, repo_root
-from skillz_experiments._contract import parse
-from skillz_experiments._new_cli import expand_files, parse_value, unused_helpers
+from skillz_experiments._cases import Case, CodedError, load_cases, mapping
+from skillz_experiments._contract import Contract, parse
+from skillz_experiments._new_cli import unused_helpers
 from skillz_experiments._records import open_record, write
 from skillz_experiments.harness import stop_kind
+from skillz_experiments.run._claims import claims
+from skillz_experiments.run._patch import build_patch
 from skillz_experiments.run._plan import case_calls
 from skillz_experiments.run._session import engine_hash, field, is_inside, record_outcomes, text_field
-
 
 _TOKEN_FIELDS = {"input_tokens": "input_tokens", "cached_tokens": "cached_input_tokens", "output_tokens": "output_tokens"}
 
@@ -82,17 +80,24 @@ def usage_by_role(record: dict[str, object]) -> dict[str, object]:
     return result
 
 
-def calls_upper_bound(record: dict[str, object], out: Path) -> int | None:
+def _frozen(record: dict[str, object], out: Path) -> tuple[Contract, list[Case]]:
+    """Return the frozen contract of the record and the cases that `out` holds."""
+    contract = parse(field(record, "contract"), text_field(record, "contract_source"))
+    return contract, load_cases(out / "cases.json", contract.grader_types())
+
+
+def calls_upper_bound(record: dict[str, object], frozen: tuple[Contract, list[Case]] | None) -> int | None:
     """Return the planned worst-case call count: the recorded preflight claims, one per reflection, `case_calls` per evaluation.
 
+    `frozen` holds the contract and the cases of the run.
     A record without an integer `preflight_calls` predates the count, so the bound is unknown and this returns None.
     A `candidate-contract-rejected` outcome made no call, so it adds nothing.
     """
     preflight = record.get("preflight_calls")
-    if type(preflight) is not int:
+    if type(preflight) is not int or frozen is None:
         return None
-    contract = parse(field(record, "contract"), text_field(record, "contract_source"))
-    cases = {case.identifier: case for case in load_cases(out / "cases.json", contract.grader_types())}
+    contract, loaded = frozen
+    cases = {case.identifier: case for case in loaded}
     total = preflight
     for item in record_outcomes(record):
         case = cases.get(str(item.get("case_id")))
@@ -104,20 +109,28 @@ def calls_upper_bound(record: dict[str, object], out: Path) -> int | None:
 
 
 def summary(record: dict[str, object], out: Path | None = None) -> dict[str, object]:
-    """Return the run summary. With `out`, it reconciles the budget counter with the planned worst-case call count."""
+    """Return the run summary. With `out`, it reconciles the budget counter with the planned worst-case call count.
+
+    A completed run with `out` also carries `claims`: the runner, export, and improvement claims, each with its own status.
+    """
     keys = ("schema_version", "phase", "calls", "retries", "calls_by_role", "seconds_by_role", "model", "adapter", "edit",
             "codex_version", "harness", "judge",
-            "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility",
+            "gate", "search", "replay", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility",
             "statistics")
     result = {key: record.get(key) for key in keys}
     result["search"] = _export_search(record.get("search"))
     result["usage_by_role"] = usage_by_role(record)
     if out is not None:
-        bound = calls_upper_bound(record, out)
+        # Parse the contract and load the cases once. A record without a preflight count or a finished phase needs neither.
+        frozen = (_frozen(record, out) if type(record.get("preflight_calls")) is int or record.get("phase") == "complete"
+                  else None)
+        bound = calls_upper_bound(record, frozen)
         result["calls_upper_bound"] = bound
         calls = record.get("calls")
         if bound is not None and isinstance(calls, int) and calls > bound:
             result["usage_gap"] = calls - bound
+        if record.get("phase") == "complete" and frozen is not None:
+            result["claims"] = claims(record, frozen[1], bound)
     if "close_warning" in record:
         code = mapping(record["close_warning"]).get("code")
         hint = "no action needed" if stop_kind(code) == "notice" else "log in again before the next run"
@@ -159,44 +172,6 @@ def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     return result
 
 
-def _repo_path(rest: str, repo: Path | None) -> str:
-    """Return `rest` when it names a path inside the repository root. Else raise `export-path-escapes`."""
-    try:
-        _ = relative(rest)
-        inside = repo is not None and (repo / rest).resolve().is_relative_to(repo)
-    except ValueError:
-        inside = False
-    if not inside:
-        raise CodedError("export-path-escapes", f"the wedge source {rest} is not a path inside the repository root; "
-                         + "no patch was written")
-    return rest
-
-
-def _lines(text: str | None) -> list[str]:
-    """Split `text` after each line feed and nowhere else, so that `git apply` reproduces it exactly."""
-    return re.findall(r"[^\n]*\n|[^\n]+", text or "")
-
-
-def _patch_lines(name: str, old: str | None, new: str | None, *, git: bool) -> list[str]:
-    """Return the diff of one file, with paths `a/NAME` and `b/NAME` and `/dev/null` for an added or deleted file.
-
-    With `git`, an added or deleted file also gets git headers, so an empty one survives `git apply` from the repository root.
-    Without it the diff is plain: `patch -p1` and `git apply` read the paths from the current directory.
-    """
-    head: list[str] = []
-    if git and (old is None or new is None):
-        head = [f"diff --git a/{name} b/{name}\n", "new file mode 100644\n" if old is None else "deleted file mode 100644\n"]
-    body = list(difflib.unified_diff(_lines(old), _lines(new),
-                                     fromfile="/dev/null" if old is None else "a/" + name,
-                                     tofile="/dev/null" if new is None else "b/" + name))
-    return head + body
-
-
-def _patch_text(lines: list[str]) -> str:
-    """Join the patch `lines`. Add the standard no-newline marker after a last line that lacks a line feed."""
-    return "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
-
-
 def _private_file(path: Path, text: str) -> None:
     """Create the new file `path` with mode 0600 and write `text` to it. Fail when `path` exists."""
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -205,7 +180,10 @@ def _private_file(path: Path, text: str) -> None:
 
 
 def export(out: Path, destination: Path) -> dict[str, object]:
-    """Write the winner as a private patch and a redacted report. Never apply it."""
+    """Write the winner as a private patch and a redacted report. Never apply it.
+
+    The patch comes from the builder that the replay uses. A patch that differs from the replayed one is refused.
+    """
     record = open_record(out / "run.json")
     if record.get("phase") != "complete":
         raise ValueError("export requires a completed run")
@@ -217,35 +195,18 @@ def export(out: Path, destination: Path) -> dict[str, object]:
             raise ValueError("judge differs from the frozen record; create a new run")
     if not os.path.lexists(destination) and is_inside(destination, Path(text_field(record, "target_root"))):
         raise CodedError("export-into-target", "the export destination must be outside the target skill directory")
-    repo = repo_root(Path(text_field(record, "target_root")))
-    first, last = mapping(field(record, "seed")), mapping(field(record, "winner"))
-    repo_names = {name: _repo_path(name.removeprefix(WEDGE_PREFIX), repo) for name in sorted(first.keys() | last.keys())
-                  if name.startswith(WEDGE_PREFIX) and first.get(name) != last.get(name)}
-    seed, candidate = dict(candidate_files(first)), dict(candidate_files(last))
-    _ = seed.pop(NEW_CLI, None)
-    value = candidate.pop(NEW_CLI, "")
-    cli = parse_value(value) if value.strip() else None
-    if cli is not None:
-        candidate |= expand_files(Path(text_field(record, "target_root")), seed, cli)
-    skill_lines: list[str] = []
-    wedge_lines: list[str] = []
-    for name in sorted(seed.keys() | candidate.keys()):
-        old, new = seed.get(name), candidate.get(name)
-        if old == new:
-            continue
-        if is_skill_file(name):
-            skill_lines.extend(_patch_lines(name, old, new, git=False))
-        else:
-            wedge_lines.extend(_patch_lines(repo_names[name], old, new, git=True))
+    patch = build_patch(field(record, "seed"), field(record, "winner"), Path(text_field(record, "target_root")))
+    replayed = record.get("replay")
+    recorded = mapping(cast(dict[str, object], replayed)).get("patch_digest") if isinstance(replayed, dict) else None
+    if recorded is not None and recorded != patch.digest:
+        raise ValueError("export differs from the replayed patch; create a new run")
     destination.mkdir(mode=0o700)
-    patches = ["candidate.patch"]
-    _private_file(destination / "candidate.patch", _patch_text(skill_lines))
-    if wedge_lines:
-        _private_file(destination / "wedge-sources.patch", _patch_text(wedge_lines))
-        patches.append("wedge-sources.patch")
+    for name, text in patch.files.items():
+        _private_file(destination / name, text)
     report = summary(record, out) | {"sharing": "private-local-only",
                                 "outcomes": [_export_outcome(item) for item in record_outcomes(record)], "cost_usd": None}
-    if cli is not None:
-        report["new_cli"] = {"target": cli.name, "package": cli.package, "unused_helpers": unused_helpers(seed, candidate)}
+    if patch.cli is not None:
+        report["new_cli"] = {"target": patch.cli.name, "package": patch.cli.package,
+                             "unused_helpers": unused_helpers(patch.seed, patch.candidate)}
     write(destination / "report.json", report)
-    return {"export": str(destination), "sharing": "private-local-only", "installed": False, "patches": patches}
+    return {"export": str(destination), "sharing": "private-local-only", "installed": False, "patches": list(patch.files)}

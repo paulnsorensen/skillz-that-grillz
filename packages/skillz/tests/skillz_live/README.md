@@ -16,13 +16,13 @@ With `SKILLZ_LIVE_DRY=1`, each run scenario stops at its budget question, record
 
 | Scenario | What it runs | Run cap |
 | --- | --- | --- |
-| `basic` | Built-in harness, no contract, default judge | 85 |
-| `command-harness` | `--harness command` through a test-only bridge to `codex exec` | 85 |
-| `command-grader` | Contract with a `command` grader, and one `source: session` case | 47 |
-| `hybrid-mixed` | `--harness-config` with a Codex task role and a command judge role, a `hybrid` grader, contract `statistics`, and `--min-gain` | 85 |
-| `prose-cli` | `--edit prose+cli` with a helper script and an `exact-json` grader | 47 |
-| `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 199 |
-| `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 85 |
+| `basic` | Built-in harness, no contract, default judge | 97 |
+| `command-harness` | `--harness command` through a test-only bridge to `codex exec` | 97 |
+| `command-grader` | Contract with a `command` grader, and one `source: session` case | 53 |
+| `hybrid-mixed` | `--harness-config` with a Codex task role and a command judge role, a `hybrid` grader, contract `statistics`, and `--min-gain` | 97 |
+| `prose-cli` | `--edit prose+cli` with a helper script and an `exact-json` grader | 53 |
+| `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 229 |
+| `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 97 |
 | `analytics` | The bundled `agent-session-analytics.pyz`: a forced ingest of the real session logs into a private database, then every query of the three Usage packs | no model call |
 
 A run approves its estimate only when the estimate is at most its cap. The preflight gets at most 3 more calls.

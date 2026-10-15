@@ -270,8 +270,20 @@ def export_and_apply(scenario: Scenario, home: Path, *, cli: Path = CLI) -> Path
 
 
 def holdout(record: dict[str, object]) -> list[dict[str, object]]:
-    return [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
-            if cast(dict[str, object], item).get("split") == "holdout"]
+    items = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])]
+    return [item for item in items if item.get("split") == "holdout" and item.get("arm") != "replay"]
+
+
+def assert_replayed(out: Path) -> None:
+    """Assert the replay supports the export: no reason, and one loaded replay outcome per holdout case."""
+    record = read_record(out)
+    replay = cast(dict[str, object], record["replay"])
+    assert replay["status"] == "supported" and replay["reasons"] == []
+    items = [cast(dict[str, object], item) for item in cast(list[object], record["outcomes"])
+             if cast(dict[str, object], item).get("arm") == "replay"]
+    held = sorted(cast(str, case["id"]) for case in read_cases(out) if case["split"] == "holdout")
+    assert sorted(cast(str, item["case_id"]) for item in items) == held and held
+    assert all(item["loaded"] is True and item["split"] == "holdout" for item in items)
 
 
 def assert_promoted(scenario: Scenario, result: dict[str, object], *,
@@ -328,7 +340,8 @@ def raw_holdout(scenario: Scenario) -> tuple[float, float, float | None, int]:
         for arm, marker in (("baseline", record["seed_hash"]), ("winner", record["winner_hash"])):
             calls = [entry for entry in task_logs if entry["candidate"] == marker
                      and entry["visible_input"] == source]
-            assert len(calls) == 3
+            assert len(calls) == 3 + (arm == "winner")
+            calls = calls[:3]
             witnessed += len(calls)
             scores[arm] = [float(cast(dict[str, str], json.loads(
                 cast(dict[str, str], entry["answer"])["result_json"]))["text"] == source.upper())
@@ -340,6 +353,8 @@ def raw_holdout(scenario: Scenario) -> tuple[float, float, float | None, int]:
         differences.append(statistics.fmean(scores["winner"]) - statistics.fmean(scores["baseline"]))
         if len(tokens) == 2:
             token_changes.append(statistics.fmean(tokens["winner"]) / statistics.fmean(tokens["baseline"]) - 1)
+    replays = [item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("arm") == "replay"]
+    assert len(replays) == len(differences)
     delta = statistics.fmean(differences)
     se = statistics.stdev(differences) / math.sqrt(len(differences))
     return delta, se, statistics.fmean(token_changes) if len(token_changes) == len(differences) else None, witnessed

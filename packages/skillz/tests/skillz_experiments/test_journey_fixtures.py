@@ -407,18 +407,34 @@ def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_
     assert (task_cost, journey_cost) == (1, 17)
     cases = [_mixed_case(split, f"{split}-{n}", journey=n == 0 and split != "train")
              for split in ("train", "validation", "holdout") for n in range(6)]
-    plan = size_plan(contract, cases, 3, ClaudeOptions())
+    plan = size_plan(contract, cases, 2, ClaudeOptions())
     searched = [task_cost] * 6 + [journey_cost] + [task_cost] * 5
     mean = -(-sum(searched) // len(searched))
     holdout = [journey_cost] + [task_cost] * 5
     retry = 2 * HOLDOUT_RETRIES_PER_ARM * max(holdout)
-    assert plan.retry_calls == retry and plan.holdout_calls == 2 * 3 * sum(holdout) + retry
+    assert plan.retry_calls == retry and plan.holdout_calls == 2 * 2 * sum(holdout) + retry
     assert plan.sized.journey
     sandbox = command_seconds(contract, cases, ClaudeOptions())
-    at_maximum = plan_run(6, 6, 6, journey_cost, 3, sandbox, journey=True)
-    at_mean = plan_run(6, 6, 6, mean, 3, sandbox, journey=True, holdout_costs=holdout)
+    at_maximum = plan_run(6, 6, 6, journey_cost, 2, sandbox, journey=True)
+    at_mean = plan_run(6, 6, 6, mean, 2, sandbox, journey=True, holdout_costs=holdout)
     assert plan == at_mean and 1 < mean < journey_cost
     assert plan.sized.calls < at_maximum.sized.calls and plan.holdout_calls < at_maximum.holdout_calls
+
+
+def test_at_three_repeats_the_mean_cost_plan_fits_while_the_journey_maximum_plan_has_too_few_calls(
+        tmp_path: Path) -> None:
+    contract = _mixed_contract(tmp_path)
+    journey_cost, task_cost = contract.calls("journey", 8), contract.calls("task")
+    cases = [_mixed_case(split, f"{split}-{n}", journey=n == 0 and split != "train")
+             for split in ("train", "validation", "holdout") for n in range(6)]
+    searched = [task_cost] * 6 + [journey_cost] + [task_cost] * 5
+    mean = -(-sum(searched) // len(searched))
+    holdout = [journey_cost] + [task_cost] * 5
+    sandbox = command_seconds(contract, cases, ClaudeOptions())
+    plan = size_plan(contract, cases, 3, ClaudeOptions())
+    assert plan == plan_run(6, 6, 6, mean, 3, sandbox, journey=True, holdout_costs=holdout)
+    with pytest.raises(Stop, match="too few calls"):
+        _ = plan_run(6, 6, 6, journey_cost, 3, sandbox, journey=True)
 
 
 def test_the_mixed_holdout_reserve_covers_one_failed_attempt_of_the_costliest_case(tmp_path: Path) -> None:

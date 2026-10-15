@@ -60,20 +60,21 @@ class Estimate:
 
 def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, holdout: int = 0,
              calls_per_evaluation: int = 1, repeats: int = 1, search_calls: int = 0,
-             reflection_calls: int = 0, retry_calls: int = 0, journey: bool = False) -> Estimate:
+             reflection_calls: int = 0, retry_calls: int = 0, replay_calls: int = 0, journey: bool = False) -> Estimate:
     """Size a run before any model call.
 
     `train`, `validation`, and `holdout` are case counts per split.
     calls = preflight_calls + (train + validation + holdout) * calls_per_evaluation * repeats
-    + search_calls + reflection_calls + retry_calls.
+    + search_calls + reflection_calls + retry_calls + replay_calls.
     seconds = ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS).
     Raise `ValueError` when a count is negative or `calls_per_evaluation` or `repeats` is below 1.
     """
-    counts = (preflight_calls, train, validation, holdout, search_calls, reflection_calls, retry_calls)
+    counts = (preflight_calls, train, validation, holdout, search_calls, reflection_calls, retry_calls, replay_calls)
     if min(counts) < 0 or calls_per_evaluation < 1 or repeats < 1:
         raise ValueError("estimate needs nonnegative counts and at least 1 call per evaluation and 1 repeat")
     cases = train + validation + holdout
-    calls = preflight_calls + cases * calls_per_evaluation * repeats + search_calls + reflection_calls + retry_calls
+    calls = (preflight_calls + cases * calls_per_evaluation * repeats + search_calls + reflection_calls + retry_calls
+             + replay_calls)
     return Estimate(calls, _seconds(calls), journey)
 
 
@@ -121,6 +122,17 @@ class Budget:
         if not 0 <= self.reserve <= self.maximum:
             raise ValueError("invalid holdout reservation")
         self._check_reserve_seconds(self.reserve_seconds)
+
+    @classmethod
+    def expired(cls, maximum: int, *, reserve: int, calls: int, approved: bool, journey: bool, calls_by_role: dict[str, int],
+                seconds_by_role: dict[str, float], retries: int, call_seconds: float) -> Budget:
+        """Return a budget whose deadline has passed and that keeps the spent calls, retries, and role maps.
+
+        A resumed run in the gated or replayed phase uses it, so every model call stops at its deadline check
+        and the recorded counts stay whole: `calls` equals the sum of `calls_by_role`.
+        """
+        return cls(maximum, 1.0, reserve, calls, time.monotonic() - 1.0, approved=approved, journey=journey,
+                   retries=retries, call_seconds=call_seconds, calls_by_role=calls_by_role, seconds_by_role=seconds_by_role)
 
     def _caps(self) -> tuple[int, int]:
         if not self.approved:

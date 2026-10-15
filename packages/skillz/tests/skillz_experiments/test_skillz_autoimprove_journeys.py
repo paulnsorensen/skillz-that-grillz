@@ -48,12 +48,13 @@ def test_the_kit_writes_twelve_journeys_in_four_families_with_a_six_case_holdout
     assert sum(case.split == "holdout" for case in cases) == HOLDOUT_MINIMUM
 
 
-def test_the_budget_estimate_is_435_calls_at_two_repeats(tmp_path: Path) -> None:
+def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two_repeats(tmp_path: Path) -> None:
     rules = contract(tmp_path)
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls) == (435, 24, 234)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (489, 24, 234, 54, 288)
+    assert plan.sized.seconds == 15230
 
 
 def test_stage_copies_the_skill_with_the_journey_contract_and_no_wedge_toml(tmp_path: Path) -> None:
