@@ -641,7 +641,7 @@ They count in `calls` and in `calls_by_role`, so `calls` still equals the sum of
 For each case, the delta `d` is the replay score minus the mean winner holdout score.
 The replay reports drift when `mean(d) + 2·SE < -min_gain`. An unset `min_gain` counts as 0.
 A missing git or a git timeout stops the run with the retryable code `replay-git-unavailable`. Fix git, then resume the run.
-A run in the phase `gated` or `replayed` that resumes after its deadline records `replay-budget-exhausted` without a model call.
+A run in the phase `gated` with unscored replay cases that resumes after its deadline records `replay-budget-exhausted` without a model call.
 The gate keeps the unspent replay reserve for the replay.
 
 ## Export

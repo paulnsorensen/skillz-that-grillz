@@ -478,7 +478,8 @@ class Session:
         recorded = mapping(field(self.record, "estimate"))
         maximum = max(plan.sized.calls, 1)
         seconds = _number_field(budget, "seconds")
-        if "reserve_seconds" not in budget or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded):
+        if ("reserve_seconds" not in budget or "replay_calls" not in recorded
+                or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded)):
             raise ValueError("run was prepared by an older runner; create a new run")
 
         def differs(found: object, wanted: object) -> bool:

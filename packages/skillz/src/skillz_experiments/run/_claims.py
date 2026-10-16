@@ -26,14 +26,18 @@ def _runner_claim(record: dict[str, object], outcomes: Sequence[Mapping[str, obj
                   bound: int | None) -> dict[str, object]:
     repeats = cast(int, record.get("repeats"))
     same = record.get("winner_hash") == record.get("seed_hash")
-    covered = all(set(range(repeats)) <= set(arms[arm].get(case.identifier, {})) for arm in arms for case in holdout)
+    failed = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in outcomes
+              if item.get("split") == "holdout" and item.get("status") == "evaluation-failed"}
+    missing = [(arm, case.identifier, repeat) for arm in arms for case in holdout
+               for repeat in range(repeats) if repeat not in arms[arm].get(case.identifier, {})]
+    coverage = "pass" if not missing else "unknown" if all(slot in failed for slot in missing) else "fail"
     calls, budget = record.get("calls"), mapping(record.get("budget", {}))
     approved = budget.get("maximum")
     checks = {
         "preflight": "pass" if isinstance(record.get("preflight"), dict) else "fail",
         "holdout-isolated": "fail" if any(item.get("arm") == "search" and item.get("split") == "holdout"
                                           for item in outcomes) else "pass",
-        "holdout-coverage": "unknown" if same else "pass" if covered else "fail",
+        "holdout-coverage": "unknown" if same else coverage,
         "calls-within-approval": ("unknown" if type(calls) is not int or type(approved) is not int
                                   else "pass" if calls <= approved else "fail"),
         "calls-within-bound": ("unknown" if bound is None or type(calls) is not int

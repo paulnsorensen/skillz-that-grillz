@@ -950,6 +950,18 @@ def test_a_run_prepared_before_command_grader_sandbox_time_stops_as_an_older_run
         _ = run(target, out, MODEL, live=True, factory=State().factory())
 
 
+def test_a_run_prepared_before_the_replay_stops_as_an_older_runner(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    estimate = cast(dict[str, object], record["estimate"])
+    assert "replay_calls" in estimate
+    _ = estimate.pop("replay_calls")
+    write(out / "run.json", record)
+    with pytest.raises(ValueError, match="older runner; create a new run"):
+        _ = run(target, out, MODEL, live=True, factory=State().factory())
+
 def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_claude_options_out_of_the_stops(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
     target, out = _command_target(tmp_path, make_target), tmp_path / "run"

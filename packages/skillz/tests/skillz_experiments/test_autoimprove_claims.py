@@ -331,6 +331,21 @@ def test_any_failed_runner_check_refutes_the_runner_claim_and_no_other_claim(
     assert claims["apply"] is False
 
 
+@pytest.mark.ac("skillz-autoimprove-claims:AC-17")
+def test_a_failed_winner_holdout_outcome_leaves_the_runner_claim_inconclusive_but_a_missing_one_refutes_it(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    _target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    victims = [item for item in outcomes if item.get("arm") == "winner" and item.get("split") == "holdout"]
+    victim, other = victims[0], next(item for item in victims if item["case_id"] != victims[0]["case_id"])
+    outcomes[outcomes.index(victim)] = {**{key: value for key, value in victim.items() if key != "score"},
+                                        "status": "evaluation-failed", "failure": "CallTimeout"}
+    runner = cast(dict[str, Any], _claims(record, out)["runner"])  # pyright: ignore[reportExplicitAny]
+    assert runner["checks"]["holdout-coverage"] == "unknown" and runner["status"] == "inconclusive"
+    outcomes.remove(other)
+    runner = cast(dict[str, Any], _claims(record, out)["runner"])  # pyright: ignore[reportExplicitAny]
+    assert runner["checks"]["holdout-coverage"] == "fail" and runner["status"] == "refuted"
+
 @pytest.mark.ac("skillz-autoimprove-claims:AC-11")
 def test_the_improvement_claim_lists_the_case_count_and_mean_paired_delta_of_each_family(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:

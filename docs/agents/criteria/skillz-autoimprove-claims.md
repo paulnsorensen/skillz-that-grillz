@@ -20,3 +20,4 @@ Source: spec skillz-autoimprove-claims (approved 2026-10-15)
 | AC-14 | test | WHEN a replay call times out or hits another provider fault THE SYSTEM SHALL record an unscored `evaluation-failed` replay outcome with its reason, and SHALL leave the export claim `inconclusive`, never `refuted`. |  |
 | AC-15 | test | WHEN replay calls run, including a resume past the deadline in the `gated` or `replayed` phase, THE SYSTEM SHALL keep `calls` equal to the sum of `calls_by_role`. |  |
 | AC-16 | test | WHEN a run completes THE SYSTEM SHALL report `claims` in the summary and in `report.json` next to `retries`, `calls_by_role`, `seconds_by_role`, and the search `scored` and `failed` counts. |  |
+| AC-17 | test | WHEN a holdout slot has only an `evaluation-failed` outcome THE SYSTEM SHALL report `holdout-coverage` as `unknown` and the runner claim as `inconclusive`. A slot with no outcome SHALL stay `fail`. |  |
