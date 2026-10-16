@@ -18,6 +18,7 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._codex import Codex
+from skillz_experiments.harness._command import _validate_answer  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
@@ -69,6 +70,8 @@ class Search:
         self.refuse = False
         self.memos: list[object] = []
         self.fixed_number: int | None = None
+        self.hypothesis_of: Callable[[int], str | None] = lambda _number: None
+        self.omit_hypothesis = False
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -181,14 +184,13 @@ class Provider(FakeProvider):
             edits = _budgets([prompt])[0] + self.state.edit_offset
             return {"answer": {name: "".join(f"{line}\nimproved {number}\n" if index < edits else f"{line}\n"
                                              for index, line in enumerate(text.splitlines()))
-                               for name, text in parent.items()}}
-        return {"answer": {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix for name in cast(list[str], schema["required"])}}
-
-
-def _shape(search: object) -> dict[str, object]:
-    """Return the search record without its evaluation counts, which `test_search_faults.py` covers."""
-    return {key: value for key, value in cast(dict[str, object], search).items()
-            if key not in ("scored", "failed", "failed_by_reason")}
+                               for name, text in parent.items()} | {"@hypothesis": self.state.hypothesis_of(number)}}
+        texts = {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix
+                 for name in cast(list[str], schema["required"]) if name != "@hypothesis"}
+        if self.state.omit_hypothesis:
+            _validate_answer(texts, schema)
+            return {"answer": texts}
+        return {"answer": texts | {"@hypothesis": self.state.hypothesis_of(number)}}
 
 
 def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
@@ -216,9 +218,16 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.exhaust_after_improved = len(_validation(out))
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    search = cast(dict[str, object], result["search"])
-    assert _shape(search) == {"reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _core(result) == {
+        "reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
+
+def _core(result: dict[str, object]) -> dict[str, object]:
+    """Return the search fields that the attempt record and the evaluation counts did not add. `test_search_faults.py` covers the counts."""
+    search = cast(dict[str, object], result["search"])
+    assert set(search) - {"scored", "failed", "failed_by_reason"} == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped"}
+    return {key: search[key] for key in ("reason", "retained_seed", "leakage_rejections", "proposal_over_budget")}
+
 
 
 def _budgets(prompts: list[str]) -> list[int]:
@@ -527,7 +536,7 @@ def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before
     outcomes.extend([filler] * (planned - overshoot(len(validation)) - spent))
     write(out / "run.json", record)
     result = run(target, out, MODEL, live=True, factory=state.factory)
-    assert _shape(result["search"]) == {"reason": "search-share-spent-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _core(result) == {"reason": "search-share-spent-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -543,7 +552,7 @@ def test_a_resume_with_a_real_allowance_keeps_the_pre_abort_candidate_over_worse
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert state.proposals > proposals_before
     # Every later proposal scores 0, so the stall stop ends the search.
-    assert _shape(result["search"]) == {"reason": "converged-stalled", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _core(result) == {"reason": "converged-stalled", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved 1 " in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 
@@ -555,7 +564,7 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     assert "best_validated" in record
-    assert _shape(result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _core(result) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "reason" not in cast(dict[str, object], record["gate"])
 
 
@@ -567,7 +576,7 @@ def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     kept = cast(dict[str, object], read(out / "run.json")["best_validated"])
     assert kept["mean"] == pytest.approx(0.5)
-    assert _shape(result["search"]) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _core(result) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
 
 
 def test_an_earlier_validated_candidate_stays_best_over_a_later_worse_one(
@@ -1158,7 +1167,7 @@ def test_a_leaking_proposal_scores_zero_without_a_task_or_judge_call_and_is_coun
     assert rejected
     for score, feedback in rejected:
         assert score == 0.0
-        assert set(feedback) == {"task_correct", "request", "rejected", "reason", "rule"} and feedback["rule"] == rule
+        assert set(feedback) == {"task_correct", "request", "case_id", "rejected", "reason", "rule"} and feedback["rule"] == rule
         assert ANSWER not in json.dumps({key: value for key, value in feedback.items() if key != "request"})
     record = read(out / "run.json")
     outcomes = cast(list[dict[str, object]], record["outcomes"])
@@ -1422,3 +1431,293 @@ def test_every_evaluation_in_a_session_gets_the_same_check_memo(
     assert len(state.memos) > 1
     assert isinstance(state.memos[0], CheckMemo)
     assert all(memo is state.memos[0] for memo in state.memos)
+
+
+TOKEN = "zebra"
+
+
+def _attempts(result: dict[str, object]) -> list[dict[str, object]]:
+    return cast(list[dict[str, object]], cast(dict[str, object], result["search"])["attempts"])
+
+
+def _recorded_attempts(out: Path) -> list[dict[str, object]]:
+    """Return the full attempts of run.json. The exported summary redacts the hypothesis and uncoded rejection text."""
+    return cast(list[dict[str, object]], cast(dict[str, object], read(out / "run.json")["search"])["attempts"])
+
+
+def _reflections_of(out: Path) -> list[dict[str, object]]:
+    return [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if item.get("split") == "reflection"]
+
+
+@pytest.mark.ac("gh-241:AC-8")
+def test_a_clean_proposal_after_the_history_is_shown_leaves_leakage_rejections_unchanged(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.hypothesis_of = lambda number: f"shorter wording {number}"
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert state.proposals >= 3 and state.improved_calls > 0
+    assert "Attempt 1: hypothesis shorter wording 1;" in state.prompts[-1] and "No attempt yet." in state.prompts[0]
+    search = cast(dict[str, object], result["search"])
+    assert search["leakage_rejections"] == {} and search["text_dropped"] == {}
+
+
+@pytest.mark.ac("gh-241:AC-10")
+def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_dropped_text_together(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    search = cast(dict[str, object], result["search"])
+    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped",
+                           "scored", "failed", "failed_by_reason"}
+    saved = cast(dict[str, object], read(out / "run.json")["search"])
+    assert set(saved) == set(search) and {key: saved[key] for key in saved if key != "attempts"} == {
+        key: search[key] for key in search if key != "attempts"}
+    attempts = _recorded_attempts(out)
+    assert [item["index"] for item in _attempts(result)] == [item["index"] for item in attempts] == list(range(1, state.proposals + 1))
+    assert attempts[0]["parent"] == read(out / "run.json")["seed_hash"] and attempts[0]["candidate"] is not None
+    assert all(item["hypothesis"] is None and item["rejected"] is None for item in attempts)
+
+
+@pytest.mark.ac("gh-241:AC-6")
+def test_a_hypothesis_that_copies_a_request_span_is_dropped_and_the_proposal_is_still_admitted(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.hypothesis_of = lambda _number: f"try to {SPAN}"
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    search = cast(dict[str, object], result["search"])
+    assert state.proposals > 0 and state.improved_calls > 0
+    assert search["leakage_rejections"] == {} and search["text_dropped"] == {"request-span": state.proposals}
+    reflections = _reflections_of(out)
+    assert all(item["hypothesis"] is None and item["hypothesis_dropped"] == "request-span" for item in reflections)
+    assert all(item["proposed"] for item in reflections)
+    assert SPAN not in (out / "run.json").read_text(encoding="utf-8")
+
+
+@pytest.mark.ac("gh-241:AC-3")
+def test_a_resumed_run_keeps_earlier_attempts_continues_the_index_and_keeps_the_dropped_count(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+
+    def hypothesis(number: int) -> str:
+        cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+        train = next(str(case["id"]) for case in cases if case["split"] == "train")
+        return f"changed {train}" if number == 1 else f"idea {number}"
+
+    state.hypothesis_of = hypothesis
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 3 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    before = _reflections_of(out)
+    assert len(before) == 2 and before[0]["hypothesis_dropped"] == "case-id"
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    attempts = _recorded_attempts(out)
+    assert len(attempts) > 2 and [item["index"] for item in attempts] == list(range(1, len(attempts) + 1))
+    assert attempts[0]["hypothesis"] is None and attempts[0]["candidate"] == before[0]["proposed"]
+    assert attempts[1]["hypothesis"] == "idea 2"
+    assert cast(dict[str, object], result["search"])["text_dropped"] == {"case-id": 1}
+
+
+@pytest.mark.ac("gh-241:AC-4")
+def test_a_holdout_string_never_reaches_a_prompt_or_an_attempt(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out, families=12)
+    draft = cast(list[dict[str, object]], json.loads((out / "cases.draft.json").read_text(encoding="utf-8")))
+    for case in draft:
+        case["request"] = f"{case['request']} {TOKEN}-{case['id']}"
+    _ = (out / "cases.draft.json").write_text(json.dumps(draft), encoding="utf-8")
+    case_hash, calls = approvals(target, out)
+    state = Search(target)
+    state.hypothesis_of = lambda number: f"idea {number}"
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+    held = [f"{TOKEN}-{case['id']}" for case in cases if case["split"] == "holdout"]
+    seen = [f"{TOKEN}-{case['id']}" for case in cases if case["split"] == "train"]
+    assert held and state.prompts
+    text = "\n".join(state.prompts) + json.dumps(_attempts(result))
+    assert not any(token in text for token in held)
+    assert any(token in text for token in seen), "the train feedback still carries the train request"
+    assert not any(token in json.dumps(_attempts(result)) for token in seen)
+
+
+@pytest.mark.ac("gh-241:AC-9")
+def test_a_shape_refusal_records_an_attempt_with_no_candidate_and_the_fixed_code(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.refuse = True
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    (stopped,) = _reflections_of(out)
+    assert stopped["rejected"] == "reflection-shape"
+    state.invoke_fault = lambda _number: None
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    attempts = _attempts(result)
+    first = attempts[0]
+    assert first["index"] == 1 and first["candidate"] is None and first["rejected"] == "reflection-shape"
+    recorded = len(_reflections_of(out))
+    assert recorded == 9 and [item["index"] for item in attempts] == list(range(1, recorded + 1))
+    assert all(item["candidate"] is None and item["rejected"] == "reflection-shape" and item["accepted"] is False for item in attempts)
+    assert all(item["rejected"] == "reflection-shape" and item["components_digest"] is None for item in _reflections_of(out))
+
+
+@pytest.mark.ac("gh-241:AC-9")
+def test_an_admit_rejection_records_an_attempt_with_no_candidate_and_its_reason(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " " + ANSWER
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    (stopped,) = _reflections_of(out)
+    assert stopped["rejected"] == "candidate-leakage-rejected"
+    state.invoke_fault = lambda _number: None
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    attempts = _attempts(result)
+    first = attempts[0]
+    assert first["index"] == 1 and first["candidate"] is None and first["rejected"] == "candidate-leakage-rejected"
+    recorded = len(_reflections_of(out))
+    assert recorded > 1 and [item["index"] for item in attempts] == list(range(1, recorded + 1))
+    assert all(item["candidate"] is None and item["rejected"] == "candidate-leakage-rejected" for item in attempts)
+    assert all(item["rejected"] == "candidate-leakage-rejected" for item in _reflections_of(out))
+
+
+@pytest.mark.ac("gh-241:AC-9")
+def test_a_proposal_build_failure_records_its_attempt_and_the_attempt_survives_the_resume(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    real = Candidate.changed
+
+    def full_disk(self: Candidate, components: dict[str, str]) -> Candidate:
+        if any("improved" in text for text in components.values()):
+            raise OSError("no space left on device")
+        return real(self, components)
+
+    monkeypatch.setattr(Candidate, "changed", full_disk)
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    (stopped,) = _reflections_of(out)
+    assert stopped["rejected"] == "proposal-build-failed" and stopped["status"] == "proposal-build-failed"
+    monkeypatch.setattr(Candidate, "changed", real)
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    first = _attempts(result)[0]
+    assert first["index"] == 1 and first["candidate"] is None and first["rejected"] == "proposal-build-failed"
+    assert len(_attempts(result)) > 1
+
+
+@pytest.mark.ac("gh-241:AC-1")
+def test_a_real_run_records_fixed_and_broke_inside_the_minibatch_and_a_later_parent_is_an_earlier_candidate(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    attempts, reflections = _recorded_attempts(out), _reflections_of(out)
+    train = {str(case["id"]) for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"]) if case["split"] == "train"}
+    listed = [(item, cast(list[str], reflection["minibatch"])) for item, reflection in zip(attempts, reflections)
+              if item["fixed"] or item["broke"]]
+    assert listed, "no attempt holds a fixed or broke id"
+    for item, minibatch in listed:
+        ids = cast(list[str], item["fixed"]) + cast(list[str], item["broke"])
+        assert set(ids) <= set(minibatch) and set(ids) <= train
+    assert any(item["parent"] in {earlier["candidate"] for earlier in attempts[:number]} for number, item in enumerate(attempts))
+    rows = _attempts(result)
+    assert len(rows) == len(attempts) and any(row["candidate"] is not None for row in rows)
+    for row, full in zip(rows, attempts):
+        assert set(row) == {"index", "parent", "candidate", "fixed", "broke", "validation_delta", "accepted", "rejected"}
+        mapped = None if full["rejected"] is None else full["rejected"] if full["rejected_coded"] else "rejected"
+        assert row == {key: full[key] for key in row if key != "rejected"} | {"rejected": mapped}
+
+
+def test_the_protect_set_follows_the_seed_when_a_validated_candidate_is_worse_than_the_seed(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    real = Provider.evaluate
+
+    def evaluate(self: Provider, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        result = real(self, candidate, case, holdout=holdout, checks=checks)
+        if holdout:
+            return result
+        improved, even = "improved" in candidate.files["SKILL.md"], sum(map(ord, case.identifier)) % 2 == 0
+        if case.split == "train":
+            result["score"] = 1.0 if even != improved else 0.5
+        elif case.split == "validation":
+            result["score"] = 0.5 if improved else 1.0
+        return result
+
+    monkeypatch.setattr(Provider, "evaluate", evaluate)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    marker = "Keep these train cases passing, because the current best passes them: "
+    kept = [prompt.split("\n", 1)[0] for prompt in state.prompts if marker in prompt.split("\n", 1)[0]]
+    assert len(kept) >= 2
+    for head in kept:
+        names = head.split(marker, 1)[1].split(".", 1)[0].split(", ")
+        assert names and all(sum(map(ord, name)) % 2 == 0 for name in names)
+
+
+def test_the_export_summary_redacts_the_hypothesis_and_uncoded_rejection_text_but_run_json_keeps_them(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.hypothesis_of = lambda number: f"hypothesis-sentinel {number}"
+    real = Candidate.changed
+
+    def failing(self: Candidate, components: dict[str, str]) -> Candidate:
+        if any("improved" in text for text in components.values()):
+            raise ValueError("uncoded-sentinel text")
+        return real(self, components)
+
+    monkeypatch.setattr(Candidate, "changed", failing)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    saved = (out / "run.json").read_text(encoding="utf-8")
+    assert "hypothesis-sentinel" in saved and "uncoded-sentinel text" in saved
+    report = (Path(cast(str, export(out, tmp_path / "export")["export"])) / "report.json").read_text(encoding="utf-8")
+    assert "hypothesis-sentinel" not in report and "uncoded-sentinel" not in report
+    assert "hypothesis-sentinel" not in json.dumps(result) and "uncoded-sentinel" not in json.dumps(result)
+    rows = _attempts(result)
+    assert rows and all("hypothesis" not in row and row["rejected"] == "rejected" for row in rows)
+    recorded = _recorded_attempts(out)
+    assert len(rows) == len(recorded)
+    for row, full in zip(rows, recorded):
+        assert set(row) == {"index", "parent", "candidate", "fixed", "broke", "validation_delta", "accepted", "rejected"}
+        assert row == {key: full[key] for key in row if key != "rejected"} | {"rejected": "rejected"}
+
+
+def test_the_export_keeps_a_coded_rejection_and_maps_a_one_word_uncoded_text_to_rejected(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    real = Candidate.changed
+    seen: list[int] = []
+
+    def failing(self: Candidate, components: dict[str, str]) -> Candidate:
+        if any("improved" in text for text in components.values()):
+            seen.append(1)
+            raise CodedError("hidden-file", "coded text") if len(seen) % 2 else ValueError("sentinelword")
+        return real(self, components)
+
+    monkeypatch.setattr(Candidate, "changed", failing)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert "sentinelword" in (out / "run.json").read_text(encoding="utf-8")
+    report = (Path(cast(str, export(out, tmp_path / "export")["export"])) / "report.json").read_text(encoding="utf-8")
+    assert "sentinelword" not in report and "sentinelword" not in json.dumps(result)
+    assert {row["rejected"] for row in _attempts(result)} == {"hidden-file", "rejected"}
+
+
+def test_a_spent_call_whose_answer_has_no_hypothesis_key_records_a_null_hypothesis_and_an_attempt(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.omit_hypothesis = True
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    reflections, attempts = _reflections_of(out), _recorded_attempts(out)
+    assert reflections and len(attempts) == len(reflections)
+    assert all(item["hypothesis"] is None and item["hypothesis_dropped"] is None for item in reflections)
+    assert all(item["hypothesis"] is None for item in attempts) and any(item["accepted"] for item in attempts)

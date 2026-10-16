@@ -61,12 +61,16 @@ The runner records the observed `codex --version` string as `codex_version` in `
 A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 The `codex` harness retries a call that fails as `rate-limited`, at most 3 times, with a 2, 4, then 8 second backoff.
-A retry waits at least as long as a retry-after time that Codex reports: a duration (`30 seconds`, `1h30m`, `2 days`), a timestamp, or a `Retry-After` number of seconds.
+`codex exec` reports no structured retry-after, only prose in its error and `turn.failed` messages.
+A retry waits at least as long as a wait that this prose names: a duration (`30 seconds`, `1h30m`, `2 days`), a timestamp, or a `Retry-After` number of seconds.
 A reset hint that the runner cannot read counts as longer than the remaining time, so the call fails as `rate-limited` with no retry.
 A retry runs only within the remaining time.
 A retry does not spend the approved call budget. The run record and the `summary` count it in `retries`.
 Each rate limit halves the concurrent model calls for the rest of the run, to a minimum of 1.
 The private failure evidence file keeps a redacted stderr excerpt (at most 1 KiB), the error event messages, and any `retry_after_seconds`.
+The last `turn.failed` message always classifies the failure and stays in the evidence, however many error events come before it.
+A ChatGPT-plan usage limit ("You've hit your usage limit") fails as `usage-limited`. The runner does not retry it and does not halve the concurrent calls.
+It is an unscored `evaluation-failed` outcome that counts toward `search-faulted` and `holdout-faulted`. The runner does not read its "try again at" time as a wait.
 Each model call (every harness) has a per-call timeout of 4 times the per-call estimate, capped by the remaining search time.
 The estimate is 60 seconds plus the sandbox seconds of one evaluation in the run plan.
 The clock starts after the call gets a call slot. A wait for a slot that reaches the search deadline is a budget stop, not a timeout.
@@ -179,7 +183,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
 | `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
-| `reserved-name` | A skill file name starts with `@wedge/`. | Rename the file. |
+| `reserved-name` | A skill file name starts with `@wedge/`, or it is `@new-cli` or `@hypothesis`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
@@ -287,7 +291,7 @@ A failed search evaluation is unscored too.
 It adds no score to a validation mean, no stall observation, and no reflection feedback.
 A candidate with no scored validation case never beats the seed.
 GEPA still receives 0.0 for it, because GEPA needs a number. The session ignores that value when it picks the winner.
-`search.scored`, `search.failed`, and `search.failed_by_reason` in the summary and the export report count the search evaluations. The `reason` of a failure is `timeout`, the reason that the adapter names (such as `rate-limited`), or `error`.
+`search.scored`, `search.failed`, and `search.failed_by_reason` in the summary and the export report count the search evaluations. The `reason` of a failure is `timeout`, the reason that the adapter names (such as `rate-limited` or `usage-limited`), or `error`.
 With fewer than 2 shared cases, the verdict is `inconclusive` and `se` is the SE floor.
 
 The gate record also holds `moves`: the case ids that `fixed`, `broke`, or left `unresolved`.
@@ -537,6 +541,37 @@ The numbers come from the run record. They never come from case content.
 The budget is advisory. The runner never rejects a proposal for its size.
 `summary` and `report.json` carry `search.proposal_over_budget`: the count of proposals above the budget stated in their prompt, including proposals that the leakage check later rejects.
 The count shows whether enforcement is worth the wasted reflection calls.
+
+### Attempt history
+
+The runner records one attempt for each reflection call. `search.attempts` holds them, oldest first.
+An attempt has `index`, `parent`, `candidate`, `components`, `hypothesis`, `fixed`, `broke`, `validation_delta`, `accepted`, `rejected`, and `rejected_coded`.
+`rejected_coded` is true when `rejected` is a known code.
+`parent` and `candidate` are candidate identities. `components` is a digest of the proposed component texts. No attempt holds case text or component text.
+`fixed` lists the train case ids that the proposal scores higher than its parent. `broke` lists the ids that it scores lower.
+The lists cover the train cases that the proposer saw in its feedback. For a case with more than one outcome, the newest outcome that did not fail counts.
+`validation_delta` is the validation mean of the candidate minus the validation mean of its parent.
+It is null unless both sides have a complete validation set. An evaluation-failed outcome is skipped. The newest scored outcome of a (candidate, case) counts. A case with no scored outcome is unscored, so validation_delta is null.
+An attempt with no train score yet has empty lists and a null `validation_delta`. The runner fills these fields from later outcomes.
+`accepted` is true when the proposal produced a candidate. `rejected` holds the reason when it did not:
+`reflection-shape`, the leakage or build reason of the host check, or `proposal-build-failed`. A rejected attempt has a null `candidate`.
+The runner rebuilds the attempts from the recorded outcomes. A resume keeps them and continues the index.
+The runner does not support a run that started before this record.
+
+The reflection prompt lists the newest 8 attempts, newest first, within 4000 characters.
+It also lists the protect set: the train case ids on which the best candidate by validation mean scores 1.0.
+The seed is the best candidate when it has the highest validation mean, including when no candidate is validated. The set holds at most 30 ids.
+The prompt tells the proposer not to re-introduce a change that broke a case.
+It also tells the proposer not to copy a shown case id into a component or into `@hypothesis`.
+
+The reflection answer carries an `@hypothesis` key. Its value is a text of at most 200 characters, or null.
+The runner stores a missing or null value as null. It drops a hypothesis over 200 characters as `hypothesis-too-long`.
+It drops a value that is not text as `hypothesis-not-text`.
+The leakage check reads the hypothesis in its own call. A leak drops the hypothesis and records the rule. The proposal stays admitted.
+The key `@hypothesis` never enters a component. It never counts in `leakage_rejections`.
+`search.text_dropped` counts the dropped hypotheses for each rule.
+The export `report.json` and the `run` summary keep these attempt fields: `index`, `parent`, `candidate`, `fixed`, `broke`, `validation_delta`, `accepted`, and `rejected`.
+They drop `hypothesis`, `components`, and `rejected_coded`. They map an uncoded `rejected` text to `rejected`. `run.json` keeps all fields.
 
 ### Stall stop
 

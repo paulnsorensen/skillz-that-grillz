@@ -110,6 +110,7 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
             "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility",
             "statistics")
     result = {key: record.get(key) for key in keys}
+    result["search"] = _export_search(record.get("search"))
     result["usage_by_role"] = usage_by_role(record)
     if out is not None:
         bound = calls_upper_bound(record, out)
@@ -122,6 +123,27 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
         hint = "no action needed" if stop_kind(code) == "notice" else "log in again before the next run"
         result["close_warning"] = {"code": code, "hint": hint}
     return result
+
+
+_ATTEMPT_KEYS = ("index", "parent", "candidate", "fixed", "broke", "validation_delta", "accepted")
+
+
+def _export_search(value: object) -> object:
+    """Return the search record with redacted attempts. The hypothesis and any uncoded rejection text stay in run.json."""
+    if not isinstance(value, dict):
+        return value
+    search = cast(dict[str, object], value)
+    if not isinstance(search.get("attempts"), list):
+        return search
+    rows: list[dict[str, object]] = []
+    for row in cast(list[dict[str, object]], search["attempts"]):
+        reason = row.get("rejected")
+        redacted = {key: row.get(key) for key in _ATTEMPT_KEYS}
+        coded = row.get("rejected_coded") is True and isinstance(reason, str)
+        redacted["rejected"] = None if reason is None else reason if coded else "rejected"
+        rows.append(redacted)
+    redacted_search: dict[str, object] = search | {"attempts": rows}
+    return redacted_search
 
 
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:

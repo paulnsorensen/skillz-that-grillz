@@ -5,6 +5,7 @@ import os
 import math
 import re
 import shutil
+import stat
 import tempfile
 import time
 from collections.abc import Callable, Mapping
@@ -114,6 +115,8 @@ _FAILURE_REASONS = tuple((re.compile(pattern), reason) for pattern, reason in (
      "authentication-unavailable"),
     ("model_not_found", "model-unavailable"),
     ("not supported", "unsupported-model-or-feature"),
+    # The ChatGPT-plan usage limit comes before the rate-limit patterns: its retry notices can also say 429. It is never retried.
+    (r"you(?:'|’)ve hit your usage limit", "usage-limited"),
     (_status("429"), "rate-limited"),
     (r"rate[ _-]?limit|too many requests", "rate-limited"),
     ("stream disconnected", "provider-connection-failed"),
@@ -128,11 +131,30 @@ def _inline(values: dict[str, str]) -> str:
     return "{" + ",".join(f"{json.dumps(key)}={json.dumps(value)}" for key, value in values.items()) + "}"
 
 
+def task_tmpdir(workspace: Path) -> Path:
+    """Return the Codex TMPDIR beside the workspace, so it has no `.git` ancestor. Create nothing."""
+    if workspace.name != "workspace":
+        raise ValueError(f"a Codex workspace must be <private task directory>/workspace, not {workspace}")
+    return workspace.parent / "tmp"
+
+
+def private_task_tmpdir(workspace: Path) -> Path:
+    """Create the task TMPDIR and refuse it unless it is a real directory that only this user owns."""
+    tmpdir = task_tmpdir(workspace)
+    tmpdir.mkdir(mode=0o700, exist_ok=True)
+    status = tmpdir.lstat()
+    if not stat.S_ISDIR(status.st_mode) or status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) != 0o700:
+        raise ValueError(f"the Codex task TMPDIR {tmpdir} must be a private directory owned by this user")
+    return tmpdir
+
+
 def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> list[str]:
-    filesystem = {":root": "deny", ":minimal": "read", ":tmpdir": "deny", ":slash_tmp": "deny",
-                  str(workspace): "write", str(workspace / ".agents"): "read", str(executable): "read"}
+    tmpdir = task_tmpdir(workspace)
+    filesystem = {":root": "deny", ":minimal": "read", ":slash_tmp": "deny",
+                  str(workspace): "write", str(workspace / ".agents"): "read",
+                  str(tmpdir): "write", str(tmpdir / ".git"): "write", str(executable): "read"}
     environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
-                   "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
+                   "TMPDIR": str(tmpdir), "LANG": "C.UTF-8"}
     settings = [
         'permissions.skillz={extends=":workspace",filesystem=' + _inline(filesystem) + ',network={enabled=false}}',
         'default_permissions="skillz"',
@@ -196,8 +218,9 @@ class Codex:
         self.authentication_home.cleanup()
 
     def _environment(self, workspace: Path) -> dict[str, str]:
+        tmpdir = private_task_tmpdir(workspace)
         return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
-                "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
+                "TMPDIR": str(tmpdir), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
 
     def preflight(self) -> dict[str, object]:
         credential = self.credential_kind
@@ -217,7 +240,7 @@ class Codex:
             _ = sealed.write_text("sealed sentinel")
             (workspace / "escape").symlink_to(sealed)
             safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
-                    "TMPDIR=" + str(workspace / "tmp"), "LANG=C.UTF-8"]
+                    "TMPDIR=" + str(task_tmpdir(workspace)), "LANG=C.UTF-8"]
             with listening() as port:
                 script = probe(workspace, sealed, Path(__file__).resolve(), port)
                 command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
@@ -239,7 +262,7 @@ class Codex:
                 raise RuntimeError(f"Codex execution options preflight fails: {evidence['reason']}")
         return {"codex_version": observed, "model": self.model, "isolation": "passed", "credential": credential,
                 "host_skill_discovery": "isolated-home", "live_calls": 0,
-                "environment_hash": digest(configuration(Path("/TASK"), self.executable, []))}
+                "environment_hash": digest(configuration(Path("/TASK/workspace"), self.executable, []))}
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -316,7 +339,7 @@ class Codex:
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
-                "TMPDIR=" + str(workspace / "tmp"), "LANG=C.UTF-8"]
+                "TMPDIR=" + str(task_tmpdir(workspace)), "LANG=C.UTF-8"]
         command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
                    "-P", "skillz", "--include-managed-config", "-C", str(workspace), "--",
                    "/usr/bin/env", "-i", *safe, *argv]
@@ -348,7 +371,7 @@ class Codex:
     def check_candidate(self, candidate: Candidate) -> bool:
         self.rejection = None
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
-            workspace = make_workspace(Path(directory))
+            workspace = make_workspace(Path(directory) / "workspace")
             rules = resolve(candidate.contract)
             candidate.materialize(workspace / ".agents/skills" / rules.skill)
             if not self._discover(workspace, rules.skill):
@@ -390,7 +413,9 @@ def _rejection_message(stderr: str, events: list[dict[str, object]]) -> str:
 
 
 def retry_after(text: str) -> float | None:
-    """Return the seconds that Codex asks the caller to wait, or None when the text names no wait.
+    """Return the seconds that the error prose of Codex names as a wait, or None when the text names none.
+
+    `codex exec` reports no structured retry-after. This parser reads prose only, and it ignores "try again at <local time>", which has no timezone.
 
     A reset hint that this parser cannot read returns `math.inf`: the wait counts as longer than any remaining time.
     A duration may be compound (`1h30m`), a timestamp gives its distance from now, and a bare number needs the header form.
@@ -429,14 +454,36 @@ def _until(text: str) -> float:
     return max((moment - datetime.now(timezone.utc)).total_seconds(), 0.0)
 
 
+def _last_turn_failed(events: list[dict[str, object]]) -> str | None:
+    """Return the message of the last `turn.failed` event, or None when there is none."""
+    for event in reversed(events):
+        if event.get("type") != "turn.failed":
+            continue
+        error = event.get("error")
+        message = mapping(cast(object, error)).get("message") if isinstance(error, dict) else event.get("message")
+        if isinstance(message, str):
+            return message
+    return None
+
+
 def failure_details(returncode: int, stderr: str, events: list[dict[str, object]]) -> dict[str, object]:
     messages = [message[:2048] for message in _error_messages(events)]
-    detail = "\n".join([stderr[:8192], *messages][:5]).lower()
+    # Error and retry notices can fill every slot. The last `turn.failed` message always classifies and stays in the evidence.
+    last = _last_turn_failed(events)
+    final = last[:2048] if last is not None else None
+    classified = [stderr[:8192], *messages][:5]
+    recorded = messages[:MESSAGE_RECORD_COUNT]
+    if final is not None:
+        if final not in classified:
+            classified.append(final)
+        if final not in recorded:
+            recorded = [*recorded[: MESSAGE_RECORD_COUNT - 1], final]
+    detail = "\n".join(classified).lower()
     reason = next((reason for pattern, reason in _FAILURE_REASONS if pattern.search(detail)),
                   "missing-final-response" if returncode == 0 else "execution-failed")
     evidence: dict[str, object] = {"schema_version": 1, "returncode": returncode, "reason": reason, "usage": usage(events),
                                    "stderr_excerpt": _redact(stderr)[-EXCERPT_LIMIT:],
-                                   "messages": [_redact(message)[:MESSAGE_RECORD_LIMIT] for message in messages[:MESSAGE_RECORD_COUNT]]}
+                                   "messages": [_redact(message)[:MESSAGE_RECORD_LIMIT] for message in recorded]}
     wait = retry_after(detail)
     if wait == math.inf:
         evidence["retry_after_unparsed"] = True
