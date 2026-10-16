@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from support import BUNDLE, CLI, call_cli, carries_answer, command_adapter, make_scenario, read_events, read_record, run_scenario
+from support import BUNDLE, CLI, call_cli, carries_answer, command_adapter, make_scenario, read_cases, read_events, read_record, run_scenario
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
@@ -49,10 +49,14 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
     first_prompt = cast(str, reflections[0]["prompt"])
     feedback = cast(dict[str, object], json.loads(first_prompt.split("\n", 1)[1]))
     assert feedback["candidate"] == {"SKILL.md": scenario.original}
-    assert feedback["feedback"] == {"SKILL.md": [
+    shown = cast(list[dict[str, object]], cast(dict[str, object], feedback["feedback"])["SKILL.md"])
+    assert set(cast(dict[str, object], feedback["feedback"])) == {"SKILL.md"}
+    train = {cast(str, case["id"]) for case in read_cases(scenario.out) if case["split"] == "train"}
+    assert len(shown) == 2 and len({item["case_id"] for item in shown}) == 2 and {item["case_id"] for item in shown} <= train
+    assert [{key: value for key, value in item.items() if key != "case_id"} for item in shown] == [
         {"task_correct": 0.0, "request": "Transform fixture.md according to this skill.",
          "grader_scores": {"command": 0.0}}
-    ] * 2}
+    ] * 2
     estimate = cast(dict[str, object], record["estimate"])
     planned = cast(int, estimate["metric_calls"]) - (4 + len(validation_ids))
     first_reflection = next(index for index, item in enumerate(outcomes)

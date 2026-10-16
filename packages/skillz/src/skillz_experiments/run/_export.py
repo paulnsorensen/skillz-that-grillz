@@ -118,10 +118,12 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
 
     A completed run with `out` also carries `claims`: the runner, export, and improvement claims, each with its own status.
     """
-    keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
+    keys = ("schema_version", "phase", "calls", "retries", "calls_by_role", "seconds_by_role", "model", "adapter", "edit",
+            "codex_version", "harness", "judge",
             "gate", "search", "replay", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility",
             "statistics")
     result = {key: record.get(key) for key in keys}
+    result["search"] = _export_search(record.get("search"))
     replay = record.get("replay")
     if isinstance(replay, dict):
         result["replay"] = {key: value for key, value in cast(dict[str, object], replay).items() if key in REPLAY_KEYS}
@@ -149,8 +151,29 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
     return result
 
 
+_ATTEMPT_KEYS = ("index", "parent", "candidate", "fixed", "broke", "validation_delta", "accepted")
+
+
+def _export_search(value: object) -> object:
+    """Return the search record with redacted attempts. The hypothesis and any uncoded rejection text stay in run.json."""
+    if not isinstance(value, dict):
+        return value
+    search = cast(dict[str, object], value)
+    if not isinstance(search.get("attempts"), list):
+        return search
+    rows: list[dict[str, object]] = []
+    for row in cast(list[dict[str, object]], search["attempts"]):
+        reason = row.get("rejected")
+        redacted = {key: row.get(key) for key in _ATTEMPT_KEYS}
+        coded = row.get("rejected_coded") is True and isinstance(reason, str)
+        redacted["rejected"] = None if reason is None else reason if coded else "rejected"
+        rows.append(redacted)
+    redacted_search: dict[str, object] = search | {"attempts": rows}
+    return redacted_search
+
+
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:
-    allowed = {"arm", "split", "case_id", "repeat", "score", "status", "loaded", "helper_executed", "candidate_hash",
+    allowed = {"arm", "split", "case_id", "repeat", "score", "status", "reason", "loaded", "helper_executed", "candidate_hash",
                "case_hash", "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
                "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate", "scores"}
     result = {key: value for key, value in item.items() if key in allowed}

@@ -102,8 +102,8 @@ def test_exec_and_app_server_run_with_strict_config(tmp_path: Path, monkeypatch:
 
     monkeypatch.setattr(_codex, "discover", discovered)
     try:
-        execution = codex._execution_command(tmp_path, tmp_path / "s.json", tmp_path / "o.json")  # pyright: ignore[reportPrivateUsage]
-        assert codex._discover(tmp_path, "skillz")  # pyright: ignore[reportPrivateUsage]
+        execution = codex._execution_command(tmp_path / "workspace", tmp_path / "s.json", tmp_path / "o.json")  # pyright: ignore[reportPrivateUsage]
+        assert codex._discover(tmp_path / "workspace", "skillz")  # pyright: ignore[reportPrivateUsage]
     finally:
         codex.close()
     assert execution[1:3] == ["exec", "--strict-config"]

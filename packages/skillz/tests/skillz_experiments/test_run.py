@@ -257,7 +257,7 @@ def test_every_reflection_request_requires_ste_prose_and_carries_the_candidate(
     advisory, maximum = limits
     prompt, schema = reflection_request(cast(Edit, edit), {name: "text" for name in components}, {}, components,
                                        progress=Progress(spent=0, planned=100, proposal=1))
-    assert "ASD-STE100" in prompt and schema["required"] == components
+    assert "ASD-STE100" in prompt and schema["required"] == [*components, "@hypothesis"]
     assert f"at most {advisory} words per procedural sentence" in prompt
     assert f"at most {maximum} words per descriptive sentence" in prompt
     payload = cast(dict[str, object], json.loads(prompt.split("\n", 1)[1]))

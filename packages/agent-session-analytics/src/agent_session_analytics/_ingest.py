@@ -942,6 +942,7 @@ def columns_struct() -> str:
 
 
 def _do_ingest_and_swap() -> float:
+    t0 = time.monotonic()  # The build time includes the stage step.
     _log("Discovering + normalizing harness sessions...")
     loaded = stage_harnesses()
     if not loaded:
@@ -953,7 +954,6 @@ def _do_ingest_and_swap() -> float:
         os.remove(DB_TMP_PATH)
 
     _log("Loading canonical rows into DuckDB...")
-    t0 = time.time()
     stage_glob = os.path.join(STAGE_DIR, "*.jsonl")
 
     # Step 1: union every harness's canonical JSONL into raw_entries.
@@ -1199,7 +1199,7 @@ def _do_ingest_and_swap() -> float:
     )
 
     os.replace(DB_TMP_PATH, DB_PATH)
-    return time.time() - t0
+    return time.monotonic() - t0
 
 
 def _summary() -> dict[str, object]:

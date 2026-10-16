@@ -50,6 +50,7 @@ class _Plan:
     replay_calls: int = 0
     sandbox_gate: int = 0
     sandbox_total: int = 0
+    sandbox_seconds: int = 0
 
     @property
     def reserve(self) -> int:
@@ -130,8 +131,9 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
                    + "lower --repeats or the holdout size", {})
     sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
     sized, total = size(metric), sandbox_total(metric)
-    return _Plan(metric, math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls, retry_calls,
-                 Estimate(sized.calls, sized.seconds + total, journey), holdout_pass, sandbox_gate, total)
+    return _Plan(metric_calls=metric, reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls=holdout_calls,
+                 retry_calls=retry_calls, sized=Estimate(sized.calls, sized.seconds + total, journey),
+                 replay_calls=holdout_pass, sandbox_gate=sandbox_gate, sandbox_total=total, sandbox_seconds=sandbox_seconds)
 
 
 def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions) -> _Plan:

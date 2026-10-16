@@ -356,7 +356,7 @@ def test_repeats_never_silently_exceed_the_cap(
     except Stop as stopped:
         assert stopped.code == "budget-unapproved" and spy.created == 0
         return
-    assert result["phase"] == "complete"
+    assert result["phase"] == "complete" and {"retries", "calls_by_role", "claims", "replay"} <= set(result)
     record = read(out / "run.json")
     budget = cast(dict[str, int], record["budget"])
     assert budget["maximum"] <= 200 and budget["seconds"] <= 7200 and cast(int, record["calls"]) <= budget["maximum"]
@@ -967,7 +967,7 @@ def test_no_token_variable_reaches_the_child_environment(
         workspace = tmp_path / "workspace"
         for directory in ("home", "tmp", ".agents/skills"):
             (workspace / directory).mkdir(parents=True, exist_ok=True)
-        _code, _stderr, events = session._run(workspace, "hello", None, 30, [])
+        _code, _stderr, events = session._run(workspace, "hello", None, [])
         child = cast(dict[str, str], events[0])
         assert "sk-secret-value" not in json.dumps(child)
         assert not any(key.upper().replace(" ", "") == name.upper().replace(" ", "") for key in child)

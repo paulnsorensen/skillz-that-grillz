@@ -2229,13 +2229,15 @@ def test_a_real_leak_or_a_malformed_list_with_a_control_response_keeps_preflight
 
 
 @pytest.mark.ac("gh-290:AC-9")
-def test_the_settings_floor_keeps_the_sandbox_hard_and_adds_no_bash_allow_rule(tmp_path: Path) -> None:
+def test_the_settings_floor_keeps_the_sandbox_hard_and_allows_bash(tmp_path: Path) -> None:
     floor = _settings.settings(tmp_path / "workspace")
     sandbox = cast(dict[str, object], floor["sandbox"])
     assert sandbox["failIfUnavailable"] is True and sandbox["allowUnsandboxedCommands"] is False
     allow = cast(dict[str, list[str]], floor["permissions"])["allow"]
-    # The live 2.1.296 spike did not run, so the floor stays without a Bash allow rule. See ADR-004 Amendment 2026-10-13.
-    assert allow == ["Skill"]
+    # The rule lets the probes reach the sandbox. On the live 2.1.296 host the Bash read probe and the pathname Unix
+    # socket probe leaked, and the preflight detected both and stopped with `network-isolation-failed`.
+    # See ADR-006 Amendment 2026-10-14.
+    assert allow == ["Skill", "Bash"]
 
 
 def _approval_events(command: str, content: str) -> list[dict[str, object]]:

@@ -12,10 +12,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
+from skillz_experiments._candidate import HYPOTHESIS, NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import mapping
 from skillz_experiments._new_cli import prompt_rule
 from skillz_experiments.search._engine import Edit
+from skillz_experiments.search._history import render
 
 _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
              "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
@@ -37,6 +38,10 @@ _FROMARGS_RULE = ("The fromargs package is the default for a wedged Python sourc
                   "Print only results on stdout. "
                   "A Python helper may use a stdlib `argparse` helper only when the skill has no wedge.toml "
                   "that can build a fromargs target. ")
+
+MAX_HYPOTHESIS = 200
+HYPOTHESIS_TOO_LONG = "hypothesis-too-long"
+HYPOTHESIS_NOT_TEXT = "hypothesis-not-text"
 
 MAX_EDITS = 6
 MIN_EDITS = 1
@@ -85,11 +90,15 @@ class Progress:
 
 
 def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
-            components: list[str], *, progress: Progress, cheaper: bool = False) -> tuple[str, dict[str, object]]:
-    """Return the reflection prompt and the JSON schema of the answer."""
+            components: list[str], *, progress: Progress, cheaper: bool = False,
+            history: Sequence[Mapping[str, object]] = (), protect: Sequence[str] = ()) -> tuple[str, dict[str, object]]:
+    """Return the reflection prompt and the JSON schema of the answer.
+
+    `history` holds the attempts, oldest first. `protect` holds the train case ids that the current best passes.
+    """
     schema: dict[str, object] = {"type": "object",
-        "properties": {key: {"type": "string"} for key in components},
-        "required": components, "additionalProperties": False}
+        "properties": {key: {"type": "string"} for key in components} | {HYPOTHESIS: {"type": ["string", "null"]}},
+        "required": [*components, HYPOTHESIS], "additionalProperties": False}
     if edit == "prose+cli":
         instruction = _CLI_RULE
         if NEW_CLI in components or any(name.startswith(WEDGE_PREFIX) for name in components):
@@ -101,6 +110,7 @@ def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequen
     head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions."
     if cheaper:
         head += " Prefer fewer tokens when correctness is equal."
+    head += " Add an " + HYPOTHESIS + " text of at most " + str(MAX_HYPOTHESIS) + " characters that states why the change helps, or null. " + render(history, protect)
     head += " " + progress.status()
     return head + "\n" + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
@@ -115,13 +125,19 @@ def edit_count(before: Mapping[str, str], after: Mapping[str, str]) -> int:
     return total
 
 
-def accept(answer: object, components: list[str], candidate: Mapping[str, str]) -> tuple[dict[str, str], int]:
-    """Return `answer` as a component map with its edit count against `candidate`.
+def accept(answer: object, components: list[str], candidate: Mapping[str, str]) -> tuple[dict[str, str], int, str | None, str | None]:
+    """Return `answer` as a component map, its edit count against `candidate`, its hypothesis, and why the hypothesis dropped.
 
     Raise `ValueError` when its keys differ from `components` or a value is not text. The size never rejects it.
+    A missing or null hypothesis is None. A non-text one is None with `HYPOTHESIS_NOT_TEXT`. One over `MAX_HYPOTHESIS` characters is None with `HYPOTHESIS_TOO_LONG`.
     """
-    proposal = mapping(answer)
+    proposal = dict(mapping(answer))
+    said = proposal.pop(HYPOTHESIS, None)
+    hypothesis = (said.strip() or None) if isinstance(said, str) else None
+    dropped = None if said is None or isinstance(said, str) else HYPOTHESIS_NOT_TEXT
+    if hypothesis is not None and len(hypothesis) > MAX_HYPOTHESIS:
+        hypothesis, dropped = None, HYPOTHESIS_TOO_LONG
     if set(proposal) != set(components) or not all(isinstance(value, str) for value in proposal.values()):
         raise ValueError("reflection keys differ from the frozen components")
     texts = cast(dict[str, str], proposal)
-    return texts, edit_count(candidate, texts)
+    return texts, edit_count(candidate, texts), hypothesis, dropped

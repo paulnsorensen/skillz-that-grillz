@@ -3,11 +3,16 @@ from __future__ import annotations
 import math
 import threading
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import KW_ONLY, dataclass, field
 
 from skillz_experiments._cases import CodedError
 
 SECONDS_PER_CALL = 60
+CALL_TIMEOUT_FACTOR = 4
+FAILED = "failed"
+SEARCH_ROLES = ("task", "reflection", "judge", FAILED)
 MAX_CONCURRENT_CALLS = 2
 UNAPPROVED_CALLS = 40
 UNAPPROVED_SECONDS = 2400
@@ -25,6 +30,13 @@ class BudgetExhausted(CodedError):
 
     def __init__(self, message: str) -> None:
         super().__init__("budget-exhausted", message)
+
+
+class CallTimeout(RuntimeError):
+    """One model call ran past its per-call timeout while the search deadline was still open.
+
+    It is not a `CodedError`: it fails one call, not the run.
+    """
 
 
 class BudgetUnapproved(CodedError):
@@ -70,6 +82,16 @@ def _seconds(calls: int) -> int:
     return math.ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
 
 
+@dataclass(frozen=True)
+class Spent:
+    """What a run has spent at one moment."""
+
+    calls: int
+    retries: int
+    calls_by_role: dict[str, int]
+    seconds_by_role: dict[str, float]
+
+
 @dataclass
 class Budget:
     """The call and time budget of one run.
@@ -87,6 +109,10 @@ class Budget:
     approved: bool = False
     reserve_seconds: float = 0.0
     journey: bool = False
+    retries: int = 0
+    call_seconds: float = SECONDS_PER_CALL
+    calls_by_role: dict[str, int] = field(default_factory=dict[str, int])
+    seconds_by_role: dict[str, float] = field(default_factory=dict[str, float])
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -98,10 +124,15 @@ class Budget:
         self._check_reserve_seconds(self.reserve_seconds)
 
     @classmethod
-    def expired(cls, maximum: int, *, reserve: int, calls: int, approved: bool, journey: bool) -> Budget:
-        """Return a budget whose deadline passed one second ago. Every `remaining` call raises."""
-        return cls(maximum, 1.0, reserve=reserve, calls=calls, started=time.monotonic() - 1.0,
-                   approved=approved, journey=journey)
+    def expired(cls, maximum: int, *, reserve: int, calls: int, approved: bool, journey: bool, calls_by_role: dict[str, int],
+                seconds_by_role: dict[str, float], retries: int, call_seconds: float) -> Budget:
+        """Return a budget whose deadline has passed and that keeps the spent calls, retries, and role maps.
+
+        A resumed run in the gated or replayed phase uses it, so every model call stops at its deadline check
+        and the recorded counts stay whole: `calls` equals the sum of `calls_by_role`.
+        """
+        return cls(maximum, 1.0, reserve, calls, time.monotonic() - 1.0, approved=approved, journey=journey,
+                   retries=retries, call_seconds=call_seconds, calls_by_role=calls_by_role, seconds_by_role=seconds_by_role)
 
     def _caps(self) -> tuple[int, int]:
         if not self.approved:
@@ -118,6 +149,18 @@ class Budget:
             raise BudgetExhausted("search deadline exhausted; the holdout gate holds the remaining time")
         return remaining - reserved
 
+    def call_timeout(self) -> float:
+        """Return the seconds that one model call may run: `CALL_TIMEOUT_FACTOR` times the per-call estimate, capped by `remaining`."""
+        return min(CALL_TIMEOUT_FACTOR * self.call_seconds, self.remaining())
+
+    def out_of_time(self) -> bool:
+        """Return whether the search deadline has passed."""
+        try:
+            _ = self.remaining()
+        except BudgetExhausted:
+            return True
+        return False
+
     def reserve_time(self, seconds: float) -> None:
         """Hold `seconds` at the end of the deadline for the holdout gate. A value of 0 gives the time back."""
         self._check_reserve_seconds(seconds)
@@ -133,10 +176,37 @@ class Budget:
         if self.calls + count > limit:
             raise BudgetExhausted("global invocation budget exhausted")
 
-    def claim(self, *, holdout: bool = False) -> None:
+    def claim(self, *, holdout: bool = False, role: str = "task") -> None:
+        """Claim one call for `role`. The per-role counts always sum to `calls`."""
         with self._lock:
             self.check(1, holdout=holdout)
             self.calls += 1
+            self.calls_by_role[role] = self.calls_by_role.get(role, 0) + 1
+
+    @contextmanager
+    def timed(self, role: str) -> Generator[None]:
+        """Add the wall seconds of the body to `role`, or to `failed` when the body raises."""
+        started = time.monotonic()
+        key = role
+        try:
+            yield
+        except BaseException:
+            key = FAILED
+            raise
+        finally:
+            elapsed = time.monotonic() - started
+            with self._lock:
+                self.seconds_by_role[key] = self.seconds_by_role.get(key, 0.0) + elapsed
+
+    def snapshot(self) -> Spent:
+        """Return the calls, retries, and both role maps as of one moment, read under the budget lock."""
+        with self._lock:
+            return Spent(self.calls, self.retries, dict(self.calls_by_role), dict(self.seconds_by_role))
+
+    def retry(self) -> None:
+        """Count a rate-limit retry. A retry does not spend the approved call budget."""
+        with self._lock:
+            self.retries += 1
 
 
 def gate_seconds(calls: int) -> int:

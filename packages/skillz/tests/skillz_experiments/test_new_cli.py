@@ -449,14 +449,20 @@ def test_the_export_report_lists_the_unused_helper(
 
 # --- AC-12: the reflection prompt -----------------------------------------------------------------------------
 
+HYPOTHESIS_ASK = (" Add an @hypothesis text of at most 200 characters that states why the change helps, or null. "
+                  + "Attempt history, newest first. Each attempt lists its hypothesis, the train cases it fixed, "
+                  + "and the train cases it broke. No attempt yet. Do not re-introduce a change that broke a case. "
+                  + "Do not copy a case id into any component or into @hypothesis. "
+                  + "The case-id check rejects a component that names one and drops such a hypothesis.")
 PROSE_HEAD = ("Improve only the supplied skill text components. Preserve the helper CLI contract. "
-              "Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
-              "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
-              "and at most 25 words per descriptive sentence. "
-              "Return complete component contents. Do not alter independent checks or permissions."
-              " Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
-              "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%). "
-              "Proposals since the last validation gain: 0.")
+              + "Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
+              + "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
+              + "and at most 25 words per descriptive sentence. "
+              + "Return complete component contents. Do not alter independent checks or permissions."
+              + HYPOTHESIS_ASK
+              + " Make at most 6 edits across all components. An edit is one block of consecutive changed lines. "
+              + "Run status: this is proposal 1. Search calls spent: 0 of 100 (0%). "
+              + "Proposals since the last validation gain: 0.")
 START = Progress(spent=0, planned=100, proposal=1)
 
 
@@ -768,8 +774,8 @@ class _Preferred(FakeProvider):
         del prompt, candidate, case
         assert schema is not None
         self.budget.claim(holdout=holdout)
-        names = cast(list[str], schema["required"])
-        return {"answer": {name: VALUE if name == NEW_CLI else self.state.seed[name] for name in names}}
+        names = [name for name in cast(list[str], schema["required"]) if name != "@hypothesis"]
+        return {"answer": {name: VALUE if name == NEW_CLI else self.state.seed[name] for name in names} | {"@hypothesis": None}}
 
 
 def test_a_search_that_prefers_the_component_gates_with_the_built_target_and_exports_applicable_patches(
