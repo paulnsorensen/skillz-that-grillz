@@ -149,6 +149,14 @@ def test_converse_stream_loop_fails_when_the_process_ends_before_any_result(tmp_
         _ = run(tmp_path, "journey-exit-before-result", 3, [])
 
 
+def test_a_journey_error_result_names_a_stable_reason_not_the_turn_word(tmp_path: Path) -> None:
+    from skillz_experiments.run._session import _fault_reason  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match="Claude Code fails") as caught:
+        _ = run(tmp_path, "journey-error-result", 3, [Reply("again", False)])
+    assert _fault_reason(caught.value) == "error-result"
+    assert "turn 1" in str(caught.value)
+
+
 def test_turn_inventory_changed_in_a_later_init_event_stops_with_isolation_failed(tmp_path: Path) -> None:
     with pytest.raises(CodedError) as caught:
         _ = run(tmp_path, "journey-init-changes", 5, [Reply("again", False), Reply("again", False)])

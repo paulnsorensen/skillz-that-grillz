@@ -350,3 +350,28 @@ def test_a_usage_limited_fault_is_unscored(tmp_path: Path, make_target: Callable
     assert _session._add_validation_scores({}, rows) == {}  # pyright: ignore[reportPrivateUsage]
     search = cast(dict[str, object], result["search"])
     assert search["failed"] == 1 and search["failed_by_reason"] == {"usage-limited": 1}
+
+
+@pytest.mark.ac("gh-318:AC-9")
+def test_a_retry_starts_from_a_clean_staged_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                    sleeps: list[float]) -> None:
+    host = tmp_path / "host-codex"
+    host.mkdir()
+    _ = (host / "auth.json").write_text("{}")
+    log = tmp_path / "codex.log"
+    fake = tmp_path / "bin/codex"
+    fake.parent.mkdir()
+    _ = fake.write_text(
+        "#!/bin/sh\n" + f"echo call >> {log}\n" + "cat >/dev/null\n"
+        + 'while [ $# -gt 0 ]; do if [ "$1" = "--output-last-message" ]; then out=$2; fi; if [ "$1" = "-C" ]; then dir=$2; fi; shift; done\n'
+        + f'if [ "$(wc -l < {log})" -le 1 ]; then\n'
+        + 'echo partial > "$dir/partial.txt"\n'
+        + "echo '" + RATE_LIMIT + "'\nexit 1\nfi\n"
+        + 'if [ -e "$dir/partial.txt" ]; then echo stale > "$dir/stale.txt"; fi\n'
+        + 'echo good > "$dir/good.txt"\necho "{}" > "$out"\n', encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{fake.parent}:{os.environ['PATH']}")
+    monkeypatch.setenv("CODEX_HOME", str(host))
+    result = _invoke(Budget(10, 120, 0))
+    assert log.read_text().count("call") == 2 and sleeps
+    assert result["output_files"] == {"good.txt": "good\n"}

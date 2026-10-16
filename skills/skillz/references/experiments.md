@@ -73,6 +73,7 @@ The last `turn.failed` message always classifies the failure and stays in the ev
 A ChatGPT-plan usage limit ("You've hit your usage limit") fails as `usage-limited`. The runner does not retry it and does not halve the concurrent calls.
 It is an unscored `evaluation-failed` outcome that counts toward `search-faulted` and `holdout-faulted`. The runner does not read its "try again at" time as a wait.
 Each model call (every harness) has a per-call timeout of 4 times the per-call estimate, capped by the remaining search time.
+The exception is a Claude journey turn. It still runs under the remaining search time only.
 The estimate is 60 seconds plus the sandbox seconds of one evaluation in the run plan.
 The clock starts after the call gets a call slot. A wait for a slot that reaches the search deadline is a budget stop, not a timeout.
 Each retry attempt gets the same limit.

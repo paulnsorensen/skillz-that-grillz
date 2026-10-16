@@ -327,3 +327,13 @@ def test_session_coded_build_failure_with_component_text_shows_only_the_code(
     assert found and {item["rejected"] for item in found} == {"build-failed"}
     assert all("SyntaxError" not in prompt for prompt in state.prompts)
     assert "SyntaxError" not in (out / "run.json").read_text(encoding="utf-8")
+
+
+def test_a_skipped_or_timed_out_reflection_is_not_an_attempt() -> None:
+    from skillz_experiments.run._session import _faulted_reflection  # pyright: ignore[reportPrivateUsage]
+    skipped = {"arm": "search", "split": "reflection", "status": "skipped", "reason": "no-scored-feedback"}
+    timeout = {"arm": "search", "split": "reflection", "status": "timeout", "reason": "timeout", "failure": "x"}
+    outcomes = [skipped, _reflection(), timeout, skipped, timeout]
+    found = attempts(outcomes, SEED, [])
+    assert [item["index"] for item in found] == [1] and found[0]["candidate"] == "child-1"
+    assert [_faulted_reflection(row) for row in outcomes] == [True, False, True, True, True]

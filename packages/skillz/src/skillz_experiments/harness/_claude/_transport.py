@@ -539,7 +539,7 @@ class ClaudeCode:
             started = time.monotonic()
             with self.budget.timed(self.role):
                 returncode, stderr, events = self._run(workspace, prompt, schema or answer_schema(), expected, candidate)
-            final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
+                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
                 return not_loaded(workspace, started, trace)
@@ -586,7 +586,7 @@ class ClaudeCode:
                             raise CodedError("isolation-failed", "Claude Code isolation fails: the skill, tool, agent, MCP server, or plugin inventory "
                                              + f"changed in turn {turn + 1}; the invocation counts against the budget")
                     if any(event.get("type") == "result" and event.get("is_error") is True for event in fresh):
-                        raise RuntimeError(f"Claude Code fails: turn {turn + 1} reports an error result; "
+                        raise RuntimeError(f"Claude Code fails: error-result (turn {turn + 1} reports an error result); "
                                            + "the invocation counts against the budget")
                     if not ended:
                         break
