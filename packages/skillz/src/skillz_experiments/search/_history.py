@@ -27,8 +27,8 @@ def is_reflection(item: Mapping[str, object]) -> bool:
 
 
 def _faulted(item: Mapping[str, object]) -> bool:
-    """Return whether a reflection row records a skipped or timed-out call, which proposes nothing."""
-    return item.get("status") in ("skipped", "timeout") and "proposed" not in item
+    """Return whether a reflection row records a skipped, timed-out, or failed call, which proposes nothing."""
+    return item.get("status") in ("skipped", "timeout", "failed") and "proposed" not in item
 
 
 def _newest(outcomes: Sequence[Mapping[str, object]], split: str) -> Scores:

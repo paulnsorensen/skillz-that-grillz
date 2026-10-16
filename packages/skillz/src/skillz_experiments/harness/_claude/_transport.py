@@ -39,6 +39,7 @@ from skillz_experiments.harness._claude._constants import (
     SANDBOX_SECONDS,
     SANDBOX_STDERR,
 )
+from skillz_experiments.harness._claude._keys import restore, safe_keys
 from skillz_experiments.harness._claude._events import (
     answer,
     assistant_text,
@@ -537,13 +538,14 @@ class ClaudeCode:
             self.budget.claim(holdout=holdout, role=self.role)
             self.checkpoint()
             started = time.monotonic()
+            sent, names = safe_keys(schema or answer_schema())
             with self.budget.timed(self.role):
-                returncode, stderr, events = self._run(workspace, prompt, schema or answer_schema(), expected, candidate)
+                returncode, stderr, events = self._run(workspace, prompt, sent, expected, candidate)
                 final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
                 return not_loaded(workspace, started, trace)
-            return {"answer": answer(final), "events": trace, "usage": usage(trace), "workspace": str(workspace),
+            return {"answer": restore(answer(final), names), "events": trace, "usage": usage(trace), "workspace": str(workspace),
                     "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
 
     def converse(self, request: str, candidate: Candidate, case: Case, holdout: bool,

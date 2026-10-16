@@ -64,7 +64,11 @@ def one_shot(argv: list[str]) -> int:
         from journey import simulate
         answer, role = simulate(prompt, fields), "simulator"
     else:
-        answer, role = propose(prompt, fields, mode), "reflection"
+        # The real API refuses unsafe keys, so the transport sends safe ones and keeps each real key in `description`.
+        properties = cast(dict[str, dict[str, str]], schema["properties"])
+        real = {key: properties[key].get("description", key) for key in fields}
+        proposed = propose(prompt, list(real.values()), mode)
+        answer, role = {key: proposed[name] for key, name in real.items() if name in proposed}, "reflection"
     usage = task_usage(Path.cwd(), skill, mode) if skill is not None else USAGE
     log(log_entry(role, prompt, Path.cwd(), markers[0] if markers else None, usage, answer))
     event: dict[str, object] = {"type": "result", "subtype": "success", "is_error": False,
