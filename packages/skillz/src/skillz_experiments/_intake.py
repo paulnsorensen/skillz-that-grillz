@@ -26,7 +26,8 @@ HOLDOUT_MINIMUM = 6
 REQUEST_PREVIEW = 80
 DRAFT_LIMIT = 2_000_000
 MINIMUM_FAMILIES = 3
-TASK_RUBRIC = "Grade the response against the reference answer in `expected`. Pass only when it meets the request."
+TASK_RUBRIC = ("The answer is correct when it satisfies the request and matches `reference`. "
+               "Score 100 for a correct answer and 0 for a wrong answer.")
 _FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
 _REQUIRED = {"id", "family", "kind", "request", "source"}
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
