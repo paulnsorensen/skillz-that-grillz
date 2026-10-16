@@ -741,7 +741,8 @@ def test_a_replay_call_timeout_is_unscored_and_leaves_the_export_claim_inconclus
               if item.get("arm") == "replay" and item.get("status") == "evaluation-failed"]
     assert [(item["case_id"], item["reason"]) for item in failed] == [(victim, "timeout")]
     # The failed case adds no delta, so a timeout never counts as a 0.0 score.
-    assert victim not in replay["per_case"] and replay["cases"] == len(replay["per_case"]) == 5
+    per_case = cast(dict[str, float], replay["per_case"])
+    assert victim not in per_case and replay["cases"] == len(per_case) == 5
     assert _claims(after, out)["apply"] is False
 
 
