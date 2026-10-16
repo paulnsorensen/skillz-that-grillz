@@ -322,4 +322,4 @@ def test_a_broken_claude_shim_fails_the_claude_row_through_the_run_executable_an
     environment = cast(dict[str, str], first["environment"])
     assert first["argv"] == ["--version"]
     assert environment["PATH"].startswith(f"{executable.parent}:")
-    assert environment["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1" and environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] == "1"
+    assert environment["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "0" and environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] == "1"

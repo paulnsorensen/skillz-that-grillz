@@ -700,9 +700,15 @@ LIVE_PREFLIGHT = ("one model call after budget approval checks Bash reads, write
 
 
 def _executable_environment(executable: Path) -> dict[str, str]:
-    """Return the environment parts that the run and the doctor share when they start `executable`."""
+    """Return the environment parts that the run and the doctor share when they start `executable`.
+
+    `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` stays `0`. On Claude Code 2.1.301, a value of `1` replaced the sandbox-runtime
+    filesystem and Unix-socket rules on a host that blocks the nested user namespace (#322, #323). The child
+    environment holds no credential variable, so nothing is left to scrub. The live preflight stays the detector
+    if a later Claude Code version changes this.
+    """
     return {"PATH": f"{executable.parent}:/usr/bin:/bin", "LANG": "C.UTF-8",
-            "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "1", "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1"}
+            "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB": "0", "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": "1"}
 
 
 def _version(executable: str) -> Check:

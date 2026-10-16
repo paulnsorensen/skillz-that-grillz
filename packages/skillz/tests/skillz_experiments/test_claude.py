@@ -424,10 +424,14 @@ def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Pat
     assert settings["disableBundledSkills"] is True
 
 
-def test_environment_scrubs_subprocess_credentials_and_disables_bundled_skills(
+@pytest.mark.ac("gh-322:AC-1")
+@pytest.mark.ac("gh-323:AC-1")
+def test_environment_keeps_the_subprocess_scrub_layer_off_and_disables_bundled_skills(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "token-value")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "token-value")
+    monkeypatch.setenv("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
@@ -435,7 +439,7 @@ def test_environment_scrubs_subprocess_credentials_and_disables_bundled_skills(
     finally:
         session.close()
     environment = cast(dict[str, str], calls(executable)[0]["environment"])
-    assert environment["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1"
+    assert environment["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "0"
     assert environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] == "1"
     assert not set(TOKENS) & set(environment)
     assert "HOME" in environment and environment["HOME"].endswith("/workspace/home")
