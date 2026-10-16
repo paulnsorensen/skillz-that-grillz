@@ -172,7 +172,7 @@ class Provider(FakeProvider):
             fault = self.state.invoke_fault(self.state.invokes)
         if fault is not None:
             raise fault
-        self.budget.claim(holdout=holdout)
+        self.budget.claim(holdout=holdout, role="reflection")
         with self.state.lock:
             self.state.proposals += 1
             number = self.state.proposals
@@ -223,9 +223,9 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
 def _core(result: dict[str, object]) -> dict[str, object]:
-    """Return the search fields that the attempt record did not add."""
+    """Return the search fields that the attempt record and the evaluation counts did not add. `test_search_faults.py` covers the counts."""
     search = cast(dict[str, object], result["search"])
-    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped"}
+    assert set(search) - {"scored", "failed", "failed_by_reason"} == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped"}
     return {key: search[key] for key in ("reason", "retained_seed", "leakage_rejections", "proposal_over_budget")}
 
 
@@ -753,14 +753,15 @@ def test_a_changed_harness_raises_the_harness_changed_code() -> None:
     assert caught.value.code == "harness-changed"
 
 
-def test_a_search_where_every_evaluation_fails_stops_with_search_failed(
+def test_a_search_where_every_evaluation_fails_stops_with_search_faulted(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.evaluate_fault = lambda _number: RuntimeError("provider fell over")
     with pytest.raises(CodedError) as caught:
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    assert caught.value.code == "search-failed" and "new run directory" in str(caught.value)
+    assert caught.value.code == "search-faulted" and "resume the run in the same directory" in str(caught.value)
+    assert "new run directory" not in str(caught.value)
     assert read(out / "run.json")["phase"] == "prepared"
 
 
@@ -1324,13 +1325,18 @@ def test_refused_proposals_count_as_no_gain_and_stop_the_search_after_eight(
 @pytest.mark.ac("gh-240:AC-3")
 def test_proposals_whose_evaluations_all_fail_never_stop_the_search(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
-        approvals: Callable[..., tuple[str, int]]) -> None:
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    # The fault rule of gh-316 would stop this run first. Lift it, so that the test isolates the stall rule.
+    monkeypatch.setattr(_session, "FAULT_MIN_FINISHED", 10**9)
+    monkeypatch.setattr(_session, "FAULT_STREAK", 10**9)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     seed_calls = len(_validation(out))
     state.evaluate_fault = lambda number: RuntimeError("provider fell over") if number > seed_calls else None
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    heads = [prompt.split("\n", 1)[0] for prompt in state.prompts]
-    assert state.proposals > 8 and set(_stall_counts(heads)) == {0}
+    # All feedback is unscored, so each reflection is skipped unpaid (gh-316:AC-1); no proposal runs and none counts toward a stall.
+    skipped = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("split") == "reflection"]
+    assert state.proposals == 0 and state.prompts == []
+    assert skipped and {row["reason"] for row in skipped} == {"no-scored-feedback"}
     assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
 
 
@@ -1463,7 +1469,8 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
-    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped"}
+    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped",
+                           "scored", "failed", "failed_by_reason"}
     saved = cast(dict[str, object], read(out / "run.json")["search"])
     assert set(saved) == set(search) and {key: saved[key] for key in saved if key != "attempts"} == {
         key: search[key] for key in search if key != "attempts"}

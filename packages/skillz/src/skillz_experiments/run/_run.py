@@ -167,7 +167,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
-        "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "model": model, "adapter": adapter,
+        "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "retries": 0, "calls_by_role": {},
+        "seconds_by_role": {}, "model": model, "adapter": adapter,
         "judge_model_flag": judge_model,
         **({"claude_options": options.data()} if resolve_harness else {}),
         **({"harness": configuration.identity()} if configuration is not None else {}),

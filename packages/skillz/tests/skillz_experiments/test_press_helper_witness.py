@@ -20,7 +20,7 @@ from skillz_experiments.evaluation._evaluator import _activation, evaluate  # py
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments._protocol import LEDGER_KEY
 from skillz_experiments._budget import Budget
-from skillz_experiments.harness import _codex
+from skillz_experiments import _runtime
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._witness import (
     LEDGER, LEDGER_BYTES_LIMIT, LedgerError, Witness, ledger_entries, stage_witness)
@@ -382,7 +382,7 @@ def test_a_codex_task_stages_no_stub_no_ledger_and_reports_no_witness(tmp_path: 
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(Codex, "_execution_command", command)
-    monkeypatch.setattr(_codex, "process", fake_process)
+    monkeypatch.setattr(_runtime, "process", fake_process)
     monkeypatch.setattr(Codex, "_discover", discovered)
     adapter = Codex("m", Budget(5, 60, 0), lambda: None)
     try:

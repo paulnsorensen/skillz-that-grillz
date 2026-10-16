@@ -105,9 +105,9 @@ def test_malformed_gemini_answer_charges_calls_without_a_trace(tmp_path: Path) -
     private = tmp_path / "private-home"
     config, _ = configured_wrapper(scenario.out, private, CLI, "malformed-json")
     code, result, error = approve_and_run(gemini_args(scenario, config, helper=False), private, scenario)
-    assert code == 1 and cli_error(error)["code"] == "search-failed", (result, error)
+    assert code == 1 and cli_error(error)["code"] == "search-faulted", (result, error)
     record = read_record(scenario.out)
-    assert record["failure_code"] == "search-failed" and record["calls"] == 12
+    assert record["failure_code"] == "search-faulted" and record["calls"] == 4
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     failed = [item for item in outcomes if item.get("case_id") is not None]
     assert failed and all(item["status"] == "evaluation-failed" for item in failed)

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import math
+import re
 import threading
 import time
 from collections import Counter
+import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -15,8 +17,11 @@ from typing import Protocol, cast, final, get_args
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._budget import (
     MAX_CONCURRENT_CALLS,
+    SECONDS_PER_CALL,
     Budget,
+    SEARCH_ROLES,
     BudgetExhausted,
+    CallTimeout,
     ceilings,
 )
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
@@ -54,8 +59,19 @@ HarnessName = str
 
 LEAKAGE_REJECTED = "candidate-leakage-rejected"
 
+# The search stops with `search-faulted` when at least this many search evaluations finished and more than half failed,
+# or when this many of the newest ones failed in a row. The values are defaults, not measured limits.
+FAULT_MIN_FINISHED = 4
+FAULT_STREAK = 5
+_FAULT_REASON = re.compile(r"\bfails: ([a-z][a-z-]*)")
+
 # The modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
 SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
+
+
+def _faulted_reflection(item: Mapping[str, object]) -> bool:
+    """Return whether a reflection row records a skipped or timed-out call, which proposes nothing."""
+    return item.get("status") in ("skipped", "timeout") and "proposed" not in item
 
 
 def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
@@ -63,11 +79,49 @@ def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: 
     """Return the outcome that records a failed evaluation as a zero score. A holdout failure names its arm and repeat."""
     outcome: dict[str, object] = {"arm": arm, "split": case.split, "case_id": case.identifier, "score": 0.0,
                                   "status": "evaluation-failed", "failure": str(error)}
+    outcome["reason"] = _fault_reason(error)
     if arm == "search":
         outcome["search_candidate"] = candidate.identity
     if repeat is not None:
         outcome["repeat"] = repeat
     return outcome
+
+
+def _fault_reason(error: Exception) -> str:
+    """Return the stable reason of a failed evaluation: `timeout`, the reason that an adapter names after `fails:`, else `error`."""
+    if isinstance(error, CallTimeout):
+        return "timeout"
+    match = _FAULT_REASON.search(str(error))
+    return match.group(1) if match else "error"
+
+
+def _is_failed(item: Mapping[str, object]) -> bool:
+    return item.get("status") == "evaluation-failed"
+
+
+def _reason_counts(failed: Sequence[Mapping[str, object]]) -> dict[str, int]:
+    return dict(sorted(Counter(str(item.get("reason", "error")) for item in failed).items()))
+
+
+def search_counts(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """Return the scored and failed counts of the search evaluations in `rows`, and the failed counts by reason."""
+    failed = [item for item in rows if _is_failed(item)]
+    return {"scored": len(rows) - len(failed), "failed": len(failed), "failed_by_reason": _reason_counts(failed)}
+
+
+def _search_fault(rows: Sequence[Mapping[str, object]]) -> CodedError | None:
+    """Return `search-faulted` when the search evaluations in `rows` fail in a majority or in a streak, else None."""
+    failed = [item for item in rows if _is_failed(item)]
+    streak = 0
+    for item in reversed(rows):
+        if not _is_failed(item):
+            break
+        streak += 1
+    majority = len(rows) >= FAULT_MIN_FINISHED and 2 * len(failed) > len(rows)
+    if not (majority or streak >= FAULT_STREAK):
+        return None
+    return CodedError("search-faulted", f"{len(failed)} of {len(rows)} search evaluations failed ({_reason_counts(failed)}; "
+                      + f"the newest: {failed[-1].get('failure')}); wait for the provider, then resume the run in the same directory")
 
 
 def _baseline_rejected(detail: str | None = None) -> Stop:
@@ -95,10 +149,11 @@ def _unit_score(value: object) -> float:
 
 def _feedback(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
     """Return the GEPA score and feedback of one search outcome."""
+    if _is_failed(result):
+        # GEPA needs a number. The session ignores this 0.0 in every decision and drops the record from reflection feedback.
+        return 0.0, {"unscored": True, "request": case.request}
     score = _unit_score(result["score"])
     feedback: dict[str, object] = {"task_correct": score, "request": case.request, "case_id": case.identifier}
-    if "failure" in result:
-        feedback["failure"] = result["failure"]
     if "scores" in result:
         feedback["grader_scores"] = result["scores"]
     return score, feedback
@@ -189,6 +244,20 @@ def _int_field(record: dict[str, object], key: str) -> int:
     return value
 
 
+def _count_map(value: object) -> dict[str, float]:
+    """Load a recorded map of role to count or seconds. A missing map is empty."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("run record role counts must map roles to nonnegative numbers")
+    loaded: dict[str, float] = {}
+    for key, item in cast(dict[object, object], value).items():
+        if not isinstance(key, str) or type(item) not in (int, float) or cast(float, item) < 0:
+            raise ValueError("run record role counts must map roles to nonnegative numbers")
+        loaded[key] = float(cast(float, item))
+    return loaded
+
+
 def record_outcomes(record: dict[str, object]) -> list[dict[str, object]]:
     value = field(record, "outcomes")
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in cast(list[object], value)):
@@ -226,6 +295,7 @@ class Session:
         self._freeze_compatibility(configuration)
         self.budget = self._open_budget()
         self._fault: CodedError | None = None
+        self._ended_proposal: str | None = None
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
         # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
         self._denylist = Denylist.build(self._search_cases.values())
@@ -236,6 +306,8 @@ class Session:
         self._reusable: dict[tuple[str, str, str], list[dict[str, object]]] = {}
         # The live search evaluations of the running search. Reused outcomes do not count.
         self._live = 0
+        # The count of recorded search evaluations when this session started its search. The fault rule counts after it.
+        self._fault_base = 0
         # Set before the provider gets `self.checkpoint`, which reads it.
         self._leak_rejections = self._recorded_rejections()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
@@ -335,7 +407,10 @@ class Session:
         by up to `CLOCK_TOLERANCE` seconds. The gate time reserve applies only inside `search`.
         """
         budget = mapping(field(self.record, "budget"))
-        self._verify_budget(budget)
+        sandbox_seconds = self._verify_budget(budget)
+        calls = _int_field(self.record, "calls")
+        by_role = ({role: int(count) for role, count in _count_map(self.record.get("calls_by_role")).items()}
+                   if "calls_by_role" in self.record else {"unattributed": calls} if calls else {})
         wall = time.time() - _number_field(self.record, "started")
         if not -CLOCK_TOLERANCE <= wall < math.inf:
             raise CodedError("clock-skew", "the wall clock is more than "
@@ -346,11 +421,17 @@ class Session:
         if seconds - elapsed <= 0:
             raise BudgetExhausted("global deadline exhausted")
         return Budget(_int_field(budget, "maximum"), seconds - elapsed, reserve=_int_field(budget, "reserve"),
-                      calls=_int_field(self.record, "calls"), approved=budget.get("approved") is True,
-                      journey=budget.get("journey") is True)
+                      calls=calls, approved=budget.get("approved") is True,
+                      journey=budget.get("journey") is True, calls_by_role=by_role,
+                      call_seconds=SECONDS_PER_CALL + sandbox_seconds,
+                      seconds_by_role=_count_map(self.record.get("seconds_by_role")),
+                      retries=_int_field(self.record, "retries") if "retries" in self.record else 0)
 
-    def _verify_budget(self, budget: dict[str, object]) -> None:
-        """Stop when the recorded budget differs from the plan that the frozen cases, repeats, and edit give."""
+    def _verify_budget(self, budget: dict[str, object]) -> int:
+        """Stop when the recorded budget differs from the plan that the frozen cases, repeats, and edit give.
+
+        Return the sandbox seconds of one evaluation, which add to the per-call time estimate.
+        """
         count = {split: sum(case.split == split for case in self.cases) for split in cast(tuple[str, ...], get_args(Split))}
         repeats = _int_field(self.record, "repeats")
         plan = size_plan(self.contract, self.cases, repeats, self.sizing)
@@ -371,10 +452,15 @@ class Session:
                 or (budget.get("journey") is True) != plan.sized.journey
                 or not 0 < seconds <= ceilings(plan.sized.journey)[1]):
             raise Stop("run-record-tampered", "the recorded budget differs from the plan of the frozen run; create a new run", {})
+        return plan.sandbox_seconds
 
     def checkpoint(self) -> None:
         with self.lock:
-            self.record["calls"] = self.budget.calls
+            spent = self.budget.snapshot()
+            self.record["calls"] = spent.calls
+            self.record["retries"] = spent.retries
+            self.record["calls_by_role"] = dict(sorted(spent.calls_by_role.items()))
+            self.record["seconds_by_role"] = {role: round(seconds, 3) for role, seconds in sorted(spent.seconds_by_role.items())}
             self.record["leakage_rejected"] = {rule: sorted(keys) for rule, keys in sorted(self._leak_rejections.items())}
             write(self.out / "run.json", self.record)
 
@@ -466,8 +552,17 @@ class Session:
             with self.lock:
                 self.outcomes.append(result)
                 self.checkpoint()
+            self._stop_if_faulted()
         self._keep_if_best(candidate, case)
         return _feedback(result, case)
+
+    def _stop_if_faulted(self) -> None:
+        """Latch and raise `search-faulted` when the recorded search evaluations meet the failure rule."""
+        with self.lock:
+            fault = _search_fault(self._search_outcomes()[self._fault_base:])
+        if fault is not None:
+            self._latch(fault)
+            raise fault
 
     def _reuse(self, candidate: Candidate, case: Case) -> dict[str, object] | None:
         """Return the next recorded outcome of `candidate` on `case`, or None. Each recorded outcome serves one evaluation."""
@@ -483,6 +578,7 @@ class Session:
         with self.lock:
             self._reusable.clear()
             self._live = 0
+            self._fault_base = len(self._search_outcomes())
             for item in self._search_outcomes():
                 if "search_candidate" in item and item.get("status") != "evaluation-failed":
                     key = (cast(str, item["search_candidate"]), cast(str, item["split"]), cast(str, item["case_id"]))
@@ -566,12 +662,25 @@ class Session:
     def _propose(self, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
                  components: list[str]) -> dict[str, str]:
         self._raise_fault()
+        asked = hashlib.sha256(repr((sorted(candidate.items()), feedback)).encode()).hexdigest()
         with self.lock:
+            if self._ended_proposal == asked:
+                # GEPA retries a failed proposal once. The retry must not run a second reflection call.
+                self._ended_proposal = None
+                raise ValueError("the reflection of this proposal ended with no candidate")
             stall = self._stall()
             progress = Progress(spent=len(self._search_outcomes()), planned=self._search_ceiling(),
-                                proposal=1 + len(self._reflections()), stalled=stall.streak, advice=stall.advice)
+                                proposal=1 + sum(1 for item in self._reflections() if not _faulted_reflection(item)), stalled=stall.streak, advice=stall.advice)
             history = build_attempts(self.outcomes, self._seed_ref(), self._validation_ids())
             protect = protected_cases(self.outcomes, self._best_identity())
+        feedback = {name: [item for item in items if not _is_unscored(item)] for name, items in feedback.items()}
+        if not any(feedback.values()):
+            with self.lock:
+                self._ended_proposal = asked
+                self.outcomes.append({"arm": "search", "split": "reflection", "status": "skipped",
+                                      "reason": "no-scored-feedback"})
+                self.checkpoint()
+            raise ValueError("every feedback record is unscored; the proposal ends with no candidate")
         prompt, schema = reflection_request(self.edit, candidate, feedback, components, progress=progress,
                                             cheaper=self.statistics.token_rule, history=history, protect=protect)
         try:
@@ -579,6 +688,13 @@ class Session:
         except CodedError as error:
             self._latch(error)
             raise
+        except CallTimeout as error:
+            with self.lock:
+                self.outcomes.append({"arm": "search", "split": "reflection", "status": "timeout", "reason": "timeout",
+                                      "failure": str(error)})
+                self._ended_proposal = asked
+                self.checkpoint()
+            raise ValueError("the reflection call timed out; the proposal ends with no candidate") from error
         refusal: ValueError | None = None
         proposal: dict[str, str] = {}
         edits = 0
@@ -742,6 +858,7 @@ class Session:
         spent = len(self._search_outcomes())
         allowance = self._search_ceiling() - spent
         reason = "search-share-spent-best-validated"
+        timed_out = False
         if allowance >= 1 and self._stalled():
             # A run that stalled before a resume skips GEPA, which scores the seed again before its first stop check.
             reason = "converged-stalled"
@@ -760,13 +877,19 @@ class Session:
             except BudgetExhausted:
                 self.take_budget_stop()
                 reason = "budget-exhausted-best-validated"
+                # Read before the `finally` gives the reserved time back: the search deadline, not the call cap, ended it.
+                timed_out = self.budget.out_of_time()
             finally:
                 self.budget.reserve_time(0.0)
         winner = self._best_validated(validation)
         if reason == "budget-exhausted-best-validated" and winner.identity == self.seed.identity:
             reason = "budget-exhausted-seed-retained"
         scored = self._search_outcomes()
-        if scored and all(item.get("status") == "evaluation-failed" for item in scored):
+        ceiling = self._search_ceiling()
+        time_stop = timed_out and 2 * len(scored) < ceiling
+        if time_stop:
+            reason = "time-exhausted"
+        if scored and all(_is_failed(item) for item in scored):
             raise CodedError("search-failed", "every search evaluation failed: " + str(scored[-1]["failure"])
                              + "; check the model, then start a new run directory")
         self.record["winner"] = winner.files
@@ -777,11 +900,15 @@ class Session:
         self.record["search"] = base | {
             "reason": reason,
             "retained_seed": winner.identity == self.seed.identity,
-            "leakage_rejections": rejections,
+            "leakage_rejections": rejections, **search_counts(scored),
             "proposal_over_budget": self._over_budget(),
             "attempts": build_attempts(self.outcomes, self._seed_ref(), self._validation_ids()),
             "text_dropped": self._text_dropped(),
         }
+        if time_stop:
+            with self.lock:
+                seconds = {role: round(self.budget.seconds_by_role.get(role, 0.0), 3) for role in SEARCH_ROLES}
+            cast(dict[str, object], self.record["search"])["seconds_by_role"] = seconds
         self.record["phase"] = "searched"
         self.checkpoint()
 
@@ -879,6 +1006,10 @@ class Session:
             with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
                 _ = list(pool.map(score, todo))
             paired = holdout_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner"))
+            lost = [item for item in self.outcomes if item.get("split") == "holdout" and _is_failed(item)]
+            if lost and not paired.deltas:
+                raise CodedError("holdout-faulted", f"no holdout case has a scored baseline and winner pair; {len(lost)} holdout "
+                                 + f"evaluations failed ({_reason_counts(lost)}); wait for the provider, then resume the run")
             tokens = ({case_id: arms_tokens for case_id, arms_tokens in self._holdout_tokens().items()
                        if case_id in paired.deltas} if self.statistics.token_rule else None)
             outcome = replace(gate_verdict(paired.deltas, thresholds=self.statistics, families=families,
@@ -922,7 +1053,7 @@ def stall_observations(outcomes: Sequence[Mapping[str, object]], validation: set
         reflection = outcomes[start]
         proposed = reflection.get("proposed")
         earlier = seen.get(proposed, {}) if isinstance(proposed, str) else {}
-        observations.append(None if reflection.get("status") == "proposal-build-failed"
+        observations.append(None if reflection.get("status") is not None
                             else _observation(window, proposed, validation, best, earlier))
         _ = _add_validation_scores(seen, window)
     return observations
@@ -943,7 +1074,7 @@ def _observation(window: Sequence[Mapping[str, object]], identity: object, valid
             break
         if item.get("search_candidate") != identity:
             continue
-        if item.get("status") == "evaluation-failed":
+        if _is_failed(item):
             return None
         if item.get("split") == "validation":
             scores[cast(str, item["case_id"])] = _unit_score(item["score"])
@@ -956,14 +1087,20 @@ def _is_search_validation(item: Mapping[str, object]) -> bool:
     return item.get("arm") == "search" and item.get("split") == "validation" and "search_candidate" in item
 
 
+def _is_unscored(record: Mapping[str, object]) -> bool:
+    """Return whether a feedback record of GEPA, or a value nested in it, marks an unscored evaluation."""
+    return record.get("unscored") is True or any(isinstance(value, Mapping) and cast(Mapping[str, object], value).get("unscored") is True
+                                                 for value in record.values())
+
+
 def _add_validation_scores(scores: dict[str, dict[str, float]],
                            items: Sequence[Mapping[str, object]]) -> dict[str, dict[str, float]]:
     """Add each search validation score in `items` to `scores` by candidate and case, and return `scores`.
 
-    A later score for a case replaces the earlier one.
+    A later score for a case replaces the earlier one. An `evaluation-failed` outcome has no score and adds none.
     """
     for item in items:
-        if _is_search_validation(item):
+        if _is_search_validation(item) and not _is_failed(item):
             scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
     return scores
 

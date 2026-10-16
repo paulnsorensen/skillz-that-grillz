@@ -20,7 +20,7 @@ from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments.evaluation import answer_schema, Reply, Transcript
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._budget import Budget, BudgetExhausted
-from skillz_experiments._runtime import live, process
+from skillz_experiments._runtime import live, model_call, process
 from skillz_experiments.harness._check import (
     Check,
     credential_row,
@@ -154,6 +154,7 @@ class ClaudeCode:
     claude_sandbox: ClassVar[bool] = True
     refuses_claude_options: ClassVar[bool] = False
     rejection: str | None = None
+    role: str = "task"
 
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
                  out: Path | None = None, login: ClaudeLogin | None = None, options: ClaudeOptions | None = None,
@@ -279,10 +280,10 @@ class ClaudeCode:
         argv = self._command(settings_path, schema, mcp_path) + (["--input-format", "stream-json"] if stream else [])
         return argv, self._environment(workspace)
 
-    def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None, timeout: float,
+    def _run(self, workspace: Path, prompt: str, schema: dict[str, object] | None,
              expected: list[str], candidate: Candidate | None = None) -> tuple[int, str, list[dict[str, object]]]:
         command, environment = self._start(workspace, schema, expected, candidate)
-        result = process(command, cwd=workspace, timeout=timeout, environment=environment, input_text=prompt)
+        result = model_call(self.budget, command, cwd=workspace, environment=environment, input_text=prompt)
         return result.returncode, result.stderr, parse_events(result.stdout)
 
     def _list(self, workspace: Path, overrides: frozenset[str]) -> tuple[frozenset[str], frozenset[str]]:
@@ -441,7 +442,7 @@ class ClaudeCode:
             abstract = f"skillz-{network_token[:16]}"
             with (watched() as (port, connected), watched_unix(sockets, active=probing) as (socket_path, socket_reached),
                   watched_abstract(abstract, active=probing) as abstract_reached):
-                self.budget.claim()
+                self.budget.claim(role="preflight")
                 self.checkpoint()
                 commands = network_commands(port, network_token)
                 if probing:
@@ -449,7 +450,7 @@ class ClaudeCode:
                 try:
                     returncode, stderr, events = self._run(
                         workspace, self._prompt(sealed, control_file, protected, write_control, write_token, commands),
-                        None, min(120, self.budget.remaining()), [name])
+                        None, [name])
                 except Exception:
                     if connected(network_token) or socket_reached(network_token) or abstract_reached(network_token):
                         raise NetworkIsolationFailed(LISTENER_REACHED) from None
@@ -533,12 +534,12 @@ class ClaudeCode:
             if paths:
                 prompt += "\nCAPTURE FILES:\n" + "\n".join(paths)
             expected = [] if candidate is None else [candidate.skill]
-            self.budget.claim(holdout=holdout)
+            self.budget.claim(holdout=holdout, role=self.role)
             self.checkpoint()
             started = time.monotonic()
-            returncode, stderr, events = self._run(workspace, prompt, schema or answer_schema(), self.budget.remaining(),
-                                                   expected, candidate)
-            final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
+            with self.budget.timed(self.role):
+                returncode, stderr, events = self._run(workspace, prompt, schema or answer_schema(), expected, candidate)
+                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
                 return not_loaded(workspace, started, trace)
@@ -572,9 +573,10 @@ class ClaudeCode:
             closed = False
             with live(command, cwd=workspace, environment=environment) as child:
                 for turn in range(case.journey.max_turns):
-                    self.budget.claim(holdout=holdout)
+                    self.budget.claim(holdout=holdout, role=self.role)
                     self.checkpoint()
-                    lines, ended = child.turn(user_line(message), self.budget.remaining(), is_result)
+                    with self.budget.timed(self.role):
+                        lines, ended = child.turn(user_line(message), self.budget.remaining(), is_result)
                     fresh = parse_events("".join(lines))
                     events += fresh
                     for init in (event for event in fresh if event.get("type") == "system" and event.get("subtype") == "init"):
@@ -584,7 +586,7 @@ class ClaudeCode:
                             raise CodedError("isolation-failed", "Claude Code isolation fails: the skill, tool, agent, MCP server, or plugin inventory "
                                              + f"changed in turn {turn + 1}; the invocation counts against the budget")
                     if any(event.get("type") == "result" and event.get("is_error") is True for event in fresh):
-                        raise RuntimeError(f"Claude Code fails: turn {turn + 1} reports an error result; "
+                        raise RuntimeError(f"Claude Code fails: error-result (turn {turn + 1} reports an error result); "
                                            + "the invocation counts against the budget")
                     if not ended:
                         break

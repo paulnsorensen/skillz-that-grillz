@@ -105,7 +105,8 @@ def calls_upper_bound(record: dict[str, object], out: Path) -> int | None:
 
 def summary(record: dict[str, object], out: Path | None = None) -> dict[str, object]:
     """Return the run summary. With `out`, it reconciles the budget counter with the planned worst-case call count."""
-    keys = ("schema_version", "phase", "calls", "model", "adapter", "edit", "codex_version", "harness", "judge",
+    keys = ("schema_version", "phase", "calls", "retries", "calls_by_role", "seconds_by_role", "model", "adapter", "edit",
+            "codex_version", "harness", "judge",
             "gate", "search", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility",
             "statistics")
     result = {key: record.get(key) for key in keys}
@@ -146,7 +147,7 @@ def _export_search(value: object) -> object:
 
 
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:
-    allowed = {"arm", "split", "case_id", "repeat", "score", "status", "loaded", "helper_executed", "candidate_hash",
+    allowed = {"arm", "split", "case_id", "repeat", "score", "status", "reason", "loaded", "helper_executed", "candidate_hash",
                "case_hash", "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
                "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate", "scores"}
     result = {key: value for key, value in item.items() if key in allowed}

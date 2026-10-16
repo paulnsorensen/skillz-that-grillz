@@ -317,7 +317,7 @@ def stream(script: Path, argv: list[str], mode: str) -> int:
             _ = Path("notes.txt").write_text(f"turn {turn}\n")
         answer = f"agent-{turn}"
         emit({"type": "assistant", "message": {"content": [{"type": "text", "text": answer}]}})
-        emit({"type": "result", "subtype": "success", "is_error": False, "result": answer, "usage": USAGE})
+        emit({"type": "result", "subtype": "success", "is_error": mode == "journey-error-result", "result": answer, "usage": USAGE})
     return 0
 
 
