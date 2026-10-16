@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from support import (HARNESS_RUNS, Scenario, archive_witnesses, assert_promoted, build_wedge, call_cli,
+from support import (HARNESS_RUNS, Scenario, archive_witnesses, assert_promoted, assert_replayed, build_wedge, call_cli,
                      make_scenario, run_scenario, snapshot, uv_bin_dir)
 from fixtures.targets import NEW_MODULE
 
@@ -44,6 +44,7 @@ def _world(base: Path) -> tuple[Scenario, str]:
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-6")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-10")
+@pytest.mark.ac("skillz-autoimprove-claims:AC-4")
 @pytest.mark.parametrize("harness, cli", HARNESS_RUNS)
 def test_new_cli_rebuilds_executes_and_exports_from_real_cli(
         tmp_path: Path, harness: str, cli: Path) -> None:
@@ -54,6 +55,7 @@ def test_new_cli_rebuilds_executes_and_exports_from_real_cli(
     result = run_scenario(scenario, home, helper=True, mode="targets", harness=harness,
                           cli=cli, bin_dir=uv_bin_dir())
     assert_promoted(scenario, result)
+    assert_replayed(scenario.out)
     assert snapshot(scenario.target) == before
 
     code, exported, error = call_cli(["export", str(scenario.out), "--out", str(scenario.export)], home, cli=cli)

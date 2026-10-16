@@ -210,6 +210,9 @@ def test_a_run_at_the_planned_budget_never_ends_budget_exhausted_seed_retained(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
     assert result["phase"] == "complete" and cast(int, read(out / "run.json")["calls"]) <= calls
+    # The summary joins the fault accounting and the three claims.
+    assert {"retries", "calls_by_role", "seconds_by_role", "claims", "replay"} <= set(result)
+    assert {"scored", "failed", "failed_by_reason"} <= set(cast(dict[str, object], result["search"]))
 
 
 def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
@@ -987,7 +990,8 @@ def test_a_run_stopped_by_another_coded_error_still_resumes(
 
 def _failed_holdout(record: dict[str, object]) -> list[dict[str, object]]:
     return [item for item in cast(list[dict[str, object]], record["outcomes"])
-            if item.get("split") == "holdout" and item.get("status") == "evaluation-failed"]
+            if item.get("split") == "holdout" and item.get("arm") != "replay"
+            and item.get("status") == "evaluation-failed"]
 
 
 def test_a_provider_fault_on_every_winner_repeat_of_one_holdout_case_drops_that_case_and_the_gate_finishes(

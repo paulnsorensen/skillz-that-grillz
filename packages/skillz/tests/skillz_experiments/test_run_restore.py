@@ -901,7 +901,7 @@ def test_a_supplied_configuration_refuses_option_values_and_its_roots_stop_befor
 
 def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reserve() -> None:
     plain, slow = plan_run(6, 6, 6, 1, 3), plan_run(6, 6, 6, 1, 3, 30)
-    gate_evaluations = 2 * 6 * 3 + 2 * HOLDOUT_RETRIES_PER_ARM
+    gate_evaluations = 2 * 6 * 3 + 2 * HOLDOUT_RETRIES_PER_ARM + 6
     assert slow.sandbox_gate == math.ceil(gate_evaluations * 30 / MAX_CONCURRENT_CALLS)
     assert slow.sized.calls == plain.sized.calls
     assert slow.sized.seconds == plain.sized.seconds + slow.sandbox_total > plain.sized.seconds
@@ -950,6 +950,18 @@ def test_a_run_prepared_before_command_grader_sandbox_time_stops_as_an_older_run
         _ = run(target, out, MODEL, live=True, factory=State().factory())
 
 
+def test_a_run_prepared_before_the_replay_stops_as_an_older_runner(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    estimate = cast(dict[str, object], record["estimate"])
+    assert "replay_calls" in estimate
+    _ = estimate.pop("replay_calls")
+    write(out / "run.json", record)
+    with pytest.raises(ValueError, match="older runner; create a new run"):
+        _ = run(target, out, MODEL, live=True, factory=State().factory())
+
 def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_claude_options_out_of_the_stops(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
     target, out = _command_target(tmp_path, make_target), tmp_path / "run"
@@ -966,7 +978,8 @@ def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_cl
         _ = run(target, out, MODEL, configuration=configuration, approve_cases=case_hash)
     assert budget.value.code == "budget-unapproved" and "claude_options" not in budget.value.data
     estimate = cast(dict[str, int], budget.value.data["estimate"])
-    evaluations = estimate["metric_calls"] + 2 * estimate["holdout_cases"] * estimate["repeats"] + 2 * HOLDOUT_RETRIES_PER_ARM
+    evaluations = (estimate["metric_calls"] + 2 * estimate["holdout_cases"] * estimate["repeats"]
+                   + 2 * HOLDOUT_RETRIES_PER_ARM + estimate["holdout_cases"])
     assert estimate["sandbox_seconds"] == math.ceil(evaluations * 100 / MAX_CONCURRENT_CALLS)
 
 @pytest.mark.parametrize("change", ["seed", "target"])

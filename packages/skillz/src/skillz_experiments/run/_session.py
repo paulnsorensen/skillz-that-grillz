@@ -8,11 +8,11 @@ import threading
 import time
 from collections import Counter
 import hashlib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from typing import Protocol, cast, final, get_args
+from typing import Protocol, TypeVar, cast, final, get_args
 
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._budget import (
@@ -39,7 +39,11 @@ from skillz_experiments.harness import (
     Harness,
     stop_kind,
 )
+from skillz_experiments.run._patch import build_patch
 from skillz_experiments.run._plan import case_calls, plan_estimate, size_plan
+from skillz_experiments.run._replay import STDERR_LIMIT, apply_patches, differences, prepare_copy
+from skillz_experiments.run._replay import components as replay_components
+from skillz_experiments.run._replay import drift as replay_drift
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import HYPOTHESIS, Denylist, Edit, overshoot
 from skillz_experiments.search import is_reflection as _is_reflection
@@ -59,6 +63,9 @@ HarnessName = str
 
 LEAKAGE_REJECTED = "candidate-leakage-rejected"
 
+# The phases after the gate. A run in one of them makes no model call without a deadline check.
+POST_GATE_PHASES = ("gated", "replayed")
+
 # The search stops with `search-faulted` when at least this many search evaluations finished and more than half failed,
 # or when this many of the newest ones failed in a row. The values are defaults, not measured limits.
 FAULT_MIN_FINISHED = 4
@@ -76,7 +83,10 @@ def _faulted_reflection(item: Mapping[str, object]) -> bool:
 
 def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
                     repeat: int | None = None) -> dict[str, object]:
-    """Return the outcome that records a failed evaluation as a zero score. A holdout failure names its arm and repeat."""
+    """Return the outcome that records a failed evaluation. Its 0.0 score is a placeholder that no decision reads.
+
+    A holdout or replay failure names its arm and repeat.
+    """
     outcome: dict[str, object] = {"arm": arm, "split": case.split, "case_id": case.identifier, "score": 0.0,
                                   "status": "evaluation-failed", "failure": str(error)}
     outcome["reason"] = _fault_reason(error)
@@ -142,17 +152,12 @@ def _case_ids(feedback: Mapping[str, Sequence[Mapping[str, object]]]) -> list[st
     return list(dict.fromkeys(name for name in names if isinstance(name, str)))
 
 
-def _unit_score(value: object) -> float:
-    """Clamp a provider score to 0..1. A NaN counts as 0."""
-    return min(1.0, max(0.0, float(cast(float, value))))
-
-
 def _feedback(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
     """Return the GEPA score and feedback of one search outcome."""
     if _is_failed(result):
         # GEPA needs a number. The session ignores this 0.0 in every decision and drops the record from reflection feedback.
         return 0.0, {"unscored": True, "request": case.request}
-    score = _unit_score(result["score"])
+    score = unit_score(result["score"])
     feedback: dict[str, object] = {"task_correct": score, "request": case.request, "case_id": case.identifier}
     if "scores" in result:
         feedback["grader_scores"] = result["scores"]
@@ -263,6 +268,34 @@ def record_outcomes(record: dict[str, object]) -> list[dict[str, object]]:
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in cast(list[object], value)):
         raise ValueError("run record field outcomes must be a list of objects")
     return cast(list[dict[str, object]], value)
+
+
+def unit_score(value: object) -> float:
+    """Clamp a provider score to 0..1. A NaN counts as 0."""
+    return min(1.0, max(0.0, float(cast(float, value))))
+
+
+Outcome = TypeVar("Outcome", bound=Mapping[str, object])
+
+
+def scored_holdout(outcomes: Iterable[Outcome], arms: Collection[str]) -> Iterator[Outcome]:
+    """Yield the holdout outcomes of `arms` in order. An `evaluation-failed` outcome is unscored and drops out."""
+    for item in outcomes:
+        if item.get("split") == "holdout" and item.get("arm") in arms and item.get("status") != "evaluation-failed":
+            yield item
+
+
+def holdout_scores(outcomes: Sequence[Mapping[str, object]], arm: str) -> dict[str, dict[int, float]]:
+    """Return the scored holdout scores of `arm` by case and repeat. The newest outcome of a case and repeat wins."""
+    found: dict[str, dict[int, float]] = {}
+    for item in scored_holdout(outcomes, (arm,)):
+        found.setdefault(str(item.get("case_id")), {})[cast(int, item.get("repeat"))] = unit_score(item["score"])
+    return found
+
+
+def by_repeat_order(scores: Mapping[str, Mapping[int, float]]) -> dict[str, list[float]]:
+    """Return the scores of each case as a list in repeat order."""
+    return {case_id: [by_repeat[repeat] for repeat in sorted(by_repeat)] for case_id, by_repeat in scores.items()}
 
 
 @final
@@ -411,6 +444,9 @@ class Session:
         calls = _int_field(self.record, "calls")
         by_role = ({role: int(count) for role, count in _count_map(self.record.get("calls_by_role")).items()}
                    if "calls_by_role" in self.record else {"unattributed": calls} if calls else {})
+        seconds_by_role = _count_map(self.record.get("seconds_by_role"))
+        retries = _int_field(self.record, "retries") if "retries" in self.record else 0
+        call_seconds = SECONDS_PER_CALL + sandbox_seconds
         wall = time.time() - _number_field(self.record, "started")
         if not -CLOCK_TOLERANCE <= wall < math.inf:
             raise CodedError("clock-skew", "the wall clock is more than "
@@ -418,14 +454,17 @@ class Session:
         monotonic = time.monotonic() - _number_field(self.record, "started_monotonic")
         elapsed = max(wall, monotonic, 0.0)
         seconds = _number_field(budget, "seconds")
+        approved, journey = budget.get("approved") is True, budget.get("journey") is True
         if seconds - elapsed <= 0:
-            raise BudgetExhausted("global deadline exhausted")
+            if _phase(self.record) not in POST_GATE_PHASES:
+                raise BudgetExhausted("global deadline exhausted")
+            # A gated or replayed run makes no model call without a deadline check, so the replay ends on its own.
+            return Budget.expired(_int_field(budget, "maximum"), reserve=_int_field(budget, "reserve"), calls=calls,
+                                  approved=approved, journey=journey, calls_by_role=by_role,
+                                  seconds_by_role=seconds_by_role, retries=retries, call_seconds=call_seconds)
         return Budget(_int_field(budget, "maximum"), seconds - elapsed, reserve=_int_field(budget, "reserve"),
-                      calls=calls, approved=budget.get("approved") is True,
-                      journey=budget.get("journey") is True, calls_by_role=by_role,
-                      call_seconds=SECONDS_PER_CALL + sandbox_seconds,
-                      seconds_by_role=_count_map(self.record.get("seconds_by_role")),
-                      retries=_int_field(self.record, "retries") if "retries" in self.record else 0)
+                      calls=calls, approved=approved, journey=journey, calls_by_role=by_role,
+                      seconds_by_role=seconds_by_role, retries=retries, call_seconds=call_seconds)
 
     def _verify_budget(self, budget: dict[str, object]) -> int:
         """Stop when the recorded budget differs from the plan that the frozen cases, repeats, and edit give.
@@ -439,7 +478,8 @@ class Session:
         recorded = mapping(field(self.record, "estimate"))
         maximum = max(plan.sized.calls, 1)
         seconds = _number_field(budget, "seconds")
-        if "reserve_seconds" not in budget or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded):
+        if ("reserve_seconds" not in budget or "replay_calls" not in recorded
+                or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded)):
             raise ValueError("run was prepared by an older runner; create a new run")
 
         def differs(found: object, wanted: object) -> bool:
@@ -447,7 +487,7 @@ class Session:
 
         if (any(differs(recorded.get(key), value) for key, value in expected.items())
                 or differs(budget.get("maximum"), maximum)
-                or differs(budget.get("reserve"), min(plan.holdout_calls, maximum))
+                or differs(budget.get("reserve"), min(plan.reserve, maximum))
                 or differs(budget.get("reserve_seconds"), plan.reserve_seconds)
                 or (budget.get("journey") is True) != plan.sized.journey
                 or not 0 < seconds <= ceilings(plan.sized.journey)[1]):
@@ -468,6 +508,12 @@ class Session:
         return sorted((case for case in self.cases if case.split == split), key=lambda case: case.identifier)
 
     def preflight(self) -> None:
+        if self.record.get("phase") in POST_GATE_PHASES:
+            try:
+                _ = self.budget.remaining()
+            except BudgetExhausted:
+                # Past the deadline the replay makes no model call, so the live preflight has nothing to protect.
+                return
         recorded = self.record.get("preflight")
         before = self.budget.calls
         try:
@@ -932,22 +978,15 @@ class Session:
     def _holdout_outcomes(self) -> list[dict[str, object]]:
         """Return the scored holdout outcomes of the baseline and the winner.
 
-        An `evaluation-failed` outcome is unscored and drops out. The newest outcome of an (arm, case, repeat) wins.
+        The newest outcome of an (arm, case, repeat) wins.
         """
         newest: dict[tuple[object, object, object], dict[str, object]] = {}
-        for item in self.outcomes:
-            if (item.get("split") == "holdout" and item.get("arm") in ("baseline", "winner")
-                    and item.get("status") != "evaluation-failed"):
-                newest[(item["arm"], item["case_id"], item.get("repeat"))] = item
+        for item in scored_holdout(self.outcomes, ("baseline", "winner")):
+            newest[(item["arm"], item["case_id"], item.get("repeat"))] = item
         return list(newest.values())
 
     def _holdout_scores(self, arm: str) -> dict[str, list[float]]:
-        scores: dict[str, list[tuple[int, float]]] = {}
-        for item in self._holdout_outcomes():
-            if item["arm"] == arm:
-                scores.setdefault(cast(str, item["case_id"]), []).append(
-                    (cast(int, item["repeat"]), _unit_score(item["score"])))
-        return {case_id: [score for _, score in sorted(pairs)] for case_id, pairs in scores.items()}
+        return by_repeat_order(holdout_scores(self.outcomes, arm))
 
     def _holdout_tokens(self) -> dict[str, tuple[float | None, float | None]]:
         """Return each holdout case's mean task tokens per arm over its repeats. A missing count makes the mean None."""
@@ -984,29 +1023,19 @@ class Session:
             todo = [(arm, case, repeat) for arm in arms for case in holdout for repeat in range(repeats)
                     if (arm, case.identifier, repeat) not in done]
 
-            def score(task: tuple[str, Case, int]) -> None:
-                arm, case, repeat = task
-                try:
-                    result = self.evaluate_case(arms[arm], case, arm, holdout=True, repeat=repeat)
-                except CodedError:
-                    raise
-                except (OSError, ValueError, RuntimeError) as error:
-                    with self.lock:
-                        self.outcomes.append(_failed_outcome(case, arms[arm], error, arm=arm, repeat=repeat))
-                        self.checkpoint()
-                    return
+            def inspect(arm: str, result: dict[str, object]) -> None:
                 if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
                     raise _baseline_rejected(_rejection_detail(result))
 
             need = sum(case_calls(self.contract, case) for _, case, _ in todo)
-            if self.budget.maximum - self.budget.calls < need:
+            left = self.budget.maximum - self.budget.calls - self._replay_need()
+            if left < need:
                 raise Stop("gate-budget-exhausted", f"the holdout gate needs {need} more calls; "
-                           + f"{self.budget.maximum - self.budget.calls} remain in the approved budget",
+                           + f"{left} remain in the approved budget after the replay reserve",
                            {"next": "start a new run in a new directory"})
-            with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
-                _ = list(pool.map(score, todo))
+            self._score_holdout([(arms[arm], case, arm, repeat) for arm, case, repeat in todo], inspect=inspect)
             paired = holdout_deltas(self._holdout_scores("baseline"), self._holdout_scores("winner"))
-            lost = [item for item in self.outcomes if item.get("split") == "holdout" and _is_failed(item)]
+            lost = [item for item in self.outcomes if item.get("split") == "holdout" and item.get("arm") in arms and _is_failed(item)]
             if lost and not paired.deltas:
                 raise CodedError("holdout-faulted", f"no holdout case has a scored baseline and winner pair; {len(lost)} holdout "
                                  + f"evaluations failed ({_reason_counts(lost)}); wait for the provider, then resume the run")
@@ -1019,6 +1048,146 @@ class Session:
         self.record["winner_hash"] = winner.identity
         self.record["phase"] = "gated"
         self.checkpoint()
+
+    def _conclude(self, reasons: list[str], patch_digest: str | None = None, *, detail: dict[str, object] | None = None,
+                  per_case: dict[str, float] | None = None, mean: float | None = None, se: float | None = None) -> None:
+        """Record the replay reasons and evidence and end the phase. The claims report maps the reasons to a status."""
+        self.record["replay"] = {
+            "reasons": reasons,
+            "patch_digest": patch_digest, "cases": len(per_case or {}), "mean_delta": mean, "se": se,
+            "per_case": per_case or {}, "tolerance": self.statistics.min_gain, "detail": detail or {}}
+        self.record["phase"] = "replayed"
+        self.checkpoint()
+
+    def replay(self) -> None:
+        """Check that the exported patch reproduces the winner, then score the patched copy once on the holdout.
+
+        The copy sits under `out/replay`. Git applies the patches to it, as a user does. The rerun candidate
+        comes from the patched files and goes through the harness like any holdout candidate.
+        A resume skips each case that already has a scored replay outcome.
+        """
+        if "winner-equals-baseline" in cast(list[object], mapping(field(self.record, "gate")).get("reasons", [])):
+            self._conclude(["winner-equals-baseline"])
+            return
+        winner = field(self.record, "winner")
+        try:
+            patch = build_patch(field(self.record, "seed"), winner, Path(text_field(self.record, "target_root")))
+        except CodedError as error:
+            self._conclude(["patch-apply-failed"], detail={"code": error.code, "error": str(error)[:STDERR_LIMIT]})
+            return
+        copy = prepare_copy(self.out / "replay", self.seed, patch)
+        failure = apply_patches(copy, patch)
+        if failure is not None:
+            self._conclude(["patch-apply-failed"], patch.digest, detail={"stderr": failure})
+            return
+        differing = differences(copy, self.seed, patch)
+        if differing:
+            self._conclude(["patch-bytes-differ"], patch.digest, detail={"differing": differing})
+            return
+        try:
+            rebuilt = self._built(self.seed.changed(replay_components(copy, self.seed, patch, winner)))
+        except CodedError as error:
+            self._conclude(["replay-build-failed"], patch.digest,
+                           detail={"code": error.code, "error": str(error)[:STDERR_LIMIT]})
+            return
+        except ValueError as error:
+            self._conclude(["replay-identity-differs"], patch.digest, detail={"error": str(error)[:STDERR_LIMIT]})
+            return
+        if rebuilt.identity != text_field(self.record, "winner_hash"):
+            self._conclude(["replay-identity-differs"], patch.digest,
+                           detail={"expected": text_field(self.record, "winner_hash"), "found": rebuilt.identity})
+            return
+        shortfall = self._score_replay(rebuilt)
+        newest = self._replay_outcomes()
+        holdout = self.cases_for("holdout")
+        reasons: list[str] = []
+        if shortfall is not None:
+            reasons.append("replay-budget-exhausted")
+        elif any(case.identifier not in newest for case in holdout):
+            reasons.append("replay-evaluation-failed")
+        detail = shortfall or {}
+        if any(item.get("status") == "candidate-contract-rejected" for item in newest.values()):
+            self._conclude([*reasons, "replay-contract-rejected"], patch.digest, detail=detail)
+            return
+        if any(item.get("loaded") is False for item in newest.values()):
+            self._conclude([*reasons, "replay-not-loaded"], patch.digest, detail=detail)
+            return
+        winners = self._holdout_scores("winner")
+        per_case = {identifier: unit_score(item["score"]) - math.fsum(winners[identifier]) / len(winners[identifier])
+                    for identifier, item in sorted(newest.items()) if winners.get(identifier)}
+        mean = se = None
+        if per_case:
+            mean, se, drifted = replay_drift(list(per_case.values()), self.statistics.min_gain)
+            if drifted:
+                reasons.append("replay-score-drift")
+        self._conclude(reasons, patch.digest, detail=detail, per_case=per_case, mean=mean, se=se)
+
+    def _replay_outcomes(self) -> dict[str, dict[str, object]]:
+        """Return the newest scored replay outcome of each holdout case. An `evaluation-failed` outcome is unscored."""
+        with self.lock:
+            return {cast(str, item["case_id"]): item for item in self.outcomes
+                    if item.get("arm") == "replay" and item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
+
+    def _replay_need(self) -> int:
+        """Return the calls that the replay still needs: the cost of each holdout case without a scored replay outcome."""
+        done = self._replay_outcomes()
+        return sum(case_calls(self.contract, case) for case in self.cases_for("holdout") if case.identifier not in done)
+
+    def _score_replay(self, rebuilt: Candidate) -> dict[str, object] | None:
+        """Evaluate `rebuilt` once on each holdout case that has no scored replay outcome.
+
+        Return None when the replay has all its outcomes, else the shortfall detail when the budget ran short.
+        The check runs before any call. A short budget makes no call and raises no stop.
+        """
+        done = self._replay_outcomes()
+        todo = [case for case in self.cases_for("holdout") if case.identifier not in done]
+        if not todo:
+            return None
+        try:
+            _ = self.budget.remaining()
+            needed, left = sum(case_calls(self.contract, case) for case in todo), self.budget.maximum - self.budget.calls
+            if left < needed:
+                return {"needed": needed, "left": left}
+            self._score_holdout([(rebuilt, case, "replay", 0) for case in todo], keep_budget_stop=True)
+        except BudgetExhausted as error:
+            self.take_budget_stop()
+            return {"shortfall": "deadline" if "deadline" in str(error) else "calls"}
+        return None
+
+    def _score_holdout(self, tasks: Sequence[tuple[Candidate, Case, str, int]], *,
+                       inspect: Callable[[str, dict[str, object]], None] | None = None,
+                       keep_budget_stop: bool = False) -> None:
+        """Evaluate each (candidate, case, arm, repeat) task on the holdout. A plain failure becomes a failed outcome.
+
+        A CodedError ends the work. `inspect` sees the arm and the result of each task that returns one.
+        With `keep_budget_stop`, a budget stop first records a failed outcome, so the calls that it charged keep an outcome.
+        """
+        def record(case: Case, candidate: Candidate, error: Exception, arm: str, repeat: int) -> None:
+            with self.lock:
+                self.outcomes.append(_failed_outcome(case, candidate, error, arm=arm, repeat=repeat))
+                self.checkpoint()
+
+        def score(task: tuple[Candidate, Case, str, int]) -> None:
+            candidate, case, arm, repeat = task
+            with self.lock:
+                latched = self._fault is not None
+            try:
+                result = self.evaluate_case(candidate, case, arm, holdout=True, repeat=repeat)
+            except BudgetExhausted as error:
+                # A task that meets an already latched stop made no call, so it keeps no outcome.
+                if keep_budget_stop and not latched:
+                    record(case, candidate, error, arm, repeat)
+                raise
+            except CodedError:
+                raise
+            except (OSError, ValueError, RuntimeError) as error:
+                record(case, candidate, error, arm, repeat)
+                return
+            if inspect is not None:
+                inspect(arm, result)
+
+        with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
+            _ = list(pool.map(score, tasks))
 
     def finish(self) -> None:
         self.record["phase"] = "complete"
@@ -1077,7 +1246,7 @@ def _observation(window: Sequence[Mapping[str, object]], identity: object, valid
         if _is_failed(item):
             return None
         if item.get("split") == "validation":
-            scores[cast(str, item["case_id"])] = _unit_score(item["score"])
+            scores[cast(str, item["case_id"])] = unit_score(item["score"])
     if set(scores) != validation:
         return 0.0
     return max(0.0, math.fsum(scores.values()) / len(scores) - best)
@@ -1101,7 +1270,7 @@ def _add_validation_scores(scores: dict[str, dict[str, float]],
     """
     for item in items:
         if _is_search_validation(item) and not _is_failed(item):
-            scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = _unit_score(item["score"])
+            scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = unit_score(item["score"])
     return scores
 
 
@@ -1111,7 +1280,7 @@ def _complete_means(scores: Mapping[str, Mapping[str, float]], validation: set[s
             if set(by_case) == validation}
 
 
-_PHASES = ("prepared", "searched", "gated", "complete")
+_PHASES = ("prepared", "searched", "gated", "replayed", "complete")
 
 
 def _phase(record: dict[str, object]) -> str:

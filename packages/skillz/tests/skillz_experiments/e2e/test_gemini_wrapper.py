@@ -71,7 +71,7 @@ def test_gemini_wrapper_promotes_and_exports_from_actual_task_trace(tmp_path: Pa
     assert record["winner_hash"] != record["seed_hash"]
     assert cast(dict[str, object], record["best_validated"])["identity"] == record["winner_hash"]
     outcomes = cast(list[dict[str, object]], record["outcomes"])
-    held = [item for item in outcomes if item.get("split") == "holdout"]
+    held = [item for item in outcomes if item.get("split") == "holdout" and item["arm"] != "replay"]
     held_ids = {item["case_id"] for item in held}
     assert len(held_ids) == 6 and len(held) == 36
     assert {(item["arm"], item["case_id"], item["repeat"]) for item in held} == {

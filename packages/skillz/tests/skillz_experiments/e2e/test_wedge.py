@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 
-from support import (HARNESS_RUNS, Scenario, archive_witnesses, assert_promoted, build_wedge, call_cli,
+from support import (HARNESS_RUNS, Scenario, archive_witnesses, assert_promoted, assert_replayed, build_wedge, call_cli,
                      make_scenario, run_scenario, snapshot, uv_bin_dir)
 
 SOURCE = (
@@ -49,6 +49,7 @@ def _world(base: Path) -> tuple[Scenario, str]:
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-5")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-6")
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-10")
+@pytest.mark.ac("skillz-autoimprove-claims:AC-4")
 @pytest.mark.parametrize("harness, cli", HARNESS_RUNS)
 def test_external_wedge_rebuilds_and_exports_real_behavior(
         tmp_path: Path, harness: str, cli: Path) -> None:
@@ -60,6 +61,7 @@ def test_external_wedge_rebuilds_and_exports_real_behavior(
     result = run_scenario(scenario, home, helper=True, mode="targets", harness=harness,
                           cli=cli, bin_dir=uv_bin_dir())
     assert_promoted(scenario, result)
+    assert_replayed(scenario.out)
     assert snapshot(scenario.target) == before
     assert snapshot(tmp_path / "proj") == external
 

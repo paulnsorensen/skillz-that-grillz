@@ -49,6 +49,7 @@ For `autoimprove`, read `references/experiments.md`. Follow its workflow, not th
 The agent drafts the cases. The user needs no contract and no case manifest.
 Run `scripts/skillz-experiment.pyz run`, answer each coded stop, and then run `export`.
 Ask at most three questions: harness and model, case approval, and budget approval.
+Report the `runner`, `export`, and `improvement` claims, each with its status and evidence. Apply a winner only when `claims.apply` is true.
 When the user selects the `claude` adapter or a custom command check, also read `references/experiment-harness.md`.
 For Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi, also read `references/harness-recipes.md`.
 Use the installed `scripts/skillz-experiment.pyz`. Do not require a source checkout.

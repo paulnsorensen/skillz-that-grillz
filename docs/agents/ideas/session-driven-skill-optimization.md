@@ -110,7 +110,9 @@ An infrastructure failure remains distinct from a task failure.
 Exports contain a patch and measurements, not raw requests or expected answers.
 Candidates can memorize approved training content.
 Therefore, all exports remain private and local until the user completes a separate review.
-The runner never applies, installs, merges, or pushes a candidate.[^export]
+The runner never installs, merges, or pushes a candidate.[^export]
+The runner applies the exported patch only to a private clean copy in the replay phase. The replay proves that the patch reproduces the evaluated winner and that the patched copy runs on the holdout.
+The summary then reports the runner, export, and improvement claims separately, and `claims.apply` decides whether the user applies the winner. [ADR-017](../decisions/skillz-autoimprove.md) records this decision.[^export]
 
 The adapter is contract-driven.
 A skill declares an approved contract at `evals/autoimprove.json`, or in a `target` block of the case manifest.
@@ -140,11 +142,11 @@ Do not describe the public self-test as a real-session benchmark.
 [^evaluator]: `packages/skillz/src/skillz_experiments/_evaluation.py:11-83`; `_evaluator.py:38-71`; `packages/skillz/src/skillz_inspect` (built as `skills/skillz/scripts/inspect-skill.pyz`).
 [^runtime]: `packages/skillz/src/skillz_experiments/harness/_codex.py`; pinned source evidence in [Codex skill discovery and isolation](../sources/codex-skill-discovery-isolation.md).
 [^workflow]: `packages/skillz/src/skillz_experiments/run/_session.py`, `run/_plan.py`, and `run/_run.py`; `_budget.py`.
-[^export]: `packages/skillz/src/skillz_experiments/run/_export.py`.
+[^export]: `packages/skillz/src/skillz_experiments/run/_export.py`; `run/_patch.py`; `run/_replay.py`; `run/_claims.py`.
 [^contract]: `packages/skillz/src/skillz_experiments/_contract.py:34-92,139-175`; `skills/skillz/references/experiments.md:167-200`; `skills/skillz/evals/autoimprove.json`.
 [^graders]: `packages/skillz/src/skillz_experiments/_graders.py:60-115`; `_evaluator.py:38-130`.
 [^claude]: `packages/skillz/src/skillz_experiments/harness/_claude/`; `harness/_harness.py`.
 [^harness]: `packages/skillz/src/skillz_experiments/harness/_harness.py`; `skills/skillz/references/experiment-harness.md:1-30,93-211`.
 [^isolation]: `docs/agents/decisions/skillz-autoimprove.md:33-39`; `skills/skillz/references/experiment-harness.md:68-92`.
 
-_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-11 · Supersedes: proposal-only status and unresolved first-harness choice_
+_Source: user-approved implementation scope, checked repository code, and primary-source research · Updated: 2026-10-15 (replay phase and three claims, spec skillz-autoimprove-claims) · Supersedes: proposal-only status and unresolved first-harness choice; "the runner never applies a candidate"_

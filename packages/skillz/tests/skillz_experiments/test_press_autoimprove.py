@@ -356,13 +356,13 @@ def test_repeats_never_silently_exceed_the_cap(
     except Stop as stopped:
         assert stopped.code == "budget-unapproved" and spy.created == 0
         return
-    assert result["phase"] == "complete"
+    assert result["phase"] == "complete" and {"retries", "calls_by_role", "claims", "replay"} <= set(result)
     record = read(out / "run.json")
     budget = cast(dict[str, int], record["budget"])
     assert budget["maximum"] <= 200 and budget["seconds"] <= 7200 and cast(int, record["calls"]) <= budget["maximum"]
     held = [item for item in spy.evaluated if item[1]]
     holdout = {str(case["id"]) for case in frozen(out) if case["split"] == "holdout"}
-    assert len(held) in (0, 2 * len(holdout) * repeats)
+    assert len(held) in (0, (2 * repeats + 1) * len(holdout))
 
 
 @pytest.mark.parametrize("approved", [None, 0, -1, -(10**9)])
