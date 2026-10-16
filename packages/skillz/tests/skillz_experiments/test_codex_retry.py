@@ -7,7 +7,7 @@ import os
 import re
 import stat
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
@@ -16,9 +16,12 @@ import pytest
 
 from skillz_experiments import _runtime
 from skillz_experiments._budget import Budget
+from skillz_experiments._records import read
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._codex import Codex, failure_details, retry_after
+from skillz_experiments.run import _session, run
 from skillz_experiments.run._export import summary
+from test_run_search import MODEL, _start  # pyright: ignore[reportPrivateUsage]
 
 RATE_LIMIT = '{"type":"error","message":"429 rate limit exceeded"}'
 
@@ -36,8 +39,8 @@ def _fake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, failures: int, eve
         "#!/bin/sh\n" + f"echo call >> {log}\n" + "cat >/dev/null\n"
         + 'while [ $# -gt 0 ]; do if [ "$1" = "--output-last-message" ]; then out=$2; fi; shift; done\n'
         + f'if [ "$(wc -l < {log})" -le {failures} ]; then\n'
-        + f"echo '{event}'\n" + (f"{stderr}\n" if stderr else "") + "exit 1\nfi\n"
-        + 'echo "{}" > "$out"\n')
+        + "echo '" + event.replace("'", "'\\''") + "'\n" + (f"{stderr}\n" if stderr else "") + "exit 1\nfi\n"
+        + 'echo "{}" > "$out"\n', encoding="utf-8")
     fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", f"{fake.parent}:{os.environ['PATH']}")
     monkeypatch.setenv("CODEX_HOME", str(host))
@@ -281,3 +284,68 @@ def test_a_429_after_a_status_prefix_or_before_a_colon_classifies_as_rate_limite
 @pytest.mark.parametrize("text", ["refused at 127.0.0.1:429: x", "status:4290", "status:429:8080", "path /a/status:429/b"])
 def test_a_colon_after_429_keeps_ports_and_paths_unmatched(text: str) -> None:
     assert failure_details(1, text, [])["reason"] == "execution-failed"
+
+
+# The texts below come from the settled research on `codex exec`. It reports no structured retry-after: only prose in these strings.
+RETRY_NOTICE = "Reconnecting... {n}/5 (stream disconnected before completion: error sending request for url)"
+EXHAUSTED = "exceeded retry limit, last status: 429 Too Many Requests"
+USAGE_LIMIT = ("You{apostrophe}ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), "
+               "visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Oct 21st, 2026 3:42 PM.")
+
+
+@pytest.mark.ac("gh-318:AC-7")
+@pytest.mark.parametrize("notices", [5, 12])
+def test_the_last_turn_failed_message_classifies_after_many_retry_notices(notices: int) -> None:
+    events: list[dict[str, object]] = [{"type": "error", "message": RETRY_NOTICE.format(n=n)} for n in range(1, notices + 1)]
+    events.append({"type": "turn.failed", "error": {"message": EXHAUSTED}})
+    evidence = failure_details(1, "", events)
+    assert evidence["reason"] == "rate-limited"
+    messages = cast(list[str], evidence["messages"])
+    assert EXHAUSTED in messages and len(messages) <= _codex.MESSAGE_RECORD_COUNT
+
+
+@pytest.mark.ac("gh-318:AC-7")
+def test_the_last_of_several_turn_failed_messages_classifies() -> None:
+    events: list[dict[str, object]] = [{"type": "error", "message": RETRY_NOTICE.format(n=n)} for n in range(1, 7)]
+    events += [{"type": "turn.failed", "message": "an earlier failure"}, {"type": "turn.failed", "message": EXHAUSTED}]
+    assert failure_details(1, "", events)["reason"] == "rate-limited"
+
+
+@pytest.mark.ac("gh-318:AC-8")
+@pytest.mark.parametrize("apostrophe", ["'", "\u2019"])
+def test_a_usage_limit_classifies_as_usage_limited_and_is_not_retried(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sleeps: list[float], apostrophe: str) -> None:
+    text = USAGE_LIMIT.format(apostrophe=apostrophe)
+    event = json.dumps({"type": "turn.failed", "error": {"message": text}}, ensure_ascii=False)
+    # A retry notice on stderr also says 429. The usage limit still wins, because it comes before both rate-limit patterns.
+    log = _fake(tmp_path, monkeypatch, failures=99, event=event, stderr=f"echo '{EXHAUSTED}' >&2")
+    budget = Budget(10, 120, 0)
+    limit = _runtime._CHILDREN.limit  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(RuntimeError, match="Codex fails: usage-limited") as caught:
+        _ = _invoke(budget)
+    assert _evidence(caught)["reason"] == "usage-limited" and "retry_after_seconds" not in _evidence(caught)
+    assert _session._fault_reason(caught.value) == "usage-limited"  # pyright: ignore[reportPrivateUsage]
+    assert log.read_text().count("call") == 1 and sleeps == []
+    assert budget.retries == 0 and budget.calls == 1
+    assert _runtime._CHILDREN.limit == limit  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.ac("gh-318:AC-8")
+@pytest.mark.parametrize("text", ["rate limit reached", "429 Too Many Requests"])
+def test_a_usage_limit_is_not_a_model_rejection_and_a_plain_rate_limit_stays_rate_limited(text: str) -> None:
+    assert "usage-limited" not in _codex.MODEL_REJECTIONS
+    assert failure_details(1, text, [])["reason"] == "rate-limited"
+
+
+@pytest.mark.ac("gh-318:AC-8")
+def test_a_usage_limited_fault_is_unscored(tmp_path: Path, make_target: Callable[..., Path],
+                                           write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.evaluate_fault = lambda number: (RuntimeError("Codex fails: usage-limited (exit 1); the invocation counts against the budget")
+                                           if number == 3 else None)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    rows = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("status") == "evaluation-failed"]
+    assert len(rows) == 1 and rows[0]["reason"] == "usage-limited"
+    assert _session._add_validation_scores({}, rows) == {}  # pyright: ignore[reportPrivateUsage]
+    search = cast(dict[str, object], result["search"])
+    assert search["failed"] == 1 and search["failed_by_reason"] == {"usage-limited": 1}

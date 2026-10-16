@@ -115,6 +115,8 @@ _FAILURE_REASONS = tuple((re.compile(pattern), reason) for pattern, reason in (
      "authentication-unavailable"),
     ("model_not_found", "model-unavailable"),
     ("not supported", "unsupported-model-or-feature"),
+    # The ChatGPT-plan usage limit comes before the rate-limit patterns: its retry notices can also say 429. It is never retried.
+    (r"you(?:'|’)ve hit your usage limit", "usage-limited"),
     (_status("429"), "rate-limited"),
     (r"rate[ _-]?limit|too many requests", "rate-limited"),
     ("stream disconnected", "provider-connection-failed"),
@@ -411,7 +413,9 @@ def _rejection_message(stderr: str, events: list[dict[str, object]]) -> str:
 
 
 def retry_after(text: str) -> float | None:
-    """Return the seconds that Codex asks the caller to wait, or None when the text names no wait.
+    """Return the seconds that the error prose of Codex names as a wait, or None when the text names none.
+
+    `codex exec` reports no structured retry-after. This parser reads prose only, and it ignores "try again at <local time>", which has no timezone.
 
     A reset hint that this parser cannot read returns `math.inf`: the wait counts as longer than any remaining time.
     A duration may be compound (`1h30m`), a timestamp gives its distance from now, and a bare number needs the header form.
@@ -450,14 +454,36 @@ def _until(text: str) -> float:
     return max((moment - datetime.now(timezone.utc)).total_seconds(), 0.0)
 
 
+def _last_turn_failed(events: list[dict[str, object]]) -> str | None:
+    """Return the message of the last `turn.failed` event, or None when there is none."""
+    for event in reversed(events):
+        if event.get("type") != "turn.failed":
+            continue
+        error = event.get("error")
+        message = mapping(cast(object, error)).get("message") if isinstance(error, dict) else event.get("message")
+        if isinstance(message, str):
+            return message
+    return None
+
+
 def failure_details(returncode: int, stderr: str, events: list[dict[str, object]]) -> dict[str, object]:
     messages = [message[:2048] for message in _error_messages(events)]
-    detail = "\n".join([stderr[:8192], *messages][:5]).lower()
+    # Error and retry notices can fill every slot. The last `turn.failed` message always classifies and stays in the evidence.
+    last = _last_turn_failed(events)
+    final = last[:2048] if last is not None else None
+    classified = [stderr[:8192], *messages][:5]
+    recorded = messages[:MESSAGE_RECORD_COUNT]
+    if final is not None:
+        if final not in classified:
+            classified.append(final)
+        if final not in recorded:
+            recorded = [*recorded[: MESSAGE_RECORD_COUNT - 1], final]
+    detail = "\n".join(classified).lower()
     reason = next((reason for pattern, reason in _FAILURE_REASONS if pattern.search(detail)),
                   "missing-final-response" if returncode == 0 else "execution-failed")
     evidence: dict[str, object] = {"schema_version": 1, "returncode": returncode, "reason": reason, "usage": usage(events),
                                    "stderr_excerpt": _redact(stderr)[-EXCERPT_LIMIT:],
-                                   "messages": [_redact(message)[:MESSAGE_RECORD_LIMIT] for message in messages[:MESSAGE_RECORD_COUNT]]}
+                                   "messages": [_redact(message)[:MESSAGE_RECORD_LIMIT] for message in recorded]}
     wait = retry_after(detail)
     if wait == math.inf:
         evidence["retry_after_unparsed"] = True

@@ -61,12 +61,16 @@ The runner records the observed `codex --version` string as `codex_version` in `
 A version below the minimum, or output that the runner cannot parse, stops with `codex-version-unsupported` before any model call.
 A resume on a different Codex version stops with `environment-differs` before any model call; restore the recorded version or start a new run.
 The `codex` harness retries a call that fails as `rate-limited`, at most 3 times, with a 2, 4, then 8 second backoff.
-A retry waits at least as long as a retry-after time that Codex reports: a duration (`30 seconds`, `1h30m`, `2 days`), a timestamp, or a `Retry-After` number of seconds.
+`codex exec` reports no structured retry-after, only prose in its error and `turn.failed` messages.
+A retry waits at least as long as a wait that this prose names: a duration (`30 seconds`, `1h30m`, `2 days`), a timestamp, or a `Retry-After` number of seconds.
 A reset hint that the runner cannot read counts as longer than the remaining time, so the call fails as `rate-limited` with no retry.
 A retry runs only within the remaining time.
 A retry does not spend the approved call budget. The run record and the `summary` count it in `retries`.
 Each rate limit halves the concurrent model calls for the rest of the run, to a minimum of 1.
 The private failure evidence file keeps a redacted stderr excerpt (at most 1 KiB), the error event messages, and any `retry_after_seconds`.
+The last `turn.failed` message always classifies the failure and stays in the evidence, however many error events come before it.
+A ChatGPT-plan usage limit ("You've hit your usage limit") fails as `usage-limited`. The runner does not retry it and does not halve the concurrent calls.
+It is an unscored `evaluation-failed` outcome that counts toward `search-faulted` and `holdout-faulted`. The runner does not read its "try again at" time as a wait.
 Each model call (every harness) has a per-call timeout of 4 times the per-call estimate, capped by the remaining search time.
 The estimate is 60 seconds plus the sandbox seconds of one evaluation in the run plan.
 The clock starts after the call gets a call slot. A wait for a slot that reaches the search deadline is a budget stop, not a timeout.
@@ -287,7 +291,7 @@ A failed search evaluation is unscored too.
 It adds no score to a validation mean, no stall observation, and no reflection feedback.
 A candidate with no scored validation case never beats the seed.
 GEPA still receives 0.0 for it, because GEPA needs a number. The session ignores that value when it picks the winner.
-`search.scored`, `search.failed`, and `search.failed_by_reason` in the summary and the export report count the search evaluations. The `reason` of a failure is `timeout`, the reason that the adapter names (such as `rate-limited`), or `error`.
+`search.scored`, `search.failed`, and `search.failed_by_reason` in the summary and the export report count the search evaluations. The `reason` of a failure is `timeout`, the reason that the adapter names (such as `rate-limited` or `usage-limited`), or `error`.
 With fewer than 2 shared cases, the verdict is `inconclusive` and `se` is the SE floor.
 
 The gate record also holds `moves`: the case ids that `fixed`, `broke`, or left `unresolved`.
@@ -547,7 +551,7 @@ An attempt has `index`, `parent`, `candidate`, `components`, `hypothesis`, `fixe
 `fixed` lists the train case ids that the proposal scores higher than its parent. `broke` lists the ids that it scores lower.
 The lists cover the train cases that the proposer saw in its feedback. For a case with more than one outcome, the newest outcome that did not fail counts.
 `validation_delta` is the validation mean of the candidate minus the validation mean of its parent.
-It is null unless both sides have a complete validation set. A failed validation case counts as 0.0.
+It is null unless both sides have a complete validation set. An evaluation-failed outcome is skipped. The newest scored outcome of a (candidate, case) counts. A case with no scored outcome is unscored, so validation_delta is null.
 An attempt with no train score yet has empty lists and a null `validation_delta`. The runner fills these fields from later outcomes.
 `accepted` is true when the proposal produced a candidate. `rejected` holds the reason when it did not:
 `reflection-shape`, the leakage or build reason of the host check, or `proposal-build-failed`. A rejected attempt has a null `candidate`.
