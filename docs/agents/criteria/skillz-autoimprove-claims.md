@@ -17,3 +17,6 @@ Source: spec skillz-autoimprove-claims (approved 2026-10-15)
 | AC-11 | test | WHEN the improvement claim is reported THE SYSTEM SHALL include per-family case counts and mean paired deltas. |  |
 | AC-12 | test | WHEN the judge scores a holdout outcome THE SYSTEM SHALL send no arm label and no candidate identity in the judge prompt. |  |
 | AC-13 | test | WHEN the experiments reference describes reporting THE SYSTEM SHALL require a representative example before the case draft and the three claims in the report. |  |
+| AC-14 | test | WHEN a replay call times out or hits another provider fault THE SYSTEM SHALL record an unscored `evaluation-failed` replay outcome with its reason, and SHALL leave the export claim `inconclusive`, never `refuted`. |  |
+| AC-15 | test | WHEN replay calls run, including a resume past the deadline in the `gated` or `replayed` phase, THE SYSTEM SHALL keep `calls` equal to the sum of `calls_by_role`. |  |
+| AC-16 | test | WHEN a run completes THE SYSTEM SHALL report `claims` in the summary and in `report.json` next to `retries`, `calls_by_role`, `seconds_by_role`, and the search `scored` and `failed` counts. |  |

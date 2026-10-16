@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
-from skillz_experiments._budget import BudgetExhausted, estimate, gate_seconds
+from skillz_experiments._budget import BudgetExhausted, CallTimeout, estimate, gate_seconds
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Grader
@@ -724,3 +724,76 @@ def test_a_completed_run_whose_contract_no_longer_parses_omits_the_claims_with_a
     result = summary(record, out)
     assert "claims" not in result and "contract" in cast(str, result["claims_unavailable"])
     assert result["calls_upper_bound"] is None
+
+
+@pytest.mark.ac("skillz-autoimprove-claims:AC-14")
+def test_a_replay_call_timeout_is_unscored_and_leaves_the_export_claim_inconclusive(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
+    victim = _first_holdout(done)
+    _tag_replays(monkeypatch, victim, {}, fault=CallTimeout("the model call exceeded its per-call timeout of 240 seconds"))
+    after = _resume(target, out, Search(target))
+    replay = _replay_of(after)
+    assert after["phase"] == "complete"
+    assert replay["reasons"] == ["replay-evaluation-failed"] and _export_status(after, out) == "inconclusive"
+    failed = [item for item in cast(list[dict[str, object]], after["outcomes"])
+              if item.get("arm") == "replay" and item.get("status") == "evaluation-failed"]
+    assert [(item["case_id"], item["reason"]) for item in failed] == [(victim, "timeout")]
+    # The failed case adds no delta, so a timeout never counts as a 0.0 score.
+    assert victim not in replay["per_case"] and replay["cases"] == len(replay["per_case"]) == 5
+    assert _claims(after, out)["apply"] is False
+
+
+@pytest.mark.parametrize("past_deadline", [False, True], ids=["in-time", "past-deadline"])
+@pytest.mark.ac("skillz-autoimprove-claims:AC-15")
+def test_replay_calls_keep_calls_by_role_summing_to_calls_after_a_post_deadline_resume(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, past_deadline: bool) -> None:
+    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+    by_role = cast(dict[str, int], record["calls_by_role"])
+    assert record["calls"] == sum(by_role.values()) and _replays(record)
+    spent = cast(int, record["calls"])
+    if past_deadline:
+        # Back to the gated phase with every call kept, past the deadline: the resume makes no call and keeps the role counts.
+        record["outcomes"] = [item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("arm") != "replay"]
+        del record["replay"]
+        record["phase"] = "gated"
+        seconds = cast(dict[str, float], record["budget"])["seconds"]
+        record["started"] = time.time() - seconds - 10
+        record["started_monotonic"] = time.monotonic() - seconds - 10
+    else:
+        # An in-time resume replays the dropped cases: task and judge calls join the recorded role counts.
+        dropped = _replays(record)
+        cost = cast(dict[str, int], record["estimate"])["replay_calls"] // len(dropped)
+        record["outcomes"] = [item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("arm") != "replay"]
+        del record["replay"]
+        record["phase"] = "gated"
+        record["calls"] = spent - len(dropped) * cost
+        record["calls_by_role"] = {"task": by_role["task"] - len(dropped) * cost,
+                                   **{role: count for role, count in by_role.items() if role != "task"}}
+    write(out / "run.json", record)
+    before = record["calls"]
+    after = _resume(target, out, Search(target))
+    assert after["phase"] == "complete"
+    assert after["calls"] == sum(cast(dict[str, int], after["calls_by_role"]).values())
+    if past_deadline:
+        assert after["calls"] == before and _replay_of(after)["reasons"] == ["replay-budget-exhausted"]
+    else:
+        assert after["calls"] == spent and _replays(after)
+
+
+@pytest.mark.ac("skillz-autoimprove-claims:AC-16")
+def test_the_run_summary_reports_claims_next_to_retries_and_search_fault_counts(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    _target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+    result = summary(record, out)
+    assert {"claims", "retries", "calls_by_role", "seconds_by_role", "replay"} <= set(result)
+    assert result["retries"] == record["retries"] and result["calls_by_role"] == record["calls_by_role"]
+    search = cast(dict[str, object], result["search"])
+    assert {"scored", "failed", "failed_by_reason"} <= set(search) and search["failed"] == 0
+    assert "detail" not in cast(dict[str, object], result["replay"])
+    destination = tmp_path / "exported"
+    _ = export(out, destination)
+    report = cast(dict[str, Any], json.loads((destination / "report.json").read_text()))  # pyright: ignore[reportExplicitAny]
+    assert report["claims"] == result["claims"] and report["retries"] == record["retries"]
+    assert report["calls_by_role"] == record["calls_by_role"] and report["search"]["scored"] == search["scored"]

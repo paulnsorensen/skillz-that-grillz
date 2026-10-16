@@ -356,7 +356,7 @@ def test_repeats_never_silently_exceed_the_cap(
     except Stop as stopped:
         assert stopped.code == "budget-unapproved" and spy.created == 0
         return
-    assert result["phase"] == "complete"
+    assert result["phase"] == "complete" and {"retries", "calls_by_role", "claims", "replay"} <= set(result)
     record = read(out / "run.json")
     budget = cast(dict[str, int], record["budget"])
     assert budget["maximum"] <= 200 and budget["seconds"] <= 7200 and cast(int, record["calls"]) <= budget["maximum"]
