@@ -66,6 +66,7 @@ A retry waits at least as long as a wait that this prose names: a duration (`30 
 A reset hint that the runner cannot read counts as longer than the remaining time, so the call fails as `rate-limited` with no retry.
 A retry runs only within the remaining time.
 A retry does not spend the approved call budget. The run record and the `summary` count it in `retries`.
+The replay reserve and the holdout reserve count calls only. Rate-limit backoff spends time from the replay window, and the run deadline still caps time.
 Each rate limit halves the concurrent model calls for the rest of the run, to a minimum of 1.
 The private failure evidence file keeps a redacted stderr excerpt (at most 1 KiB), the error event messages, and any `retry_after_seconds`.
 The last `turn.failed` message always classifies the failure and stays in the evidence, however many error events come before it.
@@ -630,6 +631,12 @@ The reason `replay-not-loaded` marks a replay outcome with `loaded` false.
 The `detail` of `replay-budget-exhausted` holds `needed` and `left`, or a `shortfall` of `deadline` or `calls`.
 The `detail` of `replay-build-failed` holds a `code` and an `error`.
 Otherwise the status is `supported`.
+A replay call can time out or hit another provider fault, such as `rate-limited` or `usage-limited`.
+The runner records an `evaluation-failed` outcome with `arm: replay` and the `reason` of the fault. That outcome is unscored: it adds no delta and never counts as a 0.0 score.
+Such a fault gives the reason `replay-evaluation-failed`, so the `export` claim is `inconclusive`, never `refuted`.
+A deadline or call-cap stop during the replay gives `replay-budget-exhausted`.
+Replay model calls use the existing roles: `task` for harness calls and `judge` for judge calls. There is no `replay` role.
+They count in `calls` and in `calls_by_role`, so `calls` still equals the sum of `calls_by_role` after a resume.
 For each case, the delta `d` is the replay score minus the mean winner holdout score.
 The replay reports drift when `mean(d) + 2·SE < -min_gain`. An unset `min_gain` counts as 0.
 A missing git or a git timeout stops the run with the retryable code `replay-git-unavailable`. Fix git, then resume the run.
