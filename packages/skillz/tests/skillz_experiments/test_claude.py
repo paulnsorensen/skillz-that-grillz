@@ -92,6 +92,19 @@ def calls(executable: Path) -> list[dict[str, object]]:
     return [cast(dict[str, object], json.loads(line)) for line in log.read_text().splitlines()]
 
 
+def test_a_failed_claude_call_books_its_seconds_under_failed(tmp_path: Path) -> None:
+    from skillz_experiments._budget import FAILED
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, fake_claude(tmp_path, "auth-fail"), budget)
+    try:
+        task = cast(ClaudeCode, session.transports["task"])
+        with pytest.raises(RuntimeError, match="Claude Code fails"):
+            _ = task.invoke("hello")
+    finally:
+        session.close()
+    assert budget.calls_by_role == {"task": 1} and set(budget.seconds_by_role) == {FAILED}
+
+
 def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_paths(tmp_path: Path) -> None:
     from skillz_experiments._graders import CAPTURE_INSTRUCTION, Viewer, judge_schema
     executable = fake_claude(tmp_path)

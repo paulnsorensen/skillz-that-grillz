@@ -276,9 +276,14 @@ class Codex:
             self.budget.claim(holdout=holdout, role=self.role)
             self.checkpoint()
             with self.budget.timed(self.role):
-                return self._attempts(prompt, command, workspace, output)
+                def restage() -> None:
+                    shutil.rmtree(workspace)
+                    stage_task(make_workspace(workspace), candidate, case)
 
-    def _attempts(self, prompt: str, command: list[str], workspace: Path, output: Path) -> dict[str, object]:
+                return self._attempts(prompt, command, workspace, output, restage)
+
+    def _attempts(self, prompt: str, command: list[str], workspace: Path, output: Path,
+                  restage: Callable[[], None]) -> dict[str, object]:
         """Run one claimed call. Each attempt gets the per-call timeout; a rate limit retries within the remaining time."""
         started = time.monotonic()
         retries = 0
@@ -296,6 +301,7 @@ class Codex:
                     self.budget.retry()
                     self.checkpoint()
                     output.unlink(missing_ok=True)
+                    restage()
                     _sleep(delay)
                     continue
             if evidence["reason"] in MODEL_REJECTIONS:

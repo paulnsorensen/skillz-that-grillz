@@ -26,6 +26,11 @@ def is_reflection(item: Mapping[str, object]) -> bool:
     return item.get("arm") == "search" and item.get("split") == "reflection"
 
 
+def _faulted(item: Mapping[str, object]) -> bool:
+    """Return whether a reflection row records a skipped or timed-out call, which proposes nothing."""
+    return item.get("status") in ("skipped", "timeout") and "proposed" not in item
+
+
 def _newest(outcomes: Sequence[Mapping[str, object]], split: str) -> Scores:
     """Return the newest score of each (candidate, case) on `split`. An evaluation-failed outcome is unscored."""
     scores: Scores = {}
@@ -83,12 +88,13 @@ def attempts(outcomes: Sequence[Mapping[str, object]], seed: tuple[str, str],
 
     `validation` holds the validation case ids. The validation change needs a newest score on every one of them for the child and the parent.
     An evaluation-failed outcome is skipped and unscored; the newest scored outcome of a (candidate, case) counts. This matches the session rule.
+    A skipped or timed-out reflection row is no attempt.
     A case with no scored outcome leaves the mean unknown, so `validation_delta` is null.
 
     The parent digest of a reflection resolves to a candidate identity through the seed and the earlier proposals.
     An unresolved parent, an unscored child, or a legacy outcome gives empty `fixed` and `broke` lists and a null `validation_delta`.
     """
-    reflections = [item for item in outcomes if is_reflection(item)]
+    reflections = [item for item in outcomes if is_reflection(item) and not _faulted(item)]
     identities = {seed[0]: seed[1]}
     for item in reflections:
         key, proposed = _text(item.get("components_digest")), _text(item.get("proposed"))

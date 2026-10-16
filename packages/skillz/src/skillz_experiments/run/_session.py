@@ -69,6 +69,11 @@ _FAULT_REASON = re.compile(r"\bfails: ([a-z][a-z-]*)")
 SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
 
 
+def _faulted_reflection(item: Mapping[str, object]) -> bool:
+    """Return whether a reflection row records a skipped or timed-out call, which proposes nothing."""
+    return item.get("status") in ("skipped", "timeout") and "proposed" not in item
+
+
 def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
                     repeat: int | None = None) -> dict[str, object]:
     """Return the outcome that records a failed evaluation as a zero score. A holdout failure names its arm and repeat."""
@@ -665,7 +670,7 @@ class Session:
                 raise ValueError("the reflection of this proposal ended with no candidate")
             stall = self._stall()
             progress = Progress(spent=len(self._search_outcomes()), planned=self._search_ceiling(),
-                                proposal=1 + len(self._reflections()), stalled=stall.streak, advice=stall.advice)
+                                proposal=1 + sum(1 for item in self._reflections() if not _faulted_reflection(item)), stalled=stall.streak, advice=stall.advice)
             history = build_attempts(self.outcomes, self._seed_ref(), self._validation_ids())
             protect = protected_cases(self.outcomes, self._best_identity())
         feedback = {name: [item for item in items if not _is_unscored(item)] for name, items in feedback.items()}
