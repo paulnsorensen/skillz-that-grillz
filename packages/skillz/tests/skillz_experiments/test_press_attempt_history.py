@@ -97,7 +97,7 @@ def test_validate_answer_missing_non_nullable_key_or_extra_key_is_rejected() -> 
 
 # Attack 4: duplicate outcomes.
 
-def test_attempts_newest_outcome_failed_uses_older_scored_outcome_for_train_and_counts_zero_for_validation() -> None:
+def test_attempts_newest_outcome_failed_uses_older_scored_outcome_for_train_and_validation() -> None:
     outcomes = [
         _score("seed-id", "train", "a", 0.5), _score("seed-id", "train", "a", 0.0, status="evaluation-failed"),
         _score("seed-id", "validation", "v1", 0.2), _score("seed-id", "validation", "v2", 0.4),
@@ -108,8 +108,8 @@ def test_attempts_newest_outcome_failed_uses_older_scored_outcome_for_train_and_
     ]
     (attempt,) = attempts(outcomes, SEED, ["v1", "v2"])
     assert attempt["fixed"] == ["a"] and attempt["broke"] == []
-    # parent mean (0.2 + 0.4) / 2, child mean (0.0 for the failed v1 + 0.9) / 2
-    assert attempt["validation_delta"] == pytest.approx(0.45 - 0.3)
+    # parent mean (0.2 + 0.4) / 2, child mean (0.6 from the older scored v1 + 0.9) / 2
+    assert attempt["validation_delta"] == pytest.approx(0.75 - 0.3)
 
 
 def test_attempts_every_outcome_of_the_case_failed_is_unscored() -> None:

@@ -86,14 +86,24 @@ def test_a_partial_validation_set_gives_no_validation_delta() -> None:
     assert attempt["validation_delta"] is None
 
 
-@pytest.mark.ac("gh-241:AC-1")
-def test_a_failed_validation_case_counts_as_zero_and_scores_are_clamped() -> None:
+@pytest.mark.ac("gh-316:AC-6")
+def test_a_failed_validation_outcome_is_unscored_and_real_scores_are_clamped() -> None:
     outcomes = [_score("seed-id", "validation", "v1", 0.5), _score("seed-id", "validation", "v2", 0.5), _reflection(),
                 _score("child-1", "validation", "v1", 1.0), _score("child-1", "validation", "v2", 0.9, status="evaluation-failed")]
     (attempt,) = attempts(outcomes, SEED, ["v1", "v2"])
-    assert attempt["validation_delta"] == pytest.approx(0.5 - 0.5)
+    assert attempt["validation_delta"] is None
     outcomes = [_score("seed-id", "validation", "v1", 0.0), _reflection(), _score("child-1", "validation", "v1", 7.0)]
     assert attempts(outcomes, SEED, ["v1"])[0]["validation_delta"] == pytest.approx(1.0)
+
+
+@pytest.mark.ac("gh-316:AC-6")
+def test_an_older_validation_score_survives_a_newer_failed_outcome() -> None:
+    outcomes = [_score("seed-id", "train", "a", 0.5), _score("seed-id", "validation", "v", 0.5), _reflection(),
+                _score("child-1", "train", "a", 0.9), _score("child-1", "train", "a", 0.0, status="evaluation-failed"),
+                _score("child-1", "validation", "v", 0.9), _score("child-1", "validation", "v", 0.0, status="evaluation-failed")]
+    (attempt,) = attempts(outcomes, SEED, ["v"])
+    assert attempt["validation_delta"] == pytest.approx(0.9 - 0.5)
+    assert attempt["fixed"] == ["a"] and attempt["broke"] == []
 
 
 def test_a_reflection_with_neither_candidate_nor_rejection_prints_result_unknown() -> None:

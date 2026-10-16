@@ -1469,7 +1469,8 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
-    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped"}
+    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped",
+                           "scored", "failed", "failed_by_reason"}
     saved = cast(dict[str, object], read(out / "run.json")["search"])
     assert set(saved) == set(search) and {key: saved[key] for key in saved if key != "attempts"} == {
         key: search[key] for key in search if key != "attempts"}

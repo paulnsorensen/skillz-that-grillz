@@ -307,7 +307,8 @@ def test_the_last_turn_failed_message_classifies_after_many_retry_notices(notice
 @pytest.mark.ac("gh-318:AC-7")
 def test_the_last_of_several_turn_failed_messages_classifies() -> None:
     events: list[dict[str, object]] = [{"type": "error", "message": RETRY_NOTICE.format(n=n)} for n in range(1, 7)]
-    events += [{"type": "turn.failed", "message": "an earlier failure"}, {"type": "turn.failed", "message": EXHAUSTED}]
+    events.append({"type": "turn.failed", "message": "an earlier failure"})
+    events.append({"type": "turn.failed", "message": EXHAUSTED})
     assert failure_details(1, "", events)["reason"] == "rate-limited"
 
 
