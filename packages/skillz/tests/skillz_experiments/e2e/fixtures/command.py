@@ -47,6 +47,7 @@ def respond(request: dict[str, object], mode: str = "normal", observed: str = ""
 
 
 def main() -> None:
+    parent = os.getppid()
     request = cast(dict[str, object], json.load(sys.stdin))
     settings = cast(dict[str, str], json.loads(Path(sys.argv[1]).read_text())) if len(sys.argv) > 1 else {}
     mode = settings.get("mode", "normal")
@@ -60,8 +61,8 @@ def main() -> None:
                 and visible is not None and visible.is_file() else "")
     if request["operation"] == "infer" and "pause_dir" in settings:
         pause_dir = Path(settings["pause_dir"])
-        pending = pause_dir / f"{os.getpid()}.pending"
-        release = pause_dir / f"{os.getpid()}.release"
+        pending = pause_dir / f"{os.getpid()}.{role}.pending"
+        release = pause_dir / f"{os.getpid()}.{role}.release"
         pending.touch()
         deadline = time.monotonic() + 30
         while not release.exists() and time.monotonic() < deadline:
@@ -72,7 +73,7 @@ def main() -> None:
         release.unlink()
     response = respond(request, mode, observed)
     if log is not None:
-        entry: dict[str, object] = {"role": role, "request": request,
+        entry: dict[str, object] = {"role": role, "request": request, "pid": os.getpid(), "parent": parent,
                  "candidate": (workspace / ".agents/skills" / str(request.get("skill_name", "")) / "EXPERIMENT_MARKER").read_text()
                  if role == "task" else None}
         if role == "task":

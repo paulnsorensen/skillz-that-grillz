@@ -51,24 +51,44 @@ def _record(path: Path) -> dict[str, object] | None:
         return None
 
 
+def _held_tasks(pause_dir: Path) -> list[Path]:
+    """Return the paused task calls that have no release yet."""
+    return [path for path in pause_dir.glob("*.task.pending") if not path.with_suffix(".release").exists()]
+
+
 def _advance(process: subprocess.Popen[str], pause_dir: Path, checkpoint: Path,
              *, stop_at_holdout: bool) -> tuple[dict[str, object], str, str]:
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         record = _record(checkpoint)
+        pending = list(pause_dir.glob("*.pending"))
         if (stop_at_holdout and record is not None
                 and any(item.get("split") == "holdout"
-                        for item in cast(list[dict[str, object]], record.get("outcomes", [])))):
+                        for item in cast(list[dict[str, object]], record.get("outcomes", [])))
+                and _held_tasks(pause_dir)):
             return record, "", ""
         if process.poll() is not None:
             output, error = process.communicate(timeout=5)
             final_record = _record(checkpoint)
             assert final_record is not None, (process.returncode, output, error)
             return final_record, output, error
-        for pending in pause_dir.glob("*.pending"):
-            _ = pending.with_suffix(".release").touch()
+        for path in pending:
+            _ = path.with_suffix(".release").touch()
         time.sleep(0.01)
     raise AssertionError("CLI did not reach the bounded checkpoint or exit")
+
+
+def _await_event(out: Path, pid: int) -> None:
+    """Wait until the vendor process `pid` logs its call. It outlives a killed CLI in its own session."""
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            if any(event.get("pid") == pid for event in read_events(out)):
+                return
+        except json.JSONDecodeError:
+            pass
+        time.sleep(0.01)
+    raise AssertionError(f"vendor process {pid} did not log its call")
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-8")
@@ -106,7 +126,9 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
                      if item.get("split") == "holdout" and item.get("status") != "evaluation-failed"]
         assert completed
         first_calls = cast(int, before["calls"])
-        prior_events = read_events(scenario.out)
+        in_flight = _held_tasks(pause_dir)[0]
+        _ = in_flight.with_suffix(".release").touch()
+        _await_event(scenario.out, int(in_flight.name.split(".")[0]))
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
@@ -141,12 +163,10 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
         if case["id"] not in held_ids:
             continue
         source = cast(str, cast(dict[str, object], case["files"])["fixture.md"])
-        prior_tasks = sum(event.get("role") == "task" and event.get("visible_input") == source
-                          for event in prior_events)
         prior_done = sum(item.get("case_id") == case["id"] for item in completed)
-        final_tasks = sum(event.get("role") == "task" and event.get("visible_input") == source
-                          for event in read_events(scenario.out))
-        assert final_tasks == 7 + prior_tasks - prior_done
+        resumed_tasks = sum(event.get("role") == "task" and event.get("visible_input") == source
+                            and event.get("parent") == resumed.pid for event in read_events(scenario.out))
+        assert resumed_tasks == 7 - prior_done
     previous = read_events(scenario.out)
     code, repeated, error = call_cli(approved, tmp_path)
     assert (code, error, repeated["gate"]) == (0, "", result["gate"])
