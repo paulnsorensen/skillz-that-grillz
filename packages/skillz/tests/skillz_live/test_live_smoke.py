@@ -1,9 +1,9 @@
 """Opt-in live smoke runs of the experiment stack and of the bundled session analytics.
 
-`just live-smoke HARNESS MODEL [SCENARIO]` runs them with `SKILLZ_LIVE=1`. Every other pytest run skips them, so
-`just build` makes no model call and reads no session log. Each attempt appends one JSON line to
-`.live-smoke/runs.jsonl` at the repository root. With `SKILLZ_LIVE_DRY=1`, a run scenario stops at its budget
-question and records the estimate, so it makes no model call.
+`just live-smoke HARNESS MODEL [SCENARIO]` runs them with `SKILLZ_LIVE=1`. Every other pytest run skips the `live`
+test, so `just build` makes no model call and reads no session log. The offline tests of the pass rule run in every
+pytest run. Each attempt appends one JSON line to `.live-smoke/runs.jsonl` at the repository root. With
+`SKILLZ_LIVE_DRY=1`, a run scenario stops at its budget question and records the estimate, so it makes no model call.
 """
 from __future__ import annotations
 
@@ -44,9 +44,6 @@ COPY_CHECK = ("import json, pathlib\nout = pathlib.Path('output/result.txt')\n"
               "want = pathlib.Path('fixture.md').read_text().strip()\n"
               "print(json.dumps({'score': float(out.is_file() and out.read_text().strip() == want)}))")
 """The command grader: the candidate output `result.txt` must hold the text of the case fixture."""
-
-pytestmark = pytest.mark.live
-
 
 @dataclass(frozen=True)
 class Setup:
@@ -277,7 +274,7 @@ def _run(scenario: Scenario, harness: str, model: str, work: Path, capsys: pytes
         code, preflight, error = _call(capsys, "self-test", "--preflight-only", "--model", model,
                                        "--harness-config", str(config), "--max-invocations", str(PREFLIGHT_CALLS))
         if code:
-            return _stopped("preflight", error)
+            return fields | _stopped("preflight", error)
         fields["preflight_calls"] = preflight.get("live_calls")
     out = work / "run"
     run = ("run", "--target", str(setup.target), "--out", str(out), "--model", model, *setup.harness, "--live",
@@ -357,6 +354,37 @@ def _revision() -> str:
     return found.stdout.strip()
 
 
+def _verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
+    """Return whether a run record passes, and the reason.
+
+    A scenario that expects a stop code passes only with that code. A preflight stop makes no task call, so it passes
+    only when the scenario expects its code. A resume that reaches the interrupt must leave a nonzero exit and an
+    unfinished run. A completed run must export a patch and score holdout cases. Any other step passes on a coded stop.
+    """
+    stage, code, expect = entry.get("stage"), entry.get("code"), entry.get("expect")
+    interrupted = "interrupted_exit" in entry
+    stop = f"the run stopped at stage {stage} with code {code}"
+    if scenario.resume and not interrupted:
+        stop += " before the interrupt"
+    if expect is not None:
+        return code == expect, f"{stop}; the scenario expects {expect}"
+    if stage == "preflight":
+        return False, f"{stop}; the scenario does not expect a preflight stop, so the run made no task call"
+    if scenario.resume and interrupted and (entry["interrupted_exit"] == 0 or entry.get("interrupted_phase") == "complete"):
+        return False, (f"the run was not interrupted: the first process exited {entry['interrupted_exit']} "
+                       f"in phase {entry.get('interrupted_phase')}")
+    if stage == "complete":
+        if entry.get("phase") != "complete" or not Path(str(entry.get("patch"))).is_file():
+            return False, "the run completed without phase complete and an exported candidate.patch"
+        if not entry.get("holdout_scored"):
+            return False, "the search kept the seed, so the gate scored no holdout case"
+        return True, f"the run completed, exported a patch, and scored {entry['holdout_scored']} holdout cases"
+    if isinstance(code, str):
+        return True, stop
+    return False, f"the run stopped at stage {stage} without a coded error"
+
+
+@pytest.mark.live
 @pytest.mark.parametrize("name", NAMES)
 def test_a_live_scenario_completes_and_exports_or_stops_with_a_code(name: str, tmp_path: Path,
                                                                     capsys: pytest.CaptureFixture[str]) -> None:
@@ -388,12 +416,95 @@ def test_a_live_scenario_completes_and_exports_or_stops_with_a_code(name: str, t
         return
     spent = [value for value in (entry.get("preflight_calls"), entry.get("calls")) if isinstance(value, int)]
     assert sum(spent) <= scenario.cap + PREFLIGHT_CALLS, entry
-    if scenario.resume:
-        assert entry["interrupted_exit"] != 0 and entry["interrupted_phase"] != "complete", f"the run was not interrupted: {entry}"
-    if entry.get("expect") is not None:
-        assert entry.get("code") == entry["expect"], f"the run did not stop with {entry['expect']}: {entry}"
-    elif entry["stage"] == "complete":
-        assert entry["phase"] == "complete" and Path(cast(str, entry["patch"])).is_file(), entry
-        assert entry.get("holdout_scored"), f"the search kept the seed, so the gate scored no holdout case: {entry}"
-    else:
-        assert isinstance(entry.get("code"), str), f"the run stopped without a coded error: {entry}"
+    passed, reason = _verdict(entry, scenario)
+    assert passed, f"{reason}: {entry}"
+
+
+BASIC, RESUME, JOURNEY = SCENARIOS["basic"], SCENARIOS["resume"], SCENARIOS["journey"]
+ISOLATION = "network-isolation-failed"
+
+
+def _preflight_stop(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], work: Path,
+                    expect: str | None) -> dict[str, object]:
+    """Run `_run` with a preflight that exits 1 with `ISOLATION`. Fail on any call after the preflight."""
+    def call(capture: pytest.CaptureFixture[str], *argv: str) -> tuple[int, dict[str, object], dict[str, object]]:
+        del capture
+        assert argv[:2] == ("self-test", "--preflight-only"), f"the run went past a failed preflight: {argv}"
+        return 1, {}, {"code": ISOLATION, "error": "the sandbox reached the network"}
+
+    def build(target: Path, harness: str, model: str) -> Setup:
+        del harness, model
+        return Setup(target, [], {"schema_version": 1}, (), expect=expect)
+    monkeypatch.setattr(sys.modules[__name__], "_call", call)
+    return _run(Scenario(build, 97), "codex", "model", work, capsys, dry=False)
+
+
+def _complete(work: Path, holdout: int) -> dict[str, object]:
+    patch = work / "candidate.patch"
+    _ = patch.write_text("--- a\n+++ b\n", encoding="utf-8")
+    return {"stage": "complete", "phase": "complete", "code": None, "expect": None, "patch": str(patch),
+            "holdout_scored": holdout, "interrupted_exit": 130, "interrupted_phase": "search"}
+
+
+@pytest.mark.ac("gh-339:AC-1")
+def test_a_preflight_stop_that_the_scenario_does_not_expect_fails() -> None:
+    passed, _ = _verdict({"stage": "preflight", "code": ISOLATION, "expect": None}, BASIC)
+    assert not passed
+
+
+@pytest.mark.ac("gh-339:AC-2")
+def test_the_failure_of_an_unexpected_preflight_stop_names_the_stage_and_the_code() -> None:
+    passed, reason = _verdict({"stage": "preflight", "code": ISOLATION, "expect": None}, BASIC)
+    assert not passed and "stage preflight" in reason and ISOLATION in reason, reason
+
+
+@pytest.mark.ac("gh-339:AC-3")
+def test_a_preflight_stop_keeps_the_expected_code_in_the_record(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+                                                                capsys: pytest.CaptureFixture[str]) -> None:
+    entry = _preflight_stop(monkeypatch, capsys, tmp_path, "journey-unsupported")
+    assert entry["stage"] == "preflight" and entry["code"] == ISOLATION, entry
+    assert entry["expect"] == "journey-unsupported", entry
+
+
+@pytest.mark.ac("gh-339:AC-4")
+def test_a_preflight_stop_with_another_code_than_the_expected_one_fails(monkeypatch: pytest.MonkeyPatch,
+                                                                        tmp_path: Path,
+                                                                        capsys: pytest.CaptureFixture[str]) -> None:
+    passed, reason = _verdict(_preflight_stop(monkeypatch, capsys, tmp_path, "journey-unsupported"), JOURNEY)
+    assert not passed and ISOLATION in reason and "journey-unsupported" in reason, reason
+
+
+@pytest.mark.ac("gh-339:AC-4")
+def test_a_stop_with_the_expected_code_passes() -> None:
+    entry: dict[str, object] = {"stage": "run", "code": "journey-unsupported", "expect": "journey-unsupported"}
+    assert _verdict(entry, JOURNEY)[0]
+
+
+@pytest.mark.ac("gh-339:AC-1")
+def test_a_completed_run_passes_only_with_a_patch_and_a_scored_holdout(tmp_path: Path) -> None:
+    assert _verdict(_complete(tmp_path, 6), BASIC)[0]
+    passed, reason = _verdict(_complete(tmp_path, 0), BASIC)
+    assert not passed and "no holdout case" in reason, reason
+    missing = _complete(tmp_path, 6) | {"patch": str(tmp_path / "absent.patch")}
+    assert not _verdict(missing, BASIC)[0]
+
+
+@pytest.mark.ac("gh-340:AC-1")
+@pytest.mark.ac("gh-340:AC-2")
+@pytest.mark.parametrize(("stage", "code", "passes"), [("preflight", ISOLATION, False), ("cases", "cases-invalid", True),
+                                                     ("budget", "budget-over-cap", True)])
+def test_a_resume_that_stops_before_the_interrupt_reports_the_stage_and_the_code(stage: str, code: str,
+                                                                                  passes: bool) -> None:
+    passed, reason = _verdict({"stage": stage, "code": code, "expect": None}, RESUME)
+    assert passed is passes and f"stage {stage}" in reason and code in reason, reason
+
+
+@pytest.mark.ac("gh-340:AC-3")
+@pytest.mark.parametrize(("exit_code", "phase", "passes"), [(130, "search", True), (0, "search", False),
+                                                           (130, "complete", False)])
+def test_a_resume_that_reaches_the_interrupt_must_leave_a_nonzero_exit_and_an_unfinished_run(
+        exit_code: int, phase: str, passes: bool, tmp_path: Path) -> None:
+    entry = _complete(tmp_path, 6) | {"interrupted_exit": exit_code, "interrupted_phase": phase}
+    passed, reason = _verdict(entry, RESUME)
+    assert passed is passes, reason
+    assert passes or "not interrupted" in reason, reason

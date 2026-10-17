@@ -27,7 +27,12 @@ With `SKILLZ_LIVE_DRY=1`, each run scenario stops at its budget question, record
 
 A run approves its estimate only when the estimate is at most its cap. The preflight gets at most 3 more calls.
 The `command-harness` and `hybrid-mixed` scenarios need `codex` and skip with another `HARNESS`.
-A test passes when the run reaches `phase == complete` and the export writes `candidate.patch`, or when a step stops with a coded error.
-A scenario that expects a stop code passes only with that code. Any other failure fails the test.
+A test passes when the run reaches `phase == complete`, the export writes `candidate.patch`, and the gate scores holdout cases.
+A test also passes when a step after the preflight stops with a coded error.
+An unexpected preflight stop does not pass: the preflight checks the host and the sandbox, and the run makes no task call.
+A scenario that expects a stop code passes only with that code, at any stage.
+The `resume` scenario must interrupt its first process with a nonzero exit before `phase == complete`.
+When it stops before the interrupt, the failure message or the record shows the stage and the stop code.
+Any other failure fails the test. The `skillz-pytest` gate step checks this pass rule offline, without a model call.
 Each attempt appends one JSON line to `.live-smoke/runs.jsonl`: scenario, harness, model, host OS, revision, stage, verdict, code, calls, and seconds.
 Git ignores that folder.
