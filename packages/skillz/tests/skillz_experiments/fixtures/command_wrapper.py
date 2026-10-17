@@ -87,6 +87,9 @@ def main() -> None:
     settings = cast(dict[str, str], json.loads(Path(sys.argv[1]).read_text()))
     operation = str(request["operation"])
     workspace = Path(str(request["workspace"]))
+    if settings.get("mode") == "slow-start":
+        # Stand in for a child that a loaded host does not schedule before the deadline.
+        time.sleep(10)
     with Path(settings["log"]).open("a") as log:
         _ = log.write(json.dumps(request) + "\n")
     mode = settings.get("mode", "normal")
