@@ -212,6 +212,30 @@ def test_holdout_reaches_the_minimum_when_the_draft_allows_it(tmp_path: Path, si
         assert split == split_cases(cases, seed)
 
 
+def mixed(task_sizes: list[int], journey_sizes: list[int]) -> list[dict[str, object]]:
+    cases = sized(task_sizes)
+    for family, size in enumerate(journey_sizes):
+        for index in range(size):
+            cases.append({"id": f"j{family}-{index}", "family": f"journey{family}", "kind": "journey",
+                          "request": "Walk it", "files": {"input.txt": "x\n"}, "expected": "y", "source": "skill", "brief": "Ask first."})
+    return cases
+
+
+def test_journey_families_do_not_count_toward_the_scored_task_holdout(tmp_path: Path) -> None:
+    cases = load_draft(write_draft(tmp_path, mixed([2] * 9, [3, 3, 2, 2, 2])))
+    for seed in range(60):
+        split = split_cases(cases, seed)
+        held = sum(case.split == "holdout" and case.kind == "task" for case in split)
+        assert held >= 6, (seed, held)
+        assert {case.family for case in split if case.kind == "journey"} == {f"journey{family}" for family in range(5)}
+
+
+def test_a_draft_with_too_few_task_families_stops_even_when_journey_families_fill_the_count(tmp_path: Path) -> None:
+    cases = load_draft(write_draft(tmp_path, mixed([3, 3], [2, 2, 2])))
+    with pytest.raises(ValueError, match="at least 3 task families"):
+        _ = split_cases(cases, 1)
+
+
 def test_approval_question_shows_family_request_and_contract(tmp_path: Path) -> None:
     raw = draft()
     raw[0]["request"] = "Summarize " + "long " * 40
