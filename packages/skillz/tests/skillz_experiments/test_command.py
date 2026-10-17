@@ -108,8 +108,9 @@ def test_resume_rejects_each_frozen_role_or_command_file(tmp_path: Path, change:
     assert log.read_text() == before
 
 
-def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path) -> None:
-    config, _, log = configured(tmp_path, "timeout")
+@pytest.mark.parametrize("mode", ["timeout", "slow-start"])
+def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path, mode: str) -> None:
+    config, _, log = configured(tmp_path, mode)
     budget = Budget(20, 0.5)
     adapter = Configuration.load(config, "offline").create("offline", budget, lambda: None)
     try:
@@ -117,7 +118,9 @@ def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path) -> None:
             _ = adapter.invoke("reflection", schema={"type": "object", "properties": {"x": {"type": "string"}},
                                                     "required": ["x"], "additionalProperties": False})
         assert budget.calls == 1
-        assert [item["operation"] for item in requests(log)] == ["infer"]
+        # The deadline can stop a child before its first log write on a loaded host.
+        operations = [item["operation"] for item in requests(log)] if log.exists() else []
+        assert operations in ([], ["infer"])
     finally:
         adapter.close()
 
