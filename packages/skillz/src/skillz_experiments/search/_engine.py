@@ -3,7 +3,9 @@ from __future__ import annotations
 import contextlib
 import importlib
 import importlib.metadata
+import math
 import os
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, Protocol, cast, get_args
 
@@ -24,8 +26,16 @@ class _API(Protocol):
 
 
 def overshoot(validation: int) -> int:
-    """Return the most metric calls that the last GEPA iteration spends beyond `max_metric_calls`."""
+    """Return the most metric calls that the last GEPA iteration spends beyond `metric_calls`."""
     return 2 * REFLECTION_MINIBATCH + validation
+
+
+def skip_limit(train: int) -> int:
+    """Return the consecutive iterations without a new evaluation that end a search: two epochs of train minibatches.
+
+    Each epoch puts every train case in a minibatch, so a parent with an imperfect case reflects within this limit.
+    """
+    return 2 * math.ceil(train / REFLECTION_MINIBATCH)
 
 
 def search(seed: dict[str, str], edit: Edit, train: list[object], validation: list[object],
@@ -34,6 +44,10 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
            spent: Callable[[], bool] | None = None) -> bool:
     """Run one GEPA search over `seed`, which holds only the editable components.
 
+    `metric_calls` bounds the distinct candidate and case evaluations. GEPA scores the parent again on each minibatch,
+    and the caller serves that repeat from its record, so a repeat does not count. A result whose feedback holds
+    `rejected` makes no live call and does not count either. GEPA skips reflection when the parent scores perfectly on
+    the minibatch. `skip_limit` consecutive iterations without a new evaluation end the search.
     GEPA calls `stalled` and `spent` before each iteration and stops when either returns true.
     Return whether `stalled` stopped it. `spent` ends the search without that mark: the caller's live-call share is used up.
     """
@@ -53,21 +67,40 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
     if not seed:
         raise ValueError("search has no editable components")
 
+    lock = threading.Lock()
+    evaluated: set[tuple[tuple[tuple[str, str], ...], str]] = set()
+    scored: set[tuple[tuple[tuple[str, str], ...], str]] = set()
+
     def score(candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
         if set(candidate) != set(seed):
             raise ValueError("proposal components differ from the frozen set")
-        return evaluate(candidate, example)
+        key = (tuple(sorted(candidate.items())), repr(example))
+        with lock:
+            evaluated.add(key)
+        result = evaluate(candidate, example)
+        if "rejected" not in result[1]:
+            with lock:
+                scored.add(key)
+        return result
 
     stopped = False
+    idle = 0
+    seen = 0
 
     def stop(_state: object) -> bool:
-        nonlocal stopped
+        nonlocal stopped, idle, seen
+        with lock:
+            # A skipped minibatch, a failed proposal, or a repeated candidate adds no new evaluation.
+            idle = idle + 1 if len(evaluated) == seen else 0
+            seen = len(evaluated)
+            ended = idle >= skip_limit(len(train)) or len(scored) >= metric_calls
         stopped = stopped or (stalled is not None and stalled())
-        return stopped or (spent is not None and spent())
+        return stopped or ended or (spent is not None and spent())
 
     # GEPA turns each proposer exception into a skipped proposal. The caller's session latch re-raises a coded fault.
+    # GEPA's own `max_metric_calls` stays unset: it counts each repeat, so free repeats would end the search.
     config = api.GEPAConfig(
-        engine=api.EngineConfig(max_metric_calls=metric_calls, parallel=True,
+        engine=api.EngineConfig(parallel=True,
                                 # The clamp enforces the two-call concurrency cap.
                                 max_workers=max(1, min(workers, MAX_CONCURRENT_CALLS)),
                                 use_cloudpickle=False, cache_evaluation=False, raise_on_exception=True,
@@ -76,7 +109,7 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
         reflection=api.ReflectionConfig(custom_candidate_proposer=propose, reflection_lm=None,
                                         module_selector="all", reflection_minibatch_size=REFLECTION_MINIBATCH,
                                         skip_perfect_score=True, perfect_score=1.0),
-        stop_callbacks=None if stalled is None and spent is None else [stop],
+        stop_callbacks=[stop],
     )
     with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
         _ = api.optimize_anything(seed, evaluator=score, dataset=train, valset=validation,

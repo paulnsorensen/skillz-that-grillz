@@ -610,6 +610,10 @@ The stall stop is always on. A budget stop keeps its own reason.
 When the search deadline, not the call cap, ends the search with more than half of the search call budget unspent, `search.reason` is `time-exhausted`.
 The `search` record then holds `seconds_by_role` for `task`, `reflection`, `judge`, and `failed`.
 A search that uses its allowance without a stop ends with `validation-mean`.
+GEPA reflects only on a train minibatch where the parent scores below 1.0.
+When the parent scores 1.0 on every minibatch of two train epochs in a row, the search also ends with `validation-mean`.
+A repeated evaluation of a scored candidate and case is free and does not use the allowance.
+If the search ends with most of its allowance unspent, the train cases are too easy; add harder train cases.
 The runner rebuilds the observations from the run record, so a resumed run gets the same streak.
 A resumed run that already reached a streak of 8 skips the search.
 ADR-016 in `docs/agents/decisions/skillz-autoimprove.md` records the thresholds.

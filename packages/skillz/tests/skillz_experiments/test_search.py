@@ -3,12 +3,13 @@ from __future__ import annotations
 import importlib
 import threading
 from collections.abc import Mapping, Sequence
-from typing import cast
+from typing import cast, final
 
 import pytest
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 from skillz_experiments.search import Edit, search
+from skillz_experiments.search._engine import overshoot, skip_limit
 
 
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
@@ -82,6 +83,84 @@ def test_search_skips_a_minibatch_the_parent_already_scores_perfectly() -> None:
     assert proposed == []
     assert evaluated and set(evaluated) == {"v0"}
 
+
+@final
+class _Recorded:
+    """Score each candidate and case once, as the session does: a repeat of a scored pair makes no live call.
+
+    The first `rejected` proposals fail admission, as a leak or a failed build does: they score 0.0 with no live call.
+    """
+
+    def __init__(self, train: dict[str, float], other: float, rejected: int = 0) -> None:
+        self.train, self.other = train, other
+        self.rejected = {f"p{index}" for index in range(1, rejected + 1)}
+        self.lock = threading.Lock()
+        self.scored: dict[tuple[str, str], float] = {}
+        self.repeats = 0
+        self.proposals = 0
+        self.checks = 0
+
+    def evaluate(self, candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
+        key = (candidate["SKILL.md"], str(example))
+        if key[0] in self.rejected:
+            return 0.0, {"task_correct": 0.0, "rejected": "leakage"}
+        with self.lock:
+            if key in self.scored:
+                self.repeats += 1
+            elif key[0] == "v0":
+                self.scored[key] = self.train.get(key[1], self.other)
+            else:
+                self.scored[key] = self.other
+            return self.scored[key], {"task_correct": self.scored[key]}
+
+    def propose(self, _candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                components: list[str]) -> dict[str, str]:
+        with self.lock:
+            self.proposals += 1
+            return {key: f"p{self.proposals}" for key in components}
+
+    def stalled(self) -> bool:
+        with self.lock:
+            self.checks += 1
+        return False
+
+
+@pytest.mark.ac("skillz-search-free-repeats:AC-1")
+def test_free_repeats_of_a_mostly_perfect_parent_do_not_end_the_search_before_its_share() -> None:
+    """Kit-like: 3 train and 3 validation cases, 43 metric calls. The seed scores 1.0 on two train cases.
+
+    GEPA counts each repeat of the parent and each skipped minibatch. Before the fix, those free repeats ended the
+    search after 7 proposals with 19 scored pairs. Each rejected proposal scores 2 new pairs.
+    """
+    run = _Recorded({"t1": 1.0, "t2": 1.0, "t3": 0.8}, 0.7)
+    validation: list[object] = ["val1", "val2", "val3"]
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], validation, run.evaluate, run.propose,
+                  metric_calls=43, stalled=run.stalled) is False
+    assert run.repeats > 0
+    assert 43 <= len(run.scored) <= 43 + overshoot(len(validation))
+    assert run.proposals >= 18
+
+
+@pytest.mark.ac("skillz-search-free-repeats:AC-2")
+def test_a_search_with_only_perfect_minibatches_ends_after_the_skip_limit() -> None:
+    run = _Recorded({"t1": 1.0, "t2": 1.0, "t3": 1.0}, 1.0)
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], ["val1", "val2", "val3"], run.evaluate,
+                  run.propose, metric_calls=10**6, stalled=run.stalled) is False
+    assert run.proposals == 0
+    # One check before the first iteration, 2 iterations that score the train cases, then the idle limit.
+    assert run.checks == 1 + 2 + skip_limit(3) == 7
+    assert len(run.scored) == 6
+
+
+@pytest.mark.ac("skillz-search-free-repeats:AC-4")
+def test_rejected_proposals_do_not_use_the_search_share() -> None:
+    """Five rejected proposals add 10 pairs with no live call. Before the fix, they ended the search at 12 pairs."""
+    run = _Recorded({"t1": 1.0, "t2": 1.0, "t3": 0.8}, 0.7, rejected=5)
+    validation: list[object] = ["val1", "val2", "val3"]
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], validation, run.evaluate, run.propose,
+                  metric_calls=12, stalled=run.stalled) is False
+    assert run.proposals > 5
+    assert 12 <= len(run.scored) <= 12 + overshoot(len(validation))
 
 @pytest.mark.parametrize("edit", ["prose", "prose+cli"])
 def test_search_offers_and_evaluates_exactly_the_seed_components(edit: Edit) -> None:
