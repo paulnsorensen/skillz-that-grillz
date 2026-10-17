@@ -78,7 +78,7 @@ SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation
 
 def _faulted_reflection(item: Mapping[str, object]) -> bool:
     """Return whether a reflection row records a skipped or timed-out call, which proposes nothing."""
-    return item.get("status") in ("skipped", "timeout") and "proposed" not in item
+    return item.get("status") in ("skipped", "timeout", "failed") and "proposed" not in item
 
 
 def _failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
@@ -132,6 +132,15 @@ def _search_fault(rows: Sequence[Mapping[str, object]]) -> CodedError | None:
         return None
     return CodedError("search-faulted", f"{len(failed)} of {len(rows)} search evaluations failed ({_reason_counts(failed)}; "
                       + f"the newest: {failed[-1].get('failure')}); wait for the provider, then resume the run in the same directory")
+
+
+def _reflection_fault(rows: Sequence[Mapping[str, object]]) -> CodedError | None:
+    """Return `search-faulted` when the newest `FAULT_STREAK` reflection calls all failed, else None."""
+    newest = rows[-FAULT_STREAK:]
+    if len(newest) < FAULT_STREAK or any(item.get("status") != "failed" for item in newest):
+        return None
+    return CodedError("search-faulted", f"{FAULT_STREAK} reflection calls in a row failed ({_reason_counts(newest)}; "
+                      + f"the newest: {newest[-1].get('failure')}); fix the cause, then resume the run in the same directory")
 
 
 def _baseline_rejected(detail: str | None = None) -> Stop:
@@ -741,6 +750,18 @@ class Session:
                 self._ended_proposal = asked
                 self.checkpoint()
             raise ValueError("the reflection call timed out; the proposal ends with no candidate") from error
+        except (OSError, ValueError, RuntimeError) as error:
+            # A provider failure other than a timeout. GEPA skips the proposal, so the row is the only trace of the paid call.
+            with self.lock:
+                self.outcomes.append({"arm": "search", "split": "reflection", "status": "failed",
+                                      "reason": _fault_reason(error), "failure": str(error)})
+                self._ended_proposal = asked
+                self.checkpoint()
+                fault = _reflection_fault(self._reflections())
+            if fault is not None:
+                self._latch(fault)
+                raise fault from error
+            raise ValueError("the reflection call failed; the proposal ends with no candidate") from error
         refusal: ValueError | None = None
         proposal: dict[str, str] = {}
         edits = 0
