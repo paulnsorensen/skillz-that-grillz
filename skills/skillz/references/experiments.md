@@ -754,6 +754,7 @@ Each kind in `kinds` names one grader:
 
 - `exact-json`: compares the task result with the case `expected` JSON. A `result_json` that is not a string scores 0 with status `invalid-answer`.
 - `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100, unless the kind declares `pillars`.
+  The judge sees the case `expected` as `reference`, so a rubric names `reference`. Without a contract, the default `task` rubric is: "The answer is correct when it satisfies the request and agrees in substance with `reference`. Ignore differences in JSON shape, quoting, or whitespace. Score 100 for a correct answer and 0 for a wrong answer."
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
 - `hybrid`: runs the `command` gate first. A failed gate scores 0, skips the judge, and records `scores.judge` as null.
 - `journey`: scores a multi-turn conversation. See "Journeys".
