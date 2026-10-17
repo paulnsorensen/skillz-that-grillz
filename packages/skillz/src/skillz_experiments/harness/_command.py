@@ -64,17 +64,14 @@ def _events(result: dict[str, object]) -> list[dict[str, object]]:
 
 def _validate_answer(value: object, schema: dict[str, object]) -> None:
     kind = schema.get("type")
-    if kind == ["string", "null"]:
+    if isinstance(kind, list) and set(cast(list[object], kind)) == {"string", "null"}:
         if value is not None and type(value) is not str:
             raise ValueError("harness answer type does not match the response schema")
         return
     if kind == "object":
         item = mapping(value)
         properties = mapping(schema["properties"])
-        nullable = {name for name, child in properties.items()
-                    if isinstance(kind_of := mapping(child).get("type"), list) and "null" in cast(list[object], kind_of)}
-        missing = set(properties) - set(item)
-        if set(item) - set(properties) or missing - nullable:
+        if set(item) != set(properties):
             raise ValueError("harness answer fields do not match the response schema")
         for name, child in item.items():
             _validate_answer(child, mapping(properties[name]))
