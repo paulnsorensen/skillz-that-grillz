@@ -14,7 +14,9 @@ from skillz_experiments._cases import CodedError, load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._intake import HOLDOUT_MINIMUM, case_hash, freeze, load_draft, split_cases
 from skillz_experiments.harness import ClaudeOptions
-from skillz_experiments.run._plan import size_plan
+from skillz_experiments.run._plan import SEARCH_CASE_FACTOR, size_plan
+from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.search import REFLECTION_MINIBATCH, overshoot
 
 KIT = Path(__file__).resolve().parents[2] / "experiments" / "skillz-autoimprove"
 SEED = 20261006
@@ -53,8 +55,27 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (489, 24, 234, 54, 288)
-    assert plan.sized.seconds == 15230
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (704, 50, 234, 54, 288)
+    assert plan.sized.seconds == 21940
+
+
+SEED_EVALUATIONS = 9
+PROPOSALS = 8
+
+
+def test_a_journey_plan_gives_the_search_room_for_eight_rejected_proposals(tmp_path: Path) -> None:
+    rules = contract(tmp_path)
+    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
+    freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
+    plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
+    validation = sum(case.split == "validation" for case in cases)
+    allowance = plan.metric_calls - overshoot(validation) - SEED_EVALUATIONS
+    assert allowance // (2 * REFLECTION_MINIBATCH) >= PROPOSALS
+
+
+def test_a_task_only_plan_keeps_the_fixed_search_factor() -> None:
+    plan = _plan(3, 3, 6, 1, 2)
+    assert plan.metric_calls == SEARCH_CASE_FACTOR * 6 == 24
 
 
 def test_stage_copies_the_skill_with_the_journey_contract_and_no_wedge_toml(tmp_path: Path) -> None:
