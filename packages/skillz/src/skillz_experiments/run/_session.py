@@ -940,8 +940,8 @@ class Session:
         elif allowance >= 1:
             # Search and reflection calls leave the gate its estimated time. Preflight and the gate use all of it.
             self.budget.reserve_time(_number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
-            # GEPA counts a reused outcome as a metric call, so the engine bound adds the reusable outcomes.
-            # The search can ask for fewer of them, so the live evaluations alone end the search at the allowance.
+            # The engine bound counts distinct candidate and case evaluations, so it adds the reusable outcomes.
+            # A repeat in this run is free and does not count. The live evaluations alone end the search at the allowance.
             reusable = self._recorded_for_reuse()
             try:
                 stopped = pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
