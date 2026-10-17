@@ -527,8 +527,10 @@ def test_two_sessions_build_the_same_bytes_for_the_same_sources(
     _ = world.contract("scripts/beta.pyz")
     out = prepared(world, tmp_path, write_draft, approvals)
     recorder = Recorder()
-    for _ in range(2):
-        _ = evaluate(out, recorder, lambda c: c.update({BETA: BETA_SOURCE.replace("v1", "v2")}))
+    # A session reuses the outcome that its run directory holds, so each session gets its own copy of the unscored run.
+    copies = [shutil.copytree(out, tmp_path / f"run-{number}") for number in range(2)]
+    for copy in copies:
+        _ = evaluate(copy, recorder, lambda c: c.update({BETA: BETA_SOURCE.replace("v1", "v2")}))
     first, second = recorder.seen
     assert first.frozen == second.frozen and first.identity == second.identity
 

@@ -430,6 +430,16 @@ def test_a_run_without_an_interrupt_calls_the_model_once_for_each_recorded_searc
     assert Counter(state.search_log) == Counter(_search_pairs(read(out / "run.json")))
 
 
+def test_one_search_scores_each_candidate_case_and_split_once(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    """GEPA scores the parent again on each minibatch. The session serves the repeat from the recorded outcome."""
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    repeated = {pair: count for pair, count in Counter(state.search_log).items() if count > 1}
+    assert not repeated
+    assert Counter(_search_pairs(read(out / "run.json"))) == Counter(state.search_log)
+
 def test_a_resume_evaluates_a_recorded_failed_evaluation_again(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:

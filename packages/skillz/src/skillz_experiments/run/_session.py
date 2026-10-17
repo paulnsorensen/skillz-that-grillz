@@ -620,10 +620,18 @@ class Session:
             raise fault
 
     def _reuse(self, candidate: Candidate, case: Case) -> dict[str, object] | None:
-        """Return the next recorded outcome of `candidate` on `case`, or None. Each recorded outcome serves one evaluation."""
+        """Return a recorded outcome of `candidate` on `case`, or None.
+
+        Each outcome from before this search serves one evaluation, as GEPA asked for it then. After that, the newest
+        scored outcome of the pair in this run serves every repeat: GEPA scores the parent again on each minibatch.
+        """
         with self.lock:
             queue = self._reusable.get((candidate.identity, case.split, case.identifier))
-            return queue.pop(0) if queue else None
+            if queue:
+                return queue.pop(0)
+            return next((item for item in reversed(self._search_outcomes())
+                         if item.get("search_candidate") == candidate.identity and item.get("split") == case.split
+                         and item.get("case_id") == case.identifier and item.get("status") != "evaluation-failed"), None)
 
     def _recorded_for_reuse(self) -> int:
         """Load the scored search outcomes of the record into the reuse queues. Return their count.
