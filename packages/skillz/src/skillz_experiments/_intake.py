@@ -125,15 +125,16 @@ def check_helper_input(contract: Contract, cases: Sequence[DraftCase]) -> None:
 def split_cases(cases: Sequence[DraftCase], seed: int, kind: str = "task") -> list[IntakeCase]:
     """Assign splits from `seed`. A family never crosses splits. Scored cases take the grading `kind`.
 
-    Train and validation get one task family each. Holdout takes the next families until it holds
-    `HOLDOUT_MINIMUM` cases. The rest alternate between train and validation.
-    When the first two shuffled families leave too few cases for holdout, the two smallest families go to
-    train and validation instead. Pending-only families get a seeded split.
+    Train and validation get one scored family each. Holdout takes the next families until it holds
+    `HOLDOUT_MINIMUM` scored cases. The rest alternate between train and validation.
+    When the first two shuffled families leave too few scored cases for holdout, the two smallest families go
+    to train and validation instead. Families with no scored case, such as pending-only families and
+    journey families in a task run, get a seeded split.
     """
     rng = random.Random(seed)
     size: dict[str, int] = {}
     for case in cases:
-        if not case.pending:
+        if not case.pending and (case.kind == kind or not case.journey):
             size[case.family] = size.get(case.family, 0) + 1
     if len(size) < MINIMUM_FAMILIES:
         raise ValueError(f"intake needs at least {MINIMUM_FAMILIES} task families (train, validation, holdout); "
