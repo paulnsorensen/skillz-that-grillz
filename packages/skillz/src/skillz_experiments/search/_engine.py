@@ -26,7 +26,7 @@ class _API(Protocol):
 
 
 def overshoot(validation: int) -> int:
-    """Return the most metric calls that the last GEPA iteration spends beyond `max_metric_calls`."""
+    """Return the most metric calls that the last GEPA iteration spends beyond `metric_calls`."""
     return 2 * REFLECTION_MINIBATCH + validation
 
 

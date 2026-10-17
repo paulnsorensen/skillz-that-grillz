@@ -145,6 +145,7 @@ def test_a_search_with_only_perfect_minibatches_ends_after_the_skip_limit() -> N
     assert run.checks == 1 + 2 + skip_limit(3) == 7
     assert len(run.scored) == 6
 
+
 @pytest.mark.parametrize("edit", ["prose", "prose+cli"])
 def test_search_offers_and_evaluates_exactly_the_seed_components(edit: Edit) -> None:
     seed = {"SKILL.md": "seed", "references/a.md": "ref"}
