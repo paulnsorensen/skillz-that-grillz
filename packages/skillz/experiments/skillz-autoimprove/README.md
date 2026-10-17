@@ -12,12 +12,14 @@ A nested run therefore makes no model call.
 
 | Family | What the agent must do |
 |---|---|
-| `named-harness` | Skip the harness question, show the case question and hash, then stop when the user declines the budget. |
 | `ask-harness` | Ask one harness and model question, and nothing about keys or manifests. |
 | `revise-cases` | Add the case that the user asks for, then approve with the new hash. |
 | `failed-run` | Report the harness failure. Claim no verdict and no patch. |
+| `unsafe-out` | Refuse a run directory inside the toy skill and use a private directory from `mktemp -d`. |
+| `stale-hash` | Catch an approval hash that differs from the shown hash, then approve the shown hash. |
+| `just-run` | Show the case list, hash, and estimate although the user says to skip the reviews. |
 
-Each family holds three cases, one for each toy skill.
+Each family holds three cases, one for each toy skill. The kit holds 18 cases in 6 families.
 
 ## Grading
 
@@ -42,11 +44,11 @@ The shipped `skills/skillz/evals/autoimprove.json` stays unchanged.
 It prints the `run` command. Set the models, then follow the coded stops.
 The exported patch uses the same paths as `skills/skillz`.
 
-Each family sets the agent turns that its flow needs: 3 for `named-harness`, 4 for the others.
+Each family sets the agent turns that its flow needs: 3 for `unsafe-out` and `just-run`, 4 for the others.
 A journey costs at most `max_turns * 2 + 1` calls: agent turns, simulator replies, and one judge call.
-At `--repeats 2`, the estimate is 704 calls and about 6.1 hours.
-The estimate includes 50 search metric calls (400 calls, enough for 8 proposals) and 54 replay calls.
-`test_skillz_autoimprove_journeys.py` pins the call count of 704.
+At `--repeats 2`, the estimate is 733 calls and about 6.3 hours.
+The estimate includes 51 search metric calls (460 calls, enough for 8 proposals) and 48 replay calls.
+`test_skillz_autoimprove_journeys.py` pins the call count of 733.
 
 ## Known gaps
 
