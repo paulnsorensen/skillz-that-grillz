@@ -202,6 +202,7 @@ A Claude Code maintainer verified that this setting turns off only Unix-socket f
 The live preflight then also probes a runner-owned host Unix socket. A Bash command that reaches it stops the run with `network-isolation-failed`.
 The environment hash includes this setting, so a resume on a host with the other result stops with `environment-differs`.
 The preflight evidence records `unix_socket_filter` as `on` or `off`.
+The runner sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0` in the Claude child environment. On Claude Code 2.1.301, the value `1` replaced the sandbox file and socket rules on a host that blocks the nested user namespace. Bash then read host files and reached a host pathname Unix socket. The child environment holds no credential variable. The live preflight stays the detector if a later Claude Code version changes this.
 A failure in the live preflight can cost its one call, but it never reaches a task call.
 The macOS path is unverified live. Verify it before you authorize private data.
 On the live Bash path, the network probes cover direct loopback TCP and the proxy HTTP path. They also cover a direct name lookup and a direct non-loopback TCP connection. They do not prove full network isolation. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
