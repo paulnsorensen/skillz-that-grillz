@@ -58,14 +58,15 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
          "grader_scores": {"command": 0.0}}
     ] * 2
     estimate = cast(dict[str, object], record["estimate"])
-    planned = cast(int, estimate["metric_calls"]) - (4 + len(validation_ids))
+    headroom = cast(dict[str, int], estimate["headroom"])
+    planned = cast(int, estimate["metric_calls"]) + headroom["outcomes"] - (4 + len(validation_ids))
     first_reflection = next(index for index, item in enumerate(outcomes)
                             if item.get("split") == "reflection")
     spent = sum(1 for item in outcomes[:first_reflection]
                 if item.get("arm") == "search" and item.get("split") in ("train", "validation"))
     percent = 100 * spent // planned
     edit_budget = math.floor(1 + 2.5 * (1 + math.cos(math.pi * spent / planned)))
-    assert (spent, planned, percent, edit_budget) == (4, 10, 40, 4)
+    assert (headroom["outcomes"], spent, planned, percent, edit_budget) == (2, 4, 12, 33, 4)
     assert f"Make at most {edit_budget} edits across all components." in first_prompt
     assert f"Run status: this is proposal 1. Search calls spent: {spent} of {planned} ({percent}%)." in first_prompt
     assert edit_budget < 6

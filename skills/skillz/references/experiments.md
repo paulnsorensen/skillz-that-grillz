@@ -13,11 +13,16 @@ It needs no source checkout or runtime package installation.
 ## Concepts
 
 - **Run**: one resumable `run` directory that holds the cases, one search, and one holdout gate.
+  Before the search, the run scores the seed once on every train and validation case.
+  It stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
+  A run that sets `min_token_saving` records these scores and does not stop.
 - **Case draft**: the file `RUN/cases.draft.json` that you write from the skill, and from past sessions when analytics exists.
 - **Split**: the train, validation, or holdout group of a case. Code assigns it from a recorded seed.
 - **Approval**: the user's answer to one question. The runner binds each answer to a hash or to a call count.
 - **Budget**: the estimated calls and seconds. After approval, a run uses at most 200 calls and 7200 seconds.
   The search stops early enough to leave the holdout gate its estimated calls and time.
+  The estimate has a `headroom` line: one seed score on each train case.
+  The headroom pass also scores the seed on each validation case. The search reuses that score, so it costs no new call.
 - **Gate verdict**: `promote`, `promote-cheaper`, `inconclusive`, or `reject`. It compares baseline and winner on the holdout cases.
 - **Export**: the write-only step that saves the winner as a private patch and a redacted report.
 
@@ -134,7 +139,8 @@ Map each coded stop to its next step:
 | `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_cases` (only when `evals/evals.json` exists), `doctor` (the host checks) | Write the case draft. Start from `seed_cases` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
+| `cases-too-easy` | The seed already scores at least 0.9 on a train or validation family. The message names each family, its split, and its mean. | Do not ask a new question. Draft harder cases in a new run directory, then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
@@ -240,7 +246,7 @@ When the entry lists no fixture, `files` is empty. Draft the starting fixture th
 A seed case has a `family` only when the entry has a nonempty-text `family` key. Otherwise set the `family` by the rule below.
 Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged. You can extend `files`, `expected`, and `family`.
 When the draft drops a seed case or changes its `id`, `kind`, or `request`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from `evals/evals.json`.
-Then add cases until the draft meets the minimums below. Journeys stay hand-authored.
+Then add cases until the draft meets the minimums below. To add journey cases, read `Draft journeys`.
 The holdout split alone needs 6 scored cases, and a family never crosses splits, so a contract needs about 10 or more `task` cases.
 A skill with no `evals/evals.json` has no `seed_cases`. Draft every case from the `facts`.
 
@@ -273,6 +279,52 @@ When session analytics exists, run the Usage ceremony from `SKILL.md`.
 Add extra cases from past sessions with `source: session`. Remove private data first.
 The approval question lists every case, with its source, family, and split.
 A change to the draft changes the case hash and asks the question again.
+
+## Draft journeys
+
+A journey case tests a skill that talks with the user over several turns. See `Journeys` for the case fields and the grader.
+When the skill has no contract, run `scaffold` first. It makes no model call.
+
+```sh
+python3 "$SKILLZ/scripts/skillz-experiment.pyz" scaffold --target /path/to/skill
+```
+
+The command writes `<skill>/evals/autoimprove.json` with `status: draft`, a `journey` kind, a generic gate, and a rubric.
+It stops with `contract-exists` when the file exists, and it leaves that file unchanged.
+Show the user the rubric and the gate. Set `status` to `approved` only after the user approves them.
+
+Write each journey case with these fields:
+
+- `brief`: the user goal and the facts that the simulated user may share. Only the simulator sees it.
+  Hold back one fact. The agent must ask for it.
+- `max_turns`: the agent turns that the flow needs. A journey costs at most `max_turns * 2 + 1` calls.
+- `requirements`: optional requirement IDs that the case covers.
+- `expected.must`: what the transcript must show, one observable item each.
+- `expected.must_not`: what the transcript must not show, such as a self-approval or an edit of the target.
+- `expected.questions`: the only questions that the agent may ask. The rubric subtracts points for any other question.
+- `expected.final_stop`: optional. The stop or state in which the journey must end.
+
+Make the cases hard. A family that the seed already passes adds no signal.
+Give each family one trap:
+
+- A fact that the agent must ask for. The request leaves it out.
+- A wrong default that the agent must avoid.
+- A change in the middle of the flow, such as a new constraint from the user.
+
+The run stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
+A run that sets `min_token_saving` does not stop, because a token-saving run expects saturated cases.
+After a stop, draft harder cases for that family in a new run directory. Do not edit the stopped run directory.
+
+When session analytics exists, mine past sessions for hard cases. Follow these steps:
+
+1. Run the Usage ceremony from `SKILL.md`.
+2. Select sessions of the target skill that show a user correction, a retry, a failed tool call, or a long multi-turn exchange.
+3. Draft each case from the user request before the solution. Mark it `source: session`.
+4. Redact home paths, emails, hostnames, and tokens from the request, the brief, and the files.
+5. Never copy the solution of the session into `expected`. Write `expected` from the skill rules and the user need.
+
+The approval question is the only check of the redaction. Read every case before you show the list.
+Issue #132 plans a `prepare-cases` command for this work. Until then, follow these steps by hand.
 
 ## Read the gate verdict
 
@@ -680,6 +732,7 @@ Pass `--harness-config FILE` to check a custom command adapter. The harness refe
 A contract is optional. It tells the runner how to grade the cases.
 It lives at `<skill>/evals/autoimprove.json`. The shipped `skills/skillz/evals/autoimprove.json` is the example.
 Without it, the runner grades each `task` case with a judge against its `expected` answer.
+To start a journey contract, run `scaffold`. See `Draft journeys`.
 
 The contract has these fields:
 
@@ -710,7 +763,7 @@ The object accepts these fields:
 - `family_budget`: the regression budget of every holdout family. The default is `null`, which turns the family rule off.
 - `family_budgets`: an object that maps a family name to its own budget. It overrides `family_budget` for that family. A flag cannot set it.
 - `max_token_increase_per_gain`: the largest token change that one unit of score gain can buy. The default is `null`, which turns this check off.
-- `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off.
+- `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off. A run with this field set records the headroom scores. It does not stop with `cases-too-easy`, because a cheaper winner expects solved cases.
 - `min_coverage`: the least share of planned holdout cases that must be scored on both arms, from 0 to 1. The default is 0.6. Below it the verdict is `inconclusive` with reason `low-coverage`. 0 turns the rule off.
 - `max_quality_loss`: the largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. The verdict needs `delta - 2·SE >= -max_quality_loss`. The default is `null`, which turns `promote-cheaper` off.
 
@@ -745,6 +798,7 @@ When the skill has none, ask the user to choose one path.
    Pass a powerful model to the flag that the judge uses.
    Show the user the rubric.
 2. Use a contract. Find an existing contract, or draft one with the user.
+   For a journey contract, run `scaffold` and edit its draft.
 
 Save every drafted contract with `"status": "draft"`, for both choices.
 Keep that status until the user approves the contract.

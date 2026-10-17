@@ -25,7 +25,7 @@ from test_run_search import MODEL, Provider, Search
 if TYPE_CHECKING:
     from .conftest import JudgedRun
 
-pytestmark = pytest.mark.usefixtures("host_login")
+pytestmark = pytest.mark.usefixtures("host_login", "headroom_off")
 
 ROOT = Path(__file__).resolve().parents[4]
 Maker = Callable[..., Path]
@@ -247,7 +247,8 @@ def test_the_plan_counts_replay_calls_in_the_estimate_the_approval_and_the_holdo
     plan = _plan(6, 6, 6, 1, 3)
     without = estimate(preflight_calls=3, holdout=12, repeats=3, search_calls=plan.metric_calls,
                        retry_calls=plan.retry_calls, reflection_calls=plan.reflection_calls)
-    assert plan.replay_calls == 6 and plan.sized.calls == without.calls + 6
+    assert plan.replay_calls == 6 and plan.headroom_calls == 6
+    assert plan.sized.calls == without.calls + plan.replay_calls + plan.headroom_calls
     assert plan.holdout_calls == 2 * 6 * 3 + plan.retry_calls and plan.reserve == plan.holdout_calls + 6
     _target, out, state, calls, record = _finished(tmp_path, make_target, write_draft, approvals)
     planned = cast(dict[str, int], record["estimate"])

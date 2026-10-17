@@ -200,8 +200,8 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
     write(out, document)
 
 
-def skill_facts(target: Path) -> dict[str, object]:
-    """Return the facts the drafting agent needs: name, description, Markdown files, and helper scripts."""
+def skill_frontmatter(target: Path) -> dict[str, str]:
+    """Return the top-level frontmatter fields of `<target>/SKILL.md`. Read only that file."""
     skill = target / "SKILL.md"
     front: dict[str, str] = {}
     if skill.is_file():
@@ -210,6 +210,12 @@ def skill_facts(target: Path) -> dict[str, object]:
             key, _, value = line.partition(":")
             if value and not key.startswith(" "):
                 front[key.strip()] = value.strip().strip("\"'")
+    return front
+
+
+def skill_facts(target: Path) -> dict[str, object]:
+    """Return the facts the drafting agent needs: name, description, Markdown files, and helper scripts."""
+    front = skill_frontmatter(target)
     files = sorted(path.relative_to(target).as_posix() for path in target.rglob("*")
                    if path.is_file() and not path.is_symlink() and not path.is_relative_to(target / "evals")
                    and not any(part.startswith(".") or part == "__pycache__" for part in path.relative_to(target).parts))

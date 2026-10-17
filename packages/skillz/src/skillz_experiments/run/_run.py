@@ -53,6 +53,7 @@ from skillz_experiments.run._resume import (
     open_lock,
     refuse_nono,
     refuse_terminated,
+    refuse_too_easy,
     require_private,
     statistics_flag,
     resolve_statistics,
@@ -317,6 +318,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if path.exists():
             record = open_record(path)
             refuse_terminated(record)
+            refuse_too_easy(record)
             if record.get("phase") == "complete":
                 # A completed run summarises without reading its statistics unless a flag asks to compare them.
                 if statistics_given:

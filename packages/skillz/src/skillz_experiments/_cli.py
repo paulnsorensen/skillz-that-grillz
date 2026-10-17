@@ -11,6 +11,7 @@ import fromargs
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._facts import audit_facts
+from skillz_experiments._scaffold import scaffold
 from skillz_experiments.gate import (
     CHEAPER_SCENARIOS, POWER_EFFECTS, simulate as simulate_gate, simulate_cheaper, simulate_power,
 )
@@ -171,6 +172,13 @@ def export_command(run: Path, *, out: Path) -> dict[str, object]:
 def audit_facts_command(directory: Path) -> dict[str, object]:
     """Report fixed rubric checks for a skill directory as facts, without grading it."""
     return audit_facts(directory)
+
+
+@app.command(name="scaffold")
+def scaffold_command(*, target: Path) -> dict[str, object]:
+    """Write a draft journey contract to `<target>/evals/autoimprove.json`. It makes no model call and never replaces a contract."""
+    with _coded():
+        return scaffold(target)
 
 
 def _simulation_report() -> dict[str, object]:

@@ -88,6 +88,7 @@ def target(tmp_path: Path, make_target: Callable[..., Path]) -> Path:
     return make_target(tmp_path / "source")
 
 
+@pytest.mark.usefixtures("headroom_off")
 def test_a_config_file_runs_every_role_through_the_command_to_completion(
         tmp_path: Path, target: Path, write_draft: Callable[..., list[str]], capsys: pytest.CaptureFixture[str]) -> None:
     config, _, log = _config(tmp_path)
@@ -101,6 +102,7 @@ def test_a_config_file_runs_every_role_through_the_command_to_completion(
         "task": "command", "reflection": "command", "judge": "command"}
 
 
+@pytest.mark.usefixtures("headroom_off")
 def test_a_completed_run_returns_its_summary_after_the_config_is_deleted(
         tmp_path: Path, target: Path, write_draft: Callable[..., list[str]], capsys: pytest.CaptureFixture[str]) -> None:
     config, _, _ = _config(tmp_path)
@@ -114,6 +116,7 @@ def test_a_completed_run_returns_its_summary_after_the_config_is_deleted(
     assert code == 0 and not err and again["phase"] == "complete"
 
 
+@pytest.mark.usefixtures("headroom_off")
 def test_an_inline_command_builds_one_command_role_for_all_three_roles(
         tmp_path: Path, target: Path, write_draft: Callable[..., list[str]], capsys: pytest.CaptureFixture[str]) -> None:
     harness, _, log = _inline(tmp_path)

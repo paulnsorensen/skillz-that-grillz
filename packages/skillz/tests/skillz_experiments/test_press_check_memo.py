@@ -37,7 +37,7 @@ from memo_fixtures import SKILL, cases as _cases, contract as _contract
 if TYPE_CHECKING:
     from .conftest import JudgedRun
 
-pytestmark = pytest.mark.usefixtures("host_login")
+pytestmark = pytest.mark.usefixtures("host_login", "headroom_off")
 
 FAKE_CLAUDE = Path(__file__).parent / "fixtures/fake_claude.py"
 WAIT = 10.0

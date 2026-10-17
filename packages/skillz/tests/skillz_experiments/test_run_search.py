@@ -48,6 +48,7 @@ class Search:
         self.proposals = 0
         self.improved_validated = 0
         self.evaluate_fault: Callable[[int], Exception | None] = lambda _number: None
+        self.split_fault: Callable[[str], Exception | None] = lambda _split: None
         self.exhaust_after_improved: int | None = None
         self.fail_holdout = 0
         self.abort_after_improved: int | None = None
@@ -123,7 +124,7 @@ class Provider(FakeProvider):
                     state.improved_validated += 1
             if number > 1:
                 _ = threading.Event().wait(state.search_delay)
-            fault = state.evaluate_fault(number)
+            fault = state.evaluate_fault(number) or state.split_fault(case.split)
             if fault is not None:
                 for _ in range(state.contract.calls(case.kind)):
                     self.budget.claim()
@@ -240,10 +241,25 @@ def _budgets(prompts: list[str]) -> list[int]:
 LAST_PROPOSAL = "This may be the last proposal, so prefer one small, safe change."
 
 
+def _seed_pass(out: Path) -> int:
+    """Return the evaluations of the headroom pass: one for each train and validation case."""
+    cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+    return sum(case["split"] in ("train", "validation") for case in cases)
+
+
+def _headroom(out: Path) -> int:
+    """Return the headroom outcomes that the plan adds to the search ceiling."""
+    estimate = cast(dict[str, object], read(out / "run.json")["estimate"])
+    return cast(dict[str, int], estimate["headroom"])["outcomes"]
+
+
 def _allowance(out: Path) -> int:
-    """Return the GEPA call budget: the planned calls less the overshoot margin. The last iteration can pass it by up to that margin."""
+    """Return the GEPA call budget: the planned calls and the headroom outcomes, less the overshoot margin.
+
+    The last iteration can pass it by up to that margin.
+    """
     planned = cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
-    return planned - overshoot(len(_validation(out)))
+    return planned + _headroom(out) - overshoot(len(_validation(out)))
 
 
 @pytest.mark.ac("gh-239:AC-1")
@@ -268,6 +284,8 @@ def test_the_last_proposal_of_a_normal_run_states_the_last_proposal_sentence_and
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    # Each proposal beats the one before it, so the stall stop never ends the run before the search share does.
+    state.score_of = lambda text, _split: min(0.9, 0.3 + 0.01 * int(text.split()[1])) if text.startswith("improved") else None
     _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert _budgets(state.prompts)[-1] == 1
     assert LAST_PROPOSAL in state.prompts[-1].split("\n", 1)[0]
@@ -315,7 +333,8 @@ def test_one_failed_evaluation_scores_zero_and_does_not_abort_the_search(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    state.evaluate_fault = lambda number: RuntimeError("provider fell over") if number == 3 else None
+    fault_at = _seed_pass(out) + 3
+    state.evaluate_fault = lambda number: RuntimeError("provider fell over") if number == fault_at else None
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert result["phase"] == "complete"
     assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
@@ -336,21 +355,20 @@ def test_a_resumed_search_spends_at_most_the_remaining_share(
 
     monkeypatch.setattr(_session, "pareto_search", spy)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    fault_at = _seed_pass(out) + 3
     state.evaluate_fault = lambda number: (
-        EnvironmentDiffers("runtime environment differs from the frozen record") if number == 3 else None)
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
     with pytest.raises(EnvironmentDiffers):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     assert record["phase"] == "prepared"
-    planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"])
-    margin = overshoot(len(_validation(out)))
     spent = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
                 for item in cast(list[dict[str, object]], record["outcomes"]))
-    assert 0 < spent < planned - margin
+    assert _seed_pass(out) < spent < _allowance(out)
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert result["phase"] == "complete"
     # GEPA counts each reused outcome as a metric call, so the grant adds the `spent` reused outcomes back.
-    assert allowances == [planned - margin, planned - margin]
+    assert allowances == [_allowance(out), _allowance(out)]
 
 
 def _search_pairs(record: dict[str, object]) -> list[tuple[str, str, str]]:
@@ -363,13 +381,18 @@ def _search_pairs(record: dict[str, object]) -> list[tuple[str, str, str]]:
 
 def _interrupt(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
                approvals: Callable[..., tuple[str, int]]) -> tuple[Path, Path, Search, int]:
-    """Stop a run on its third search call. Return the target, the run directory, the provider state, and the planned calls."""
+    """Stop a run on its third call inside the search, after the headroom pass.
+
+    Return the target, the run directory, the provider state, and the planned search evaluations: the metric calls and the headroom outcomes.
+    """
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    fault_at = _seed_pass(out) + 3
     state.evaluate_fault = lambda number: (
-        EnvironmentDiffers("runtime environment differs from the frozen record") if number == 3 else None)
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
     with pytest.raises(EnvironmentDiffers):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    return target, out, state, cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
+    estimate = cast(dict[str, object], read(out / "run.json")["estimate"])
+    return target, out, state, cast(int, estimate["metric_calls"]) + _headroom(out)
 
 
 @pytest.mark.ac("gh-279:AC-1")
@@ -458,8 +481,9 @@ def test_a_second_interrupt_and_resume_calls_no_pair_that_either_earlier_process
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, _ = _interrupt(tmp_path, make_target, write_draft, approvals)
+    fault_at = state.search_calls + 3
     state.evaluate_fault = lambda number: (
-        EnvironmentDiffers("runtime environment differs from the frozen record") if number == 6 else None)
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
     with pytest.raises(EnvironmentDiffers):
         _ = run(target, out, MODEL, live=True, factory=state.factory)
     recorded = _search_pairs(read(out / "run.json"))
@@ -501,7 +525,7 @@ def test_a_resume_with_recorded_outcomes_that_the_search_never_asks_for_again_ma
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
-    planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"])
+    planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"]) + _headroom(out)
     margin = overshoot(len(_validation(out)))
     # A live model proposes new candidates on resume, so the outcomes of an old candidate are never asked for again.
     ghosts = 3 * margin
@@ -542,11 +566,10 @@ def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
-    planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"])
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     spent = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation") for item in outcomes)
     filler: dict[str, object] = {"arm": "search", "split": "train", "case_id": "filler", "score": 0.0}
-    outcomes.extend([filler] * (planned - overshoot(len(validation)) - spent))
+    outcomes.extend([filler] * (_allowance(out) - spent))
     write(out / "run.json", record)
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert _core(result) == {"reason": "search-share-spent-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
@@ -733,7 +756,8 @@ def test_a_different_coded_error_aborts_the_search_instead_of_scoring_zero(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    state.evaluate_fault = lambda number: CodedError("other-code", "a coded stop") if number == 3 else None
+    fault_at = _seed_pass(out) + 3
+    state.evaluate_fault = lambda number: CodedError("other-code", "a coded stop") if number == fault_at else None
     with pytest.raises(CodedError) as caught:
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert caught.value.code == "other-code"
@@ -1344,7 +1368,9 @@ def test_proposals_whose_evaluations_all_fail_never_stop_the_search(
     monkeypatch.setattr(_session, "FAULT_MIN_FINISHED", 10**9)
     monkeypatch.setattr(_session, "FAULT_STREAK", 10**9)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    seed_calls = len(_validation(out))
+    seed_calls = _seed_pass(out)
+    # The headroom pass scores the seed on the validation cases only. Its train cases fail, so the feedback stays unscored.
+    state.split_fault = lambda split: RuntimeError("provider fell over") if split != "validation" else None
     state.evaluate_fault = lambda number: RuntimeError("provider fell over") if number > seed_calls else None
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     # All feedback is unscored, so each reflection is skipped unpaid (gh-316:AC-1); no proposal runs and none counts toward a stall.
@@ -1648,6 +1674,7 @@ def test_a_real_run_records_fixed_and_broke_inside_the_minibatch_and_a_later_par
         assert row == {key: full[key] for key in row if key != "rejected"} | {"rejected": mapped}
 
 
+@pytest.mark.usefixtures("headroom_off")
 def test_the_protect_set_follows_the_seed_when_a_validated_candidate_is_worse_than_the_seed(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
