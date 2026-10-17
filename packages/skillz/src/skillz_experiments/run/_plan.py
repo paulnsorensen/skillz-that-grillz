@@ -31,6 +31,9 @@ PREFLIGHT_CALLS = 3
 SEARCH_CASE_FACTOR = 4
 
 
+JOURNEY_SEARCH_CALLS = 400
+
+
 CALLS_PER_REFLECTION = 2 * REFLECTION_MINIBATCH
 
 
@@ -92,6 +95,8 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     The sandbox time of every evaluation adds to the estimate and to the gate reserve, shared across parallel calls.
     The search shrinks until both the call cap and the time cap hold, sandbox time included.
     `journey` is True when a scored case is a journey. The run then gets the journey ceiling in place of the standard cap.
+    A journey run also sizes the search from `JOURNEY_SEARCH_CALLS` model calls, so the search holds as many metric calls
+    as that allowance buys at `per_evaluation`. A task-only run keeps `SEARCH_CASE_FACTOR` metric calls per searched case.
     `holdout_costs` lists the model calls of each holdout case. The default is `per_evaluation` for each of `holdout` cases.
     A retry costs the costliest holdout case, so the reserve covers one failed attempt of any case.
     """
@@ -124,6 +129,8 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
                    + f"{size(0).seconds + sandbox_total(0)} seconds; the cap is {max_seconds}{seconds_cap_note(journey)}; "
                    + "lower --repeats, the holdout size, or --sandbox-seconds", {})
     metric = SEARCH_CASE_FACTOR * (train + validation)
+    if journey:
+        metric = max(metric, JOURNEY_SEARCH_CALLS // per_evaluation)
     while metric > 0 and not fits(metric):
         metric -= 1
     if metric < overshoot(validation) + MINIMUM_SEARCH_MARGIN:

@@ -835,6 +835,7 @@ It never sees `expected` or the rubric.
 
 A journey case costs `max_turns * 2 + 1` calls for each evaluation.
 The plan sizes the holdout gate from the sum of its case costs. It sizes each search call at the mean cost of the train and validation cases.
+The search of a journey run gets at least `400 // mean case cost` metric calls, so it can make about 8 proposals. A run with no journey case keeps 4 metric calls for each train or validation case. The plan still shrinks the search to fit the call and time ceilings.
 It sizes each holdout retry at the costliest holdout case.
 The reserve therefore covers one failed attempt of any case.
 The reserve also holds `replay_calls`: one pass of the winner over the holdout, recorded under the `replay` arm.
