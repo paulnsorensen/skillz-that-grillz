@@ -5,7 +5,11 @@ and maps the structured answer back to the real names. Fake `claude` only.
 """
 from __future__ import annotations
 
+import importlib.util
+import re
 import stat
+import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -44,6 +48,9 @@ SCHEMA: dict[str, object] = {
                    "@hypothesis": {"type": ["string", "null"]}},
     "required": ["SKILL.md", "scripts/count.py", "@hypothesis"], "additionalProperties": False}
 
+TESTS = Path(__file__).parent
+E2E_CLAUDE = TESTS / "e2e/fixtures/claude.py"
+
 
 def test_safe_keys_rename_only_the_keys_that_the_api_refuses_and_restore_maps_them_back() -> None:
     sent, names = safe_keys(SCHEMA)
@@ -77,3 +84,23 @@ def test_a_claude_reflection_call_with_an_unsafe_key_gets_its_answer_under_the_r
         transport.close()
     assert result["answer"] == {"SKILL.md": "text for SKILL.md", "scripts/count.py": "text for scripts/count.py",
                                 "@hypothesis": "text for @hypothesis"}
+
+
+def test_the_e2e_fake_claude_keeps_a_safe_key_and_maps_a_renamed_key_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "path", [str(E2E_CLAUDE.parent), str(TESTS / "fixtures"), *sys.path])
+    spec = importlib.util.spec_from_file_location("e2e_fake_claude", E2E_CLAUDE)
+    assert spec is not None and spec.loader is not None
+    fake = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fake)
+    real_names = cast(Callable[[dict[str, dict[str, str]], list[str], set[str]], dict[str, str]], fake.real_names)
+    assert cast(re.Pattern[str], fake.API_KEY).pattern == API_KEY.pattern
+    schema: dict[str, object] = {
+        "type": "object",
+        "properties": {"SKILL.md": {"type": "string", "description": "Skill contents"},
+                       "scripts/count.py": {"type": "string"}},
+        "required": ["SKILL.md", "scripts/count.py"]}
+    sent, names = safe_keys(schema)
+    properties = cast(dict[str, dict[str, str]], sent["properties"])
+    (renamed,) = names
+    assert real_names(properties, cast(list[str], sent["required"]), {"SKILL.md", "scripts/count.py"}) == {
+        "SKILL.md": "SKILL.md", renamed: "scripts/count.py"}
