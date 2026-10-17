@@ -75,6 +75,13 @@ def refuse_terminated(record: dict[str, object]) -> None:
                    {"next": "start a new run in a new directory", "failure_code": stopped})
 
 
+def refuse_too_easy(record: dict[str, object]) -> None:
+    """Return the `cases-too-easy` stop of the headroom pass from the record. The stop makes no model call."""
+    headroom = record.get("headroom")
+    if isinstance(headroom, dict) and cast(dict[str, object], headroom).get("verdict") == "too-easy":
+        raise CodedError("cases-too-easy", text_field(record, "failure"))
+
+
 def open_lock(out: Path) -> TextIO:
     """Open `run.lock` without following a symlink."""
     try:

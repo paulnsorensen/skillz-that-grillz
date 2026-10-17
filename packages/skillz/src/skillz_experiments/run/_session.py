@@ -61,6 +61,9 @@ CLOCK_TOLERANCE = 5.0
 
 HarnessName = str
 
+# The headroom pass stops the run when a train or validation family has a seed mean at or above this value.
+HEADROOM_CEILING = 0.9
+
 LEAKAGE_REJECTED = "candidate-leakage-rejected"
 
 # The phases after the gate. A run in one of them makes no model call without a deadline check.
@@ -487,7 +490,7 @@ class Session:
         recorded = mapping(field(self.record, "estimate"))
         maximum = max(plan.sized.calls, 1)
         seconds = _number_field(budget, "seconds")
-        if ("reserve_seconds" not in budget or "replay_calls" not in recorded
+        if ("reserve_seconds" not in budget or "replay_calls" not in recorded or "headroom" not in recorded
                 or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded)):
             raise ValueError("run was prepared by an older runner; create a new run")
 
@@ -858,8 +861,12 @@ class Session:
         return sum(1 for item in self._reflections() if item.get("over_budget") is True)
 
     def _search_ceiling(self) -> int:
-        """Return the GEPA call budget: the estimate less the overshoot margin. The last iteration can pass it by up to that margin."""
-        planned = _int_field(mapping(field(self.record, "estimate")), "metric_calls")
+        """Return the GEPA call budget: the estimate plus the headroom train outcomes, less the overshoot margin.
+
+        The last iteration can pass it by up to that margin.
+        """
+        estimate = mapping(field(self.record, "estimate"))
+        planned = _int_field(estimate, "metric_calls") + _int_field(mapping(field(estimate, "headroom")), "outcomes")
         return planned - overshoot(len(self.cases_for("validation")))
 
     def _latch(self, error: CodedError) -> None:
@@ -925,16 +932,88 @@ class Session:
         if not passed:
             raise _baseline_rejected(rejection)
 
+    def headroom(self) -> None:
+        """Score the seed once on every train and validation case. Stop with `cases-too-easy` when a family is saturated.
+
+        Each score is a normal search outcome of the seed, so `_reuse` serves it to the search once. The validation
+        outcomes stand in for the seed validation pass of GEPA. Only the train outcomes add to the search ceiling, so
+        the search keeps the room it had after its own seed pass. A resume scores only the cases that
+        have no scored seed outcome. A run whose statistics set `min_token_saving` expects saturated cases:
+        it records the scores and does not stop.
+        """
+        if isinstance(self.record.get("headroom"), dict):
+            return
+        cases = [case for split in ("train", "validation") for case in self.cases_for(cast(Split, split))]
+
+        def seed_scores() -> dict[tuple[object, object], float]:
+            with self.lock:
+                return {(item["split"], item["case_id"]): unit_score(item["score"]) for item in self._search_outcomes()
+                        if item.get("search_candidate") == self.seed.identity and not _is_failed(item)}
+
+        def score(case: Case) -> None:
+            try:
+                _ = self.evaluate_case(self.seed, case, "search")
+            except CodedError:
+                raise
+            except (OSError, ValueError, RuntimeError) as error:
+                with self.lock:
+                    self.outcomes.append(_failed_outcome(case, self.seed, error))
+                    self.checkpoint()
+
+        with self.lock:
+            self._fault_base = len(self._search_outcomes())
+        found = seed_scores()
+        with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
+            _ = list(pool.map(score, [case for case in cases if (case.split, case.identifier) not in found]))
+        self._stop_if_faulted()
+        found = seed_scores()
+        by_family: dict[str, list[float]] = {}
+        splits: dict[str, str] = {}
+        for case in cases:
+            splits[case.family] = case.split
+            if (case.split, case.identifier) in found:
+                by_family.setdefault(case.family, []).append(found[(case.split, case.identifier)])
+        means = {name: sum(scores) / len(scores) for name, scores in sorted(by_family.items())}
+        families = {name: {"split": splits[name], "mean": means[name], "cases": len(by_family[name])} for name in means}
+        easy = {name: mean for name, mean in means.items() if mean >= HEADROOM_CEILING or close(mean, HEADROOM_CEILING)}
+        stop = bool(easy) and self.statistics.min_token_saving is None
+        self.record["headroom"] = {"ceiling": HEADROOM_CEILING, "families": families,
+                                   "verdict": "too-easy" if stop else "ok"}
+        self.checkpoint()
+        if stop:
+            named = "; ".join(f"{name} ({splits[name]}) mean {mean:.2f}" for name, mean in easy.items())
+            raise CodedError("cases-too-easy", f"the seed already scores at least {HEADROOM_CEILING} on {named}; "
+                             + "a search cannot show a gain on cases this easy; draft harder cases in a new run directory, "
+                             + "then call run again")
+
     def search(self) -> None:
-        """Run the one GEPA search over train and validation cases. Holdout cases never enter it."""
+        """Run the one GEPA search over train and validation cases. Holdout cases never enter it.
+
+        The headroom pass runs first. Its train and validation seed outcomes count as spent search evaluations.
+        Its validation outcomes stand in for the seed validation pass of GEPA.
+        """
+        reason = "search-share-spent-best-validated"
+        timed_out = False
+        budget_stopped = False
+        # The headroom pass runs under the gate time reserve, like the seed validation pass of GEPA did.
+        self.budget.reserve_time(_number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
+        try:
+            self.headroom()
+        except BudgetExhausted:
+            self.take_budget_stop()
+            budget_stopped = True
+            reason = "budget-exhausted-best-validated"
+            timed_out = self.budget.out_of_time()
+        finally:
+            self.budget.reserve_time(0.0)
         files = {name: self.seed.files[name] for name in self.seed.editable}
         train = [case.identifier for case in self.cases_for("train")]
         validation = [case.identifier for case in self.cases_for("validation")]
         spent = len(self._search_outcomes())
         allowance = self._search_ceiling() - spent
-        reason = "search-share-spent-best-validated"
-        timed_out = False
-        if allowance >= 1 and self._stalled():
+        if budget_stopped:
+            pass
+        elif allowance >= 1 and self._stalled():
             # A run that stalled before a resume skips GEPA, which scores the seed again before its first stop check.
             reason = "converged-stalled"
         elif allowance >= 1:
