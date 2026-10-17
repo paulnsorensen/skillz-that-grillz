@@ -79,6 +79,19 @@ _FAULT_REASON = re.compile(r"\bfails: ([a-z][a-z-]*)")
 SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
 
 
+def too_easy_message(headroom: Mapping[str, object]) -> str:
+    """Return the `cases-too-easy` stop text from a recorded headroom block.
+
+    The text comes from the block alone, so a resume gets the same stop when the run died before it recorded `failure`.
+    """
+    ceiling = cast(float, headroom["ceiling"])
+    families = [(name, mapping(item)) for name, item in mapping(headroom["families"]).items()]
+    named = "; ".join(f"{name} ({item['split']}) mean {cast(float, item['mean']):.2f}" for name, item in families
+                      if cast(float, item["mean"]) >= ceiling or close(cast(float, item["mean"]), ceiling))
+    return (f"the seed already scores at least {ceiling} on {named}; a search cannot show a gain on cases this easy; "
+            + "draft harder cases in a new run directory, then call run again")
+
+
 def _faulted_reflection(item: Mapping[str, object]) -> bool:
     """Return whether a reflection row records a skipped or timed-out call, which proposes nothing."""
     return item.get("status") in ("skipped", "timeout", "failed") and "proposed" not in item
@@ -977,14 +990,11 @@ class Session:
         families = {name: {"split": splits[name], "mean": means[name], "cases": len(by_family[name])} for name in means}
         easy = {name: mean for name, mean in means.items() if mean >= HEADROOM_CEILING or close(mean, HEADROOM_CEILING)}
         stop = bool(easy) and self.statistics.min_token_saving is None
-        self.record["headroom"] = {"ceiling": HEADROOM_CEILING, "families": families,
-                                   "verdict": "too-easy" if stop else "ok"}
+        block: dict[str, object] = {"ceiling": HEADROOM_CEILING, "families": families, "verdict": "too-easy" if stop else "ok"}
+        self.record["headroom"] = block
         self.checkpoint()
         if stop:
-            named = "; ".join(f"{name} ({splits[name]}) mean {mean:.2f}" for name, mean in easy.items())
-            raise CodedError("cases-too-easy", f"the seed already scores at least {HEADROOM_CEILING} on {named}; "
-                             + "a search cannot show a gain on cases this easy; draft harder cases in a new run directory, "
-                             + "then call run again")
+            raise CodedError("cases-too-easy", too_easy_message(block))
 
     def search(self) -> None:
         """Run the one GEPA search over train and validation cases. Holdout cases never enter it.

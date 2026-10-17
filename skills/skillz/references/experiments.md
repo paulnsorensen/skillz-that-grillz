@@ -15,6 +15,7 @@ It needs no source checkout or runtime package installation.
 - **Run**: one resumable `run` directory that holds the cases, one search, and one holdout gate.
   Before the search, the run scores the seed once on every train and validation case.
   It stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
+  A run that sets `min_token_saving` records these scores and does not stop.
 - **Case draft**: the file `RUN/cases.draft.json` that you write from the skill, and from past sessions when analytics exists.
 - **Split**: the train, validation, or holdout group of a case. Code assigns it from a recorded seed.
 - **Approval**: the user's answer to one question. The runner binds each answer to a hash or to a call count.
@@ -311,7 +312,8 @@ Give each family one trap:
 - A change in the middle of the flow, such as a new constraint from the user.
 
 The run stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
-Then draft harder cases for that family in a new run directory. Do not edit the stopped run directory.
+A run that sets `min_token_saving` does not stop, because a token-saving run expects saturated cases.
+After a stop, draft harder cases for that family in a new run directory. Do not edit the stopped run directory.
 
 When session analytics exists, mine past sessions for hard cases. Follow these steps:
 

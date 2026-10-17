@@ -11,7 +11,7 @@ import pytest
 
 from skillz_experiments._budget import APPROVED_CALLS, MAX_CONCURRENT_CALLS, BudgetExhausted
 from skillz_experiments._cases import CodedError
-from skillz_experiments._records import read
+from skillz_experiments._records import read, write
 from skillz_experiments.harness import EnvironmentDiffers
 from skillz_experiments.run import Stop, _session, run
 from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, _plan  # pyright: ignore[reportPrivateUsage]
@@ -233,6 +233,23 @@ def test_a_resume_of_a_too_easy_run_returns_the_same_stop_with_no_session_and_no
         _ = run(target, out, MODEL, live=True, factory=factory)
     assert (again.value.code, str(again.value)) == (first.value.code, str(first.value))
     assert built == [] and len(state.search_log) == searched and state.invokes == 0
+
+
+@pytest.mark.ac("autoimprove-authoring-headroom:AC-12")
+def test_a_resume_of_a_too_easy_run_that_died_before_it_recorded_the_failure_returns_the_same_stop(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    _saturate_train(state)
+    with pytest.raises(CodedError) as first:
+        _ = _go(state, target, out, case_hash, calls)
+    record = _record(out)
+    # The process died after the headroom checkpoint and before `record_failure`.
+    _ = record.pop("failure")
+    _ = record.pop("failure_code")
+    write(out / "run.json", record)
+    with pytest.raises(CodedError) as again:
+        _ = run(target, out, MODEL, live=True, factory=state.factory)
+    assert (again.value.code, str(again.value)) == ("cases-too-easy", str(first.value))
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-12")
