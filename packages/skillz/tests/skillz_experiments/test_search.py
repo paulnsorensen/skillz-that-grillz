@@ -86,10 +86,14 @@ def test_search_skips_a_minibatch_the_parent_already_scores_perfectly() -> None:
 
 @final
 class _Recorded:
-    """Score each candidate and case once, as the session does: a repeat of a scored pair makes no live call."""
+    """Score each candidate and case once, as the session does: a repeat of a scored pair makes no live call.
 
-    def __init__(self, train: dict[str, float], other: float) -> None:
+    The first `rejected` proposals fail admission, as a leak or a failed build does: they score 0.0 with no live call.
+    """
+
+    def __init__(self, train: dict[str, float], other: float, rejected: int = 0) -> None:
         self.train, self.other = train, other
+        self.rejected = {f"p{index}" for index in range(1, rejected + 1)}
         self.lock = threading.Lock()
         self.scored: dict[tuple[str, str], float] = {}
         self.repeats = 0
@@ -98,6 +102,8 @@ class _Recorded:
 
     def evaluate(self, candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
         key = (candidate["SKILL.md"], str(example))
+        if key[0] in self.rejected:
+            return 0.0, {"task_correct": 0.0, "rejected": "leakage"}
         with self.lock:
             if key in self.scored:
                 self.repeats += 1
@@ -145,6 +151,16 @@ def test_a_search_with_only_perfect_minibatches_ends_after_the_skip_limit() -> N
     assert run.checks == 1 + 2 + skip_limit(3) == 7
     assert len(run.scored) == 6
 
+
+@pytest.mark.ac("skillz-search-free-repeats:AC-4")
+def test_rejected_proposals_do_not_use_the_search_share() -> None:
+    """Five rejected proposals add 10 pairs with no live call. Before the fix, they ended the search at 12 pairs."""
+    run = _Recorded({"t1": 1.0, "t2": 1.0, "t3": 0.8}, 0.7, rejected=5)
+    validation: list[object] = ["val1", "val2", "val3"]
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], validation, run.evaluate, run.propose,
+                  metric_calls=12, stalled=run.stalled) is False
+    assert run.proposals > 5
+    assert 12 <= len(run.scored) <= 12 + overshoot(len(validation))
 
 @pytest.mark.parametrize("edit", ["prose", "prose+cli"])
 def test_search_offers_and_evaluates_exactly_the_seed_components(edit: Edit) -> None:
