@@ -13,6 +13,7 @@ from skillz_experiments._records import read
 from skillz_experiments.run import _session
 from skillz_experiments.run import run
 from skillz_experiments.run._export import export, summary
+from skillz_experiments.search import _engine
 from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
@@ -104,7 +105,11 @@ def test_five_consecutive_faults_stop_with_search_faulted_although_most_evaluati
 
 @pytest.mark.ac("gh-316:AC-2")
 def test_four_consecutive_faults_among_scored_evaluations_do_not_stop_the_search(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    # The rule reads the evaluations in finish order. With two workers, a fast fault can finish before the slower
+    # scored evaluation 4, and then 4 of 7 finished evaluations failed: a true majority. One worker keeps the call order.
+    monkeypatch.setattr(_engine, "MAX_CONCURRENT_CALLS", 1)
     out, state, launch = _launch(tmp_path, make_target, write_draft, approvals)
     state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if 5 <= number <= 8 else None
     assert launch()["phase"] == "complete"
