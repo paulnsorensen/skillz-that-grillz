@@ -193,11 +193,11 @@ def test_a_gate_next_to_argv_or_on_a_grader_without_argv_stops(tmp_path: Path, k
 @pytest.mark.ac("gh-367:AC-7")
 def test_the_mode_fixtures_hold_no_argv_and_one_longest() -> None:
     document = cast(dict[str, dict[str, dict[str, dict[str, object]]]],
-                    json.loads((ROOT / "skills/skillz/evals/mode-fixtures.json").read_text(encoding="utf-8")))
+                    json.loads((FIXTURES / "mode/mode-fixtures.json").read_text(encoding="utf-8")))
     assert all("argv" not in kind and "gate" in kind for kind in document["target"]["kinds"].values())
-    found = [path for path in (ROOT / "skills/skillz/evals").rglob("*.py")
+    found = [path for path in (FIXTURES / "mode").rglob("*.py")
              if path.is_file() and re.search(r"^def longest\b", path.read_text(encoding="utf-8"), re.M)]
-    assert found == [ROOT / "skills/skillz/evals/gates/mode/_markdown.py"]
+    assert found == [FIXTURES / "mode/evals/gates/mode/_markdown.py"]
 
 
 def _skill(root: Path) -> Path:

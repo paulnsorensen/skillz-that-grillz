@@ -38,9 +38,9 @@ from skillz_experiments._facts import audit_facts
 
 ROOT = Path(__file__).resolve().parents[4]
 SKILL_DIR = ROOT / "skills/skillz"
-PUBLISHED = SKILL_DIR / "evals/mode-fixtures.json"
 FIXTURES = Path(__file__).parent / "fixtures"
-MODE_GATES = SKILL_DIR / "evals/gates/mode"
+PUBLISHED = FIXTURES / "mode/mode-fixtures.json"
+MODE_GATES = FIXTURES / "mode/evals/gates/mode"
 SELF_UPDATE = FIXTURES / "self-update.json"
 SELF_SKILL = ROOT / ".agents/skills/skillz-self-update/SKILL.md"
 LAYOUT = SKILL_DIR / "references/harness-layout.md"
