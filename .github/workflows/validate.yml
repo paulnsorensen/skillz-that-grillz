@@ -86,13 +86,14 @@ jobs:
   skillz-shard:
     # The two skillz pytest lanes set the gate's wall time, so they run here
     # in parallel. The gate job skips them through GATE_SKIP. One runner has
-    # 4 vCPUs and the lanes are CPU-bound, so each shard runs 1/4 of each lane.
-    name: skillz shard (${{ matrix.shard }}/4)
+    # 4 vCPUs and the lanes are CPU-bound, so each shard runs 1/6 of each lane.
+    # Six shards keep each shard under the gate job's time.
+    name: skillz shard (${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,7 +122,7 @@ jobs:
       - name: Run skillz tests
         env:
           REQUIRE_DUCKDB: "1"
-          GATE_SHARD: ${{ matrix.shard }}/4
+          GATE_SHARD: ${{ matrix.shard }}/6
         run: just test-skillz
 
   skillz-tests:
