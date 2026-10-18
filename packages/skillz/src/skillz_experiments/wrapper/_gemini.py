@@ -25,6 +25,7 @@ from typing import Literal, NoReturn, cast
 
 from skillz_experiments._cases import loads_untrusted, mapping
 from skillz_experiments._protocol import OPERATIONS, USAGE_KEYS, VERSION, argv_strings
+from skillz_experiments._redact import redact
 from skillz_experiments.harness import command_profile
 from skillz_experiments.wrapper._seatbelt import profile as seatbelt_profile
 
@@ -42,7 +43,6 @@ STOP_BUDGET = 6
 DOTENV = "." + "env"
 PROMPT_FLAG = "Follow the request on standard input."
 EXIT_LINE = re.compile(r"^Exit Code: (.*)$", re.MULTILINE)
-SECRETISH = re.compile(r"\S*://\S*|\S*(?:key|token|secret|password|auth)\S*", re.IGNORECASE)
 DOTENV_GUARDED = ("GOOGLE_GEMINI_BASE_URL", "GOOGLE_VERTEX_BASE_URL", "GEMINI_SANDBOX_PROXY_COMMAND", "SANDBOX_ENV",
                   "SANDBOX_PORTS", "BUILD_SANDBOX", "SANDBOX_SET_UID_GID", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY",
                   "http_proxy")
@@ -60,8 +60,8 @@ TOOL_ARGV: dict[str, tuple[str, Callable[[str], list[str]]]] = {
 
 
 def _tail(text: str) -> str:
-    """Return the last 300 characters of a process's stderr, without URLs or words that look like credentials."""
-    return SECRETISH.sub("[redacted]", text.strip()[-300:])
+    """Return the last 300 characters of a process's stderr, without URLs or credential-like words and values."""
+    return redact(text.strip()[-300:])
 
 
 def _home() -> Path:
