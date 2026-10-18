@@ -197,7 +197,6 @@ def test_two_threads_on_one_identity_share_one_check_and_one_result() -> None:
     assert task.checks == 1
 
 
-@pytest.mark.ac("gh-312:AC-4")
 def test_a_check_that_raises_caches_nothing_and_frees_the_identity() -> None:
     @final
     class Flaky:
