@@ -18,7 +18,6 @@ from skillz_experiments._cases import Case, CodedError
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._codex import Codex
-from skillz_experiments.harness._command import _validate_answer  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
@@ -189,7 +188,6 @@ class Provider(FakeProvider):
         texts = {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix
                  for name in cast(list[str], schema["required"]) if name != "@hypothesis"}
         if self.state.omit_hypothesis:
-            _validate_answer(texts, schema)
             return {"answer": texts}
         return {"answer": texts | {"@hypothesis": self.state.hypothesis_of(number)}}
 
