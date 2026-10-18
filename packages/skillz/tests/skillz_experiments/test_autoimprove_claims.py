@@ -16,6 +16,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Grader
 from skillz_experiments._graders import judge
+from skillz_experiments._cli import main
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, _export, _patch, _session, export, run, summary
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
@@ -691,6 +692,26 @@ def test_a_tie_run_replays_nothing_and_never_applies(
     assert claims["runner"]["checks"]["holdout-coverage"] == "unknown" and claims["runner"]["status"] == "inconclusive"
     assert claims["apply"] is False
 
+
+@pytest.mark.ac("gh-336:AC-1")
+def test_a_tie_run_exports_no_patch_file_and_names_the_reason(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    state = Search(target)
+    state.score_of = lambda _text, _split: 0.0
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert cast(dict[str, object], read(out / "run.json")["gate"])["reasons"] == ["winner-equals-baseline"]
+    destination = tmp_path / "exported"
+    _ = capsys.readouterr()
+    assert main(["export", str(out), "--out", str(destination)]) == 0
+    exported = cast(dict[str, object], json.loads(capsys.readouterr().out))
+    assert exported["patches"] == [] and exported["reason"] == "winner-equals-baseline"
+    assert sorted(path.name for path in destination.iterdir()) == ["report.json"]
+    report = read(destination / "report.json")
+    assert report["patches"] == [] and report["reason"] == "winner-equals-baseline"
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-2")
 def test_a_winner_with_crlf_line_endings_replays_to_the_same_identity(

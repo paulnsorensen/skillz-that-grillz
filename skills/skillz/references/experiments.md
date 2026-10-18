@@ -711,7 +711,10 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export
 ```
 
 Export is write-only. It writes `candidate.patch` and a redacted `report.json` to a new directory.
-Its result lists the written patch files under `patches`.
+Its result and `report.json` list the written patch files under `patches`.
+Export writes no empty patch file.
+When the winner files equal the seed files, export writes only `report.json`. Its result has `patches: []` and `reason: "winner-equals-baseline"`.
+Tell the user that the run found no change to apply.
 It never applies or installs a patch, and it never changes the target skill.
 Show the user each patch and the three claims. Apply a patch only when `claims.apply` is true.
 `candidate.patch` is a plain unified diff with paths relative to the skill directory.

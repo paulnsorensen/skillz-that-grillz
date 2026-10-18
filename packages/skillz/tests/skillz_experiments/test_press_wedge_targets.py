@@ -811,14 +811,29 @@ def test_a_skill_without_wedge_toml_has_no_own_targets_and_no_rebuilder(
 
 # --- AC-9: export -------------------------------------------------------------------------------------------------
 
-def test_export_of_a_winner_equal_to_the_seed_writes_an_empty_skill_patch_and_no_wedge_patch(
+@pytest.mark.ac("gh-336:AC-1")
+def test_export_of_a_winner_equal_to_the_seed_writes_no_patch_and_names_the_reason(
         world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
     _ = world.contract("scripts/beta.pyz")
     out = prepared(world, tmp_path, write_draft, approvals)
     set_winner(out, {})
     destination = tmp_path / "export"
-    _ = export(out, destination)
-    assert (destination / "candidate.patch").read_text() == "" and not (destination / "wedge-sources.patch").exists()
+    exported = export(out, destination)
+    assert exported["patches"] == [] and exported["reason"] == "winner-equals-baseline"
+    assert sorted(path.name for path in destination.iterdir()) == ["report.json"]
+
+
+@pytest.mark.ac("gh-336:AC-2")
+def test_export_with_only_a_wedge_change_writes_no_empty_skill_patch(
+        world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    _ = world.contract("scripts/beta.pyz")
+    out = prepared(world, tmp_path, write_draft, approvals)
+    set_winner(out, {BETA: BETA_SOURCE.replace("v1", "v2")})
+    destination = tmp_path / "export"
+    exported = export(out, destination)
+    assert exported["patches"] == ["wedge-sources.patch"] and "reason" not in exported
+    assert sorted(path.name for path in destination.iterdir()) == ["report.json", "wedge-sources.patch"]
+    assert git_apply(destination / "wedge-sources.patch", world.repo).returncode == 0
 
 
 def test_export_with_only_a_skill_change_writes_no_wedge_patch(
