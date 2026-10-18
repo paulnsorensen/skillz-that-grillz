@@ -28,7 +28,8 @@ EASY_CHEESE: dict[str, object] = {
     "files": {"src/a.py": "x = 1\n"}, "expected": {"must": ["opens a PR"], "must_not": ["force-pushes"]},
     "source": "skill",
 }
-KIT_HASH = "03e88064cb83a2c6f55cfbff01e3b48bcdd3261ae5ea31edc873443ea48ec29b"
+# gh-369: the ask-harness family gained a partial-answer trap, so this content change moved the pin.
+KIT_HASH = "33ce4fee9af54aa76408dcea0c59ad1bb52f0b81de2ce8997a91646f74cd1378"
 TASK_HASH = "37dffac39b162cbff4a6e2ecb98ac7d355bff74a38856c080b1d2763047488b8"
 
 

@@ -121,7 +121,7 @@ def test_the_stop_names_the_seed_file_and_shows_only_counts(tmp_path: Path, make
     assert stop.data["seed_file"] == str(seed) and str(seed) in str(stop)
     assert stat.S_IMODE(seed.stat().st_mode) == 0o600
     assert json.loads(seed.read_text(encoding="utf-8")) == seed_cases(target)
-    assert stop.data["seed_summary"] == {"cases": 4, "kinds": {"near-miss": 1, "task": 2, "trigger": 1},
+    assert stop.data["seed_summary"] == {"cases": 4, "journeys": 0, "kinds": {"near-miss": 1, "task": 2, "trigger": 1},
                                          "families": {"billing": 2, "miss": 1, "trig": 1},
                                          "inferred": {"one": "task", "two": "task", "miss": "near-miss"}}
     assert not (tmp_path / "run/cases.draft.json").exists()
@@ -301,9 +301,11 @@ def test_coverage_does_not_read_fixtures(tmp_path: Path, make_target: Maker, wri
 def test_the_repository_skill_seeds_only_task_cases_in_three_families() -> None:
     seed = seed_cases(Path(__file__).resolve().parents[4] / "skills/skillz")
     assert seed
-    summary = seed_summary(seed)
+    evals_json = [case for case in seed if case["kind"] != "journey"]
+    summary = seed_summary(evals_json)
     assert summary["kinds"] == {"task": 8}
     assert len(cast(dict[str, int], summary["families"])) >= 3
+    assert seed_summary(seed)["kinds"] == {"task": 8, "journey": 18}
 
 
 @pytest.mark.ac("gh-366:AC-2")

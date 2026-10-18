@@ -10,9 +10,10 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
-from skillz_experiments._cases import relative
+from skillz_experiments._cases import JOURNEY_FIELDS, CodedError, journey_of, relative, string, text_map
 
 EVAL_KINDS = ("trigger", "near-miss", "task")
+SOURCES = ("skill", "session")
 FIXTURES = "evals/files/"
 _TEXT_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
@@ -201,3 +202,74 @@ def parse_evals(document: object, *, strict: bool) -> ParsedEvals:
         if entry is not None and not problems:
             entries.append(entry)
     return ParsedEvals(tuple(entries), tuple(errors))
+
+
+JOURNEY_KEYS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
+JOURNEY_REQUIRED = ("id", "family", "kind", "request", "brief", "expected", "source")
+
+
+@dataclass(frozen=True)
+class ParsedJourneys:
+    """The valid journey cases of an `evals/journeys.json` document, in draft-case shape, and every error."""
+
+    cases: tuple[dict[str, object], ...]
+    errors: tuple[str, ...]
+
+
+def _journey(item: dict[str, object], strict: bool) -> dict[str, object]:
+    """Return the seed case of one journey item. Raise `ValueError` for the first problem."""
+    unknown = sorted(set(item) - JOURNEY_KEYS)
+    if unknown:
+        raise ValueError(f"unknown fields {', '.join(unknown)}")
+    required = JOURNEY_REQUIRED if strict else ("id", "kind", "request", "brief", "expected")
+    missing = [name for name in required if name not in item]
+    if missing:
+        raise ValueError(f"missing required field {', '.join(repr(name) for name in missing)}")
+    ident = string(item["id"], "id")
+    kind = string(item["kind"], "kind")
+    if kind in EVAL_KINDS:
+        raise ValueError(f"kind must name a journey kind, not {kind}")
+    source = item.get("source", "skill")
+    if source not in SOURCES:
+        raise ValueError(f"source must be one of {', '.join(SOURCES)}")
+    case: dict[str, object] = {"id": ident, "family": string(item.get("family", ident), "family"), "kind": kind,
+                               "request": string(item["request"], "request"), "source": source}
+    journey = journey_of(item, True)
+    if journey is None:
+        raise ValueError("a journey case needs journey fields")
+    case |= journey.data()
+    if "files" in item:
+        case["files"] = text_map(item["files"])
+    case["expected"] = item["expected"]
+    return case
+
+
+def parse_journeys(document: object, *, strict: bool) -> ParsedJourneys:
+    """Check an `evals/journeys.json` document: a list of journey cases in the draft-case shape.
+
+    Return the valid cases and every error, each with its `journeys[i]` location. A case `kind` is any
+    nonempty name other than the eval kinds; the contract checks it at intake.
+    """
+    if not isinstance(document, list):
+        return ParsedJourneys((), ("expected a JSON list of journey cases",))
+    items = cast(list[object], document)
+    if strict and not items:
+        return ParsedJourneys((), ("the list must contain at least one journey case",))
+    cases: list[dict[str, object]] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(items):
+        if not isinstance(raw, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], raw)):
+            errors.append(f"journeys[{index}]: expected a JSON object")
+            continue
+        try:
+            case = _journey(cast(dict[str, object], raw), strict)
+        except (ValueError, CodedError) as error:
+            errors.append(f"journeys[{index}]: {error}")
+            continue
+        if case["id"] in seen:
+            errors.append(f"journeys[{index}]: duplicate case id {case['id']!r}")
+            continue
+        seen.add(cast(str, case["id"]))
+        cases.append(case)
+    return ParsedJourneys(tuple(cases), tuple(errors))

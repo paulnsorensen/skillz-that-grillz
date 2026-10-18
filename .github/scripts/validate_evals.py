@@ -2,11 +2,14 @@
 """Validate every skill eval file against one shared schema.
 
 All skills that ship behavioural evals keep them at exactly
-`skills/<name>/evals/evals.json`. This script finds every such file and
-checks it against one canonical contract:
+`skills/<name>/evals/evals.json`. A skill may also check in journey cases at
+`skills/<name>/evals/journeys.json`: a JSON list of draft-shaped cases that
+require `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`.
+This script finds every such file and checks it against one canonical contract:
 
-The reader is `skillz_experiments._evals_format.parse_evals`, which the
-autoimprove seed also uses. This script applies its strict profile.
+The readers are `skillz_experiments._evals_format.parse_evals` and
+`parse_journeys`, which the autoimprove seed also uses. This script applies
+their strict profile.
 
 Top-level (a JSON object):
 - `skill_name`: non-empty string.
@@ -47,7 +50,7 @@ from typing import cast
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "skillz" / "src"))
 
 from skillz_experiments._cases import read_text, relative  # noqa: E402
-from skillz_experiments._evals_format import FIXTURES, parse_evals  # noqa: E402
+from skillz_experiments._evals_format import FIXTURES, parse_evals, parse_journeys  # noqa: E402
 from skillz_experiments._seed import READ_LIMIT  # noqa: E402
 
 
@@ -75,12 +78,25 @@ def validate_file(path: Path) -> list[str]:
         data = cast(object, json.loads(path.read_text(encoding="utf-8")))
     except json.JSONDecodeError as exc:
         return [f"{path}: invalid JSON: {exc}"]
+    if path.name == "journeys.json":
+        return [f"{path}: {error}" for error in parse_journeys(data, strict=True).errors]
     parsed = parse_evals(data, strict=True)
     errors = [f"{path}: {error}" for error in parsed.errors]
     evals = cast(dict[str, object], data).get("evals") if isinstance(data, dict) else None
     for index, raw in enumerate(cast(list[object], evals) if isinstance(evals, list) else []):
         errors.extend(f"{path}: {error}" for error in _fixture_errors(path.parent.parent, index, raw))
     return errors
+
+
+def cross_file_duplicates(evals: Path, journeys: Path) -> list[str]:
+    try:
+        eval_data = cast(object, json.loads(evals.read_text(encoding="utf-8")))
+        journey_data = cast(object, json.loads(journeys.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, OSError):
+        return []
+    eval_ids = {entry.identifier for entry in parse_evals(eval_data, strict=True).entries}
+    journey_ids = [case["id"] for case in parse_journeys(journey_data, strict=True).cases]
+    return [f"{journeys}: duplicate case id {ident!r} also in {evals.name}" for ident in journey_ids if ident in eval_ids]
 
 
 def _canonical_entry(**overrides: object) -> dict[str, object]:
@@ -176,10 +192,15 @@ def main() -> int:
     if not eval_files:
         print("ERROR: no skills/*/evals/evals.json files found", file=sys.stderr)
         return 1
+    eval_files += sorted(Path("skills").glob("*/evals/journeys.json"))
 
     all_errors: list[str] = []
     for ef in eval_files:
         all_errors.extend(validate_file(ef))
+    for journeys in sorted(Path("skills").glob("*/evals/journeys.json")):
+        evals = journeys.with_name("evals.json")
+        if evals.is_file():
+            all_errors.extend(cross_file_duplicates(evals, journeys))
 
     if all_errors:
         for e in all_errors:

@@ -82,9 +82,9 @@ def _prompt(rules: Contract, candidate: Candidate, instruction: str, case: Case)
     """Build the candidate prompt. It never holds `expected` or a grader rubric."""
     root = f".agents/skills/{rules.skill}"
     steps = f"cat {root}/SKILL.md; then read {root}/EXPERIMENT_MARKER"
-    if candidate.script is not None:
+    if case.journey is None and candidate.script is not None:
         steps += f"; then python3 -I {root}/{candidate.script}" + (f" {rules.helper.input}" if rules.helper else "")
-    elif rules.helper is not None:
+    elif case.journey is None and rules.helper is not None:
         steps += f"; then python3 -I {root}/{rules.helper.path} {rules.helper.input}"
     invocation = rules.invocation.replace("{skill}", rules.skill).replace("{path}", root)
     return (invocation + "\nRun separate simple commands, without shell operators: " + steps + ". " + instruction
@@ -130,7 +130,7 @@ def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate
     else:
         result = task.invoke(prompt, candidate, case, holdout=holdout)
     files = _graders.output_files(result)
-    answer, loaded, helper = _activation(result, candidate, rules)
+    answer, loaded, helper = _activation(result, candidate, rules, journey=case.journey is not None)
     result.update({"score": 0.0, "loaded": loaded, "helper_executed": helper,
                    "candidate_hash": candidate.identity, "case_hash": digest(case.identifier)})
     if journey is not None:
@@ -178,8 +178,11 @@ def task_tokens(item: Mapping[str, object]) -> int | None:
     return None
 
 
-def _activation(result: dict[str, object], candidate: Candidate, rules: Contract) -> tuple[dict[str, object], bool, bool]:
+def _activation(result: dict[str, object], candidate: Candidate, rules: Contract,
+                *, journey: bool = False) -> tuple[dict[str, object], bool, bool]:
     """Return the answer, `loaded`, and `helper_executed`.
+
+    The helper applies to task cases only. A journey case needs no helper credit.
 
     A transport that sends a helper ledger under `LEDGER_KEY` gets helper credit only for a trace entry that a
     ledger line backs. The result then gains `helper_witnessed`. Other transports add no key.
@@ -192,7 +195,7 @@ def _activation(result: dict[str, object], candidate: Candidate, rules: Contract
         raise ValueError("events must be a list")
     events = cast(list[dict[str, object]], events)
     loaded = answer.get("load_marker") == candidate.identity and executed(events, "SKILL.md", workspace, skill=rules.skill)
-    script = helper_script(candidate, rules)
+    script = None if journey else helper_script(candidate, rules)
     credited = events if ledger is None else witnessed_events(events, cast(list[dict[str, object]], ledger))
     helper = script is None or executed(credited, script, workspace, skill=rules.skill,
                                         isolated=candidate.script is not None,

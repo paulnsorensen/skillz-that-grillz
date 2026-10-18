@@ -12,9 +12,10 @@ from typing import cast
 import pytest
 
 from skillz_experiments._cases import CodedError, load_cases
-from skillz_experiments._contract import Contract, parse
+from skillz_experiments._contract import Contract, load_contract, parse
 from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._intake import HOLDOUT_MINIMUM, case_hash, freeze, load_draft, split_cases
+from skillz_experiments._seed import seed_cases
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._plan import JOURNEY_SEARCH_CALLS, SEARCH_CASE_FACTOR, size_plan
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
@@ -113,13 +114,25 @@ def test_a_task_only_plan_keeps_the_fixed_search_factor() -> None:
     assert plan.metric_calls == SEARCH_CASE_FACTOR * 6 == 24
 
 
-def test_stage_copies_the_skill_with_the_journey_contract_and_no_wedge_toml(tmp_path: Path) -> None:
+@pytest.mark.ac("kit-harder-journeys:AC-13")
+def test_stage_copies_the_skill_with_the_kit_contract_the_one_gate_and_the_shipped_journeys(tmp_path: Path) -> None:
     env = {**os.environ, "TMPDIR": str(tmp_path)}
-    done = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage"], env=env, capture_output=True, text=True, timeout=30, check=True)
+    done = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage", "--approve-contract"], env=env, capture_output=True,
+                          text=True, timeout=30, check=True)
     target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
     assert target.is_relative_to(tmp_path)
-    assert (target / "SKILL.md").is_file() and (target / "evals" / "autoimprove.json").is_file()
     assert not (target / "wedge.toml").exists()
+    shipped = KIT.parents[3] / "skills" / "skillz" / "evals"
+    for name in ("journeys.json", "gates/journey.py"):
+        assert (target / "evals" / name).read_bytes() == (shipped / name).read_bytes(), name
+    assert sorted(path.relative_to(target / "evals").as_posix() for path in (target / "evals").rglob("*") if path.is_file()) == [
+        "autoimprove.json", "gates/journey.py", "journeys.json"]
+    rules = load_contract(target)
+    assert sorted(rules.kinds) == ["journey"] and rules.editable == ("SKILL.md", "references/experiments.md")
+    seeded = seed_cases(target)
+    assert seeded is not None and len(seeded) == 18
+    drafted = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage"], env=env, capture_output=True, text=True, timeout=30, check=True)
+    assert "contract status: draft" in drafted.stdout
 
 
 def bash(command: str) -> dict[str, object]:
@@ -276,3 +289,43 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (781, 51, 210, 48, 24320)
+
+
+def ask_harness_cases(tmp_path: Path) -> list[dict[str, object]]:
+    draft = cast(list[dict[str, object]], json.loads((written(tmp_path) / "cases.draft.json").read_text()))
+    cases = [case for case in draft if case["family"] == "ask-harness"]
+    assert len(cases) == 3
+    return cases
+
+
+@pytest.mark.ac("gh-369:AC-9")
+def test_ask_harness_scripts_a_partial_first_answer_and_the_rest_only_on_a_follow_up(tmp_path: Path) -> None:
+    for case in ask_harness_cases(tmp_path):
+        brief = cast(str, case["brief"])
+        first, rest = brief.index("answer only this"), brief.index("Only if the agent asks again")
+        assert first < rest
+        assert "`python3`" in brief[first:rest] and "Do not give the script argument" in brief[first:rest]
+        assert "Do not give the model" in brief[first:rest]
+        assert "`fake_harness.py`" not in brief[first:rest] and "`toy`" not in brief[first:rest]
+        assert "absolute path" in brief[rest:] and "`fake_harness.py`" in brief[rest:] and "`toy`" in brief[rest:]
+
+
+@pytest.mark.ac("gh-369:AC-10")
+def test_ask_harness_allows_one_extra_agent_turn_for_the_follow_up(tmp_path: Path) -> None:
+    assert {case["max_turns"] for case in ask_harness_cases(tmp_path)} == {5}
+
+
+@pytest.mark.ac("gh-369:AC-11")
+def test_ask_harness_expects_a_follow_up_and_forbids_guessing(tmp_path: Path) -> None:
+    for case in ask_harness_cases(tmp_path):
+        expected = cast(dict[str, object], case["expected"])
+        assert expected["questions"] == [
+            "harness and model", "missing harness argument and model", "case approval", "budget approval"]
+        must = cast(list[str], expected["must"])
+        must_not = cast(list[str], expected["must_not"])
+        assert "asks a follow-up for the missing argument and model instead of guessing" in must
+        assert "passes --harness command with the two --command values only after the user gave both" in must
+        assert "guesses the harness argument or the model, or runs the harness with a value the user did not give" in must_not
+        assert "asks more than four questions" in must_not
+        assert "approves cases or budget for the user" in must_not
+        assert expected["final_stop"] == "budget-unapproved"

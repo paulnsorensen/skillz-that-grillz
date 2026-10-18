@@ -113,6 +113,9 @@ Without `--kind`, the kind that drives the split is `task` when the contract dec
 Without `--kind`, a default run also evaluates the other journey kinds. Journey cases take a seeded split and do not size the task holdout.
 With `--kind`, a drafted case of an unselected kind shows as `not scored` in the question and stays out of `cases.json` `cases`.
 The first run freezes the choice, and a resume ignores `--kind`.
+A default `run` on `skills/skillz` evaluates the 18 checked-in journeys beside the tasks, so its estimate grows. Pass `--kind task` for a task-only run. Pass `--kind journey` for a journey-only run.
+The contract helper applies to task cases only. A journey case gets no helper instruction and needs no helper credit.
+Run journeys from a copy of the skill with `--edit prose`. A frozen helper stops only `--edit prose+cli`.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
 `--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
@@ -145,7 +148,7 @@ Map each coded stop to its next step:
 | Code | Data on stdout | Next step |
 |---|---|---|
 | `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
-| `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_file` (the path of `RUN/cases.seed.json`) and `seed_summary` (`cases`, and the case count of each kind and each family; a task case with no family is in no family count; both only when `evals/evals.json` exists), `doctor` (the host checks) | Write the case draft. Start from the `seed_file` when it is present. Then run again. |
+| `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_file` (the path of `RUN/cases.seed.json`) and `seed_summary` (`cases`, `journeys` (the journey case count), and the case count of each kind and each family; a task case with no family is in no family count; both only when `evals/evals.json` or `evals/journeys.json` exists), `doctor` (the host checks) | Write the case draft. Start from the `seed_file` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `cases-too-easy` | The seed already scores at least 0.9 on a train or validation family. The message names each family, its split, and its mean. | Do not ask a new question. Draft harder cases in a new run directory, then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
@@ -176,8 +179,8 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `environment-differs` | A resume runs on a different Codex version, or the runtime environment differs from the frozen record. The message names the changed key. No model call ran. | Restore the recorded version or start a new run. |
 | `usage` | `--harness-config`, `--harness`, and `--command` conflict. The message names the conflict. | Fix the options, then run again. |
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
-| `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. An entry can also have an unknown `kind`, a duplicate case id, assertions on a trigger or near-miss, or a string `expected_skill` with no `kind` (the message says to set `kind`). At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, set `kind` on an ambiguous entry, then run again. |
-| `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. A run directory that an older version drafted can stop here: a kind-less entry with no assertions moved from `trigger` to `task`. Copy the seed again, or set `kind` in the entry. |
+| `evals-unreadable` | `evals/evals.json` or `evals/journeys.json` is a symlink, too large, or malformed. An entry can also have an unknown `kind`, a duplicate case id (also across the two files), assertions on a trigger or near-miss, or a string `expected_skill` with no `kind` (the message says to set `kind`). At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix the eval file or the fixture, set `kind` on an ambiguous entry, then run again. |
+| `cases-uncovered` | The draft lacks an entry of `evals/evals.json` or a journey of `evals/journeys.json`. It can also change an entry `kind` or `request`, or a journey `brief`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from its eval file. Then run again. A run directory that an older version drafted can stop here: a kind-less entry with no assertions moved from `trigger` to `task`. Copy the seed again, or set `kind` in the entry. |
 | `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
@@ -200,7 +203,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `build-failed` | The host build of an own target fails. During the search, the candidate scores 0 and the feedback shows the reason. | Read the feedback. |
 | `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
-| `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
+| `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. Or pass `--edit prose` when you want no helper edit. |
 | `reserved-name` | A skill file name starts with `@wedge/`, or it is `@new-cli`, `@hypothesis`, or `@notes`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
@@ -211,7 +214,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-surface` | The contract `surface` block is malformed, or `editable` names the MCP config, an agent, or a companion file. An agent file also needs a frontmatter `name` equal to its file stem. A candidate also stops when it changes the MCP config text or an agent name. | Fix the surface or `editable` in the contract, or fix the agent name. Then run again. |
 | `contract-surface-missing` | A file that the `surface` block names is missing from the skill, or the MCP config is not a JSON object with an `mcpServers` object. | Restore the file or fix the contract, then run again. |
 | `contract-surface-unsupported` | The contract declares a `surface`, and the task role is not the Claude harness. | Run with `--harness claude`, or remove the `surface` block. |
-| `journey-unsupported` | A journey case needs a task transport that holds a conversation, and the transport cannot. | Run with `--harness claude`, or remove the journey cases. |
+| `journey-unsupported` | A scored or also-evaluated kind uses the journey grader, and the task transport cannot hold a conversation. The run stops at prepare time, before the case approval. | Run with `--harness claude`, or pass `--kind task`. |
 | `journey-expected-invalid` | A journey `expected` is not an object, holds a key other than `must`, `must_not`, `questions`, and `final_stop`, holds a wrong type, an empty or repeated entry, or has neither a nonempty `must` nor a nonempty `must_not`. A frozen case of an older run can trigger it on resume. | Fix the case. For an older run, start a new run directory. |
 | `expected-missing` | A journey case has no `expected`. | Add the `expected` object. |
 | `contract-rubric-field` | The rubric of a `journey` kind names `reference.<name>` for a name that is not an `expected` field. | Use `must`, `must_not`, `questions`, or `final_stop`. |
@@ -246,7 +249,7 @@ Before the case draft, write one representative example. State the request, the 
 Show the example to the user with the case approval question.
 Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
 
-When `<skill>/evals/evals.json` exists, the runner writes the seed cases to `RUN/cases.seed.json` (mode 0600). The stop names that file in `seed_file` and shows counts in `seed_summary`. Start the draft from the file.
+When `<skill>/evals/evals.json` or `<skill>/evals/journeys.json` exists, the runner writes the seed cases to `RUN/cases.seed.json` (mode 0600). The stop names that file in `seed_file` and shows counts in `seed_summary`. Start the draft from the file.
 The seed file holds a list of cases, one for each entry, in file order. The runner maps them and does not write the draft. To accept the seed unchanged, copy the file to `RUN/cases.draft.json`.
 Each seed case has `source: skill`, the entry `name` as `id` (`eval-<id>` when the entry has no `name`), and the `prompt` as `request`.
 An explicit `kind` of `trigger`, `near-miss`, or `task` wins. A contradiction stops the seed: `expected_skill: null` with a kind other than `near-miss`, `assertions` on a trigger or near-miss, or a task with no `expected_output` and no `assertions`.
@@ -258,11 +261,11 @@ Each fixture path starts with `evals/files/`. A path outside `evals/files/` stop
 The runner stages each fixture at its `evals/files/` path in the workspace, so the request must name that directory.
 When the entry lists no fixture, `files` is empty. Draft the starting fixture that the request needs.
 A seed case has a `family` only when the entry has a nonempty-text `family` key. Otherwise set the `family` by the rule below.
-Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged. You can extend `files`, `expected`, and `family`.
-When the draft drops a seed case or changes its `id`, `kind`, or `request`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from `evals/evals.json`.
+Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged, and a journey case with its `brief` unchanged. You can extend `files`, `expected`, and `family`.
+When the draft drops a seed case or changes its `id`, `kind`, `request`, or `brief`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from its eval file.
 Then add cases until the draft meets the minimums below. To add journey cases, read `Draft journeys`.
 The holdout split alone needs 6 scored cases, and a family never crosses splits, so a contract needs about 10 or more `task` cases.
-A skill with no `evals/evals.json`, or with an unreadable one, has no seed file, and the stop removes an old one. Draft every case from the `facts`.
+A skill with neither `evals/evals.json` nor `evals/journeys.json`, or with an unreadable one, has no seed file, and the stop removes an old one. Draft every case from the `facts`.
 
 Each case has these fields:
 
@@ -321,6 +324,28 @@ Write each journey case with these fields:
 
 The runner adds the meaning of each `reference` field to the judge prompt. A rubric may name only `reference.must`, `reference.must_not`, `reference.questions`, and `reference.final_stop`. Any other `reference.<name>` stops with `contract-rubric-field`.
 A journey case may omit `files`.
+
+### Check in journey cases
+
+A skill may keep its journey cases in `evals/journeys.json`, next to `evals/evals.json`.
+The file is a JSON list. Each item has the draft-case shape:
+
+```json
+{"id": "age-1", "family": "age-gate", "kind": "journey", "request": "/age-check ...", "brief": "...",
+ "max_turns": 4, "requirements": ["AGE-1"], "files": {"venue/rules.md": "..."},
+ "expected": {"must": ["..."], "must_not": ["..."]}, "source": "skill"}
+```
+
+- `kind` names a journey kind of the contract. The seed accepts any nonempty name except `trigger`, `near-miss`, and `task`. Intake checks the name against the contract.
+- `files` is an inline map of path to text, and it is optional. `requirements` and `max_turns` are optional.
+- Any other key is an error. `expected` follows the closed object above.
+- CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. The seed fills `family` from `id` and `source` from `skill` when they are absent.
+- `id` values are unique across `evals.json` and `journeys.json`. A repeat stops the run with `evals-unreadable`.
+
+The first `run` call seeds `RUN/cases.seed.json` from both files. The call writes the seed when either file exists.
+The coverage check also covers `journeys.json`. The draft must keep each journey with its `id`, `kind`, `request`, and `brief`.
+Otherwise the run stops with `cases-uncovered`. To drop a journey, remove it from `journeys.json`.
+The `skills/skillz` skill ships 18 journeys for `$skillz autoimprove`, and a test keeps the file equal to its generator.
 
 Make the cases hard. A family that the seed already passes adds no signal.
 Give each family one trap:
