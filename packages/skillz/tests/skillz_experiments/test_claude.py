@@ -20,7 +20,8 @@ from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
 from skillz_experiments.harness._claude import _constants, _events, _options, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
-from skillz_experiments._cases import CodedError, digest
+from skillz_experiments import _redact
+from skillz_experiments._cases import CodedError, digest, mapping
 from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
 from skillz_experiments.harness._claude._sandbox import sandbox_argv
 from skillz_experiments._contract import Surface, load_contract, parse
@@ -73,11 +74,11 @@ def fake_claude(tmp_path: Path, mode: str = "ok") -> Path:
     return executable
 
 
-def harness(tmp_path: Path, executable: Path, budget: Budget | None = None) -> Harness:
+def harness(tmp_path: Path, executable: Path, budget: Budget | None = None, out: Path | None = None) -> Harness:
     config = tmp_path / "harness.json"
     _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [str(executable)]}))
     return Configuration.load(config, "claude-test-model").create(
-        "claude-test-model", budget or Budget(10, 120, 0), lambda: None)
+        "claude-test-model", budget or Budget(10, 120, 0), lambda: None, out)
 
 
 def echo_candidate(tmp_path: Path) -> Candidate:
@@ -2327,3 +2328,77 @@ def test_missing_lookup_or_non_loopback_output_fails_closed() -> None:
     assert _sandbox.network_failure(events(*complete, *http), 1234, token) is None
     assert "non-loopback" in str(_sandbox.network_failure(events(complete[0], *http, complete[2]), 1234, token))
     assert "name lookup" in str(_sandbox.network_failure(events(*complete[:2], *http), 1234, token))
+
+
+def _failed_preflight(tmp_path: Path, mode: str) -> tuple[CodedError, Path]:
+    out = tmp_path / "run"
+    out.mkdir(mode=0o700)
+    session = harness(tmp_path, fake_claude(tmp_path, mode), out=out)
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    return caught.value, out / "preflight.events.json"
+
+
+@pytest.mark.ac("gh-291:AC-1")
+@pytest.mark.ac("gh-291:AC-2")
+def test_a_failed_preflight_keeps_a_private_transcript_that_the_stop_names(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    error, transcript = _failed_preflight(tmp_path, "write-broken")
+    assert error.code == "preflight-leak" and "no positive control" in str(error)
+    assert str(transcript) in str(error)
+    assert stat.S_IMODE(transcript.stat().st_mode) == 0o600
+    document = cast(dict[str, object], json.loads(transcript.read_text(encoding="utf-8")))
+    assert document["role"] == "task" and "no positive control" in cast(str, document["failure"])
+    tools = cast(list[dict[str, object]], document["tools"])
+    writes = [tool for tool in tools if cast(str, mapping(tool["input"]).get("command", "")).startswith("printf ")]
+    assert len(writes) == 3 and all(tool["tool"] == "Bash" and tool["result"] == "denied" and tool["is_error"] is True
+                                    for tool in writes)
+    assert any(tool["tool"] == "Read" and tool["result"] for tool in tools)
+    assert all("result" in tool for tool in tools)
+
+
+@pytest.mark.ac("gh-291:AC-1")
+def test_a_leak_found_in_the_init_event_also_keeps_the_transcript(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    error, transcript = _failed_preflight(tmp_path, "foreign-skill")
+    assert error.code == "preflight-leak" and str(transcript) in str(error) and transcript.is_file()
+
+
+@pytest.mark.ac("gh-291:AC-4")
+def test_a_passed_preflight_keeps_no_transcript(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    out = tmp_path / "run"
+    out.mkdir(mode=0o700)
+    session = harness(tmp_path, fake_claude(tmp_path), out=out)
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    assert not (out / "preflight.events.json").exists()
+
+
+@pytest.mark.ac("gh-291:AC-3")
+def test_the_transcript_redacts_credentials_through_the_shared_seam(tmp_path: Path) -> None:
+    secrets = ("sk-ant-oat01-secretvalue", "hunter2", "refresh-me-123")
+    events: list[dict[str, object]] = [
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "r1", "name": "Read", "input": {"file_path": "/home/u/.claude/.credentials.json"}},
+            {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "env | grep PASSWORD=hunter2"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "r1", "content": [
+                {"type": "text", "text": '{"accessToken": "sk-ant-oat01-secretvalue", "refreshToken": "refresh-me-123"}'}]},
+            {"type": "tool_result", "tool_use_id": "b1", "is_error": True, "content": "exit 1: more context"}]}}]
+    path = tmp_path / "transcript.json"
+    _redact.write_transcript(path, {"tools": _events.tool_transcript(events)})
+    text = path.read_text(encoding="utf-8")
+    assert not any(secret in text for secret in secrets)
+    tools = cast(list[dict[str, object]], json.loads(text)["tools"])
+    assert [tool["tool"] for tool in tools] == ["Read", "Bash"]
+    assert tools[1]["result"] == "exit 1: more context" and tools[1]["is_error"] is True
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # The Codex failure evidence uses the same seam, so it also drops a spaced JSON credential value.
+    excerpt = cast(str, _codex.failure_details(1, '{"refreshToken": "refresh-me-123"} more context', [])["stderr_excerpt"])
+    assert "refresh-me-123" not in excerpt and "more context" in excerpt

@@ -144,6 +144,14 @@ The run stops with `preflight-leak` when the Read tool returns that file, or whe
 The `--restricted` flag no longer confines the Read tool, so only this probe proves it.
 Only the candidate skill, Claude Code's own commands and built-in plugins, and the built-in agents are allowed.
 
+When the live preflight call runs and the preflight then fails, the runner keeps its transcript in `RUN/preflight.events.json` (mode 0600).
+The stop message names the file. `run.json` records the message in `failure`.
+The file holds the role, the failure message, the final answer, and each tool use with its input, its result text, and its error flag.
+Each string passes through the shared redaction in `skillz_experiments/_redact.py`, which removes URLs and credential-like words and values.
+The Codex and Gemini diagnostics use the same redaction.
+The probe tokens are random for each run, so the transcript keeps them.
+A `--preflight-only` check has no run directory, so it writes no transcript.
+
 Before the first live task, a live isolation preflight runs. It runs once per run, not once per `run` command.
 The preflight asks Claude Code to run `cat` on a sealed host file and on a workspace file.
 It passes only when a Bash command read the sealed path, the host read failed, and the workspace read returned its token.

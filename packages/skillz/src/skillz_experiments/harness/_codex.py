@@ -19,6 +19,7 @@ from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted,
 from skillz_experiments._contract import resolve
 from skillz_experiments.harness._discovery import discover
 from skillz_experiments._evaluation import helper_failure, usage
+from skillz_experiments._redact import redact
 from skillz_experiments.evaluation import CheckMemo, answer_schema, evaluate
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import halve_call_slots, model_call, process, reset_call_slots
@@ -80,10 +81,6 @@ MESSAGE_RECORD_COUNT = 10
 MAX_RETRIES = 3
 BACKOFF_SECONDS = 2.0
 _sleep = time.sleep
-_KEYWORD = r"(?<![\w-])(?:\w+[-_])*(?:api[-_ ]?key|key|token|secret|password|passwd|authorization|auth|cookie)s?(?!\w)"
-_SECRETISH = re.compile(
-    r"\S*://\S*|" + _KEYWORD + r"\s*[:=]?\s*(?:(?:basic|bearer)\s+)?\S+|\S*(?:key|token|secret|password|auth)\S*|"
-    + r"\bsk-\S+|\bbearer\s+\S+|\bbasic\s+\S+|\beyj[\w-]+\.[\w-]+\.[\w-]*", re.IGNORECASE)
 _UNITS = r"milliseconds?|ms|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|d|h|m|s"
 _SCALE = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400}
 _RETRY_AFTER = re.compile(r"(?:retry[ _-]?after|try again (?:in|after)|resets? (?:in|at))\W{0,3}(?P<rest>.*)")
@@ -488,15 +485,11 @@ def failure_details(returncode: int, stderr: str, events: list[dict[str, object]
     reason = next((reason for pattern, reason in _FAILURE_REASONS if pattern.search(detail)),
                   "missing-final-response" if returncode == 0 else "execution-failed")
     evidence: dict[str, object] = {"schema_version": 1, "returncode": returncode, "reason": reason, "usage": usage(events),
-                                   "stderr_excerpt": _redact(stderr)[-EXCERPT_LIMIT:],
-                                   "messages": [_redact(message)[:MESSAGE_RECORD_LIMIT] for message in recorded]}
+                                   "stderr_excerpt": redact(stderr)[-EXCERPT_LIMIT:],
+                                   "messages": [redact(message)[:MESSAGE_RECORD_LIMIT] for message in recorded]}
     wait = retry_after(detail)
     if wait == math.inf:
         evidence["retry_after_unparsed"] = True
     elif wait is not None:
         evidence["retry_after_seconds"] = wait
     return evidence
-
-
-def _redact(text: str) -> str:
-    return _SECRETISH.sub("[redacted]", text.strip())

@@ -20,6 +20,7 @@ from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments.evaluation import answer_schema, Reply, Transcript
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._budget import Budget, BudgetExhausted
+from skillz_experiments._redact import write_transcript
 from skillz_experiments._runtime import live, model_call, process
 from skillz_experiments.harness._check import (
     Check,
@@ -60,7 +61,9 @@ from skillz_experiments.harness._claude._events import (
     read_failure,
     read_tool_failure,
     token_events,
+    tool_transcript,
     event_trace,
+    TRANSCRIPT_TEXT_LIMIT,
     user_line,
     write_failure,
 )
@@ -119,6 +122,10 @@ INVENTORY_SECONDS = 60
 
 
 MCP_FILE = "mcp.json"
+
+
+# The private file in the run directory that holds the tool transcript of a failed live preflight.
+PREFLIGHT_TRANSCRIPT = "preflight.events.json"
 
 
 _NO_INIT = "has no init event, so the skill list is unknown; the invocation counts against the budget"
@@ -460,36 +467,53 @@ class ClaudeCode:
                 socket_open = socket_reached(network_token) or abstract_reached(network_token)
             wrote = any(file.exists() for file in protected)
             controlled = write_control.is_file() and write_control.read_text() == write_token
-        if reached:
-            raise NetworkIsolationFailed(LISTENER_REACHED)
-        if socket_open:
-            raise NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
-        leak = find_leak(events, [name], builtin, self.declared)
-        if leak is not None:
-            raise preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
-        reason = failure(returncode, stderr, events, [name], builtin, allowed=self.declared.skills)
-        if reason == AUTH_FAILED:
-            raise login_failed(LOGIN_HINT)
-        network = network_failure(events, port, network_token)
-        if network is None and probing:
-            network = unix_failure(events, str(socket_path), network_token)
-        if network is None and probing:
-            network = unix_failure(events, "\\0" + abstract, network_token)
-        if reason is None:
-            reason = read_tool_failure(events, token, sealed, evidence=False)
-        if reason is None:
-            reason = read_failure(events, token, str(sealed), control, str(control_file))
-        if reason is None:
-            reason = read_tool_failure(events, token, sealed, evidence=True)
-        if reason is None:
-            reason = write_failure(events, [str(file) for file in protected], wrote, controlled)
-        if reason is None and network is not None:
-            raise NetworkIsolationFailed(network)
-        if reason is not None:
-            raise preflight_leak(reason)
+        try:
+            if reached:
+                raise NetworkIsolationFailed(LISTENER_REACHED)
+            if socket_open:
+                raise NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
+            leak = find_leak(events, [name], builtin, self.declared)
+            if leak is not None:
+                raise preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
+            reason = failure(returncode, stderr, events, [name], builtin, allowed=self.declared.skills)
+            if reason == AUTH_FAILED:
+                raise login_failed(LOGIN_HINT)
+            network = network_failure(events, port, network_token)
+            if network is None and probing:
+                network = unix_failure(events, str(socket_path), network_token)
+            if network is None and probing:
+                network = unix_failure(events, "\\0" + abstract, network_token)
+            if reason is None:
+                reason = read_tool_failure(events, token, sealed, evidence=False)
+            if reason is None:
+                reason = read_failure(events, token, str(sealed), control, str(control_file))
+            if reason is None:
+                reason = read_tool_failure(events, token, sealed, evidence=True)
+            if reason is None:
+                reason = write_failure(events, [str(file) for file in protected], wrote, controlled)
+            if reason is None and network is not None:
+                raise NetworkIsolationFailed(network)
+            if reason is not None:
+                raise preflight_leak(reason)
+        except CodedError as error:
+            self._keep_transcript(error, events)
+            raise
         return {"adapter": "claude", "model": self.model, "isolation": "passed", "credential": self.credential_kind,
                 "network": "denied", "live_calls": 1, "unix_socket_filter": "off" if self.unix_sockets() else "on",
                 "environment_key": self.environment_key()}
+
+    def _keep_transcript(self, error: CodedError, events: list[dict[str, object]]) -> None:
+        """Write the redacted tool transcript of a failed live preflight to the run directory, and name it in `error`.
+
+        The file is private (mode 0600). Without a run directory, as in `--preflight-only`, nothing is written.
+        """
+        if self.out is None:
+            return
+        path = self.out / PREFLIGHT_TRANSCRIPT
+        write_transcript(path, {"schema_version": 1, "role": self.role, "failure": str(error),
+                                "tools": tool_transcript(events), "answer": assistant_text(events)[:TRANSCRIPT_TEXT_LIMIT]})
+        # The run records and prints `str(error)`, so the stop names the transcript through the message.
+        error.args = (f"{error}; the preflight transcript is in {path}",)
 
     def check_name(self, candidate: Candidate) -> None:
         """Stop when the candidate name matches a Claude Code command or a foreign skill. The init event lists names
