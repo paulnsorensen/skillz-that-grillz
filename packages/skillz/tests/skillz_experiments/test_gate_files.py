@@ -248,7 +248,7 @@ def _argv_source(root: Path, files: dict[str, str]) -> str:
     return load_contract(_target(root, files)).grader("task").argv[3]
 
 
-@pytest.mark.ac("gh-367:AC-1")
+@pytest.mark.ac("gh-367:AC-10")
 def test_a_bundled_gate_runs_as_the_real_main_module(tmp_path: Path) -> None:
     single = _argv_source(tmp_path / "single", {GATE: FORWARD_REF})
     bundled = _argv_source(tmp_path / "bundled", {GATE: FORWARD_REF + "import _lib\n", "evals/gates/_lib.py": "VALUE = 1\n"})
@@ -259,7 +259,7 @@ def test_a_bundled_gate_runs_as_the_real_main_module(tmp_path: Path) -> None:
     assert outputs[1] == outputs[0]
 
 
-@pytest.mark.ac("gh-367:AC-5")
+@pytest.mark.ac("gh-367:AC-11")
 def test_a_gate_named_like_a_stdlib_module_is_not_shadowed_by_itself(tmp_path: Path) -> None:
     gate = "evals/gates/json.py"
     target = _target(tmp_path, {gate: "import json\n" + SCRIPT}, {"grader": "command", "gate": gate})
