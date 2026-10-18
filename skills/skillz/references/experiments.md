@@ -658,9 +658,25 @@ The runner drops notes over 500 characters as `notes-too-long`, and a value that
 The leakage check reads the notes in their own call. A leak drops the notes and records the rule. The proposal stays admitted.
 Each reflection outcome records `notes` and `notes_dropped`. `search.text_dropped` counts the dropped hypotheses and notes together, by rule.
 `search.journal` in `run.json` lists the kept notes, oldest first, with the attempt `index`.
-The prompt shows the newest notes in a separate section after the rejected memory, within 2000 characters. The oldest note drops first.
+The prompt shows the newest notes in a separate section after the framework facts, within 2000 characters. The oldest note drops first.
 The runner rebuilds the rejected memory and the journal from the recorded outcomes, so a resume keeps both.
 The export `report.json` and the `run` summary drop `search.journal`.
+
+### Cross-run history
+
+The runner keeps a private history of attempts across runs of one target. It is on by default. `run --no-history` turns it off.
+The first run records the choice in `run.json` as `history`. A resume that changes it stops with `run-config-differs`. A resume that omits the flag keeps it.
+The store is `$XDG_STATE_HOME/skillz/history/<key>.jsonl`, or `~/.local/state/skillz/history/<key>.jsonl` when `XDG_STATE_HOME` is unset.
+The key is a digest of the contract skill name and the resolved target root. The directory has mode 0700, and the file has mode 0600.
+When the search ends, the runner writes one line for the run: its `run_id`, a timestamp, the `compatibility` block, and its attempts.
+A killed run writes nothing. The store keeps the newest 20 runs.
+At search start, the runner loads only the earlier runs whose compatibility fields all match. `search.history` reports:
+`enabled`, `runs` (the loaded run ids), `excluded` (each run id with its differing fields), `skipped_lines`, and `warnings`.
+The reflection prompt shows the earlier attempts after the rejected memory: at most 8, newest first, within 4000 characters. Run 1 is the newest earlier run.
+Earlier attempts never enter the search, never become the winner, and never count toward the stall stop.
+The store holds no request, expected, label, or holdout data. It holds candidate identities, digests, train case ids, and the hypothesis that passed the leakage check.
+A corrupt line is skipped and counted. A store that cannot be read or written, or that has the wrong mode, gives the warning `history-unreadable`. The run result does not change.
+ADR-020 in `docs/agents/decisions/skillz-autoimprove.md` records the decision.
 
 ### Stall stop
 

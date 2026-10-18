@@ -104,9 +104,9 @@ def refuse_nono(record: dict[str, object]) -> None:
 
 def check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
                   seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object],
-                  configured: bool, judge_model: str | None) -> None:
-    """Stop when a resume names another model, judge model, adapter, target, edit, repeats, seed, or Claude option
-    than the first run. A resume that omits `judge_model` keeps the recorded judge model.
+                  configured: bool, judge_model: str | None, history: bool | None = None) -> None:
+    """Stop when a resume names another model, judge model, adapter, target, edit, repeats, seed, Claude option, or history
+    setting than the first run. A resume that omits `judge_model` or `history` keeps the recorded value.
     A run that froze a harness configuration resumes only with a configuration.
     """
     if text_field(record, "model") != model:
@@ -132,6 +132,8 @@ def check_resume(record: dict[str, object], target: Path, edit: Edit | None, rep
             raise _config_differs(flag)
     if str(target.resolve()) != record.get("target_root"):
         raise _config_differs("the target skill directory")
+    if history is not None and history != record.get("history"):
+        raise _config_differs("--no-history")
 
 
 _ABSENT = object()

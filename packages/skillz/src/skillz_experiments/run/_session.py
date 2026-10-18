@@ -369,6 +369,8 @@ class Session:
         self._live = 0
         # The count of recorded search evaluations when this session started its search. The fault rule counts after it.
         self._fault_base = 0
+        # The attempts of compatible earlier runs that `search` receives. They feed the prompt only, never the stall signal.
+        self._earlier: tuple[Mapping[str, object], ...] = ()
         # Set before the provider gets `self.checkpoint`, which reads it.
         self._leak_rejections = self._recorded_rejections()
         self.provider: _Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
@@ -767,7 +769,7 @@ class Session:
             raise ValueError("every feedback record is unscored; the proposal ends with no candidate")
         prompt, schema = reflection_request(self.edit, candidate, feedback, components, progress=progress,
                                             cheaper=self.statistics.token_rule, history=history, protect=protect,
-                                            memory=memory, journal=journal)
+                                            memory=memory, journal=journal, earlier=self._earlier)
         try:
             result = self.provider.invoke(prompt, schema=schema)
         except CodedError as error:
@@ -1006,12 +1008,14 @@ class Session:
         if stop:
             raise CodedError("cases-too-easy", too_easy_message(block))
 
-    def search(self) -> None:
+    def search(self, earlier: Sequence[Mapping[str, object]] = ()) -> None:
         """Run the one GEPA search over train and validation cases. Holdout cases never enter it.
 
         The headroom pass runs first. Its train and validation seed outcomes count as spent search evaluations.
         Its validation outcomes stand in for the seed validation pass of GEPA.
+        `earlier` holds the attempts of compatible earlier runs, oldest first. Each reflection prompt shows them.
         """
+        self._earlier = tuple(earlier)
         reason = "search-share-spent-best-validated"
         timed_out = False
         budget_stopped = False
@@ -1069,8 +1073,8 @@ class Session:
         self.record["winner"] = winner.files
         with self.lock:
             rejections = {rule: len(keys) for rule, keys in sorted(self._leak_rejections.items())}
-        earlier = self.record.get("search")
-        base = cast(dict[str, object], earlier) if isinstance(earlier, dict) else {}
+        recorded = self.record.get("search")
+        base = cast(dict[str, object], recorded) if isinstance(recorded, dict) else {}
         self.record["search"] = base | {
             "reason": reason,
             "retained_seed": winner.identity == self.seed.identity,

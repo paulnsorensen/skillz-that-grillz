@@ -7,6 +7,7 @@ from __future__ import annotations
 import fcntl
 import sys
 import time
+import uuid
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast, get_args
@@ -45,6 +46,9 @@ from skillz_experiments.harness import (
     stop_kind,
 )
 from skillz_experiments.run._export import summary
+from skillz_experiments.run._history_store import load as load_history
+from skillz_experiments.run._history_store import store_path
+from skillz_experiments.run._history_store import write as write_history
 from skillz_experiments.run._plan import editable_files, plan_estimate, size_plan, supported_kind
 from skillz_experiments.run._resume import (
     check_resume,
@@ -58,7 +62,7 @@ from skillz_experiments.run._resume import (
     statistics_flag,
     resolve_statistics,
 )
-from skillz_experiments.run._session import Factory, HarnessName, engine_hash, is_inside, Session
+from skillz_experiments.run._session import Factory, HarnessName, engine_hash, is_inside, Session, text_field
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit
 
@@ -81,7 +85,8 @@ def _fall_back_to_prose(target: Path, skeleton: Candidate, contract: Contract,
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit | None, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
              options: ClaudeOptions, configuration: Configuration | None = None,
-             statistics_given: Mapping[str, float] | None = None, judge_model: str | None) -> Statistics:
+             statistics_given: Mapping[str, float] | None = None, judge_model: str | None,
+             history: bool = True) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
     The case approval covers the resolved statistics, so a changed or dropped flag stops at the case approval.
@@ -168,7 +173,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
-        "schema_version": SCHEMA_VERSION, "phase": "prepared", "calls": 0, "retries": 0, "calls_by_role": {},
+        "schema_version": SCHEMA_VERSION, "run_id": str(uuid.uuid4()), "history": history,
+        "phase": "prepared", "calls": 0, "retries": 0, "calls_by_role": {},
         "seconds_by_role": {}, "model": model, "adapter": adapter,
         "judge_model_flag": judge_model,
         **({"claude_options": options.data()} if resolve_harness else {}),
@@ -246,6 +252,29 @@ def _check_statistics_flags(statistics: Mapping[str, float] | None) -> dict[str,
     return accepted
 
 
+def _search(session: Session) -> None:
+    """Run the search with the compatible earlier attempts of the history store, then add this run's attempts to it.
+
+    A run with `history` off neither reads nor writes the store. A store fault adds a warning and keeps the result.
+    """
+    if session.record.get("history") is not True:
+        session.search()
+        block: dict[str, object] = {"enabled": False}
+    else:
+        path = store_path(session.contract.skill, text_field(session.record, "target_root"))
+        run_id = text_field(session.record, "run_id")
+        loaded = load_history(path, session.record, run_id)
+        session.search(earlier=loaded.attempts)
+        attempts = cast(dict[str, object], session.record["search"]).get("attempts")
+        warning = write_history(path, session.record, run_id, cast(list[dict[str, object]], attempts or []))
+        if warning is not None and warning not in loaded.warnings:
+            loaded.warnings.append(warning)
+        block = loaded.summary()
+    with session.lock:
+        cast(dict[str, object], session.record["search"])["history"] = block
+        session.checkpoint()
+
+
 def _drive(session: Session) -> dict[str, object]:
     """Run the remaining phases of `session`, close the provider, and return the run summary."""
     pending: BaseException | None = None
@@ -256,7 +285,7 @@ def _drive(session: Session) -> dict[str, object]:
             session.preflight()
             if session.phase == "prepared":
                 session.check_seed()
-                session.search()
+                _search(session)
             if session.phase == "searched":
                 session.gate()
             if session.phase == "gated":
@@ -285,7 +314,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
         statistics: Mapping[str, float] | None = None,
-        judge_model: str | None = None) -> dict[str, object]:
+        judge_model: str | None = None, history: bool | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `judge_model` sets the model of the judge calls. Task and reflection calls use `model`. The first run records it,
@@ -293,6 +322,9 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
 
     `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
     them. A resume uses the recorded options. A value that a resume passes must match the record.
+
+    `history` turns the private cross-run attempt history on or off. It is on by default. The first run records it,
+    and a resume that passes another value stops with `run-config-differs`.
     """
     requested, given = _check_arguments(
         adapter, configuration, factory, edit, repeats,
@@ -328,12 +360,13 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             frozen = frozen_statistics(record)
             check_statistics(statistics_given, frozen)
             check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None,
-                         judge_model)
+                         judge_model, history)
         else:
             frozen = _prepare(target, out, model, adapter, edit, repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
                               options=requested, configuration=configuration,
-                              statistics_given=statistics_given, judge_model=judge_model)
+                              statistics_given=statistics_given, judge_model=judge_model,
+                              history=True if history is None else history)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)

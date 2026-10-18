@@ -27,7 +27,8 @@ from skillz_experiments.run import _session
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
-from skillz_experiments.search._history import DIFFERENT, NOTES_INTRO, REJECTED_INTRO
+from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
+from skillz_experiments.run._history_store import UNREADABLE, store_path
 from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -232,7 +233,7 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
 def _core(result: dict[str, object]) -> dict[str, object]:
     """Return the search fields that the attempt record and the evaluation counts did not add. `test_search_faults.py` covers the counts."""
     search = cast(dict[str, object], result["search"])
-    assert set(search) - {"scored", "failed", "failed_by_reason"} == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped"}
+    assert set(search) - {"scored", "failed", "failed_by_reason"} == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped", "history"}
     return {key: search[key] for key in ("reason", "retained_seed", "leakage_rejections", "proposal_over_budget")}
 
 
@@ -1513,7 +1514,7 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
     assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped",
-                           "scored", "failed", "failed_by_reason"}
+                           "scored", "failed", "failed_by_reason", "history"}
     saved = cast(dict[str, object], read(out / "run.json")["search"])
     # The exported summary drops the proposer journal; run.json keeps it.
     assert set(saved) == set(search) | {"journal"} and {key: saved[key] for key in search if key != "attempts"} == {
@@ -1859,3 +1860,170 @@ def test_a_note_that_copies_a_request_span_is_dropped_and_counted_in_text_droppe
     assert cast(dict[str, object], read(out / "run.json")["search"])["journal"] == []
     assert SPAN not in (out / "run.json").read_text(encoding="utf-8")
     assert not any(NOTES_INTRO in _head(prompt) for prompt in state.prompts)
+
+
+def _again(tmp_path: Path, target: Path, first: Path, approvals: Callable[..., tuple[str, int]], name: str = "second",
+           statistics: dict[str, float] | None = None) -> tuple[Path, Search, str, int]:
+    """Prepare another run of `target` with the case draft of `first`, so its fingerprint matches unless `statistics` differ."""
+    out = tmp_path / name
+    out.mkdir(mode=0o700)
+    _ = (out / "cases.draft.json").write_text((first / "cases.draft.json").read_text(encoding="utf-8"), encoding="utf-8")
+    case_hash, calls = approvals(target, out, statistics=statistics)
+    return out, Search(target), case_hash, calls
+
+
+def _store(out: Path) -> Path:
+    record = read(out / "run.json")
+    return store_path(cast(str, cast(dict[str, object], record["contract"])["skill"]), cast(str, record["target_root"]))
+
+
+def _history(result: dict[str, object]) -> dict[str, object]:
+    return cast(dict[str, object], cast(dict[str, object], result["search"])["history"])
+
+
+def _earlier(prompt: str) -> str:
+    head = _head(prompt)
+    return head.split(EARLIER_INTRO, 1)[1].split(" Make at most", 1)[0] if EARLIER_INTRO in head else ""
+
+
+@pytest.mark.ac("gh-243:AC-1")
+def test_a_second_compatible_run_loads_the_first_run_from_the_store_and_shows_a_bounded_summary_without_case_text(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, first, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.hypothesis_of = lambda number: f"first-run idea {number}"
+    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    first_id, tried = read(first / "run.json")["run_id"], len(_recorded_attempts(first))
+    assert not any(EARLIER_INTRO in _head(prompt) for prompt in state.prompts) and tried >= 3
+    second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
+    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    assert _history(result) == {"enabled": True, "runs": [first_id], "excluded": [], "skipped_lines": 0, "warnings": []}
+    section = _earlier(again.prompts[0])
+    assert section.startswith(f"Run 1 attempt {tried}: hypothesis first-run idea {tried};")
+    assert section.count("Run 1 attempt") == min(8, tried) and len(EARLIER_INTRO + section) <= 4000
+    assert "request-" not in section, "the summary holds no case text"
+    lines = [cast(dict[str, object], json.loads(line)) for line in _store(first).read_text(encoding="utf-8").splitlines()]
+    assert [line["run_id"] for line in lines] == [first_id, read(second / "run.json")["run_id"]]
+    assert "request-" not in _store(first).read_text(encoding="utf-8")
+
+
+@pytest.mark.ac("gh-243:AC-2")
+def test_a_run_with_a_differing_compatibility_field_excludes_the_earlier_run_by_name(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, first, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " " + ANSWER
+    first_result = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert cast(dict[str, object], first_result["search"])["reason"] == "converged-stalled"
+    gains = {"min_gain": 0.01}
+    second, again, case_hash, calls = _again(tmp_path, target, first, approvals, statistics=gains)
+    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory,
+                 statistics=gains)
+    assert _history(result)["excluded"] == [{"run_id": read(first / "run.json")["run_id"], "fields": ["statistics"]}]
+    assert _history(result)["runs"] == [] and not any(_earlier(prompt) for prompt in again.prompts)
+    assert "Proposals since the last validation gain: 0." in _head(again.prompts[0]) and again.proposals > 1
+
+
+@pytest.mark.ac("gh-243:AC-3")
+def test_an_earlier_rejected_attempt_shows_in_history_and_never_becomes_the_winner_or_feeds_the_stall(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, first, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " " + ANSWER
+    state.hypothesis_of = lambda number: f"leaky idea {number}"
+    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
+    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    section = _earlier(again.prompts[0])
+    assert ("Run 1 attempt 1: hypothesis leaky idea 1; fixed none; broke none; validation change unknown; "
+            + "result rejected, candidate-leakage-rejected.") in section
+    assert "Proposals since the last validation gain: 0." in _head(again.prompts[0]) and again.proposals > 1
+    record = read(second / "run.json")
+    own = {item.get("search_candidate") for item in cast(list[dict[str, object]], record["outcomes"])}
+    assert record["winner_hash"] in own and ANSWER not in json.dumps(record["winner"])
+    assert cast(dict[str, object], result["search"])["retained_seed"] is False
+
+
+@pytest.mark.ac("gh-243:AC-4")
+def test_a_holdout_secret_never_reaches_the_store_or_a_later_prompt(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, first = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(first, families=12)
+    draft = cast(list[dict[str, object]], json.loads((first / "cases.draft.json").read_text(encoding="utf-8")))
+    for case in draft:
+        case["request"] = f"{case['request']} {TOKEN}-{case['id']}"
+    _ = (first / "cases.draft.json").write_text(json.dumps(draft), encoding="utf-8")
+    case_hash, calls = approvals(target, first)
+    state = Search(target)
+    state.hypothesis_of = lambda number: f"idea {number}"
+    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
+    _ = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    cases = cast(list[dict[str, object]], read(first / "cases.json")["cases"])
+    held = [f"{TOKEN}-{case['id']}" for case in cases if case["split"] == "holdout"]
+    stored = _store(first).read_text(encoding="utf-8")
+    assert held and _earlier(again.prompts[0])
+    assert TOKEN not in stored, "the store holds no request text at all"
+    assert not any(token in prompt for token in held for prompt in again.prompts)
+
+
+@pytest.mark.ac("gh-243:AC-5")
+@pytest.mark.parametrize("broken", ["corrupt-line", "unreadable"])
+def test_a_corrupt_or_unreadable_store_keeps_the_run_result_and_reports_it(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], broken: str) -> None:
+    target, first, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    store = _store(first)
+    if broken == "corrupt-line":
+        with store.open("a", encoding="utf-8") as handle:
+            _ = handle.write("{not json\n")
+    else:
+        store.chmod(0o644)
+    control, plain, case_hash, calls = _again(tmp_path, target, first, approvals, name="control")
+    expected = run(target, control, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plain.factory,
+                   history=False)
+    second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
+    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    history = _history(result)
+    if broken == "corrupt-line":
+        assert history["skipped_lines"] == 1 and history["warnings"] == [] and history["runs"] == [read(first / "run.json")["run_id"]]
+    else:
+        assert history["warnings"] == [UNREADABLE] and history["runs"] == [] and not _earlier(again.prompts[0])
+        assert str(store) not in json.dumps(result)
+    assert _core(result) == _core(expected) and read(second / "run.json")["winner"] == read(control / "run.json")["winner"]
+    assert result["gate"] == expected["gate"]
+
+
+@pytest.mark.ac("gh-243:AC-6")
+def test_no_history_neither_reads_nor_writes_the_store(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], history_state: Path) -> None:
+    target, first, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    result = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
+                 history=False)
+    assert _history(result) == {"enabled": False} and read(first / "run.json")["history"] is False
+    assert not any(history_state.iterdir()), "a run with --no-history creates no store"
+    second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
+    _ = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    before = _store(first).read_bytes()
+    third, quiet, case_hash, calls = _again(tmp_path, target, first, approvals, name="third")
+    _ = run(target, third, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=quiet.factory,
+            history=False)
+    assert _store(first).read_bytes() == before and not any(_earlier(prompt) for prompt in quiet.prompts)
+
+
+@pytest.mark.ac("gh-243:AC-6")
+def test_a_resume_that_changes_the_history_flag_stops_with_run_config_differs(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
+                history=False)
+    state.invoke_fault = lambda _number: None
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory, history=True)
+    assert caught.value.code == "run-config-differs" and "--no-history" in str(caught.value)
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    assert _history(result) == {"enabled": False}
