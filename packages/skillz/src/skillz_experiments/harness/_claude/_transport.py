@@ -21,7 +21,7 @@ from skillz_experiments.evaluation import answer_schema, CheckResult, Reply, Tra
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._redact import write_transcript
-from skillz_experiments._runtime import live, model_call, process
+from skillz_experiments._runtime import SANDBOX_SECONDS, SandboxTimeout, live, model_call, process, sandboxed
 from skillz_experiments.harness._check import (
     Check,
     credential_row,
@@ -37,7 +37,6 @@ from skillz_experiments.harness._claude._constants import (
     LOGIN_HINT,
     NOTICE_CODES,
     PROBE_PREFIX,
-    SANDBOX_SECONDS,
     SANDBOX_STDERR,
 )
 from skillz_experiments.harness._claude._keys import restore, safe_keys
@@ -390,8 +389,11 @@ class ClaudeCode:
                 raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
         with listening() as port:
             script = probe(workspace, sealed, Path(__file__).resolve(), port)
-            code, output, _stderr = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
-                                        max(SANDBOX_SECONDS, self.options.sandbox_seconds))
+            try:
+                code, output, _stderr = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
+                                                     max(SANDBOX_SECONDS, self.options.sandbox_seconds))
+            except SandboxTimeout:
+                code, output = 124, ""
         if code != 0 or output.strip() != "isolation-ok":
             raise preflight_leak("sandbox probe failed")
 
@@ -677,7 +679,8 @@ class ClaudeCode:
 
         Return the exit code, the standard output, and the standard error.
 
-        A command that exceeds `seconds` (default `options.sandbox_seconds`) returns code 124. Budget exhaustion still raises.
+        A command that reaches the sandbox time limit, `seconds` (default `options.sandbox_seconds`), raises
+        `SandboxTimeout`. A run budget that ends the command raises `BudgetExhausted`.
         """
         system = "darwin" if sys.platform == "darwin" else "linux"
         name = "sandbox-exec" if system == "darwin" else "bwrap"
@@ -688,17 +691,11 @@ class ClaudeCode:
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
         limit = self.options.sandbox_seconds if seconds is None else seconds
-        timeout = min(limit, self.budget.remaining())
         capture = (Path(tempfile.mkdtemp(prefix="skillz-capture-")) if system == "linux" else None)
         try:
-            try:
-                result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots,
-                                              capture), cwd=workspace, timeout=timeout,
-                                 environment={"PATH": "/usr/bin:/bin"})
-            except BudgetExhausted:
-                if timeout < limit:
-                    raise
-                return 124, "", ""
+            result = sandboxed(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots,
+                                            capture), cwd=workspace, limit=limit, budget=self.budget,
+                               environment={"PATH": "/usr/bin:/bin"})
             if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
                 raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", sandbox_fix(result.stderr))
             return result.returncode, result.stdout, result.stderr if capture is None else _take_stderr(capture)

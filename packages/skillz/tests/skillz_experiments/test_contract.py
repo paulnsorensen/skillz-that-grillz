@@ -166,7 +166,7 @@ def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monke
         return subprocess.CompletedProcess(command, 0, reply["stdout"], "")
 
     monkeypatch.setattr(Codex, "_discover", discover)
-    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.sandboxed", process)
     assert adapter.check_candidate(candidate).passed
     assert seen == ["echo-skill"]
     assert commands[0][-2:] == [".agents/skills/echo-skill/scripts/echo.py", "fixtures/nested/input.md"]

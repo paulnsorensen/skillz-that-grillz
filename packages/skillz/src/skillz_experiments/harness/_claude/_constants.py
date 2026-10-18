@@ -34,6 +34,3 @@ LOGIN_HINT = "run `claude` once and log in"
 
 
 INSTALL_BUBBLEWRAP = "install bubblewrap (for example `sudo apt install bubblewrap`)"
-
-
-SANDBOX_SECONDS = 20

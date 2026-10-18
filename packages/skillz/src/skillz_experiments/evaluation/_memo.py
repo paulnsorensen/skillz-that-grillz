@@ -16,11 +16,13 @@ class Checker(Protocol):
 
 @final
 class CheckMemo:
-    """Map each candidate identity to the `CheckResult` of its `check_candidate` call.
+    """Map each candidate identity to the final `CheckResult` of its `check_candidate` calls.
 
     One session owns one memo. The memo is never written to disk. The run contract is frozen, so one identity always
-    gets the same result in a run. The memo stores every rejection for the whole run, including a sandbox timeout.
-    Thus a flaky helper fixture can reject a candidate for the run. Issue #287 tracks retryable timeouts.
+    gets the same result in a run. A check that times out in the sandbox runs once more at once, in the same `check`
+    call. The second result is final for the run, so a second timeout proves a real hang. No caller sees a first
+    timeout. A resume starts a new memo, so the seed check and the holdout and replay arms check again. A recorded
+    search outcome stays final for the run.
     Each identity has its own lock, so checks of different identities run at the same time. A short mutex guards only
     the lock map. A cached result needs no lock.
     """
@@ -31,7 +33,7 @@ class CheckMemo:
         self._results: dict[str, CheckResult] = {}
 
     def check(self, task: Checker, candidate: Candidate) -> CheckResult:
-        """Return the contract check result of `candidate`. Check each identity once per memo."""
+        """Return the final contract check result of `candidate`. Check each identity at most twice per memo."""
         identity = candidate.identity
         found = self._results.get(identity)
         if found is not None:
@@ -42,5 +44,7 @@ class CheckMemo:
             found = self._results.get(identity)
             if found is None:
                 found = task.check_candidate(candidate)
+                if found.kind == "timeout":
+                    found = task.check_candidate(candidate)
                 self._results[identity] = found
             return found

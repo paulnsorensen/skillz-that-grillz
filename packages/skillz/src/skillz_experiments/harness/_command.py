@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Mapping
@@ -16,7 +17,7 @@ from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments.evaluation import CheckResult, answer_schema
 from skillz_experiments._protocol import LEDGER_KEY, RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._budget import Budget
-from skillz_experiments._runtime import model_call, process
+from skillz_experiments._runtime import SANDBOX_SECONDS, SandboxTimeout, model_call, process, sandboxed
 from skillz_experiments.harness._check import Check
 from skillz_experiments.harness._isolation import listening, probe
 from skillz_experiments.harness._witness import LedgerError, Witness, ledger_entries, stage_witness
@@ -24,6 +25,9 @@ from skillz_experiments.harness._check import UNVERIFIED_CREDENTIAL
 
 WITNESS_ERROR_KEY = "helper_witness_error"
 """The run-record field that names why the helper witness could not confirm a helper run."""
+PROBE_SECONDS = 300
+"""The limit of the preflight isolation probe. It allows a slow first container start, as in the reference wrapper."""
+_WRAPPER_ENVIRONMENT = {"PATH": "/usr/bin:/bin"}
 
 
 def _response(value: object, operation: str) -> dict[str, object]:
@@ -147,23 +151,35 @@ class Command:
         pass
 
     def _request(self, operation: str, workspace: Path, **payload: object) -> dict[str, object]:
+        """Send one request that runs under the remaining run budget. The request carries no time limit field."""
+        if operation == "infer":
+            return self._exchange(operation, workspace, payload, lambda text: model_call(
+                self.budget, list(self.command), cwd=workspace.parent, environment=_WRAPPER_ENVIRONMENT,
+                input_text=text))
+        return self._exchange(operation, workspace, payload, lambda text: process(
+            list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
+            environment=_WRAPPER_ENVIRONMENT, input_text=text))
+
+    def _exchange(self, operation: str, workspace: Path, payload: Mapping[str, object],
+                  run: Callable[[str], subprocess.CompletedProcess[str]]) -> dict[str, object]:
         request = {"schema_version": VERSION, "operation": operation, "workspace": str(workspace),
                    "model": self.model, **payload}
-        environment = {"PATH": "/usr/bin:/bin"}
-        if operation == "infer":
-            result = model_call(self.budget, list(self.command), cwd=workspace.parent, environment=environment,
-                                input_text=json.dumps(request))
-        else:
-            result = process(list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
-                             environment=environment, input_text=json.dumps(request))
+        result = run(json.dumps(request))
         if result.returncode:
             raise RuntimeError(_failure(result.stderr))
         if len(result.stdout) > 1_000_000:
             raise ValueError("harness response exceeds size limit")
         return _response(loads_untrusted(result.stdout), operation)
 
-    def _sandbox(self, workspace: Path, argv: list[str]) -> dict[str, object]:
-        return self._request("sandbox", workspace, argv=argv)
+    def _sandbox(self, workspace: Path, argv: list[str], *, limit: float | None = None) -> dict[str, object]:
+        """Send one sandbox request. A run that reaches the sandbox time limit, `limit` (default `SANDBOX_SECONDS`),
+        kills the wrapper process group and raises `SandboxTimeout`. The request carries no time limit field.
+        The method reads `SANDBOX_SECONDS` at call time, so a changed module limit applies.
+        """
+        seconds = SANDBOX_SECONDS if limit is None else limit
+        return self._exchange("sandbox", workspace, {"argv": argv}, lambda text: sandboxed(
+            list(self.command), cwd=workspace.parent, limit=seconds, budget=self.budget,
+            environment=_WRAPPER_ENVIRONMENT, input_text=text))
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         result = self._sandbox(workspace, argv)
@@ -210,7 +226,11 @@ class Command:
             (workspace / "escape").symlink_to(sealed)
             with listening() as port:
                 script = probe(workspace, sealed, Path(__file__).resolve(), port)
-                result = self._sandbox(workspace, ["/usr/bin/python3", "-c", script])
+                # A container wrapper can start slowly once, so the probe gets a longer limit than a helper fixture.
+                try:
+                    result = self._sandbox(workspace, ["/usr/bin/python3", "-c", script], limit=PROBE_SECONDS)
+                except SandboxTimeout:
+                    raise RuntimeError("harness isolation preflight fails; the sandbox probe timed out") from None
             if result["returncode"] != 0 or cast(str, result["stdout"]).strip() != "isolation-ok":
                 raise RuntimeError("harness isolation preflight fails; no unsafe fallback")
             skill = workspace / ".agents/skills/skillz"

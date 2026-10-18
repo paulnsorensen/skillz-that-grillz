@@ -44,6 +44,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
 - [gh-279](./gh-279.md) — gh-279: reuse recorded search outcomes on resume
 - [gh-285](./gh-285.md) — gh-285: isolate the temp root of the journey sandbox tests
+- [gh-287](./gh-287.md) — gh-287: retry a contract check that fails by sandbox timeout
 - [gh-290](./gh-290.md) — gh-290: the settings floor and the approval block in the preflight
 - [gh-291](./gh-291.md) — gh-291: keep the preflight event transcript when the preflight fails
 - [gh-292](./gh-292.md) — gh-292: seeded trigger and near-miss cases default family to the case id

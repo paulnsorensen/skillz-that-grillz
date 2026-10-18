@@ -10,6 +10,7 @@ from typing import Literal, cast
 from skillz_experiments._cases import loads_untrusted, mapping
 from skillz_experiments._contract import Contract
 from skillz_experiments._graders import Sandbox
+from skillz_experiments._runtime import SandboxTimeout
 
 
 CheckKind = Literal["pass", "fail", "timeout"]
@@ -164,15 +165,22 @@ def fixture_failure(fixture: Mapping[str, object], returncode: int, stdout: str,
 
 
 def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> CheckResult:
-    """Run each declared helper fixture in the sandbox. Return the first failure, or `PASSED` when all pass."""
+    """Run each declared helper fixture in the sandbox. Return the first failure, or `PASSED` when all pass.
+
+    A fixture run that reaches the sandbox time limit gives kind `timeout`. A helper that exits 124 by itself gives
+    kind `fail`.
+    """
     helper = rules.helper
     if helper is None:
         return PASSED
     for index, fixture in enumerate(helper.fixtures):
         (workspace / helper.input).parent.mkdir(parents=True, exist_ok=True)
         _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
-        code, stdout, stderr = sandbox.sandbox(workspace, [
-            "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
+        try:
+            code, stdout, stderr = sandbox.sandbox(workspace, [
+                "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
+        except SandboxTimeout:
+            return CheckResult(False, f"helper fixture {index} reaches the sandbox time limit", "timeout")
         stream = fixture_failure(fixture, code, stdout, stderr)
         if stream is not None:
             return CheckResult(False, f"helper fixture {index} fails on {stream}", "fail")

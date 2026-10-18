@@ -22,7 +22,8 @@ from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._redact import redact
 from skillz_experiments.evaluation import CheckMemo, CheckResult, answer_schema, evaluate
 from skillz_experiments._budget import Budget, BudgetExhausted
-from skillz_experiments._runtime import halve_call_slots, model_call, process, reset_call_slots
+from skillz_experiments._runtime import (SANDBOX_SECONDS, halve_call_slots, model_call, process, reset_call_slots,
+                                         sandboxed)
 from skillz_experiments.harness._check import Check, credential_row, failed
 from skillz_experiments.harness._isolation import listening, probe
 from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN
@@ -340,13 +341,14 @@ class Codex:
         return discover(command, workspace, self._environment(workspace), min(30, self.budget.remaining()), skill)
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
+        """Run `argv` in the Codex sandbox. A run that reaches the sandbox time limit raises `SandboxTimeout`."""
         safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
                 "TMPDIR=" + str(task_tmpdir(workspace)), "LANG=C.UTF-8"]
         command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
                    "-P", "skillz", "--include-managed-config", "-C", str(workspace), "--",
                    "/usr/bin/env", "-i", *safe, *argv]
-        result = process(command, cwd=workspace, timeout=min(20, self.budget.remaining()),
-                         environment=self._environment(workspace))
+        result = sandboxed(command, cwd=workspace, limit=SANDBOX_SECONDS, budget=self.budget,
+                           environment=self._environment(workspace))
         return result.returncode, result.stdout, result.stderr
 
     def reuse_key(self, fingerprint: object) -> str | None:

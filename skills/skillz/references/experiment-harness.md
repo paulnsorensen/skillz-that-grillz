@@ -311,6 +311,11 @@ The checks compare `returncode`, `stdout`, and `stderr` with the fixtures.
 Return the real `stderr` from the transport.
 The checks compare only the last non-empty `stderr` line with the `error` of a fixture.
 A command adapter must return the real command `stderr`, not an empty placeholder.
+The runner kills the wrapper process group 20 seconds after it sends a helper-fixture or grader sandbox request.
+This time includes the wrapper start-up, so start any container before the request or keep start-up short.
+The isolation probe gets 300 seconds.
+The request carries no time limit field.
+A helper fixture that reaches this limit is a sandbox timeout, and a grader that reaches it scores as exit code 124.
 
 ### Discovery
 
