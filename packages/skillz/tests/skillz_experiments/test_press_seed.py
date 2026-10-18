@@ -44,15 +44,17 @@ def _unreadable(target: Path, tmp_path: Path) -> CodedError:
 
 
 @pytest.mark.parametrize(("extra", "kind"), [
-    ({}, "trigger"),
-    ({"assertions": []}, "trigger"),
+    ({}, "task"),
+    ({"assertions": []}, "task"),
     ({"assertions": ["a"]}, "task"),
-    ({"expected_skill": "echo-skill"}, "trigger"),
+    ({"kind": "trigger", "expected_skill": "echo-skill"}, "trigger"),
+    ({"kind": "trigger"}, "trigger"),
+    ({"kind": "near-miss"}, "near-miss"),
     ({"expected_skill": "echo-skill", "assertions": ["a"]}, "task"),
     ({"expected_skill": None}, "near-miss"),
     ({"expected_skill": None, "assertions": []}, "near-miss"),
-    ({"expected_skill": None, "assertions": ["a"]}, "near-miss"),
     ({"expected_skill": None, "files": ["nope.md"]}, "near-miss"),
+    ({"kind": "near-miss", "expected_skill": None}, "near-miss"),
 ])
 def test_seed_kind_precedence_matrix(tmp_path: Path, make_target: Maker, extra: dict[str, object], kind: str) -> None:
     target = make_target(tmp_path)
@@ -85,7 +87,7 @@ def test_seed_with_family_added_round_trips_through_the_draft_validator(
     target = make_target(tmp_path)
     (target / "evals/files").mkdir()
     _ = (target / "evals/files/a.md").write_text("alpha\n", encoding="utf-8")
-    _evals(target, [_entry("t", assertions=["a"], files=["evals/files/a.md"]), _entry("g"),
+    _evals(target, [_entry("t", assertions=["a"], files=["evals/files/a.md"]), _entry("g", kind="trigger"),
                     _entry("m", expected_skill=None)])
     seed = _seed_cases(target, tmp_path)
     drafted = [case | {"family": "fam"} for case in seed]
@@ -191,12 +193,12 @@ def test_non_utf8_and_bom_evals_file_is_refused(tmp_path: Path, make_target: Mak
 
 
 @pytest.mark.parametrize(("bad", "fragment"), [
-    (None, "entry #1: expected a JSON object"), (3, "entry #1: expected a JSON object"),
-    (True, "entry #1: expected a JSON object"), ([], "entry #1: expected a JSON object"),
-    ("str", "entry #1: expected a JSON object"),
-    ({"name": True, "prompt": "p"}, "entry #1: name must be nonempty text"),
-    ({"name": "  ", "prompt": "p"}, "entry #1: name must be nonempty text"),
-    ({"name": "a", "prompt": "  \n"}, "entry a: prompt must be nonempty text"),
+    (None, "evals[0]: expected a JSON object"), (3, "evals[0]: expected a JSON object"),
+    (True, "evals[0]: expected a JSON object"), ([], "evals[0]: expected a JSON object"),
+    ("str", "evals[0]: expected a JSON object"),
+    ({"name": True, "prompt": "p"}, "evals[0]: name must be nonempty text"),
+    ({"name": "  ", "prompt": "p"}, "evals[0]: name must be nonempty text"),
+    ({"name": "a", "prompt": "  \n"}, "evals[0]: prompt must be nonempty text"),
     ({"name": "a", "prompt": "p", "expected_output": 5}, "expected_output must be text"),
     ({"name": "a", "prompt": "p", "assertions": [None]}, "assertions must be a list of text"),
     ({"name": "a", "prompt": "p", "assertions": [""]}, "assertions must hold nonempty text"),
@@ -265,7 +267,7 @@ def test_the_largest_accepted_seed_still_loads_as_a_draft(tmp_path: Path, make_t
 def test_seed_keeps_request_and_name_verbatim(tmp_path: Path, make_target: Maker) -> None:
     target = make_target(tmp_path)
     request = "  café ‮ line\n\ttail  "
-    _evals(target, [{"name": "né 1", "prompt": request, "expected_output": ""}])
+    _evals(target, [{"name": "né 1", "kind": "trigger", "prompt": request, "expected_output": ""}])
     seed = _seed_cases(target, tmp_path)
     assert seed[0]["request"] == request and seed[0]["id"] == "né 1"
 
@@ -292,7 +294,7 @@ def _extra(name: str, request: str | None = None, kind: str = "task") -> dict[st
 ])
 def test_coverage_requires_the_exact_request(tmp_path: Path, make_target: Maker, changed: str) -> None:
     target = make_target(tmp_path)
-    _evals(target, [_entry("e")])
+    _evals(target, [_entry("e", kind="trigger")])
     error = _draft_and_run(tmp_path, [_extra("e", changed, kind="trigger")])
     assert error.code == "cases-uncovered" and "- e: request changed" in str(error)
     assert changed.strip() not in str(error)
@@ -300,7 +302,7 @@ def test_coverage_requires_the_exact_request(tmp_path: Path, make_target: Maker,
 
 def test_coverage_rejects_nfd_versus_nfc_request(tmp_path: Path, make_target: Maker) -> None:
     _ = make_target(tmp_path)
-    _evals(tmp_path / "echo-skill", [{"name": "u", "prompt": "café", "expected_output": ""}])
+    _evals(tmp_path / "echo-skill", [{"name": "u", "kind": "trigger", "prompt": "café", "expected_output": ""}])
     error = _draft_and_run(tmp_path, [_extra("u", "café", kind="trigger")])
     assert error.code == "cases-uncovered"
 
@@ -308,7 +310,7 @@ def test_coverage_rejects_nfd_versus_nfc_request(tmp_path: Path, make_target: Ma
 def test_coverage_names_every_problem_and_runs_before_the_family_budget_check(
         tmp_path: Path, make_target: Maker) -> None:
     target = make_target(tmp_path)
-    _evals(target, [_entry("a"), _entry("b"), _entry("c", assertions=["x"])])
+    _evals(target, [_entry("a", kind="trigger"), _entry("b", kind="trigger"), _entry("c", assertions=["x"])])
     error = _draft_and_run(tmp_path, [_extra("a", kind="trigger"), _extra("c", kind="trigger")])
     assert error.code == "cases-uncovered"
     assert "- b: missing" in str(error) and "- c:" in str(error) and "- a:" not in str(error)

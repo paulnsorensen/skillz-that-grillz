@@ -11,7 +11,7 @@ import pytest
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._intake import DRAFT_NAME, load_draft
-from skillz_experiments._seed import seed_cases
+from skillz_experiments._seed import seed_cases, seed_inferred, seed_summary
 from skillz_experiments.run import Stop, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -25,7 +25,7 @@ def _evals(target: Path, entries: list[dict[str, object]]) -> None:
 
 
 def _entry(name: str, **extra: object) -> dict[str, object]:
-    return {"id": 1, "name": name, "prompt": f"prompt-{name}", "expected_output": f"out-{name}", "files": [],
+    return {"name": name, "prompt": f"prompt-{name}", "expected_output": f"out-{name}", "files": [],
             **extra}
 
 
@@ -54,9 +54,9 @@ def test_seed_maps_each_entry_in_file_order(tmp_path: Path, make_target: Maker) 
     _ = (target / "evals/files/a.md").write_text("alpha\n", encoding="utf-8")
     _evals(target, [
         _entry("zeta-task", assertions=["says alpha"], files=["evals/files/a.md"]),
-        _entry("alpha-trigger", assertions=[]),
-        _entry("mid-miss", expected_skill=None, assertions=["ignored"]),
-        _entry("bare-trigger"),
+        _entry("alpha-trigger", kind="trigger"),
+        _entry("mid-miss", expected_skill=None),
+        _entry("bare-trigger", kind="trigger"),
     ])
     seed = _seed_cases(target, tmp_path)
     assert [case["id"] for case in seed] == ["zeta-task", "alpha-trigger", "mid-miss", "bare-trigger"]
@@ -84,7 +84,7 @@ def test_a_task_entry_keeps_no_default_family_and_the_entry_family_wins(tmp_path
 @pytest.mark.ac("gh-292:AC-1")
 def test_a_seeded_trigger_and_near_miss_draft_loads_with_family_equal_to_id(tmp_path: Path, make_target: Maker) -> None:
     target = make_target(tmp_path)
-    _evals(target, [_entry("trig"), _entry("miss", expected_skill=None)])
+    _evals(target, [_entry("trig", kind="trigger"), _entry("miss", expected_skill=None)])
     seed = _seed_cases(target, tmp_path)
     path = tmp_path / DRAFT_NAME
     _ = path.write_text(json.dumps(seed), encoding="utf-8")
@@ -110,7 +110,7 @@ def test_the_stop_names_the_seed_file_and_shows_only_counts(tmp_path: Path, make
     _evals(target, [
         _entry("one", assertions=["a"], files=["evals/files/a.md"], family="billing"),
         _entry("two", assertions=["b"], files=["evals/files/a.md"], family="billing"),
-        _entry("trig"),
+        _entry("trig", kind="trigger"),
         _entry("miss", expected_skill=None),
     ])
     stop = _stop(target, tmp_path)
@@ -122,7 +122,8 @@ def test_the_stop_names_the_seed_file_and_shows_only_counts(tmp_path: Path, make
     assert stat.S_IMODE(seed.stat().st_mode) == 0o600
     assert json.loads(seed.read_text(encoding="utf-8")) == seed_cases(target)
     assert stop.data["seed_summary"] == {"cases": 4, "kinds": {"near-miss": 1, "task": 2, "trigger": 1},
-                                         "families": {"billing": 2, "miss": 1, "trig": 1}}
+                                         "families": {"billing": 2, "miss": 1, "trig": 1},
+                                         "inferred": {"one": "task", "two": "task", "miss": "near-miss"}}
     assert not (tmp_path / "run/cases.draft.json").exists()
 
 
@@ -204,12 +205,13 @@ def _document(**extra: object) -> str:
     ("{not json", "Expecting"),
     ("[]", "expected a JSON object"),
     (json.dumps({"evals": {}}), "evals must be a list"),
-    (json.dumps({"evals": ["x"]}), "entry #1: expected a JSON object"),
-    (json.dumps({"evals": [{"name": "a", "prompt": "p"}, {"prompt": "p"}]}), "entry #2: name must be nonempty text"),
+    (json.dumps({"evals": ["x"]}), "evals[0]: expected a JSON object"),
+    (json.dumps({"evals": [{"name": "a", "prompt": "p", "expected_output": "o"}, {"prompt": "p"}]}),
+     "evals[1]: needs a name or an id"),
     (json.dumps({"evals": [{"name": "a", "prompt": "p", "expected_output": "o"},
-                           {"name": "a", "prompt": "q", "expected_output": "o"}]}), "entry names must be unique"),
+                           {"name": "a", "prompt": "q", "expected_output": "o"}]}), "duplicate name 'a'"),
     (json.dumps({"evals": [{"name": 4, "prompt": "p", "expected_output": "o"}]}), "name must be nonempty text"),
-    (json.dumps({"evals": [{"name": "a", "prompt": "", "expected_output": "o"}]}), "entry a: prompt must be nonempty text"),
+    (json.dumps({"evals": [{"name": "a", "prompt": "", "expected_output": "o"}]}), "evals[0]: prompt must be nonempty text"),
     (_document(assertions="no"), "assertions must be a list of text"),
     (_document(assertions=[" "]), "assertions must hold nonempty text"),
     (_document(files=[3]), "files must be a list of text"),
@@ -253,7 +255,7 @@ def _covered(tmp_path: Path, cases: list[dict[str, object]], write_draft: Drafte
 def test_a_draft_that_covers_every_entry_plus_extras_proceeds_to_approval(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
     target = make_target(tmp_path)
-    _evals(target, [_entry("one", assertions=["a"]), _entry("two")])
+    _evals(target, [_entry("one", assertions=["a"]), _entry("two", kind="trigger")])
     error = _covered(tmp_path, [_task("one"), _task("two", kind="trigger")], write_draft)
     assert isinstance(error, Stop) and error.code == "cases-unapproved"
 
@@ -293,3 +295,52 @@ def test_coverage_does_not_read_fixtures(tmp_path: Path, make_target: Maker, wri
     fixture.unlink()
     error = _covered(tmp_path, [_task("one")], write_draft)
     assert error.code == "cases-unapproved"
+
+
+@pytest.mark.ac("gh-366:AC-1")
+def test_the_repository_skill_seeds_only_task_cases_in_three_families() -> None:
+    seed = seed_cases(Path(__file__).resolve().parents[4] / "skills/skillz")
+    assert seed
+    summary = seed_summary(seed)
+    assert summary["kinds"] == {"task": 8}
+    assert len(cast(dict[str, int], summary["families"])) >= 3
+
+
+@pytest.mark.ac("gh-366:AC-2")
+def test_a_kind_less_entry_with_an_expected_skill_is_ambiguous(tmp_path: Path, make_target: Maker) -> None:
+    target = make_target(tmp_path)
+    _evals(target, [{"name": "x", "prompt": "p", "expected_skill": "s"}])
+    message = str(_unreadable(target, tmp_path))
+    assert "kind" in message and "evals[0]" in message
+
+
+@pytest.mark.ac("gh-366:AC-3")
+@pytest.mark.parametrize("entry", [
+    {"name": "x", "prompt": "p", "kind": "trigger", "assertions": ["x"]},
+    {"name": "x", "prompt": "p", "expected_skill": None, "assertions": ["x"]},
+])
+def test_assertions_on_a_trigger_or_near_miss_stop_with_evals_unreadable(
+        tmp_path: Path, make_target: Maker, entry: dict[str, object]) -> None:
+    target = make_target(tmp_path)
+    _evals(target, [entry])
+    assert "assertions" in str(_unreadable(target, tmp_path))
+
+
+@pytest.mark.ac("gh-366:AC-4")
+def test_a_name_less_entry_seeds_a_task_case_id_from_its_id(tmp_path: Path, make_target: Maker) -> None:
+    target = make_target(tmp_path)
+    _evals(target, [{"id": 3, "prompt": "p", "expected_output": "e", "files": []}])
+    seed = _seed_cases(target, tmp_path)
+    assert [(case["id"], case["kind"]) for case in seed] == [("eval-3", "task")]
+
+
+@pytest.mark.ac("gh-366:AC-5")
+def test_a_kind_less_entry_with_only_expected_output_seeds_a_task_and_is_reported_inferred(
+        tmp_path: Path, make_target: Maker) -> None:
+    target = make_target(tmp_path)
+    _evals(target, [{"name": "only", "prompt": "p", "expected_output": "e"}])
+    seed = seed_cases(target)
+    assert seed and seed[0]["kind"] == "task"
+    assert seed_summary(seed, seed_inferred(target))["inferred"] == {"only": "task"}
+    stop = _stop(target, tmp_path)
+    assert cast(dict[str, object], stop.data["seed_summary"])["inferred"] == {"only": "task"}

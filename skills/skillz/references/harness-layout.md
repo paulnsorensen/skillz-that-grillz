@@ -120,7 +120,9 @@ metadata:
 
 `add` writes `evals/evals.json` in the agentskills.io shape.
 Anthropic skill-creator and NVIDIA SkillEvaluator read the same shape.
-The repository validator also requires a unique `name` on each entry.
+The repository validator also requires a unique `name`, an explicit `kind`, and fixtures that exist under `evals/files/`. A file from outside this repository may omit `name` and `kind`; the `id` then names the case.
+
+- `kind`: `trigger`, `near-miss`, or `task`.
 
 - `expected_skill`: the skill name, or `null` for a near-miss case.
 - `assertions`: checkable statements about the output. A trigger case has none.
@@ -133,11 +135,11 @@ An entry may also have an optional `family` key with nonempty text. Related case
 {
   "skill_name": "<name>",
   "evals": [
-    {"id": 1, "name": "trigger-<slug>", "prompt": "<trigger phrase>", "expected_output": "The <name> skill loads.",
-     "files": [], "expected_skill": "<name>", "assertions": []},
-    {"id": 2, "name": "near-miss-<slug>", "prompt": "<anti-trigger request>",
+    {"id": 1, "name": "trigger-<slug>", "kind": "trigger", "prompt": "<trigger phrase>",
+     "expected_output": "The <name> skill loads.", "files": [], "expected_skill": "<name>", "assertions": []},
+    {"id": 2, "name": "near-miss-<slug>", "kind": "near-miss", "prompt": "<anti-trigger request>",
      "expected_output": "The <name> skill stays unloaded.", "files": [], "expected_skill": null, "assertions": []},
-    {"id": 3, "name": "task-<slug>", "prompt": "<realistic request>", "expected_output": "<what a correct run produces>",
+    {"id": 3, "name": "task-<slug>", "kind": "task", "prompt": "<realistic request>", "expected_output": "<what a correct run produces>",
      "files": ["evals/files/<fixture>"], "expected_skill": "<name>", "assertions": ["<a statement a grader can verify>"]}
   ]
 }
