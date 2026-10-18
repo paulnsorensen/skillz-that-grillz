@@ -24,7 +24,7 @@ from skillz_experiments._budget import (
     CallTimeout,
     ceilings,
 )
-from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
+from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX, Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
 from skillz_experiments.evaluation import CheckMemo, task_tokens
@@ -356,7 +356,8 @@ class Session:
         self._ended_proposal: str | None = None
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
         # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
-        self._denylist = Denylist.build(self._search_cases.values())
+        self._denylist = Denylist.build(self._search_cases.values(), wedge_free=not any(
+            name == NEW_CLI or name.startswith(WEDGE_PREFIX) for name in self.seed.editable))
         self._leak_rules: dict[str, str | None] = {}
         # One contract check per candidate identity in this session (ADR-013). It never reaches `run.json`.
         self._checks = CheckMemo()

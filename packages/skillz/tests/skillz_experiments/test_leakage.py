@@ -153,3 +153,22 @@ def test_the_leak_names_the_changed_component_and_ignores_unchanged_ones() -> No
 
 def test_an_empty_denylist_never_leaks() -> None:
     assert check(Denylist.build([]), SEED, {"SKILL.md": f"{SPAN} {ANSWER} case-7 ledger.csv"}) is None
+
+
+@pytest.mark.ac("gh-302:AC-10")
+@pytest.mark.parametrize("added", [
+    "No buildable wedge.toml accompanies the supplied skill components.", "Parse the flags with fromargs.",
+    "The @new-cli value is empty."])
+def test_a_runner_term_that_a_proposal_adds_to_a_wedge_free_target_is_a_runner_term_leak(added: str) -> None:
+    denylist = Denylist.build([_case()], wedge_free=True)
+    assert check(denylist, SEED, {"SKILL.md": f"{SEED['SKILL.md']} {added}"}) == Leak("runner-term", "SKILL.md")
+
+
+@pytest.mark.ac("gh-302:AC-11")
+def test_a_runner_term_is_no_leak_when_the_target_offers_a_wedge_or_the_seed_holds_it() -> None:
+    added = {"SKILL.md": f"{SEED['SKILL.md']} Build it from wedge.toml with fromargs."}
+    assert check(Denylist.build([_case()]), SEED, added) is None
+    seed = {"SKILL.md": f"{SEED['SKILL.md']} See wedge.toml and fromargs."}
+    assert check(Denylist.build([_case()], wedge_free=True), seed, {"SKILL.md": seed["SKILL.md"] + " Use fromargs."}) is None
+    longer = {"SKILL.md": f"{SEED['SKILL.md']} Keep mywedge.toml and the fromargs-like parser."}
+    assert check(Denylist.build([_case()], wedge_free=True), SEED, longer) is None

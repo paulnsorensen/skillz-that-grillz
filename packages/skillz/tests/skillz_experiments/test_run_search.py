@@ -1211,6 +1211,22 @@ def test_a_leaking_proposal_scores_zero_without_a_task_or_judge_call_and_is_coun
     assert cast(dict[str, object], record["search"])["leakage_rejections"] == rejections
 
 
+@pytest.mark.ac("gh-302:AC-10")
+def test_a_proposal_that_adds_a_runner_term_to_a_wedge_free_target_is_rejected(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " No buildable wedge.toml accompanies the supplied skill components."
+    seen = _spy_feedback(monkeypatch)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    editable = cast(list[str], read(out / "run.json")["editable"])
+    assert not any(name == "@new-cli" or name.startswith("@wedge/") for name in editable)
+    rejections = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
+    assert state.proposals > 0 and state.improved_calls == 0
+    assert list(rejections) == ["runner-term"] and 0 < rejections["runner-term"] <= state.proposals
+    assert any(feedback.get("rule") == "runner-term" and score == 0.0 for score, feedback in seen)
+
+
 def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
