@@ -237,3 +237,30 @@ def test_the_kit_stage_moves_the_gate_into_the_target(tmp_path: Path) -> None:
                           capture_output=True, text=True, timeout=30, check=True)
     target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
     assert load_contract(target).grader("journey").argv[:3] == ("python3", "-I", "-c")
+
+
+FORWARD_REF = ("from __future__ import annotations\n\nimport json\nimport typing\nfrom dataclasses import dataclass\n\n"
+               "@dataclass\nclass Row:\n    value: Later\n\n\nclass Later:\n    pass\n\n\n"
+               "print(json.dumps({'score': 1, 'hints': sorted(typing.get_type_hints(Row)), 'name': __name__}))\n")
+
+
+def _argv_source(root: Path, files: dict[str, str]) -> str:
+    return load_contract(_target(root, files)).grader("task").argv[3]
+
+
+@pytest.mark.ac("gh-367:AC-1")
+def test_a_bundled_gate_runs_as_the_real_main_module(tmp_path: Path) -> None:
+    single = _argv_source(tmp_path / "single", {GATE: FORWARD_REF})
+    bundled = _argv_source(tmp_path / "bundled", {GATE: FORWARD_REF + "import _lib\n", "evals/gates/_lib.py": "VALUE = 1\n"})
+    assert bundled != single
+    outputs = [subprocess.run([sys.executable, "-I", "-c", source], capture_output=True, text=True, check=True).stdout
+               for source in (single, bundled)]
+    assert json.loads(outputs[0]) == {"score": 1, "hints": ["value"], "name": "__main__"}
+    assert outputs[1] == outputs[0]
+
+
+@pytest.mark.ac("gh-367:AC-5")
+def test_a_gate_named_like_a_stdlib_module_is_not_shadowed_by_itself(tmp_path: Path) -> None:
+    gate = "evals/gates/json.py"
+    target = _target(tmp_path, {gate: "import json\n" + SCRIPT}, {"grader": "command", "gate": gate})
+    assert load_contract(target).grader("task").argv[3] == "import json\n" + SCRIPT
