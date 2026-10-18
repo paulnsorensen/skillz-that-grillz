@@ -98,3 +98,36 @@ def test_a_kit_run_scores_the_eighteen_journeys_under_the_kit_contract(tmp_path:
     target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
     data = _first_stop(target, tmp_path, capsys)
     assert _marks(data, "journey") == ["scored"] * 18 and "kinds journey" in str(data["question"])
+
+
+def _stops(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], edit: str) -> tuple[str, str]:
+    """Run a journey-only call on the copy, approve its cases with the shown hash, and return both stop codes."""
+    seeded = seed_cases(target)
+    assert seeded is not None
+    out = tmp_path / "run"
+    out.mkdir(mode=0o700)
+    _ = (out / "cases.draft.json").write_text(json.dumps(seeded), encoding="utf-8")
+    command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", edit, "--repeats", "1",
+               "--kind", "journey"]
+    _ = main(command)
+    first = capsys.readouterr()
+    code = str(cast(dict[str, object], json.loads(first.err))["code"])
+    if code != "cases-unapproved":
+        return code, code
+    shown = cast(dict[str, object], json.loads(first.out))["case_hash"]
+    _ = main([*command, "--approve-cases", str(shown)])
+    return code, str(cast(dict[str, object], json.loads(capsys.readouterr().err))["code"])
+
+
+@pytest.mark.ac("gh-384:AC-1")
+def test_a_prose_journey_run_on_a_copy_without_wedge_toml_reaches_the_budget_stop(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = _staged(tmp_path)
+    assert not (target / "wedge.toml").exists()
+    assert _stops(target, tmp_path, capsys, "prose") == ("cases-unapproved", "budget-unapproved")
+
+
+@pytest.mark.ac("gh-384:AC-2")
+def test_a_prose_cli_run_on_the_same_copy_stops_with_a_clear_code(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert "helper-frozen" in _stops(_staged(tmp_path), tmp_path, capsys, "prose+cli")

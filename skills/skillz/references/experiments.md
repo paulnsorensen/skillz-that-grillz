@@ -114,6 +114,8 @@ Without `--kind`, the run still evaluates every declared kind that is not `audit
 With `--kind`, a drafted case of an unselected kind shows as `not scored` in the question and stays out of `cases.json` `cases`.
 The first run freezes the choice, and a resume ignores `--kind`.
 A default `run` on `skills/skillz` evaluates the 18 checked-in journeys beside the tasks, so its estimate grows. Pass `--kind task` for a task-only run. Pass `--kind journey` for a journey-only run.
+The contract helper applies to task cases only. A journey case gets no helper instruction and needs no helper credit.
+Run journeys from a copy of the skill with `--edit prose`. A frozen helper stops only `--edit prose+cli`.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
 `--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
