@@ -47,6 +47,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-293](./gh-293.md) — gh-293: read block-scalar descriptions in full in the facts audit
 - [gh-294](./gh-294.md) — gh-294: --edit prose with non-Markdown editable names stops with editable-needs-cli
 - [gh-295](./gh-295.md) — gh-295: the doctor checks the run's claude executable, and a nonzero inventory exit stops with host-not-ready
+- [gh-296](./gh-296.md) — gh-296: the cases-missing stop writes the seed to a file and shows only counts
 - [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
 - [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
