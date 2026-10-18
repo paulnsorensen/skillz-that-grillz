@@ -1,7 +1,7 @@
 """Journey contract and cases for an autoimprove run on the /skillz autoimprove mode.
 
 Usage:
-  python3 journeys.py write DIR [--approve-contract]   write DIR/autoimprove.json and DIR/cases.draft.json
+  python3 journeys.py write DIR [--approve-contract]   write DIR/autoimprove.json, DIR/evals/gates/journey.py, and DIR/cases.draft.json
   python3 journeys.py stage [--approve-contract]       stage a private skillz copy and a run directory
 
 Each journey asks the agent to autoimprove one toy skill. The stub harness refuses every call,
@@ -18,6 +18,7 @@ HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
 SKILL = HERE.parents[3] / "skills" / "skillz"
 TOYS = ("commit-msg", "changelog-line", "todo-sort")
+GATE = "evals/gates/journey.py"
 
 HARNESS = ("Use the command harness: the executable is `python3`, and its one argument is the absolute path of "
            + "`fake_harness.py` in the workspace. The model name is `toy`.")
@@ -151,15 +152,15 @@ def cases() -> list[dict[str, object]]:
 def contract(approved: bool) -> dict[str, object]:
     return {"schema_version": 1, "status": "approved" if approved else "draft", "skill": "skillz",
             "invocation": "/{skill} autoimprove",
-            "kinds": {"journey": {"grader": "journey",
-                                   "argv": ["python3", "-I", "-c", (HERE / "gate.py").read_text()],
-                                   "rubric": RUBRIC}},
+            "kinds": {"journey": {"grader": "journey", "gate": GATE, "rubric": RUBRIC}},
             "editable": ["SKILL.md", "references/experiments.md"]}
 
 
 def write(directory: Path, approved: bool) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     _ = (directory / "autoimprove.json").write_text(json.dumps(contract(approved), indent=2) + "\n")
+    (directory / GATE).parent.mkdir(parents=True, exist_ok=True)
+    _ = (directory / GATE).write_text((HERE / "gate.py").read_text())
     _ = (directory / "cases.draft.json").write_text(json.dumps(cases(), indent=2) + "\n")
 
 
@@ -175,6 +176,7 @@ def stage(approved: bool) -> None:
     write(out, approved)
     (target / "evals").mkdir()
     _ = (out / "autoimprove.json").replace(target / "evals" / "autoimprove.json")
+    _ = shutil.move(out / "evals" / "gates", target / "evals" / "gates")
     print(f"target: {target}\nout:    {out}\ncontract status: {'approved' if approved else 'draft'}\n")
     print(f"python3 {SKILL / 'scripts' / 'skillz-experiment.pyz'} run --target {target} --out {out} --harness claude "
           + "--model MODEL --judge-model JUDGE_MODEL --repeats 2 --live")

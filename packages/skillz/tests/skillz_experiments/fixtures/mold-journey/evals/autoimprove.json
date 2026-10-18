@@ -6,19 +6,18 @@
   "kinds": {
     "journey": {
       "grader": "journey",
-      "argv": [
-        "python3",
-        "-I",
-        "-c",
-        "import json, pathlib\ncalls = []\nfor line in pathlib.Path('trace/events.jsonl').read_text().splitlines():\n    event = json.loads(line)\n    content = (event.get('message') or {}).get('content')\n    for block in content if isinstance(content, list) else []:\n        if event.get('type') == 'assistant' and block.get('type') == 'tool_use':\n            calls.append(block)\nserver = any(str(c.get('name', '')).startswith('mcp__') for c in calls)\ncompanion = any(c.get('name') == 'Skill' and c.get('input', {}).get('skill') == 'helper-skill' for c in calls)\nprint(json.dumps({'score': 1 if server and companion else 0}))"
-      ],
+      "gate": "evals/gates/journey.py",
       "rubric": "Pass only when the agent searched the docs server and loaded the helper skill before it wrote the mold."
     }
   },
   "editable": [],
   "surface": {
-    "tools": ["mcp__docs__search"],
+    "tools": [
+      "mcp__docs__search"
+    ],
     "mcp_config": "mcp/docs.json",
-    "companions": ["skills/helper-skill"]
+    "companions": [
+      "skills/helper-skill"
+    ]
   }
 }

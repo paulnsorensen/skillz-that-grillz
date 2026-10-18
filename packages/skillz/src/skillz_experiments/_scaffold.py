@@ -16,6 +16,7 @@ RUBRIC = ("Score the conversation from 0 to 100 against `reference`. The agent r
           + "Subtract 20 when the agent asks a question that is not in `reference.questions`. Do not go below 0.")
 NEXT = ("Draft the journey cases in RUN/cases.draft.json: brief, max_turns, requirements, expected.must, "
         + "expected.must_not, expected.questions. Then ask the user to approve the contract and set its status to approved.")
+GATE = "evals/gates/journey.py"
 
 
 def scaffold(target: Path) -> dict[str, object]:
@@ -24,17 +25,19 @@ def scaffold(target: Path) -> dict[str, object]:
         raise CodedError("usage", f"--target {target} is not a directory")
     if not (target / "SKILL.md").is_file():
         raise CodedError("usage", f"--target {target} is not a skill: it has no SKILL.md")
-    if (target / "evals").is_symlink():
-        raise CodedError("usage", f"{target / 'evals'} is a symlink; scaffold never writes through it")
+    if (target / "evals").is_symlink() or (target / "evals/gates").is_symlink():
+        raise CodedError("usage", f"{target / 'evals'} or its gates directory is a symlink; scaffold never writes through it")
     path = target / LOCATION
-    if os.path.lexists(path):
-        raise CodedError("contract-exists", f"{path} exists; scaffold never replaces a contract")
+    gate = target / GATE
+    if os.path.lexists(path) or os.path.lexists(gate):
+        raise CodedError("contract-exists", f"{path} or {gate} exists; scaffold never replaces a contract or a gate")
     skill = skill_frontmatter(target).get("name", target.name)
     source = files("skillz_experiments").joinpath("_journey_gate.py").read_text(encoding="utf-8")
     contract = {"schema_version": 1, "status": "draft", "skill": skill, "invocation": "/{skill}",
-                "kinds": {"journey": {"grader": "journey", "argv": ["python3", "-I", "-c", source],
-                                      "rubric": RUBRIC.format(skill=skill)}}}
-    path.parent.mkdir(parents=True, exist_ok=True)
+                "kinds": {"journey": {"grader": "journey", "gate": GATE, "rubric": RUBRIC.format(skill=skill)}}}
+    gate.parent.mkdir(parents=True, exist_ok=True)
+    with gate.open("x", encoding="utf-8") as handle:
+        _ = handle.write(source)
     with path.open("x", encoding="utf-8") as handle:
         _ = handle.write(json.dumps(contract, indent=2) + "\n")
-    return {"contract": str(path), "status": "draft", "next": NEXT}
+    return {"contract": str(path), "gate": str(gate), "status": "draft", "next": NEXT}
