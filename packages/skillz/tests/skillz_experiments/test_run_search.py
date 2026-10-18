@@ -2024,6 +2024,32 @@ def test_a_resume_that_changes_the_history_flag_stops_with_run_config_differs(
     state.invoke_fault = lambda _number: None
     with pytest.raises(CodedError) as caught:
         _ = run(target, out, MODEL, live=True, factory=state.factory, history=True)
-    assert caught.value.code == "run-config-differs" and "--no-history" in str(caught.value)
+    assert caught.value.code == "run-config-differs" and "--history" in str(caught.value)
+    assert "--no-history" not in str(caught.value), "the message names the flag the user passed"
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert _history(result) == {"enabled": False}
+
+
+class _Killed(BaseException):
+    """A kill between the `searched` checkpoint and the store write."""
+
+
+@pytest.mark.ac("gh-243:AC-5")
+def test_a_resume_at_the_searched_phase_without_a_history_block_writes_the_store(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+
+    def killed(*_args: object, **_kwargs: object) -> str | None:
+        raise _Killed
+
+    with monkeypatch.context() as patch:
+        patch.setattr("skillz_experiments.run._run.write_history", killed)
+        with pytest.raises(_Killed):
+            _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert read(out / "run.json")["phase"] == "searched" and "history" not in cast(dict[str, object], read(out / "run.json")["search"])
+    assert not _store(out).exists()
+    result = run(target, out, MODEL, live=True, factory=state.factory)
+    assert _history(result)["enabled"] is True and _history(result)["warnings"] == []
+    lines = _store(out).read_text(encoding="utf-8").splitlines()
+    assert [cast(dict[str, object], json.loads(line))["run_id"] for line in lines] == [read(out / "run.json")["run_id"]]

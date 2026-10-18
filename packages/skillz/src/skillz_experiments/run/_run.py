@@ -46,6 +46,7 @@ from skillz_experiments.harness import (
     stop_kind,
 )
 from skillz_experiments.run._export import summary
+from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._history_store import load as load_history
 from skillz_experiments.run._history_store import store_path
 from skillz_experiments.run._history_store import write as write_history
@@ -252,6 +253,19 @@ def _check_statistics_flags(statistics: Mapping[str, float] | None) -> dict[str,
     return accepted
 
 
+def _record_history(session: Session, loaded: Loaded) -> None:
+    """Add this run's attempts to the store, then write the history block of the search. A store fault adds a warning."""
+    path = store_path(session.contract.skill, text_field(session.record, "target_root"))
+    attempts = cast(dict[str, object], session.record["search"]).get("attempts")
+    warning = write_history(path, session.record, text_field(session.record, "run_id"),
+                            cast(list[dict[str, object]], attempts or []))
+    if warning is not None and warning not in loaded.warnings:
+        loaded.warnings.append(warning)
+    with session.lock:
+        cast(dict[str, object], session.record["search"])["history"] = loaded.summary()
+        session.checkpoint()
+
+
 def _search(session: Session) -> None:
     """Run the search with the compatible earlier attempts of the history store, then add this run's attempts to it.
 
@@ -259,20 +273,25 @@ def _search(session: Session) -> None:
     """
     if session.record.get("history") is not True:
         session.search()
-        block: dict[str, object] = {"enabled": False}
-    else:
-        path = store_path(session.contract.skill, text_field(session.record, "target_root"))
-        run_id = text_field(session.record, "run_id")
-        loaded = load_history(path, session.record, run_id)
-        session.search(earlier=loaded.attempts)
-        attempts = cast(dict[str, object], session.record["search"]).get("attempts")
-        warning = write_history(path, session.record, run_id, cast(list[dict[str, object]], attempts or []))
-        if warning is not None and warning not in loaded.warnings:
-            loaded.warnings.append(warning)
-        block = loaded.summary()
-    with session.lock:
-        cast(dict[str, object], session.record["search"])["history"] = block
-        session.checkpoint()
+        with session.lock:
+            cast(dict[str, object], session.record["search"])["history"] = {"enabled": False}
+            session.checkpoint()
+        return
+    path = store_path(session.contract.skill, text_field(session.record, "target_root"))
+    loaded = load_history(path, session.record, text_field(session.record, "run_id"))
+    session.search(earlier=loaded.attempts)
+    _record_history(session, loaded)
+
+
+def _repair_history(session: Session) -> None:
+    """Write the store for a run that stopped after the `searched` checkpoint and before the store write.
+
+    The write replaces the line of the same run id, so a repeat is safe. The block names no earlier run, because this
+    resume did not use the history in its search.
+    """
+    search = session.record.get("search")
+    if session.record.get("history") is True and isinstance(search, dict) and "history" not in search:
+        _record_history(session, Loaded())
 
 
 def _drive(session: Session) -> dict[str, object]:
@@ -286,6 +305,8 @@ def _drive(session: Session) -> dict[str, object]:
             if session.phase == "prepared":
                 session.check_seed()
                 _search(session)
+            elif session.phase == "searched":
+                _repair_history(session)
             if session.phase == "searched":
                 session.gate()
             if session.phase == "gated":

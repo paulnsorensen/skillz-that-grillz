@@ -5,11 +5,13 @@ A line holds no request, expected, label, or holdout data. A store fault never c
 """
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
 import stat
 import time
+import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,12 +58,18 @@ def _private(status: os.stat_result) -> bool:
     return status.st_uid == os.getuid() and not status.st_mode & 0o077
 
 
-def _open(path: Path, flags: int) -> int:
-    """Open `path` without following a symlink. Raise `OSError` unless it and its directory are private."""
-    folder = path.parent.lstat()
-    if not stat.S_ISDIR(folder.st_mode) or not _private(folder):
+def _open_directory(path: Path) -> int:
+    """Open the history directory without following a symlink. Raise `OSError` unless it is private."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    if not _private(os.fstat(descriptor)):
+        os.close(descriptor)
         raise OSError("the history directory is not private")
-    descriptor = os.open(path, flags | os.O_NOFOLLOW, 0o600)
+    return descriptor
+
+
+def _open(folder: int, name: str, flags: int) -> int:
+    """Open `name` in `folder` without following a symlink. Raise `OSError` unless it is a private regular file."""
+    descriptor = os.open(name, flags | os.O_NOFOLLOW, 0o600, dir_fd=folder)
     status = os.fstat(descriptor)
     if not stat.S_ISREG(status.st_mode) or not _private(status):
         os.close(descriptor)
@@ -69,25 +77,21 @@ def _open(path: Path, flags: int) -> int:
     return descriptor
 
 
-def _lines(descriptor: int) -> list[str]:
-    _ = os.lseek(descriptor, 0, os.SEEK_SET)
-    chunks: list[bytes] = []
-    while chunk := os.read(descriptor, 1 << 16):
-        chunks.append(chunk)
-    return b"".join(chunks).decode("utf-8").splitlines()
+def _read(folder: int, name: str) -> list[bytes]:
+    """Return the non-blank lines of the store as bytes. A missing store has no line."""
+    try:
+        descriptor = _open(folder, name, os.O_RDONLY)
+    except FileNotFoundError:
+        return []
+    with os.fdopen(descriptor, "rb") as handle:
+        return [raw for raw in handle.read().split(b"\n") if raw.strip()]
 
 
-def _write_all(descriptor: int, data: bytes) -> None:
-    view = memoryview(data)
-    while view:
-        view = view[os.write(descriptor, view):]
-
-
-def _parse(line: str) -> dict[str, object] | None:
+def _parse(raw: bytes) -> dict[str, object] | None:
     """Return one stored run, or None when the line is not a well-formed run."""
     try:
-        value = cast(object, json.loads(line))
-    except ValueError:
+        value = cast(object, json.loads(raw.decode("utf-8")))
+    except (ValueError, RecursionError):
         return None
     if not isinstance(value, dict):
         return None
@@ -99,29 +103,42 @@ def _parse(line: str) -> dict[str, object] | None:
     return item
 
 
+def _lock(folder: int, name: str, mode: int) -> int:
+    """Open the lock file of the store and take the lock `mode`. The caller closes the descriptor to release it."""
+    descriptor = _open(folder, f"{name}.lock", os.O_RDWR | os.O_CREAT)
+    try:
+        fcntl.flock(descriptor, mode)
+    except OSError:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
 def load(path: Path, record: Mapping[str, object], run_id: str) -> Loaded:
     """Load the compatible earlier runs of `path` for the run `record`. The run's own line stays out.
 
-    A run whose fingerprint fields differ is excluded and named with the differing fields. A corrupt line is skipped and
-    counted. A store that cannot be read, or that is not private, gives the warning `history-unreadable` and no attempt.
+    The load excludes a run whose fingerprint fields differ and names the differing fields. The load skips and counts
+    a corrupt line, including a line with bad UTF-8 or nesting that is too deep. A store that cannot be read, or that
+    is not private, gives the warning `history-unreadable` and no attempt.
     """
     loaded = Loaded()
     if not os.path.lexists(path):
         return loaded
     try:
-        descriptor = _open(path, os.O_RDONLY)
+        folder = _open_directory(path.parent)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_SH)
-            lines = _lines(descriptor)
+            locked = _lock(folder, path.name, fcntl.LOCK_SH)
+            try:
+                lines = _read(folder, path.name)
+            finally:
+                os.close(locked)
         finally:
-            os.close(descriptor)
-    except (OSError, UnicodeDecodeError):
+            os.close(folder)
+    except OSError:
         loaded.warnings.append(UNREADABLE)
         return loaded
-    for line in lines:
-        if not line.strip():
-            continue
-        item = _parse(line)
+    for raw in lines:
+        item = _parse(raw)
         if item is None:
             loaded.skipped_lines += 1
             continue
@@ -141,38 +158,56 @@ def _make_directory(path: Path) -> None:
     """Create the store directory and its `skillz` parent with mode 0700. An existing directory keeps its mode."""
     path.parent.parent.mkdir(parents=True, exist_ok=True)
     for directory_path in (path.parent, path):
-        try:
-            directory_path.mkdir(mode=0o700)
-        except FileExistsError:
-            pass
+        directory_path.mkdir(mode=0o700, exist_ok=True)
+
+
+def _stored(attempt: Mapping[str, object]) -> dict[str, object]:
+    """Return the kept fields of one attempt. Raw rejection text can hold host paths, so only a code stays."""
+    row = {key: attempt.get(key) for key in ATTEMPT_KEYS}
+    reason = row["rejected"]
+    if reason is not None and not (row["rejected_coded"] is True and isinstance(reason, str)):
+        row["rejected"] = "rejected"
+    return row
+
+
+def _replace(folder: int, name: str, data: bytes) -> None:
+    """Write `data` to a private temporary file next to the store, sync it, and move it over the store."""
+    temporary = f".{name}.{uuid.uuid4().hex}.tmp"
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=folder)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            _ = handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, name, src_dir_fd=folder, dst_dir_fd=folder)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary, dir_fd=folder)
+        raise
 
 
 def write(path: Path, record: Mapping[str, object], run_id: str, attempts: Sequence[Mapping[str, object]]) -> str | None:
     """Write the line of this run under an exclusive lock. Return `history-unreadable` when the store fails, else None.
 
-    A line with the same run id is replaced, so a resumed search writes its run once. The store keeps the newest
-    `KEEP_RUNS` lines. With room left, the line is appended; else the file is rewritten without the oldest lines.
+    The write replaces a line with the same run id, so a resumed search writes its run once. The store keeps the
+    newest `KEEP_RUNS` lines. The write builds the whole new store in a temporary file and moves it over the old one,
+    so a kill leaves either the old store or the new store. The lock lives in the file `<store>.lock`.
     """
     line = json.dumps({"run_id": run_id, "timestamp": time.time(), "compatibility": record.get("compatibility"),
-                       "attempts": [{key: attempt.get(key) for key in ATTEMPT_KEYS} for attempt in attempts]},
-                      sort_keys=True) + "\n"
+                       "attempts": [_stored(attempt) for attempt in attempts]}, sort_keys=True).encode("utf-8") + b"\n"
     try:
         _make_directory(path.parent)
-        descriptor = _open(path, os.O_RDWR | os.O_CREAT)
+        folder = _open_directory(path.parent)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
-            lines = [text for text in _lines(descriptor) if text.strip()]
-            kept = [text for text in lines if (_parse(text) or {}).get("run_id") != run_id]
-            if len(kept) == len(lines) and len(kept) < KEEP_RUNS:
-                _ = os.lseek(descriptor, 0, os.SEEK_END)
-                _write_all(descriptor, line.encode("utf-8"))
-            else:
+            locked = _lock(folder, path.name, fcntl.LOCK_EX)
+            try:
+                kept = [raw for raw in _read(folder, path.name) if (_parse(raw) or {}).get("run_id") != run_id]
                 newest = kept[max(0, len(kept) - (KEEP_RUNS - 1)):]
-                os.ftruncate(descriptor, 0)
-                _ = os.lseek(descriptor, 0, os.SEEK_SET)
-                _write_all(descriptor, ("".join(text + "\n" for text in newest) + line).encode("utf-8"))
+                _replace(folder, path.name, b"".join(raw + b"\n" for raw in newest) + line)
+            finally:
+                os.close(locked)
         finally:
-            os.close(descriptor)
-    except (OSError, UnicodeDecodeError):
+            os.close(folder)
+    except OSError:
         return UNREADABLE
     return None

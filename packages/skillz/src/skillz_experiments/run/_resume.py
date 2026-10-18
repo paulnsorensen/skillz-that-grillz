@@ -133,7 +133,7 @@ def check_resume(record: dict[str, object], target: Path, edit: Edit | None, rep
     if str(target.resolve()) != record.get("target_root"):
         raise _config_differs("the target skill directory")
     if history is not None and history != record.get("history"):
-        raise _config_differs("--no-history")
+        raise _config_differs("--history" if history else "--no-history")
 
 
 _ABSENT = object()

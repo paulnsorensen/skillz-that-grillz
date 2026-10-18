@@ -79,7 +79,7 @@ def test_a_corrupt_line_is_skipped_and_counted() -> None:
 
 
 @pytest.mark.ac("gh-243:AC-5")
-@pytest.mark.parametrize("broken", ["file-mode", "directory-mode", "symlink", "bytes"])
+@pytest.mark.parametrize("broken", ["file-mode", "directory-mode", "symlink"])
 def test_an_unsafe_or_unreadable_store_gives_history_unreadable_and_no_attempt(broken: str, tmp_path: Path) -> None:
     path = _path()
     _ = write(path, _record(), "run-a", [_attempt(1, hypothesis="private-idea")])
@@ -87,19 +87,16 @@ def test_an_unsafe_or_unreadable_store_gives_history_unreadable_and_no_attempt(b
         path.chmod(0o644)
     elif broken == "directory-mode":
         path.parent.chmod(0o755)
-    elif broken == "symlink":
+    else:
         elsewhere = tmp_path / "elsewhere.jsonl"
         _ = elsewhere.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         elsewhere.chmod(0o600)
         path.unlink()
         path.symlink_to(elsewhere)
-    else:
-        _ = path.write_bytes(b"\xff\xfe\n")
     loaded = load(path, _record(), "run-b")
     assert loaded.attempts == [] and loaded.warnings == [UNREADABLE]
     assert loaded.summary() == {"enabled": True, "runs": [], "excluded": [], "skipped_lines": 0, "warnings": [UNREADABLE]}
-    if broken != "bytes":
-        assert write(path, _record(), "run-b", [_attempt(1)]) == UNREADABLE
+    assert write(path, _record(), "run-b", [_attempt(1)]) == UNREADABLE
 
 
 def test_a_missing_store_loads_nothing_and_warns_nothing() -> None:
@@ -133,3 +130,78 @@ def test_an_adr_records_the_default_on_store_its_location_its_privacy_rule_and_n
     assert "**Privacy rule:** a line holds no request, expected, label, or holdout data." in adr
     assert "`run --no-history`" in adr and "`run-config-differs`" in adr and f"`{UNREADABLE}`" in adr
     assert "never feed the stall counter" in adr
+
+
+@pytest.mark.ac("gh-243:AC-5")
+def test_a_deeply_nested_line_is_skipped_and_counted_without_crashing() -> None:
+    path = _path()
+    _ = write(path, _record(), "run-a", [_attempt(1)])
+    with path.open("ab") as handle:
+        _ = handle.write(b"[" * 200000 + b"\n")
+    loaded = load(path, _record(), "run-b")
+    assert loaded.skipped_lines == 1 and loaded.runs == ["run-a"] and loaded.warnings == []
+    assert write(path, _record(), "run-b", [_attempt(1)]) is None
+    assert load(path, _record(), "run-c").runs == ["run-a", "run-b"]
+
+
+@pytest.mark.ac("gh-243:AC-5")
+def test_a_bad_utf8_line_is_skipped_and_the_other_lines_load_and_a_write_repairs_the_store() -> None:
+    path = _path()
+    _ = write(path, _record(), "run-a", [_attempt(1)])
+    with path.open("ab") as handle:
+        _ = handle.write(b"\xff\xfe\n")
+    loaded = load(path, _record(), "run-b")
+    assert loaded.skipped_lines == 1 and loaded.runs == ["run-a"] and loaded.warnings == []
+    assert write(path, _record(), "run-b", [_attempt(1)]) is None
+    assert load(path, _record(), "run-c").runs == ["run-a", "run-b"]
+
+
+@pytest.mark.ac("gh-243:AC-5")
+def test_a_partial_trailing_line_does_not_swallow_the_line_of_the_next_write() -> None:
+    path = _path()
+    _ = write(path, _record(), "run-a", [_attempt(1)])
+    with path.open("ab") as handle:
+        _ = handle.write(b'{"run_id": "cut')
+    assert write(path, _record(), "run-b", [_attempt(1)]) is None
+    loaded = load(path, _record(), "run-c")
+    assert loaded.runs == ["run-a", "run-b"] and loaded.skipped_lines == 1
+
+
+@pytest.mark.ac("gh-243:AC-5")
+def test_a_failure_while_replacing_the_store_keeps_the_old_store_and_leaves_no_temporary_file(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _path()
+    _ = write(path, _record(), "run-a", [_attempt(1)])
+    before = path.read_bytes()
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    assert write(path, _record(), "run-b", [_attempt(1)]) == UNREADABLE
+    assert path.read_bytes() == before
+    assert sorted(entry.name for entry in path.parent.iterdir()) == sorted([path.name, f"{path.name}.lock"])
+
+
+@pytest.mark.ac("gh-243:AC-4")
+def test_uncoded_rejection_text_is_stored_as_rejected_and_a_code_is_kept() -> None:
+    path = _path()
+    attempts = [_attempt(1, accepted=False, rejected="failed at /home/someone/secret/path", rejected_coded=False),
+                _attempt(2, accepted=False, rejected="candidate-leakage-rejected", rejected_coded=True)]
+    assert write(path, _record(), "run-a", attempts) is None
+    text = path.read_text(encoding="utf-8")
+    assert "/home/someone" not in text
+    (line,) = text.splitlines()
+    stored = cast(list[dict[str, object]], cast(dict[str, object], json.loads(line))["attempts"])
+    assert [item["rejected"] for item in stored] == ["rejected", "candidate-leakage-rejected"]
+
+
+@pytest.mark.ac("gh-243:AC-5")
+def test_the_lock_file_is_private() -> None:
+    path = _path()
+    _ = write(path, _record(), "run-a", [_attempt(1)])
+    lock = path.parent / f"{path.name}.lock"
+    assert stat.S_IMODE(lock.stat().st_mode) == 0o600
+    lock.chmod(0o644)
+    assert write(path, _record(), "run-b", [_attempt(1)]) == UNREADABLE
+    assert load(path, _record(), "run-c").warnings == [UNREADABLE]
