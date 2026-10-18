@@ -452,6 +452,7 @@ def test_the_export_report_lists_the_unused_helper(
 # --- AC-12: the reflection prompt -----------------------------------------------------------------------------
 
 HYPOTHESIS_ASK = (" Add an @hypothesis text of at most 200 characters that states why the change helps, or null. "
+                  + "Add an @notes text of at most 500 characters that you want to read in later proposals, or null. "
                   + "Attempt history, newest first. Each attempt lists its hypothesis, the train cases it fixed, "
                   + "and the train cases it broke. No attempt yet. Do not re-introduce a change that broke a case. "
                   + "Do not copy a case id into any component or into @hypothesis. "
@@ -776,8 +777,9 @@ class _Preferred(FakeProvider):
         del prompt, candidate, case
         assert schema is not None
         self.budget.claim(holdout=holdout)
-        names = [name for name in cast(list[str], schema["required"]) if name != "@hypothesis"]
-        return {"answer": {name: VALUE if name == NEW_CLI else self.state.seed[name] for name in names} | {"@hypothesis": None}}
+        names = [name for name in cast(list[str], schema["required"]) if name not in ("@hypothesis", "@notes")]
+        return {"answer": {name: VALUE if name == NEW_CLI else self.state.seed[name] for name in names}
+                | {"@hypothesis": None, "@notes": None}}
 
 
 def test_a_search_that_prefers_the_component_gates_with_the_built_target_and_exports_applicable_patches(

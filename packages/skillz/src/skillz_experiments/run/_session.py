@@ -45,13 +45,16 @@ from skillz_experiments.run._replay import STDERR_LIMIT, apply_patches, differen
 from skillz_experiments.run._replay import components as replay_components
 from skillz_experiments.run._replay import drift as replay_drift
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import HYPOTHESIS, Denylist, Edit, overshoot
+from skillz_experiments.search import HYPOTHESIS, NOTES, Denylist, Edit, overshoot
 from skillz_experiments.search import is_reflection as _is_reflection
 from skillz_experiments.search import Progress, Signal, assess
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search import check as check_leakage
 from skillz_experiments.search import attempts as build_attempts
+from skillz_experiments.search import journal as build_journal
+from skillz_experiments.search import notes as accept_notes
+from skillz_experiments.search import rejected as rejected_memory
 from skillz_experiments.search import protected as protected_cases
 from skillz_experiments.search import search as pareto_search
 
@@ -752,6 +755,8 @@ class Session:
                                 proposal=1 + sum(1 for item in self._reflections() if not _faulted_reflection(item)), stalled=stall.streak, advice=stall.advice)
             history = build_attempts(self.outcomes, self._seed_ref(), self._validation_ids())
             protect = protected_cases(self.outcomes, self._best_identity())
+            memory = rejected_memory(history, band=self.statistics.min_gain)
+            journal = build_journal(self.outcomes)
         feedback = {name: [item for item in items if not _is_unscored(item)] for name, items in feedback.items()}
         if not any(feedback.values()):
             with self.lock:
@@ -761,7 +766,8 @@ class Session:
                 self.checkpoint()
             raise ValueError("every feedback record is unscored; the proposal ends with no candidate")
         prompt, schema = reflection_request(self.edit, candidate, feedback, components, progress=progress,
-                                            cheaper=self.statistics.token_rule, history=history, protect=protect)
+                                            cheaper=self.statistics.token_rule, history=history, protect=protect,
+                                            memory=memory, journal=journal)
         try:
             result = self.provider.invoke(prompt, schema=schema)
         except CodedError as error:
@@ -791,21 +797,25 @@ class Session:
         edits = 0
         hypothesis: str | None = None
         hypothesis_dropped: str | None = None
+        notes: str | None = None
+        notes_dropped: str | None = None
         try:
             proposal, edits, hypothesis, hypothesis_dropped = accept_proposal(result["answer"], components, candidate)
+            notes, notes_dropped = accept_notes(result["answer"])
         except ValueError as error:
             refusal = error
-        if hypothesis is not None:
-            # The hypothesis never enters the components, so a leak drops the hypothesis and keeps the proposal.
-            leak = check_leakage(self._denylist, {}, {HYPOTHESIS: hypothesis})
-            if leak is not None:
-                hypothesis, hypothesis_dropped = None, leak.rule
+        # The hypothesis and the notes never enter the components, so a leak drops the text and keeps the proposal.
+        if hypothesis is not None and (leak := check_leakage(self._denylist, {}, {HYPOTHESIS: hypothesis})) is not None:
+            hypothesis, hypothesis_dropped = None, leak.rule
+        if notes is not None and (leak := check_leakage(self._denylist, {}, {NOTES: notes})) is not None:
+            notes, notes_dropped = None, leak.rule
         with self.lock:
             outcome: dict[str, object] = {"arm": "search", "split": "reflection", "usage": result.get("usage"),
                                           "latency_seconds": result.get("latency_seconds"), "parent": digest(candidate),
                                           "components_digest": None if refusal is not None else digest(proposal),
                                           "minibatch": _case_ids(feedback), "hypothesis": hypothesis,
-                                          "hypothesis_dropped": hypothesis_dropped,
+                                          "hypothesis_dropped": hypothesis_dropped, "notes": notes,
+                                          "notes_dropped": notes_dropped,
                                           "rejected": None if refusal is None else "reflection-shape"}
             if refusal is not None:
                 outcome["rejected_coded"] = True
@@ -850,9 +860,9 @@ class Session:
         return self._best_validated(self._validation_ids()).identity
 
     def _text_dropped(self) -> dict[str, int]:
-        """Return the count of each rule that dropped a hypothesis. The recorded outcomes hold it, so a resume keeps it."""
-        rules = [cast(str, item["hypothesis_dropped"]) for item in self._reflections()
-                 if isinstance(item.get("hypothesis_dropped"), str)]
+        """Return the count of each rule that dropped a hypothesis or notes. The recorded outcomes hold it, so a resume keeps it."""
+        rules = [cast(str, item[key]) for item in self._reflections() for key in ("hypothesis_dropped", "notes_dropped")
+                 if isinstance(item.get(key), str)]
         return dict(sorted(Counter(rules).items()))
 
     def _stall(self) -> Signal:
@@ -1068,6 +1078,7 @@ class Session:
             "proposal_over_budget": self._over_budget(),
             "attempts": build_attempts(self.outcomes, self._seed_ref(), self._validation_ids()),
             "text_dropped": self._text_dropped(),
+            "journal": build_journal(self.outcomes),
         }
         if time_stop:
             with self.lock:

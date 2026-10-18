@@ -7,13 +7,16 @@ from skillz_experiments._candidate import is_skill_file
 from skillz_experiments.harness._command import _validate_answer  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.search import Progress, assess
 from skillz_experiments.search import accept as accept_proposal
+from skillz_experiments.search import notes as accept_notes
 from skillz_experiments.search import request as reflection_request
 
 STE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
        "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
        "and at most 25 words per descriptive sentence. "
        "Return complete component contents. Do not alter independent checks or permissions.")
-ASK = " Add an @hypothesis text of at most 200 characters that states why the change helps, or null. "
+ASK = (" Add an @hypothesis text of at most 200 characters that states why the change helps, or null. "
+       + "Add an @notes text of at most 500 characters that you want to read in later proposals, or null. ")
+NULLABLE = {"type": ["string", "null"]}
 RULES = ("Do not re-introduce a change that broke a case. "
          + "Do not copy a case id into any component or into @hypothesis. "
          + "The case-id check rejects a component that names one and drops such a hypothesis.")
@@ -54,8 +57,8 @@ def test_the_prose_request_text_and_schema_are_pinned() -> None:
     prompt, schema = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)
     assert prompt == PROSE + '{"candidate": {"SKILL.md": "t"}, "feedback": {}}'
     assert schema == {"type": "object",
-                      "properties": {"SKILL.md": {"type": "string"}, "@hypothesis": {"type": ["string", "null"]}},
-                      "required": ["SKILL.md", "@hypothesis"], "additionalProperties": False}
+                      "properties": {"SKILL.md": {"type": "string"}, "@hypothesis": NULLABLE, "@notes": NULLABLE},
+                      "required": ["SKILL.md", "@hypothesis", "@notes"], "additionalProperties": False}
 
 
 @pytest.mark.ac("gh-238:AC-1")
@@ -67,8 +70,8 @@ def test_the_prose_and_cli_request_text_and_schema_are_pinned() -> None:
     assert prompt == PROSE_CLI + '{"candidate": {"SKILL.md": "t", "@new-cli": "t"}, "feedback": {}}'
     assert schema == {"type": "object",
                       "properties": {"SKILL.md": {"type": "string"}, "@new-cli": {"type": "string"},
-                                     "@hypothesis": {"type": ["string", "null"]}},
-                      "required": [*components, "@hypothesis"], "additionalProperties": False}
+                                     "@hypothesis": NULLABLE, "@notes": NULLABLE},
+                      "required": [*components, "@hypothesis", "@notes"], "additionalProperties": False}
 
 
 @pytest.mark.ac("gh-238:AC-2")
@@ -214,11 +217,11 @@ def test_an_answer_without_a_hypothesis_is_accepted_with_none() -> None:
 @pytest.mark.ac("gh-327:AC-1")
 def test_a_command_answer_without_a_hypothesis_fails_the_schema_check() -> None:
     _, schema = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)
-    _validate_answer({"SKILL.md": "x", "@hypothesis": None}, schema)
+    _validate_answer({"SKILL.md": "x", "@hypothesis": None, "@notes": None}, schema)
     with pytest.raises(ValueError):
-        _validate_answer({"SKILL.md": "x"}, schema)
+        _validate_answer({"SKILL.md": "x", "@notes": None}, schema)
     with pytest.raises(ValueError):
-        _validate_answer({"@hypothesis": None}, schema)
+        _validate_answer({"@hypothesis": None, "@notes": None}, schema)
 
 
 def test_a_hypothesis_of_another_type_than_text_is_dropped_with_its_rule() -> None:
@@ -235,6 +238,38 @@ def test_the_schema_requires_a_nullable_hypothesis_without_a_length_limit_and_ac
     _, schema = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)
     properties = schema["properties"]
     assert isinstance(properties, dict) and properties["@hypothesis"] == {"type": ["string", "null"]}
-    assert schema["required"] == ["SKILL.md", "@hypothesis"]
+    assert schema["required"] == ["SKILL.md", "@hypothesis", "@notes"]
     assert accept_proposal({"SKILL.md": "x", "@hypothesis": "h" * 200}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == ("h" * 200, None)
     assert accept_proposal({"SKILL.md": "x", "@hypothesis": "h" * 201}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == (None, "hypothesis-too-long")
+
+
+REJECTED = ("Rejected approaches, newest first. Each one lists its hypothesis and the reason that the runner rejected it. "
+            + "Attempt 3: hypothesis split the table; reason candidate-leakage-rejected. "
+            + "Attempt 2: hypothesis none; reason no-gain. "
+            + "Propose a change that is structurally different from each rejected approach.")
+NOTES = "Your own notes from earlier proposals, newest first. The runner does not check these notes: Attempt 2: try the intro"
+
+
+@pytest.mark.ac("gh-242:AC-1")
+@pytest.mark.ac("gh-242:AC-3")
+def test_the_rejected_memory_and_the_notes_are_pinned_separate_sections_after_the_history() -> None:
+    memory: list[dict[str, object]] = [{"index": 3, "hypothesis": "split the table", "reason": "candidate-leakage-rejected"},
+                                       {"index": 2, "hypothesis": None, "reason": "no-gain"}]
+    prompt, _ = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START,
+                                   memory=memory, journal=[{"index": 2, "notes": "try the intro"}])
+    head = prompt.split("\n", 1)[0]
+    assert head.startswith("Improve only") and (NO_ATTEMPT + " " + REJECTED + " " + NOTES + " Make at most 6 edits") in head
+    for sentence in (ASK + REJECTED + ". " + NOTES).split(". "):
+        assert len(sentence.split()) <= 20, sentence
+
+
+@pytest.mark.ac("gh-242:AC-3")
+def test_notes_follow_the_hypothesis_rules_with_their_own_limit_and_codes() -> None:
+    assert accept_notes({"SKILL.md": "x", "@notes": "  keep it  "}) == ("keep it", None)
+    assert accept_notes({"SKILL.md": "x"}) == (None, None) and accept_notes({"@notes": " "}) == (None, None)
+    assert accept_notes({"@notes": "n" * 500}) == ("n" * 500, None)
+    assert accept_notes({"@notes": "n" * 501}) == (None, "notes-too-long")
+    assert accept_notes({"@notes": 7}) == (None, "notes-not-text")
+    texts, _, hypothesis, _ = accept_proposal({"SKILL.md": "x", "@hypothesis": "h", "@notes": "n"}, ["SKILL.md"], {"SKILL.md": "t"})
+    assert texts == {"SKILL.md": "x"} and hypothesis == "h"
+    assert not is_skill_file("@notes")

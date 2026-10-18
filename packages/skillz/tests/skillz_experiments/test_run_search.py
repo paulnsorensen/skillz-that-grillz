@@ -27,6 +27,7 @@ from skillz_experiments.run import _session
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
+from skillz_experiments.search._history import DIFFERENT, NOTES_INTRO, REJECTED_INTRO
 from fake_provider import FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -71,6 +72,7 @@ class Search:
         self.memos: list[object] = []
         self.fixed_number: int | None = None
         self.hypothesis_of: Callable[[int], str | None] = lambda _number: None
+        self.notes_of: Callable[[int], str | None] = lambda _number: None
         self.omit_hypothesis = False
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
@@ -184,12 +186,15 @@ class Provider(FakeProvider):
             edits = _budgets([prompt])[0] + self.state.edit_offset
             return {"answer": {name: "".join(f"{line}\nimproved {number}\n" if index < edits else f"{line}\n"
                                              for index, line in enumerate(text.splitlines()))
-                               for name, text in parent.items()} | {"@hypothesis": self.state.hypothesis_of(number)}}
+                               for name, text in parent.items()} | self._free_text(number)}
         texts = {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix
-                 for name in cast(list[str], schema["required"]) if name != "@hypothesis"}
+                 for name in cast(list[str], schema["required"]) if name not in ("@hypothesis", "@notes")}
         if self.state.omit_hypothesis:
             return {"answer": texts}
-        return {"answer": texts | {"@hypothesis": self.state.hypothesis_of(number)}}
+        return {"answer": texts | self._free_text(number)}
+
+    def _free_text(self, number: int) -> dict[str, str | None]:
+        return {"@hypothesis": self.state.hypothesis_of(number), "@notes": self.state.notes_of(number)}
 
 
 def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
@@ -1526,7 +1531,8 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
     assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped",
                            "scored", "failed", "failed_by_reason"}
     saved = cast(dict[str, object], read(out / "run.json")["search"])
-    assert set(saved) == set(search) and {key: saved[key] for key in saved if key != "attempts"} == {
+    # The exported summary drops the proposer journal; run.json keeps it.
+    assert set(saved) == set(search) | {"journal"} and {key: saved[key] for key in search if key != "attempts"} == {
         key: search[key] for key in search if key != "attempts"}
     attempts = _recorded_attempts(out)
     assert [item["index"] for item in _attempts(result)] == [item["index"] for item in attempts] == list(range(1, state.proposals + 1))
@@ -1776,3 +1782,96 @@ def test_a_spent_call_whose_answer_has_no_hypothesis_key_records_a_null_hypothes
     assert reflections and len(attempts) == len(reflections)
     assert all(item["hypothesis"] is None and item["hypothesis_dropped"] is None for item in reflections)
     assert all(item["hypothesis"] is None for item in attempts) and any(item["accepted"] for item in attempts)
+
+
+def _head(prompt: str) -> str:
+    return prompt.split("\n", 1)[0]
+
+
+@pytest.mark.ac("gh-242:AC-1")
+def test_a_leakage_rejected_attempt_shows_its_hypothesis_and_reason_in_the_next_prompt_with_the_different_instruction(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " " + ANSWER
+    state.hypothesis_of = lambda number: f"idea {number}"
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert len(state.prompts) >= 2 and REJECTED_INTRO not in _head(state.prompts[0])
+    second = _head(state.prompts[1])
+    assert REJECTED_INTRO + "Attempt 1: hypothesis idea 1; reason candidate-leakage-rejected. " + DIFFERENT in second
+    newest = _head(state.prompts[-1])
+    shown = newest.split(REJECTED_INTRO, 1)[1].split(DIFFERENT, 1)[0]
+    assert shown.count("; reason candidate-leakage-rejected.") == min(6, len(state.prompts) - 1)
+    assert shown.startswith(f"Attempt {len(state.prompts) - 1}: hypothesis idea {len(state.prompts) - 1};")
+
+
+@pytest.mark.ac("gh-242:AC-1")
+def test_a_fully_scored_proposal_without_a_validation_gain_is_shown_as_no_gain(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.score_of = lambda text, split: 0.7 if "improved" in text and split == "train" else 0.2
+    state.hypothesis_of = lambda number: f"idea {number}"
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    flat = [item for item in _recorded_attempts(out) if item["validation_delta"] is not None]
+    assert flat and all(item["validation_delta"] == 0.0 and item["accepted"] for item in flat)
+    first = cast(int, flat[0]["index"])
+    assert len(state.prompts) > first
+    assert f"Attempt {first}: hypothesis idea {first}; reason no-gain." in _head(state.prompts[first])
+
+
+@pytest.mark.ac("gh-242:AC-3")
+def test_proposer_notes_join_the_journal_and_the_next_prompt_newest_first_and_stay_out_of_the_export(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    state.notes_of = lambda number: f"note-sentinel {number}"
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    saved = cast(dict[str, object], read(out / "run.json")["search"])
+    assert state.proposals >= 3
+    assert saved["journal"] == [{"index": number, "notes": f"note-sentinel {number}"} for number in range(1, state.proposals + 1)]
+    assert NOTES_INTRO not in _head(state.prompts[0])
+    assert NOTES_INTRO + "Attempt 1: note-sentinel 1" in _head(state.prompts[1])
+    assert NOTES_INTRO + "Attempt 2: note-sentinel 2 | Attempt 1: note-sentinel 1" in _head(state.prompts[2])
+    history, notes = _head(state.prompts[2]).index("Attempt history, newest first."), _head(state.prompts[2]).index(NOTES_INTRO)
+    assert history < notes, "the framework facts come before the proposer notes, in their own section"
+    assert "journal" not in cast(dict[str, object], result["search"]) and "note-sentinel" not in json.dumps(result)
+    report = (Path(cast(str, export(out, tmp_path / "export")["export"])) / "report.json").read_text(encoding="utf-8")
+    assert "note-sentinel" not in report
+
+
+@pytest.mark.ac("gh-242:AC-4")
+def test_a_resumed_run_keeps_the_journal_and_the_rejected_memory(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.suffix = " " + ANSWER
+    state.hypothesis_of = lambda number: f"idea {number}"
+    state.notes_of = lambda number: f"note {number}"
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 3 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert len(_reflections_of(out)) == 2 and len(state.prompts) == 3
+    state.invoke_fault = lambda _number: None
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    resumed = _head(state.prompts[3])
+    assert (REJECTED_INTRO + "Attempt 2: hypothesis idea 2; reason candidate-leakage-rejected. "
+            + "Attempt 1: hypothesis idea 1; reason candidate-leakage-rejected. " + DIFFERENT) in resumed
+    assert NOTES_INTRO + "Attempt 2: note 2 | Attempt 1: note 1" in resumed
+    journal = cast(list[dict[str, object]], cast(dict[str, object], read(out / "run.json")["search"])["journal"])
+    assert journal[:2] == [{"index": 1, "notes": "note 1"}, {"index": 2, "notes": "note 2"}]
+    assert [item["index"] for item in journal] == list(range(1, len(_reflections_of(out)) + 1))
+
+
+@pytest.mark.ac("gh-242:AC-5")
+def test_a_note_that_copies_a_request_span_is_dropped_and_counted_in_text_dropped(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
+    state.notes_of = lambda _number: f"remember to {SPAN}"
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    search = cast(dict[str, object], result["search"])
+    assert state.proposals > 0 and state.improved_calls > 0
+    assert search["leakage_rejections"] == {} and search["text_dropped"] == {"request-span": state.proposals}
+    reflections = _reflections_of(out)
+    assert all(item["notes"] is None and item["notes_dropped"] == "request-span" and item["proposed"] for item in reflections)
+    assert cast(dict[str, object], read(out / "run.json")["search"])["journal"] == []
+    assert SPAN not in (out / "run.json").read_text(encoding="utf-8")
+    assert not any(NOTES_INTRO in _head(prompt) for prompt in state.prompts)
