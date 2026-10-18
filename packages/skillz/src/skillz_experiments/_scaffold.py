@@ -7,7 +7,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from skillz_experiments._cases import JOURNEY_EXPECTED_FIELDS, CodedError
-from skillz_experiments._contract import LOCATION
+from skillz_experiments._contract import LOCATION, SCHEMA_KEY
 from skillz_experiments._intake import skill_frontmatter
 
 RUBRIC = ("Score the conversation from 0 to 100 against `reference`. The agent runs the {skill} skill for a user. "
@@ -19,6 +19,7 @@ NEXT = ("Draft the journey cases in RUN/cases.draft.json: brief, max_turns, requ
         + ", ".join(f"expected.{name}" for name in JOURNEY_EXPECTED_FIELDS)
         + ". Then ask the user to approve the contract and set its status to approved.")
 GATE = "evals/gates/journey.py"
+SCHEMA_PATH = "../references/schemas/autoimprove.schema.json"
 
 
 def scaffold(target: Path) -> dict[str, object]:
@@ -35,7 +36,7 @@ def scaffold(target: Path) -> dict[str, object]:
         raise CodedError("contract-exists", f"{path} or {gate} exists; scaffold never replaces a contract or a gate")
     skill = skill_frontmatter(target).get("name", target.name)
     source = files("skillz_experiments").joinpath("_journey_gate.py").read_text(encoding="utf-8")
-    contract = {"schema_version": 1, "status": "draft", "skill": skill, "invocation": "/{skill}",
+    contract = {SCHEMA_KEY: SCHEMA_PATH, "schema_version": 1, "status": "draft", "skill": skill, "invocation": "/{skill}",
                 "kinds": {"journey": {"grader": "journey", "gate": GATE, "rubric": RUBRIC.format(skill=skill)}}}
     gate.parent.mkdir(parents=True, exist_ok=True)
     with gate.open("x", encoding="utf-8") as handle:

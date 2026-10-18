@@ -1,4 +1,5 @@
 {
+  "$schema": "../references/schemas/evals.schema.json",
   "skill_name": "skillz",
   "notes": "Pressure scenarios for the offload procedure that `wedge` and `improve` share. Ids 1 to 4 came from the former /wedge skill.",
   "evals": [

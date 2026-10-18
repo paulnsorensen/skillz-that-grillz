@@ -16,6 +16,7 @@ from skillz_experiments._cases import JOURNEY_FIELDS, CodedError, journey_of, st
 EVAL_KINDS = ("trigger", "near-miss", "task")
 SOURCES = ("skill", "session")
 FIXTURES = "evals/files/"
+EVAL_FIELDS = ("id", "name", "prompt", "expected_output", "files", "assertions", "kind", "family", "expected_skill")
 _TEXT_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
 

@@ -29,8 +29,8 @@ MINIMUM_FAMILIES = 3
 TASK_RUBRIC = ("The answer is correct when it satisfies the request and agrees in substance with `reference`. "
                "Ignore differences in JSON shape, quoting, or whitespace. "
                "Score 100 for a correct answer and 0 for a wrong answer.")
-_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
-_REQUIRED = {"id", "family", "kind", "request", "source"}
+DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
+DRAFT_REQUIRED = {"id", "family", "kind", "request", "source"}
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
 
 
@@ -74,10 +74,10 @@ def _case(value: object, position: int, journeys: Collection[str]) -> DraftCase:
         raise ValueError(f"draft case {position} must be a JSON object")
     item = cast(dict[str, object], value)
     name = item.get("id") if isinstance(item.get("id"), str) and item.get("id") else f"#{position}"
-    if set(item) - _FIELDS:
-        raise ValueError(f"case {name}: unknown fields {', '.join(sorted(set(item) - _FIELDS))}")
-    if _REQUIRED - set(item):
-        raise CodedError("cases-invalid", f"case {name}: missing fields {', '.join(sorted(_REQUIRED - set(item)))}; add each "
+    if set(item) - DRAFT_FIELDS:
+        raise ValueError(f"case {name}: unknown fields {', '.join(sorted(set(item) - DRAFT_FIELDS))}")
+    if DRAFT_REQUIRED - set(item):
+        raise CodedError("cases-invalid", f"case {name}: missing fields {', '.join(sorted(DRAFT_REQUIRED - set(item)))}; add each "
                          + "field (a trigger or near-miss seed case takes family = id; a task case needs an explicit family)")
     try:
         kind, source = item["kind"], item["source"]

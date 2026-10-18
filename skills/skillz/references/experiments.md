@@ -342,10 +342,8 @@ The file is a JSON list. Each item has the draft-case shape:
  "expected": {"must": ["..."], "must_not": ["..."]}, "source": "skill"}
 ```
 
-- `kind` names a journey kind of the contract. The seed accepts any nonempty name except `trigger`, `near-miss`, and `task`. Intake checks the name against the contract.
-- `files` is an inline map of path to text, and it is optional. `requirements` and `max_turns` are optional.
-- Any other key is an error. `expected` follows the closed object above.
-- CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. The seed fills `family` from `id` and `source` from `skill` when they are absent.
+- The fields, the closed `expected` object, and the required keys are in `references/eval-formats.md`. The schema is `references/schemas/journeys.schema.json`.
+- `journeys.json` is a bare list, so it has no `$schema` key. Map the schema to the file name in your editor.
 - `id` values are unique across `evals.json` and `journeys.json`. A repeat stops the run with `evals-unreadable`.
 
 The first `run` call seeds `RUN/cases.seed.json` from both files. The call writes the seed when either file exists.
@@ -850,17 +848,9 @@ It lives at `<skill>/evals/autoimprove.json`. The shipped `skills/skillz/evals/a
 Without it, the runner grades each `task` case with a judge against its `expected` answer.
 To start a journey contract, run `scaffold`. See `Draft journeys`.
 
-The contract has these fields:
-
-- `schema_version`: integer `1`.
-- `status`: `approved` or `draft`. A draft stops the run.
-- `skill`: the skill directory name.
-- `invocation`: the request that calls the skill. It supports `{skill}` and `{path}`.
-- `kinds`: a map of case kind to `{grader, gate? or argv?, rubric?, capture?, pillars?}`.
-- `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
-- `editable` (optional): relative paths that search can change.
-- `surface` (optional): the tool surface of the task role. See "Journeys".
-- `statistics` (optional): promotion thresholds for the holdout gate. See "Set promotion thresholds".
+The fields of the contract, of a kind, of `helper`, of `surface`, and of `statistics` are in `references/eval-formats.md`.
+The schema `references/schemas/autoimprove.schema.json` lists them for your editor. Start the file with a relative `$schema` key to use it.
+The runner ignores that key.
 
 A run scores the kinds that `--kind` names. Without `--kind` the split-driving kind is `task` when declared, else all journey kinds, else the single kind. Journey cases of the other journey kinds are still evaluated. Otherwise it stops with `contract-kinds` and asks for `--kind`.
 A `--kind` selection may name at most one kind that does not use the journey grader.
@@ -1233,7 +1223,7 @@ Quality stays in prose. The command cannot judge a trigger phrase, an output con
 
 The mode fixtures test the steps of `add`, `improve`, `wedge`, and contract drafting.
 They also test the repository-local `skillz-self-update` skill.
-The public cases live in `skills/skillz/evals/mode-fixtures.json`.
+The public cases live in `packages/skillz/tests/skillz_experiments/fixtures/mode/mode-fixtures.json`, so they never ship in the skill.
 The self-update case lives in the repository's test fixtures, so it never publishes.
 
 A fixture uses the version-one case manifest and adds a `target` block with one `command` kind per mode.
@@ -1269,7 +1259,7 @@ The tests pin the mode steps that each fixture depends on, so an edited step fai
 To add a case, follow these steps:
 
 1. Add the case to the manifest with a unique `id` and `family`.
-2. Put a grader script under `skills/skillz/evals/gates/mode/` and name it in the `gate` of its kind. The script scores the golden output as 1 and the seeded defect as 0. Type-check it: `just build` covers it.
+2. Put a grader script under `packages/skillz/tests/skillz_experiments/fixtures/mode/evals/gates/mode/` and name it in the `gate` of its kind. The script scores the golden output as 1 and the seeded defect as 0. Type-check it: `just build` covers it.
 3. Record the golden output and one or more seeded-bad outputs in the repository's mode-output fixture file. Record only the files that the task writes or changes.
 4. Pin each step the case depends on in the step list of the mode-fixture test.
 5. Run `just build`.
@@ -1279,5 +1269,5 @@ Keep exactly two `holdout` cases. Use `train` and `validation` for the rest.
 The fixture JSON files are the source of truth. Edit them directly; no generator script exists.
 
 No command runs these fixtures live, so they never run in `just build` or `just ci`.
-The `run` command cannot load the fixture manifest.
+The `run` command cannot load the fixture manifest. Its `target` block is a test convention, and the contract lives only in `evals/autoimprove.json`.
 The offline tests cover them.

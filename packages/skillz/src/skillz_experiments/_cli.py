@@ -12,6 +12,7 @@ import fromargs
 from skillz_experiments._cases import CodedError
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._scaffold import scaffold
+from skillz_experiments._schemas import SchemaName, render as render_schema
 from skillz_experiments._validate import validate as check_target
 from skillz_experiments.gate import (
     CHEAPER_SCENARIOS, POWER_EFFECTS, simulate as simulate_gate, simulate_cheaper, simulate_power,
@@ -213,6 +214,12 @@ def validate_command(*, target: Path, draft: Path | None = None, seed: int | Non
         print(json.dumps(report))
         raise _Reported
     return report
+
+
+@app.command(name="schema")
+def schema_command(name: SchemaName) -> None:
+    """Print the JSON Schema of an author file: evals, journeys, contract, or draft. Python stays the source of truth."""
+    _ = sys.stdout.write(render_schema(name))
 
 
 def _simulation_report() -> dict[str, object]:
