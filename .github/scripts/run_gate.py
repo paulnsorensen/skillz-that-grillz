@@ -21,6 +21,8 @@ SKIP_VARIABLE = "GATE_SKIP"
 SHARD_VARIABLE = "GATE_SHARD"
 # CI runs these lanes in their own job (`just test-skillz`) and skips them in the gate job.
 SKILLZ_LANES = ("skillz-e2e-pytest", "skillz-pytest")
+# The requirement that `test_generated_target.py` locks offline.
+OFFLINE_LOCK_DEPENDENCY = "cyclopts==5.2.0"
 
 
 def _environment() -> dict[str, str]:
@@ -203,7 +205,20 @@ def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
 
 
 def _prepare() -> bool:
-    return run_step("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups", "--all-extras"])
+    """Sync the workspace, then warm the uv index cache for the offline e2e locks.
+
+    `uv sync` stores wheels but not registry index metadata. The e2e tests run `uv lock --offline`
+    on a scratch project that pins `OFFLINE_LOCK_DEPENDENCY`. Without this metadata, that lock fails on a cold cache.
+    One online lock of the same requirement stores it. Keep the pin equal to the pin in the e2e `_world` helpers.
+    """
+    if not run_step("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups", "--all-extras"]):
+        return False
+    with tempfile.TemporaryDirectory() as scratch:
+        project = Path(scratch)
+        _ = (project / "pyproject.toml").write_text(
+            f'[project]\nname = "warm-index"\nversion = "0"\ndependencies = ["{OFFLINE_LOCK_DEPENDENCY}"]\n'
+        )
+        return run_step("index-cache", ["uv", "lock", "--project", str(project)])
 
 
 def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str]) -> int:
