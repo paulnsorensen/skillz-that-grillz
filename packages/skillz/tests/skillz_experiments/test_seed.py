@@ -301,9 +301,11 @@ def test_coverage_does_not_read_fixtures(tmp_path: Path, make_target: Maker, wri
 def test_the_repository_skill_seeds_only_task_cases_in_three_families() -> None:
     seed = seed_cases(Path(__file__).resolve().parents[4] / "skills/skillz")
     assert seed
-    summary = seed_summary(seed)
+    evals_json = [case for case in seed if case["kind"] != "journey"]
+    summary = seed_summary(evals_json)
     assert summary["kinds"] == {"task": 8}
     assert len(cast(dict[str, int], summary["families"])) >= 3
+    assert seed_summary(seed)["kinds"] == {"task": 8, "journey": 18}
 
 
 @pytest.mark.ac("gh-366:AC-2")

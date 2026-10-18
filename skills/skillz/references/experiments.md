@@ -113,6 +113,7 @@ Without `--kind`, the kind that drives the split is `task` when the contract dec
 Without `--kind`, the run still evaluates every declared kind that is not `audit`. Journey cases take a seeded split and do not size the task holdout.
 With `--kind`, a drafted case of an unselected kind shows as `not scored` in the question and stays out of `cases.json` `cases`.
 The first run freezes the choice, and a resume ignores `--kind`.
+A default `run` on `skills/skillz` evaluates the 18 checked-in journeys beside the tasks, so its estimate grows. Pass `--kind task` for a task-only run. Pass `--kind journey` for a journey-only run.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
 `--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
@@ -306,6 +307,12 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" scaffold --target /path/to/skill
 The command writes `<skill>/evals/autoimprove.json` with `status: draft`, a `journey` kind, a generic gate, and a rubric.
 It stops with `contract-exists` when the file exists, and it leaves that file unchanged.
 Show the user the rubric and the gate. Set `status` to `approved` only after the user approves them.
+
+A skill may keep its journeys in `<skill>/evals/journeys.json`: a JSON list of cases with `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`.
+`max_turns`, `requirements`, and an inline `files` map are optional. The `kind` names a journey kind of the contract.
+The seed reads this file with `evals/evals.json`, and the first `run` call writes both to `cases.seed.json`.
+A draft that drops a seeded journey or edits its `brief` stops with `cases-uncovered`.
+The `skills/skillz` skill ships 18 journeys for `$skillz autoimprove`, and a test keeps the file equal to its generator.
 
 Write each journey case with these fields:
 

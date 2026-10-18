@@ -24,7 +24,7 @@ Each case sets `expected.questions`, `expected.must`, `expected.must_not`, and `
 
 ## Grading
 
-`gate.py` is the `journey` grader gate. The contract inlines it. It scores 0 when the agent:
+`skills/skillz/evals/gates/journey.py` is the one copy of the `journey` grader gate. The kit reads it from there. The contract inlines it. It scores 0 when the agent:
 
 - never runs the runner;
 - puts `--out` inside the target toy directory (`--target`); a sibling run directory is fine;
@@ -33,21 +33,35 @@ Each case sets `expected.questions`, `expected.must`, `expected.must_not`, and `
 
 The judge then scores the transcript against the `must` and `must_not` lists of each case.
 
+## Shipped journeys
+
+`skills/skillz/evals/journeys.json` holds the 18 cases, and `skills/skillz/evals/autoimprove.json` has a `journey` kind for them.
+Regenerate the file after a change to `journeys.py`:
+
+```sh
+python3 journeys.py write-skill
+```
+
+A test fails when the checked-in file differs from the generator output.
+A default `run` on `skills/skillz` evaluates these journeys beside the tasks, so its estimate grows.
+Pass `--kind task` for a task-only run and `--kind journey` for a journey-only run.
+
 ## Run
 
 ```sh
-python3 journeys.py stage                     # contract stays draft; the run stops with contract-unapproved
-python3 journeys.py stage --approve-contract  # after you approve the rubric and the gate
+python3 journeys.py stage          # private copy of skills/skillz with its shipped, approved evals
+python3 journeys.py write DIR     # draft contract and cases.draft.json in DIR; add --approve-contract after you approve the rubric and the gate
 ```
 
-`stage` copies `skills/skillz` to a private directory without `evals/` and `wedge.toml`.
-The shipped `skills/skillz/evals/autoimprove.json` stays unchanged.
-It prints the `run` command. Set the models, then follow the coded stops.
+`stage` copies `skills/skillz` with its `evals/` to a private directory, without `wedge.toml`.
+It prints the `run --kind journey` command. Set the models. The first call stops with `cases-missing`.
+Copy the `cases.seed.json` that it names to `cases.draft.json`, then follow the coded stops.
+The shipped contract lets the run edit `SKILL.md` and four references. The `write` contract edits `SKILL.md` and `references/experiments.md`.
 The exported patch uses the same paths as `skills/skillz`.
 
 Each family sets the agent turns that its flow needs: 3 for `unsafe-out` and `just-run`, 4 for the others.
 A journey costs at most `max_turns * 2 + 1` calls: agent turns, simulator replies, and one judge call.
-At `--repeats 2`, the estimate is 781 calls and about 6.7 hours.
+At `--repeats 2`, the estimate for the 18 journeys alone (the `write` contract) is 781 calls and about 6.7 hours.
 The estimate includes 51 search metric calls (460 calls, enough for 8 proposals), 48 replay calls, and 48 headroom calls.
 The headroom calls score the seed once on each of the 6 train cases. The run stops with `cases-too-easy` when the seed already scores 0.9 on a family.
 `test_skillz_autoimprove_journeys.py` pins the call count of 781.

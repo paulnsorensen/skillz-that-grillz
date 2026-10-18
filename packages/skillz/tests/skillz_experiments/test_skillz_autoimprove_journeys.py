@@ -113,13 +113,17 @@ def test_a_task_only_plan_keeps_the_fixed_search_factor() -> None:
     assert plan.metric_calls == SEARCH_CASE_FACTOR * 6 == 24
 
 
-def test_stage_copies_the_skill_with_the_journey_contract_and_no_wedge_toml(tmp_path: Path) -> None:
+@pytest.mark.ac("kit-harder-journeys:AC-13")
+def test_stage_copies_the_skill_with_its_shipped_evals_and_no_wedge_toml(tmp_path: Path) -> None:
     env = {**os.environ, "TMPDIR": str(tmp_path)}
     done = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage"], env=env, capture_output=True, text=True, timeout=30, check=True)
     target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
     assert target.is_relative_to(tmp_path)
-    assert (target / "SKILL.md").is_file() and (target / "evals" / "autoimprove.json").is_file()
     assert not (target / "wedge.toml").exists()
+    shipped = KIT.parents[3] / "skills" / "skillz" / "evals"
+    for name in ("autoimprove.json", "journeys.json", "gates/journey.py"):
+        assert (target / "evals" / name).read_bytes() == (shipped / name).read_bytes(), name
+    assert "--kind journey" in done.stdout
 
 
 def bash(command: str) -> dict[str, object]:

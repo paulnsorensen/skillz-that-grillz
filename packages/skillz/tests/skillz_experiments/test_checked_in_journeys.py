@@ -145,5 +145,7 @@ def test_ci_validator_rejects_an_unknown_expected_key_and_accepts_the_shipped_fi
     loose = {key: value for key, value in EASY_CHEESE_CASE.items() if key != "family"}
     _ = path.write_text(json.dumps([loose]), encoding="utf-8")
     assert any("family" in error for error in validate(path))
-    for shipped in sorted((REPO_ROOT / "skills").glob("*/evals/journeys.json")):
+    shipped_files = sorted((REPO_ROOT / "skills").glob("*/evals/journeys.json"))
+    assert REPO_ROOT / "skills/skillz/evals/journeys.json" in shipped_files
+    for shipped in shipped_files:
         assert validate(shipped) == [], shipped
