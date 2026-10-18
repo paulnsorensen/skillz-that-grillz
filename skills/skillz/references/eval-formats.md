@@ -25,6 +25,7 @@ A test fails when a committed schema differs from the generated text, and it pri
 An `evals.json` or `autoimprove.json` file may start with a `$schema` key.
 Its value is a relative path from the directory of the file, such as `../references/schemas/evals.schema.json`.
 The runner ignores the key and never stores it, so it does not change the identity of a contract.
+`scaffold` writes the key only when the skill ships `references/schemas/autoimprove.schema.json`. Otherwise map the file in your editor settings.
 
 The file `journeys.json` is a bare JSON list, so it has no place for a `$schema` key.
 Map it to its schema by file name in your editor settings. In VS Code, add an entry to `json.schemas` with `fileMatch` set to `**/evals/journeys.json`.

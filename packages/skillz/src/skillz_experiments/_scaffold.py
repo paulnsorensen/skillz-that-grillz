@@ -36,8 +36,10 @@ def scaffold(target: Path) -> dict[str, object]:
         raise CodedError("contract-exists", f"{path} or {gate} exists; scaffold never replaces a contract or a gate")
     skill = skill_frontmatter(target).get("name", target.name)
     source = files("skillz_experiments").joinpath("_journey_gate.py").read_text(encoding="utf-8")
-    contract = {SCHEMA_KEY: SCHEMA_PATH, "schema_version": 1, "status": "draft", "skill": skill, "invocation": "/{skill}",
-                "kinds": {"journey": {"grader": "journey", "gate": GATE, "rubric": RUBRIC.format(skill=skill)}}}
+    # Write `$schema` only when the target ships the schema file, so the path never dangles.
+    schema = {SCHEMA_KEY: SCHEMA_PATH} if (target / "evals" / SCHEMA_PATH).resolve().is_file() else {}
+    contract = schema | {"schema_version": 1, "status": "draft", "skill": skill, "invocation": "/{skill}",
+                         "kinds": {"journey": {"grader": "journey", "gate": GATE, "rubric": RUBRIC.format(skill=skill)}}}
     gate.parent.mkdir(parents=True, exist_ok=True)
     with gate.open("x", encoding="utf-8") as handle:
         _ = handle.write(source)
