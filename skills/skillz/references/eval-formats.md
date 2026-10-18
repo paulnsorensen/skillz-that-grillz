@@ -143,8 +143,11 @@ The `autoimprove` workflow section "Set promotion thresholds" gives the effect o
 ## The minimums
 
 A run needs at least three scored families and a holdout split of at least six scored cases.
-The split gives each family to one split only. The two smallest families go to train and validation.
-The other families form the holdout split.
+The split gives each family to one split only. It shuffles the families with the run seed.
+The first two families in that order go to train and validation.
+If the rest hold fewer than six scored cases, the split orders the families smallest first instead.
+The next family always goes to the holdout split. More families join it until it holds six cases.
+The remaining families alternate between validation and train.
 
 The promotion gate needs the paired delta to exceed twice its standard error over three repeats.
 Fewer than two holdout cases is always inconclusive.
@@ -178,8 +181,9 @@ The run directory `RUN` holds files that the runner writes. Edit only the draft.
 - `RUN/cases.json` holds the approved cases with their splits. Do not edit it.
 - `RUN/run.json` holds the frozen settings and the run state. Do not edit it.
 
-A draft case has the same fields as a journey case, with two differences.
-The `kind` may also be `trigger`, `near-miss`, or `task`. The `source` may be `skill` or `session`.
+A draft case has the same fields as a journey case, with these differences.
+The `kind` may also be `trigger`, `near-miss`, or `task`.
+A case of a non-journey kind needs neither `brief` nor `expected`.
 
 ## Repository-internal formats
 
