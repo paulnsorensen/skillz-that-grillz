@@ -24,7 +24,10 @@ with open(os.environ['EVENT_LOG'], 'a') as log:
     if 'SKILLZ_LIVE' in os.environ:
         log.write('live-flag-leaked\\n')
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
-    pathlib.Path(os.environ['CHILD_PID']).write_text(str(os.getpid()))
+    pid_file = pathlib.Path(os.environ['CHILD_PID'])
+    pid_tmp = pid_file.with_name(pid_file.name + '.tmp')
+    pid_tmp.write_text(str(os.getpid()))
+    os.replace(pid_tmp, pid_file)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     time.sleep(30)
 if args and args[0] == 'run':

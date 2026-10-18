@@ -43,6 +43,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-279](./gh-279.md) — gh-279: reuse recorded search outcomes on resume
 - [gh-285](./gh-285.md) — gh-285: isolate the temp root of the journey sandbox tests
 - [gh-290](./gh-290.md) — gh-290: the settings floor and the approval block in the preflight
+- [gh-291](./gh-291.md) — gh-291: keep the preflight event transcript when the preflight fails
 - [gh-292](./gh-292.md) — gh-292: seeded trigger and near-miss cases default family to the case id
 - [gh-293](./gh-293.md) — gh-293: read block-scalar descriptions in full in the facts audit
 - [gh-294](./gh-294.md) — gh-294: --edit prose with non-Markdown editable names stops with editable-needs-cli
