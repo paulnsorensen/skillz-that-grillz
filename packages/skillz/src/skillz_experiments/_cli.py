@@ -98,7 +98,7 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                 min_lower_bound: float | None = None, family_budget: float | None = None,
                 max_token_increase_per_gain: float | None = None,
                 min_token_saving: float | None = None, min_coverage: float | None = None,
-                max_quality_loss: float | None = None) -> dict[str, object]:
+                max_quality_loss: float | None = None, history: bool | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
     Parameters
@@ -136,6 +136,9 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
     max_quality_loss
         Largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. At least 0.
         `--min-token-saving` needs it. Overrides the contract value.
+    history
+        Keep and read the private cross-run attempt history (on by default). --no-history turns it off.
+        The first run records the choice; a resume must not change it.
     """
     flags = {"min_gain": min_gain, "min_lower_bound": min_lower_bound, "family_budget": family_budget,
              "max_token_increase_per_gain": max_token_increase_per_gain, "min_token_saving": min_token_saving,
@@ -148,7 +151,7 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                             approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
                             sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
                             sandbox_seconds=sandbox_seconds, statistics=statistics or None,
-                            judge_model=judge_model)
+                            judge_model=judge_model, history=history)
 
 
 @app.command(name="doctor")

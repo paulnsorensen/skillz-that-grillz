@@ -14,6 +14,7 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
+from skillz_experiments import _cli
 from skillz_experiments._cli import main
 from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._codex import Codex
@@ -182,3 +183,19 @@ def test_missing_builtin_harness_stops_with_a_code_before_any_approval(
     _ = (out / "cases.draft.json").write_text(json.dumps(draft))
     assert main(args) == 1
     assert json.loads(capsys.readouterr().err)["code"] == "harness-missing"
+
+
+@pytest.mark.ac("gh-243:AC-6")
+@pytest.mark.parametrize(("flag", "history"), [([], None), (["--no-history"], False), (["--history"], True)])
+def test_the_history_flag_reaches_the_run(flag: list[str], history: bool | None, tmp_path: Path,
+                                          monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    seen: list[object] = []
+
+    def fake_run(*_args: object, **kwargs: object) -> dict[str, object]:
+        seen.append(kwargs["history"])
+        return {}
+
+    monkeypatch.setattr(_cli, "run_workflow", fake_run)
+    code = main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "out"), "--model", "m", *flag])
+    _ = capsys.readouterr()
+    assert code == 0 and seen == [history]

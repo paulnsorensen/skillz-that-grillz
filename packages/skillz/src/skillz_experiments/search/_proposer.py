@@ -16,7 +16,7 @@ from skillz_experiments._candidate import HYPOTHESIS, NEW_CLI, NOTES, WEDGE_PREF
 from skillz_experiments._cases import mapping
 from skillz_experiments._new_cli import prompt_rule
 from skillz_experiments.search._engine import Edit
-from skillz_experiments.search._history import render, render_notes, render_rejected
+from skillz_experiments.search._history import render, render_earlier, render_notes, render_rejected
 
 _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
              "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
@@ -95,12 +95,14 @@ class Progress:
 def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
             components: list[str], *, progress: Progress, cheaper: bool = False,
             history: Sequence[Mapping[str, object]] = (), protect: Sequence[str] = (),
-            memory: Sequence[Mapping[str, object]] = (), journal: Sequence[Mapping[str, object]] = ()) -> tuple[str, dict[str, object]]:
+            memory: Sequence[Mapping[str, object]] = (), journal: Sequence[Mapping[str, object]] = (),
+            earlier: Sequence[Mapping[str, object]] = ()) -> tuple[str, dict[str, object]]:
     """Return the reflection prompt and the JSON schema of the answer.
 
     `history` holds the attempts, oldest first. `protect` holds the train case ids that the current best passes.
     `memory` holds the rejected memory, newest first. `journal` holds the proposer notes, oldest first.
-    The framework facts (history and rejected memory) and the proposer notes are separate sections.
+    `earlier` holds the attempts of compatible earlier runs, oldest first.
+    The framework facts (history, rejected memory, and earlier runs) and the proposer notes are separate sections.
     """
     nullable: dict[str, object] = {"type": ["string", "null"]}
     schema: dict[str, object] = {"type": "object",
@@ -119,7 +121,8 @@ def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequen
         head += " Prefer fewer tokens when correctness is equal."
     head += " Add an " + HYPOTHESIS + " text of at most " + str(MAX_HYPOTHESIS) + " characters that states why the change helps, or null."
     head += " Add an " + NOTES + " text of at most " + str(MAX_NOTES) + " characters that you want to read in later proposals, or null. "
-    head += " ".join(part for part in (render(history, protect), render_rejected(memory), render_notes(journal)) if part)
+    sections = (render(history, protect), render_rejected(memory), render_earlier(earlier), render_notes(journal))
+    head += " ".join(part for part in sections if part)
     head += " " + progress.status()
     return head + "\n" + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from skillz_experiments.search import attempts, journal, protected, rejected
-from skillz_experiments.search._history import JOURNAL_LIMIT, render, render_notes
+from skillz_experiments.search._history import EARLIER_INTRO, JOURNAL_LIMIT, LIMIT, SHOWN, render, render_earlier, render_notes
 
 SEED = ("digest-seed", "seed-id")
 
@@ -177,6 +177,19 @@ def test_the_notes_section_shows_the_newest_notes_within_the_cap_and_drops_the_o
     assert shown == ["Attempt 10", "Attempt 9", "Attempt 8", "Attempt 7"]
     assert sum(len(part) for part in body.split(" | ")) <= JOURNAL_LIMIT
     assert render_notes([]) == "" and "\n" not in render_notes([{"index": 1, "notes": "a\nb"}])
+
+
+@pytest.mark.ac("gh-243:AC-1")
+def test_the_earlier_run_section_numbers_runs_newest_first_and_stays_within_the_cap() -> None:
+    earlier: list[dict[str, object]] = [{"run_id": run, "index": index, "candidate": "c", "rejected": None, "hypothesis": "h" * 190,
+                                         "fixed": [f"c{n}" for n in range(12)], "broke": [], "validation_delta": 0.0}
+                                        for run in ("old", "new") for index in (1, 2, 3, 4, 5, 6, 7)]
+    text = render_earlier(earlier)
+    assert text.startswith(EARLIER_INTRO + "Run 1 attempt 7: hypothesis ") and len(text) <= LIMIT
+    assert text.count("; result admitted.") == SHOWN and "Run 2 attempt 7" in text and "Run 2 attempt 6" not in text
+    assert "and 2 more" in text and render_earlier([]) == ""
+    long = [item | {"hypothesis": "h" * 2000} for item in earlier]
+    assert len(render_earlier(long)) <= LIMIT and render_earlier(long).count("Run 1 attempt") >= 1
 
 
 @pytest.mark.ac("gh-242:AC-3")

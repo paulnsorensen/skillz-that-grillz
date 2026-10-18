@@ -69,6 +69,17 @@ def real_nested_userns_probe(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callab
 
 
 @pytest.fixture(autouse=True)
+def history_state(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point `XDG_STATE_HOME` at a fresh temp directory, so no test reads or writes the real cross-run history store.
+
+    A CLI subprocess inherits the variable. Return the state root.
+    """
+    root = tmp_path_factory.mktemp("xdg-state")
+    monkeypatch.setenv("XDG_STATE_HOME", str(root))
+    return root
+
+
+@pytest.fixture(autouse=True)
 def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     """Report a ready host to `run`, so the stub harness executables pass the free host checks.
 

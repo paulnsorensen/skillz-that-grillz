@@ -34,6 +34,9 @@ NOTES_INTRO = ("Your own notes from earlier proposals, newest first. "
                "The runner does not check these notes: ")
 NOTE_SEPARATOR = " | "
 
+# Earlier runs (W4.6): attempts of compatible earlier runs, from the private history store. They feed the prompt only.
+EARLIER_INTRO = ("Attempts from earlier compatible runs, newest first. "
+                 "Run 1 is the newest earlier run. Its candidates are not part of this search. ")
 Scores = dict[str, dict[str, float]]
 
 
@@ -192,7 +195,7 @@ def _cut(reason: str) -> str:
     return _flat(reason)[:MAX_REASON]
 
 
-def _line(attempt: Mapping[str, object]) -> str:
+def _line(attempt: Mapping[str, object], label: str | None = None) -> str:
     hypothesis = _text(attempt.get("hypothesis"))
     delta = attempt.get("validation_delta")
     rejected = _text(attempt.get("rejected"))
@@ -201,7 +204,7 @@ def _line(attempt: Mapping[str, object]) -> str:
     else:
         result = "admitted" if attempt.get("candidate") is not None else "unknown"
     change = f"{delta:+.3f}" if isinstance(delta, (int, float)) else "unknown"
-    return (f"Attempt {attempt.get('index')}: hypothesis {_said(hypothesis)}; "
+    return (f"{label or 'Attempt ' + str(attempt.get('index'))}: hypothesis {_said(hypothesis)}; "
             f"fixed {_list(_ids(attempt.get('fixed')))}; broke {_list(_ids(attempt.get('broke')))}; "
             f"validation change {change}; result {result}.")
 
@@ -255,3 +258,17 @@ def render_notes(entries: Sequence[Mapping[str, object]]) -> str:
         shown.append(text)
         size += added
     return NOTES_INTRO + NOTE_SEPARATOR.join(shown) if shown else ""
+
+
+def render_earlier(earlier: Sequence[Mapping[str, object]]) -> str:
+    """Return the earlier-run section: the newest `SHOWN` earlier attempts, newest first, within `LIMIT` characters.
+
+    `earlier` holds the attempts of compatible earlier runs, oldest first, each with its `run_id`. Run 1 is the newest run.
+    The section is empty when there is no earlier attempt.
+    """
+    runs = list(dict.fromkeys(str(item.get("run_id")) for item in reversed(earlier)))
+    lines = [_line(item, f"Run {runs.index(str(item.get('run_id'))) + 1} attempt {item.get('index')}")
+             for item in reversed(earlier[-SHOWN:])]
+    while lines and len(EARLIER_INTRO) + len(" ".join(lines)) > LIMIT:
+        _ = lines.pop()
+    return EARLIER_INTRO + " ".join(lines) if lines else ""
