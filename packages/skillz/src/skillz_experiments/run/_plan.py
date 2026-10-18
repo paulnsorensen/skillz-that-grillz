@@ -200,7 +200,8 @@ def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, fro
             pass
         elif helper in frozen:
             raise CodedError("helper-frozen", f"the contract helper {helper} is a frozen file (binary, not UTF-8, "
-                             + "or over the text limit) and not the .pyz of an own wedge target, so no proposal can edit it")
+                             + "or over the text limit) and not the .pyz of an own wedge target, so no proposal can edit it; "
+                             + "pass --edit prose when you want no helper edit")
         else:
             raise CodedError("helper-file-missing", f"the contract helper {helper} is missing from the target")
     mcp = mcp_text(files, contract)

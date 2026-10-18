@@ -100,8 +100,8 @@ def test_a_kit_run_scores_the_eighteen_journeys_under_the_kit_contract(tmp_path:
     assert _marks(data, "journey") == ["scored"] * 18 and "kinds journey" in str(data["question"])
 
 
-def _stops(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], edit: str) -> tuple[str, str]:
-    """Run a journey-only call on the copy, approve its cases with the shown hash, and return both stop codes."""
+def _stop_errors(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], edit: str) -> tuple[dict[str, object], dict[str, object]]:
+    """Run a journey-only call on the copy, approve its cases with the shown hash, and return both stop errors."""
     seeded = seed_cases(target)
     assert seeded is not None
     out = tmp_path / "run"
@@ -111,12 +111,17 @@ def _stops(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], edi
                "--kind", "journey"]
     _ = main(command)
     first = capsys.readouterr()
-    code = str(cast(dict[str, object], json.loads(first.err))["code"])
-    if code != "cases-unapproved":
-        return code, code
+    error = cast(dict[str, object], json.loads(first.err))
+    if error["code"] != "cases-unapproved":
+        return error, error
     shown = cast(dict[str, object], json.loads(first.out))["case_hash"]
     _ = main([*command, "--approve-cases", str(shown)])
-    return code, str(cast(dict[str, object], json.loads(capsys.readouterr().err))["code"])
+    return error, cast(dict[str, object], json.loads(capsys.readouterr().err))
+
+
+def _stops(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], edit: str) -> tuple[str, str]:
+    first, second = _stop_errors(target, tmp_path, capsys, edit)
+    return str(first["code"]), str(second["code"])
 
 
 @pytest.mark.ac("gh-384:AC-1")
@@ -130,4 +135,6 @@ def test_a_prose_journey_run_on_a_copy_without_wedge_toml_reaches_the_budget_sto
 @pytest.mark.ac("gh-384:AC-2")
 def test_a_prose_cli_run_on_the_same_copy_stops_with_a_clear_code(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert "helper-frozen" in _stops(_staged(tmp_path), tmp_path, capsys, "prose+cli")
+    _, stopped = _stop_errors(_staged(tmp_path), tmp_path, capsys, "prose+cli")
+    assert stopped["code"] == "helper-frozen"
+    assert "--edit prose" in str(stopped["error"])
