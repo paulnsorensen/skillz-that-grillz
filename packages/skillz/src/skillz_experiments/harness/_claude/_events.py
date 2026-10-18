@@ -174,6 +174,36 @@ def event_trace(events: list[dict[str, object]]) -> list[dict[str, object]]:
     return trace
 
 
+def _blocks(content: object) -> list[dict[str, object]]:
+    """Return the object blocks of a content list, or none when `content` is not a list."""
+    items = cast(list[object], content) if isinstance(content, list) else []
+    return [cast(dict[str, object], item) for item in items if isinstance(item, dict)]
+
+
+def _result_text(content: object) -> str:
+    """Join the text of a tool result. Claude Code sends it as a string or as a list of text blocks."""
+    return content if isinstance(content, str) else "\n".join(
+        str(block.get("text", "")) for block in _blocks(content) if block.get("type") == "text")
+
+
+def tool_transcript(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    """List each tool use in stream order: the tool, its input, and the full text and error flag of its result.
+
+    A tool use with no result keeps `result` and `is_error` as None.
+    """
+    uses: dict[str, dict[str, object]] = {}
+    for event in events:
+        message = event.get("message")
+        for block in _blocks(cast(dict[str, object], message).get("content") if isinstance(message, dict) else None):
+            if block.get("type") == "tool_use" and isinstance(block.get("id"), str):
+                uses[cast(str, block["id"])] = {"tool": block.get("name"), "input": block.get("input"),
+                                                "result": None, "is_error": None}
+            elif block.get("type") == "tool_result" and block.get("tool_use_id") in uses:
+                uses[cast(str, block["tool_use_id"])] |= {"result": _result_text(block.get("content")),
+                                                         "is_error": block.get("is_error") is True}
+    return list(uses.values())
+
+
 def token_events(final: dict[str, object]) -> list[dict[str, object]]:
     """Map Claude usage to the shared counts. Input tokens include cache creation and cache reads."""
     raw = final.get("usage")
