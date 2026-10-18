@@ -50,6 +50,12 @@ Before you write or check `evals/evals.json`, `evals/journeys.json`, or `evals/a
 The agent drafts the cases. The user needs no contract and no case manifest.
 Run `scripts/skillz-experiment.pyz run`, answer each coded stop, and then run `export`.
 Ask at most three questions: harness and model, case approval, and budget approval.
+Skip a question when the request already answers it.
+Show the drafted cases and the budget. Wait for the user to approve both before the first run.
+Place the run directory outside the target skill directory.
+Refuse a requested run directory inside the target. State that a run inside the target pollutes the skill.
+Use an isolated directory outside the target instead, and tell the user the path.
+When the user changes the drafted cases, revise the cases and ask for approval again.
 Report the `runner`, `export`, and `improvement` claims, each with its status and evidence. Apply a winner only when `claims.apply` is true.
 When the user selects the `claude` adapter or a custom command check, also read `references/experiment-harness.md`.
 For Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi, also read `references/harness-recipes.md`.
