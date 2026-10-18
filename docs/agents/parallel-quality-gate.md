@@ -40,6 +40,10 @@ The parallel `skillz tests` job runs those two lanes through `just test-skillz`.
 Before the split, these lanes set the full wait on all 12 sampled pull-request runs.
 The median full wait was 560.5 seconds.[^10]
 Local `just build` and `just ci` leave `GATE_SKIP` unset and run every lane.
+The `skillz tests` job mounts a tmpfs on `/tmp` before its other steps.
+The skillz run records `fsync` each write, and a disk `fsync` sets most of the suite runtime.
+One fake-provider search test took 16.0 seconds on disk and 0.56 seconds on tmpfs.
+The path stays `/tmp`, because the sandbox refuses read roots under `/dev/shm`.
 
 ## Resource ownership
 

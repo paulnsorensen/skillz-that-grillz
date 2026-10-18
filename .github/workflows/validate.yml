@@ -89,6 +89,12 @@ jobs:
     name: skillz tests
     runs-on: ubuntu-latest
     steps:
+      - name: Mount tmpfs on /tmp
+        # The skillz tests fsync each run record under /tmp. On the runner disk,
+        # fsync sets most of their runtime; on tmpfs it costs almost nothing.
+        # The path stays /tmp, so the socket-length and sandbox-path rules hold.
+        run: sudo mount -t tmpfs -o mode=1777 tmpfs /tmp
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
