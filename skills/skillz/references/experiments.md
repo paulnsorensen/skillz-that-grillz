@@ -191,7 +191,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `build-failed` (prepare time) | The seed build of an editable target fails in the sealing step, before the run starts. The message names the target. | Fix the target sources, or use `--edit prose` and remove non-Markdown names from `editable`. Then run again. |
 | `editable-frozen` | The contract `editable` list names a frozen file, such as a binary file or a file over 262144 bytes. | Remove the name from `editable`. |
 | `helper-frozen` | The contract helper names a frozen file. | Name an editable text helper, or name the `.pyz` of an own wedge target. |
-| `reserved-name` | A skill file name starts with `@wedge/`, or it is `@new-cli` or `@hypothesis`. | Rename the file. |
+| `reserved-name` | A skill file name starts with `@wedge/`, or it is `@new-cli`, `@hypothesis`, or `@notes`. | Rename the file. |
 | `export-path-escapes` | A changed wedge source name leaves the repository root. Export writes no patch. | Keep the project inside the repository root, or edit with `--edit prose`. |
 | `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
@@ -641,6 +641,26 @@ The key `@hypothesis` never enters a component. It never counts in `leakage_reje
 `search.text_dropped` counts the dropped hypotheses for each rule.
 The export `report.json` and the `run` summary keep these attempt fields: `index`, `parent`, `candidate`, `fixed`, `broke`, `validation_delta`, `accepted`, and `rejected`.
 They drop `hypothesis`, `components`, and `rejected_coded`. They map an uncoded `rejected` text to `rejected`. `run.json` keeps all fields.
+
+### Rejected memory and proposer notes
+
+The reflection prompt lists the rejected memory after the attempt history.
+The rejected memory holds the newest 6 attempts with a deterministic reason, newest first. Each one shows its hypothesis and its reason.
+The reason is the coded rejection: `reflection-shape`, `candidate-leakage-rejected`, or the code of a host check.
+An admitted attempt whose `validation_delta` is not above `min_gain` has the reason `no-gain`.
+An attempt with an unknown result stays out: an unknown `validation_delta`, an uncoded rejection, or `proposal-build-failed`.
+The section ends with: "Propose a change that is structurally different from each rejected approach."
+The section is absent when no attempt qualifies.
+
+The reflection answer also carries an `@notes` key. Its value is a text of at most 500 characters, or null.
+The notes are the proposer's own text for its later proposals. The runner does not check them for truth.
+The runner drops notes over 500 characters as `notes-too-long`, and a value that is not text as `notes-not-text`.
+The leakage check reads the notes in their own call. A leak drops the notes and records the rule. The proposal stays admitted.
+Each reflection outcome records `notes` and `notes_dropped`. `search.text_dropped` counts the dropped hypotheses and notes together, by rule.
+`search.journal` in `run.json` lists the kept notes, oldest first, with the attempt `index`.
+The prompt shows the newest notes in a separate section after the rejected memory, within 2000 characters. The oldest note drops first.
+The runner rebuilds the rejected memory and the journal from the recorded outcomes, so a resume keeps both.
+The export `report.json` and the `run` summary drop `search.journal`.
 
 ### Stall stop
 

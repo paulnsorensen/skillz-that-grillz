@@ -19,6 +19,20 @@ RULES = ("Do not re-introduce a change that broke a case. "
          "Do not copy a case id into any component or into @hypothesis. "
          "The case-id check rejects a component that names one and drops such a hypothesis.")
 
+# Rejected memory (W4.5): the newest attempts that a deterministic reason rejected.
+SHOWN_REJECTED = 6
+NO_GAIN = "no-gain"
+# A host build failure says nothing about the idea, so its attempt is unknown, like an evaluation-failed outcome.
+UNKNOWN_REASONS = frozenset({"proposal-build-failed"})
+REJECTED_INTRO = ("Rejected approaches, newest first. "
+                  "Each one lists its hypothesis and the reason that the runner rejected it. ")
+DIFFERENT = "Propose a change that is structurally different from each rejected approach."
+
+# Proposer notes (W4.5): the proposer's own text, shown apart from the facts above.
+JOURNAL_LIMIT = 2000
+NOTES_INTRO = ("Your own notes from earlier proposals, newest first. "
+               "The runner does not check these notes: ")
+
 Scores = dict[str, dict[str, float]]
 
 
@@ -127,6 +141,33 @@ def attempts(outcomes: Sequence[Mapping[str, object]], seed: tuple[str, str],
     return found
 
 
+def rejected(history: Sequence[Mapping[str, object]], *, band: float) -> list[dict[str, object]]:
+    """Return the rejected memory: the newest `SHOWN_REJECTED` attempts with a deterministic reason, newest first.
+
+    A coded rejection keeps its code. An admitted attempt whose `validation_delta` is not above `band` has the reason `no-gain`.
+    An uncoded rejection, an attempt in `UNKNOWN_REASONS`, and an admitted attempt with an unknown delta stay out.
+    """
+    found: list[dict[str, object]] = []
+    for attempt in history:
+        reason, delta = _text(attempt.get("rejected")), attempt.get("validation_delta")
+        if reason is not None:
+            if attempt.get("rejected_coded") is not True or reason in UNKNOWN_REASONS:
+                continue
+        elif attempt.get("candidate") is not None and isinstance(delta, (int, float)) and not delta > band:
+            reason = NO_GAIN
+        else:
+            continue
+        found.append({"index": attempt.get("index"), "hypothesis": _text(attempt.get("hypothesis")), "reason": reason})
+    return found[::-1][:SHOWN_REJECTED]
+
+
+def journal(outcomes: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Return the proposer notes, oldest first. Each entry holds the attempt index and the kept notes text."""
+    reflections = [item for item in outcomes if is_reflection(item) and not _faulted(item)]
+    return [{"index": index, "notes": notes} for index, item in enumerate(reflections, 1)
+            if (notes := _text(item.get("notes"))) is not None]
+
+
 def protected(outcomes: Sequence[Mapping[str, object]], identity: str) -> list[str]:
     """Return the train case ids on which candidate `identity` has a full score, sorted."""
     return sorted(case for case, score in _newest(outcomes, "train").get(identity, {}).items() if score >= 1.0)
@@ -178,3 +219,32 @@ def render(history: Sequence[Mapping[str, object]], protect: Sequence[str] = ())
     while len(compose()) > LIMIT and keep:
         _ = keep.pop()
     return compose()
+
+
+def render_rejected(memory: Sequence[Mapping[str, object]]) -> str:
+    """Return the rejected-memory section, or an empty text when no attempt qualifies."""
+    if not memory:
+        return ""
+    lines: list[str] = []
+    for item in memory:
+        hypothesis = _text(item.get("hypothesis"))
+        said = " ".join(hypothesis.split()) if hypothesis else "none"
+        reason = " ".join(str(item.get("reason")).split())[:MAX_REASON]
+        lines.append(f"Attempt {item.get('index')}: hypothesis {said}; reason {reason}.")
+    return REJECTED_INTRO + " ".join(lines) + " " + DIFFERENT
+
+
+def render_notes(entries: Sequence[Mapping[str, object]]) -> str:
+    """Return the proposer-notes section, newest first, or an empty text when there is no note.
+
+    The shown notes stay within `JOURNAL_LIMIT` characters. The oldest note drops first.
+    """
+    shown: list[str] = []
+    size = 0
+    for item in reversed(entries):
+        text = f"Attempt {item.get('index')}: {' '.join(str(item.get('notes')).split())}"
+        if size + len(text) > JOURNAL_LIMIT:
+            break
+        shown.append(text)
+        size += len(text)
+    return NOTES_INTRO + " | ".join(shown) if shown else ""

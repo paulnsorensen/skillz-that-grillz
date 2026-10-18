@@ -11,7 +11,8 @@ from typing import cast
 
 USAGE = {"input_tokens": 120, "cached_input_tokens": 20, "output_tokens": 20}
 DATA_MARKER = "\nUNTRUSTED DATA (JSON):\n"
-HYPOTHESIS = "@hypothesis"
+# The nullable schema keys that the proposer fills with its own text, not with a component.
+FREE_TEXT = ("@hypothesis", "@notes")
 PROBE_PHRASES = ("read isolation failed", "network isolation failed")
 
 
@@ -99,7 +100,7 @@ def propose(prompt: str, fields: list[str], mode: str = "normal", observed: str 
         answer["SKILL.md"] += "\n" + observed.upper()
     elif mode == "bad-helper" and "scripts/transform.py" in answer:
         answer["scripts/transform.py"] = candidate["scripts/transform.py"].replace("text = text", "raise RuntimeError('bad helper')")
-    return {name: None if name == HYPOTHESIS else answer[name] for name in fields}
+    return {name: None if name in FREE_TEXT else answer[name] for name in fields}
 
 
 def task(workspace: Path, skill_name: str, mode: str = "normal") -> tuple[dict[str, str], list[dict[str, object]]]:

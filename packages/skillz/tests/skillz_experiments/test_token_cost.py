@@ -358,6 +358,7 @@ TODAY_PROSE = ("Improve only the supplied skill text components. Preserve the he
                "and at most 25 words per descriptive sentence. "
                "Return complete component contents. Do not alter independent checks or permissions.")
 HYPOTHESIS_ASK = (" Add an @hypothesis text of at most 200 characters that states why the change helps, or null. "
+                  + "Add an @notes text of at most 500 characters that you want to read in later proposals, or null. "
                   + "Attempt history, newest first. Each attempt lists its hypothesis, the train cases it fixed, "
                   + "and the train cases it broke. No attempt yet. Do not re-introduce a change that broke a case. "
                   + "Do not copy a case id into any component or into @hypothesis. "

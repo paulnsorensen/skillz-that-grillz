@@ -155,10 +155,13 @@ _ATTEMPT_KEYS = ("index", "parent", "candidate", "fixed", "broke", "validation_d
 
 
 def _export_search(value: object) -> object:
-    """Return the search record with redacted attempts. The hypothesis and any uncoded rejection text stay in run.json."""
+    """Return the search record with redacted attempts and no journal.
+
+    The hypothesis, the proposer notes, and any uncoded rejection text stay in run.json.
+    """
     if not isinstance(value, dict):
         return value
-    search = cast(dict[str, object], value)
+    search = {key: item for key, item in cast(dict[str, object], value).items() if key != "journal"}
     if not isinstance(search.get("attempts"), list):
         return search
     rows: list[dict[str, object]] = []

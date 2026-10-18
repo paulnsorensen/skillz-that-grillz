@@ -12,11 +12,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
 
-from skillz_experiments._candidate import HYPOTHESIS, NEW_CLI, WEDGE_PREFIX
+from skillz_experiments._candidate import HYPOTHESIS, NEW_CLI, NOTES, WEDGE_PREFIX
 from skillz_experiments._cases import mapping
 from skillz_experiments._new_cli import prompt_rule
 from skillz_experiments.search._engine import Edit
-from skillz_experiments.search._history import render
+from skillz_experiments.search._history import render, render_notes, render_rejected
 
 _STE_RULE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
              "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
@@ -42,6 +42,9 @@ _FROMARGS_RULE = ("The fromargs package is the default for a wedged Python sourc
 MAX_HYPOTHESIS = 200
 HYPOTHESIS_TOO_LONG = "hypothesis-too-long"
 HYPOTHESIS_NOT_TEXT = "hypothesis-not-text"
+MAX_NOTES = 500
+NOTES_TOO_LONG = "notes-too-long"
+NOTES_NOT_TEXT = "notes-not-text"
 
 MAX_EDITS = 6
 MIN_EDITS = 1
@@ -91,14 +94,18 @@ class Progress:
 
 def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
             components: list[str], *, progress: Progress, cheaper: bool = False,
-            history: Sequence[Mapping[str, object]] = (), protect: Sequence[str] = ()) -> tuple[str, dict[str, object]]:
+            history: Sequence[Mapping[str, object]] = (), protect: Sequence[str] = (),
+            memory: Sequence[Mapping[str, object]] = (), journal: Sequence[Mapping[str, object]] = ()) -> tuple[str, dict[str, object]]:
     """Return the reflection prompt and the JSON schema of the answer.
 
     `history` holds the attempts, oldest first. `protect` holds the train case ids that the current best passes.
+    `memory` holds the rejected memory, newest first. `journal` holds the proposer notes, oldest first.
+    The framework facts (history and rejected memory) and the proposer notes are separate sections.
     """
+    nullable: dict[str, object] = {"type": ["string", "null"]}
     schema: dict[str, object] = {"type": "object",
-        "properties": {key: {"type": "string"} for key in components} | {HYPOTHESIS: {"type": ["string", "null"]}},
-        "required": [*components, HYPOTHESIS], "additionalProperties": False}
+        "properties": {key: {"type": "string"} for key in components} | {HYPOTHESIS: nullable, NOTES: dict(nullable)},
+        "required": [*components, HYPOTHESIS, NOTES], "additionalProperties": False}
     if edit == "prose+cli":
         instruction = _CLI_RULE
         if NEW_CLI in components or any(name.startswith(WEDGE_PREFIX) for name in components):
@@ -110,7 +117,9 @@ def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequen
     head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions."
     if cheaper:
         head += " Prefer fewer tokens when correctness is equal."
-    head += " Add an " + HYPOTHESIS + " text of at most " + str(MAX_HYPOTHESIS) + " characters that states why the change helps, or null. " + render(history, protect)
+    head += " Add an " + HYPOTHESIS + " text of at most " + str(MAX_HYPOTHESIS) + " characters that states why the change helps, or null."
+    head += " Add an " + NOTES + " text of at most " + str(MAX_NOTES) + " characters that you want to read in later proposals, or null. "
+    head += " ".join(part for part in (render(history, protect), render_rejected(memory), render_notes(journal)) if part)
     head += " " + progress.status()
     return head + "\n" + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
 
@@ -132,12 +141,27 @@ def accept(answer: object, components: list[str], candidate: Mapping[str, str]) 
     A missing or null hypothesis is None. A non-text one is None with `HYPOTHESIS_NOT_TEXT`. One over `MAX_HYPOTHESIS` characters is None with `HYPOTHESIS_TOO_LONG`.
     """
     proposal = dict(mapping(answer))
-    said = proposal.pop(HYPOTHESIS, None)
-    hypothesis = (said.strip() or None) if isinstance(said, str) else None
-    dropped = None if said is None or isinstance(said, str) else HYPOTHESIS_NOT_TEXT
-    if hypothesis is not None and len(hypothesis) > MAX_HYPOTHESIS:
-        hypothesis, dropped = None, HYPOTHESIS_TOO_LONG
+    hypothesis, dropped = _free_text(proposal.pop(HYPOTHESIS, None), MAX_HYPOTHESIS, HYPOTHESIS_TOO_LONG, HYPOTHESIS_NOT_TEXT)
+    _ = proposal.pop(NOTES, None)
     if set(proposal) != set(components) or not all(isinstance(value, str) for value in proposal.values()):
         raise ValueError("reflection keys differ from the frozen components")
     texts = cast(dict[str, str], proposal)
     return texts, edit_count(candidate, texts), hypothesis, dropped
+
+
+def notes(answer: object) -> tuple[str | None, str | None]:
+    """Return the `@notes` text of an accepted `answer` and why it dropped, by the rules of the hypothesis.
+
+    A missing or null value is None. A non-text one is None with `NOTES_NOT_TEXT`. One over `MAX_NOTES` characters is None with `NOTES_TOO_LONG`.
+    """
+    return _free_text(mapping(answer).get(NOTES), MAX_NOTES, NOTES_TOO_LONG, NOTES_NOT_TEXT)
+
+
+def _free_text(said: object, limit: int, too_long: str, not_text: str) -> tuple[str | None, str | None]:
+    """Return a stripped proposer text and why it dropped. Blank text is None with no reason."""
+    text = (said.strip() or None) if isinstance(said, str) else None
+    if said is not None and not isinstance(said, str):
+        return None, not_text
+    if text is not None and len(text) > limit:
+        return None, too_long
+    return text, None

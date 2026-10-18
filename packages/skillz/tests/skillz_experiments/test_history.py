@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from skillz_experiments.search import attempts, protected
-from skillz_experiments.search._history import render
+from skillz_experiments.search import attempts, journal, protected, rejected
+from skillz_experiments.search._history import JOURNAL_LIMIT, render, render_notes
 
 SEED = ("digest-seed", "seed-id")
 
@@ -124,3 +124,56 @@ def test_a_case_id_with_a_newline_stays_on_one_line_of_the_history() -> None:
     history: list[dict[str, object]] = [{"index": 1, "candidate": "c", "rejected": None, "fixed": ["a\nb"], "broke": ["c\r\nd"]}]
     text = render(history, ["p\nq"])
     assert "\n" not in text and "fixed a b;" in text and "broke c d;" in text and "p q." in text
+
+
+def _tried(index: int, **fields: object) -> dict[str, object]:
+    return {"index": index, "candidate": f"c{index}", "hypothesis": f"idea {index}", "validation_delta": 0.5,
+            "rejected": None, "rejected_coded": False} | fields
+
+
+@pytest.mark.ac("gh-242:AC-1")
+def test_rejected_memory_keeps_coded_reasons_and_no_gain_newest_six_first() -> None:
+    history = [_tried(1, candidate=None, rejected="candidate-leakage-rejected", rejected_coded=True),
+               _tried(2, candidate=None, rejected="reflection-shape", rejected_coded=True),
+               _tried(3, validation_delta=0.0), _tried(4, validation_delta=-0.1), _tried(5, validation_delta=0.05),
+               _tried(6, candidate=None, rejected="hidden-file", rejected_coded=True), _tried(7, validation_delta=0.0),
+               _tried(8, validation_delta=0.0)]
+    memory = rejected(history, band=0.05)
+    assert [(item["index"], item["reason"]) for item in memory] == [
+        (8, "no-gain"), (7, "no-gain"), (6, "hidden-file"), (5, "no-gain"), (4, "no-gain"), (3, "no-gain")]
+    assert memory[0]["hypothesis"] == "idea 8"
+    assert [item["index"] for item in rejected(history, band=0.0)] == [8, 7, 6, 4, 3, 2]
+
+
+@pytest.mark.ac("gh-242:AC-2")
+def test_rejected_memory_leaves_out_unknown_results_uncoded_text_and_gains() -> None:
+    history = [_tried(1, validation_delta=None), _tried(2, candidate=None, rejected="proposal-build-failed", rejected_coded=True),
+               _tried(3, candidate=None, rejected="some uncoded error text"), _tried(4, validation_delta=0.2),
+               _tried(5, candidate=None, rejected=None, validation_delta=None)]
+    assert rejected(history, band=0.0) == []
+
+
+@pytest.mark.ac("gh-242:AC-2")
+def test_an_evaluation_failed_child_has_an_unknown_delta_and_stays_out_of_rejected_memory() -> None:
+    outcomes = [_score("seed-id", "validation", "v", 0.4), _reflection(),
+                _score("child-1", "validation", "v", 0.0, status="evaluation-failed")]
+    history = attempts(outcomes, SEED, ["v"])
+    assert history[0]["validation_delta"] is None and rejected(history, band=0.0) == []
+
+
+@pytest.mark.ac("gh-242:AC-3")
+def test_the_journal_follows_the_attempt_index_and_skips_faulted_rows_and_absent_notes() -> None:
+    outcomes = [_reflection(notes="first"), {"arm": "search", "split": "reflection", "status": "timeout"},
+                _reflection(notes=None), _reflection(), _reflection(notes="fourth")]
+    assert journal(outcomes) == [{"index": 1, "notes": "first"}, {"index": 4, "notes": "fourth"}]
+
+
+@pytest.mark.ac("gh-242:AC-3")
+def test_the_notes_section_shows_the_newest_notes_within_the_cap_and_drops_the_oldest_first() -> None:
+    entries: list[dict[str, object]] = [{"index": number, "notes": f"{number:02d}" + "n" * 480} for number in range(1, 11)]
+    text = render_notes(entries)
+    body = text.split("The runner does not check these notes: ", 1)[1]
+    shown = [part.split(":", 1)[0] for part in body.split(" | ")]
+    assert shown == ["Attempt 10", "Attempt 9", "Attempt 8", "Attempt 7"]
+    assert sum(len(part) for part in body.split(" | ")) <= JOURNAL_LIMIT
+    assert render_notes([]) == "" and "\n" not in render_notes([{"index": 1, "notes": "a\nb"}])
