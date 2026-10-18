@@ -2,6 +2,8 @@
 
 Source: kit-harder-journeys spec (approved 2026-10-17; absent from the repository)
 
+The self-autoimprove kit lives in `packages/skillz/journey-kits/skillz-autoimprove/`. PR #363 renamed it from `packages/skillz/experiments/`. The old name looked like the `skillz_experiments` engine package, but the kit holds no engine code.
+
 | id | kind | criterion | verified by |
 | --- | --- | --- | --- |
 | AC-1 | test | WHEN `journeys.py write` runs THE SYSTEM SHALL write 18 journey cases in 6 families: `ask-harness`, `revise-cases`, `failed-run`, `unsafe-out`, `stale-hash`, `just-run`, and no `named-harness` case |  |
