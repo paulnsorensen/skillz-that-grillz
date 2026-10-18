@@ -217,7 +217,7 @@ def mixed(task_sizes: list[int], journey_sizes: list[int]) -> list[dict[str, obj
     for family, size in enumerate(journey_sizes):
         for index in range(size):
             cases.append({"id": f"j{family}-{index}", "family": f"journey{family}", "kind": "journey",
-                          "request": "Walk it", "files": {"input.txt": "x\n"}, "expected": "y", "source": "skill", "brief": "Ask first."})
+                          "request": "Walk it", "files": {"input.txt": "x\n"}, "expected": {"must": ["y"]}, "source": "skill", "brief": "Ask first."})
     return cases
 
 
@@ -260,7 +260,7 @@ def test_grading_kind_is_covered_by_the_hash_and_written_per_case(tmp_path: Path
 def journey_draft(**extra: object) -> list[dict[str, object]]:
     cases = draft()
     cases.append({"id": "j-1", "family": "f2", "kind": "journey", "request": "Start the interview",
-                  "files": {"input.txt": "hello\n"}, "expected": {"answer": "2"}, "source": "skill",
+                  "files": {"input.txt": "hello\n"}, "expected": {"must": ["2"]}, "source": "skill",
                   "brief": "You want a quiz app.", **extra})
     return cases
 

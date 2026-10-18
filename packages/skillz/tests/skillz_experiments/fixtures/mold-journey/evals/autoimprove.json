@@ -7,7 +7,7 @@
     "journey": {
       "grader": "journey",
       "gate": "evals/gates/journey.py",
-      "rubric": "Pass only when the agent searched the docs server and loaded the helper skill before it wrote the mold."
+      "rubric": "Pass only when the transcript shows every item in reference.must: the agent searched the docs server and loaded the helper skill before it wrote the mold."
     }
   },
   "editable": [],

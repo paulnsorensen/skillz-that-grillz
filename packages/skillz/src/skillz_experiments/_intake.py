@@ -85,8 +85,8 @@ def _case(value: object, position: int) -> DraftCase:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}")
         files = text_map(item.get("files", {}))
         expected = item.get("expected")
-        if kind in ("task", "journey") and (not files or expected is None):
-            raise ValueError(f"a {kind} case needs files and an expected reference")
+        if kind == "task" and (not files or expected is None):
+            raise ValueError("a task case needs files and an expected reference")
         return DraftCase(string(item["id"], "id"), string(item["family"], "family"), cast(str, kind),
                           string(item["request"], "request"), cast(str, source), files, expected,
                           journey_of(item, cast(str, kind)))

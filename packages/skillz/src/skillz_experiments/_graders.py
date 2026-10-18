@@ -24,7 +24,7 @@ from typing import Protocol, cast, runtime_checkable
 
 from skillz_experiments import _audit
 from skillz_experiments._candidate import make_workspace, stage_task
-from skillz_experiments._cases import Audit, Case, loads_untrusted, mapping, relative
+from skillz_experiments._cases import JOURNEY_EXPECTED_FIELDS, Audit, Case, loads_untrusted, mapping, relative
 from skillz_experiments._contract import Grader
 from skillz_experiments._runtime import SandboxTimeout
 
@@ -246,7 +246,11 @@ def judge(transport: object, grader: Grader, case: Case, answer: object, files: 
     if attachments:
         instruction += CAPTURE_INSTRUCTION
         data["capture_files"] = sorted(attachments)
-    prompt = instruction + "\nRUBRIC:\n" + grader.rubric + "\nUNTRUSTED DATA (JSON):\n" + json.dumps(data)
+    reference = ("\nREFERENCE FIELDS (runner-defined; `reference` may hold only these):\n"
+                 + "\n".join(f"- reference.{name}: {meaning}" for name, meaning in JOURNEY_EXPECTED_FIELDS.items())
+                 if grader.type == "journey" else "")
+    prompt = (instruction + "\nRUBRIC:\n" + grader.rubric + reference + "\nUNTRUSTED DATA (JSON):\n"
+              + json.dumps(data))
     schema = judge_schema(grader.pillars)
     result = (cast(Viewer, transport).view(prompt, attachments, holdout=holdout, schema=schema) if attachments
               else cast(_Invoker, transport).invoke(prompt, holdout=holdout, schema=schema))

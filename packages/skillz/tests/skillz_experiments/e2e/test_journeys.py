@@ -37,7 +37,7 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
             "brief": f"Value: {label}. Answer only the agent's question.",
             "max_turns": 2,
             "files": {"fixture.md": "seed\n", "question.txt": f"{topic}\n"},
-            "expected": {"text": label.upper() + "\n"},
+            "expected": {"must": [label.upper() + "\n"]},
             "source": "skill",
         })
     if mixed:

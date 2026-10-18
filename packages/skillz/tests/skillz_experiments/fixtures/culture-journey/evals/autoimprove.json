@@ -7,7 +7,7 @@
     "journey": {
       "grader": "journey",
       "gate": "evals/gates/journey.py",
-      "rubric": "Pass only when the agent asked about each fork in the brief and wrote culture.md without writing source code."
+      "rubric": "Pass only when the transcript shows every item in reference.must and the agent wrote culture.md without writing source code."
     }
   },
   "editable": []

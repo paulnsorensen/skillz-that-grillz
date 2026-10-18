@@ -7,8 +7,7 @@
     "brief": "You want a mold for weekly status reports. Answer one question at a time and stay brief.",
     "max_turns": 2,
     "requirements": ["MOLD-1"],
-    "files": {"notes.txt": "Report notes.\n"},
-    "expected": {"forks": ["report audience"]},
+    "expected": {"must": ["asks about the report audience"]},
     "source": "skill"
   }
 ]
