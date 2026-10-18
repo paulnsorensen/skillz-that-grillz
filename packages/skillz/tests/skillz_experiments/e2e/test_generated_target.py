@@ -18,7 +18,8 @@ def _world(base: Path) -> tuple[Scenario, str]:
     scenario = make_scenario(base)
     skill = scenario.target
     _ = (skill / "pyproject.toml").write_text('[project]\nname = "offline-proj"\nversion = "0"\ndependencies = ["cyclopts==5.2.0"]\n')
-    _ = subprocess.run(["uv", "lock", "--offline", "--project", str(skill)], check=True,
+    # Online on purpose: this fills the uv cache with cyclopts, so a cold cache works; later steps run offline.
+    _ = subprocess.run(["uv", "lock", "--project", str(skill)], check=True,
                        capture_output=True, text=True)
     source = skill / "src/alpha/__init__.py"
     source.parent.mkdir(parents=True)
