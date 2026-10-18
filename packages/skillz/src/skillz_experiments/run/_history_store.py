@@ -23,9 +23,9 @@ from skillz_experiments.run._resume import compare
 # The newest runs that one store keeps. A write drops older lines.
 KEEP_RUNS = 20
 UNREADABLE = "history-unreadable"
-# The attempt fields that a stored line keeps. They hold identities, digests, case ids, and the proposer hypothesis.
+# The attempt fields that a stored line keeps. They hold identities, digests, case ids, component names, and the proposer hypothesis.
 ATTEMPT_KEYS = ("index", "parent", "candidate", "components", "hypothesis", "fixed", "broke", "validation_delta",
-                "accepted", "rejected", "rejected_coded")
+                "accepted", "rejected", "rejected_coded", "changed")
 
 
 def directory() -> Path:

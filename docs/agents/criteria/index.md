@@ -39,6 +39,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-241](./gh-241.md) — gh-241: record per-proposal attempts and show broke/fixed history to the proposer (W4.4)
 - [gh-242](./gh-242.md) — gh-242: show rejected approaches and proposer notes in the reflection prompt (W4.5)
 - [gh-243](./gh-243.md) — gh-243: keep private cross-run attempt history for compatible runs (W4.6)
+- [gh-244](./gh-244.md) — gh-244: steer a stalled search toward the least-tested editable component (W4.7)
 - [gh-247](./gh-247.md) — gh-247: move the evaluator into evaluation/ and memoize check_candidate per candidate (W5.3)
 - [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
 - [gh-279](./gh-279.md) — gh-279: reuse recorded search outcomes on resume

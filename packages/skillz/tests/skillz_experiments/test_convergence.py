@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from skillz_experiments.search import Signal, assess
+from skillz_experiments.search import Signal, assess, focus_advice
 from skillz_experiments.search._convergence import MIN_KNOWN, SHIFT_AT, STOP_AT, WARN_AT
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -82,3 +82,26 @@ def test_an_adr_records_the_default_on_stall_stop_and_its_thresholds() -> None:
     assert f"`warn` at a streak of {WARN_AT}, `shift` at {SHIFT_AT}, and `stop` at {STOP_AT}." in text
     assert f"Fewer than {MIN_KNOWN} known observations give `ok`." in text
     assert "`Statistics.min_gain`" in text
+
+
+@pytest.mark.ac("gh-244:AC-1")
+def test_the_focus_advice_names_the_component_and_keeps_other_components_open() -> None:
+    text = focus_advice(6, "references/guide.md")
+    assert text == ("The last 6 proposals gave no validation gain. "
+                    "Change references/guide.md, because earlier attempts changed it least. "
+                    "You may also change other components. Do not refine the same lines again.")
+    assert "Change a different component or section." not in text
+    assert all(len(sentence.split()) <= 20 for sentence in text.split(". "))
+
+
+@pytest.mark.ac("gh-244:AC-5")
+def test_the_experiments_reference_documents_retention_compatibility_stagnation_exploration_and_privacy() -> None:
+    path = ROOT / "skills/skillz/references/experiments.md"
+    history, stall, exploration = (_section(path, name) for name in ("Cross-run history", "Stall stop", "Exploration"))
+    assert "The store keeps the newest 20 runs." in history
+    assert "only the earlier runs whose compatibility fields all match" in history
+    assert "The store holds no request, expected, label, or holdout data." in history
+    assert f"At a streak of {STOP_AT}, the search stops" in stall and "never count toward the stall stop" in history
+    assert f"From a streak of {SHIFT_AT}" in exploration and "fewest attempts" in exploration
+    assert "lexical order" in exploration and "`@new-cli`" in exploration and "`focus_reason`" in exploration
+    assert "never bypasses validation" in exploration and "holdout" in exploration
