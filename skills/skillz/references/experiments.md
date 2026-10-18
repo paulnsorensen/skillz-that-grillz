@@ -122,7 +122,7 @@ A root must not hold a socket entry. A tree of more than 100000 entries is too l
 Home caches such as `~/.cache/ms-playwright` stay allowed.
 `--sandbox-seconds N` sets the time limit of one OS sandbox command, from 1 to 600. The default is 20.
 The Codex and command harnesses use a fixed limit of 20 seconds for helper fixtures and graders. The command harness kills the wrapper process group at that limit, and the wrapper request does not change. Its preflight isolation probe has a limit of 300 seconds, and a probe timeout fails preflight.
-A helper fixture that reaches the limit is a sandbox timeout. The contract check then runs once more at once. A second timeout rejects the candidate for the rest of the run with `rejection_kind: "timeout"`. A helper that exits 124 by itself is an ordinary fixture failure.
+A helper fixture that reaches the limit is a sandbox timeout. The contract check then runs once more at once. A second timeout rejects a search candidate for the rest of the run with `rejection_kind: "timeout"`. For the seed check, a holdout gate arm, or the replay, a second timeout stops the run, and a resume retries the check. A helper that exits 124 by itself is an ordinary fixture failure.
 A command or capture grader that reaches the limit scores as exit code 124. On the Codex and command harnesses, a grader must therefore finish within 20 seconds.
 Once any scored case uses a command or hybrid grader, this time applies to every evaluation.
 Parallel calls share it. The estimate and the holdout gate reserve include it.

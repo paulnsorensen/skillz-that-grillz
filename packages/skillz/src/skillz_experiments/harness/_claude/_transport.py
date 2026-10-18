@@ -679,8 +679,8 @@ class ClaudeCode:
 
         Return the exit code, the standard output, and the standard error.
 
-        A command that exceeds `seconds` (default `options.sandbox_seconds`) raises `SandboxTimeout`.
-        A run budget that ends the command raises `BudgetExhausted`.
+        A command that reaches the sandbox time limit, `seconds` (default `options.sandbox_seconds`), raises
+        `SandboxTimeout`. A run budget that ends the command raises `BudgetExhausted`.
         """
         system = "darwin" if sys.platform == "darwin" else "linux"
         name = "sandbox-exec" if system == "darwin" else "bwrap"

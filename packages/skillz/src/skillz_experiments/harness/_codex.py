@@ -341,7 +341,7 @@ class Codex:
         return discover(command, workspace, self._environment(workspace), min(30, self.budget.remaining()), skill)
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
-        """Run `argv` in the Codex sandbox. A run past `SANDBOX_SECONDS` raises `SandboxTimeout`."""
+        """Run `argv` in the Codex sandbox. A run that reaches the sandbox time limit raises `SandboxTimeout`."""
         safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
                 "TMPDIR=" + str(task_tmpdir(workspace)), "LANG=C.UTF-8"]
         command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
