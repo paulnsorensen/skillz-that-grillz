@@ -14,7 +14,7 @@ from skillz_experiments.run import _session
 from skillz_experiments.run import run
 from skillz_experiments.run._export import export, summary
 from skillz_experiments.search import _engine
-from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, Search, _seed_pass, _start  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
@@ -95,7 +95,8 @@ def test_more_than_half_failed_after_four_finished_stops_with_search_faulted(
 def test_five_consecutive_faults_stop_with_search_faulted_although_most_evaluations_scored(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     out, state, launch = _launch(tmp_path, make_target, write_draft, approvals)
-    state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if number > 8 else None
+    searched = _seed_pass(out) + 8
+    state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if number > searched else None
     with pytest.raises(CodedError) as caught:
         _ = launch()
     rows = _rows(out)
@@ -178,7 +179,8 @@ def test_a_candidate_with_no_scored_validation_outcome_is_not_selected_over_the_
 def _faulted_record(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> tuple[Path, Search, Launch, int]:
     """End a run `search-faulted`, then return it with the evaluation count at the stop."""
     out, state, launch = _launch(tmp_path, make_target, write_draft, approvals)
-    state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if number > 8 else None
+    searched = _seed_pass(out) + 8
+    state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if number > searched else None
     with pytest.raises(CodedError, match="rate-limited"):
         _ = launch()
     return out, state, launch, state.search_calls

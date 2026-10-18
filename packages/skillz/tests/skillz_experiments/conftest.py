@@ -21,7 +21,7 @@ from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import _options, _sandbox, _transport
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments.search import Edit
-from skillz_experiments.run import Stop, run
+from skillz_experiments.run import Stop, _session, run
 from skillz_experiments.run._session import Factory
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -115,6 +115,12 @@ def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return credential
 
 
+@pytest.fixture
+def headroom_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lift the headroom stop for a test whose fake provider scores every seed case at 1.0 and does not test the stop."""
+    monkeypatch.setattr(_session, "HEADROOM_CEILING", 1.1)
+
+
 def _make_target(tmp_path: Path, *, helper: bool = False) -> Path:
     """Copy the echo skill and give it a one-kind contract, so every drafted task case scores with `echo`."""
     target = tmp_path / "echo-skill"
@@ -191,8 +197,9 @@ def approvals() -> Callable[..., tuple[str, int]]:
 
 
 @pytest.fixture
-def approved_run() -> Callable[..., dict[str, object]]:
-    """Hand the `run` test helper `approved_run` to a test."""
+def approved_run(headroom_off: None) -> Callable[..., dict[str, object]]:
+    """Hand the `run` test helper `approved_run` to a test. Its fake providers score every seed case at 1.0."""
+    del headroom_off
     return _approved_run
 
 
@@ -216,8 +223,9 @@ class JudgedRun(NamedTuple):
 
 
 @pytest.fixture
-def judged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> JudgedRun:
+def judged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, headroom_off: None) -> JudgedRun:
     """Hand a `JudgedRun` to a test. Write `mode` into `settings` to change how the wrapper answers."""
+    del headroom_off
     wrapper = tmp_path / "wrapper.py"
     _ = shutil.copyfile(FIXTURES / "command_wrapper.py", wrapper)
     settings = tmp_path / "settings.json"

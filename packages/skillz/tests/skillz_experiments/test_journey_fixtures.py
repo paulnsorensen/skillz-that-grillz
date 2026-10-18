@@ -321,7 +321,7 @@ def start(tmp_path: Path, max_turns: int) -> tuple[Path, Path, str, Callable[...
 
 
 def test_journey_budget_estimate_shows_a_separate_journey_line_and_asks_once(tmp_path: Path) -> None:
-    target, out, approved, factory, _ = start(tmp_path, 8)
+    target, out, approved, factory, _ = start(tmp_path, 7)
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved)
     assert asked.value.code == "budget-unapproved"
@@ -416,7 +416,7 @@ def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_
     assert plan.sized.journey
     sandbox = command_seconds(contract, cases, ClaudeOptions())
     at_maximum = plan_run(6, 6, 6, journey_cost, 2, sandbox, journey=True)
-    at_mean = plan_run(6, 6, 6, mean, 2, sandbox, journey=True, holdout_costs=holdout)
+    at_mean = plan_run(6, 6, 6, mean, 2, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
     assert plan == at_mean and 1 < mean < journey_cost
     assert plan.sized.calls < at_maximum.sized.calls and plan.holdout_calls < at_maximum.holdout_calls
 
@@ -432,7 +432,7 @@ def test_at_three_repeats_the_mean_cost_plan_fits_while_the_journey_maximum_plan
     holdout = [journey_cost] + [task_cost] * 5
     sandbox = command_seconds(contract, cases, ClaudeOptions())
     plan = size_plan(contract, cases, 3, ClaudeOptions())
-    assert plan == plan_run(6, 6, 6, mean, 3, sandbox, journey=True, holdout_costs=holdout)
+    assert plan == plan_run(6, 6, 6, mean, 3, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
     with pytest.raises(Stop, match="too few calls"):
         _ = plan_run(6, 6, 6, journey_cost, 3, sandbox, journey=True)
 

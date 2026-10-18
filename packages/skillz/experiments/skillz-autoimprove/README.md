@@ -46,9 +46,10 @@ The exported patch uses the same paths as `skills/skillz`.
 
 Each family sets the agent turns that its flow needs: 3 for `unsafe-out` and `just-run`, 4 for the others.
 A journey costs at most `max_turns * 2 + 1` calls: agent turns, simulator replies, and one judge call.
-At `--repeats 2`, the estimate is 733 calls and about 6.3 hours.
-The estimate includes 51 search metric calls (460 calls, enough for 8 proposals) and 48 replay calls.
-`test_skillz_autoimprove_journeys.py` pins the call count of 733.
+At `--repeats 2`, the estimate is 781 calls and about 6.7 hours.
+The estimate includes 51 search metric calls (460 calls, enough for 8 proposals), 48 replay calls, and 48 headroom calls.
+The headroom calls score the seed once on each of the 6 train cases. The run stops with `cases-too-easy` when the seed already scores 0.9 on a family.
+`test_skillz_autoimprove_journeys.py` pins the call count of 781.
 
 ## Known gaps
 

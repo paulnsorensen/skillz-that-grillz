@@ -13,7 +13,7 @@ from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments._contract import Contract
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics
 from skillz_experiments.harness import CONFIGURED_SELECTIONS, NONO_REMOVED, ClaudeOptions, stop_kind
-from skillz_experiments.run._session import HarnessName, judge_flag, text_field
+from skillz_experiments.run._session import HarnessName, judge_flag, text_field, too_easy_message
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit
 
@@ -73,6 +73,16 @@ def refuse_terminated(record: dict[str, object]) -> None:
     if stop_kind(stopped) == "terminal":
         raise Stop("run-terminated", f"the run stopped with {stopped}; start a new run directory",
                    {"next": "start a new run in a new directory", "failure_code": stopped})
+
+
+def refuse_too_easy(record: dict[str, object]) -> None:
+    """Raise the `cases-too-easy` stop of the headroom pass again from the record. The stop makes no model call.
+
+    The text comes from the headroom block, not from `failure`, so a run that died before it recorded `failure` still resumes.
+    """
+    headroom = record.get("headroom")
+    if isinstance(headroom, dict) and cast(dict[str, object], headroom).get("verdict") == "too-easy":
+        raise CodedError("cases-too-easy", too_easy_message(cast(dict[str, object], headroom)))
 
 
 def open_lock(out: Path) -> TextIO:

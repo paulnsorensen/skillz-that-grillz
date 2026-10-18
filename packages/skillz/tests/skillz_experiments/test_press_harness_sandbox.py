@@ -478,6 +478,7 @@ def test_commandRole_sandboxProbeFailure_leavesZeroTaskCalls(
     assert read(out / 'run.json')['phase'] == 'prepared'
 
 
+@pytest.mark.usefixtures('headroom_off')
 def test_commandRole_neverRunsDoctorEvenWhenClaudeAndCodexAreAbsent(
         tmp_path: Path, target: Path, write_draft: Callable[..., list[str]], capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch) -> None:

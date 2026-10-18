@@ -921,7 +921,7 @@ def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reser
 
 def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:
     plain = plan_run(30, 30, 6, 1, 3)
-    shrunk = [plan_run(30, 30, 6, 1, 3, seconds) for seconds in (20, 60, 100)]
+    shrunk = [plan_run(30, 30, 6, 1, 3, seconds) for seconds in (30, 40, 60)]
     assert all(plan.sized.seconds <= APPROVED_SECONDS for plan in shrunk)
     assert shrunk[0].metric_calls < plain.metric_calls and shrunk[2].metric_calls < shrunk[0].metric_calls
     with pytest.raises(Stop, match="sandbox time alone need") as caught:
@@ -978,7 +978,8 @@ def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_cl
         _ = run(target, out, MODEL, configuration=configuration, approve_cases=case_hash)
     assert budget.value.code == "budget-unapproved" and "claude_options" not in budget.value.data
     estimate = cast(dict[str, int], budget.value.data["estimate"])
-    evaluations = (estimate["metric_calls"] + 2 * estimate["holdout_cases"] * estimate["repeats"]
+    headroom = cast(dict[str, int], cast(dict[str, object], budget.value.data["estimate"])["headroom"])
+    evaluations = (estimate["metric_calls"] + headroom["outcomes"] + 2 * estimate["holdout_cases"] * estimate["repeats"]
                    + 2 * HOLDOUT_RETRIES_PER_ARM + estimate["holdout_cases"])
     assert estimate["sandbox_seconds"] == math.ceil(evaluations * 100 / MAX_CONCURRENT_CALLS)
 

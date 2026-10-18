@@ -79,9 +79,9 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (733, 51, 210, 48, 258)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (781, 51, 210, 48, 258)
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
-    assert plan.sized.seconds == 22820
+    assert plan.sized.seconds == 24320
 
 
 SEED_EVALUATIONS = 9
@@ -273,4 +273,4 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     assert {case.identifier: case.split for case in cases} == base
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (733, 51, 210, 48, 22820)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (781, 51, 210, 48, 24320)
