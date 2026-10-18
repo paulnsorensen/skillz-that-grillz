@@ -20,7 +20,7 @@ from skillz_experiments._contract import resolve
 from skillz_experiments.harness._discovery import discover
 from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._redact import redact
-from skillz_experiments.evaluation import CheckMemo, answer_schema, evaluate
+from skillz_experiments.evaluation import CheckMemo, CheckResult, answer_schema, evaluate
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import halve_call_slots, model_call, process, reset_call_slots
 from skillz_experiments.harness._check import Check, credential_row, failed
@@ -171,7 +171,6 @@ def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> li
 class Codex:
     claude_sandbox: ClassVar[bool] = False
     refuses_claude_options: ClassVar[bool] = True
-    rejection: str | None = None
     role: str = "task"
 
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
@@ -371,16 +370,14 @@ class Codex:
         """Codex has no name collision to check."""
         del candidate
 
-    def check_candidate(self, candidate: Candidate) -> bool:
-        self.rejection = None
+    def check_candidate(self, candidate: Candidate) -> CheckResult:
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             rules = resolve(candidate.contract)
             candidate.materialize(workspace / ".agents/skills" / rules.skill)
             if not self._discover(workspace, rules.skill):
-                return False
-            self.rejection = helper_failure(self, workspace, rules)
-            return self.rejection is None
+                return CheckResult(False, None, "fail")
+            return helper_failure(self, workspace, rules)
 
     def evaluate(self, candidate: Candidate, case: Case, *, checks: CheckMemo, holdout: bool = False) -> dict[str, object]:
         return evaluate(self, self, candidate, case, holdout=holdout, checks=checks)

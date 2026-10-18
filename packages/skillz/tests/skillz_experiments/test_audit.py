@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from skillz_experiments.evaluation import CheckMemo
+from skillz_experiments.evaluation import CheckMemo, CheckResult
 
 import json
 from pathlib import Path
@@ -53,8 +53,9 @@ def controlled_adapter(monkeypatch: pytest.MonkeyPatch, answers: list[dict[str, 
     adapter.budget = Budget(40, 2400, reserve=12)
     adapter.model = "controlled"
 
-    def check(self: Codex, candidate: Candidate) -> bool:
-        return self.model == "controlled" and "SKILL.md" in candidate.files
+    def check(self: Codex, candidate: Candidate) -> CheckResult:
+        passed = self.model == "controlled" and "SKILL.md" in candidate.files
+        return CheckResult(True, None, "pass") if passed else CheckResult(False, None, "fail")
 
     def invoke(self: Codex, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

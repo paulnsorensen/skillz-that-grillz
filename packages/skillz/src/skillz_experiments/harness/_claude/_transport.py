@@ -17,7 +17,7 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import Case, CodedError, digest, relative, string
 from skillz_experiments._contract import resolve, Surface
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments.evaluation import answer_schema, Reply, Transcript
+from skillz_experiments.evaluation import answer_schema, CheckResult, Reply, Transcript
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._redact import write_transcript
@@ -160,7 +160,6 @@ def _take_stderr(capture: Path) -> str:
 class ClaudeCode:
     claude_sandbox: ClassVar[bool] = True
     refuses_claude_options: ClassVar[bool] = False
-    rejection: str | None = None
     role: str = "task"
 
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
@@ -707,8 +706,7 @@ class ClaudeCode:
             if capture is not None:
                 remove_tree(capture)
 
-    def check_candidate(self, candidate: Candidate) -> bool:
-        self.rejection = None
+    def check_candidate(self, candidate: Candidate) -> CheckResult:
         self.check_name(candidate)
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
@@ -717,9 +715,8 @@ class ClaudeCode:
             candidate.materialize(root)
             skill_file = root / "SKILL.md"
             if not skill_file.is_file() or not declares(skill_file.read_text(), rules.skill):
-                return False
-            self.rejection = helper_failure(self, workspace, rules)
-            return self.rejection is None
+                return CheckResult(False, None, "fail")
+            return helper_failure(self, workspace, rules)
 
 
 APPARMOR_SYSCTL = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")

@@ -13,7 +13,7 @@ from skillz_experiments._candidate import Candidate, helper_script, make_workspa
 from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments.evaluation import answer_schema
+from skillz_experiments.evaluation import CheckResult, answer_schema
 from skillz_experiments._protocol import LEDGER_KEY, RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._budget import Budget
 from skillz_experiments._runtime import model_call, process
@@ -124,7 +124,6 @@ def _failure(stderr: str) -> str:
 class Command:
     claude_sandbox: ClassVar[bool] = False
     refuses_claude_options: ClassVar[bool] = False
-    rejection: str | None = None
     role: str = "task"
 
     def __init__(self, command: tuple[str, ...], model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
@@ -222,16 +221,14 @@ class Command:
         return {"adapter": "command", "model": self.model, "isolation": "passed", "isolation_scope": "sandbox operation",
                 "live_calls": 0}
 
-    def check_candidate(self, candidate: Candidate) -> bool:
-        self.rejection = None
+    def check_candidate(self, candidate: Candidate) -> CheckResult:
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             rules = resolve(candidate.contract)
             candidate.materialize(workspace / ".agents/skills" / rules.skill)
             if not self._discover(workspace, rules.skill):
-                return False
-            self.rejection = helper_failure(self, workspace, rules)
-            return self.rejection is None
+                return CheckResult(False, None, "fail")
+            return helper_failure(self, workspace, rules)
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

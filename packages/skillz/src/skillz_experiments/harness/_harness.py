@@ -9,7 +9,7 @@ from typing import cast, final
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments._contract import Surface
-from skillz_experiments.evaluation import CheckMemo, evaluate
+from skillz_experiments.evaluation import CheckMemo, CheckResult, evaluate
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, ClaudeLogin, ClaudeOptions,
@@ -210,15 +210,10 @@ class Harness:
         self._unchanged()
         self.transports["task"].check_name(candidate)
 
-    def check_candidate(self, candidate: Candidate) -> bool:
+    def check_candidate(self, candidate: Candidate) -> CheckResult:
         """Run the local contract check of the task role. It makes no model call."""
         self._unchanged()
         return self.transports["task"].check_candidate(candidate)
-
-    @property
-    def rejection(self) -> str | None:
-        """Return why the last `check_candidate` call failed, when the task transport says so."""
-        return self.transports["task"].rejection
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: CheckMemo) -> dict[str, object]:

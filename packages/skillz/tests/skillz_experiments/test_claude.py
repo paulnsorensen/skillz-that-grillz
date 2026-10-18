@@ -20,6 +20,7 @@ from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
 from skillz_experiments.harness._claude import _constants, _events, _options, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
+from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
 from skillz_experiments._cases import CodedError, digest, mapping
 from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
@@ -945,9 +946,9 @@ def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter
     broken = Candidate({"SKILL.md": "---\nname: echo-skill\n---\n"}, ("SKILL.md",), contract=good.contract)
     quoted = Candidate({"SKILL.md": '---\nname: "echo-skill"\ndescription: x\n---\n'}, ("SKILL.md",), contract=good.contract)
     try:
-        assert adapter.check_candidate(good)
-        assert not adapter.check_candidate(broken)
-        assert adapter.check_candidate(quoted)
+        assert adapter.check_candidate(good).passed
+        assert adapter.check_candidate(broken) == CheckResult(False, None, "fail")
+        assert adapter.check_candidate(quoted).passed
     finally:
         session.close()
 
@@ -969,7 +970,7 @@ def test_nested_helper_fixture_runs_through_claude_adapter(tmp_path: Path, monke
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     adapter = harness(tmp_path, fake_claude(tmp_path))
     try:
-        assert adapter.transports["task"].check_candidate(candidate)
+        assert adapter.transports["task"].check_candidate(candidate).passed
     finally:
         adapter.close()
 
@@ -984,6 +985,7 @@ def _failing_helper_candidate() -> Candidate:
                       "scripts/echo.py": "print(1)\n"}, ("SKILL.md", "scripts/echo.py"), contract)
 
 
+@pytest.mark.ac("gh-312:AC-1")
 @pytest.mark.parametrize(("stderr", "accepted"), [('{"error": "echo: bad", "exit_code": 3}', True), ("", False),
                                                   ('{"error": "echo: other", "exit_code": 3}', False)])
 def test_check_candidate_compares_the_helper_stderr_with_the_fixture_error(
@@ -995,7 +997,9 @@ def test_check_candidate_compares_the_helper_stderr_with_the_fixture_error(
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     adapter = harness(tmp_path, fake_claude(tmp_path))
     try:
-        assert adapter.transports["task"].check_candidate(_failing_helper_candidate()) is accepted
+        result = adapter.transports["task"].check_candidate(_failing_helper_candidate())
+        assert result == (CheckResult(True, None, "pass") if accepted
+                          else CheckResult(False, "helper fixture 0 fails on stderr", "fail"))
     finally:
         adapter.close()
 
@@ -1007,7 +1011,7 @@ def test_check_candidate_rejects_a_skill_that_declares_hooks(tmp_path: Path) -> 
     hooked = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nhooks:\n  PreToolUse: []\n---\n"},
                        ("SKILL.md",), contract=good.contract)
     try:
-        assert not adapter.check_candidate(hooked)
+        assert not adapter.check_candidate(hooked).passed
     finally:
         session.close()
 
@@ -1022,7 +1026,7 @@ def test_check_candidate_rejects_hidden_forms_of_unsupported_frontmatter_keys(tm
     hooked = Candidate({"SKILL.md": f"---\nname: echo-skill\ndescription: x\n{extra}\n  x: y\n---\n"},
                        ("SKILL.md",), contract=good.contract)
     try:
-        assert not adapter.check_candidate(hooked)
+        assert not adapter.check_candidate(hooked).passed
     finally:
         session.close()
 
@@ -1036,8 +1040,8 @@ def test_check_candidate_reads_the_frontmatter_end_as_a_line_and_allows_nested_h
     nested = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nmetadata:\n  hooks: x\n---\n"},
                        ("SKILL.md",), contract=good.contract)
     try:
-        assert not adapter.check_candidate(inline)
-        assert adapter.check_candidate(nested)
+        assert not adapter.check_candidate(inline).passed
+        assert adapter.check_candidate(nested).passed
     finally:
         session.close()
 

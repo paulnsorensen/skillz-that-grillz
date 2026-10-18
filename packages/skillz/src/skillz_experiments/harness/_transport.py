@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
 from skillz_experiments._budget import Budget
+from skillz_experiments.evaluation import CheckResult
 from skillz_experiments.harness._check import Check
 
 if TYPE_CHECKING:
@@ -27,7 +28,6 @@ class Transport(Protocol):
     refuses_claude_options: ClassVar[bool]
 
     budget: Budget
-    rejection: str | None
     # The run role that this adapter serves. The harness sets it, and each claimed call and its seconds count under it.
     role: str
 
@@ -58,6 +58,6 @@ class Transport(Protocol):
         ...
 
     def check_name(self, candidate: Candidate) -> None: ...
-    def check_candidate(self, candidate: Candidate) -> bool: ...
+    def check_candidate(self, candidate: Candidate) -> CheckResult: ...
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...

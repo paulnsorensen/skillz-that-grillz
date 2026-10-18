@@ -27,7 +27,7 @@ from skillz_experiments._budget import (
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
-from skillz_experiments.evaluation import CheckMemo, task_tokens
+from skillz_experiments.evaluation import CheckMemo, CheckResult, task_tokens
 from skillz_experiments._records import open_record, read, write
 from skillz_experiments._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics, Verdict, close, holdout_deltas
@@ -206,10 +206,7 @@ class _Provider(Protocol):
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
     def check_name(self, candidate: Candidate) -> None: ...
-    def check_candidate(self, candidate: Candidate) -> bool: ...
-
-    @property
-    def rejection(self) -> str | None: ...
+    def check_candidate(self, candidate: Candidate) -> CheckResult: ...
 
 
 Factory = Callable[[str, Budget, Callable[[], None]], _Provider]
@@ -962,9 +959,9 @@ class Session:
 
     def check_seed(self) -> None:
         """Stop before any search call when the seed fails the local candidate contract check."""
-        passed, rejection = self._checks.check(self.provider, self.seed)
-        if not passed:
-            raise _baseline_rejected(rejection)
+        checked = self._checks.check(self.provider, self.seed)
+        if not checked.passed:
+            raise _baseline_rejected(checked.reason)
 
     def headroom(self) -> None:
         """Score the seed once on every train and validation case. Stop with `cases-too-easy` when a family is saturated.
