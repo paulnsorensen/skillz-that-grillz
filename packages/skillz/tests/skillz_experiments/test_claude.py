@@ -2465,5 +2465,5 @@ def test_the_transcript_redacts_the_whole_value_of_a_credential_named_key(tmp_pa
     path = tmp_path / "transcript.json"
     _redact.write_transcript(path, {"input": {"api_key": "abc123", "headers": {"Authorization": "xyz789"},
                                               "command": "ls"}})
-    document = json.loads(path.read_text(encoding="utf-8"))
+    document = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
     assert document == {"input": {"api_key": "[redacted]", "headers": {"Authorization": "[redacted]"}, "command": "ls"}}

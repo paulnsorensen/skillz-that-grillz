@@ -148,7 +148,8 @@ When the live preflight call returns and a preflight check then fails, the runne
 A call that times out or fails to run writes no transcript. Each preflight first removes an old transcript.
 The stop message names the file. `run.json` records the message in `failure`.
 If the file cannot be written, the stop keeps its code and the message says so.
-The file holds the role, the failure message, the final answer, and each tool use with its input, its full result text, and its error flag.
+The file holds the role, the failure message, the final answer, and each tool use.
+Each tool use keeps its input, its full result text, and its error flag.
 Each string passes through the shared redaction in `skillz_experiments/_redact.py`, which removes URLs and credential-like words and values.
 The whole value of a credential-named key, such as `api_key`, becomes `[redacted]`.
 The Codex and Gemini diagnostics use the same redaction.
