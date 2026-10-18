@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from support import (BUNDLE, CLI, FIXTURES, Scenario, approve_and_run, assert_promoted, call_cli, cli_error,
+from support import (BUNDLE, CLI, FIXTURES, Scenario, assert_promoted, call_cli, cli_error,
                      command_adapter, export_and_apply, make_scenario, make_vendor_bin, read_cases, read_events,
                      read_record, run_scenario, snapshot)
 

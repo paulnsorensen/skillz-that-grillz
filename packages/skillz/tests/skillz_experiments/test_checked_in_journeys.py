@@ -113,6 +113,7 @@ def test_both_files_seed_together_and_a_duplicate_id_across_them_stops(tmp_path:
         _ = seed_cases(target)
     assert duplicate.value.code == "evals-unreadable" and "duplicate case id 't'" in str(duplicate.value)
 
+
 @pytest.mark.ac("gh-369:AC-14")
 def test_coverage_stops_on_an_id_that_repeats_across_the_two_files(tmp_path: Path, make_target: Maker) -> None:
     target = make_target(tmp_path)
@@ -133,8 +134,29 @@ def test_a_journey_kind_on_a_harness_that_cannot_converse_stops_before_any_appro
     _draft(tmp_path, kept)
     with pytest.raises(CodedError) as caught:
         _ = run(target, tmp_path / "run", "local-test", adapter="codex", live=True)
-    assert caught.value.code == "journey-unsupported" and "--kind task" in str(caught.value)
+    assert caught.value.code == "journey-unsupported" and "--harness claude" in str(caught.value)
+    assert "--kind task" not in str(caught.value)
     assert not (tmp_path / "run/run.json").exists()
+
+
+@pytest.mark.ac("gh-369:AC-15")
+def test_a_journey_kind_with_only_task_cases_drafted_does_not_stop_as_journey_unsupported(
+        tmp_path: Path, make_target: Maker, write_draft: Callable[..., list[str]]) -> None:
+    target = make_target(tmp_path)
+    gate = target / "evals/gates/journey.py"
+    gate.parent.mkdir(parents=True)
+    _ = shutil.copyfile(CULTURE / "evals/gates/journey.py.fixture", gate)
+    contract_path = target / "evals/autoimprove.json"
+    contract = cast(dict[str, dict[str, object]], json.loads(contract_path.read_text(encoding="utf-8")))
+    contract["kinds"] = {"task": contract["kinds"]["echo"]}
+    contract["kinds"]["journey"] = {"grader": "journey", "gate": "evals/gates/journey.py", "rubric": "Score the transcript."}
+    _ = contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    _ = write_draft(tmp_path / "run")
+    with pytest.raises(Stop) as caught:
+        _ = run(target, tmp_path / "run", "local-test", adapter="codex", live=True)
+    assert caught.value.code == "cases-unapproved"
+
+
 @pytest.mark.ac("gh-369:AC-4")
 def test_an_easy_cheese_shaped_journeys_file_seeds_and_passes_intake_unchanged(tmp_path: Path) -> None:
     target = _stage(tmp_path / "target")

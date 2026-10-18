@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import cast
 
-from skillz_experiments._cases import JOURNEY_FIELDS, CodedError, journey_of, string, text_map
+from skillz_experiments._cases import JOURNEY_FIELDS, CodedError, journey_of, relative, string, text_map
 
 EVAL_KINDS = ("trigger", "near-miss", "task")
 SOURCES = ("skill", "session")
