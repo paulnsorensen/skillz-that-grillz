@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
-from skillz_experiments._cases import CodedError, digest, mapping, relative, string
+from skillz_experiments._cases import JOURNEY_EXPECTED_FIELDS, CodedError, digest, mapping, relative, string
 from skillz_experiments._gate_files import expand_gates
 from skillz_experiments.gate import Statistics
 
@@ -104,6 +104,9 @@ class Contract:
 
     def grader_types(self) -> dict[str, str]:
         return {kind: grader.type for kind, grader in self.kinds.items()}
+
+    def journey_kinds(self) -> tuple[str, ...]:
+        return tuple(kind for kind, grader in self.kinds.items() if grader.type == "journey")
 
     def judged(self, kind: str) -> bool:
         return self.grader(kind).type in JUDGED
@@ -325,9 +328,15 @@ def parse(value: object, source: str) -> Contract:
                         {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source, surface,
                         thresholds)
     for kind, grader in contract.kinds.items():
-        if (kind == "journey") != (grader.type == "journey"):
-            raise CodedError("contract-kinds", f"kind {kind} and the journey grader go together: the kind named "
-                             + "journey takes the journey grader, and no other kind does")
+        if kind == "journey" and grader.type != "journey":
+            raise CodedError("contract-kinds", "the kind named journey takes the journey grader; "
+                             + "name another kind to use a different grader")
+    for kind, grader in contract.kinds.items():
+        if grader.type == "journey":
+            unknown = sorted(set(re.findall(r"reference\.([a-z_]+)", grader.rubric)) - set(JOURNEY_EXPECTED_FIELDS))
+            if unknown:
+                raise CodedError("contract-rubric-field", f"kind {kind} rubric names reference.{unknown[0]}, which is not a "
+                                 + f"journey expected field; allowed fields: {', '.join(JOURNEY_EXPECTED_FIELDS)}")
     for label, names in ("editable", editable), ("helper", (helper.path,) if helper is not None else ()):
         for name in names:
             if contract.read_only(name):

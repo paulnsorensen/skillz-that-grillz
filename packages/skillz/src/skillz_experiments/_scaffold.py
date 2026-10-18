@@ -6,16 +6,18 @@ import os
 from importlib.resources import files
 from pathlib import Path
 
-from skillz_experiments._cases import CodedError
+from skillz_experiments._cases import JOURNEY_EXPECTED_FIELDS, CodedError
 from skillz_experiments._contract import LOCATION
 from skillz_experiments._intake import skill_frontmatter
 
 RUBRIC = ("Score the conversation from 0 to 100 against `reference`. The agent runs the {skill} skill for a user. "
           + "Start at 100. Subtract 20 for each item in `reference.must` that the transcript does not show. "
           + "Subtract 40 for each item in `reference.must_not` that the transcript shows. "
-          + "Subtract 20 when the agent asks a question that is not in `reference.questions`. Do not go below 0.")
-NEXT = ("Draft the journey cases in RUN/cases.draft.json: brief, max_turns, requirements, expected.must, "
-        + "expected.must_not, expected.questions. Then ask the user to approve the contract and set its status to approved.")
+          + "Subtract 20 when the agent asks a question that is not in `reference.questions`. "
+          + "Subtract 20 when the conversation does not end as `reference.final_stop` says. Do not go below 0.")
+NEXT = ("Draft the journey cases in RUN/cases.draft.json: brief, max_turns, requirements, "
+        + ", ".join(f"expected.{name}" for name in JOURNEY_EXPECTED_FIELDS)
+        + ". Then ask the user to approve the contract and set its status to approved.")
 GATE = "evals/gates/journey.py"
 
 

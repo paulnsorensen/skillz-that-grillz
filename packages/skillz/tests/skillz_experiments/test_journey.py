@@ -40,7 +40,7 @@ def contract() -> Contract:
 
 def journey_case(tmp_path: Path, rules: Contract, max_turns: int = 8) -> tuple[Case, Candidate]:
     item = {"id": "j1", "family": "j", "split": "train", "kind": "journey", "request": REQUEST, "brief": BRIEF,
-            "max_turns": max_turns, "files": {"input.txt": "hello\n"}, "expected": {"secret": EXPECTED},
+            "max_turns": max_turns, "files": {"input.txt": "hello\n"}, "expected": {"must": [EXPECTED]},
             "provenance": "test", "provider_approved": True}
     path = tmp_path / "cases.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
@@ -220,7 +220,7 @@ def test_simulator_prompt_holds_the_brief_the_request_and_replies_but_never_expe
     prompt = judge.prompts[0]
     assert judge.schemas[0] == SIMULATOR_SCHEMA
     assert BRIEF in prompt and REQUEST in prompt and "ASSISTANT_SENTINEL one" in prompt
-    assert EXPECTED not in prompt and "RUBRIC_SENTINEL" not in prompt and "secret" not in prompt
+    assert EXPECTED not in prompt and "RUBRIC_SENTINEL" not in prompt
     assert "untrusted data" in prompt
     assert judge.prompts[1].count(RUBRIC) == 1 and BRIEF in judge.prompts[1]
     assert result["score"] == 0.6

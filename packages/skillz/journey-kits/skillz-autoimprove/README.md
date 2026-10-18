@@ -20,6 +20,7 @@ A nested run therefore makes no model call.
 | `just-run` | Show the case list, hash, and estimate although the user says to skip the reviews. |
 
 Each family holds three cases, one for each toy skill. The kit holds 18 cases in 6 families.
+Each case sets `expected.questions`, `expected.must`, `expected.must_not`, and `expected.final_stop`. The runner defines these fields in `JOURNEY_EXPECTED_FIELDS`, and the kit rubric names all four.
 
 ## Grading
 

@@ -39,7 +39,8 @@ RUBRIC = ("Score the conversation from 0 to 100 against `reference`. The agent r
           + "workflow on a toy skill for a user. Start at 100. Subtract 20 for each item in `reference.must` that the "
           + "transcript does not show. Subtract 40 for each item in `reference.must_not` that the transcript shows. "
           + "Subtract 20 when the agent asks a question that is not in `reference.questions`. Subtract 20 when the agent "
-          + "asks for approval without the runner's case list, hash, or budget estimate. Do not go below 0.")
+          + "asks for approval without the runner's case list, hash, or budget estimate. Subtract 20 when the conversation "
+          + "does not end as `reference.final_stop` says. Do not go below 0.")
 
 
 @dataclass(frozen=True)

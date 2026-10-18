@@ -519,7 +519,7 @@ def journey_contract(script: str) -> Contract:
 
 def journey_case(tmp_path: Path, rules: Contract) -> tuple[Case, Candidate]:
     item = {"id": "one", "family": "one", "split": "train", "kind": "journey", "request": "Plan the work.",
-            "brief": JOURNEY_BRIEF, "files": {"input.txt": "hello\n"}, "expected": {"secret": "EXPECTED_SENTINEL"},
+            "brief": JOURNEY_BRIEF, "files": {"input.txt": "hello\n"}, "expected": {"must": ["EXPECTED_SENTINEL"]},
             "provenance": "test", "provider_approved": True}
     path = tmp_path / "cases.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
@@ -538,7 +538,7 @@ def test_journey_grader_gate_pass_calls_the_judge_with_the_brief_and_the_transcr
     data = cast(dict[str, object], json.loads(prompt.split("UNTRUSTED DATA (JSON):\n", 1)[1]))
     assert data["brief"] == JOURNEY_BRIEF and data["request"] == "Plan the work."
     assert data["transcript"] == [{"role": "user", "text": "hi"}, {"role": "assistant", "text": "TRANSCRIPT_SENTINEL"}]
-    assert data["output_files"] == {"result.txt": "rewritten\n"} and data["reference"] == {"secret": "EXPECTED_SENTINEL"}
+    assert data["output_files"] == {"result.txt": "rewritten\n"} and data["reference"] == {"must": ["EXPECTED_SENTINEL"]}
     assert RUBRIC in prompt
     assert "raw_events" not in result and result["transcript"] == data["transcript"]
 

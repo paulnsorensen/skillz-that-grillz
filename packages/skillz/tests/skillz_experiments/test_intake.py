@@ -98,7 +98,7 @@ def test_hash_mismatch_raises_cases_unapproved_and_writes_nothing(tmp_path: Path
 
 def test_too_few_families_names_the_minimum(tmp_path: Path) -> None:
     cases = load_draft(write_draft(tmp_path, draft(families=2)))
-    with pytest.raises(ValueError, match="at least 3 task families"):
+    with pytest.raises(ValueError, match="at least 3 families of task cases"):
         _ = split_cases(cases, 1)
 
 
@@ -217,7 +217,7 @@ def mixed(task_sizes: list[int], journey_sizes: list[int]) -> list[dict[str, obj
     for family, size in enumerate(journey_sizes):
         for index in range(size):
             cases.append({"id": f"j{family}-{index}", "family": f"journey{family}", "kind": "journey",
-                          "request": "Walk it", "files": {"input.txt": "x\n"}, "expected": "y", "source": "skill", "brief": "Ask first."})
+                          "request": "Walk it", "files": {"input.txt": "x\n"}, "expected": {"must": ["y"]}, "source": "skill", "brief": "Ask first."})
     return cases
 
 
@@ -232,7 +232,7 @@ def test_journey_families_do_not_count_toward_the_scored_task_holdout(tmp_path: 
 
 def test_a_draft_with_too_few_task_families_stops_even_when_journey_families_fill_the_count(tmp_path: Path) -> None:
     cases = load_draft(write_draft(tmp_path, mixed([3, 3], [2, 2, 2])))
-    with pytest.raises(ValueError, match="at least 3 task families"):
+    with pytest.raises(ValueError, match="at least 3 families of task cases"):
         _ = split_cases(cases, 1)
 
 
@@ -260,16 +260,16 @@ def test_grading_kind_is_covered_by_the_hash_and_written_per_case(tmp_path: Path
 def journey_draft(**extra: object) -> list[dict[str, object]]:
     cases = draft()
     cases.append({"id": "j-1", "family": "f2", "kind": "journey", "request": "Start the interview",
-                  "files": {"input.txt": "hello\n"}, "expected": {"answer": "2"}, "source": "skill",
+                  "files": {"input.txt": "hello\n"}, "expected": {"must": ["2"]}, "source": "skill",
                   "brief": "You want a quiz app.", **extra})
     return cases
 
 
 def frozen_journey(tmp_path: Path, **extra: object) -> tuple[list[object], str]:
-    cases = split_cases(load_draft(write_draft(tmp_path, journey_draft(**extra))), 7)
+    cases = split_cases(load_draft(write_draft(tmp_path, journey_draft(**extra))), 7, "task", ["journey"])
     out = tmp_path / "cases.json"
     freeze(out, cases, 7, case_hash(cases, 7))
-    return cast(list[object], load_cases(out, {"task": "judge", "journey": "judge"})), case_hash(cases, 7)
+    return cast(list[object], load_cases(out, {"task": "judge", "journey": "journey"})), case_hash(cases, 7)
 
 
 def test_journey_case_loads_with_default_max_turns_and_frozen_fields(tmp_path: Path) -> None:

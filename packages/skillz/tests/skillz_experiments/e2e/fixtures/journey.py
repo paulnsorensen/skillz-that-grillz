@@ -69,14 +69,14 @@ def judge(prompt: str, fields: list[str]) -> dict[str, int]:
     if fields != ["score_percent"]:
         raise ValueError("unexpected judge schema")
     data = untrusted_payload(prompt)
-    reference = cast(dict[str, str], data["reference"])
+    reference = cast(dict[str, list[str]], data["reference"])
     files = cast(dict[str, str], data["output_files"])
     transcript = cast(list[dict[str, str]], data["transcript"])
     topic = cast(dict[str, str], data["files"])["question.txt"].strip()
     asked = any(row["role"] == "assistant" and row["text"] == f"Which {topic} should I transform?"
                 for row in transcript)
     answered = any(row["role"] == "user" and row["text"].startswith("Value: ") for row in transcript)
-    return {"score_percent": 100 if asked and answered and files.get("output/result.txt") == reference["text"] else 0}
+    return {"score_percent": 100 if asked and answered and files.get("output/result.txt") == reference["must"][0] else 0}
 
 
 def grade() -> None:

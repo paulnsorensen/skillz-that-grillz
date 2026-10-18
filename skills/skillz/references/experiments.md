@@ -108,6 +108,11 @@ A resume without `--edit` keeps the mode of the first run.
 `--edit prose` changes only Markdown files.
 A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 `--repeats` sets the repeats for each holdout case. The default is 3.
+`--kind KIND` picks a scored kind. Repeat it for more kinds. Each kind must be declared and not graded by `audit`.
+Without `--kind`, the kind that drives the split is `task` when the contract declares it. Otherwise it is all journey kinds, or the single kind.
+Without `--kind`, a default run also evaluates the other journey kinds. Journey cases take a seeded split and do not size the task holdout.
+With `--kind`, a drafted case of an unselected kind shows as `not scored` in the question and stays out of `cases.json` `cases`.
+The first run freezes the choice, and a resume ignores `--kind`.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
 `--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
@@ -201,12 +206,15 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
 | `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
-| `contract-kinds` | The skill contract has no `task` kind and more than one kind, or the `journey` kind and the `journey` grader are not paired. | Read `The autoimprove contract` and `Journeys` below. |
+| `contract-kinds` | The skill contract has no `task` kind, is not all journey kinds, and has more than one kind, so `--kind` is needed. Or `--kind` names an undeclared kind. Or the kind named `journey` does not use the `journey` grader. | Pass `--kind KIND`, or read `The autoimprove contract` and `Journeys` below. |
 | `brief-missing` | A journey case has no nonempty `brief`. | Add the brief to the case, then run again. |
 | `contract-surface` | The contract `surface` block is malformed, or `editable` names the MCP config, an agent, or a companion file. An agent file also needs a frontmatter `name` equal to its file stem. A candidate also stops when it changes the MCP config text or an agent name. | Fix the surface or `editable` in the contract, or fix the agent name. Then run again. |
 | `contract-surface-missing` | A file that the `surface` block names is missing from the skill, or the MCP config is not a JSON object with an `mcpServers` object. | Restore the file or fix the contract, then run again. |
 | `contract-surface-unsupported` | The contract declares a `surface`, and the task role is not the Claude harness. | Run with `--harness claude`, or remove the `surface` block. |
 | `journey-unsupported` | A journey case needs a task transport that holds a conversation, and the transport cannot. | Run with `--harness claude`, or remove the journey cases. |
+| `journey-expected-invalid` | A journey `expected` is not an object, holds a key other than `must`, `must_not`, `questions`, and `final_stop`, holds a wrong type, an empty or repeated entry, or has neither a nonempty `must` nor a nonempty `must_not`. A frozen case of an older run can trigger it on resume. | Fix the case. For an older run, start a new run directory. |
+| `expected-missing` | A journey case has no `expected`. | Add the `expected` object. |
+| `contract-rubric-field` | The rubric of a `journey` kind names `reference.<name>` for a name that is not an `expected` field. | Use `must`, `must_not`, `questions`, or `final_stop`. |
 | `contract-unapproved` | The skill contract has `status` `draft`. | Ask the user to approve the contract, then set `approved`. |
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
@@ -304,11 +312,15 @@ Write each journey case with these fields:
 - `brief`: the user goal and the facts that the simulated user may share. Only the simulator sees it.
   Hold back one fact. The agent must ask for it.
 - `max_turns`: the agent turns that the flow needs. A journey costs at most `max_turns * 2 + 1` calls.
-- `requirements`: optional requirement IDs that the case covers.
+- `requirements`: optional, unique nonempty IDs. Each ID is a trace label into a behavior table. The case hash covers them. Search and the report do not read them.
+- `expected`: a closed object. Any other key stops with `journey-expected-invalid`. Give at least one nonempty `must` or `must_not`. Each list holds unique nonempty text.
 - `expected.must`: what the transcript must show, one observable item each.
 - `expected.must_not`: what the transcript must not show, such as a self-approval or an edit of the target.
-- `expected.questions`: the only questions that the agent may ask. The rubric subtracts points for any other question.
-- `expected.final_stop`: optional. The stop or state in which the journey must end.
+- `expected.questions`: optional. The only questions that the agent may ask. The rubric subtracts points for any other question. An empty list means the agent asks nothing. When absent, any question is allowed.
+- `expected.final_stop`: optional nonempty text. The stop or state in which the journey must end.
+
+The runner adds the meaning of each `reference` field to the judge prompt. A rubric may name only `reference.must`, `reference.must_not`, `reference.questions`, and `reference.final_stop`. Any other `reference.<name>` stops with `contract-rubric-field`.
+A journey case may omit `files`.
 
 Make the cases hard. A family that the seed already passes adds no signal.
 Give each family one trap:
@@ -806,7 +818,8 @@ The contract has these fields:
 - `surface` (optional): the tool surface of the task role. See "Journeys".
 - `statistics` (optional): promotion thresholds for the holdout gate. See "Set promotion thresholds".
 
-A run needs a contract with a `task` kind or with exactly one kind. Otherwise it stops with `contract-kinds`.
+A run scores the kinds that `--kind` names. Without `--kind` the split-driving kind is `task` when declared, else all journey kinds, else the single kind. Journey cases of the other journey kinds are still evaluated. Otherwise it stops with `contract-kinds` and asks for `--kind`.
+A `--kind` selection may name at most one kind that does not use the journey grader.
 It stops with `contract-unapproved` when `status` is `draft`.
 Unknown fields and malformed values stop the run.
 
@@ -923,12 +936,13 @@ Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the jud
 A journey case tests a skill that asks the user questions across several turns.
 A simulator role plays the user. The task role runs one conversation per journey.
 
-A journey case has `kind: journey`. It also needs `files` and `expected`, like a task case.
+A journey case has a kind that uses the `journey` grader. It also needs `expected`. Unlike a task case, it may omit `files`.
 It has these extra fields:
 
 - `brief` (required): the user goal and the facts the simulator may share. Only the simulator sees it. The agent never sees it.
 - `max_turns` (optional): the turn limit. The default is 8.
-- `requirements` (optional): requirement IDs. The case hash covers them.
+- `requirements` (optional): unique nonempty requirement IDs. They are trace labels. The case hash covers them.
+- `expected` (required): an object with `must`, `must_not`, `questions`, and `final_stop`. See `Draft journeys` for the rules.
 
 A contract declares the tool surface in a `surface` block. Every field is optional:
 
@@ -946,7 +960,7 @@ The surface joins the environment reuse key.
 MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
 The MCP config holds commands that the host runs, so search never edits it.
 
-The kind named `journey` takes the `journey` grader, and no other kind does. Any other pairing stops with `contract-kinds`.
+Any kind that uses the `journey` grader is a journey kind, and its name is free (for example `journey` and `journey-review`). Each kind keeps its own gate and rubric, and each case is graded by its own kind. The kind named exactly `journey` must use the `journey` grader, or the contract stops with `contract-kinds`.
 
 The `journey` grader runs a command gate first.
 The gate sees the case fixtures at the root, the agent files under `output/`, and the raw events in `trace/events.jsonl`.
