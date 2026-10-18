@@ -92,7 +92,7 @@ def test_lenient_reader_rejects_a_name_that_equals_a_resolved_id() -> None:
     assert errors == ["evals[1]: duplicate case id 'eval-1'"]
 
 
-@pytest.mark.ac("gh-366:AC-4")
+@pytest.mark.ac("gh-366:AC-9")
 def test_lenient_reader_ignores_an_invalid_id_when_the_entry_has_a_name() -> None:
     named = {"name": "a", "prompt": "p", "expected_output": "e"}
     assert _lenient({**named, "id": "bad id!"}, {**named, "name": "b", "id": "bad id!"}) == ([], ["a", "b"])
