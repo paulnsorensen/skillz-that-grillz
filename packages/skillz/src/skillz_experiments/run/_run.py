@@ -32,7 +32,7 @@ from skillz_experiments._intake import (
     split_cases,
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
-from skillz_experiments._seed import check_coverage, seed_cases
+from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_summary
 from skillz_experiments._wedge_targets import TargetPlan, plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
@@ -102,10 +102,15 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         if report is not None and not report["ok"]:
             raise Stop("host-not-ready", "fix each failed host check, then call run again; no model call ran", report)
         data: dict[str, object] = {"draft": str(draft), "facts": skill_facts(target)}
+        seed_file = out / SEED_NAME
+        # Remove an old seed first, so a skill that lost or broke its evals.json leaves no stale seed file.
+        seed_file.unlink(missing_ok=True)
         seeded = seed_cases(target)
         if seeded is not None:
-            data["seed_cases"] = seeded
-        raise Stop("cases-missing", f"write the case draft to {draft}, then call run again",
+            write(seed_file, seeded)
+            data |= {"seed_file": str(seed_file), "seed_summary": seed_summary(seeded)}
+        start = "" if seeded is None else f", starting from the seed cases in {seed_file}"
+        raise Stop("cases-missing", f"write the case draft to {draft}{start}, then call run again",
                    data | ({"doctor": report} if report else {}))
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)

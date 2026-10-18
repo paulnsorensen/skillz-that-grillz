@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -37,7 +38,7 @@ def _stop(target: Path, tmp_path: Path) -> Stop:
 def _seed_cases(target: Path, tmp_path: Path) -> list[dict[str, object]]:
     stop = _stop(target, tmp_path)
     assert stop.code == "cases-missing"
-    return cast(list[dict[str, object]], stop.data["seed_cases"])
+    return cast(list[dict[str, object]], json.loads(Path(cast(str, stop.data["seed_file"])).read_text(encoding="utf-8")))
 
 
 def _unreadable(target: Path, tmp_path: Path) -> CodedError:
@@ -100,10 +101,51 @@ def test_the_repository_skill_seed_loads_as_a_draft(tmp_path: Path) -> None:
     assert [case.identifier for case in load_draft(path)] == [case["id"] for case in seed]
 
 
-def test_no_evals_file_keeps_the_old_stop(tmp_path: Path, make_target: Maker) -> None:
-    stop = _stop(make_target(tmp_path), tmp_path)
-    assert stop.code == "cases-missing" and "seed_cases" not in stop.data and "facts" in stop.data
+@pytest.mark.ac("gh-296:AC-1")
+@pytest.mark.ac("gh-296:AC-2")
+def test_the_stop_names_the_seed_file_and_shows_only_counts(tmp_path: Path, make_target: Maker) -> None:
+    target = make_target(tmp_path)
+    (target / "evals/files").mkdir()
+    _ = (target / "evals/files/a.md").write_text("fixture-body-" + "x" * 4000 + "\n", encoding="utf-8")
+    _evals(target, [
+        _entry("one", assertions=["a"], files=["evals/files/a.md"], family="billing"),
+        _entry("two", assertions=["b"], files=["evals/files/a.md"], family="billing"),
+        _entry("trig"),
+        _entry("miss", expected_skill=None),
+    ])
+    stop = _stop(target, tmp_path)
+    shown = json.dumps(stop.data)
+    assert stop.code == "cases-missing" and "fixture-body-" not in shown and "seed_cases" not in stop.data
+    assert len(shown) < 2000
+    seed = tmp_path / "run/cases.seed.json"
+    assert stop.data["seed_file"] == str(seed) and str(seed) in str(stop)
+    assert stat.S_IMODE(seed.stat().st_mode) == 0o600
+    assert json.loads(seed.read_text(encoding="utf-8")) == seed_cases(target)
+    assert stop.data["seed_summary"] == {"cases": 4, "kinds": {"near-miss": 1, "task": 2, "trigger": 1},
+                                         "families": {"billing": 2, "miss": 1, "trig": 1}}
     assert not (tmp_path / "run/cases.draft.json").exists()
+
+
+@pytest.mark.ac("gh-296:AC-3")
+def test_no_evals_file_keeps_the_old_stop_and_removes_a_stale_seed(tmp_path: Path, make_target: Maker) -> None:
+    (tmp_path / "run").mkdir(mode=0o700)
+    _ = (tmp_path / "run/cases.seed.json").write_text("[]", encoding="utf-8")
+    stop = _stop(make_target(tmp_path), tmp_path)
+    assert stop.code == "cases-missing" and "facts" in stop.data
+    assert "seed_file" not in stop.data and "seed_summary" not in stop.data
+    assert not (tmp_path / "run/cases.seed.json").exists()
+    assert not (tmp_path / "run/cases.draft.json").exists()
+
+
+@pytest.mark.ac("gh-296:AC-3")
+def test_an_unreadable_evals_file_removes_a_stale_seed(tmp_path: Path, make_target: Maker) -> None:
+    target = make_target(tmp_path)
+    _evals(target, [_entry("a")])
+    seed = _seed_cases(target, tmp_path)
+    assert seed and (tmp_path / "run/cases.seed.json").exists()
+    _ = (target / "evals/evals.json").write_text("{not json")
+    _ = _unreadable(target, tmp_path)
+    assert not (tmp_path / "run/cases.seed.json").exists()
 
 
 def test_the_runner_never_writes_the_draft(tmp_path: Path, make_target: Maker) -> None:
