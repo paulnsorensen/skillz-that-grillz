@@ -162,7 +162,7 @@ def test_without_kind_journey_families_do_not_pad_the_task_minimum(tmp_path: Pat
     items = [*tasks(2), *journeys("journey", "j", 3)]
     path = tmp_path / "cases.draft.json"
     _ = path.write_text(json.dumps(items))
-    with pytest.raises(ValueError, match="task families"):
+    with pytest.raises(ValueError, match="families of task cases"):
         _ = split_cases(load_draft(path), 7, "task", also=("journey",))
 
 @pytest.mark.ac("gh-368:AC-8")
@@ -176,7 +176,7 @@ def test_task_families_do_not_fill_the_holdout_of_a_journey_run(tmp_path: Path, 
     _ = main(["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose",
               "--kind", "journey"])
     error = cast(dict[str, object], json.loads(capsys.readouterr().err))
-    assert "task families" in str(error["error"]) and "has 2" in str(error["error"])
+    assert "families of journey cases" in str(error["error"]) and "has 2" in str(error["error"])
 
 
 def test_the_default_kinds_follow_the_contract_and_a_bad_selection_stops(tmp_path: Path) -> None:
@@ -199,3 +199,15 @@ def test_the_default_kinds_follow_the_contract_and_a_bad_selection_stops(tmp_pat
     with pytest.raises(CodedError) as audit:
         _ = scored_kinds(load_contract(target))
     assert audit.value.code == "contract-audit-unsupported"
+
+
+@pytest.mark.ac("gh-368:AC-7")
+def test_a_journey_labeled_case_stops_in_a_contract_without_that_kind(tmp_path: Path) -> None:
+    item = {"id": "j-0", "family": "j", "kind": "journey", "request": "Plan the work.", "source": "skill",
+            "expected": {"must": ["x"]}}
+    path = tmp_path / "cases.draft.json"
+    _ = path.write_text(json.dumps([item]))
+    with pytest.raises(ValueError, match="case j-0: kind must be one of trigger, near-miss, task, journey-review"):
+        _ = load_draft(path, ("journey-review",))
+    with pytest.raises(ValueError, match="case j-0: kind must be one of trigger, near-miss, task$"):
+        _ = load_draft(path, ())

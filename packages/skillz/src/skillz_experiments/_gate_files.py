@@ -19,7 +19,8 @@ _PREFIX = ("python3", "-I", "-c")
 _STUB = ("import sys\nimport types\n_SIBLINGS = {siblings}\n_MAIN = {main}\n"
          + "for _name, _source in _SIBLINGS:\n    _module = types.ModuleType(_name)\n    sys.modules[_name] = _module\n"
          + "    exec(compile(_source, _name + '.py', 'exec'), _module.__dict__)\n"
-         + "exec(compile(_MAIN, 'gate.py', 'exec'), {{'__name__': '__main__'}})\n")
+         + "_gate = types.ModuleType('__main__')\nsys.modules['__main__'] = _gate\n"
+         + "exec(compile(_MAIN, 'gate.py', 'exec'), _gate.__dict__)\n")
 
 
 def _invalid(message: str) -> CodedError:
@@ -65,7 +66,7 @@ def _bundle(root: Path, gate: str) -> tuple[str, list[str]]:
             top = module.split(".")[0]
             path = (folder / f"{top}.py").as_posix()
             if top in sys.stdlib_module_names:
-                if os.path.lexists(root / path):
+                if path != gate and os.path.lexists(root / path):
                     raise _invalid(f"gate sibling {path} shadows the standard library module {top}")
                 continue
             if module != top or not os.path.lexists(root / path):

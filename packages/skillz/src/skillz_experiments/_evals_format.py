@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 from typing import cast
 
 from skillz_experiments._cases import JOURNEY_FIELDS, CodedError, journey_of, relative, string, text_map
@@ -58,6 +57,12 @@ def _texts(item: dict[str, object], key: str, problems: list[str]) -> tuple[str,
     return values
 
 
+def _valid_id(ident: object, strict: bool) -> bool:
+    if isinstance(ident, bool):
+        return False
+    return isinstance(ident, int) or (not strict and isinstance(ident, str) and _TEXT_ID.fullmatch(ident) is not None)
+
+
 def _identity(item: dict[str, object], strict: bool, problems: list[str]) -> tuple[str | None, object]:
     """Return the entry `name` and `id` when valid, and note each problem."""
     name: str | None = None
@@ -67,6 +72,8 @@ def _identity(item: dict[str, object], strict: bool, problems: list[str]) -> tup
         problems.append("missing required field 'name'")
     ident = item.get("id")
     if "id" in item:
+        if not strict and name is not None and not _valid_id(ident, strict):
+            return name, None
         text_ok = not strict and isinstance(ident, str) and _TEXT_ID.fullmatch(ident) is not None
         if isinstance(ident, bool) or not (isinstance(ident, int) or text_ok):
             problems.append("id must be an int" if strict
@@ -118,9 +125,11 @@ def _kind(item: dict[str, object], strict: bool, assertions: tuple[str, ...], ex
 
 
 def _fixture_problem(path: str) -> bool:
-    parts = PurePosixPath(path).parts
-    return (not path.startswith(FIXTURES) or "\\" in path or "\x00" in path or ".." in parts
-            or PurePosixPath(path).as_posix() != path or any(part.startswith(".") for part in parts))
+    try:
+        _ = relative(path)
+    except ValueError:
+        return True
+    return not path.startswith(FIXTURES)
 
 
 def _entry(item: dict[str, object], index: int, strict: bool, problems: list[str]) -> EvalEntry | None:
@@ -176,7 +185,7 @@ def parse_evals(document: object, *, strict: bool) -> ParsedEvals:
         problems: list[str] = []
         entry = _entry(item, index, strict, problems)
         name, ident = item.get("name"), item.get("id")
-        has_id = isinstance(ident, (int, str)) and not isinstance(ident, bool)
+        has_id = _valid_id(ident, strict=False)
         if isinstance(name, str) and name in names:
             problems.append(f"duplicate name {name!r}")
         elif has_id and ident in ids:

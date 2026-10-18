@@ -197,7 +197,7 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
 
     def case(name: str) -> dict[str, object]:
         return {"kind": "journey", "request": "Echo what I tell you.", "brief": f"Say `{name}` once, then stop.",
-                "max_turns": 2, "files": {"fixture.md": f"{name}\n"}, "expected": {"request": name}}
+                "max_turns": 2, "files": {"fixture.md": f"{name}\n"}, "expected": {"must": [name]}}
     return Setup(target, _cases(case), _builtin(harness), ("--harness", harness, "--edit", "prose"),
                  expect=None if harness == "claude" else "journey-unsupported")
 
