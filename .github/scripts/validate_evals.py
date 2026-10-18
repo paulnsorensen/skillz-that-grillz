@@ -46,7 +46,28 @@ from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "skillz" / "src"))
 
-from skillz_experiments._evals_format import parse_evals  # noqa: E402
+from skillz_experiments._cases import read_text, relative  # noqa: E402
+from skillz_experiments._evals_format import FIXTURES, parse_evals  # noqa: E402
+from skillz_experiments._seed import READ_LIMIT  # noqa: E402
+
+
+def _fixture_errors(skill: Path, index: int, raw: object) -> list[str]:
+    """Read each plain fixture path the way the seed does. Report a path it cannot read or that is blank."""
+    files = cast(dict[str, object], raw).get("files") if isinstance(raw, dict) else None
+    if not isinstance(files, list):
+        return []
+    errors: list[str] = []
+    for name in cast(list[object], files):
+        try:
+            if not isinstance(name, str) or not relative(name).startswith(FIXTURES):
+                continue
+            text = read_text(skill, name, READ_LIMIT)
+        except ValueError as exc:
+            errors.append(f"evals[{index}]: files: {exc}")
+            continue
+        if not text.strip():
+            errors.append(f"evals[{index}]: files: {name} must be nonempty text")
+    return errors
 
 
 def validate_file(path: Path) -> list[str]:
@@ -56,10 +77,9 @@ def validate_file(path: Path) -> list[str]:
         return [f"{path}: invalid JSON: {exc}"]
     parsed = parse_evals(data, strict=True)
     errors = [f"{path}: {error}" for error in parsed.errors]
-    skill = path.parent.parent
-    for entry in parsed.entries:
-        errors.extend(f"{path}: evals[{entry.index}]: files: {name} does not exist"
-                      for name in entry.files if not (skill / name).is_file())
+    evals = cast(dict[str, object], data).get("evals") if isinstance(data, dict) else None
+    for index, raw in enumerate(cast(list[object], evals) if isinstance(evals, list) else []):
+        errors.extend(f"{path}: {error}" for error in _fixture_errors(path.parent.parent, index, raw))
     return errors
 
 

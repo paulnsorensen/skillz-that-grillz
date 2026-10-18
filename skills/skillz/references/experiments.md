@@ -177,7 +177,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `usage` | `--harness-config`, `--harness`, and `--command` conflict. The message names the conflict. | Fix the options, then run again. |
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `evals-unreadable` | `evals/evals.json` is a symlink, too large, or malformed. An entry can also have an unknown `kind`, a duplicate case id, assertions on a trigger or near-miss, or a string `expected_skill` with no `kind` (the message says to set `kind`). At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix `evals/evals.json` or the fixture, set `kind` on an ambiguous entry, then run again. |
-| `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. |
+| `cases-uncovered` | The draft lacks an entry of `evals/evals.json`, or changes its `kind` or `request`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from `evals/evals.json`. Then run again. A run directory that an older version drafted can stop here: a kind-less entry with no assertions moved from `trigger` to `task`. Copy the seed again, or set `kind` in the entry. |
 | `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
 | `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
@@ -253,7 +253,7 @@ An explicit `kind` of `trigger`, `near-miss`, or `task` wins. A contradiction st
 When an entry has no `kind`, the reader infers it. `expected_skill: null` is `near-miss`. Nonempty `assertions` is `task`. A string `expected_skill` with no assertions is ambiguous and stops the seed: set `kind`. Any other entry is a `task` graded on `expected_output`.
 `seed_summary.inferred` maps each inferred case id to its kind, so no inference is silent.
 A `task` case holds the fixtures in `files`, keyed by their listed paths, and an `expected` object.
-The `expected` object holds `expected_output`, which defaults to an empty string, and `assertions`, which the entry must give.
+The `expected` object holds `expected_output`, which defaults to an empty string, and `assertions`, which defaults to an empty list. A `task` entry needs `expected_output` or `assertions`.
 Each fixture path starts with `evals/files/`. A path outside `evals/files/` stops the seed.
 The runner stages each fixture at its `evals/files/` path in the workspace, so the request must name that directory.
 When the entry lists no fixture, `files` is empty. Draft the starting fixture that the request needs.
@@ -1226,6 +1226,7 @@ To add a case, follow these steps:
 
 1. Add the case to the manifest with a unique `id` and `family`.
 2. Put a grader script under `skills/skillz/evals/gates/mode/` and name it in the `gate` of its kind. The script scores the golden output as 1 and the seeded defect as 0. Type-check it: `just build` covers it.
+   A new skill with sibling gate modules needs its own `executionEnvironments` entry in the root `pyproject.toml`; only `skills/skillz/evals/gates` has one.
 3. Record the golden output and one or more seeded-bad outputs in the repository's mode-output fixture file. Record only the files that the task writes or changes.
 4. Pin each step the case depends on in the step list of the mode-fixture test.
 5. Run `just build`.
