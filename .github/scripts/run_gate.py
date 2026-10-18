@@ -17,13 +17,30 @@ _cancelled = False
 PACKAGE_MODES = frozenset({"fromargs", "agent-session-analytics"})
 LIVE_FLAG = "SKILLZ_LIVE"
 SKIP_VARIABLE = "GATE_SKIP"
+# `skillz` mode only: run one shard of each skillz lane through the `pytest_shard` plugin.
+SHARD_VARIABLE = "GATE_SHARD"
 # CI runs these lanes in their own job (`just test-skillz`) and skips them in the gate job.
 SKILLZ_LANES = ("skillz-e2e-pytest", "skillz-pytest")
 
 
 def _environment() -> dict[str, str]:
-    """Return the step environment without `SKILLZ_LIVE`, so no gate step makes a real model call."""
-    return {name: value for name, value in os.environ.items() if name != LIVE_FLAG}
+    """Return the step environment without `SKILLZ_LIVE`, so no gate step makes a real model call.
+
+    With `GATE_SHARD` set, put this directory on `PYTHONPATH`, so pytest can load the `pytest_shard` plugin.
+    """
+    environment = {name: value for name, value in os.environ.items() if name != LIVE_FLAG}
+    if environment.get(SHARD_VARIABLE):
+        scripts = str(Path(__file__).resolve().parent)
+        environment["PYTHONPATH"] = os.pathsep.join(filter(None, [scripts, environment.get("PYTHONPATH")]))
+    return environment
+
+
+def parse_shard(value: str) -> tuple[int, int]:
+    """Return `(index, count)` from `<index>/<count>`, with `1 <= index <= count`."""
+    index, separator, count = value.partition("/")
+    if separator and index.isdigit() and count.isdigit() and 1 <= int(index) <= int(count):
+        return int(index), int(count)
+    raise ValueError(f"{SHARD_VARIABLE} must be <index>/<count> with 1 <= index <= count: {value!r}")
 
 
 def _check_cancelled() -> None:
@@ -230,6 +247,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         workers, test_workers = _workers("GATE_JOBS"), _workers("TEST_WORKERS")
         skip = _skipped()
+        shard = os.environ.get(SHARD_VARIABLE, "")
+        if shard and args[0] != "skillz":
+            raise ValueError(f"{SHARD_VARIABLE} applies only to `run_gate.py skillz`")
+        if shard:
+            _ = parse_shard(shard)
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2
@@ -254,7 +276,8 @@ def main(argv: list[str] | None = None) -> int:
                 if args[0] in {"test", "skillz"}:
                     jobs = _test_jobs(test_workers, temp_root)
                     if args[0] == "skillz":
-                        jobs = [job for job in jobs if job[0] in SKILLZ_LANES]
+                        plugin = ["-p", "pytest_shard"] if shard else []
+                        jobs = [(name, command + plugin) for name, command in jobs if name in SKILLZ_LANES]
                     jobs = _without(jobs, skip)
                     if not _prepare():
                         return 1

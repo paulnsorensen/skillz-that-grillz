@@ -83,18 +83,17 @@ jobs:
           GATE_SKIP: skillz-e2e-pytest,skillz-pytest
         run: just ci
 
-  skillz-tests:
+  skillz-shard:
     # The two skillz pytest lanes set the gate's wall time, so they run here
-    # in parallel. The gate job skips them through GATE_SKIP.
-    name: skillz tests
+    # in parallel. The gate job skips them through GATE_SKIP. One runner has
+    # 4 vCPUs and the lanes are CPU-bound, so each shard runs 1/4 of each lane.
+    name: skillz shard (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
-      - name: Mount tmpfs on /tmp
-        # The skillz tests fsync each run record under /tmp. On the runner disk,
-        # fsync sets most of their runtime; on tmpfs it costs almost nothing.
-        # The path stays /tmp, so the socket-length and sandbox-path rules hold.
-        run: sudo mount -t tmpfs -o mode=1777 tmpfs /tmp
-
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -122,7 +121,22 @@ jobs:
       - name: Run skillz tests
         env:
           REQUIRE_DUCKDB: "1"
+          GATE_SHARD: ${{ matrix.shard }}/4
         run: just test-skillz
+
+  skillz-tests:
+    # The main ruleset requires this check name. It passes only when every shard passes.
+    name: skillz tests
+    if: always()
+    needs: skillz-shard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the skillz shards
+        env:
+          SHARDS: ${{ needs.skillz-shard.result }}
+        run: |
+          echo "skillz shards: $SHARDS"
+          test "$SHARDS" = success
 
   fromargs-tests:
     name: fromargs tests (py${{ matrix.python }})
