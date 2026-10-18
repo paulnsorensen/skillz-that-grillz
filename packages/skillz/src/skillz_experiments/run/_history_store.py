@@ -189,8 +189,9 @@ def _replace(folder: int, name: str, data: bytes) -> None:
 def write(path: Path, record: Mapping[str, object], run_id: str, attempts: Sequence[Mapping[str, object]]) -> str | None:
     """Write the line of this run under an exclusive lock. Return `history-unreadable` when the store fails, else None.
 
-    The write replaces a line with the same run id, so a resumed search writes its run once. The store keeps the
-    newest `KEEP_RUNS` lines. The write builds the whole new store in a temporary file and moves it over the old one,
+    The write replaces a line with the same run id, so a resumed search writes its run once. The write drops each
+    line that is not a well-formed run, so a corrupt line uses no retention slot. The store keeps the newest
+    `KEEP_RUNS` runs. The write builds the whole new store in a temporary file and moves it over the old one,
     so a kill leaves either the old store or the new store. The lock lives in the file `<store>.lock`.
     """
     line = json.dumps({"run_id": run_id, "timestamp": time.time(), "compatibility": record.get("compatibility"),
@@ -201,7 +202,8 @@ def write(path: Path, record: Mapping[str, object], run_id: str, attempts: Seque
         try:
             locked = _lock(folder, path.name, fcntl.LOCK_EX)
             try:
-                kept = [raw for raw in _read(folder, path.name) if (_parse(raw) or {}).get("run_id") != run_id]
+                kept = [raw for raw in _read(folder, path.name)
+                        if (item := _parse(raw)) is not None and item["run_id"] != run_id]
                 newest = kept[max(0, len(kept) - (KEEP_RUNS - 1)):]
                 _replace(folder, path.name, b"".join(raw + b"\n" for raw in newest) + line)
             finally:

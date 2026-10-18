@@ -141,7 +141,8 @@ def test_a_deeply_nested_line_is_skipped_and_counted_without_crashing() -> None:
     loaded = load(path, _record(), "run-b")
     assert loaded.skipped_lines == 1 and loaded.runs == ["run-a"] and loaded.warnings == []
     assert write(path, _record(), "run-b", [_attempt(1)]) is None
-    assert load(path, _record(), "run-c").runs == ["run-a", "run-b"]
+    repaired = load(path, _record(), "run-c")
+    assert repaired.runs == ["run-a", "run-b"] and repaired.skipped_lines == 0
 
 
 @pytest.mark.ac("gh-243:AC-5")
@@ -153,7 +154,8 @@ def test_a_bad_utf8_line_is_skipped_and_the_other_lines_load_and_a_write_repairs
     loaded = load(path, _record(), "run-b")
     assert loaded.skipped_lines == 1 and loaded.runs == ["run-a"] and loaded.warnings == []
     assert write(path, _record(), "run-b", [_attempt(1)]) is None
-    assert load(path, _record(), "run-c").runs == ["run-a", "run-b"]
+    repaired = load(path, _record(), "run-c")
+    assert repaired.runs == ["run-a", "run-b"] and repaired.skipped_lines == 0
 
 
 @pytest.mark.ac("gh-243:AC-5")
@@ -164,7 +166,19 @@ def test_a_partial_trailing_line_does_not_swallow_the_line_of_the_next_write() -
         _ = handle.write(b'{"run_id": "cut')
     assert write(path, _record(), "run-b", [_attempt(1)]) is None
     loaded = load(path, _record(), "run-c")
-    assert loaded.runs == ["run-a", "run-b"] and loaded.skipped_lines == 1
+    assert loaded.runs == ["run-a", "run-b"] and loaded.skipped_lines == 0
+
+
+@pytest.mark.ac("gh-243:AC-5")
+def test_corrupt_lines_use_no_retention_slot() -> None:
+    path = _path()
+    _ = write(path, _record(), "run-0", [_attempt(1)])
+    with path.open("ab") as handle:
+        _ = handle.write(b"not json\n\xff\n[1]\n")
+    for number in range(1, KEEP_RUNS):
+        assert write(path, _record(), f"run-{number}", [_attempt(1)]) is None
+    loaded = load(path, _record(), "run-next")
+    assert loaded.runs == [f"run-{number}" for number in range(KEEP_RUNS)] and loaded.skipped_lines == 0
 
 
 @pytest.mark.ac("gh-243:AC-5")
