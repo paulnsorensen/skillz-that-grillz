@@ -10,7 +10,7 @@ import pytest
 
 from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import load_cases
+from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.evaluation._evaluator import evaluate
@@ -31,7 +31,7 @@ def _contract() -> Contract:
     return parse(document, "skill")
 
 
-def _cases(tmp_path: Path, rules: Contract) -> dict[str, object]:
+def _cases(tmp_path: Path, rules: Contract) -> dict[str, Case]:
     common = {"family": "f", "split": "train", "request": REQUEST, "provenance": "test", "provider_approved": True}
     items = [common | {"id": "t1", "kind": "task", "files": {"input.md": "x\n"}, "expected": {"expected_output": "x"}},
              common | {"id": "j1", "kind": "journey", "brief": "wants a plan", "max_turns": 4,
@@ -51,7 +51,7 @@ def test_evaluate_rejects_a_task_case_for_a_helper_that_never_ran_but_not_a_jour
 
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     rules = _contract()
-    cases = cast(dict[str, object], _cases(tmp_path, rules))
+    cases = _cases(tmp_path, rules)
     candidate = Candidate({"SKILL.md": SKILL_TEXT, "run.py": "pass\n"}, ("SKILL.md",), contract=rules)
     session = open_session(tmp_path, install(tmp_path, {}), budget=Budget(40, 2400, 0))
     task = cast(ClaudeCode, session.transports["task"])
@@ -59,8 +59,8 @@ def test_evaluate_rejects_a_task_case_for_a_helper_that_never_ran_but_not_a_jour
     judge.budget = task.budget
     try:
         checks = CheckMemo()
-        journey = evaluate(task, judge, candidate, cases["j1"], checks=checks)  # pyright: ignore[reportArgumentType]
-        plain = evaluate(task, judge, candidate, cases["t1"], checks=checks)  # pyright: ignore[reportArgumentType]
+        journey = evaluate(task, judge, candidate, cases["j1"], checks=checks)
+        plain = evaluate(task, judge, candidate, cases["t1"], checks=checks)
     finally:
         session.close()
     assert journey["loaded"] is True and journey["helper_executed"] is True
