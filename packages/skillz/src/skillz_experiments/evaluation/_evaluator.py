@@ -98,9 +98,9 @@ def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate
     rules = resolve(candidate.contract)
     checked = checks.check(task, candidate)
     if not checked.passed:
-        return {"score": 0.0, "status": "candidate-contract-rejected", "rejection": checked.reason, "loaded": False,
-                "helper_executed": False, "usage": usage([]), "candidate_hash": candidate.identity,
-                "case_hash": digest(case.identifier)}
+        return {"score": 0.0, "status": "candidate-contract-rejected", "rejection": checked.reason,
+                "rejection_kind": checked.kind, "loaded": False, "helper_executed": False, "usage": usage([]),
+                "candidate_hash": candidate.identity, "case_hash": digest(case.identifier)}
     grader = rules.grader(case.kind)
     if (case.journey is not None) != (grader.type == "journey"):
         raise ValueError("a journey case needs the journey grader, and the journey grader needs a journey case")

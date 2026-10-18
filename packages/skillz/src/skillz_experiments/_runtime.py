@@ -14,6 +14,16 @@ from pathlib import Path
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted, CallTimeout
 
 TERM_GRACE_SECONDS = 10.0
+# The sandbox time limit of one Codex or command-harness sandbox run, and the default of `ClaudeOptions.sandbox_seconds`.
+SANDBOX_SECONDS = 20
+
+
+class SandboxTimeout(Exception):
+    """A sandbox run reached the sandbox time limit of its harness while the run budget still had that time.
+
+    It is not a `BudgetExhausted`, so no budget handler catches it. A run budget that ends a sandbox run still raises
+    `BudgetExhausted`.
+    """
 
 
 @final
@@ -128,6 +138,23 @@ def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[
         if timeout <= 0:
             raise BudgetExhausted("deadline exhausted waiting for a call slot")
         return _spawn(command, cwd, timeout, environment, input_text)
+
+
+def sandboxed(command: list[str], *, cwd: Path, limit: float, budget: Budget, environment: dict[str, str],
+              input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    """Run one sandbox child under a call slot. The child gets `limit` seconds, or less when the run budget has less.
+
+    The slot wait counts against the run budget, not against `limit`. A child that runs out `limit` raises
+    `SandboxTimeout`. A child that the run budget stops raises `BudgetExhausted`. Each case kills the child group.
+    """
+    with _slot(budget.remaining()):
+        timeout = min(limit, budget.remaining())
+        try:
+            return _spawn(command, cwd, timeout, environment, input_text)
+        except BudgetExhausted:
+            if timeout < limit:
+                raise
+            raise SandboxTimeout(f"the sandbox run reached its {limit:g} second limit") from None
 
 
 def model_call(budget: Budget, command: list[str], *, cwd: Path, environment: dict[str, str],

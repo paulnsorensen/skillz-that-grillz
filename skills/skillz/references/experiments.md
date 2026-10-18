@@ -121,6 +121,9 @@ The credential paths are `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.docker
 A root must not hold a socket entry. A tree of more than 100000 entries is too large to check, so the runner refuses it.
 Home caches such as `~/.cache/ms-playwright` stay allowed.
 `--sandbox-seconds N` sets the time limit of one OS sandbox command, from 1 to 600. The default is 20.
+The Codex and command harnesses use a fixed limit of 20 seconds. The command harness ends the wrapper process group at that limit, and the wrapper request does not change.
+A helper fixture that reaches the limit is a sandbox timeout. The contract check then runs once more at once. A second timeout rejects the candidate for the rest of the run with `rejection_kind: "timeout"`. A helper that exits 124 by itself is an ordinary fixture failure.
+A command or capture grader that reaches the limit scores as exit code 124.
 Once any scored case uses a command or hybrid grader, this time applies to every evaluation.
 Parallel calls share it. The estimate and the holdout gate reserve include it.
 The search shrinks so that the estimate fits the time cap. A value that is too large stops with `budget-unapproved`.
@@ -142,6 +145,8 @@ Map each coded stop to its next step:
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `cases-too-easy` | The seed already scores at least 0.9 on a train or validation family. The message names each family, its split, and its mean. | Do not ask a new question. Draft harder cases in a new run directory, then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
+| `baseline-check-timeout` | `next`, and optional `detail` | The contract check of the original skill reached the sandbox time limit twice, before the search or in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
+| `winner-check-timeout` | `next`, and optional `detail` | The contract check of the winner reached the sandbox time limit twice in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
 | `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |
@@ -339,7 +344,7 @@ The zero-SE rule below applies only when the floor is also 0.
 
 A provider fault on one holdout repeat (`OSError`, `ValueError`, or `RuntimeError`) records an outcome with status `evaluation-failed`, and the gate goes on.
 A coded fault still stops the run. A resume runs each failed repeat again, and the newest outcome of a repeat wins. The spend stays inside the approved budget, else the run stops with `gate-budget-exhausted`.
-Only `evaluation-failed` leaves a repeat unscored. A rejected candidate, a capture failure, and a grader zero score 0.
+Only `evaluation-failed` and a final check timeout (`rejection_kind: "timeout"`) leave a repeat unscored. A final check timeout also stops the run with `baseline-check-timeout` or `winner-check-timeout`, and a resume scores the repeat again. Any other rejected candidate, a capture failure, and a grader zero score 0.
 The gate drops a case with no scored repeat on an arm. `n_shared` is the number of cases that remain.
 A winner equal to the baseline scores no case, so its `n_shared` is 0. That `inconclusive` verdict with `winner-equals-baseline` is legitimate when the search scored its evaluations.
 

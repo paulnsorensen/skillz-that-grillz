@@ -30,6 +30,7 @@ from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._transport import Transport
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._budget import Budget, BudgetExhausted
+from skillz_experiments import _runtime
 from skillz_experiments.harness._seatbelt import command_profile
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
@@ -352,25 +353,28 @@ def test_sandbox_read_roots_that_expose_runtime_paths_or_credentials_are_refused
     assert resolve_read_roots((str(playwright),), None) == (str(playwright.resolve()),)
 
 
-def test_a_slow_sandbox_command_returns_124_but_budget_exhaustion_still_raises(
+@pytest.mark.ac("gh-287:AC-5")
+@pytest.mark.ac("gh-287:AC-7")
+def test_a_slow_sandbox_command_raises_sandbox_timeout_but_budget_exhaustion_still_raises(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
-                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-        del command, cwd, timeout, environment, input_text
-        raise BudgetExhausted("process group terminated at deadline")
-
-    monkeypatch.setattr(_transport, "process", process)
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
+
+    def slow(command: list[str], **options: object) -> subprocess.CompletedProcess[str]:
+        del command
+        return _runtime.sandboxed(["/bin/sleep", "30"], cwd=tmp_path, limit=cast(float, options["limit"]),
+                                  budget=cast(Budget, options["budget"]), environment={"PATH": "/usr/bin:/bin"})
+
+    monkeypatch.setattr(_transport, "sandboxed", slow)
     monkeypatch.setattr(shutil, "which", which)
-    options = ClaudeOptions(sandbox_seconds=5)
     workspace = make_workspace(tmp_path / "workspace")
-    slow = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=options)
+    roomy = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=1))
     try:
-        assert slow.sandbox(workspace, ["/usr/bin/true"]) == (124, "", "")
+        with pytest.raises(_runtime.SandboxTimeout):
+            _ = roomy.sandbox(workspace, ["/usr/bin/true"])
     finally:
-        slow.close()
-    short = ClaudeCode("m", Budget(10, 2, 0), lambda: None, tmp_path / "bin/claude", options=options)
+        roomy.close()
+    short = ClaudeCode("m", Budget(10, 2, 0), lambda: None, tmp_path / "bin/claude", options=ClaudeOptions(sandbox_seconds=5))
     try:
         with pytest.raises(BudgetExhausted):
             _ = short.sandbox(workspace, ["/usr/bin/true"])
@@ -378,20 +382,19 @@ def test_a_slow_sandbox_command_returns_124_but_budget_exhaustion_still_raises(
         short.close()
 
 
-def test_a_sandbox_command_uses_sandbox_seconds_and_the_probe_keeps_the_floor(
+@pytest.mark.ac("gh-287:AC-5")
+def test_the_claude_sandbox_limit_is_the_configured_sandbox_seconds_and_the_probe_keeps_the_floor(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     limits: list[float] = []
 
-    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
-                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-        del cwd, environment, input_text
-        limits.append(timeout)
+    def sandboxed(command: list[str], **options: object) -> subprocess.CompletedProcess[str]:
+        limits.append(cast(float, options["limit"]))
         return subprocess.CompletedProcess(command, 0, "isolation-ok\n", "")
 
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
 
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", sandboxed)
     monkeypatch.setattr(shutil, "which", which)
     adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=5))
     workspace = make_workspace(tmp_path / "workspace")
@@ -401,7 +404,30 @@ def test_a_sandbox_command_uses_sandbox_seconds_and_the_probe_keeps_the_floor(
         _ = adapter.sandbox(workspace, ["/usr/bin/true"])
     finally:
         adapter.close()
-    assert limits == [5, _constants.SANDBOX_SECONDS, 5]
+    assert limits == [5, _runtime.SANDBOX_SECONDS, 5]
+
+
+@pytest.mark.ac("gh-287:AC-14")
+def test_a_sandbox_probe_timeout_fails_the_probe_like_exit_124(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        raise _runtime.SandboxTimeout("the sandbox run reached its 20 second limit")
+
+    def exit_124(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        return 124, "", ""
+
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    messages: list[str] = []
+    try:
+        for fake in (timeout, exit_124):
+            monkeypatch.setattr(ClaudeCode, "sandbox", fake)
+            with pytest.raises(CodedError) as caught:
+                adapter._probe_sandbox(make_workspace(tmp_path / fake.__name__), tmp_path / "sealed")  # pyright: ignore[reportPrivateUsage]
+            messages.append(f"{caught.value.code}: {caught.value}")
+    finally:
+        adapter.close()
+    assert messages[0] == messages[1] and "sandbox probe failed" in messages[0]
 
 
 def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Path) -> None:
@@ -848,7 +874,7 @@ def test_sandbox_setup_failure_raises_instead_of_looking_like_a_helper_exit(
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
     adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", process)
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(shutil, "which", which)
     with pytest.raises(CodedError, match="sandbox setup fails.*no unsafe fallback"):
@@ -1583,7 +1609,7 @@ def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
     if case == "socat-missing":
         monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ("socat",))
     if case == "userns-restricted":
-        monkeypatch.setattr(_transport, "process", process)
+        monkeypatch.setattr(_transport, "sandboxed", process)
     if case == "live-sandbox-failure":
         def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
             del self, workspace, argv, seconds

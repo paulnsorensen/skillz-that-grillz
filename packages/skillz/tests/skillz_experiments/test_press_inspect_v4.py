@@ -30,7 +30,6 @@ from skillz_experiments.evaluation import CheckResult
 from skillz_experiments._graders import Sandbox
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments._budget import Budget
-from skillz_experiments._runtime import process as run_process
 from skillz_experiments._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -205,7 +204,7 @@ def stub_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[tu
         return subprocess.CompletedProcess(command, code, stdout, stderr)
 
     monkeypatch.setattr(Codex, "_discover", discover)
-    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.sandboxed", process)
     return adapter
 
 
@@ -238,7 +237,7 @@ def test_codex_sandbox_returns_the_real_stderr_as_the_third_value(tmp_path: Path
     def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 3, "out", "err\n")
 
-    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.sandboxed", process)
     assert adapter.sandbox(tmp_path / "workspace", ["x"]) == (3, "out", "err\n")
 
 
@@ -391,9 +390,7 @@ def test_claude_sandbox_on_macos_returns_the_sandbox_exec_stderr_unchanged(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, claude: Harness) -> None:
     commands: list[list[str]] = []
 
-    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
-                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-        del cwd, timeout, environment, input_text
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         commands.append(command)
         return subprocess.CompletedProcess(command, 3, "out", "err line\n")
 
@@ -402,7 +399,7 @@ def test_claude_sandbox_on_macos_returns_the_sandbox_exec_stderr_unchanged(
         return f"/usr/bin/{name}"
 
     monkeypatch.setattr(shutil, "which", which)
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", process)
     try:
         result = cast(Sandbox, cast(object, claude.transports["task"])).sandbox(make_workspace(tmp_path / "w"), ["x"])
     finally:
@@ -539,7 +536,7 @@ def test_the_sandbox_removes_its_capture_directory_even_when_setup_fails(
         locked.chmod(0)
         return subprocess.CompletedProcess(command, 3, "", "bwrap: setting up uid map: Permission denied")
 
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", process)
     monkeypatch.setattr(tempfile, "mkdtemp", mkdtemp)
     monkeypatch.setattr(sys, "platform", "linux")
     def which(name: str) -> str:
@@ -557,21 +554,18 @@ def test_the_sandbox_removes_its_capture_directory_even_when_setup_fails(
 
 def test_claude_sandbox_setup_failure_never_reaches_fixture_result(monkeypatch: pytest.MonkeyPatch, claude: Harness) -> None:
     real_which = shutil.which
-    real_process = run_process
     seen: list[object] = []
     bwrap_calls: list[int] = []
 
-    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
-                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-        if not command[0].endswith("bwrap"):
-            return real_process(command, cwd=cwd, timeout=timeout, environment=environment, input_text=input_text)
+    def sandboxed(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        assert command[0].endswith("bwrap")
         bwrap_calls.append(3)
         return subprocess.CompletedProcess(command, 3, "", "bwrap: setting up uid map: Permission denied")
 
     def spy(*args: object, **kwargs: object) -> None:
         seen.append((args, kwargs))
 
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", sandboxed)
     monkeypatch.setattr(evaluation_module, "fixture_failure", spy)
     monkeypatch.setattr(sys, "platform", "linux")
     def which(name: str) -> str | None:

@@ -175,6 +175,26 @@ def _rejection_detail(outcome: dict[str, object]) -> str | None:
     return detail if isinstance(detail, str) else None
 
 
+def _timed_out(item: Mapping[str, object]) -> bool:
+    """Return whether `item` is a contract rejection by a final sandbox timeout. A resume scores its case again."""
+    return item.get("status") == "candidate-contract-rejected" and item.get("rejection_kind") == "timeout"
+
+
+def _unscored(item: Mapping[str, object]) -> bool:
+    """Return whether a holdout outcome has no gate score: a failed evaluation or a final check timeout."""
+    return _is_failed(item) or _timed_out(item)
+
+
+_CHECK_TIMEOUT_CODES = {"baseline": "baseline-check-timeout", "winner": "winner-check-timeout"}
+
+
+def _check_timeout(arm: str, detail: str | None = None) -> Stop:
+    """Return the resumable stop for a contract check of `arm` that reached the sandbox time limit twice."""
+    return Stop(_CHECK_TIMEOUT_CODES[arm], f"the {arm} contract check reached the sandbox time limit twice",
+                {"next": "resume the run in the same directory; a resume retries the check"}
+                | cast(dict[str, object], {} if detail is None else {"detail": detail}))
+
+
 def _case_ids(feedback: Mapping[str, Sequence[Mapping[str, object]]]) -> list[str]:
     """Return the train case ids in the feedback that the proposer saw, first seen first."""
     names = (record.get("case_id") for records in feedback.values() for record in records)
@@ -305,9 +325,12 @@ Outcome = TypeVar("Outcome", bound=Mapping[str, object])
 
 
 def scored_holdout(outcomes: Iterable[Outcome], arms: Collection[str]) -> Iterator[Outcome]:
-    """Yield the holdout outcomes of `arms` in order. An `evaluation-failed` outcome is unscored and drops out."""
+    """Yield the holdout outcomes of `arms` in order.
+
+    An `evaluation-failed` outcome and a final check timeout are unscored and drop out.
+    """
     for item in outcomes:
-        if item.get("split") == "holdout" and item.get("arm") in arms and item.get("status") != "evaluation-failed":
+        if item.get("split") == "holdout" and item.get("arm") in arms and not _unscored(item):
             yield item
 
 
@@ -958,8 +981,13 @@ class Session:
         self.provider.check_name(self.seed)
 
     def check_seed(self) -> None:
-        """Stop before any search call when the seed fails the local candidate contract check."""
+        """Stop before any search call when the seed fails the local candidate contract check.
+
+        A final sandbox timeout stops with the resumable `baseline-check-timeout`; a resume checks again.
+        """
         checked = self._checks.check(self.provider, self.seed)
+        if checked.kind == "timeout":
+            raise _check_timeout("baseline", checked.reason)
         if not checked.passed:
             raise _baseline_rejected(checked.reason)
 
@@ -1153,16 +1181,18 @@ class Session:
         else:
             _ = self.budget.remaining()
             rejected = next((item for item in self.outcomes if item.get("arm") == "baseline"
-                             and item.get("status") == "candidate-contract-rejected"), None)
+                             and item.get("status") == "candidate-contract-rejected" and not _timed_out(item)), None)
             if rejected is not None:
                 raise _baseline_rejected(_rejection_detail(rejected))
             arms = {"baseline": self.seed, "winner": winner}
             done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in self.outcomes
-                    if item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
+                    if item.get("split") == "holdout" and not _unscored(item)}
             todo = [(arm, case, repeat) for arm in arms for case in holdout for repeat in range(repeats)
                     if (arm, case.identifier, repeat) not in done]
 
             def inspect(arm: str, result: dict[str, object]) -> None:
+                if _timed_out(result):
+                    raise _check_timeout(arm, _rejection_detail(result))
                 if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
                     raise _baseline_rejected(_rejection_detail(result))
 
