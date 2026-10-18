@@ -14,6 +14,7 @@ from typing import cast
 from skillz_experiments._cases import JOURNEY_FIELDS, CodedError, journey_of, string, text_map
 
 EVAL_KINDS = ("trigger", "near-miss", "task")
+SOURCES = ("skill", "session")
 FIXTURES = "evals/files/"
 _TEXT_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
@@ -220,8 +221,8 @@ def _journey(item: dict[str, object], strict: bool) -> dict[str, object]:
     if kind in EVAL_KINDS:
         raise ValueError(f"kind must name a journey kind, not {kind}")
     source = item.get("source", "skill")
-    if source != "skill":
-        raise ValueError("source must be 'skill'")
+    if source not in SOURCES:
+        raise ValueError(f"source must be one of {', '.join(SOURCES)}")
     case: dict[str, object] = {"id": ident, "family": string(item.get("family", ident), "family"), "kind": kind,
                                "request": string(item["request"], "request"), "source": source}
     journey = journey_of(item, True)

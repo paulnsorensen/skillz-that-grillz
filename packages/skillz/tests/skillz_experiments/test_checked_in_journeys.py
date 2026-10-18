@@ -124,6 +124,18 @@ def test_an_easy_cheese_shaped_journeys_file_seeds_and_passes_intake_unchanged(t
     assert _first_call(target, tmp_path).code == "cases-unapproved"
 
 
+@pytest.mark.ac("gh-369:AC-4")
+def test_a_session_mined_journey_seeds_with_its_source(tmp_path: Path) -> None:
+    target = _stage(tmp_path / "target")
+    mined = EASY_CHEESE_CASE | {"id": "age-2", "source": "session"}
+    _journeys(target, [EASY_CHEESE_CASE, mined])
+    seeded = cast(list[dict[str, object]], seed_cases(target))
+    assert seeded == [EASY_CHEESE_CASE, mined]
+    _journeys(target, [EASY_CHEESE_CASE | {"source": "chat"}])
+    with pytest.raises(CodedError, match="source must be one of skill, session"):
+        _ = seed_cases(target)
+
+
 def _validator() -> ModuleType:
     spec = importlib.util.spec_from_file_location("validate_evals_for_journeys", REPO_ROOT / ".github/scripts/validate_evals.py")
     assert spec is not None and spec.loader is not None
