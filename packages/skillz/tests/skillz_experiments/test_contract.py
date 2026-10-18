@@ -167,11 +167,11 @@ def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monke
 
     monkeypatch.setattr(Codex, "_discover", discover)
     monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
-    assert adapter.check_candidate(candidate)
+    assert adapter.check_candidate(candidate).passed
     assert seen == ["echo-skill"]
     assert commands[0][-2:] == [".agents/skills/echo-skill/scripts/echo.py", "fixtures/nested/input.md"]
     reply["stdout"] = '{"ok": false}'
-    assert not adapter.check_candidate(candidate)
+    assert not adapter.check_candidate(candidate).passed
 
 
 def test_contract_unapproved_stops_a_draft(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

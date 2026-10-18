@@ -236,7 +236,7 @@ def test_the_witness_stages_in_invoke_and_not_in_check_candidate(tmp_path: Path,
         "fake-model", Budget(5, 60, 0), lambda: None)
     try:
         task = adapter.transports["task"]
-        assert task.check_candidate(candidate())
+        assert task.check_candidate(candidate()).passed
         assert staged_for == []
         _ = task.invoke("p", candidate(), case(tmp_path))
         assert staged_for == [HELPER]

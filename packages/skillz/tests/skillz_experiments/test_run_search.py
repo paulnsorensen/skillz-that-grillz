@@ -15,7 +15,7 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments.evaluation import CheckMemo
+from skillz_experiments.evaluation import CheckMemo, CheckResult
 from skillz_experiments.harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments._intake import intake_contract
@@ -29,7 +29,7 @@ from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
 from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
 from skillz_experiments.run._history_store import UNREADABLE, store_path
-from fake_provider import FakeProvider, ProviderCrash
+from fake_provider import PASSED, FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -819,9 +819,9 @@ class _Task:
     def __init__(self) -> None:
         self.seen: list[Candidate] = []
 
-    def check_candidate(self, candidate: Candidate) -> bool:
+    def check_candidate(self, candidate: Candidate) -> CheckResult:
         self.seen.append(candidate)
-        return False
+        return CheckResult(False, "fixture", "fail")
 
 
 def test_harness_check_candidate_delegates_to_the_task_transport(
@@ -832,7 +832,7 @@ def test_harness_check_candidate_delegates_to_the_task_transport(
     harness.configuration = cast(object, _Identity())  # pyright: ignore[reportAttributeAccessIssue]
     harness.identity = {}
     harness.transports = cast(dict[str, object], {"task": task})  # pyright: ignore[reportAttributeAccessIssue]
-    assert harness.check_candidate(seed) is False
+    assert harness.check_candidate(seed) == CheckResult(False, "fixture", "fail")
     assert task.seen == [seed]
 
 
@@ -1135,9 +1135,9 @@ def test_a_full_codex_run_ends_model_unsupported_after_the_first_rejected_call(
 
     monkeypatch.setattr(Codex, "preflight", preflight)
 
-    def accept(self: Codex, candidate: Candidate) -> bool:
+    def accept(self: Codex, candidate: Candidate) -> CheckResult:
         del self, candidate
-        return True
+        return PASSED
 
     monkeypatch.setattr(Codex, "check_candidate", accept)
     target, out = make_target(tmp_path), tmp_path / "run"

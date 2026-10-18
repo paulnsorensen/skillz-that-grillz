@@ -20,6 +20,7 @@ import pytest
 from typing_extensions import override
 
 from skillz_experiments._candidate import Candidate
+from skillz_experiments.evaluation import CheckResult
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
@@ -39,7 +40,7 @@ from skillz_experiments.run._plan import (
     plan_estimate,
 )
 from skillz_experiments.run._session import Session, engine_hash
-from fake_provider import FakeProvider, ProviderCrash
+from fake_provider import PASSED, FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -136,9 +137,9 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: State) -> C
         del self
         return _Fake(state).invoke(prompt, candidate, case, holdout=holdout, schema=schema)
 
-    def check_candidate(self: Harness, candidate: Candidate) -> bool:
+    def check_candidate(self: Harness, candidate: Candidate) -> CheckResult:
         del self, candidate
-        return not state.reject_baseline
+        return CheckResult(False, None, "fail") if state.reject_baseline else PASSED
 
     monkeypatch.setattr(Harness, "preflight", preflight)
     monkeypatch.setattr(Harness, "check_candidate", check_candidate)
@@ -339,9 +340,9 @@ def test_a_resume_with_another_installed_codex_version_stops_as_environment_diff
 
     monkeypatch.setattr(Codex, "preflight", preflight)
 
-    def accept(self: Codex, candidate: Candidate) -> bool:
+    def accept(self: Codex, candidate: Candidate) -> CheckResult:
         del self, candidate
-        return True
+        return PASSED
 
     monkeypatch.setattr(Codex, "check_candidate", accept)
     monkeypatch.setattr(Harness, "evaluate", evaluate)

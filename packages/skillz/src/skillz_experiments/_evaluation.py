@@ -3,12 +3,35 @@ from __future__ import annotations
 import json
 import shlex
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import Literal, cast
 
 from skillz_experiments._cases import loads_untrusted, mapping
 from skillz_experiments._contract import Contract
 from skillz_experiments._graders import Sandbox
+
+
+CheckKind = Literal["pass", "fail", "timeout"]
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """The result of one candidate contract check. The `evaluation` barrel exports it.
+
+    `passed` is true only for kind `pass`. `reason` says why a check fails, or is None when the transport gives no reason.
+    """
+
+    passed: bool
+    reason: str | None
+    kind: CheckKind
+
+    def __post_init__(self) -> None:
+        if self.passed != (self.kind == "pass") or (self.passed and self.reason is not None):
+            raise ValueError(f"inconsistent check result: passed={self.passed}, kind={self.kind}")
+
+
+PASSED = CheckResult(True, None, "pass")
 
 
 def grade(answer: str, expected: object, *, loaded: bool, helper_executed: bool) -> float:
@@ -140,11 +163,11 @@ def fixture_failure(fixture: Mapping[str, object], returncode: int, stdout: str,
     return None if lines and _same_json(lines[-1], fixture["error"]) else "stderr"
 
 
-def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> str | None:
-    """Run each declared helper fixture in the sandbox. Return the first failure, or None when all pass."""
+def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> CheckResult:
+    """Run each declared helper fixture in the sandbox. Return the first failure, or `PASSED` when all pass."""
     helper = rules.helper
     if helper is None:
-        return None
+        return PASSED
     for index, fixture in enumerate(helper.fixtures):
         (workspace / helper.input).parent.mkdir(parents=True, exist_ok=True)
         _ = (workspace / helper.input).write_text(cast(str, fixture["input"]))
@@ -152,8 +175,8 @@ def helper_failure(sandbox: Sandbox, workspace: Path, rules: Contract) -> str | 
             "/usr/bin/python3", "-I", f".agents/skills/{rules.skill}/{helper.path}", helper.input])
         stream = fixture_failure(fixture, code, stdout, stderr)
         if stream is not None:
-            return f"helper fixture {index} fails on {stream}"
-    return None
+            return CheckResult(False, f"helper fixture {index} fails on {stream}", "fail")
+    return PASSED
 
 
 def _paths(relative: str, workspace: str | None) -> set[str]:
