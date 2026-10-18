@@ -68,7 +68,7 @@ The file is a JSON list with at least one case. Each case has these fields:
 | `requirements` | Unique requirement ids that the case covers. |
 | `files` | An inline map of path to text. It is optional. |
 | `expected` | The closed reference object below. |
-| `source` | Always `skill`. The seed uses `skill` when it is absent. |
+| `source` | `skill` for a case drafted from the skill, or `session` for a case mined from past sessions. The seed uses `skill` when it is absent. |
 
 CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. Any other key is an error.
 

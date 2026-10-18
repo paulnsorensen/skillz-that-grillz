@@ -98,7 +98,7 @@ def _journey_properties() -> Json:
         "requirements": {"type": "array", "items": NONEMPTY, "uniqueItems": True},
         "files": TEXT_MAP | {"description": "Inline files: path to text."},
         "expected": _expected(),
-        "source": {"const": "skill"},
+        "source": {"enum": list(SOURCES)},
     }
     return {name: properties[name] for name in sorted(JOURNEY_KEYS)}
 

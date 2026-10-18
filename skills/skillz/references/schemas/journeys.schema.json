@@ -128,7 +128,10 @@
         "uniqueItems": true
       },
       "source": {
-        "const": "skill"
+        "enum": [
+          "skill",
+          "session"
+        ]
       }
     },
     "additionalProperties": false
