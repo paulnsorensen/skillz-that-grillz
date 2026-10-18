@@ -20,7 +20,6 @@ from skillz_experiments._evals_format import EVAL_KINDS, SOURCES
 from skillz_experiments._records import write
 
 DRAFT_NAME = "cases.draft.json"
-KINDS = (*EVAL_KINDS, "journey")
 PENDING_KINDS = ("trigger", "near-miss")
 HOLDOUT_MINIMUM = 6
 REQUEST_PREVIEW = 80
@@ -81,8 +80,9 @@ def _case(value: object, position: int, journeys: Collection[str]) -> DraftCase:
                          + "field (a trigger or near-miss seed case takes family = id; a task case needs an explicit family)")
     try:
         kind, source = item["kind"], item["source"]
-        if kind not in KINDS and kind not in journeys:
-            raise ValueError(f"kind must be one of {', '.join((*KINDS, *(name for name in journeys if name not in KINDS)))}")
+        allowed = (*EVAL_KINDS, *journeys)
+        if kind not in allowed:
+            raise ValueError(f"kind must be one of {', '.join(allowed)}")
         if source not in SOURCES:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}")
         files = text_map(item.get("files", {}))

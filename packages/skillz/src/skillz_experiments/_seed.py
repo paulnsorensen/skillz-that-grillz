@@ -76,6 +76,15 @@ def _fixture(target: Path, path: str, cache: dict[str, str]) -> str:
     return cache[path]
 
 
+def check_unique(identifiers: Sequence[object]) -> None:
+    """Raise `CodedError` `evals-unreadable` when a case id repeats across `evals.json` and `journeys.json`."""
+    seen: set[object] = set()
+    for identifier in identifiers:
+        if identifier in seen:
+            raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: duplicate case id {identifier!r}")
+        seen.add(identifier)
+
+
 def seed_cases(target: Path) -> list[dict[str, object]] | None:
     """Return one seed case per eval entry, then one per journey, or None when the skill has neither file.
 
@@ -100,14 +109,11 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
             case["expected"] = {"expected_output": header.expected_output, "assertions": list(header.assertions)}
         cases.append(case)
     cases.extend(journeys or [])
-    seen: set[object] = set()
+    check_unique([case["id"] for case in cases])
     for case in cases:
-        if case["id"] in seen:
-            raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: duplicate case id {case['id']!r}")
-        seen.add(case["id"])
         total += len(json.dumps(case))
         if total > SEED_LIMIT:
-            raise CodedError("evals-unreadable", f"{EVALS} cannot seed the cases: the seed is too large; it passes "
+            raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: the seed is too large; it passes "
                              + f"{SEED_LIMIT} bytes at entry {case['id']}")
     return cases
 
@@ -157,6 +163,7 @@ def check_coverage(target: Path, draft: Sequence[DraftCase]) -> None:
     wanted = [(header.identifier, header.kind, header.prompt, None) for header in _entries(target) or []]
     wanted += [(str(case["id"]), str(case["kind"]), str(case["request"]), str(case["brief"]))
                for case in _journeys(target) or []]
+    check_unique([identifier for identifier, *_ in wanted])
     for identifier, kind, request, brief in wanted:
         case = drafted.get(identifier)
         if case is None:

@@ -199,3 +199,15 @@ def test_the_default_kinds_follow_the_contract_and_a_bad_selection_stops(tmp_pat
     with pytest.raises(CodedError) as audit:
         _ = scored_kinds(load_contract(target))
     assert audit.value.code == "contract-audit-unsupported"
+
+
+@pytest.mark.ac("gh-368:AC-7")
+def test_a_journey_labeled_case_stops_in_a_contract_without_that_kind(tmp_path: Path) -> None:
+    item = {"id": "j-0", "family": "j", "kind": "journey", "request": "Plan the work.", "source": "skill",
+            "expected": {"must": ["x"]}}
+    path = tmp_path / "cases.draft.json"
+    _ = path.write_text(json.dumps([item]))
+    with pytest.raises(ValueError, match="case j-0: kind must be one of trigger, near-miss, task, journey-review"):
+        _ = load_draft(path, ("journey-review",))
+    with pytest.raises(ValueError, match="case j-0: kind must be one of trigger, near-miss, task$"):
+        _ = load_draft(path, ())
