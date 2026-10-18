@@ -168,10 +168,17 @@ else:
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-    except ProcessLookupError:
+        with open(f"/proc/{pid}/stat") as stat:
+            return stat.read().split()[2] != "Z"
+    except (ProcessLookupError, FileNotFoundError):
         return False
-    with open(f"/proc/{pid}/stat") as stat:
-        return stat.read().split()[2] != "Z"
+
+
+def _wait_until_dead(*pids: int, seconds: float = 5) -> None:
+    """Wait for the processes to exit. SIGKILL is asynchronous, so a killed process can still be exiting."""
+    deadline = time.monotonic() + seconds
+    while any(_alive(pid) for pid in pids) and time.monotonic() < deadline:
+        time.sleep(0.05)
 
 
 @pytest.mark.ac("gh-287:AC-5")
@@ -188,6 +195,7 @@ def test_the_command_harness_kills_the_wrapper_group_at_sandbox_seconds_and_send
     assert adapter.check_candidate(_helper_candidate()) == TIMEOUT
     assert 5 <= time.monotonic() - started < 30
     wrapper_pid, child_pid = (int(part) for part in pids.read_text().split())
+    _wait_until_dead(wrapper_pid, child_pid)
     assert not _alive(wrapper_pid) and not _alive(child_pid)
     keys = [cast(list[str], json.loads(line)) for line in log.read_text().splitlines()]
     assert keys[-1] == ["argv", "model", "operation", "schema_version", "workspace"]
