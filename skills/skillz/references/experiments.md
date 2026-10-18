@@ -207,6 +207,9 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-surface-missing` | A file that the `surface` block names is missing from the skill, or the MCP config is not a JSON object with an `mcpServers` object. | Restore the file or fix the contract, then run again. |
 | `contract-surface-unsupported` | The contract declares a `surface`, and the task role is not the Claude harness. | Run with `--harness claude`, or remove the `surface` block. |
 | `journey-unsupported` | A journey case needs a task transport that holds a conversation, and the transport cannot. | Run with `--harness claude`, or remove the journey cases. |
+| `journey-expected-invalid` | A journey `expected` is not an object, holds a key other than `must`, `must_not`, `questions`, and `final_stop`, holds a wrong type, an empty or repeated entry, or has neither a nonempty `must` nor a nonempty `must_not`. A frozen case of an older run can trigger it on resume. | Fix the case. For an older run, start a new run directory. |
+| `expected-missing` | A journey case has no `expected`. | Add the `expected` object. |
+| `contract-rubric-field` | The rubric of a `journey` kind names `reference.<name>` for a name that is not an `expected` field. | Use `must`, `must_not`, `questions`, or `final_stop`. |
 | `contract-unapproved` | The skill contract has `status` `draft`. | Ask the user to approve the contract, then set `approved`. |
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
@@ -304,11 +307,15 @@ Write each journey case with these fields:
 - `brief`: the user goal and the facts that the simulated user may share. Only the simulator sees it.
   Hold back one fact. The agent must ask for it.
 - `max_turns`: the agent turns that the flow needs. A journey costs at most `max_turns * 2 + 1` calls.
-- `requirements`: optional requirement IDs that the case covers.
+- `requirements`: optional, unique nonempty IDs. Each ID is a trace label into a behavior table. The case hash covers them. Search and the report do not read them.
+- `expected`: a closed object. Any other key stops with `journey-expected-invalid`. Give at least one nonempty `must` or `must_not`. Each list holds unique nonempty text.
 - `expected.must`: what the transcript must show, one observable item each.
 - `expected.must_not`: what the transcript must not show, such as a self-approval or an edit of the target.
-- `expected.questions`: the only questions that the agent may ask. The rubric subtracts points for any other question.
-- `expected.final_stop`: optional. The stop or state in which the journey must end.
+- `expected.questions`: optional. The only questions that the agent may ask. The rubric subtracts points for any other question. An empty list means the agent asks nothing. When absent, any question is allowed.
+- `expected.final_stop`: optional nonempty text. The stop or state in which the journey must end.
+
+The runner adds the meaning of each `reference` field to the judge prompt. A rubric may name only `reference.must`, `reference.must_not`, `reference.questions`, and `reference.final_stop`. Any other `reference.<name>` stops with `contract-rubric-field`.
+A journey case may omit `files`.
 
 Make the cases hard. A family that the seed already passes adds no signal.
 Give each family one trap:
@@ -923,12 +930,13 @@ Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the jud
 A journey case tests a skill that asks the user questions across several turns.
 A simulator role plays the user. The task role runs one conversation per journey.
 
-A journey case has `kind: journey`. It also needs `files` and `expected`, like a task case.
+A journey case has `kind: journey`. It also needs `expected`. Unlike a task case, it may omit `files`.
 It has these extra fields:
 
 - `brief` (required): the user goal and the facts the simulator may share. Only the simulator sees it. The agent never sees it.
 - `max_turns` (optional): the turn limit. The default is 8.
-- `requirements` (optional): requirement IDs. The case hash covers them.
+- `requirements` (optional): unique nonempty requirement IDs. They are trace labels. The case hash covers them.
+- `expected` (required): an object with `must`, `must_not`, `questions`, and `final_stop`. See `Draft journeys` for the rules.
 
 A contract declares the tool surface in a `surface` block. Every field is optional:
 
