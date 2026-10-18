@@ -587,9 +587,9 @@ def test_export_whitespace_component_exports_no_new_cli_and_no_leak(
     out = prepared(world, tmp_path, write_draft, approvals)
     complete(out, {NEW_CLI: "  \n"})
     destination = tmp_path / "export"
-    _ = export(out, destination)
+    exported = export(out, destination)
     assert "new_cli" not in read(destination / "report.json")
-    assert (destination / "candidate.patch").read_text() == ""
+    assert exported["patches"] == [] and not (destination / "candidate.patch").exists()
 
 
 def test_export_winner_value_that_collides_with_the_seed_fails_by_code_and_writes_no_patch(
