@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -67,6 +68,37 @@ def test_a_run_budget_shorter_than_the_limit_raises_budget_exhausted(tmp_path: P
         _ = _runtime.sandboxed(["/bin/sleep", "30"], cwd=tmp_path, limit=60, budget=Budget(10, 1, 0),
                                environment={"PATH": "/usr/bin:/bin"})
     assert BudgetExhausted not in _runtime.SandboxTimeout.__mro__
+
+
+SETSID_CHILD = """
+import os, pathlib, sys, time
+if os.fork() == 0:
+    os.setsid()
+    pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+    time.sleep(30)
+    os._exit(0)
+time.sleep(30)
+"""
+
+
+@pytest.mark.ac("gh-287:AC-6")
+def test_a_descendant_that_leaves_the_group_cannot_hold_the_runner_past_the_limit(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A setsid grandchild keeps the child's stdout open. The runner must not read that pipe to the end."""
+    monkeypatch.setattr(_runtime, "TERM_GRACE_SECONDS", 1.0)
+    marker = tmp_path / "grandchild"
+    started = time.monotonic()
+    try:
+        with pytest.raises(_runtime.SandboxTimeout):
+            _ = _runtime.sandboxed([sys.executable, "-c", SETSID_CHILD, str(marker)], cwd=tmp_path, limit=1,
+                                   budget=Budget(10, 120, 0), environment={"PATH": "/usr/bin:/bin"})
+        assert time.monotonic() - started < 10
+    finally:
+        if marker.exists():
+            try:
+                os.kill(int(marker.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 @final
@@ -154,7 +186,7 @@ def test_the_command_harness_kills_the_wrapper_group_at_sandbox_seconds_and_send
     adapter = Command((sys.executable, str(wrapper), str(log), str(pids)), "m", Budget(10, 120, 0), lambda: None)
     started = time.monotonic()
     assert adapter.check_candidate(_helper_candidate()) == TIMEOUT
-    assert time.monotonic() - started < 30
+    assert 5 <= time.monotonic() - started < 30
     wrapper_pid, child_pid = (int(part) for part in pids.read_text().split())
     assert not _alive(wrapper_pid) and not _alive(child_pid)
     keys = [cast(list[str], json.loads(line)) for line in log.read_text().splitlines()]

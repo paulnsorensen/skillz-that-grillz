@@ -70,7 +70,8 @@ class Sandbox(Protocol):
     """Optional transport capability that the command grader needs.
 
     Run `argv` with `workspace` as the working directory, with the same isolation as a task run.
-    Return the exit code, the standard output, and the standard error. A transport that grades command kinds also puts
+    Return the exit code, the standard output, and the standard error. A run that reaches the harness sandbox time
+    limit raises `SandboxTimeout` instead. A transport that grades command kinds also puts
     `output_files` in its `invoke` result: a map of relative path to text for the task workspace.
     """
 

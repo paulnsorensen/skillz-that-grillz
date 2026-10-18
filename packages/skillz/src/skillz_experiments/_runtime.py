@@ -80,7 +80,11 @@ def reset_call_slots() -> None:
 
 
 def _end(child: subprocess.Popen[str]) -> None:
-    """Send SIGTERM to the child's group, wait `TERM_GRACE_SECONDS`, then SIGKILL whatever remains."""
+    """Send SIGTERM to the child's group, wait `TERM_GRACE_SECONDS`, then SIGKILL whatever remains.
+
+    After the SIGKILL, wait for the child itself and do not read its pipes to the end. A descendant that left the
+    group with `setsid()` can keep a pipe open, and reading to the end would wait for that descendant.
+    """
     try:
         os.killpg(child.pid, signal.SIGTERM)
     except (ProcessLookupError, PermissionError):
@@ -94,7 +98,7 @@ def _end(child: subprocess.Popen[str]) -> None:
             os.killpg(child.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
-        _ = child.communicate()
+        _ = child.wait()
 
 
 @contextmanager

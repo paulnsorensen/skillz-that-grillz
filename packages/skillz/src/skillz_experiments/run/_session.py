@@ -187,7 +187,7 @@ def _timed_out(item: Mapping[str, object]) -> bool:
     return item.get("status") == "candidate-contract-rejected" and item.get("rejection_kind") == "timeout"
 
 
-def _unscored(item: Mapping[str, object]) -> bool:
+def _holdout_unscored(item: Mapping[str, object]) -> bool:
     """Return whether a holdout outcome has no gate score: a failed evaluation or a final check timeout."""
     return _is_failed(item) or _timed_out(item)
 
@@ -336,7 +336,7 @@ def scored_holdout(outcomes: Iterable[Outcome], arms: Collection[str]) -> Iterat
     An `evaluation-failed` outcome and a final check timeout are unscored and drop out.
     """
     for item in outcomes:
-        if item.get("split") == "holdout" and item.get("arm") in arms and not _unscored(item):
+        if item.get("split") == "holdout" and item.get("arm") in arms and not _holdout_unscored(item):
             yield item
 
 
@@ -1192,7 +1192,7 @@ class Session:
                 raise _baseline_rejected(_rejection_detail(rejected))
             arms = {"baseline": self.seed, "winner": winner}
             done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in self.outcomes
-                    if item.get("split") == "holdout" and not _unscored(item)}
+                    if item.get("split") == "holdout" and not _holdout_unscored(item)}
             todo = [(arm, case, repeat) for arm in arms for case in holdout for repeat in range(repeats)
                     if (arm, case.identifier, repeat) not in done]
 
@@ -1304,7 +1304,7 @@ class Session:
         """
         with self.lock:
             return {cast(str, item["case_id"]): item for item in self.outcomes
-                    if item.get("arm") == "replay" and item.get("split") == "holdout" and not _unscored(item)}
+                    if item.get("arm") == "replay" and item.get("split") == "holdout" and not _holdout_unscored(item)}
 
     def _replay_need(self) -> int:
         """Return the calls that the replay still needs: the cost of each holdout case without a scored replay outcome."""
