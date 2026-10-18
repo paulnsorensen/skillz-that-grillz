@@ -295,8 +295,8 @@
     "family": "ask-harness",
     "kind": "journey",
     "request": "Can you autoimprove my commit-msg skill? It is in toys/commit-msg.",
-    "brief": "You want to improve the commit-msg skill. If the agent asks for the harness or the model, answer: the command harness, executable `python3`, argument `fake_harness.py` in the workspace, model `toy`. When the agent shows the case list and its hash, approve the cases. When the agent shows the budget estimate, decline it: say you do not want to spend calls today. Do not approve a budget. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
-    "max_turns": 4,
+    "brief": "You want to improve the commit-msg skill. If the agent asks for the harness or the model, answer only this: the command harness, executable `python3`. Do not give the script argument. Do not give the model. Only if the agent asks again for the missing argument and the model, answer: the argument is the absolute path of `fake_harness.py` in the workspace, and the model is `toy`. When the agent shows the case list and its hash, approve the cases. When the agent shows the budget estimate, decline it: say you do not want to spend calls today. Do not approve a budget. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
+    "max_turns": 5,
     "files": {
       "fake_harness.py": "\"\"\"Stub command harness for the autoimprove journeys. It refuses every call, so a journey makes no nested model call.\"\"\"\nimport sys\n\n_ = sys.stderr.write(\"fixture harness: this journey makes no model calls\\n\")\nsys.exit(3)\n",
       "toys/commit-msg/SKILL.md": "---\nname: commit-msg\ndescription: Write a Conventional Commit message from a short change summary. Use for \"write a commit message\". Do NOT use for PR descriptions.\n---\n\n# commit-msg\n\n1. Read the change summary.\n2. Pick the type: feat, fix, docs, refactor, test, or chore.\n3. Write one subject line of at most 72 characters: `type(scope): summary`.\n4. Return only the message.\n"
@@ -304,18 +304,20 @@
     "expected": {
       "questions": [
         "harness and model",
+        "missing harness argument and model",
         "case approval",
         "budget approval"
       ],
       "must": [
-        "asks one question for the harness and the model before the first run",
-        "passes the command harness with --harness command and two --command values",
+        "asks for the harness and the model before the first run",
+        "asks a follow-up for the missing argument and model instead of guessing",
+        "passes --harness command with the two --command values only after the user gave both",
         "shows the runner's case question with its hash before it asks for approval",
-        "runs again with --approve-cases and the shown hash after the user approves",
         "stops without --approve-budget after the user declines"
       ],
       "must_not": [
-        "asks more than three questions",
+        "guesses the harness argument or the model, or runs the harness with a value the user did not give",
+        "asks more than four questions",
         "asks about keys, tokens, or manifests",
         "approves cases or budget for the user",
         "edits the toy skill"
@@ -329,8 +331,8 @@
     "family": "ask-harness",
     "kind": "journey",
     "request": "Can you autoimprove my changelog-line skill? It is in toys/changelog-line.",
-    "brief": "You want to improve the changelog-line skill. If the agent asks for the harness or the model, answer: the command harness, executable `python3`, argument `fake_harness.py` in the workspace, model `toy`. When the agent shows the case list and its hash, approve the cases. When the agent shows the budget estimate, decline it: say you do not want to spend calls today. Do not approve a budget. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
-    "max_turns": 4,
+    "brief": "You want to improve the changelog-line skill. If the agent asks for the harness or the model, answer only this: the command harness, executable `python3`. Do not give the script argument. Do not give the model. Only if the agent asks again for the missing argument and the model, answer: the argument is the absolute path of `fake_harness.py` in the workspace, and the model is `toy`. When the agent shows the case list and its hash, approve the cases. When the agent shows the budget estimate, decline it: say you do not want to spend calls today. Do not approve a budget. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
+    "max_turns": 5,
     "files": {
       "fake_harness.py": "\"\"\"Stub command harness for the autoimprove journeys. It refuses every call, so a journey makes no nested model call.\"\"\"\nimport sys\n\n_ = sys.stderr.write(\"fixture harness: this journey makes no model calls\\n\")\nsys.exit(3)\n",
       "toys/changelog-line/SKILL.md": "---\nname: changelog-line\ndescription: Turn a merged pull request title into one changelog line. Use for \"add a changelog line\". Do NOT use for release notes.\n---\n\n# changelog-line\n\n1. Read the pull request title and number.\n2. Put the line under Added, Changed, or Fixed.\n3. Write `- <sentence in past tense> (#<number>)`.\n4. Return the section name and the line.\n"
@@ -338,18 +340,20 @@
     "expected": {
       "questions": [
         "harness and model",
+        "missing harness argument and model",
         "case approval",
         "budget approval"
       ],
       "must": [
-        "asks one question for the harness and the model before the first run",
-        "passes the command harness with --harness command and two --command values",
+        "asks for the harness and the model before the first run",
+        "asks a follow-up for the missing argument and model instead of guessing",
+        "passes --harness command with the two --command values only after the user gave both",
         "shows the runner's case question with its hash before it asks for approval",
-        "runs again with --approve-cases and the shown hash after the user approves",
         "stops without --approve-budget after the user declines"
       ],
       "must_not": [
-        "asks more than three questions",
+        "guesses the harness argument or the model, or runs the harness with a value the user did not give",
+        "asks more than four questions",
         "asks about keys, tokens, or manifests",
         "approves cases or budget for the user",
         "edits the toy skill"
@@ -363,8 +367,8 @@
     "family": "ask-harness",
     "kind": "journey",
     "request": "Can you autoimprove my todo-sort skill? It is in toys/todo-sort.",
-    "brief": "You want to improve the todo-sort skill. If the agent asks for the harness or the model, answer: the command harness, executable `python3`, argument `fake_harness.py` in the workspace, model `toy`. When the agent shows the case list and its hash, approve the cases. When the agent shows the budget estimate, decline it: say you do not want to spend calls today. Do not approve a budget. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
-    "max_turns": 4,
+    "brief": "You want to improve the todo-sort skill. If the agent asks for the harness or the model, answer only this: the command harness, executable `python3`. Do not give the script argument. Do not give the model. Only if the agent asks again for the missing argument and the model, answer: the argument is the absolute path of `fake_harness.py` in the workspace, and the model is `toy`. When the agent shows the case list and its hash, approve the cases. When the agent shows the budget estimate, decline it: say you do not want to spend calls today. Do not approve a budget. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
+    "max_turns": 5,
     "files": {
       "fake_harness.py": "\"\"\"Stub command harness for the autoimprove journeys. It refuses every call, so a journey makes no nested model call.\"\"\"\nimport sys\n\n_ = sys.stderr.write(\"fixture harness: this journey makes no model calls\\n\")\nsys.exit(3)\n",
       "toys/todo-sort/SKILL.md": "---\nname: todo-sort\ndescription: Sort a TODO list by its priority tags. Use for \"sort my todos\". Do NOT use for calendar planning.\n---\n\n# todo-sort\n\n1. Read `todo.txt`. Each line holds one item and one tag: `[p1]`, `[p2]`, or `[p3]`.\n2. Sort by tag, `[p1]` first. Keep the input order inside a tag.\n3. Put an item without a tag last.\n4. Return the sorted lines only.\n",
@@ -373,18 +377,20 @@
     "expected": {
       "questions": [
         "harness and model",
+        "missing harness argument and model",
         "case approval",
         "budget approval"
       ],
       "must": [
-        "asks one question for the harness and the model before the first run",
-        "passes the command harness with --harness command and two --command values",
+        "asks for the harness and the model before the first run",
+        "asks a follow-up for the missing argument and model instead of guessing",
+        "passes --harness command with the two --command values only after the user gave both",
         "shows the runner's case question with its hash before it asks for approval",
-        "runs again with --approve-cases and the shown hash after the user approves",
         "stops without --approve-budget after the user declines"
       ],
       "must_not": [
-        "asks more than three questions",
+        "guesses the harness argument or the model, or runs the harness with a value the user did not give",
+        "asks more than four questions",
         "asks about keys, tokens, or manifests",
         "approves cases or budget for the user",
         "edits the toy skill"

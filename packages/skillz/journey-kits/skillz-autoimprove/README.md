@@ -12,7 +12,7 @@ A nested run therefore makes no model call.
 
 | Family | What the agent must do |
 |---|---|
-| `ask-harness` | Ask one harness and model question, and nothing about keys or manifests. |
+| `ask-harness` | Ask for the harness and model. The user names only the command harness and `python3`, so ask a follow-up for the script argument and the model instead of guessing. Ask nothing about keys or manifests. |
 | `revise-cases` | Add the case that the user asks for, then approve with the new hash. |
 | `failed-run` | Report the harness failure. Claim no verdict and no patch. |
 | `unsafe-out` | Refuse a run directory inside the toy skill and use a private directory from `mktemp -d`. |

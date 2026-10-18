@@ -289,3 +289,43 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (781, 51, 210, 48, 24320)
+
+
+def ask_harness_cases(tmp_path: Path) -> list[dict[str, object]]:
+    draft = cast(list[dict[str, object]], json.loads((written(tmp_path) / "cases.draft.json").read_text()))
+    cases = [case for case in draft if case["family"] == "ask-harness"]
+    assert len(cases) == 3
+    return cases
+
+
+@pytest.mark.ac("gh-369:AC-9")
+def test_ask_harness_scripts_a_partial_first_answer_and_the_rest_only_on_a_follow_up(tmp_path: Path) -> None:
+    for case in ask_harness_cases(tmp_path):
+        brief = cast(str, case["brief"])
+        first, rest = brief.index("answer only this"), brief.index("Only if the agent asks again")
+        assert first < rest
+        assert "`python3`" in brief[first:rest] and "Do not give the script argument" in brief[first:rest]
+        assert "Do not give the model" in brief[first:rest]
+        assert "`fake_harness.py`" not in brief[first:rest] and "`toy`" not in brief[first:rest]
+        assert "absolute path" in brief[rest:] and "`fake_harness.py`" in brief[rest:] and "`toy`" in brief[rest:]
+
+
+@pytest.mark.ac("gh-369:AC-10")
+def test_ask_harness_allows_one_extra_agent_turn_for_the_follow_up(tmp_path: Path) -> None:
+    assert {case["max_turns"] for case in ask_harness_cases(tmp_path)} == {5}
+
+
+@pytest.mark.ac("gh-369:AC-11")
+def test_ask_harness_expects_a_follow_up_and_forbids_guessing(tmp_path: Path) -> None:
+    for case in ask_harness_cases(tmp_path):
+        expected = cast(dict[str, object], case["expected"])
+        assert expected["questions"] == [
+            "harness and model", "missing harness argument and model", "case approval", "budget approval"]
+        must = cast(list[str], expected["must"])
+        must_not = cast(list[str], expected["must_not"])
+        assert "asks a follow-up for the missing argument and model instead of guessing" in must
+        assert "passes --harness command with the two --command values only after the user gave both" in must
+        assert "guesses the harness argument or the model, or runs the harness with a value the user did not give" in must_not
+        assert "asks more than four questions" in must_not
+        assert "approves cases or budget for the user" in must_not
+        assert expected["final_stop"] == "budget-unapproved"
