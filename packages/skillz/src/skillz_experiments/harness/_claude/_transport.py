@@ -740,8 +740,13 @@ def _apparmor() -> Check:
 
 
 def _tool_checks() -> list[Check]:
-    """Report each host tool row of `host_tools`, so one pass names every missing tool."""
-    return [Check(f"tool:{name}", "pass" if found else "fail", f"`{name}` found", None if found else fix)
+    """Report each host tool row of `host_tools`, so one pass names every missing tool.
+
+    A name is a command on PATH or an absolute path, and the detail of a missing tool says which one was looked up.
+    """
+    return [Check(f"tool:{name}", "pass" if found else "fail",
+                  f"`{name}` found" if found else f"`{name}` not found" + ("" if name.startswith("/") else " on PATH"),
+                  None if found else fix)
             for name, found, fix in host_tools()]
 
 
