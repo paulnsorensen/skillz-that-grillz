@@ -98,6 +98,7 @@ FAMILIES = {
          "asks a follow-up for the missing argument and model instead of guessing",
          "passes --harness command with the two --command values only after the user gave both",
          "shows the runner's case question with its hash before it asks for approval",
+         "runs again with --approve-cases and the shown hash after the user approves",
          "stops without --approve-budget after the user declines"),
         ("guesses the harness argument or the model, or runs the harness with a value the user did not give",
          "asks more than four questions", "asks about keys, tokens, or manifests",

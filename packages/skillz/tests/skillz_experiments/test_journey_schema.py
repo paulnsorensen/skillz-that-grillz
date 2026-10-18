@@ -29,7 +29,7 @@ EASY_CHEESE: dict[str, object] = {
     "source": "skill",
 }
 # gh-369: the ask-harness family gained a partial-answer trap, so this content change moved the pin.
-KIT_HASH = "87d42826ebdc44bddc14880010f4fccdf349307cc5f734e676b0c8c0bd6cfb75"
+KIT_HASH = "33ce4fee9af54aa76408dcea0c59ad1bb52f0b81de2ce8997a91646f74cd1378"
 TASK_HASH = "37dffac39b162cbff4a6e2ecb98ac7d355bff74a38856c080b1d2763047488b8"
 
 
