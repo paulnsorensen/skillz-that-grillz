@@ -68,6 +68,17 @@ def validate_file(path: Path) -> list[str]:
     return errors
 
 
+def cross_file_duplicates(evals: Path, journeys: Path) -> list[str]:
+    try:
+        eval_data = cast(object, json.loads(evals.read_text(encoding="utf-8")))
+        journey_data = cast(object, json.loads(journeys.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, OSError):
+        return []
+    eval_ids = {entry.identifier for entry in parse_evals(eval_data, strict=True).entries}
+    journey_ids = [case["id"] for case in parse_journeys(journey_data, strict=True).cases]
+    return [f"{journeys}: duplicate case id {ident!r} also in {evals.name}" for ident in journey_ids if ident in eval_ids]
+
+
 def _canonical_entry(**overrides: object) -> dict[str, object]:
     entry: dict[str, object] = {"id": 0, "name": "a", "kind": "task", "prompt": "p", "expected_output": "e", "files": []}
     entry.update(overrides)
@@ -166,6 +177,10 @@ def main() -> int:
     all_errors: list[str] = []
     for ef in eval_files:
         all_errors.extend(validate_file(ef))
+    for journeys in sorted(Path("skills").glob("*/evals/journeys.json")):
+        evals = journeys.with_name("evals.json")
+        if evals.is_file():
+            all_errors.extend(cross_file_duplicates(evals, journeys))
 
     if all_errors:
         for e in all_errors:

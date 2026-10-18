@@ -103,6 +103,19 @@ class ValidateEvalsMainTest(unittest.TestCase):
         self.assertIn("at least one entry", err)
         self.assertIn("1 error", err)
 
+    @pytest.mark.ac("gh-369:AC-13")
+    def test_id_repeated_across_evals_and_journeys_fails(self) -> None:
+        self._write_eval("foo", VALID_EVALS)
+        journey = json.loads((REPO_ROOT / "skills" / "skillz" / "evals" / "journeys.json").read_text(encoding="utf-8"))[0]
+        path = self.tmpdir / "skills" / "foo" / "evals" / "journeys.json"
+        _ = path.write_text(json.dumps([journey | {"id": "j1"}]), encoding="utf-8")
+        rc, _, _ = self._run()
+        self.assertEqual(rc, 0)
+        _ = path.write_text(json.dumps([journey | {"id": "a"}]), encoding="utf-8")
+        rc, _, err = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("duplicate case id 'a'", err)
+
     def test_aggregates_across_files(self) -> None:
         self._write_eval("good", VALID_EVALS)
         self._write_eval("alsogood", {"skill_name": "x", "evals": [VALID_ENTRY]})
