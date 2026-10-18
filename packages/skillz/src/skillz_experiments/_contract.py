@@ -206,7 +206,7 @@ def _pillars(raw: object, kind: str) -> tuple[str, ...]:
 
 def _grader(value: object, kind: str) -> Grader:
     item = mapping(value)
-    _fields(item, {"grader", "argv", "rubric", "capture", "pillars"}, f"kind {kind}")
+    _fields(item, set(GRADER_FIELDS) - {"gate"}, f"kind {kind}")
     kind_type = item.get("grader")
     if kind_type not in GRADERS:
         raise ValueError(f"kind {kind} needs a grader: {', '.join(GRADERS)}")
@@ -231,7 +231,7 @@ def _grader(value: object, kind: str) -> Grader:
 
 def _helper(value: object) -> Helper:
     item = mapping(value)
-    _fields(item, {"path", "input", "fixtures"}, "helper")
+    _fields(item, set(HELPER_FIELDS), "helper")
     fixtures: list[dict[str, object]] = []
     raw = item.get("fixtures", [])
     if not isinstance(raw, list):
@@ -291,7 +291,7 @@ def _surface(value: object) -> Surface:
     if not isinstance(value, dict):
         raise _surface_error("must be an object")
     item = mapping(cast(object, value))
-    unknown = set(item) - {"tools", "mcp_config", "agents", "companions"}
+    unknown = set(item) - set(SURFACE_FIELDS)
     if unknown:
         raise _surface_error(f"has unknown fields: {', '.join(sorted(unknown))}")
     tools = _surface_list(item, "tools")

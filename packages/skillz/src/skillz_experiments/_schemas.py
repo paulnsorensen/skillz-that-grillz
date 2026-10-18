@@ -7,14 +7,16 @@ Rules that a schema cannot express (a duplicate id, a family count, a missing fi
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import fields
 from typing import Literal, cast
 
 from skillz_experiments._cases import JOURNEY_EXPECTED_FIELDS
 from skillz_experiments._contract import (
-    ARGV_GRADERS, GRADERS, PILLAR_LIMIT, PILLAR_PATTERN, RUBRIC_GRADERS, SCHEMA_KEY, SKILL_PATTERN, TOOL_PATTERN,
+    ARGV_GRADERS, CONTRACT_FIELDS, GRADER_FIELDS, GRADERS, HELPER_FIELDS, PILLAR_LIMIT, PILLAR_PATTERN, RUBRIC_GRADERS,
+    SCHEMA_KEY, SKILL_PATTERN, SURFACE_FIELDS, TOOL_PATTERN,
 )
-from skillz_experiments._evals_format import EVAL_KINDS, FIXTURES, JOURNEY_KEYS, JOURNEY_REQUIRED, SOURCES
+from skillz_experiments._evals_format import EVAL_FIELDS, EVAL_KINDS, FIXTURES, JOURNEY_KEYS, JOURNEY_REQUIRED, SOURCES
 from skillz_experiments._intake import DRAFT_FIELDS, DRAFT_REQUIRED
 from skillz_experiments.gate import Statistics
 
@@ -29,8 +31,6 @@ Json = dict[str, object]
 NONEMPTY: Json = {"type": "string", "pattern": r"\S"}
 NONEMPTY_LIST: Json = {"type": "array", "items": NONEMPTY}
 TEXT_MAP: Json = {"type": "object", "additionalProperties": {"type": "string"}}
-_BOUNDS: dict[str, Json] = {"_saving": {"exclusiveMinimum": 0, "exclusiveMaximum": 1},
-                            "_coverage": {"minimum": 0, "maximum": 1}}
 
 
 def regenerate_command(name: SchemaName) -> str:
@@ -39,6 +39,11 @@ def regenerate_command(name: SchemaName) -> str:
 
 def _top(title: str, body: Json) -> Json:
     return {"$schema": DIALECT, "title": title} | body
+
+
+def _pick(properties: Json, names: Sequence[str]) -> Json:
+    """Return the property schemas for `names`, in that order. A name with no schema raises `KeyError`."""
+    return {name: properties[name] for name in names}
 
 
 def _any_of(*names: str) -> Json:
@@ -50,7 +55,7 @@ def _eval_entry() -> Json:
     return {
         "type": "object",
         "required": ["id", "name", "prompt", "expected_output", "files", "kind"],
-        "properties": {
+        "properties": _pick({
             "id": {"type": "integer", "description": "Unique whole number."},
             "name": NONEMPTY | {"description": "Unique case name. It becomes the case id."},
             "prompt": NONEMPTY | {"description": "The request that the user sends."},
@@ -61,7 +66,7 @@ def _eval_entry() -> Json:
             "kind": {"enum": kinds, "description": "trigger: the skill must start. near-miss: it must not. task: it does work."},
             "family": NONEMPTY | {"description": "Group of related cases. Needed for the split."},
             "expected_skill": {"type": ["string", "null"], "description": "The skill that must start, or null for a near-miss."},
-        },
+        }, EVAL_FIELDS),
         "allOf": [
             {"if": {"properties": {"kind": {"const": "task"}}}, "else": {"properties": {"assertions": {"maxItems": 0}}}},
             {"if": {"properties": {"expected_skill": {"type": "null"}}, "required": ["expected_skill"]},
@@ -132,8 +137,7 @@ def _statistics() -> Json:
         if metadata.get("map"):
             number: Json = {"type": "object", "additionalProperties": {"type": "number", "minimum": 0}}
         else:
-            check = metadata.get("check")
-            bounds = _BOUNDS.get(getattr(check, "__name__", ""), {"minimum": 0})
+            bounds = cast(Json, metadata.get("bounds", {"minimum": 0}))
             number = {"type": ["number", "null"] if metadata.get("nullable") else "number"} | bounds
         if "rule" in metadata:
             number["description"] = "Accepts " + cast(str, metadata["rule"]) + "."
@@ -146,7 +150,7 @@ def _kind() -> Json:
     return {
         "type": "object",
         "required": ["grader"],
-        "properties": {
+        "properties": _pick({
             "grader": {"enum": list(GRADERS)},
             "argv": {"type": "array", "minItems": 1, "items": NONEMPTY},
             "gate": NONEMPTY | {"description": "A gate file under evals/gates/, as a relative path. It stands for argv."},
@@ -154,7 +158,7 @@ def _kind() -> Json:
             "capture": {"type": "array", "minItems": 1, "items": NONEMPTY},
             "pillars": {"type": "array", "minItems": 1, "maxItems": PILLAR_LIMIT, "uniqueItems": True,
                         "items": {"type": "string", "pattern": "^" + PILLAR_PATTERN + "$"}},
-        },
+        }, GRADER_FIELDS),
         "additionalProperties": False,
         "not": {"required": ["argv", "gate"]},
         "allOf": [
@@ -176,24 +180,25 @@ def _helper() -> Json:
         "properties": {"input": NONEMPTY, "returncode": {"type": "integer"}, "output": {}, "error": {"type": "object"}},
         "additionalProperties": False,
     }
-    return {"type": "object", "required": ["path"], "additionalProperties": False, "properties": {
-        "path": _relative_path(), "input": _relative_path(), "fixtures": {"type": "array", "items": fixture}}}
+    return {"type": "object", "required": ["path"], "additionalProperties": False, "properties": _pick({
+        "path": _relative_path(), "input": _relative_path(), "fixtures": {"type": "array", "items": fixture}},
+        HELPER_FIELDS)}
 
 
 def _surface() -> Json:
-    return {"type": "object", "minProperties": 1, "additionalProperties": False, "properties": {
+    return {"type": "object", "minProperties": 1, "additionalProperties": False, "properties": _pick({
         "tools": {"type": "array", "uniqueItems": True, "items": {"type": "string", "pattern": "^" + TOOL_PATTERN + "$"}},
         "mcp_config": _relative_path(".json"),
         "agents": {"type": "array", "uniqueItems": True, "items": _relative_path(".md")},
         "companions": {"type": "array", "uniqueItems": True, "items": _relative_path()},
-    }}
+    }, SURFACE_FIELDS)}
 
 
 def contract() -> Json:
     return _top("evals/autoimprove.json", {
         "type": "object",
         "required": ["schema_version", "status", "skill", "invocation", "kinds"],
-        "properties": {
+        "properties": _pick({
             SCHEMA_KEY: {"type": "string", "description": "Editor hint. The runner ignores it."},
             "schema_version": {"const": 1},
             "status": {"enum": ["approved", "draft"], "description": "A draft contract stops a run until the user approves it."},
@@ -204,7 +209,7 @@ def contract() -> Json:
             "editable": {"type": "array", "items": _relative_path()},
             "surface": _surface(),
             "statistics": _statistics(),
-        },
+        }, (SCHEMA_KEY, *CONTRACT_FIELDS)),
         "additionalProperties": False,
     })
 

@@ -138,6 +138,21 @@ def test_the_committed_schema_equals_the_schema_command_output(name: SchemaName,
     assert committed == printed == render(name), f"{FILES[name]} is stale; run: {regenerate_command(name)}"
 
 
+@pytest.mark.ac("gh-370:AC-13")
+def test_each_generated_object_takes_its_property_names_from_the_field_tuple_of_its_reader() -> None:
+    def keys(node: object) -> set[str]:
+        return set(cast(dict[str, object], cast(dict[str, object], node)["properties"]))
+
+    top = cast(dict[str, dict[str, object]], schema("contract")["properties"])
+    kind = cast(dict[str, object], top["kinds"]["additionalProperties"])
+    entry = cast(dict[str, dict[str, object]], schema("evals")["properties"])["evals"]["items"]
+    assert keys(schema("contract")) == {SCHEMA_KEY, *CONTRACT_FIELDS}
+    assert keys(kind) == set(GRADER_FIELDS)
+    assert keys(top["helper"]) == set(HELPER_FIELDS)
+    assert keys(top["surface"]) == set(SURFACE_FIELDS)
+    assert keys(entry) == set(EVAL_FIELDS)
+    assert keys(top["statistics"]) == set(Statistics.names())
+
 @pytest.mark.ac("gh-370:AC-5")
 def test_a_contract_with_a_schema_key_loads_with_the_same_identity() -> None:
     plain = parse(copy.deepcopy(CONTRACT), "skill")
