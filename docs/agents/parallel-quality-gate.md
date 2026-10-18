@@ -36,10 +36,20 @@ The four first pytest lanes can each start four workers at the same time.[^5]
 `GATE_SKIP` holds a comma list of lane names that the scheduler skips.
 An unknown name fails before any work.
 The CI `gate (just ci)` job skips `skillz-e2e-pytest` and `skillz-pytest`.
-The parallel `skillz tests` job runs those two lanes through `just test-skillz`.
+Six parallel `skillz shard (<n>/6)` jobs run those two lanes through `just test-skillz`.
+The required `skillz tests` check passes only when every shard passes.
 Before the split, these lanes set the full wait on all 12 sampled pull-request runs.
 The median full wait was 560.5 seconds.[^10]
 Local `just build` and `just ci` leave `GATE_SKIP` unset and run every lane.
+
+`GATE_SHARD=<index>/<count>` applies only to `run_gate.py skillz`; another mode or a malformed value exits 2.
+It loads the `.github/scripts/pytest_shard.py` plugin into each skillz lane.
+The plugin keeps each test whose collection position modulo `count` equals `index - 1`.
+The plugin runs after the conftest hooks, so the marker checks still see every collected test.
+One unsharded `skillz tests` job took 478 to 509 seconds on four runs.
+The 4-vCPU runner was CPU-bound: a tmpfs on `/tmp` saved about 3 percent.
+With four shards, the shards took 87 to 157 seconds and the full wait was 164 seconds.
+Six shards aim to keep each shard under the gate job's 115 seconds on that run.
 
 ## Resource ownership
 

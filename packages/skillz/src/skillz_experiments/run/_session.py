@@ -27,7 +27,7 @@ from skillz_experiments._budget import (
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
-from skillz_experiments.evaluation import CheckMemo, task_tokens
+from skillz_experiments.evaluation import CheckMemo, CheckResult, task_tokens
 from skillz_experiments._records import open_record, read, write
 from skillz_experiments._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics, Verdict, close, holdout_deltas
@@ -163,16 +163,42 @@ def _reflection_fault(rows: Sequence[Mapping[str, object]]) -> CodedError | None
                       + f"the newest: {newest[-1].get('failure')}); fix the cause, then resume the run in the same directory")
 
 
+def _detail(detail: str | None) -> dict[str, object]:
+    """Return the optional `detail` entry of a stop."""
+    return {} if detail is None else {"detail": detail}
+
+
 def _baseline_rejected(detail: str | None = None) -> Stop:
     return Stop("baseline-contract-rejected", "original candidate fails the frozen native/helper contract",
-                {"next": "fix the skill or its contract, then start a new run in a new directory"}
-                | cast(dict[str, object], {} if detail is None else {"detail": detail}))
+                {"next": "fix the skill or its contract, then start a new run in a new directory"} | _detail(detail))
 
 
 def _rejection_detail(outcome: dict[str, object]) -> str | None:
     """Return the rejection reason of `outcome` when it is a string. A value read back from run.json can be any type."""
     detail = outcome.get("rejection")
     return detail if isinstance(detail, str) else None
+
+
+def _timed_out(item: Mapping[str, object]) -> bool:
+    """Return whether `item` is a contract rejection by a final sandbox timeout.
+
+    A resume scores such a holdout or replay case again. A search outcome of this kind stays final for the run.
+    """
+    return item.get("status") == "candidate-contract-rejected" and item.get("rejection_kind") == "timeout"
+
+
+def _holdout_unscored(item: Mapping[str, object]) -> bool:
+    """Return whether a holdout outcome has no gate score: a failed evaluation or a final check timeout."""
+    return _is_failed(item) or _timed_out(item)
+
+
+_CHECK_TIMEOUT_CODES = {"baseline": "baseline-check-timeout", "winner": "winner-check-timeout"}
+
+
+def _check_timeout(arm: str, detail: str | None = None) -> Stop:
+    """Return the resumable stop for a contract check of `arm` that reached the sandbox time limit twice."""
+    return Stop(_CHECK_TIMEOUT_CODES[arm], f"the {arm} contract check reached the sandbox time limit twice",
+                {"next": "resume the run in the same directory; a resume retries the check"} | _detail(detail))
 
 
 def _case_ids(feedback: Mapping[str, Sequence[Mapping[str, object]]]) -> list[str]:
@@ -206,10 +232,7 @@ class _Provider(Protocol):
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]: ...
     def check_name(self, candidate: Candidate) -> None: ...
-    def check_candidate(self, candidate: Candidate) -> bool: ...
-
-    @property
-    def rejection(self) -> str | None: ...
+    def check_candidate(self, candidate: Candidate) -> CheckResult: ...
 
 
 Factory = Callable[[str, Budget, Callable[[], None]], _Provider]
@@ -308,9 +331,12 @@ Outcome = TypeVar("Outcome", bound=Mapping[str, object])
 
 
 def scored_holdout(outcomes: Iterable[Outcome], arms: Collection[str]) -> Iterator[Outcome]:
-    """Yield the holdout outcomes of `arms` in order. An `evaluation-failed` outcome is unscored and drops out."""
+    """Yield the holdout outcomes of `arms` in order.
+
+    An `evaluation-failed` outcome and a final check timeout are unscored and drop out.
+    """
     for item in outcomes:
-        if item.get("split") == "holdout" and item.get("arm") in arms and item.get("status") != "evaluation-failed":
+        if item.get("split") == "holdout" and item.get("arm") in arms and not _holdout_unscored(item):
             yield item
 
 
@@ -961,10 +987,15 @@ class Session:
         self.provider.check_name(self.seed)
 
     def check_seed(self) -> None:
-        """Stop before any search call when the seed fails the local candidate contract check."""
-        passed, rejection = self._checks.check(self.provider, self.seed)
-        if not passed:
-            raise _baseline_rejected(rejection)
+        """Stop before any search call when the seed fails the local candidate contract check.
+
+        A final sandbox timeout stops with the resumable `baseline-check-timeout`; a resume checks again.
+        """
+        checked = self._checks.check(self.provider, self.seed)
+        if checked.kind == "timeout":
+            raise _check_timeout("baseline", checked.reason)
+        if not checked.passed:
+            raise _baseline_rejected(checked.reason)
 
     def headroom(self) -> None:
         """Score the seed once on every train and validation case. Stop with `cases-too-easy` when a family is saturated.
@@ -1156,16 +1187,18 @@ class Session:
         else:
             _ = self.budget.remaining()
             rejected = next((item for item in self.outcomes if item.get("arm") == "baseline"
-                             and item.get("status") == "candidate-contract-rejected"), None)
+                             and item.get("status") == "candidate-contract-rejected" and not _timed_out(item)), None)
             if rejected is not None:
                 raise _baseline_rejected(_rejection_detail(rejected))
             arms = {"baseline": self.seed, "winner": winner}
             done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in self.outcomes
-                    if item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
+                    if item.get("split") == "holdout" and not _holdout_unscored(item)}
             todo = [(arm, case, repeat) for arm in arms for case in holdout for repeat in range(repeats)
                     if (arm, case.identifier, repeat) not in done]
 
             def inspect(arm: str, result: dict[str, object]) -> None:
+                if _timed_out(result):
+                    raise _check_timeout(arm, _rejection_detail(result))
                 if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
                     raise _baseline_rejected(_rejection_detail(result))
 
@@ -1265,10 +1298,13 @@ class Session:
         self._conclude(reasons, patch.digest, detail=detail, per_case=per_case, mean=mean, se=se)
 
     def _replay_outcomes(self) -> dict[str, dict[str, object]]:
-        """Return the newest scored replay outcome of each holdout case. An `evaluation-failed` outcome is unscored."""
+        """Return the newest scored replay outcome of each holdout case.
+
+        An `evaluation-failed` outcome and a final check timeout are unscored.
+        """
         with self.lock:
             return {cast(str, item["case_id"]): item for item in self.outcomes
-                    if item.get("arm") == "replay" and item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
+                    if item.get("arm") == "replay" and item.get("split") == "holdout" and not _holdout_unscored(item)}
 
     def _replay_need(self) -> int:
         """Return the calls that the replay still needs: the cost of each holdout case without a scored replay outcome."""
@@ -1280,17 +1316,24 @@ class Session:
 
         Return None when the replay has all its outcomes, else the shortfall detail when the budget ran short.
         The check runs before any call. A short budget makes no call and raises no stop.
+        A final check timeout stops with the resumable `winner-check-timeout`, because the replay checks the winner.
         """
         done = self._replay_outcomes()
         todo = [case for case in self.cases_for("holdout") if case.identifier not in done]
         if not todo:
             return None
+
+        def inspect(arm: str, result: dict[str, object]) -> None:
+            del arm
+            if _timed_out(result):
+                raise _check_timeout("winner", _rejection_detail(result))
+
         try:
             _ = self.budget.remaining()
             needed, left = sum(case_calls(self.contract, case) for case in todo), self.budget.maximum - self.budget.calls
             if left < needed:
                 return {"needed": needed, "left": left}
-            self._score_holdout([(rebuilt, case, "replay", 0) for case in todo], keep_budget_stop=True)
+            self._score_holdout([(rebuilt, case, "replay", 0) for case in todo], inspect=inspect, keep_budget_stop=True)
         except BudgetExhausted as error:
             self.take_budget_stop()
             return {"shortfall": "deadline" if "deadline" in str(error) else "calls"}

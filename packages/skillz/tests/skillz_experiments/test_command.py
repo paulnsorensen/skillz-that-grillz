@@ -326,7 +326,7 @@ def test_contract_skill_name_reaches_discover_and_infer(tmp_path: Path) -> None:
     adapter = Configuration.load(config, "offline").create("offline", Budget(10, 60, 0), lambda: None)
     candidate = echo_candidate(tmp_path)
     try:
-        assert adapter.transports["task"].check_candidate(candidate)
+        assert adapter.transports["task"].check_candidate(candidate).passed
         result = adapter.transports["task"].invoke("Echo hello", candidate)
     finally:
         adapter.close()
@@ -349,7 +349,7 @@ def test_nested_helper_fixture_runs_through_command_adapter(tmp_path: Path) -> N
     candidate = Candidate(files, ("SKILL.md", "scripts/echo.py"), contract)
     adapter = Configuration.load(config, "offline").create("offline", Budget(10, 60, 0), lambda: None)
     try:
-        assert adapter.transports["task"].check_candidate(candidate)
+        assert adapter.transports["task"].check_candidate(candidate).passed
     finally:
         adapter.close()
 

@@ -20,6 +20,7 @@ from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
 from skillz_experiments.harness._claude import _constants, _events, _options, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
+from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
 from skillz_experiments._cases import CodedError, digest, mapping
 from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
@@ -29,6 +30,7 @@ from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._transport import Transport
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._budget import Budget, BudgetExhausted
+from skillz_experiments import _runtime
 from skillz_experiments.harness._seatbelt import command_profile
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
@@ -351,25 +353,28 @@ def test_sandbox_read_roots_that_expose_runtime_paths_or_credentials_are_refused
     assert resolve_read_roots((str(playwright),), None) == (str(playwright.resolve()),)
 
 
-def test_a_slow_sandbox_command_returns_124_but_budget_exhaustion_still_raises(
+@pytest.mark.ac("gh-287:AC-5")
+@pytest.mark.ac("gh-287:AC-7")
+def test_a_slow_sandbox_command_raises_sandbox_timeout_but_budget_exhaustion_still_raises(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
-                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-        del command, cwd, timeout, environment, input_text
-        raise BudgetExhausted("process group terminated at deadline")
-
-    monkeypatch.setattr(_transport, "process", process)
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
+
+    def slow(command: list[str], **options: object) -> subprocess.CompletedProcess[str]:
+        del command
+        return _runtime.sandboxed(["/bin/sleep", "30"], cwd=tmp_path, limit=cast(float, options["limit"]),
+                                  budget=cast(Budget, options["budget"]), environment={"PATH": "/usr/bin:/bin"})
+
+    monkeypatch.setattr(_transport, "sandboxed", slow)
     monkeypatch.setattr(shutil, "which", which)
-    options = ClaudeOptions(sandbox_seconds=5)
     workspace = make_workspace(tmp_path / "workspace")
-    slow = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=options)
+    roomy = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=1))
     try:
-        assert slow.sandbox(workspace, ["/usr/bin/true"]) == (124, "", "")
+        with pytest.raises(_runtime.SandboxTimeout):
+            _ = roomy.sandbox(workspace, ["/usr/bin/true"])
     finally:
-        slow.close()
-    short = ClaudeCode("m", Budget(10, 2, 0), lambda: None, tmp_path / "bin/claude", options=options)
+        roomy.close()
+    short = ClaudeCode("m", Budget(10, 2, 0), lambda: None, tmp_path / "bin/claude", options=ClaudeOptions(sandbox_seconds=5))
     try:
         with pytest.raises(BudgetExhausted):
             _ = short.sandbox(workspace, ["/usr/bin/true"])
@@ -377,20 +382,19 @@ def test_a_slow_sandbox_command_returns_124_but_budget_exhaustion_still_raises(
         short.close()
 
 
-def test_a_sandbox_command_uses_sandbox_seconds_and_the_probe_keeps_the_floor(
+@pytest.mark.ac("gh-287:AC-5")
+def test_the_claude_sandbox_limit_is_the_configured_sandbox_seconds_and_the_probe_keeps_the_floor(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     limits: list[float] = []
 
-    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
-                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-        del cwd, environment, input_text
-        limits.append(timeout)
+    def sandboxed(command: list[str], **options: object) -> subprocess.CompletedProcess[str]:
+        limits.append(cast(float, options["limit"]))
         return subprocess.CompletedProcess(command, 0, "isolation-ok\n", "")
 
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
 
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", sandboxed)
     monkeypatch.setattr(shutil, "which", which)
     adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=5))
     workspace = make_workspace(tmp_path / "workspace")
@@ -400,7 +404,30 @@ def test_a_sandbox_command_uses_sandbox_seconds_and_the_probe_keeps_the_floor(
         _ = adapter.sandbox(workspace, ["/usr/bin/true"])
     finally:
         adapter.close()
-    assert limits == [5, _constants.SANDBOX_SECONDS, 5]
+    assert limits == [5, _runtime.SANDBOX_SECONDS, 5]
+
+
+@pytest.mark.ac("gh-287:AC-14")
+def test_a_sandbox_probe_timeout_fails_the_probe_like_exit_124(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        raise _runtime.SandboxTimeout("the sandbox run reached its 20 second limit")
+
+    def exit_124(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        return 124, "", ""
+
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    messages: list[str] = []
+    try:
+        for fake in (timeout, exit_124):
+            monkeypatch.setattr(ClaudeCode, "sandbox", fake)
+            with pytest.raises(CodedError) as caught:
+                adapter._probe_sandbox(make_workspace(tmp_path / fake.__name__), tmp_path / "sealed")  # pyright: ignore[reportPrivateUsage]
+            messages.append(f"{caught.value.code}: {caught.value}")
+    finally:
+        adapter.close()
+    assert messages[0] == messages[1] and "sandbox probe failed" in messages[0]
 
 
 def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Path) -> None:
@@ -847,7 +874,7 @@ def test_sandbox_setup_failure_raises_instead_of_looking_like_a_helper_exit(
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
     adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", process)
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(shutil, "which", which)
     with pytest.raises(CodedError, match="sandbox setup fails.*no unsafe fallback"):
@@ -945,9 +972,9 @@ def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter
     broken = Candidate({"SKILL.md": "---\nname: echo-skill\n---\n"}, ("SKILL.md",), contract=good.contract)
     quoted = Candidate({"SKILL.md": '---\nname: "echo-skill"\ndescription: x\n---\n'}, ("SKILL.md",), contract=good.contract)
     try:
-        assert adapter.check_candidate(good)
-        assert not adapter.check_candidate(broken)
-        assert adapter.check_candidate(quoted)
+        assert adapter.check_candidate(good).passed
+        assert adapter.check_candidate(broken) == CheckResult(False, None, "fail")
+        assert adapter.check_candidate(quoted).passed
     finally:
         session.close()
 
@@ -969,7 +996,7 @@ def test_nested_helper_fixture_runs_through_claude_adapter(tmp_path: Path, monke
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     adapter = harness(tmp_path, fake_claude(tmp_path))
     try:
-        assert adapter.transports["task"].check_candidate(candidate)
+        assert adapter.transports["task"].check_candidate(candidate).passed
     finally:
         adapter.close()
 
@@ -984,6 +1011,7 @@ def _failing_helper_candidate() -> Candidate:
                       "scripts/echo.py": "print(1)\n"}, ("SKILL.md", "scripts/echo.py"), contract)
 
 
+@pytest.mark.ac("gh-312:AC-1")
 @pytest.mark.parametrize(("stderr", "accepted"), [('{"error": "echo: bad", "exit_code": 3}', True), ("", False),
                                                   ('{"error": "echo: other", "exit_code": 3}', False)])
 def test_check_candidate_compares_the_helper_stderr_with_the_fixture_error(
@@ -995,7 +1023,9 @@ def test_check_candidate_compares_the_helper_stderr_with_the_fixture_error(
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
     adapter = harness(tmp_path, fake_claude(tmp_path))
     try:
-        assert adapter.transports["task"].check_candidate(_failing_helper_candidate()) is accepted
+        result = adapter.transports["task"].check_candidate(_failing_helper_candidate())
+        assert result == (CheckResult(True, None, "pass") if accepted
+                          else CheckResult(False, "helper fixture 0 fails on stderr", "fail"))
     finally:
         adapter.close()
 
@@ -1007,7 +1037,7 @@ def test_check_candidate_rejects_a_skill_that_declares_hooks(tmp_path: Path) -> 
     hooked = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nhooks:\n  PreToolUse: []\n---\n"},
                        ("SKILL.md",), contract=good.contract)
     try:
-        assert not adapter.check_candidate(hooked)
+        assert not adapter.check_candidate(hooked).passed
     finally:
         session.close()
 
@@ -1022,7 +1052,7 @@ def test_check_candidate_rejects_hidden_forms_of_unsupported_frontmatter_keys(tm
     hooked = Candidate({"SKILL.md": f"---\nname: echo-skill\ndescription: x\n{extra}\n  x: y\n---\n"},
                        ("SKILL.md",), contract=good.contract)
     try:
-        assert not adapter.check_candidate(hooked)
+        assert not adapter.check_candidate(hooked).passed
     finally:
         session.close()
 
@@ -1036,8 +1066,8 @@ def test_check_candidate_reads_the_frontmatter_end_as_a_line_and_allows_nested_h
     nested = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nmetadata:\n  hooks: x\n---\n"},
                        ("SKILL.md",), contract=good.contract)
     try:
-        assert not adapter.check_candidate(inline)
-        assert adapter.check_candidate(nested)
+        assert not adapter.check_candidate(inline).passed
+        assert adapter.check_candidate(nested).passed
     finally:
         session.close()
 
@@ -1579,7 +1609,7 @@ def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
     if case == "socat-missing":
         monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ("socat",))
     if case == "userns-restricted":
-        monkeypatch.setattr(_transport, "process", process)
+        monkeypatch.setattr(_transport, "sandboxed", process)
     if case == "live-sandbox-failure":
         def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
             del self, workspace, argv, seconds

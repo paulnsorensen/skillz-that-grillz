@@ -17,11 +17,11 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import Case, CodedError, digest, relative, string
 from skillz_experiments._contract import resolve, Surface
 from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments.evaluation import answer_schema, Reply, Transcript
+from skillz_experiments.evaluation import answer_schema, CheckResult, Reply, Transcript
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._redact import write_transcript
-from skillz_experiments._runtime import live, model_call, process
+from skillz_experiments._runtime import SANDBOX_SECONDS, SandboxTimeout, live, model_call, process, sandboxed
 from skillz_experiments.harness._check import (
     Check,
     credential_row,
@@ -37,7 +37,6 @@ from skillz_experiments.harness._claude._constants import (
     LOGIN_HINT,
     NOTICE_CODES,
     PROBE_PREFIX,
-    SANDBOX_SECONDS,
     SANDBOX_STDERR,
 )
 from skillz_experiments.harness._claude._keys import restore, safe_keys
@@ -160,7 +159,6 @@ def _take_stderr(capture: Path) -> str:
 class ClaudeCode:
     claude_sandbox: ClassVar[bool] = True
     refuses_claude_options: ClassVar[bool] = False
-    rejection: str | None = None
     role: str = "task"
 
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None], executable: Path | None = None,
@@ -391,8 +389,11 @@ class ClaudeCode:
                 raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
         with listening() as port:
             script = probe(workspace, sealed, Path(__file__).resolve(), port)
-            code, output, _stderr = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
-                                        max(SANDBOX_SECONDS, self.options.sandbox_seconds))
+            try:
+                code, output, _stderr = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
+                                                     max(SANDBOX_SECONDS, self.options.sandbox_seconds))
+            except SandboxTimeout:
+                code, output = 124, ""
         if code != 0 or output.strip() != "isolation-ok":
             raise preflight_leak("sandbox probe failed")
 
@@ -678,7 +679,8 @@ class ClaudeCode:
 
         Return the exit code, the standard output, and the standard error.
 
-        A command that exceeds `seconds` (default `options.sandbox_seconds`) returns code 124. Budget exhaustion still raises.
+        A command that reaches the sandbox time limit, `seconds` (default `options.sandbox_seconds`), raises
+        `SandboxTimeout`. A run budget that ends the command raises `BudgetExhausted`.
         """
         system = "darwin" if sys.platform == "darwin" else "linux"
         name = "sandbox-exec" if system == "darwin" else "bwrap"
@@ -689,17 +691,11 @@ class ClaudeCode:
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
         limit = self.options.sandbox_seconds if seconds is None else seconds
-        timeout = min(limit, self.budget.remaining())
         capture = (Path(tempfile.mkdtemp(prefix="skillz-capture-")) if system == "linux" else None)
         try:
-            try:
-                result = process(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots,
-                                              capture), cwd=workspace, timeout=timeout,
-                                 environment={"PATH": "/usr/bin:/bin"})
-            except BudgetExhausted:
-                if timeout < limit:
-                    raise
-                return 124, "", ""
+            result = sandboxed(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots,
+                                            capture), cwd=workspace, limit=limit, budget=self.budget,
+                               environment={"PATH": "/usr/bin:/bin"})
             if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
                 raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", sandbox_fix(result.stderr))
             return result.returncode, result.stdout, result.stderr if capture is None else _take_stderr(capture)
@@ -707,8 +703,7 @@ class ClaudeCode:
             if capture is not None:
                 remove_tree(capture)
 
-    def check_candidate(self, candidate: Candidate) -> bool:
-        self.rejection = None
+    def check_candidate(self, candidate: Candidate) -> CheckResult:
         self.check_name(candidate)
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
@@ -717,9 +712,8 @@ class ClaudeCode:
             candidate.materialize(root)
             skill_file = root / "SKILL.md"
             if not skill_file.is_file() or not declares(skill_file.read_text(), rules.skill):
-                return False
-            self.rejection = helper_failure(self, workspace, rules)
-            return self.rejection is None
+                return CheckResult(False, None, "fail")
+            return helper_failure(self, workspace, rules)
 
 
 APPARMOR_SYSCTL = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")

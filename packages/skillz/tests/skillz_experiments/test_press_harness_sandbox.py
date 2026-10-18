@@ -25,7 +25,8 @@ from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import PASSED, FakeProvider
+from skillz_experiments.evaluation import CheckResult
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 REPO = Path(__file__).resolve().parents[4]
@@ -109,9 +110,9 @@ def codex_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Calls:
         return {'codex_version': calls.version, 'model': 'm', 'isolation': 'passed', 'credential': self.credential_kind,
                 'live_calls': 0, 'environment_hash': 'h'}
 
-    def check_candidate(self: Codex, candidate: object) -> bool:
+    def check_candidate(self: Codex, candidate: object) -> CheckResult:
         del self, candidate
-        return True
+        return PASSED
 
     def evaluate(self: Codex, candidate: object, case: object, *, holdout: bool = False) -> dict[str, object]:
         del self, candidate, case, holdout

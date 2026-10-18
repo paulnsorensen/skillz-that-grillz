@@ -44,6 +44,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
 - [gh-279](./gh-279.md) — gh-279: reuse recorded search outcomes on resume
 - [gh-285](./gh-285.md) — gh-285: isolate the temp root of the journey sandbox tests
+- [gh-287](./gh-287.md) — gh-287: retry a contract check that fails by sandbox timeout
 - [gh-290](./gh-290.md) — gh-290: the settings floor and the approval block in the preflight
 - [gh-291](./gh-291.md) — gh-291: keep the preflight event transcript when the preflight fails
 - [gh-292](./gh-292.md) — gh-292: seeded trigger and near-miss cases default family to the case id
@@ -55,6 +56,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
 - [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
 - [gh-311](./gh-311.md) — gh-311: assert where the journey press test creates its workspace
+- [gh-312](./gh-312.md) — gh-312: a contract check returns one typed result, and checks of different candidates run at the same time
 - [gh-316](./gh-316.md) — gh-316: a run that is mostly provider faults stops with a code and scores no fault as zero
 - [gh-318](./gh-318.md) — gh-318: the Codex adapter retries a rate limit and keeps diagnostic text
 - [gh-319](./gh-319.md) — gh-319: one model call cannot use the whole search window, and calls reconcile with outcomes

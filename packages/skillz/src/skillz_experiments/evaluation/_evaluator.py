@@ -96,11 +96,11 @@ def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate
              simulator: _Responder | None = None, checks: CheckMemo) -> dict[str, object]:
     """Score `candidate` on `case`. `checks` reuses one contract check per candidate identity across a session."""
     rules = resolve(candidate.contract)
-    passed, rejection = checks.check(task, candidate)
-    if not passed:
-        return {"score": 0.0, "status": "candidate-contract-rejected", "rejection": rejection, "loaded": False,
-                "helper_executed": False, "usage": usage([]), "candidate_hash": candidate.identity,
-                "case_hash": digest(case.identifier)}
+    checked = checks.check(task, candidate)
+    if not checked.passed:
+        return {"score": 0.0, "status": "candidate-contract-rejected", "rejection": checked.reason,
+                "rejection_kind": checked.kind, "loaded": False, "helper_executed": False, "usage": usage([]),
+                "candidate_hash": candidate.identity, "case_hash": digest(case.identifier)}
     grader = rules.grader(case.kind)
     if (case.journey is not None) != (grader.type == "journey"):
         raise ValueError("a journey case needs the journey grader, and the journey grader needs a journey case")

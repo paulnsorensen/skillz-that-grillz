@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import cast, get_args, Literal
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments.harness._claude._constants import SANDBOX_SECONDS
+from skillz_experiments._runtime import SANDBOX_SECONDS
 from skillz_experiments.harness._claude._login import host_config_dir
 
 

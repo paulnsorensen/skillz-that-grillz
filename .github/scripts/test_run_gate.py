@@ -1,6 +1,7 @@
 """Behavior tests for the parallel quality gate."""
 from __future__ import annotations
 
+import importlib.util
 import io
 import os
 import signal
@@ -23,6 +24,8 @@ with open(os.environ['EVENT_LOG'], 'a') as log:
     log.write(pathlib.Path(sys.argv[0]).name + ' ' + ' '.join(args) + '\\n')
     if 'SKILLZ_LIVE' in os.environ:
         log.write('live-flag-leaked\\n')
+    if 'GATE_SHARD' in os.environ:
+        log.write('pythonpath ' + os.environ.get('PYTHONPATH', '') + '\\n')
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
     pid_file = pathlib.Path(os.environ['CHILD_PID'])
     pid_tmp = pid_file.with_name(pid_file.name + '.tmp')
@@ -41,8 +44,8 @@ class GateRunnerTest(unittest.TestCase):
             tool = root / name
             _ = tool.write_text(FAKE_TOOL)
             tool.chmod(0o755)
-        # CI's gate job sets GATE_SKIP; drop it so each test sets its own lane selection.
-        inherited = {name: value for name, value in os.environ.items() if name != "GATE_SKIP"}
+        # CI jobs set GATE_SKIP or GATE_SHARD; drop them so each test sets its own lane selection.
+        inherited = {name: value for name, value in os.environ.items() if name not in {"GATE_SKIP", "GATE_SHARD"}}
         return {**inherited, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                 "EVENT_LOG": str(root / "events"), "GATE_JOBS": "2", "TEST_WORKERS": "3"}
 
@@ -199,6 +202,54 @@ class GateRunnerTest(unittest.TestCase):
             self.assertEqual(len(events), 3)
             self.assertTrue(any(f"pytest {e2e} " in event for event in events[1:]))
             self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[1:]))
+
+    def test_skillz_shard_loads_the_plugin_into_both_skillz_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_SHARD": "2/4", "PYTHONPATH": "/elsewhere"}
+            result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            pytest_events = [event for event in events if " pytest " in event]
+            self.assertEqual(len(pytest_events), 2)
+            self.assertTrue(all(event.endswith(" -p pytest_shard") for event in pytest_events))
+            paths = {event for event in events if event.startswith("pythonpath ")}
+            self.assertEqual(paths, {f"pythonpath {RUNNER.parent}{os.pathsep}/elsewhere"})
+
+    def test_a_malformed_or_misplaced_shard_fails_before_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self._fake_env(root)
+            cases = [("check", "1/2"), ("skillz", "0/2"), ("skillz", "3/2"), ("skillz", "x"), ("skillz", "1/")]
+            for mode, value in cases:
+                with self.subTest(mode=mode, value=value):
+                    result = subprocess.run([sys.executable, str(RUNNER), mode], env={**env, "GATE_SHARD": value},
+                                            capture_output=True, text=True, check=False, timeout=10)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("GATE_SHARD", result.stderr)
+                    self.assertFalse((root / "events").exists())
+
+    @unittest.skipUnless(importlib.util.find_spec("pytest"), "pytest is not installed")
+    def test_the_shards_partition_the_collected_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _ = (root / "test_sample.py").write_text("".join(f"def test_{n}():\n    pass\n" for n in range(7)))
+            env = {**self._fake_env(root), "PYTHONPATH": str(RUNNER.parent)}
+
+            def collected(*extra: str, shard: str | None = None) -> list[str]:
+                run_env = env if shard is None else {**env, "GATE_SHARD": shard}
+                result = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+                                         *extra, str(root / "test_sample.py")], cwd=root, env=run_env,
+                                        capture_output=True, text=True, check=False, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return [line for line in result.stdout.splitlines() if "::" in line]
+
+            everything = collected()
+            shards = [collected("-p", "pytest_shard", shard=f"{index}/3") for index in (1, 2, 3)]
+            self.assertEqual(len(everything), 7)
+            self.assertEqual([len(shard) for shard in shards], [3, 2, 2])
+            self.assertEqual(sorted(test for shard in shards for test in shard), sorted(everything))
 
     def test_invalid_worker_count_fails_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
