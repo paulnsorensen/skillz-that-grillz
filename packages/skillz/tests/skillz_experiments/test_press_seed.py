@@ -33,7 +33,7 @@ def _seed_cases(target: Path, tmp_path: Path) -> list[dict[str, object]]:
     with pytest.raises(Stop) as caught:
         _ = run(target, tmp_path / "run", "local-test", live=True)
     assert caught.value.code == "cases-missing"
-    return cast(list[dict[str, object]], caught.value.data["seed_cases"])
+    return cast(list[dict[str, object]], json.loads(Path(cast(str, caught.value.data["seed_file"])).read_text(encoding="utf-8")))
 
 
 def _unreadable(target: Path, tmp_path: Path) -> CodedError:
