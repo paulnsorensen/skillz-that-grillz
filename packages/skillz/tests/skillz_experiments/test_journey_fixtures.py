@@ -79,7 +79,7 @@ def frozen_case(target: Path, contract: Contract, tmp_path: Path) -> Case:
     copies = [draft[0] | {"id": f"{draft[0]['id']}-{n}", "family": f"{draft[0]['family']}-{n}"} for n in (1, 2)]
     drafted = tmp_path / DRAFT_NAME
     _ = drafted.write_text(json.dumps([*draft, *copies]), encoding="utf-8")
-    cases = split_cases(load_draft(drafted), 7, "journey")
+    cases = split_cases(load_draft(drafted), 7, None, ["journey"])
     out = tmp_path / "cases.json"
     freeze(out, cases, 7, case_hash(cases, 7))
     return load_cases(out, contract.grader_types())[0]

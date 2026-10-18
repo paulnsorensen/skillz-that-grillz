@@ -266,10 +266,10 @@ def journey_draft(**extra: object) -> list[dict[str, object]]:
 
 
 def frozen_journey(tmp_path: Path, **extra: object) -> tuple[list[object], str]:
-    cases = split_cases(load_draft(write_draft(tmp_path, journey_draft(**extra))), 7)
+    cases = split_cases(load_draft(write_draft(tmp_path, journey_draft(**extra))), 7, "task", ["journey"])
     out = tmp_path / "cases.json"
     freeze(out, cases, 7, case_hash(cases, 7))
-    return cast(list[object], load_cases(out, {"task": "judge", "journey": "judge"})), case_hash(cases, 7)
+    return cast(list[object], load_cases(out, {"task": "judge", "journey": "journey"})), case_hash(cases, 7)
 
 
 def test_journey_case_loads_with_default_max_turns_and_frozen_fields(tmp_path: Path) -> None:

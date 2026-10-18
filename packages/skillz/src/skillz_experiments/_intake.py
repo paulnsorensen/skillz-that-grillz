@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 import random
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
@@ -54,6 +54,7 @@ class DraftCase:
 @dataclass(frozen=True)
 class IntakeCase(DraftCase):
     split: Split = field(kw_only=True)
+    scored: bool = field(default=True, kw_only=True)
 
     def data(self) -> dict[str, object]:
         item: dict[str, object] = {"id": self.identifier, "family": self.family, "split": self.split,
@@ -64,10 +65,12 @@ class IntakeCase(DraftCase):
             item["expected"] = self.expected
         if self.journey is not None:
             item.update(self.journey.data())
+        if not self.scored and not self.pending:
+            item["scored"] = False
         return item
 
 
-def _case(value: object, position: int) -> DraftCase:
+def _case(value: object, position: int, journeys: Collection[str]) -> DraftCase:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ValueError(f"draft case {position} must be a JSON object")
     item = cast(dict[str, object], value)
@@ -79,8 +82,8 @@ def _case(value: object, position: int) -> DraftCase:
                          + "field (a trigger or near-miss seed case takes family = id; a task case needs an explicit family)")
     try:
         kind, source = item["kind"], item["source"]
-        if kind not in KINDS:
-            raise ValueError(f"kind must be one of {', '.join(KINDS)}")
+        if kind not in KINDS and kind not in journeys:
+            raise ValueError(f"kind must be one of {', '.join((*KINDS, *(name for name in journeys if name not in KINDS)))}")
         if source not in SOURCES:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}")
         files = text_map(item.get("files", {}))
@@ -89,21 +92,24 @@ def _case(value: object, position: int) -> DraftCase:
             raise ValueError("a task case needs files and an expected reference")
         return DraftCase(string(item["id"], "id"), string(item["family"], "family"), cast(str, kind),
                           string(item["request"], "request"), cast(str, source), files, expected,
-                          journey_of(item, cast(str, kind)))
+                          journey_of(item, kind in journeys))
     except CodedError as error:
         raise CodedError(error.code, f"case {name}: {error}") from None
     except ValueError as error:
         raise ValueError(f"case {name}: {error}") from None
 
 
-def load_draft(path: Path) -> list[DraftCase]:
-    """Read and strictly validate `cases.draft.json`. Raise `ValueError` that names the bad case."""
+def load_draft(path: Path, journeys: Collection[str] = ("journey",)) -> list[DraftCase]:
+    """Read and strictly validate `cases.draft.json`. Raise `ValueError` that names the bad case.
+
+    `journeys` names the contract kinds that use the journey grader. Their cases take the journey fields.
+    """
     if not path.is_file() or path.is_symlink() or path.stat().st_size > DRAFT_LIMIT:
         raise ValueError("draft must be a bounded regular file, not a symlink")
     document = loads_untrusted(path.read_text(encoding="utf-8"))
     if not isinstance(document, list) or not document:
         raise ValueError("draft must be a nonempty list of cases")
-    cases = [_case(item, position) for position, item in enumerate(cast(list[object], document), 1)]
+    cases = [_case(item, position, journeys) for position, item in enumerate(cast(list[object], document), 1)]
     seen: set[str] = set()
     for case in cases:
         if case.identifier in seen:
@@ -123,8 +129,13 @@ def check_helper_input(contract: Contract, cases: Sequence[DraftCase]) -> None:
                          + f"add {needed} to the files of each task case")
 
 
-def split_cases(cases: Sequence[DraftCase], seed: int, kind: str = "task") -> list[IntakeCase]:
-    """Assign splits from `seed`. A family never crosses splits. Scored cases take the grading `kind`.
+def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task",
+                journeys: Collection[str] = ()) -> list[IntakeCase]:
+    """Assign splits from `seed`. A family never crosses splits.
+
+    A non-journey case is scored when `kind` is set, and it takes that grading `kind`. A journey case is scored
+    when its own kind is in `journeys`, and it keeps its kind. Any other case is not scored: it stays in the
+    draft and keeps its kind. No scored case ever changes between a task kind and a journey kind.
 
     Train and validation get one scored family each. Holdout takes the next families until it holds
     `HOLDOUT_MINIMUM` scored cases. The rest alternate between train and validation.
@@ -133,9 +144,15 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str = "task") -> li
     journey families in a task run, get a seeded split.
     """
     rng = random.Random(seed)
+
+    def scores(case: DraftCase) -> bool:
+        if case.pending:
+            return False
+        return case.kind in journeys if case.journey is not None else kind is not None
+
     size: dict[str, int] = {}
     for case in cases:
-        if not case.pending and (case.kind == kind or not case.journey):
+        if scores(case):
             size[case.family] = size.get(case.family, 0) + 1
     if len(size) < MINIMUM_FAMILIES:
         raise ValueError(f"intake needs at least {MINIMUM_FAMILIES} task families (train, validation, holdout); "
@@ -154,8 +171,9 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str = "task") -> li
             assigned[family] = "train" if index % 2 else "validation"
     for family in sorted({case.family for case in cases} - set(assigned)):
         assigned[family] = rng.choice(("train", "validation", "holdout"))
-    return [IntakeCase(c.identifier, c.family, c.kind if c.pending or c.journey else kind, c.request, c.source,
-                       c.files, c.expected, c.journey, split=assigned[c.family]) for c in cases]
+    return [IntakeCase(c.identifier, c.family, kind if scores(c) and c.journey is None and kind is not None else c.kind,
+                       c.request, c.source, c.files, c.expected, c.journey, split=assigned[c.family],
+                       scored=scores(c)) for c in cases]
 
 
 def case_hash(cases: Sequence[IntakeCase], seed: int, statistics: Mapping[str, object] | None = None) -> str:
@@ -169,13 +187,14 @@ def case_hash(cases: Sequence[IntakeCase], seed: int, statistics: Mapping[str, o
 def approval_question(cases: Sequence[IntakeCase], seed: int, contract: Contract | None = None,
                       statistics: Mapping[str, object] | None = None) -> str:
     """Return the one approval question. It lists every case and binds approval to the case hash."""
-    lines = [f"Approve these {len(cases)} cases (seed {seed})? Trigger and near-miss cases stay pending, not scored."]
+    lines = [f"Approve these {len(cases)} cases (seed {seed})? Trigger and near-miss cases stay pending, not scored. "
+             + "A case of a kind that this run does not score is marked not scored."]
     if statistics is not None:
         lines.append(f"statistics: {', '.join(f'{name} {value}' for name, value in statistics.items())}")
     if contract is not None:
         lines.append(f"contract: source {contract.source}; kinds {', '.join(sorted(contract.kinds))}")
     for case in sorted(cases, key=lambda c: c.identifier):
-        status = "pending" if case.pending else "scored"
+        status = "pending" if case.pending else "scored" if case.scored else "not scored"
         request = " ".join(case.request.split())
         if len(request) > REQUEST_PREVIEW:
             request = request[:REQUEST_PREVIEW - 3] + "..."
@@ -193,12 +212,16 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
         raise CodedError("cases-unapproved", "the approved hash does not match the cases; ask for approval again")
     scored: list[dict[str, object]] = []
     for case in cases:
-        if not case.pending:
+        if case.scored:
             item = case.data()
             item.update(provenance=case.source, provider_approved=True)
             scored.append(item)
     pending = [case.data() for case in cases if case.pending]
-    document = {"schema_version": 1, "seed": seed, "approved_hash": expected, "cases": scored, "pending": pending}
+    document: dict[str, object] = {"schema_version": 1, "seed": seed, "approved_hash": expected, "cases": scored,
+                                   "pending": pending}
+    unscored = [case.data() for case in cases if not case.scored and not case.pending]
+    if unscored:
+        document["not_scored"] = unscored
     write(out, document)
 
 

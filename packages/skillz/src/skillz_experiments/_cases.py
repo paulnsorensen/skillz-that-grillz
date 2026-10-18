@@ -222,9 +222,9 @@ def journey_expected(value: object, case_id: object) -> None:
         raise CodedError(code, f"{where}: expected.final_stop must be nonempty text; {advice}")
 
 
-def journey_of(item: dict[str, object], kind: str) -> Journey | None:
-    """Return the journey fields of a `journey` case, else None. Journey fields on another kind are an error."""
-    if kind != "journey":
+def journey_of(item: dict[str, object], journey: bool) -> Journey | None:
+    """Return the journey fields of a case of a journey-graded kind, else None. Journey fields elsewhere are an error."""
+    if not journey:
         if JOURNEY_FIELDS & set(item):
             raise ValueError(f"{', '.join(sorted(JOURNEY_FIELDS & set(item)))} only belong to a journey case")
         return None
@@ -302,7 +302,7 @@ def _case(value: object, kinds: Mapping[str, str]) -> Case:
         string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split),
         request, files, expected,
         string(item.get("provenance"), "provenance"), item.get("provider_approved") is True,
-        cast(Visibility, visibility), kind, reviewed, journey_of(item, kind),
+        cast(Visibility, visibility), kind, reviewed, journey_of(item, kinds[kind] == "journey"),
     )
 
 

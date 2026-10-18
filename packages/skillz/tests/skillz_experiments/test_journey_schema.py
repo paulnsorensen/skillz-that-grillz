@@ -163,7 +163,7 @@ def test_requirements_with_a_duplicate_or_empty_entry_are_rejected(tmp_path: Pat
 @pytest.mark.ac("gh-368:AC-6")
 def test_an_easy_cheese_shaped_case_passes_intake_unchanged(tmp_path: Path) -> None:
     items = [EASY_CHEESE | {"id": f"age-{n}", "family": f"age{n}"} for n in range(9)]
-    cases = split_cases(load_draft(write_draft(tmp_path, items)), 5, "journey")
+    cases = split_cases(load_draft(write_draft(tmp_path, items)), 5, None, ["journey"])
     assert len(cases) == 9
     for case in cases:
         assert case.data() == EASY_CHEESE | {"id": case.identifier, "family": case.family, "split": case.split}
@@ -178,7 +178,7 @@ def task(index: int) -> dict[str, object]:
 def test_a_journey_without_files_passes_intake_freezes_counts_toward_the_holdout_and_is_eligible(tmp_path: Path) -> None:
     items = [{name: value for name, value in EASY_CHEESE.items() if name != "files"}
              | {"id": f"j{n}", "family": f"jf{n % 6}"} for n in range(18)]
-    cases = split_cases(load_draft(write_draft(tmp_path, items)), 4, "journey")
+    cases = split_cases(load_draft(write_draft(tmp_path, items)), 4, None, ["journey"])
     assert sum(case.split == "holdout" for case in cases) >= 6
     assert all("files" not in case.data() for case in cases)
     out = tmp_path / "cases.json"
@@ -211,7 +211,7 @@ def without_files(item: dict[str, object]) -> dict[str, object]:
 @pytest.mark.ac("gh-368:AC-10")
 def test_the_kit_cases_and_a_task_run_keep_their_case_hash(tmp_path: Path) -> None:
     cast(Callable[[Path, bool], None], getattr(kit(), "write"))(tmp_path / "kit", False)
-    kit_cases = split_cases(load_draft(tmp_path / "kit/cases.draft.json"), 7, "journey")
+    kit_cases = split_cases(load_draft(tmp_path / "kit/cases.draft.json"), 7, None, ["journey"])
     assert case_hash(kit_cases, 7) == KIT_HASH
     task_cases = split_cases(load_draft(write_draft(tmp_path, [task(index) for index in range(20)])), 3)
     assert case_hash(task_cases, 3) == TASK_HASH

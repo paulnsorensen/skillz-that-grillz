@@ -59,7 +59,7 @@ FAMILIES = {"ask-harness", "revise-cases", "failed-run", "unsafe-out", "stale-ha
 def test_the_kit_writes_eighteen_journeys_in_six_families_with_a_six_case_holdout(tmp_path: Path) -> None:
     rules = contract(tmp_path)
     assert sorted(rules.kinds) == ["journey"] and rules.editable == ("SKILL.md", "references/experiments.md")
-    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
+    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
     assert len(cases) == 18 and {case.family for case in cases} == FAMILIES
     assert all(case.journey is not None and case.journey.brief for case in cases)
     assert all("fake_harness.py" in case.files and any(name.endswith("/SKILL.md") for name in case.files) for case in cases)
@@ -69,7 +69,7 @@ def test_the_kit_writes_eighteen_journeys_in_six_families_with_a_six_case_holdou
 @pytest.mark.ac("kit-harder-journeys:AC-2")
 def test_the_seed_puts_the_hard_families_in_train_and_holds_two_families_in_each_other_split(tmp_path: Path) -> None:
     _ = contract(tmp_path)
-    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
+    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
     for split, families in (("train", {"revise-cases", "unsafe-out"}), ("validation", {"ask-harness", "stale-hash"}),
                             ("holdout", {"failed-run", "just-run"})):
         assert {case.family for case in cases if case.split == split} == families
@@ -78,7 +78,7 @@ def test_the_seed_puts_the_hard_families_in_train_and_holds_two_families_in_each
 @pytest.mark.ac("kit-harder-journeys:AC-3")
 def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two_repeats(tmp_path: Path) -> None:
     rules = contract(tmp_path)
-    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
+    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (781, 51, 210, 48, 258)
@@ -93,7 +93,7 @@ PROPOSALS = 8
 @pytest.mark.ac("kit-harder-journeys:AC-4")
 def test_a_journey_plan_gives_the_search_room_for_eight_rejected_proposals(tmp_path: Path) -> None:
     rules = contract(tmp_path)
-    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, "journey")
+    cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     validation = sum(case.split == "validation" for case in cases)
@@ -270,8 +270,8 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     draft = load_draft(tmp_path / "cases.draft.json")
     changed = {"reversed": draft[::-1], "rotated": draft[5:] + draft[:5], "shuffled": random.Random(7).sample(draft, len(draft))}[order]
     assert changed != draft
-    base = {case.identifier: case.split for case in split_cases(draft, SEED, "journey")}
-    cases = split_cases(changed, SEED, "journey")
+    base = {case.identifier: case.split for case in split_cases(draft, SEED, None, ["journey"])}
+    cases = split_cases(changed, SEED, None, ["journey"])
     assert {case.identifier: case.split for case in cases} == base
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())

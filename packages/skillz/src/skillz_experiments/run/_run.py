@@ -50,7 +50,7 @@ from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._history_store import load as load_history
 from skillz_experiments.run._history_store import store_path
 from skillz_experiments.run._history_store import write as write_history
-from skillz_experiments.run._plan import editable_files, plan_estimate, size_plan, supported_kind
+from skillz_experiments.run._plan import editable_files, plan_estimate, scored_kinds, size_plan
 from skillz_experiments.run._resume import (
     check_resume,
     check_statistics,
@@ -87,7 +87,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
              options: ClaudeOptions, configuration: Configuration | None = None,
              statistics_given: Mapping[str, float] | None = None, judge_model: str | None,
-             history: bool = True) -> Statistics:
+             history: bool = True, requested_kinds: Sequence[str] = ()) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
     The case approval covers the resolved statistics, so a changed or dropped flag stops at the case approval.
@@ -115,20 +115,23 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)
     resolved = resolve_statistics(contract, statistics_given or {})
-    kind = supported_kind(contract)
+    kinds = scored_kinds(contract, requested_kinds)
     captures = configuration.judge_captures() if configuration is not None else has_claude_sandbox(adapter)
-    if contract.kinds[kind].capture and not captures:
-        raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
-                         + "the claude harness can show capture files to the judge; run with --harness claude")
-    drafted = load_draft(draft)
+    for kind in kinds:
+        if contract.kinds[kind].capture and not captures:
+            raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
+                             + "the claude harness can show capture files to the judge; run with --harness claude")
+    drafted = load_draft(draft, contract.journey_kinds())
     check_helper_input(contract, drafted)
     check_coverage(target, drafted)
-    cases = split_cases(drafted, split_seed, kind)
+    journeys = set(contract.journey_kinds())
+    plain = [kind for kind in kinds if kind not in journeys]
+    cases = split_cases(drafted, split_seed, plain[0] if plain else None, [kind for kind in kinds if kind in journeys])
     unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})
     if unknown:
         raise CodedError("contract-family-unknown", f"the contract family_budgets names no draft family: {', '.join(unknown)}; "
                          + f"the draft families are {', '.join(sorted({case.family for case in cases}))}")
-    held = sum(case.split == "holdout" and case.kind == kind for case in cases)
+    held = sum(case.split == "holdout" and case.scored for case in cases)
     if held < HOLDOUT_MINIMUM:
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
                          + "add task cases in more families to the draft, then call run again")
@@ -340,7 +343,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
         statistics: Mapping[str, float] | None = None,
-        judge_model: str | None = None, history: bool | None = None) -> dict[str, object]:
+        judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = ()) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `judge_model` sets the model of the judge calls. Task and reflection calls use `model`. The first run records it,
@@ -392,7 +395,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
                               options=requested, configuration=configuration,
                               statistics_given=statistics_given, judge_model=judge_model,
-                              history=True if history is None else history)
+                              history=True if history is None else history, requested_kinds=kinds)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)

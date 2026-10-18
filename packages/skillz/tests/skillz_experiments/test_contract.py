@@ -188,7 +188,7 @@ def test_a_contract_without_a_task_kind_and_with_several_kinds_stops_with_a_code
     set_contract(target, kinds={"echo": {"grader": "exact-json"}, "rewrite": {"grader": "exact-json"}})
     code, err = run_intake(tmp_path, target, capsys)
     assert code == 1 and err["code"] == "contract-kinds"
-    assert "echo, rewrite" in str(err["error"]) and "`task` kind or exactly one kind" in str(err["error"])
+    assert "echo, rewrite" in str(err["error"]) and "--kind" in str(err["error"])
     assert not (tmp_path / "run/run.json").exists()
 
 
@@ -362,11 +362,7 @@ def test_contract_surface_files_the_mcp_config_runs_are_read_only_under_prose_cl
     assert editable_files(files, plain, "prose+cli") == ["SKILL.md", "scripts/run.py", "scripts/server.py"]
 
 
-@pytest.mark.parametrize("kinds", [
-    {"journey": {"grader": "judge", "rubric": "r"}},
-    {"conversation": {"grader": "journey", "argv": ["x"], "rubric": "r"}},
-], ids=["journey-kind-other-grader", "journey-grader-other-kind"])
-def test_contract_ties_the_journey_kind_to_the_journey_grader(kinds: dict[str, object]) -> None:
-    with pytest.raises(CodedError, match="go together") as caught:
-        _ = parse(surface_contract(kinds=kinds), "skill")
+def test_contract_ties_the_kind_named_journey_to_the_journey_grader() -> None:
+    with pytest.raises(CodedError, match="takes the journey grader") as caught:
+        _ = parse(surface_contract(kinds={"journey": {"grader": "judge", "rubric": "r"}}), "skill")
     assert caught.value.code == "contract-kinds"

@@ -12,7 +12,7 @@ import pytest
 from skillz_experiments._contract import load_contract
 from skillz_experiments._intake import load_draft
 from skillz_experiments._seed import seed_cases
-from skillz_experiments.run._plan import supported_kind
+from skillz_experiments.run._plan import scored_kinds
 
 SKILL = Path(__file__).resolve().parents[4] / "skills" / "skillz"
 
@@ -20,7 +20,7 @@ SKILL = Path(__file__).resolve().parents[4] / "skills" / "skillz"
 @pytest.mark.ac("gh-299:AC-7")
 def test_shipped_contract_has_a_supported_kind_and_no_audit_grader() -> None:
     contract = load_contract(SKILL)
-    assert supported_kind(contract) == "task"
+    assert scored_kinds(contract) == ("task",)
     assert all(grader.type != "audit" for grader in contract.kinds.values())
 
 

@@ -233,22 +233,33 @@ def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, fro
     return names
 
 
-def _scored_kind(contract: Contract) -> str:
+def _default_kinds(contract: Contract) -> tuple[str, ...]:
+    journeys = contract.journey_kinds()
     if "task" in contract.kinds:
-        return "task"
+        return ("task", *journeys)
+    if journeys and len(journeys) == len(contract.kinds):
+        return journeys
     if len(contract.kinds) == 1:
-        return next(iter(contract.kinds))
+        return tuple(contract.kinds)
     raise CodedError("contract-kinds", f"the contract declares the kinds {', '.join(sorted(contract.kinds))}; "
-                     + "run needs a contract with a `task` kind or exactly one kind")
+                     + "run needs a contract with a `task` kind, only journey kinds, or exactly one kind; "
+                     + "name the scored kinds with `--kind KIND` (repeat the flag for more)")
 
 
-def supported_kind(contract: Contract) -> str:
-    """Return the scored kind. Stop on an audit-graded kind: intake never reviews labels, so no case is eligible."""
-    kind = _scored_kind(contract)
-    if contract.kinds[kind].type == "audit":
-        raise CodedError("contract-audit-unsupported", f"the scored kind {kind!r} uses the audit grader; "
-                         + "run does not support audit-graded kinds yet")
-    return kind
+def scored_kinds(contract: Contract, requested: Sequence[str] = ()) -> tuple[str, ...]:
+    """Return the scored kinds: the `--kind` selection, else the contract default.
+
+    Stop on an undeclared kind and on an audit-graded kind: intake never reviews labels, so no case is eligible.
+    """
+    chosen = tuple(dict.fromkeys(requested)) or _default_kinds(contract)
+    for kind in chosen:
+        if kind not in contract.kinds:
+            raise CodedError("contract-kinds", f"--kind {kind} names no declared kind; "
+                             + f"the contract declares {', '.join(sorted(contract.kinds))}")
+        if contract.kinds[kind].type == "audit":
+            raise CodedError("contract-audit-unsupported", f"the scored kind {kind!r} uses the audit grader; "
+                             + "run does not support audit-graded kinds yet")
+    return chosen
 
 
 def plan_estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object]:

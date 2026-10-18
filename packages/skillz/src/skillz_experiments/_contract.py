@@ -105,6 +105,9 @@ class Contract:
     def grader_types(self) -> dict[str, str]:
         return {kind: grader.type for kind, grader in self.kinds.items()}
 
+    def journey_kinds(self) -> tuple[str, ...]:
+        return tuple(kind for kind, grader in self.kinds.items() if grader.type == "journey")
+
     def judged(self, kind: str) -> bool:
         return self.grader(kind).type in JUDGED
 
@@ -325,9 +328,9 @@ def parse(value: object, source: str) -> Contract:
                         {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source, surface,
                         thresholds)
     for kind, grader in contract.kinds.items():
-        if (kind == "journey") != (grader.type == "journey"):
-            raise CodedError("contract-kinds", f"kind {kind} and the journey grader go together: the kind named "
-                             + "journey takes the journey grader, and no other kind does")
+        if kind == "journey" and grader.type != "journey":
+            raise CodedError("contract-kinds", "the kind named journey takes the journey grader; "
+                             + "name another kind to use a different grader")
     for kind, grader in contract.kinds.items():
         if grader.type == "journey":
             unknown = sorted(set(re.findall(r"reference\.([a-z_]+)", grader.rubric)) - set(JOURNEY_EXPECTED_FIELDS))

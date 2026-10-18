@@ -594,7 +594,7 @@ def draft_items(**changes: object) -> list[dict[str, object]]:
 def hash_of(tmp_path: Path, **changes: object) -> str:
     path = tmp_path / DRAFT_NAME
     _ = path.write_text(json.dumps(draft_items(**changes)), encoding="utf-8")
-    cases = split_cases(load_draft(path), 7, "journey")
+    cases = split_cases(load_draft(path), 7, None, ["journey"])
     return case_hash(cases, 7)
 
 
@@ -637,7 +637,7 @@ def test_a_journey_without_a_usable_brief_is_rejected_with_brief_missing(tmp_pat
 def test_frozen_journey_keeps_the_brief_the_turn_limit_and_the_requirement_order_through_load_cases(tmp_path: Path) -> None:
     path = tmp_path / DRAFT_NAME
     _ = path.write_text(json.dumps(draft_items(requirements=["R2", "R1", "R3"])), encoding="utf-8")
-    cases = split_cases(load_draft(path), 7, "journey")
+    cases = split_cases(load_draft(path), 7, None, ["journey"])
     out = tmp_path / "cases.json"
     freeze(out, cases, 7, case_hash(cases, 7))
     loaded = {case.identifier: case for case in load_cases(out, {"journey": "journey"})}
