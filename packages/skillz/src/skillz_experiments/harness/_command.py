@@ -24,6 +24,8 @@ from skillz_experiments.harness._check import UNVERIFIED_CREDENTIAL
 
 WITNESS_ERROR_KEY = "helper_witness_error"
 """The run-record field that names why the helper witness could not confirm a helper run."""
+PROBE_SECONDS = 300
+"""The limit of the preflight isolation probe. It allows a slow first container start, as in the reference wrapper."""
 
 
 def _response(value: object, operation: str) -> dict[str, object]:
@@ -119,9 +121,6 @@ def _failure(stderr: str) -> str:
         message += f"; private stderr tail: {filename}"
     return message
 
-
-# The limit of the preflight isolation probe. It allows a slow first container start, as in the reference wrapper.
-PROBE_SECONDS = 300
 
 @final
 class Command:
