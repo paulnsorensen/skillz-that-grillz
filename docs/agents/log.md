@@ -112,3 +112,4 @@
 - 2026-10-15 · 1406d6d87eb17d68 · updated · decisions/skillz-autoimprove.md · ADR-017 records the three autoimprove claims, the replay phase, and the claims.apply rule (spec skillz-autoimprove-claims).
 - 2026-10-15 · 1406d6d87eb17d68 · merged · ideas/session-driven-skill-optimization.md · Export section now states the replay on a clean copy and the three-claim report.
 
+- 2026-10-18 · pr-363-journey-kits · updated · decisions/skillz-autoimprove.md · Record the kit location `packages/skillz/journey-kits/` in an ADR-008 note and the ADR-019 context, and why PR #363 renamed it from `experiments/`.
