@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import re
@@ -32,12 +33,14 @@ from skillz_experiments._cases import Case, load_cases, mapping
 from skillz_experiments._cli import main
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments._contract import Contract, parse
+from skillz_experiments._gate import expand_gates
 from skillz_experiments._facts import audit_facts
 
 ROOT = Path(__file__).resolve().parents[4]
 SKILL_DIR = ROOT / "skills/skillz"
 PUBLISHED = SKILL_DIR / "evals/mode-fixtures.json"
 FIXTURES = Path(__file__).parent / "fixtures"
+MODE_GATES = SKILL_DIR / "evals/gates/mode"
 SELF_UPDATE = FIXTURES / "self-update.json"
 SELF_SKILL = ROOT / ".agents/skills/skillz-self-update/SKILL.md"
 LAYOUT = SKILL_DIR / "references/harness-layout.md"
@@ -53,7 +56,8 @@ def _outputs(path: Path) -> dict[str, dict[str, object]]:
 
 
 def _rules(path: Path) -> Contract:
-    return parse(_document(path)["target"], "manifest")
+    root = path.parent.parent if path.parent.name == "evals" else path.parent
+    return parse(expand_gates(_document(path)["target"], root), "manifest")
 
 
 def _cases(path: Path) -> dict[str, Case]:
@@ -116,6 +120,11 @@ def _script(path: Path, kind: str) -> str:
     return argv[3]
 
 
+def _stub_value(script: str, name: str) -> str:
+    line = next(line for line in script.splitlines() if line.startswith(f"{name} = "))
+    return line.removeprefix(f"{name} = ")
+
+
 PUBLISHED_CASES = _cases(PUBLISHED)
 PUBLISHED_OUTPUTS = _outputs(FIXTURES / "mode-outputs.json")
 SELF_UPDATE_CASES = _cases(SELF_UPDATE)
@@ -162,13 +171,21 @@ def test_published_manifest_declares_one_kind_per_mode_with_complete_splits() ->
     assert set(PUBLISHED_OUTPUTS) == set(PUBLISHED_CASES)
 
 
+@pytest.mark.ac("gh-367:AC-7")
 @pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
 def test_the_grader_lives_in_the_argv_and_never_in_a_staged_file(path: Path, name: str) -> None:
     case = _cases(path)[name]
     script = _script(path, case.kind)
     assert not any(file.startswith("check") or "'score'" in text for file, text in case.files.items())
-    imported = {alias.name for node in ast.walk(ast.parse(script)) if isinstance(node, ast.Import) for alias in node.names}
-    assert {"json", "pathlib", "re"} <= imported <= {"hashlib", "json", "pathlib", "re"}
+    sources = [script] if "_SIBLINGS" not in script else [text for _, text in cast(
+        list[tuple[str, str]], ast.literal_eval(_stub_value(script, "_SIBLINGS")))] + [
+        cast(str, ast.literal_eval(_stub_value(script, "_MAIN")))]
+    imported = {alias.name for source in sources for node in ast.walk(ast.parse(source))
+                for alias in (node.names if isinstance(node, ast.Import) else [])}
+    imported |= {node.module for source in sources for node in ast.walk(ast.parse(source))
+                 if isinstance(node, ast.ImportFrom) and node.module}
+    assert {"json", "pathlib", "re"} <= imported or "_workspace" in imported
+    assert imported <= {"hashlib", "json", "pathlib", "re", "collections.abc", "_workspace", "_markdown"}
 
 
 @pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
@@ -286,22 +303,21 @@ PARITY_INPUTS = {
 }
 
 
-def _grader_longest(source: str) -> object:
-    match = re.search(r"^MARKER = .*?^    return best$", source, re.M | re.S)
-    assert match is not None
-    scope: dict[str, object] = {"re": re}
-    exec(match[0], scope)  # noqa: S102 - the grader source from the repository manifest
-    return scope["longest"]
+def _grader_longest() -> Callable[[str], int]:
+    spec = importlib.util.spec_from_file_location("_markdown", MODE_GATES / "_markdown.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return cast(Callable[[str], int], getattr(module, "longest"))
 
 
 def _inspector() -> ModuleType:
     return importlib.import_module("skillz_inspect._inspect")
 
 
-@pytest.mark.parametrize("kind", ["add", "improve"])
 @pytest.mark.parametrize("name", list(PARITY_INPUTS))
-def test_grader_longest_sentence_matches_the_inspector(kind: str, name: str) -> None:
-    longest = cast(Callable[[str], int], _grader_longest(_script(PUBLISHED, kind)))
+def test_grader_longest_sentence_matches_the_inspector(name: str) -> None:
+    longest = _grader_longest()
     inspector = _inspector()
     prose = cast(Callable[[list[str], int], list[dict[str, int]]], inspector.prose_sentences)
     advisory = cast(int, inspector.ADVISORY_WORDS)
