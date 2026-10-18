@@ -1,12 +1,14 @@
 """Seed the case draft from the skill's own `evals/evals.json`.
 
-The runner never writes the draft. It maps each eval entry to a seed case and shows the map in the
-`cases-missing` stop. The coverage check stops the run when the draft drops or changes an entry.
+The runner never writes the draft. It maps each eval entry to a seed case and writes the map to
+`RUN/cases.seed.json`. The `cases-missing` stop names that file and shows only counts, because the
+fixtures can be large. The coverage check stops the run when the draft drops or changes an entry.
 To drop an entry, remove it from `evals.json`.
 """
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +19,7 @@ from skillz_experiments._intake import DRAFT_LIMIT, DraftCase
 
 EVALS = "evals/evals.json"
 FIXTURES = "evals/files/"
+SEED_NAME = "cases.seed.json"
 SEED_LIMIT = DRAFT_LIMIT // 2
 READ_LIMIT = SEED_LIMIT
 
@@ -127,6 +130,12 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
                              + f"{SEED_LIMIT} bytes at entry {header.identifier}")
         cases.append(case)
     return cases
+
+
+def seed_summary(cases: Sequence[dict[str, object]]) -> dict[str, object]:
+    """Count the seed cases, and the cases of each kind and of each family. A case with no family counts in no family."""
+    return {"cases": len(cases), "kinds": dict(sorted(Counter(str(case["kind"]) for case in cases).items())),
+            "families": dict(sorted(Counter(str(case["family"]) for case in cases if "family" in case).items()))}
 
 
 def check_coverage(target: Path, draft: Sequence[DraftCase]) -> None:
