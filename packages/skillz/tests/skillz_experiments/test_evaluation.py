@@ -172,7 +172,7 @@ def test_wedge_script_runs_isolated() -> None:
     from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
 
     candidate = Candidate({"SKILL.md": "s", "scripts/offload.py": "print(1)"}, ("SKILL.md",), None, "scripts/offload.py")
-    prompt = _prompt(resolve(None), candidate, "", cast(Case, cast(object, SimpleNamespace(request="task"))))
+    prompt = _prompt(resolve(None), candidate, "", cast(Case, cast(object, SimpleNamespace(request="task", journey=None))))
     assert "python3 -I .agents/skills/skillz/scripts/offload.py" in prompt
 
 

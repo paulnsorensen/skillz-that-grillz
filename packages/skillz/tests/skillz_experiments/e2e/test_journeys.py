@@ -8,9 +8,9 @@ from typing import cast
 
 import pytest
 
-from support import (BUNDLE, CLI, FIXTURES, Scenario, approve_and_run, assert_promoted, cli_error, command_adapter,
-                     export_and_apply, make_scenario, make_vendor_bin, read_cases, read_events, read_record,
-                     run_scenario, snapshot)
+from support import (BUNDLE, CLI, FIXTURES, Scenario, approve_and_run, assert_promoted, call_cli, cli_error,
+                     command_adapter, export_and_apply, make_scenario, make_vendor_bin, read_cases, read_events,
+                     read_record, run_scenario, snapshot)
 
 
 def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
@@ -139,7 +139,10 @@ def test_unsupported_journey_refuses_before_task_inference(tmp_path: Path, harne
         args += command_adapter(scenario)
     else:
         bin_dir = make_vendor_bin(scenario, tmp_path, harness, "normal")
-    code, result, error = approve_and_run(args, tmp_path, scenario, bin_dirs=[bin_dir] if bin_dir else ())
-    assert code == 1 and cli_error(error)["code"] == "journey-unsupported", result
-    assert not any("Ask which value to transform" in json.dumps(entry) for entry in read_events(scenario.out)
-                   if entry.get("role") == "task")
+    scenario.out.mkdir(mode=0o700, exist_ok=True)
+    _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
+    code, result, error = call_cli(args, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
+    # The stop comes before the case and budget approvals, so no approval data and no task call exist.
+    assert code == 1 and cli_error(error)["code"] == "journey-unsupported", (result, error)
+    assert "case_hash" not in result and not (scenario.out / "run.json").exists()
+    assert not any(entry.get("role") == "task" for entry in read_events(scenario.out))
