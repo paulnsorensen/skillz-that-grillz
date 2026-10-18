@@ -12,6 +12,7 @@ import fromargs
 from skillz_experiments._cases import CodedError
 from skillz_experiments._facts import audit_facts
 from skillz_experiments._scaffold import scaffold
+from skillz_experiments._validate import validate as check_target
 from skillz_experiments.gate import (
     CHEAPER_SCENARIOS, POWER_EFFECTS, simulate as simulate_gate, simulate_cheaper, simulate_power,
 )
@@ -47,7 +48,10 @@ def _coded() -> Generator[None]:
     except CodedError as error:
         if isinstance(error, Stop):
             print(json.dumps(error.data))
-        print(json.dumps({"error": str(error), "exit_code": 1, "code": error.code}), file=sys.stderr)
+        report: dict[str, object] = {"error": str(error), "exit_code": 1, "code": error.code}
+        if error.details is not None:
+            report["data"] = dict(error.details)
+        print(json.dumps(report), file=sys.stderr)
         raise _Reported from None
 
 
@@ -186,6 +190,29 @@ def scaffold_command(*, target: Path) -> dict[str, object]:
     """Write a draft journey contract to `<target>/evals/autoimprove.json`. It makes no model call and never replaces a contract."""
     with _coded():
         return scaffold(target)
+
+
+@app.command(name="validate")
+def validate_command(*, target: Path, draft: Path | None = None, seed: int | None = None,
+                     kind: list[str] | None = None) -> dict[str, object]:
+    """Check the eval files and the split that a run would build. No model call, no host check, no write.
+
+    The command exits 1 when any finding has severity error. Read `findings` for the code, file, and fix of each.
+
+    Parameters
+    ----------
+    draft
+        Also check this case draft: its fields, the helper input, and the coverage of the seed entries.
+    seed
+        Split seed. Default: the seed that `run` uses.
+    kind
+        Contract kind to score. Repeat for more. Same rule as `run --kind`.
+    """
+    report = check_target(target, draft, seed, kind or ())
+    if not report["ok"]:
+        print(json.dumps(report))
+        raise _Reported
+    return report
 
 
 def _simulation_report() -> dict[str, object]:

@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 
 from skillz_experiments._cases import CodedError, loads_untrusted, read_text, relative, text_map
 from skillz_experiments._evals_format import EvalEntry, parse_evals, parse_journeys
-from skillz_experiments._intake import DRAFT_LIMIT, DraftCase
+from skillz_experiments._intake import DRAFT_LIMIT, PENDING_KINDS, DraftCase, projection
 
 EVALS = "evals/evals.json"
 JOURNEYS = "evals/journeys.json"
@@ -106,15 +106,34 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
     return cases
 
 
-def seed_summary(cases: Sequence[dict[str, object]], inferred: Mapping[str, str] | None = None) -> dict[str, object]:
+def seed_projection(cases: Sequence[Mapping[str, object]], kinds: Collection[str],
+                    journeys: Collection[str]) -> dict[str, object]:
+    """Project the split minimums over the seed cases that a run of `kinds` scores.
+
+    A non-journey case is scored when `kinds` holds a kind that does not use the journey grader. A journey
+    case is scored when its own kind is in `kinds`. A trigger or near-miss case stays pending.
+    """
+    plain = any(kind not in journeys for kind in kinds)
+    size = Counter(str(case["family"]) for case in cases if "family" in case and case["kind"] not in PENDING_KINDS
+                   and (case["kind"] in kinds if "brief" in case else plain))
+    return projection(size)
+
+
+def seed_summary(cases: Sequence[dict[str, object]], inferred: Mapping[str, str] | None = None,
+                 split: Mapping[str, object] | None = None) -> dict[str, object]:
     """Count the seed cases, the journeys, and the cases of each kind and of each family. A case with no family counts in no family.
 
     `inferred` maps the case id of each entry that had no `kind` to the kind that the reader chose.
+    `split` is the projection of the minimums over the scored families, from `seed_projection`.
     """
-    return {"cases": len(cases), "journeys": sum("brief" in case for case in cases),
-            "kinds": dict(sorted(Counter(str(case["kind"]) for case in cases).items())),
-            "families": dict(sorted(Counter(str(case["family"]) for case in cases if "family" in case).items())),
-            "inferred": dict(inferred or {})}
+    summary: dict[str, object] = {
+        "cases": len(cases), "journeys": sum("brief" in case for case in cases),
+        "kinds": dict(sorted(Counter(str(case["kind"]) for case in cases).items())),
+        "families": dict(sorted(Counter(str(case["family"]) for case in cases if "family" in case).items())),
+        "inferred": dict(inferred or {})}
+    if split is not None:
+        summary["split"] = dict(split)
+    return summary
 
 
 def seed_inferred(target: Path) -> dict[str, str]:

@@ -8,7 +8,9 @@ import fcntl
 import sys
 import time
 import uuid
+from collections import Counter
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import cast, get_args
 
@@ -21,7 +23,6 @@ from skillz_experiments._cases import CodedError, Split, digest, load_cases
 from skillz_experiments._contract import Contract
 from skillz_experiments._intake import (
     DRAFT_NAME,
-    HOLDOUT_MINIMUM,
     approval_question,
     case_hash,
     check_helper_input,
@@ -30,9 +31,10 @@ from skillz_experiments._intake import (
     load_draft,
     skill_facts,
     split_cases,
+    too_few,
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
-from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_inferred, seed_summary
+from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_inferred, seed_projection, seed_summary
 from skillz_experiments._wedge_targets import TargetPlan, plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
@@ -108,7 +110,11 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         seeded = seed_cases(target)
         if seeded is not None:
             write(seed_file, seeded)
-            data |= {"seed_file": str(seed_file), "seed_summary": seed_summary(seeded, seed_inferred(target))}
+            split: dict[str, object] | None = None
+            with suppress(CodedError, ValueError):
+                planned = intake_contract(target)
+                split = seed_projection(seeded, scored_kinds(planned), planned.journey_kinds())
+            data |= {"seed_file": str(seed_file), "seed_summary": seed_summary(seeded, seed_inferred(target), split)}
         start = "" if seeded is None else f", starting from the seed cases in {seed_file}"
         raise Stop("cases-missing", f"write the case draft to {draft}{start}, then call run again",
                    data | ({"doctor": report} if report else {}))
@@ -132,10 +138,9 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if unknown:
         raise CodedError("contract-family-unknown", f"the contract family_budgets names no draft family: {', '.join(unknown)}; "
                          + f"the draft families are {', '.join(sorted({case.family for case in cases}))}")
-    held = sum(case.split == "holdout" and case.scored and case.kind in kinds for case in cases)
-    if held < HOLDOUT_MINIMUM:
-        raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
-                         + "add task cases in more families to the draft, then call run again")
+    shortfall = too_few(Counter(case.family for case in cases if case.scored and case.kind in kinds))
+    if shortfall is not None:
+        raise shortfall
     expected = case_hash(cases, split_seed, resolved.data())
     if resolve_harness or configuration is not None:
         chosen = configuration if configuration is not None else Configuration.split(adapter, model, judge_model, options)

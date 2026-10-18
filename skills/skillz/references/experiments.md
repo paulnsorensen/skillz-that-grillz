@@ -182,7 +182,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `evals-unreadable` | `evals/evals.json` or `evals/journeys.json` is a symlink, too large, or malformed. An entry can also have an unknown `kind`, a duplicate case id (also across the two files), assertions on a trigger or near-miss, or a string `expected_skill` with no `kind` (the message says to set `kind`). At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix the eval file or the fixture, set `kind` on an ambiguous entry, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json` or a journey of `evals/journeys.json`. It can also change an entry `kind` or `request`, or a journey `brief`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from its eval file. Then run again. |
 | `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
-| `cases-too-few` | The holdout has fewer scored cases than the minimum of 6. | Add task cases in more families to the draft, then run again. |
+| `cases-too-few` | The scored families cannot fill the splits. A run needs 3 scored families and a holdout of 6 scored cases. The message names the two smallest families, the holdout capacity, the deficit, and a fix. The data holds `families`, `families_minimum`, `holdout_minimum`, `holdout_capacity`, `deficit`, and `fix`. | Follow the fix: add scored cases to other families, or add a family. Then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `search-faulted` | At least 4 search evaluations finished in this session and more than half failed, or the 5 newest failed in a row. A resume starts a new count. The message gives the failed counts by reason. | Wait for the provider, then resume the run in the same directory. |
 | `holdout-faulted` | Provider faults left the gate with no holdout case that has a scored baseline and winner pair. The command exits nonzero. | Wait for the provider, then run again in the same directory. |
@@ -351,6 +351,20 @@ The file is a JSON list. Each item has the draft-case shape:
 The first `run` call seeds `RUN/cases.seed.json` from both files. The call writes the seed when either file exists.
 The coverage check also covers `journeys.json`. The draft must keep each journey with its `id`, `kind`, `request`, and `brief`.
 Otherwise the run stops with `cases-uncovered`. To drop a journey, remove it from `journeys.json`.
+
+### Check the files offline
+
+Run `skillz-experiment.pyz validate --target SKILL` before the first `run`. It makes no model call, no host check, and no write.
+Add `--draft PATH` to check a draft too. Add `--seed N` to try another split seed. Repeat `--kind K` to pick the scored kinds.
+Every stage reports on its own, so one call lists all the problems.
+
+The stages check the contract, the seed files, the draft, the kind selection, the split, and the `family_budgets` names.
+A contract with `status: draft` gives a warning. Any finding with severity `error` makes the command exit 1.
+Each finding has `code`, `severity`, `file`, `pointer`, `message`, and `fix`. A `cases-too-few` finding also holds `data` with the family counts.
+
+The report holds `split` with the case count of each split under the default seed.
+The first `run` stop, `cases-missing`, shows the same projection in `seed_summary.split`. It lists `families`, `holdout_capacity`, and `deficit`.
+The projection uses the kinds that the run scores by default, and it does not depend on the seed.
 
 Make the cases hard. A family that the seed already passes adds no signal.
 Give each family one trap:

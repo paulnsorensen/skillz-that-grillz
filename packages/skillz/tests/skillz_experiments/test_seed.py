@@ -123,7 +123,9 @@ def test_the_stop_names_the_seed_file_and_shows_only_counts(tmp_path: Path, make
     assert json.loads(seed.read_text(encoding="utf-8")) == seed_cases(target)
     assert stop.data["seed_summary"] == {"cases": 4, "journeys": 0, "kinds": {"near-miss": 1, "task": 2, "trigger": 1},
                                          "families": {"billing": 2, "miss": 1, "trig": 1},
-                                         "inferred": {"one": "task", "two": "task", "miss": "near-miss"}}
+                                         "inferred": {"one": "task", "two": "task", "miss": "near-miss"},
+                                         "split": {"families": {"billing": 2}, "families_minimum": 3, "holdout_minimum": 6,
+                                                   "holdout_capacity": 0, "deficit": 6}}
     assert not (tmp_path / "run/cases.draft.json").exists()
 
 
