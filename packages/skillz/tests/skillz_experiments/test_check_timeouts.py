@@ -18,7 +18,7 @@ from typing_extensions import override
 
 from skillz_experiments import _graders, _runtime
 from skillz_experiments._budget import Budget, BudgetExhausted
-from skillz_experiments._candidate import Candidate
+from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import Case
 from skillz_experiments._evaluation import helper_failure
 from skillz_experiments._records import read
@@ -28,7 +28,7 @@ from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._command import Command
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._export import _frozen, calls_upper_bound  # pyright: ignore[reportPrivateUsage]
-from skillz_experiments.run._session import holdout_scores
+from skillz_experiments.run._session import Session, holdout_scores
 from fake_provider import PASSED, FakeProvider, ProviderCrash
 from memo_fixtures import SKILL, cases as _cases, contract as _contract
 
@@ -160,6 +160,30 @@ def test_the_command_harness_kills_the_wrapper_group_at_sandbox_seconds_and_send
     assert keys[-1] == ["argv", "model", "operation", "schema_version", "workspace"]
 
 
+SLOW_PROBE_WRAPPER = """
+import json, sys, time
+request = json.load(sys.stdin)
+if request['operation'] == 'discover':
+    print(json.dumps(dict(schema_version=1, operation='discover',
+                          skills=[dict(name=request['skill_name'], path=request['skill_path'])])))
+else:
+    time.sleep(2)
+    print(json.dumps(dict(schema_version=1, operation='sandbox', returncode=0, stdout='isolation-ok\\n', stderr='')))
+"""
+
+
+def test_the_command_preflight_probe_keeps_the_run_budget_as_its_limit(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A container wrapper can start slowly once. The probe must not inherit the per-fixture sandbox cap."""
+    wrapper = tmp_path / "wrapper.py"
+    _ = wrapper.write_text(SLOW_PROBE_WRAPPER)
+    monkeypatch.setattr(_command, "SANDBOX_SECONDS", 1)
+    adapter = Command((sys.executable, str(wrapper)), "m", Budget(10, 120, 0), lambda: None)
+    assert adapter.preflight()["isolation"] == "passed"
+    with pytest.raises(_runtime.SandboxTimeout):
+        _ = adapter.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+
+
 @final
 class _Grading:
     """A task transport whose sandbox raises `SandboxTimeout`, or returns the exit 124 that a timeout gave before."""
@@ -242,6 +266,39 @@ def test_two_threads_on_one_identity_share_the_retry_and_the_final_timeout() -> 
         hold.set()
         first, second = (future.result(timeout=2 * WAIT) for future in futures)
     assert first is second is TIMEOUT
+    assert task.calls == 2
+
+
+@pytest.mark.ac("gh-287:AC-4")
+def test_a_reader_during_the_retry_waits_for_the_final_result_and_never_sees_the_first_timeout() -> None:
+    retrying, release = threading.Event(), threading.Event()
+
+    @final
+    class Gated:
+        """A checker whose first attempt times out and whose retry waits for `release`."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def check_candidate(self, candidate: Candidate) -> CheckResult:
+            del candidate
+            self.calls += 1
+            if self.calls == 1:
+                return TIMEOUT
+            retrying.set()
+            _ = release.wait(WAIT)
+            return PASSED
+
+    task, memo = Gated(), CheckMemo()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(memo.check, task, _candidate())
+        assert retrying.wait(WAIT)
+        reader = pool.submit(memo.check, task, _candidate())
+        _ = threading.Event().wait(0.2)
+        assert not reader.done()
+        release.set()
+        results = (first.result(timeout=2 * WAIT), reader.result(timeout=2 * WAIT))
+    assert results[0] is results[1] is PASSED
     assert task.calls == 2
 
 
@@ -427,3 +484,36 @@ def test_a_search_candidate_with_a_final_timeout_is_recorded_rejected_and_adds_n
     frozen = _frozen(record, out)
     kept = {**record, "outcomes": [item for item in _outcomes(out) if item.get("rejection_kind") != "timeout"]}
     assert calls_upper_bound(record, frozen) == calls_upper_bound(kept, frozen)
+
+
+@pytest.mark.ac("gh-287:AC-12")
+@pytest.mark.ac("gh-287:AC-13")
+def test_a_final_replay_check_timeout_stops_resumably_and_never_refutes_the_export(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resume at phase `gated` starts a new memo, so the replay checks the winner again."""
+    plan = Plan()
+    target, out = _at_gate(tmp_path, make_target, write_draft, approvals, plan)
+    gate = Session.gate
+
+    def gate_then_crash(self: Session) -> None:
+        gate(self)
+        plan.crash_holdout = True
+
+    monkeypatch.setattr(Session, "gate", gate_then_crash)
+    with pytest.raises(ProviderCrash):
+        _ = run(target, out, MODEL, live=True, factory=plan.factory())
+    monkeypatch.setattr(Session, "gate", gate)
+    assert read(out / "run.json")["phase"] == "gated"
+    plan.crash_holdout, plan.timeouts, plan.checks = False, {"winner": 2}, Counter()
+    with pytest.raises(Stop) as caught:
+        _ = run(target, out, MODEL, live=True, factory=plan.factory())
+    assert caught.value.code == "winner-check-timeout" and plan.checks["winner"] == 2
+    record = read(out / "run.json")
+    replays = [item for item in _outcomes(out) if item.get("arm") == "replay"]
+    assert record["phase"] == "gated" and "replay" not in record
+    assert replays and all(item.get("rejection_kind") == "timeout" for item in replays)
+    _ = run(target, out, MODEL, live=True, factory=plan.factory())
+    record = read(out / "run.json")
+    reasons = cast(list[str], cast(dict[str, object], record["replay"])["reasons"])
+    assert record["phase"] == "complete" and "replay-contract-rejected" not in reasons

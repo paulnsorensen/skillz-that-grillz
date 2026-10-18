@@ -21,7 +21,8 @@ class CheckMemo:
     One session owns one memo. The memo is never written to disk. The run contract is frozen, so one identity always
     gets the same result in a run. A check that times out in the sandbox runs once more at once, in the same `check`
     call. The second result is final for the run, so a second timeout proves a real hang. No caller sees a first
-    timeout. A resume starts a new memo, so it checks again.
+    timeout. A resume starts a new memo, so the seed check and the holdout and replay arms check again. A recorded
+    search outcome stays final for the run.
     Each identity has its own lock, so checks of different identities run at the same time. A short mutex guards only
     the lock map. A cached result needs no lock.
     """

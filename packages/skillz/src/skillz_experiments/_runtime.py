@@ -144,8 +144,9 @@ def sandboxed(command: list[str], *, cwd: Path, limit: float, budget: Budget, en
               input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     """Run one sandbox child under a call slot. The child gets `limit` seconds, or less when the run budget has less.
 
-    The slot wait counts against the run budget, not against `limit`. A child that runs out `limit` raises
-    `SandboxTimeout`. A child that the run budget stops raises `BudgetExhausted`. Each case kills the child group.
+    The slot wait counts against the run budget, not against `limit`. A child that runs for `limit` seconds raises
+    `SandboxTimeout`. A child that the run budget stops raises `BudgetExhausted`. Both outcomes kill the child
+    process group.
     """
     with _slot(budget.remaining()):
         timeout = min(limit, budget.remaining())

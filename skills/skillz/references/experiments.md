@@ -121,7 +121,7 @@ The credential paths are `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, `~/.docker
 A root must not hold a socket entry. A tree of more than 100000 entries is too large to check, so the runner refuses it.
 Home caches such as `~/.cache/ms-playwright` stay allowed.
 `--sandbox-seconds N` sets the time limit of one OS sandbox command, from 1 to 600. The default is 20.
-The Codex and command harnesses use a fixed limit of 20 seconds. The command harness ends the wrapper process group at that limit, and the wrapper request does not change.
+The Codex and command harnesses use a fixed limit of 20 seconds for helper fixtures and graders. The command harness ends the wrapper process group at that limit, and the wrapper request does not change. Its preflight isolation probe keeps the run budget as its limit.
 A helper fixture that reaches the limit is a sandbox timeout. The contract check then runs once more at once. A second timeout rejects the candidate for the rest of the run with `rejection_kind: "timeout"`. A helper that exits 124 by itself is an ordinary fixture failure.
 A command or capture grader that reaches the limit scores as exit code 124.
 Once any scored case uses a command or hybrid grader, this time applies to every evaluation.
@@ -146,7 +146,7 @@ Map each coded stop to its next step:
 | `cases-too-easy` | The seed already scores at least 0.9 on a train or validation family. The message names each family, its split, and its mean. | Do not ask a new question. Draft harder cases in a new run directory, then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `baseline-check-timeout` | `next`, and optional `detail` | The contract check of the original skill reached the sandbox time limit twice, before the search or in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
-| `winner-check-timeout` | `next`, and optional `detail` | The contract check of the winner reached the sandbox time limit twice in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
+| `winner-check-timeout` | `next`, and optional `detail` | The contract check of the winner reached the sandbox time limit twice in the holdout gate or the replay. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
 | `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |

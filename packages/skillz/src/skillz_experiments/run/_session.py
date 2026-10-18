@@ -163,10 +163,14 @@ def _reflection_fault(rows: Sequence[Mapping[str, object]]) -> CodedError | None
                       + f"the newest: {newest[-1].get('failure')}); fix the cause, then resume the run in the same directory")
 
 
+def _detail(detail: str | None) -> dict[str, object]:
+    """Return the optional `detail` entry of a stop."""
+    return {} if detail is None else {"detail": detail}
+
+
 def _baseline_rejected(detail: str | None = None) -> Stop:
     return Stop("baseline-contract-rejected", "original candidate fails the frozen native/helper contract",
-                {"next": "fix the skill or its contract, then start a new run in a new directory"}
-                | cast(dict[str, object], {} if detail is None else {"detail": detail}))
+                {"next": "fix the skill or its contract, then start a new run in a new directory"} | _detail(detail))
 
 
 def _rejection_detail(outcome: dict[str, object]) -> str | None:
@@ -176,7 +180,10 @@ def _rejection_detail(outcome: dict[str, object]) -> str | None:
 
 
 def _timed_out(item: Mapping[str, object]) -> bool:
-    """Return whether `item` is a contract rejection by a final sandbox timeout. A resume scores its case again."""
+    """Return whether `item` is a contract rejection by a final sandbox timeout.
+
+    A resume scores such a holdout or replay case again. A search outcome of this kind stays final for the run.
+    """
     return item.get("status") == "candidate-contract-rejected" and item.get("rejection_kind") == "timeout"
 
 
@@ -191,8 +198,7 @@ _CHECK_TIMEOUT_CODES = {"baseline": "baseline-check-timeout", "winner": "winner-
 def _check_timeout(arm: str, detail: str | None = None) -> Stop:
     """Return the resumable stop for a contract check of `arm` that reached the sandbox time limit twice."""
     return Stop(_CHECK_TIMEOUT_CODES[arm], f"the {arm} contract check reached the sandbox time limit twice",
-                {"next": "resume the run in the same directory; a resume retries the check"}
-                | cast(dict[str, object], {} if detail is None else {"detail": detail}))
+                {"next": "resume the run in the same directory; a resume retries the check"} | _detail(detail))
 
 
 def _case_ids(feedback: Mapping[str, Sequence[Mapping[str, object]]]) -> list[str]:
@@ -1292,10 +1298,13 @@ class Session:
         self._conclude(reasons, patch.digest, detail=detail, per_case=per_case, mean=mean, se=se)
 
     def _replay_outcomes(self) -> dict[str, dict[str, object]]:
-        """Return the newest scored replay outcome of each holdout case. An `evaluation-failed` outcome is unscored."""
+        """Return the newest scored replay outcome of each holdout case.
+
+        An `evaluation-failed` outcome and a final check timeout are unscored.
+        """
         with self.lock:
             return {cast(str, item["case_id"]): item for item in self.outcomes
-                    if item.get("arm") == "replay" and item.get("split") == "holdout" and item.get("status") != "evaluation-failed"}
+                    if item.get("arm") == "replay" and item.get("split") == "holdout" and not _unscored(item)}
 
     def _replay_need(self) -> int:
         """Return the calls that the replay still needs: the cost of each holdout case without a scored replay outcome."""
@@ -1307,17 +1316,24 @@ class Session:
 
         Return None when the replay has all its outcomes, else the shortfall detail when the budget ran short.
         The check runs before any call. A short budget makes no call and raises no stop.
+        A final check timeout stops with the resumable `winner-check-timeout`, because the replay checks the winner.
         """
         done = self._replay_outcomes()
         todo = [case for case in self.cases_for("holdout") if case.identifier not in done]
         if not todo:
             return None
+
+        def inspect(arm: str, result: dict[str, object]) -> None:
+            del arm
+            if _timed_out(result):
+                raise _check_timeout("winner", _rejection_detail(result))
+
         try:
             _ = self.budget.remaining()
             needed, left = sum(case_calls(self.contract, case) for case in todo), self.budget.maximum - self.budget.calls
             if left < needed:
                 return {"needed": needed, "left": left}
-            self._score_holdout([(rebuilt, case, "replay", 0) for case in todo], keep_budget_stop=True)
+            self._score_holdout([(rebuilt, case, "replay", 0) for case in todo], inspect=inspect, keep_budget_stop=True)
         except BudgetExhausted as error:
             self.take_budget_stop()
             return {"shortfall": "deadline" if "deadline" in str(error) else "calls"}
