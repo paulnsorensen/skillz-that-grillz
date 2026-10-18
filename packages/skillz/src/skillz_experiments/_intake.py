@@ -16,10 +16,11 @@ from skillz_experiments._cases import (
     JOURNEY_FIELDS, CodedError, Journey, Split, digest, journey_of, loads_untrusted, string, text_map,
 )
 from skillz_experiments._contract import LOCATION, Contract, Grader, load_contract, parse
+from skillz_experiments._evals_format import EVAL_KINDS
 from skillz_experiments._records import write
 
 DRAFT_NAME = "cases.draft.json"
-KINDS = ("trigger", "near-miss", "task", "journey")
+KINDS = (*EVAL_KINDS, "journey")
 SOURCES = ("skill", "session")
 PENDING_KINDS = ("trigger", "near-miss")
 HOLDOUT_MINIMUM = 6

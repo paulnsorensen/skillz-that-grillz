@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import cast
 
-from skillz_experiments._cases import CodedError, loads_untrusted, mapping, read_text, relative, string, text_map
+from skillz_experiments._cases import CodedError, loads_untrusted, read_text, relative, text_map
+from skillz_experiments._evals_format import EvalEntry, parse_evals
 from skillz_experiments._intake import DRAFT_LIMIT, DraftCase
 
 EVALS = "evals/evals.json"
@@ -24,73 +23,26 @@ SEED_LIMIT = DRAFT_LIMIT // 2
 READ_LIMIT = SEED_LIMIT
 
 
-@dataclass(frozen=True)
-class SeedHeader:
-    """The fields of a seed case that the coverage check compares."""
-
-    identifier: str
-    request: str
-    kind: str
-    family: str | None
-
-    def case(self) -> dict[str, object]:
-        case: dict[str, object] = {"id": self.identifier, "request": self.request, "kind": self.kind, "source": "skill"}
-        if self.family is not None:
-            case["family"] = self.family
-        elif self.kind != "task":
-            case["family"] = self.identifier
-        return case
+def _case(entry: EvalEntry) -> dict[str, object]:
+    case: dict[str, object] = {"id": entry.identifier, "request": entry.prompt, "kind": entry.kind, "source": "skill"}
+    if entry.family is not None:
+        case["family"] = entry.family
+    elif entry.kind != "task":
+        case["family"] = entry.identifier
+    return case
 
 
-Entry = tuple[SeedHeader, dict[str, object]]
-
-
-def _strings(item: dict[str, object], key: str) -> list[str]:
-    value = item.get(key, [])
-    if not isinstance(value, list) or not all(isinstance(entry, str) for entry in cast(list[object], value)):
-        raise ValueError(f"{key} must be a list of text")
-    return cast(list[str], value)
-
-
-def _entry(value: object, position: int) -> Entry:
-    """Validate one eval entry. Return its seed header and the entry. No file is read."""
-    label = f"entry #{position}"
-    try:
-        item = mapping(value)
-        name = string(item.get("name"), "name")
-        label = f"entry {name}"
-        prompt = string(item.get("prompt"), "prompt")
-        if not isinstance(item.get("expected_output", ""), str):
-            raise ValueError("expected_output must be text")
-        assertions = _strings(item, "assertions")
-        if not all(assertion.strip() for assertion in assertions):
-            raise ValueError("assertions must hold nonempty text")
-        _ = _strings(item, "files")
-        skill = item.get("expected_skill")
-        if "expected_skill" in item and skill is not None and (not isinstance(skill, str) or not skill.strip()):
-            raise ValueError("expected_skill must be nonempty text or null")
-        kind = "near-miss" if "expected_skill" in item and skill is None else "task" if assertions else "trigger"
-        family = string(item["family"], "family") if "family" in item else None
-        return SeedHeader(name, prompt, kind, family), item
-    except ValueError as error:
-        raise ValueError(f"{label}: {error}") from None
-
-
-def _entries(target: Path) -> list[Entry] | None:
+def _entries(target: Path) -> list[EvalEntry] | None:
     """Return the validated entries in file order, or None when the skill has no `evals.json`."""
     if not (target / EVALS).is_symlink() and not (target / EVALS).exists():
         return None
     try:
-        entries = mapping(loads_untrusted(read_text(target, EVALS, READ_LIMIT))).get("evals")
-        if not isinstance(entries, list):
-            raise ValueError("evals must be a list")
-        parsed = [_entry(entry, position) for position, entry in enumerate(cast(list[object], entries), 1)]
-        names = [header.identifier for header, _item in parsed]
-        if len(set(names)) != len(names):
-            raise ValueError("entry names must be unique")
+        parsed = parse_evals(loads_untrusted(read_text(target, EVALS, READ_LIMIT)), strict=False)
     except ValueError as error:
         raise CodedError("evals-unreadable", f"{EVALS} cannot seed the cases: {error}") from None
-    return parsed
+    if parsed.errors:
+        raise CodedError("evals-unreadable", f"{EVALS} cannot seed the cases: {'; '.join(parsed.errors)}")
+    return list(parsed.entries)
 
 
 def _fixture(target: Path, path: str, cache: dict[str, str]) -> str:
@@ -116,14 +68,14 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
     cases: list[dict[str, object]] = []
     cache: dict[str, str] = {}
     total = 0
-    for header, item in entries:
-        case = header.case()
+    for header in entries:
+        case = _case(header)
         if header.kind == "task":
             try:
-                case["files"] = text_map({path: _fixture(target, path, cache) for path in _strings(item, "files")})
+                case["files"] = text_map({path: _fixture(target, path, cache) for path in header.files})
             except ValueError as error:
                 raise CodedError("evals-unreadable", f"{EVALS} cannot seed the cases: entry {header.identifier}: {error}") from None
-            case["expected"] = {"expected_output": item.get("expected_output", ""), "assertions": item["assertions"]}
+            case["expected"] = {"expected_output": header.expected_output, "assertions": list(header.assertions)}
         total += len(json.dumps(case))
         if total > SEED_LIMIT:
             raise CodedError("evals-unreadable", f"{EVALS} cannot seed the cases: the seed is too large; it passes "
@@ -132,10 +84,19 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
     return cases
 
 
-def seed_summary(cases: Sequence[dict[str, object]]) -> dict[str, object]:
-    """Count the seed cases, and the cases of each kind and of each family. A case with no family counts in no family."""
+def seed_summary(cases: Sequence[dict[str, object]], inferred: Mapping[str, str] | None = None) -> dict[str, object]:
+    """Count the seed cases, and the cases of each kind and of each family. A case with no family counts in no family.
+
+    `inferred` maps the case id of each entry that had no `kind` to the kind that the reader chose.
+    """
     return {"cases": len(cases), "kinds": dict(sorted(Counter(str(case["kind"]) for case in cases).items())),
-            "families": dict(sorted(Counter(str(case["family"]) for case in cases if "family" in case).items()))}
+            "families": dict(sorted(Counter(str(case["family"]) for case in cases if "family" in case).items())),
+            "inferred": dict(inferred or {})}
+
+
+def seed_inferred(target: Path) -> dict[str, str]:
+    """Return the kind that the reader chose for each entry with no `kind`, by case id. Read no fixture."""
+    return {entry.identifier: entry.kind for entry in _entries(target) or [] if entry.inferred}
 
 
 def check_coverage(target: Path, draft: Sequence[DraftCase]) -> None:
@@ -145,13 +106,13 @@ def check_coverage(target: Path, draft: Sequence[DraftCase]) -> None:
     """
     drafted = {case.identifier: case for case in draft}
     problems: list[str] = []
-    for header, _item in _entries(target) or []:
+    for header in _entries(target) or []:
         case = drafted.get(header.identifier)
         if case is None:
             problems.append(f"- {header.identifier}: missing from the draft")
             continue
         changed = [f"kind is {case.kind!r}, not {header.kind!r}"] if case.kind != header.kind else []
-        if case.request != header.request:
+        if case.request != header.prompt:
             changed.append("request changed")
         if changed:
             problems.append(f"- {header.identifier}: {'; '.join(changed)}")

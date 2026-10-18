@@ -32,7 +32,7 @@ from skillz_experiments._intake import (
     split_cases,
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
-from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_summary
+from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_inferred, seed_summary
 from skillz_experiments._wedge_targets import TargetPlan, plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
@@ -108,7 +108,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         seeded = seed_cases(target)
         if seeded is not None:
             write(seed_file, seeded)
-            data |= {"seed_file": str(seed_file), "seed_summary": seed_summary(seeded)}
+            data |= {"seed_file": str(seed_file), "seed_summary": seed_summary(seeded, seed_inferred(target))}
         start = "" if seeded is None else f", starting from the seed cases in {seed_file}"
         raise Stop("cases-missing", f"write the case draft to {draft}{start}, then call run again",
                    data | ({"doctor": report} if report else {}))

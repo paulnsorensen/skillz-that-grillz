@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for validate_evals.py.
 
-The script ships an embedded `--self-test` (20 fixtures) that thoroughly
+The script ships an embedded `--self-test` (30 fixtures) that thoroughly
 covers `validate_file`'s accept/reject contract. These tests cover the seam
 the self-test does NOT reach: `main()`'s tree scan, glob discovery, the
 empty / missing cases, the aggregate exit code, and — as a standing
@@ -18,6 +18,8 @@ import shutil
 import sys
 import tempfile
 import unittest
+
+import pytest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -30,7 +32,7 @@ import validate_evals  # noqa: E402
 
 REPO_ROOT = SCRIPT_DIR.parent.parent
 
-VALID_ENTRY: dict[str, object] = {"id": 0, "name": "a", "prompt": "p", "expected_output": "e", "files": []}
+VALID_ENTRY: dict[str, object] = {"id": 0, "name": "a", "kind": "task", "prompt": "p", "expected_output": "e", "files": []}
 VALID_EVALS: dict[str, object] = {"skill_name": "foo", "evals": [VALID_ENTRY]}
 
 
@@ -123,6 +125,32 @@ class ShippedEvalsTest(unittest.TestCase):
                 self.assertEqual(validate_evals.validate_file(ef), [])
 
 
+class InRepoStrictnessTest(unittest.TestCase):
+    """An in-repo evals.json needs an explicit kind and fixtures under evals/files/."""
+
+    def _validate(self, entry: dict[str, object], fixtures: tuple[str, ...] = ()) -> list[str]:
+        with tempfile.TemporaryDirectory(prefix="validate-evals-") as raw:
+            skill = Path(raw) / "skills" / "x"
+            for fixture in fixtures:
+                (skill / fixture).parent.mkdir(parents=True, exist_ok=True)
+                _ = (skill / fixture).write_text("f\n", encoding="utf-8")
+            path = skill / "evals" / "evals.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _ = path.write_text(json.dumps({"skill_name": "x", "evals": [entry]}), encoding="utf-8")
+            return validate_evals.validate_file(path)
+
+    @pytest.mark.ac("gh-366:AC-7")
+    def test_rejects_missing_kind_missing_fixture_and_outside_fixture(self) -> None:
+        no_kind = {key: value for key, value in VALID_ENTRY.items() if key != "kind"}
+        self.assertEqual(self._validate(VALID_ENTRY), [])
+        self.assertTrue(any("kind" in error for error in self._validate(no_kind)))
+        missing = VALID_ENTRY | {"files": ["evals/files/gone.md"]}
+        self.assertTrue(any("gone.md" in error for error in self._validate(missing)))
+        outside = VALID_ENTRY | {"files": ["evals/other.md"]}
+        self.assertTrue(any("evals/files/" in error for error in self._validate(outside, ("evals/other.md",))))
+        self.assertEqual(self._validate(VALID_ENTRY | {"files": ["evals/files/ok.md"]}, ("evals/files/ok.md",)), [])
+
+
 class SelfTestPassesTest(unittest.TestCase):
     """The embedded --self-test fixtures must all pass (rc 0)."""
 
@@ -131,7 +159,7 @@ class SelfTestPassesTest(unittest.TestCase):
         with redirect_stdout(out), redirect_stderr(err):
             rc = validate_evals.self_test()
         self.assertEqual(rc, 0, err.getvalue())
-        self.assertIn("self-test: 24/24 passed", out.getvalue())
+        self.assertIn("self-test: 30/30 passed", out.getvalue())
 
 
 if __name__ == "__main__":

@@ -5,6 +5,9 @@ All skills that ship behavioural evals keep them at exactly
 `skills/<name>/evals/evals.json`. This script finds every such file and
 checks it against one canonical contract:
 
+The reader is `skillz_experiments._evals_format.parse_evals`, which the
+autoimprove seed also uses. This script applies its strict profile.
+
 Top-level (a JSON object):
 - `skill_name`: non-empty string.
 - `evals`: a list of at least one entry.
@@ -13,9 +16,13 @@ Top-level (a JSON object):
 Each entry in `evals` (a JSON object):
 - `id`: int.
 - `name`: non-empty string.
+- `kind`: `trigger`, `near-miss`, or `task`. A contradiction is an error:
+  null `expected_skill` with a kind other than `near-miss`, `assertions` on
+  a trigger or near-miss, or a task with no `expected_output` and no
+  `assertions`.
 - `prompt`: non-empty string.
 - `expected_output`: non-empty string.
-- `files`: list.
+- `files`: list of fixture paths under `evals/files/`. Each file must exist.
 - `family` (optional): non-empty string.
 - `assertions` (optional): list of non-empty strings, as in the
   agentskills.io shape.
@@ -31,22 +38,15 @@ scanning the tree.
 
 Exit 0 on success, 1 on any failure.
 """
-from __future__ import annotations
-
 import json
 import sys
 import tempfile
 from pathlib import Path
 from typing import cast
 
-REQUIRED_ENTRY_FIELDS: dict[str, type | tuple[type, ...]] = {
-    "id": int,
-    "name": str,
-    "prompt": str,
-    "expected_output": str,
-    "files": list,
-}
-NON_EMPTY_STRING_FIELDS = {"name", "prompt", "expected_output"}
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "skillz" / "src"))
+
+from skillz_experiments._evals_format import parse_evals  # noqa: E402
 
 
 def validate_file(path: Path) -> list[str]:
@@ -54,83 +54,23 @@ def validate_file(path: Path) -> list[str]:
         data = cast(object, json.loads(path.read_text(encoding="utf-8")))
     except json.JSONDecodeError as exc:
         return [f"{path}: invalid JSON: {exc}"]
-
-    if not isinstance(data, dict):
-        return [f"{path}: top-level value must be a JSON object with 'skill_name' and 'evals'"]
-
-    record = cast(dict[str, object], data)
-    errors: list[str] = []
-
-    skill_name = record.get("skill_name")
-    if not isinstance(skill_name, str) or not skill_name.strip():
-        errors.append(f"{path}: 'skill_name' must be a non-empty string")
-
-    evals = record.get("evals")
-    if not isinstance(evals, list):
-        errors.append(f"{path}: 'evals' must be a list")
-        return errors
-    if not evals:
-        errors.append(f"{path}: 'evals' must contain at least one entry")
-        return errors
-
-    entries = cast(list[object], evals)
-    seen_ids: set[int] = set()
-    seen_names: set[str] = set()
-    for i, entry in enumerate(entries):
-        loc = f"{path}: evals[{i}]"
-        if not isinstance(entry, dict):
-            errors.append(f"{loc}: must be a JSON object")
-            continue
-
-        item = cast(dict[str, object], entry)
-        for field, expected_type in REQUIRED_ENTRY_FIELDS.items():
-            if field not in item:
-                errors.append(f"{loc}: missing required field '{field}'")
-                continue
-            value = item[field]
-            # bool is a subclass of int; reject it for the int `id` field.
-            if expected_type is int and isinstance(value, bool):
-                errors.append(f"{loc}: '{field}' must be an int, not a bool")
-                continue
-            if not isinstance(value, expected_type):
-                type_name = getattr(expected_type, "__name__", str(expected_type))
-                errors.append(f"{loc}: '{field}' must be {type_name}")
-                continue
-            if field in NON_EMPTY_STRING_FIELDS and isinstance(value, str) and not value.strip():
-                errors.append(f"{loc}: '{field}' must be a non-empty string")
-
-        assertions = item.get("assertions", [])
-        if not isinstance(assertions, list) or not all(
-            isinstance(a, str) and a.strip() for a in cast(list[object], assertions)
-        ):
-            errors.append(f"{loc}: 'assertions' must be a list of non-empty strings")
-        expected_skill = item.get("expected_skill")
-        if expected_skill is not None and (not isinstance(expected_skill, str) or not expected_skill.strip()):
-            errors.append(f"{loc}: 'expected_skill' must be a non-empty string or null")
-
-        if "family" in item:
-            family = item["family"]
-            if not isinstance(family, str) or not family.strip():
-                errors.append(f"{loc}: 'family' must be a non-empty string")
-        name = item.get("name")
-        if isinstance(name, str):
-            if name in seen_names:
-                errors.append(f"{loc}: duplicate name {name!r}")
-            seen_names.add(name)
-
-        entry_id = item.get("id")
-        if isinstance(entry_id, int) and not isinstance(entry_id, bool):
-            if entry_id in seen_ids:
-                errors.append(f"{loc}: duplicate id {entry_id}")
-            seen_ids.add(entry_id)
-
+    parsed = parse_evals(data, strict=True)
+    errors = [f"{path}: {error}" for error in parsed.errors]
+    skill = path.parent.parent
+    for entry in parsed.entries:
+        errors.extend(f"{path}: evals[{entry.index}]: files: {name} does not exist"
+                      for name in entry.files if not (skill / name).is_file())
     return errors
 
 
 def _canonical_entry(**overrides: object) -> dict[str, object]:
-    entry: dict[str, object] = {"id": 0, "name": "a", "prompt": "p", "expected_output": "e", "files": []}
+    entry: dict[str, object] = {"id": 0, "name": "a", "kind": "task", "prompt": "p", "expected_output": "e", "files": []}
     entry.update(overrides)
     return entry
+
+
+def _doc(*entries: dict[str, object]) -> dict[str, object]:
+    return {"skill_name": "s", "evals": list(entries) or [_canonical_entry()]}
 
 
 # (label, payload, expect_errors). Each case pins one accept/reject decision
@@ -138,7 +78,7 @@ def _canonical_entry(**overrides: object) -> dict[str, object]:
 # `[{query, should_trigger}]` is now rejected, so the contract can't silently
 # regress back to two incompatible schemas.
 _SELF_TEST_CASES: list[tuple[str, object, bool]] = [
-    ("canonical evals shape", {"skill_name": "s", "evals": [_canonical_entry()]}, False),
+    ("canonical evals shape", _doc(), False),
     (
         "extras tolerated (notes + unknown entry key)",
         {"skill_name": "s", "notes": "n", "evals": [_canonical_entry(extra={"k": "v"})]},
@@ -146,20 +86,24 @@ _SELF_TEST_CASES: list[tuple[str, object, bool]] = [
     ),
     (
         "agentskills.io assertions and routing fields",
-        {
-            "skill_name": "s",
-            "evals": [
-                _canonical_entry(assertions=["The output names X"], expected_skill="s"),
-                _canonical_entry(id=1, name="near-miss", assertions=[], expected_skill=None),
-            ],
-        },
+        _doc(
+            _canonical_entry(assertions=["The output names X"], expected_skill="s"),
+            _canonical_entry(id=1, name="near-miss", kind="near-miss", assertions=[], expected_skill=None),
+            _canonical_entry(id=2, name="trigger", kind="trigger", expected_skill="s"),
+        ),
         False,
     ),
-    ("assertions not a list", {"skill_name": "s", "evals": [_canonical_entry(assertions="x")]}, True),
-    ("blank assertion", {"skill_name": "s", "evals": [_canonical_entry(assertions=[" "])]}, True),
-    ("object assertion", {"skill_name": "s", "evals": [_canonical_entry(assertions=[{"text": "t"}])]}, True),
-    ("empty expected_skill", {"skill_name": "s", "evals": [_canonical_entry(expected_skill="")]}, True),
-    ("non-string expected_skill", {"skill_name": "s", "evals": [_canonical_entry(expected_skill=1)]}, True),
+    ("missing kind", _doc({k: v for k, v in _canonical_entry().items() if k != "kind"}), True),
+    ("unknown kind", _doc(_canonical_entry(kind="bogus")), True),
+    ("null expected_skill on a task", _doc(_canonical_entry(expected_skill=None)), True),
+    ("assertions on a trigger", _doc(_canonical_entry(kind="trigger", assertions=["x"])), True),
+    ("fixture missing on disk", _doc(_canonical_entry(files=["evals/files/absent.md"])), True),
+    ("fixture outside evals/files", _doc(_canonical_entry(files=["SKILL.md"])), True),
+    ("assertions not a list", _doc(_canonical_entry(assertions="x")), True),
+    ("blank assertion", _doc(_canonical_entry(assertions=[" "])), True),
+    ("object assertion", _doc(_canonical_entry(assertions=[{"text": "t"}])), True),
+    ("empty expected_skill", _doc(_canonical_entry(expected_skill="")), True),
+    ("non-string expected_skill", _doc(_canonical_entry(expected_skill=1)), True),
     ("old bare-array shape", [{"query": "q", "should_trigger": True}], True),
     ("missing skill_name", {"evals": [_canonical_entry()]}, True),
     ("empty skill_name", {"skill_name": "  ", "evals": [_canonical_entry()]}, True),
@@ -168,26 +112,18 @@ _SELF_TEST_CASES: list[tuple[str, object, bool]] = [
     ("entry not an object", {"skill_name": "s", "evals": ["nope"]}, True),
     (
         "missing expected_output",
-        {"skill_name": "s", "evals": [{"id": 0, "name": "a", "prompt": "p", "files": []}]},
+        _doc({"id": 0, "name": "a", "kind": "task", "prompt": "p", "files": []}),
         True,
     ),
-    ("empty name", {"skill_name": "s", "evals": [_canonical_entry(name="")]}, True),
-    ("files not a list", {"skill_name": "s", "evals": [_canonical_entry(files={})]}, True),
-    ("id not an int", {"skill_name": "s", "evals": [_canonical_entry(id="0")]}, True),
-    ("bool id rejected", {"skill_name": "s", "evals": [_canonical_entry(id=True)]}, True),
-    ("family kept", {"skill_name": "s", "evals": [_canonical_entry(family="billing")]}, False),
-    ("empty family", {"skill_name": "s", "evals": [_canonical_entry(family=" ")]}, True),
-    ("non-string family", {"skill_name": "s", "evals": [_canonical_entry(family=3)]}, True),
-    (
-        "duplicate name",
-        {"skill_name": "s", "evals": [_canonical_entry(id=1), _canonical_entry(id=2)]},
-        True,
-    ),
-    (
-        "duplicate id",
-        {"skill_name": "s", "evals": [_canonical_entry(id=1), _canonical_entry(id=1, name="b")]},
-        True,
-    ),
+    ("empty name", _doc(_canonical_entry(name="")), True),
+    ("files not a list", _doc(_canonical_entry(files={})), True),
+    ("id not an int", _doc(_canonical_entry(id="0")), True),
+    ("bool id rejected", _doc(_canonical_entry(id=True)), True),
+    ("family kept", _doc(_canonical_entry(family="billing")), False),
+    ("empty family", _doc(_canonical_entry(family=" ")), True),
+    ("non-string family", _doc(_canonical_entry(family=3)), True),
+    ("duplicate name", _doc(_canonical_entry(id=1), _canonical_entry(id=2)), True),
+    ("duplicate id", _doc(_canonical_entry(id=1), _canonical_entry(id=1, name="b")), True),
 ]
 
 
