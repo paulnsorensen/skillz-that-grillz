@@ -28,8 +28,8 @@ MINIMUM_FAMILIES = 3
 TASK_RUBRIC = ("The answer is correct when it satisfies the request and agrees in substance with `reference`. "
                "Ignore differences in JSON shape, quoting, or whitespace. "
                "Score 100 for a correct answer and 0 for a wrong answer.")
-_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
-_REQUIRED = {"id", "family", "kind", "request", "source"}
+DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
+DRAFT_REQUIRED = {"id", "family", "kind", "request", "source"}
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
 
 
@@ -73,10 +73,10 @@ def _case(value: object, position: int, journeys: Collection[str]) -> DraftCase:
         raise ValueError(f"draft case {position} must be a JSON object")
     item = cast(dict[str, object], value)
     name = item.get("id") if isinstance(item.get("id"), str) and item.get("id") else f"#{position}"
-    if set(item) - _FIELDS:
-        raise ValueError(f"case {name}: unknown fields {', '.join(sorted(set(item) - _FIELDS))}")
-    if _REQUIRED - set(item):
-        raise CodedError("cases-invalid", f"case {name}: missing fields {', '.join(sorted(_REQUIRED - set(item)))}; add each "
+    if set(item) - DRAFT_FIELDS:
+        raise ValueError(f"case {name}: unknown fields {', '.join(sorted(set(item) - DRAFT_FIELDS))}")
+    if DRAFT_REQUIRED - set(item):
+        raise CodedError("cases-invalid", f"case {name}: missing fields {', '.join(sorted(DRAFT_REQUIRED - set(item)))}; add each "
                          + "field (a trigger or near-miss seed case takes family = id; a task case needs an explicit family)")
     try:
         kind, source = item["kind"], item["source"]
@@ -128,6 +128,41 @@ def check_helper_input(contract: Contract, cases: Sequence[DraftCase]) -> None:
                          + f"add {needed} to the files of each task case")
 
 
+def projection(size: Mapping[str, int]) -> dict[str, object]:
+    """Project the split minimums over the scored cases per family, without a seed.
+
+    The two smallest families go to train and validation in the worst shuffle. The scored cases of the other
+    families are the most that the holdout can hold, so `holdout_capacity` and `deficit` hold for every seed.
+    """
+    ordered = sorted(size.values())
+    capacity = sum(ordered[2:])
+    return {"families": dict(sorted(size.items())), "families_minimum": MINIMUM_FAMILIES,
+            "holdout_minimum": HOLDOUT_MINIMUM, "holdout_capacity": capacity,
+            "deficit": max(0, HOLDOUT_MINIMUM - capacity)}
+
+
+def too_few(size: Mapping[str, int]) -> CodedError | None:
+    """Return the `cases-too-few` error when the scored families cannot fill the three splits, else None."""
+    data = projection(size)
+    capacity, deficit = cast(int, data["holdout_capacity"]), cast(int, data["deficit"])
+    if len(size) >= MINIMUM_FAMILIES and not deficit:
+        return None
+    smallest = sorted(size.items(), key=lambda item: (item[1], item[0]))[:2]
+    names = [name for name, _ in smallest]
+    listed = ", ".join(f"{name}:{count}" for name, count in smallest)
+    others = " and ".join(names)
+    if len(size) < MINIMUM_FAMILIES:
+        head = f"intake needs at least {MINIMUM_FAMILIES} scored families (train, validation, holdout); the draft has {len(size)}"
+        fix = (f"add scored cases in {MINIMUM_FAMILIES - len(size)} more families, so that the families outside the "
+               + f"two smallest hold at least {HOLDOUT_MINIMUM} scored cases")
+    else:
+        head = f"the holdout can hold {capacity} scored cases; the minimum is {HOLDOUT_MINIMUM}"
+        fix = f"add {deficit} scored cases to families other than {others}, or one new family of at least {deficit}"
+    message = (f"{head}; the two smallest families ({listed}) go to train and validation; the rest hold {capacity}; "
+               + f"the deficit is {deficit}; {fix}")
+    return CodedError("cases-too-few", message, data | {"fix": fix})
+
+
 def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task", journeys: Collection[str] = (),
                 also: Collection[str] = ()) -> list[IntakeCase]:
     """Assign splits from `seed`. A family never crosses splits.
@@ -156,9 +191,7 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task"
         if scores(case):
             size[case.family] = size.get(case.family, 0) + 1
     if len(size) < MINIMUM_FAMILIES:
-        scored = ", ".join([*([kind] if kind is not None else []), *journeys])
-        raise ValueError(f"intake needs at least {MINIMUM_FAMILIES} families of {scored} cases (train, validation, holdout); "
-                         + f"the draft has {len(size)}")
+        raise cast(CodedError, too_few(size))
     order = sorted(size)
     rng.shuffle(order)
     if sum(size[family] for family in order[2:]) < HOLDOUT_MINIMUM:

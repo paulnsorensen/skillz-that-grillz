@@ -162,7 +162,7 @@ def test_without_kind_journey_families_do_not_pad_the_task_minimum(tmp_path: Pat
     items = [*tasks(2), *journeys("journey", "j", 3)]
     path = tmp_path / "cases.draft.json"
     _ = path.write_text(json.dumps(items))
-    with pytest.raises(ValueError, match="families of task cases"):
+    with pytest.raises(ValueError, match="scored families"):
         _ = split_cases(load_draft(path), 7, "task", also=("journey",))
 
 @pytest.mark.ac("gh-368:AC-8")
@@ -176,7 +176,7 @@ def test_task_families_do_not_fill_the_holdout_of_a_journey_run(tmp_path: Path, 
     _ = main(["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose",
               "--kind", "journey"])
     error = cast(dict[str, object], json.loads(capsys.readouterr().err))
-    assert "families of journey cases" in str(error["error"]) and "has 2" in str(error["error"])
+    assert "scored families" in str(error["error"]) and error["code"] == "cases-too-few" and "has 2" in str(error["error"])
 
 
 def test_the_default_kinds_follow_the_contract_and_a_bad_selection_stops(tmp_path: Path) -> None:

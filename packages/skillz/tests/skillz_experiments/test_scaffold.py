@@ -64,6 +64,17 @@ def test_the_built_bundle_scaffolds_a_draft_contract_that_loads_once_approved(tm
     contract = parse(expand_gates(data | {"status": "approved"}, skill), "skill")
     assert contract.skill == "toy-skill" and list(contract.kinds) == ["journey"]
     assert json.loads(done.stdout)["status"] == "draft"
+    assert "$schema" not in data
+
+
+def test_scaffold_writes_the_schema_key_only_when_the_skill_ships_the_schema(tmp_path: Path) -> None:
+    skill = _skill(tmp_path)
+    (skill / "references/schemas").mkdir(parents=True)
+    _ = (skill / "references/schemas/autoimprove.schema.json").write_text("{}\n", encoding="utf-8")
+    _ = scaffold(skill)
+    data = cast(dict[str, object], json.loads((skill / LOCATION).read_text(encoding="utf-8")))
+    assert data["$schema"] == "../references/schemas/autoimprove.schema.json"
+    assert (skill / "evals" / cast(str, data["$schema"])).resolve().is_file()
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-7")

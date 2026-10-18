@@ -24,9 +24,10 @@ def repo_root(start: Path) -> Path | None:
 class CodedError(ValueError):
     """A coded validation failure or run stop that carries a stable machine-readable code."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, details: Mapping[str, object] | None = None) -> None:
         super().__init__(message)
         self.code: str = code
+        self.details: Mapping[str, object] | None = details
 
 
 def loads_untrusted(text: str) -> object:

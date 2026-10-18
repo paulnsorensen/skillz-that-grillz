@@ -46,6 +46,7 @@ Ask for a target when the mode requires one.
 `references/analytics-ceremony.md` has the details. Skip Usage and the raw-log fallback write no cache.
 
 For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
+Before you write or check `evals/evals.json`, `evals/journeys.json`, or `evals/autoimprove.json`, read `references/eval-formats.md`.
 The agent drafts the cases. The user needs no contract and no case manifest.
 Run `scripts/skillz-experiment.pyz run`, answer each coded stop, and then run `export`.
 Ask at most three questions: harness and model, case approval, and budget approval.
@@ -279,5 +280,6 @@ Read on demand:
 - In the analytics ceremony, pass these three paths to each pack context as `schema`, `conventions`, and `coverage`.
 - `references/calibration.md` — when you tag a finding's severity and confidence; the confidence × severity kernel.
 - `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the run flow, case draft, gate verdict, export, optional contract, graders, isolation, and the helper contracts.
+- `references/eval-formats.md` — the eval files that an author writes: fields, schemas, `$schema`, the minimums, and `validate`.
 - `references/experiment-harness.md` — the user selects the `claude` adapter, or checks a custom command or role files.
 - `references/harness-recipes.md` — the user wants to run experiments through Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi.

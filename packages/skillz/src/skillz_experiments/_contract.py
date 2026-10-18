@@ -16,9 +16,19 @@ LOCATION = "evals/autoimprove.json"
 GraderType = Literal["exact-json", "judge", "command", "hybrid", "audit", "journey"]
 GRADERS = ("exact-json", "judge", "command", "hybrid", "audit", "journey")
 JUDGED = ("audit", "judge", "hybrid", "journey")
-_SKILL = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
-_PILLAR = re.compile(r"[a-z][a-z0-9_]{0,31}")
-_TOOL = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,127}")
+ARGV_GRADERS = ("command", "hybrid", "journey")
+RUBRIC_GRADERS = ("judge", "hybrid", "journey")
+SKILL_PATTERN = r"[a-z0-9][a-z0-9-]{0,63}"
+PILLAR_PATTERN = r"[a-z][a-z0-9_]{0,31}"
+TOOL_PATTERN = r"[A-Za-z][A-Za-z0-9_]{0,127}"
+_SKILL = re.compile(SKILL_PATTERN)
+_PILLAR = re.compile(PILLAR_PATTERN)
+_TOOL = re.compile(TOOL_PATTERN)
+CONTRACT_FIELDS = ("schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface", "statistics")
+GRADER_FIELDS = ("grader", "argv", "gate", "rubric", "capture", "pillars")
+HELPER_FIELDS = ("path", "input", "fixtures")
+SURFACE_FIELDS = ("tools", "mcp_config", "agents", "companions")
+SCHEMA_KEY = "$schema"
 PILLAR_LIMIT = 8
 
 
@@ -196,19 +206,19 @@ def _pillars(raw: object, kind: str) -> tuple[str, ...]:
 
 def _grader(value: object, kind: str) -> Grader:
     item = mapping(value)
-    _fields(item, {"grader", "argv", "rubric", "capture", "pillars"}, f"kind {kind}")
+    _fields(item, set[str](GRADER_FIELDS) - {"gate"}, f"kind {kind}")
     kind_type = item.get("grader")
     if kind_type not in GRADERS:
         raise ValueError(f"kind {kind} needs a grader: {', '.join(GRADERS)}")
     argv: tuple[str, ...] = ()
-    if kind_type in ("command", "hybrid", "journey"):
+    if kind_type in ARGV_GRADERS:
         argv = _argv(item.get("argv"), f"kind {kind}")
     elif "argv" in item:
         raise ValueError(f"kind {kind} grader does not take argv")
     rubric = ""
     capture: tuple[str, ...] = ()
     pillars: tuple[str, ...] = ()
-    if kind_type in ("judge", "hybrid", "journey"):
+    if kind_type in RUBRIC_GRADERS:
         rubric = string(item.get("rubric"), f"kind {kind} rubric")
         capture = _argv(item["capture"], f"kind {kind} capture") if "capture" in item else ()
         pillars = _pillars(item["pillars"], kind) if "pillars" in item else ()
@@ -221,7 +231,7 @@ def _grader(value: object, kind: str) -> Grader:
 
 def _helper(value: object) -> Helper:
     item = mapping(value)
-    _fields(item, {"path", "input", "fixtures"}, "helper")
+    _fields(item, set(HELPER_FIELDS), "helper")
     fixtures: list[dict[str, object]] = []
     raw = item.get("fixtures", [])
     if not isinstance(raw, list):
@@ -281,7 +291,7 @@ def _surface(value: object) -> Surface:
     if not isinstance(value, dict):
         raise _surface_error("must be an object")
     item = mapping(cast(object, value))
-    unknown = set(item) - {"tools", "mcp_config", "agents", "companions"}
+    unknown = set(item) - set(SURFACE_FIELDS)
     if unknown:
         raise _surface_error(f"has unknown fields: {', '.join(sorted(unknown))}")
     tools = _surface_list(item, "tools")
@@ -308,7 +318,7 @@ def parse(value: object, source: str) -> Contract:
         raise CodedError("contract-unapproved", "contract has status draft; approve it before a run")
     if item.get("status") != "approved":
         raise ValueError("contract status must be approved or draft")
-    _fields(item, {"schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface", "statistics"}, "contract")
+    _fields(item, {SCHEMA_KEY, *CONTRACT_FIELDS}, "contract")
     if type(item.get("schema_version")) is not int or item["schema_version"] != 1:
         raise ValueError("contract needs schema_version 1")
     skill = string(item.get("skill"), "contract skill")
