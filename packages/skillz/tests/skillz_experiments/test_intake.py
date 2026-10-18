@@ -98,7 +98,7 @@ def test_hash_mismatch_raises_cases_unapproved_and_writes_nothing(tmp_path: Path
 
 def test_too_few_families_names_the_minimum(tmp_path: Path) -> None:
     cases = load_draft(write_draft(tmp_path, draft(families=2)))
-    with pytest.raises(ValueError, match="at least 3 task families"):
+    with pytest.raises(ValueError, match="at least 3 families of task cases"):
         _ = split_cases(cases, 1)
 
 
@@ -232,7 +232,7 @@ def test_journey_families_do_not_count_toward_the_scored_task_holdout(tmp_path: 
 
 def test_a_draft_with_too_few_task_families_stops_even_when_journey_families_fill_the_count(tmp_path: Path) -> None:
     cases = load_draft(write_draft(tmp_path, mixed([3, 3], [2, 2, 2])))
-    with pytest.raises(ValueError, match="at least 3 task families"):
+    with pytest.raises(ValueError, match="at least 3 families of task cases"):
         _ = split_cases(cases, 1)
 
 

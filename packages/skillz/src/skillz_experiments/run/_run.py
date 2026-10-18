@@ -135,7 +135,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     held = sum(case.split == "holdout" and case.scored and case.kind in kinds for case in cases)
     if held < HOLDOUT_MINIMUM:
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
-                         + "add task cases in more families to the draft, then call run again")
+                         + f"add {', '.join(kinds)} cases in more families to the draft, then call run again")
     expected = case_hash(cases, split_seed, resolved.data())
     if resolve_harness or configuration is not None:
         chosen = configuration if configuration is not None else Configuration.split(adapter, model, judge_model, options)

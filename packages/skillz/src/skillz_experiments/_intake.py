@@ -20,7 +20,6 @@ from skillz_experiments._evals_format import EVAL_KINDS
 from skillz_experiments._records import write
 
 DRAFT_NAME = "cases.draft.json"
-KINDS = (*EVAL_KINDS, "journey")
 SOURCES = ("skill", "session")
 PENDING_KINDS = ("trigger", "near-miss")
 HOLDOUT_MINIMUM = 6
@@ -82,8 +81,9 @@ def _case(value: object, position: int, journeys: Collection[str]) -> DraftCase:
                          + "field (a trigger or near-miss seed case takes family = id; a task case needs an explicit family)")
     try:
         kind, source = item["kind"], item["source"]
-        if kind not in KINDS and kind not in journeys:
-            raise ValueError(f"kind must be one of {', '.join((*KINDS, *(name for name in journeys if name not in KINDS)))}")
+        allowed = (*EVAL_KINDS, *journeys)
+        if kind not in allowed:
+            raise ValueError(f"kind must be one of {', '.join(allowed)}")
         if source not in SOURCES:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}")
         files = text_map(item.get("files", {}))
@@ -157,7 +157,8 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task"
         if scores(case):
             size[case.family] = size.get(case.family, 0) + 1
     if len(size) < MINIMUM_FAMILIES:
-        raise ValueError(f"intake needs at least {MINIMUM_FAMILIES} task families (train, validation, holdout); "
+        scored = ", ".join([*([kind] if kind is not None else []), *journeys])
+        raise ValueError(f"intake needs at least {MINIMUM_FAMILIES} families of {scored} cases (train, validation, holdout); "
                          + f"the draft has {len(size)}")
     order = sorted(size)
     rng.shuffle(order)
