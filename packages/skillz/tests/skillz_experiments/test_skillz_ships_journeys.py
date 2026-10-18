@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -49,9 +50,10 @@ def test_the_checked_in_journeys_equal_the_generator_output() -> None:
 
 
 def _staged(tmp_path: Path) -> Path:
-    done = subprocess.run([sys.executable, str(KIT), "stage"], env={**os.environ, "TMPDIR": str(tmp_path)},
-                          capture_output=True, text=True, timeout=60, check=True)
-    return Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
+    """Return a private copy of the shipped skill, as a user would run it."""
+    target = tmp_path / "staged" / "skillz"
+    _ = shutil.copytree(SKILL, target, ignore=shutil.ignore_patterns("wedge.toml", "__pycache__"))
+    return target
 
 
 def _first_stop(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], *flags: str) -> dict[str, object]:
@@ -88,3 +90,11 @@ def test_a_default_run_on_the_staged_skill_scores_the_journeys_with_the_tasks(
     data = _first_stop(_staged(tmp_path), tmp_path, capsys)
     assert _marks(data, "journey") == ["scored"] * 18
     assert "scored" in _marks(data, "task") and "not scored" not in _marks(data, "task")
+
+
+def test_a_kit_run_scores_the_eighteen_journeys_under_the_kit_contract(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    done = subprocess.run([sys.executable, str(KIT), "stage", "--approve-contract"], env={**os.environ, "TMPDIR": str(tmp_path)},
+                          capture_output=True, text=True, timeout=60, check=True)
+    target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
+    data = _first_stop(target, tmp_path, capsys)
+    assert _marks(data, "journey") == ["scored"] * 18 and "kinds journey" in str(data["question"])

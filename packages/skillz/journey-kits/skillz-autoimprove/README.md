@@ -45,16 +45,20 @@ python3 journeys.py write-skill
 A test fails when the checked-in file differs from the generator output.
 A default `run` on `skills/skillz` evaluates these journeys beside the tasks, so its estimate grows.
 Pass `--kind task` for a task-only run and `--kind journey` for a journey-only run.
+The shipped contract edits `SKILL.md` and four references, which exclude `references/experiments.md`. The kit run uses the kit contract below.
 
 ## Run
 
 ```sh
-python3 journeys.py stage          # private copy of skills/skillz with its shipped, approved evals
-python3 journeys.py write DIR     # draft contract and cases.draft.json in DIR; add --approve-contract after you approve the rubric and the gate
+python3 journeys.py stage                     # contract stays draft; the run stops with contract-unapproved
+python3 journeys.py stage --approve-contract  # after you approve the rubric and the gate
+python3 journeys.py write DIR                 # draft contract and cases.draft.json in DIR; same flag
 ```
 
-`stage` copies `skills/skillz` with its `evals/` to a private directory, without `wedge.toml`.
-It prints the `run --kind journey` command. Set the models. The first call stops with `cases-missing`.
+`stage` copies `skills/skillz` to a private directory without its shipped `evals/` and without `wedge.toml`.
+It then writes the kit contract (journey kind only, editable `SKILL.md` and `references/experiments.md`) and copies the one gate and the shipped `journeys.json` into the target `evals/`.
+The shipped `skills/skillz/evals/autoimprove.json` stays unchanged.
+It prints the `run` command. Set the models. The first call stops with `cases-missing`.
 Copy the `cases.seed.json` that it names to `cases.draft.json`, then follow the coded stops.
 The shipped contract lets the run edit `SKILL.md` and four references. The `write` contract edits `SKILL.md` and `references/experiments.md`.
 The exported patch uses the same paths as `skills/skillz`.

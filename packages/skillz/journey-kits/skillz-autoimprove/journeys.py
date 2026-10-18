@@ -3,7 +3,7 @@
 Usage:
   python3 journeys.py write DIR [--approve-contract]   write DIR/autoimprove.json, DIR/evals/gates/journey.py, and DIR/cases.draft.json
   python3 journeys.py write-skill                      write skills/skillz/evals/journeys.json from the generator
-  python3 journeys.py stage                            stage a private copy of skills/skillz and a run directory
+  python3 journeys.py stage [--approve-contract]       stage a private copy of skills/skillz with the kit contract and a run directory
 
 Each journey asks the agent to autoimprove one toy skill. The stub harness refuses every call,
 so a journey makes no nested model call. The `write` contract keeps status draft unless --approve-contract is given.
@@ -172,18 +172,23 @@ def write_skill() -> None:
     _ = (SKILL / "evals" / "journeys.json").write_text(json.dumps(cases(), indent=2) + "\n")
 
 
-def stage() -> None:
-    """Copy skills/skillz with its shipped evals to a private target, then print the run command.
+def stage(approved: bool) -> None:
+    """Copy skills/skillz to a private target with the kit contract, then print the run command.
 
-    The shipped contract is approved and holds the `journey` kind, so `--kind journey` scores only the journeys.
-    The copy leaves out wedge.toml: its project path points at the repo root, and `--edit prose` never reads it.
+    The copy leaves out the shipped evals/, so the kit editable set (SKILL.md and references/experiments.md) applies
+    and the task cases stay out. The target keeps the kit contract, the one gate copy, and the shipped journeys.json.
+    It also leaves out wedge.toml: its project path points at the repo root, and `--edit prose` never reads it.
     """
     target = Path(tempfile.mkdtemp(prefix="skillz-target-")) / "skillz"
-    _ = shutil.copytree(SKILL, target, ignore=shutil.ignore_patterns("wedge.toml", "__pycache__"))
+    _ = shutil.copytree(SKILL, target, ignore=shutil.ignore_patterns("evals", "wedge.toml", "__pycache__"))
+    (target / GATE).parent.mkdir(parents=True)
+    _ = (target / "evals" / "autoimprove.json").write_text(json.dumps(contract(approved), indent=2) + "\n")
+    _ = shutil.copyfile(SKILL / GATE, target / GATE)
+    _ = shutil.copyfile(SKILL / "evals" / "journeys.json", target / "evals" / "journeys.json")
     out = Path(tempfile.mkdtemp(prefix="skillz-run-"))
-    print(f"target: {target}\nout:    {out}\n")
+    print(f"target: {target}\nout:    {out}\ncontract status: {'approved' if approved else 'draft'}\n")
     print(f"python3 {SKILL / 'scripts' / 'skillz-experiment.pyz'} run --target {target} --out {out} --harness claude "
-          + "--model MODEL --judge-model JUDGE_MODEL --repeats 2 --kind journey --live")
+          + "--model MODEL --judge-model JUDGE_MODEL --repeats 2 --live")
     print("The first call stops with cases-missing. Copy the cases.seed.json it names to OUT/cases.draft.json, then follow the coded stops.")
 
 
@@ -194,8 +199,8 @@ def main(argv: list[str]) -> None:
         write(Path(words[1]), approved)
     elif words == ["write-skill"] and not approved:
         write_skill()
-    elif words == ["stage"] and not approved:
-        stage()
+    elif words == ["stage"]:
+        stage(approved)
     else:
         sys.exit(__doc__)
 

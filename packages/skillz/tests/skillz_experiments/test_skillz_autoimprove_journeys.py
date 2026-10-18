@@ -12,9 +12,10 @@ from typing import cast
 import pytest
 
 from skillz_experiments._cases import CodedError, load_cases
-from skillz_experiments._contract import Contract, parse
+from skillz_experiments._contract import Contract, load_contract, parse
 from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._intake import HOLDOUT_MINIMUM, case_hash, freeze, load_draft, split_cases
+from skillz_experiments._seed import seed_cases
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._plan import JOURNEY_SEARCH_CALLS, SEARCH_CASE_FACTOR, size_plan
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
@@ -114,16 +115,24 @@ def test_a_task_only_plan_keeps_the_fixed_search_factor() -> None:
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-13")
-def test_stage_copies_the_skill_with_its_shipped_evals_and_no_wedge_toml(tmp_path: Path) -> None:
+def test_stage_copies_the_skill_with_the_kit_contract_the_one_gate_and_the_shipped_journeys(tmp_path: Path) -> None:
     env = {**os.environ, "TMPDIR": str(tmp_path)}
-    done = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage"], env=env, capture_output=True, text=True, timeout=30, check=True)
+    done = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage", "--approve-contract"], env=env, capture_output=True,
+                          text=True, timeout=30, check=True)
     target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
     assert target.is_relative_to(tmp_path)
     assert not (target / "wedge.toml").exists()
     shipped = KIT.parents[3] / "skills" / "skillz" / "evals"
-    for name in ("autoimprove.json", "journeys.json", "gates/journey.py"):
+    for name in ("journeys.json", "gates/journey.py"):
         assert (target / "evals" / name).read_bytes() == (shipped / name).read_bytes(), name
-    assert "--kind journey" in done.stdout
+    assert sorted(path.relative_to(target / "evals").as_posix() for path in (target / "evals").rglob("*") if path.is_file()) == [
+        "autoimprove.json", "gates/journey.py", "journeys.json"]
+    rules = load_contract(target)
+    assert sorted(rules.kinds) == ["journey"] and rules.editable == ("SKILL.md", "references/experiments.md")
+    seeded = seed_cases(target)
+    assert seeded is not None and len(seeded) == 18
+    drafted = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage"], env=env, capture_output=True, text=True, timeout=30, check=True)
+    assert "contract status: draft" in drafted.stdout
 
 
 def bash(command: str) -> dict[str, object]:

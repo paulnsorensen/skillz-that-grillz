@@ -233,7 +233,7 @@ def test_scaffold_stops_and_writes_nothing_when_the_contract_or_the_gate_exists(
 
 def test_the_kit_stage_moves_the_gate_into_the_target(tmp_path: Path) -> None:
     kit = ROOT / "packages/skillz/journey-kits/skillz-autoimprove/journeys.py"
-    done = subprocess.run([sys.executable, str(kit), "stage"], env={**os.environ, "TMPDIR": str(tmp_path)},
+    done = subprocess.run([sys.executable, str(kit), "stage", "--approve-contract"], env={**os.environ, "TMPDIR": str(tmp_path)},
                           capture_output=True, text=True, timeout=30, check=True)
     target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
     assert load_contract(target).grader("journey").argv[:3] == ("python3", "-I", "-c")
