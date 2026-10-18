@@ -11,7 +11,7 @@ from typing import cast
 import pytest
 from skillz_experiments._cases import CodedError
 from skillz_experiments._contract import LOCATION, parse
-from skillz_experiments._gate import expand_gates
+from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._scaffold import scaffold
 
 ROOT = Path(__file__).resolve().parents[4]

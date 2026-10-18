@@ -13,7 +13,7 @@ import pytest
 
 from skillz_experiments._cases import CodedError, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._gate import expand_gates
+from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._intake import HOLDOUT_MINIMUM, case_hash, freeze, load_draft, split_cases
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._plan import JOURNEY_SEARCH_CALLS, SEARCH_CASE_FACTOR, size_plan

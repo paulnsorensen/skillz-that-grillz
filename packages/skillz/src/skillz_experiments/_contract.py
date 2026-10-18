@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
 from skillz_experiments._cases import CodedError, digest, mapping, relative, string
-from skillz_experiments._gate import expand_gates
+from skillz_experiments._gate_files import expand_gates
 from skillz_experiments.gate import Statistics
 
 LOCATION = "evals/autoimprove.json"

@@ -33,7 +33,7 @@ from skillz_experiments._cases import Case, load_cases, mapping
 from skillz_experiments._cli import main
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._gate import expand_gates
+from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._facts import audit_facts
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -185,7 +185,7 @@ def test_the_grader_lives_in_the_argv_and_never_in_a_staged_file(path: Path, nam
     imported |= {node.module for source in sources for node in ast.walk(ast.parse(source))
                  if isinstance(node, ast.ImportFrom) and node.module}
     assert {"json", "pathlib", "re"} <= imported or "_workspace" in imported
-    assert imported <= {"hashlib", "json", "pathlib", "re", "collections.abc", "_workspace", "_markdown"}
+    assert imported <= {"hashlib", "json", "pathlib", "re", "collections.abc", "typing", "_workspace", "_markdown"}
 
 
 @pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
