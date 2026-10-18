@@ -14,7 +14,7 @@ import pytest
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._intake import DRAFT_NAME
-from skillz_experiments._seed import seed_cases, seed_summary
+from skillz_experiments._seed import check_coverage, seed_cases, seed_summary
 from skillz_experiments.run import Stop, run
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -113,7 +113,28 @@ def test_both_files_seed_together_and_a_duplicate_id_across_them_stops(tmp_path:
         _ = seed_cases(target)
     assert duplicate.value.code == "evals-unreadable" and "duplicate case id 't'" in str(duplicate.value)
 
+@pytest.mark.ac("gh-369:AC-14")
+def test_coverage_stops_on_an_id_that_repeats_across_the_two_files(tmp_path: Path, make_target: Maker) -> None:
+    target = make_target(tmp_path)
+    entry = {"name": "t", "prompt": "p", "expected_output": "out"}
+    _ = (target / "evals/evals.json").write_text(json.dumps({"evals": [entry]}), encoding="utf-8")
+    _journeys(target, [EASY_CHEESE_CASE | {"id": "t"}])
+    with pytest.raises(CodedError) as duplicate:
+        check_coverage(target, [])
+    assert duplicate.value.code == "evals-unreadable" and "duplicate case id 't'" in str(duplicate.value)
 
+
+@pytest.mark.ac("gh-369:AC-15")
+def test_a_journey_kind_on_a_harness_that_cannot_converse_stops_before_any_approval(tmp_path: Path) -> None:
+    target = _stage(tmp_path / "target")
+    seeded = cast(list[dict[str, object]], seed_cases(target))
+    kept = _variants(seeded[0])
+    kept[0] |= {"id": "culture-1", "request": seeded[0]["request"]}
+    _draft(tmp_path, kept)
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, tmp_path / "run", "local-test", adapter="codex", live=True)
+    assert caught.value.code == "journey-unsupported" and "--kind task" in str(caught.value)
+    assert not (tmp_path / "run/run.json").exists()
 @pytest.mark.ac("gh-369:AC-4")
 def test_an_easy_cheese_shaped_journeys_file_seeds_and_passes_intake_unchanged(tmp_path: Path) -> None:
     target = _stage(tmp_path / "target")

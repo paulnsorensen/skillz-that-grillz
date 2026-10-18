@@ -196,13 +196,11 @@ def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, fro
             raise CodedError("editable-needs-cli", f"the contract editable list names {', '.join(code_names)}, which "
                              + "are not Markdown; run with --edit prose+cli or remove them from editable")
     if helper is not None and helper not in files and (plan is None or plan.helper_target(contract) is None):
-        if helper in frozen and edit == "prose":
-            pass
-        elif helper in frozen:
+        if helper in frozen and edit != "prose":
             raise CodedError("helper-frozen", f"the contract helper {helper} is a frozen file (binary, not UTF-8, "
                              + "or over the text limit) and not the .pyz of an own wedge target, so no proposal can edit it; "
                              + "pass --edit prose when you want no helper edit")
-        else:
+        elif helper not in frozen:
             raise CodedError("helper-file-missing", f"the contract helper {helper} is missing from the target")
     mcp = mcp_text(files, contract)
     named = [*contract.editable, *([helper] if helper is not None else [])]

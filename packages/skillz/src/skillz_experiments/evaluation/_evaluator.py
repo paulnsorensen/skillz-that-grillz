@@ -82,11 +82,9 @@ def _prompt(rules: Contract, candidate: Candidate, instruction: str, case: Case)
     """Build the candidate prompt. It never holds `expected` or a grader rubric."""
     root = f".agents/skills/{rules.skill}"
     steps = f"cat {root}/SKILL.md; then read {root}/EXPERIMENT_MARKER"
-    if getattr(case, "journey", None) is not None:
-        pass
-    elif candidate.script is not None:
+    if case.journey is None and candidate.script is not None:
         steps += f"; then python3 -I {root}/{candidate.script}" + (f" {rules.helper.input}" if rules.helper else "")
-    elif rules.helper is not None:
+    elif case.journey is None and rules.helper is not None:
         steps += f"; then python3 -I {root}/{rules.helper.path} {rules.helper.input}"
     invocation = rules.invocation.replace("{skill}", rules.skill).replace("{path}", root)
     return (invocation + "\nRun separate simple commands, without shell operators: " + steps + ". " + instruction
