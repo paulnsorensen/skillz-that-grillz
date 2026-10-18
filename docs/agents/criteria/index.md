@@ -46,6 +46,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-293](./gh-293.md) — gh-293: read block-scalar descriptions in full in the facts audit
 - [gh-294](./gh-294.md) — gh-294: --edit prose with non-Markdown editable names stops with editable-needs-cli
 - [gh-295](./gh-295.md) — gh-295: the doctor checks the run's claude executable, and a nonzero inventory exit stops with host-not-ready
+- [gh-296](./gh-296.md) — gh-296: the cases-missing stop writes the seed to a file and shows only counts
 - [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
 - [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
@@ -53,6 +54,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-316](./gh-316.md) — gh-316: a run that is mostly provider faults stops with a code and scores no fault as zero
 - [gh-318](./gh-318.md) — gh-318: the Codex adapter retries a rate limit and keeps diagnostic text
 - [gh-319](./gh-319.md) — gh-319: one model call cannot use the whole search window, and calls reconcile with outcomes
+- [gh-332](./gh-332.md) — gh-332: the doctor detail of a missing host tool says that the tool is missing
 - [skillz-autoimprove-claims](./skillz-autoimprove-claims.md) — skillz-autoimprove-claims: validate the three autoimprove claims separately
 - [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
 - [skillz-pragmatic-autoimprove](./skillz-pragmatic-autoimprove.md) — skillz-pragmatic-autoimprove: pragmatic autoimprove
