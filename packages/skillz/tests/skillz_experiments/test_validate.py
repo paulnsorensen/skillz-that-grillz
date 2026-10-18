@@ -79,7 +79,6 @@ def test_the_holdout_shortfall_names_the_smallest_families_the_capacity_the_defi
     assert too_few({"a": 1, "b": 2, "c": 3, "d": 3}) is None
 
 
-@pytest.mark.ac("gh-370:AC-4")
 def test_the_projection_leaves_the_case_hash_of_an_existing_draft_unchanged(tmp_path: Path) -> None:
     cases = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"Do thing {family}.{index}",
               "files": {"input.txt": "hello\n"}, "expected": {"answer": f"{family}"}, "source": "skill"}
@@ -99,6 +98,28 @@ def test_the_cases_missing_stop_carries_a_split_projection(tmp_path: Path, make_
     summary = cast(dict[str, object], caught.value.data["seed_summary"])
     assert summary["split"] == {"families": {"a": 1, "b": 2, "c": 4}, "families_minimum": 3, "holdout_minimum": 6,
                                 "holdout_capacity": 4, "deficit": 2}
+
+
+@pytest.mark.ac("gh-370:AC-9")
+def test_validate_and_run_project_the_same_split_for_task_entries_without_a_family(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    _entries(target, {"a": 1, "b": 2, "c": 4})
+    document = cast(dict[str, list[dict[str, object]]], json.loads((target / "evals/evals.json").read_text()))
+    document["evals"] += [{"name": f"loose-{index}", "prompt": f"loose prompt {index}", "expected_output": "out", "files": []}
+                          for index in range(3)]
+    _ = (target / "evals/evals.json").write_text(json.dumps(document))
+    with pytest.raises(Stop) as caught:
+        _ = run(target, tmp_path / "run", "local-test", live=True)
+    projected = cast(dict[str, object], cast(dict[str, object], caught.value.data["seed_summary"])["split"])
+    code, report = _report(capsys, "--target", str(target))
+    findings = cast(list[dict[str, object]], report["findings"])
+    short = [item for item in findings if item["code"] == "cases-too-few"]
+    missing = [item for item in findings if item["code"] == "case-family-missing"]
+    assert code == 1 and len(missing) == 3 and len(short) == 1
+    assert cast(dict[str, object], report["cases"])["families"] == projected["families"] == {"a": 1, "b": 2, "c": 4}
+    data = cast(dict[str, object], short[0]["data"])
+    assert {key: data[key] for key in projected} == projected
 
 
 @pytest.mark.ac("gh-370:AC-10")

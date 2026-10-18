@@ -33,6 +33,12 @@ def _case(entry: EvalEntry) -> dict[str, object]:
     return case
 
 
+def seed_family(case: Mapping[str, object]) -> str | None:
+    """Return the family of a seed case, or None when it has none. A case with no family joins no split."""
+    family = case.get("family")
+    return None if family is None else str(family)
+
+
 def _entries(target: Path) -> list[EvalEntry] | None:
     """Return the validated entries in file order, or None when the skill has no `evals.json`."""
     if not (target / EVALS).is_symlink() and not (target / EVALS).exists():
@@ -114,8 +120,8 @@ def seed_projection(cases: Sequence[Mapping[str, object]], kinds: Collection[str
     case is scored when its own kind is in `kinds`. A trigger or near-miss case stays pending.
     """
     plain = any(kind not in journeys for kind in kinds)
-    size = Counter(str(case["family"]) for case in cases if "family" in case and case["kind"] not in PENDING_KINDS
-                   and (case["kind"] in kinds if "brief" in case else plain))
+    size = Counter(family for case in cases if (family := seed_family(case)) is not None
+                   and case["kind"] not in PENDING_KINDS and (case["kind"] in kinds if "brief" in case else plain))
     return projection(size)
 
 
@@ -129,7 +135,7 @@ def seed_summary(cases: Sequence[dict[str, object]], inferred: Mapping[str, str]
     summary: dict[str, object] = {
         "cases": len(cases), "journeys": sum("brief" in case for case in cases),
         "kinds": dict(sorted(Counter(str(case["kind"]) for case in cases).items())),
-        "families": dict(sorted(Counter(str(case["family"]) for case in cases if "family" in case).items())),
+        "families": dict(sorted(Counter(family for case in cases if (family := seed_family(case)) is not None).items())),
         "inferred": dict(inferred or {})}
     if split is not None:
         summary["split"] = dict(split)

@@ -17,7 +17,7 @@ from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._intake import (
     HOLDOUT_MINIMUM, MINIMUM_FAMILIES, DraftCase, check_helper_input, intake_contract, load_draft, split_cases, too_few,
 )
-from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, seed_cases
+from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, seed_cases, seed_family
 from skillz_experiments.run import DEFAULT_SEED, resolve_statistics, scored_kinds
 
 Finding = dict[str, object]
@@ -67,13 +67,23 @@ def _contract(target: Path, findings: list[Finding]) -> tuple[Contract | None, s
         return None, "draft", "skill"
 
 
-def _from_seed(seeded: Sequence[Mapping[str, object]], journeys: Sequence[str]) -> list[DraftCase]:
-    """Map the seed cases to draft cases, the way an agent copies them into the draft."""
+def _from_seed(seeded: Sequence[Mapping[str, object]], journeys: Sequence[str], findings: list[Finding]) -> list[DraftCase]:
+    """Map the seed cases to draft cases, the way an agent copies them into the draft.
+
+    A case with no family joins no split, as in `seed_projection`. Each one adds a finding.
+    """
     drafted: list[DraftCase] = []
     for case in seeded:
+        family = seed_family(case)
+        if family is None:
+            findings.append(_finding(
+                "case-family-missing", "error", EVALS,
+                f"the task entry {case['id']} has no family, so it joins no split and a run drops it",
+                "set family on the entry"))
+            continue
         kind = str(case["kind"])
         item = dict(case)
-        drafted.append(DraftCase(str(case["id"]), str(case.get("family", case["id"])), kind, str(case["request"]), "skill",
+        drafted.append(DraftCase(str(case["id"]), family, kind, str(case["request"]), "skill",
                                  text_map(item.get("files", {})), case.get("expected"), journey_of(item, kind in journeys)))
     return drafted
 
@@ -117,7 +127,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     elif seeded is not None:
         origin = "seed"
         try:
-            drafted = _from_seed(seeded, journeys)
+            drafted = _from_seed(seeded, journeys, findings)
         except FAILURES as error:
             findings.append(_failure(error, EVALS))
 
