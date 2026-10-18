@@ -11,6 +11,7 @@ from typing import cast
 from skillz_experiments._candidate import snapshot_outputs
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._evaluation import usage
+from skillz_experiments._frontmatter import top_fields
 from skillz_experiments.harness._claude._constants import AUTH_FAILED, PROBE_PREFIX
 from skillz_experiments.harness._claude._sandbox import sandbox_fix, SandboxUnavailable
 from skillz_experiments.harness._claude._settings import Declared
@@ -228,16 +229,10 @@ def token_events(final: dict[str, object]) -> list[dict[str, object]]:
 
 def declares(text: str, skill: str) -> bool:
     """Check that the SKILL.md frontmatter names the contract skill, has a description, and declares no hooks."""
-    lines = text.splitlines()
-    if not lines or lines[0] != "---" or "---" not in lines[1:]:
+    parsed = top_fields(text)
+    if parsed is None:
         return False
-    fields: dict[str, str] = {}
-    for line in lines[1:lines.index("---", 1)]:
-        if not line or line[0].isspace():
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip().removeprefix("? ").strip().strip("\"'").strip().lower()
-        fields[key] = value.strip().strip("\"'")
+    fields = {key.lower(): value for key, value in parsed.items()}
     return (fields.get("name") == skill and bool(fields.get("description"))
             and "hooks" not in fields and "user-invocable" not in fields)
 

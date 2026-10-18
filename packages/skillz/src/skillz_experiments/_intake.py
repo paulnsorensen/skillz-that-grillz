@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import os
 import random
-import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +16,7 @@ from skillz_experiments._cases import (
 )
 from skillz_experiments._contract import LOCATION, Contract, Grader, load_contract, parse
 from skillz_experiments._evals_format import EVAL_KINDS, SOURCES
+from skillz_experiments._frontmatter import top_fields
 from skillz_experiments._records import write
 
 DRAFT_NAME = "cases.draft.json"
@@ -30,7 +30,6 @@ TASK_RUBRIC = ("The answer is correct when it satisfies the request and agrees i
                "Score 100 for a correct answer and 0 for a wrong answer.")
 DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
 DRAFT_REQUIRED = {"id", "family", "kind", "request", "source"}
-_FRONTMATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -263,14 +262,8 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
 def skill_frontmatter(target: Path) -> dict[str, str]:
     """Return the top-level frontmatter fields of `<target>/SKILL.md`. Read only that file."""
     skill = target / "SKILL.md"
-    front: dict[str, str] = {}
-    if skill.is_file():
-        match = _FRONTMATTER.match(skill.read_text(encoding="utf-8"))
-        for line in (match.group(1).splitlines() if match else []):
-            key, _, value = line.partition(":")
-            if value and not key.startswith(" "):
-                front[key.strip()] = value.strip().strip("\"'")
-    return front
+    fields = top_fields(skill.read_text(encoding="utf-8")) if skill.is_file() else None
+    return {key: value for key, value in (fields or {}).items() if value}
 
 
 def skill_facts(target: Path) -> dict[str, object]:

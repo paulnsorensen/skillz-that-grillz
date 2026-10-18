@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from skillz_experiments._cases import CodedError, repo_root
+from skillz_experiments._frontmatter import frontmatter_end
 from skillz_experiments._wedge_targets import audit_targets
 
 SCHEMA_VERSION = 1
@@ -362,11 +363,11 @@ def audit_facts(directory: Path) -> dict[str, object]:
     skill = package / "SKILL.md"
     if skill.is_file():
         lines = _read(skill)
-        if not lines or lines[0] != "---" or "---" not in lines[1:]:
+        end = frontmatter_end(lines)
+        if end is None:
             context.add("package.frontmatter", "layout.skill-file", "SKILL.md", None, FAIL,
                         "SKILL.md needs frontmatter delimiters")
         else:
-            end = lines.index("---", 1)
             fields = _frontmatter(lines, end)
             user_only = "disable-model-invocation" in fields and \
                 fields["disable-model-invocation"].text().lower() == "true"
