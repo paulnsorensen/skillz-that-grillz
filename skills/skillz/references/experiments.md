@@ -108,6 +108,10 @@ A resume without `--edit` keeps the mode of the first run.
 `--edit prose` changes only Markdown files.
 A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 `--repeats` sets the repeats for each holdout case. The default is 3.
+`--kind KIND` picks a scored kind. Repeat it for more kinds. Each kind must be declared and not graded by `audit`.
+Without `--kind`, a contract with `task` scores `task` and every `journey`-graded kind. A contract of only journey kinds scores all of them. Otherwise the run scores the single kind.
+A drafted case of an unselected kind shows as `not scored` in the question and stays out of `cases.json` `cases`.
+The first run freezes the choice, and a resume ignores `--kind`.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
 `--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
@@ -201,7 +205,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `helper-missing` | An explicit `--edit prose+cli` finds no helper script to edit. | Add a helper script under `scripts/`, or use `--edit prose`. A run with no `--edit` uses prose and does not stop. |
 | `helper-file-missing` | The contract helper or an editable file is missing from the target. | Restore the file, or fix the contract, then run again. |
 | `prompt-components-missing` | The target has no editable Markdown file. | Add an editable Markdown file, then run again. |
-| `contract-kinds` | The skill contract has no `task` kind and more than one kind, or the `journey` kind and the `journey` grader are not paired. | Read `The autoimprove contract` and `Journeys` below. |
+| `contract-kinds` | The skill contract has no `task` kind, is not all journey kinds, and has more than one kind, so `--kind` is needed. Or `--kind` names an undeclared kind. Or the kind named `journey` does not use the `journey` grader. | Pass `--kind KIND`, or read `The autoimprove contract` and `Journeys` below. |
 | `brief-missing` | A journey case has no nonempty `brief`. | Add the brief to the case, then run again. |
 | `contract-surface` | The contract `surface` block is malformed, or `editable` names the MCP config, an agent, or a companion file. An agent file also needs a frontmatter `name` equal to its file stem. A candidate also stops when it changes the MCP config text or an agent name. | Fix the surface or `editable` in the contract, or fix the agent name. Then run again. |
 | `contract-surface-missing` | A file that the `surface` block names is missing from the skill, or the MCP config is not a JSON object with an `mcpServers` object. | Restore the file or fix the contract, then run again. |
@@ -813,7 +817,7 @@ The contract has these fields:
 - `surface` (optional): the tool surface of the task role. See "Journeys".
 - `statistics` (optional): promotion thresholds for the holdout gate. See "Set promotion thresholds".
 
-A run needs a contract with a `task` kind or with exactly one kind. Otherwise it stops with `contract-kinds`.
+A run scores the kinds that `--kind` names. Without `--kind` it scores `task` and every `journey`-graded kind when `task` is declared, else every kind when all kinds use the `journey` grader, else the single kind. Otherwise it stops with `contract-kinds` and asks for `--kind`.
 It stops with `contract-unapproved` when `status` is `draft`.
 Unknown fields and malformed values stop the run.
 
@@ -954,7 +958,7 @@ The surface joins the environment reuse key.
 MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
 The MCP config holds commands that the host runs, so search never edits it.
 
-The kind named `journey` takes the `journey` grader, and no other kind does. Any other pairing stops with `contract-kinds`.
+Any kind that uses the `journey` grader is a journey kind, and its name is free (for example `journey` and `journey-review`). Each kind keeps its own gate and rubric, and each case is graded by its own kind. The kind named exactly `journey` must use the `journey` grader, or the contract stops with `contract-kinds`.
 
 The `journey` grader runs a command gate first.
 The gate sees the case fixtures at the root, the agent files under `output/`, and the raw events in `trace/events.jsonl`.
