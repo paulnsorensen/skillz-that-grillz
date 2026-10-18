@@ -78,8 +78,8 @@ def _from_seed(seeded: Sequence[Mapping[str, object]], journeys: Sequence[str], 
         if family is None:
             findings.append(_finding(
                 "case-family-missing", "error", EVALS,
-                f"the task entry {case['id']} has no family, so it joins no split and a run drops it",
-                "set family on the entry"))
+                f"the task entry {case['id']} has no family, so it joins no split",
+                "set family on the entry; the draft needs a family for it"))
             continue
         kind = str(case["kind"])
         item = dict(case)

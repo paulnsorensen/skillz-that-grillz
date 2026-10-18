@@ -106,8 +106,10 @@ def test_validate_and_run_project_the_same_split_for_task_entries_without_a_fami
     target = make_target(tmp_path)
     _entries(target, {"a": 1, "b": 2, "c": 4})
     document = cast(dict[str, list[dict[str, object]]], json.loads((target / "evals/evals.json").read_text()))
-    document["evals"] += [{"name": f"loose-{index}", "prompt": f"loose prompt {index}", "expected_output": "out", "files": []}
-                          for index in range(3)]
+    loose: list[dict[str, object]] = [
+        {"name": f"loose-{index}", "prompt": f"loose prompt {index}", "expected_output": "out", "files": []}
+        for index in range(3)]
+    document["evals"] += loose
     _ = (target / "evals/evals.json").write_text(json.dumps(document))
     with pytest.raises(Stop) as caught:
         _ = run(target, tmp_path / "run", "local-test", live=True)

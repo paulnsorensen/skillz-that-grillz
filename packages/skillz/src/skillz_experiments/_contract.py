@@ -206,7 +206,7 @@ def _pillars(raw: object, kind: str) -> tuple[str, ...]:
 
 def _grader(value: object, kind: str) -> Grader:
     item = mapping(value)
-    _fields(item, set(GRADER_FIELDS) - {"gate"}, f"kind {kind}")
+    _fields(item, set[str](GRADER_FIELDS) - {"gate"}, f"kind {kind}")
     kind_type = item.get("grader")
     if kind_type not in GRADERS:
         raise ValueError(f"kind {kind} needs a grader: {', '.join(GRADERS)}")

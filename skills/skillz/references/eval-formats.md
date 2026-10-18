@@ -183,7 +183,8 @@ The run directory `RUN` holds files that the runner writes. Edit only the draft.
 
 A draft case has the same fields as a journey case, with these differences.
 The `kind` may also be `trigger`, `near-miss`, or `task`.
-A case of a non-journey kind needs neither `brief` nor `expected`.
+A `trigger` or `near-miss` case needs neither `brief` nor `expected`.
+A `task` case needs `files` and `expected` but no `brief`.
 
 ## Repository-internal formats
 
