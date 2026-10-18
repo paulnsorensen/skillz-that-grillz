@@ -75,6 +75,8 @@ class Search:
         self.hypothesis_of: Callable[[int], str | None] = lambda _number: None
         self.notes_of: Callable[[int], str | None] = lambda _number: None
         self.omit_hypothesis = False
+        # When set, a proposal changes only this component and returns the parent text of every other one.
+        self.only: str | None = None
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -188,7 +190,9 @@ class Provider(FakeProvider):
             return {"answer": {name: "".join(f"{line}\nimproved {number}\n" if index < edits else f"{line}\n"
                                              for index, line in enumerate(text.splitlines()))
                                for name, text in parent.items()} | self._free_text(number)}
+        parent_texts = cast(dict[str, dict[str, str]], json.loads(prompt.split("\n", 1)[1]))["candidate"]
         texts = {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix
+                 if self.state.only in (None, name) else parent_texts[name]
                  for name in cast(list[str], schema["required"]) if name not in ("@hypothesis", "@notes")}
         if self.state.omit_hypothesis:
             return {"answer": texts}
@@ -1324,7 +1328,10 @@ def test_each_reflection_prompt_states_the_stall_count_and_gives_advice_from_war
     heads = [prompt.split("\n", 1)[0] for prompt in state.prompts]
     assert _stall_counts(heads) == [0, 0, 1, 2, 3, 4, 5, 6, 7]
     assert [WARN in head for head in heads] == [False] * 4 + [True] * 2 + [False] * 3
+    # SKILL.md is the only editable component, so the focus is no choice and the generic `shift` advice stays (W4.7).
     assert [SHIFT in head for head in heads] == [False] * 6 + [True] * 3
+    assert not any("because earlier attempts changed it least" in head for head in heads)
+    assert not any("focus" in item for item in _reflections_of(out))
 
 
 @pytest.mark.ac("gh-240:AC-5")
@@ -2044,6 +2051,104 @@ def test_a_resume_that_changes_the_history_flag_stops_with_run_config_differs(
     assert "--no-history" not in str(caught.value), "the message names the flag the user passed"
     result = run(target, out, MODEL, live=True, factory=state.factory)
     assert _history(result) == {"enabled": False}
+
+
+FOCUS = "Change references/alpha.md, because earlier attempts changed it least."
+
+
+def _focus_start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+                 approvals: Callable[..., tuple[str, int]], tag: str = "") -> tuple[Path, Path, Search, str, int]:
+    """Start a run with three editable Markdown files. The provider changes only SKILL.md, and the search stalls."""
+    target, out = make_target(tmp_path), tmp_path / "run"
+    (target / "references").mkdir()
+    for name in ("alpha", "beta"):
+        _ = (target / f"references/{name}.md").write_text(f"# {name}\n", encoding="utf-8")
+    _ = write_draft(out, families=12)
+    if tag:
+        draft = cast(list[dict[str, object]], json.loads((out / "cases.draft.json").read_text(encoding="utf-8")))
+        for case in draft:
+            case["request"] = f"{case['request']} {tag}-{case['id']}"
+        _ = (out / "cases.draft.json").write_text(json.dumps(draft), encoding="utf-8")
+    case_hash, calls = approvals(target, out)
+    state = Search(target)
+    state.only = "SKILL.md"
+    state.score_of = _stalls
+    return target, out, state, case_hash, calls
+
+
+@pytest.mark.ac("gh-244:AC-1")
+def test_a_shift_names_the_least_tested_editable_component_with_the_lexical_tie_break_and_records_it(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _focus_start(tmp_path, make_target, write_draft, approvals)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert read(out / "run.json")["editable"] == ["SKILL.md", "references/alpha.md", "references/beta.md"]
+    heads = [_head(prompt) for prompt in state.prompts]
+    counts = _stall_counts(heads)
+    shifted = [5 <= count < 8 for count in counts]
+    assert counts == [0, 0, 1, 2, 3, 4, 5, 6, 7] and sum(shifted) == 3
+    for head, shift in zip(heads, shifted):
+        assert (FOCUS in head) is shift and SHIFT not in head, "the focus sentence replaces the generic shift advice"
+    reflections = _reflections_of(out)
+    assert all(item["changed"] == ["SKILL.md"] for item in reflections)
+    for item, shift in zip(reflections, shifted):
+        assert (item.get("focus"), item.get("focus_reason")) == (("references/alpha.md", "under-tested") if shift else (None, None))
+    attempts = _recorded_attempts(out)
+    assert [item.get("focus") for item in attempts] == [item.get("focus") for item in reflections]
+
+
+@pytest.mark.ac("gh-244:AC-3")
+def test_a_real_gain_resets_the_streak_and_ends_the_focus(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _focus_start(tmp_path, make_target, write_draft, approvals)
+    state.score_of = lambda text, split: 0.95 if "improved 7 " in text else _stalls(text, split)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    heads = [_head(prompt) for prompt in state.prompts]
+    counts = _stall_counts(heads)
+    assert counts[:8] == [0, 0, 1, 2, 3, 4, 5, 0]
+    assert FOCUS in heads[6] and FOCUS not in heads[7]
+    reflections = _reflections_of(out)
+    assert reflections[6].get("focus") == "references/alpha.md" and "focus" not in reflections[7]
+
+
+@pytest.mark.ac("gh-244:AC-4")
+def test_a_holdout_secret_stays_out_of_the_focus_choice_and_its_reason(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _focus_start(tmp_path, make_target, write_draft, approvals, tag=TOKEN)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+    held = [f"{TOKEN}-{case['id']}" for case in cases if case["split"] == "holdout"]
+    focused = [{"focus": item["focus"], "focus_reason": item["focus_reason"]} for item in _reflections_of(out) if "focus" in item]
+    assert held and focused and all(item == {"focus": "references/alpha.md", "focus_reason": "under-tested"} for item in focused)
+    text = json.dumps(focused) + "\n".join(_head(prompt) for prompt in state.prompts)
+    assert not any(token in text for token in held)
+    # A second run differs only in the holdout requests and the holdout scores. The focus choice must not move.
+    other = tmp_path / "other"
+    other.mkdir()
+    target2, out2, state2, case_hash2, calls2 = _focus_start(other, make_target, write_draft, approvals, tag="other")
+    state2.score_of = lambda text, split: 0.99 if split == "holdout" else _stalls(text, split)
+    _ = run(target2, out2, MODEL, live=True, approve_cases=case_hash2, approve_budget=calls2, factory=state2.factory)
+    shape = [(item.get("focus"), item.get("focus_reason")) for item in _reflections_of(out)]
+    assert shape == [(item.get("focus"), item.get("focus_reason")) for item in _reflections_of(out2)]
+    assert any(focus is not None for focus, _reason in shape)
+
+
+@pytest.mark.ac("gh-244:AC-1")
+def test_the_focus_counts_the_attempts_of_compatible_earlier_runs(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, first, earlier, case_hash, calls = _focus_start(tmp_path, make_target, write_draft, approvals)
+    earlier.only = "references/alpha.md"
+    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=earlier.factory)
+    assert any(item["changed"] == ["references/alpha.md"] for item in _reflections_of(first))
+    second, state, case_hash, calls = _again(tmp_path, target, first, approvals)
+    state.only, state.score_of = "SKILL.md", _stalls
+    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert _history(result)["runs"] == [read(first / "run.json")["run_id"]]
+    focused = {item["focus"] for item in _reflections_of(second) if "focus" in item}
+    assert focused == {"references/beta.md"}, "alpha has earlier-run attempts, so beta is the least tested"
 
 
 class _Killed(BaseException):

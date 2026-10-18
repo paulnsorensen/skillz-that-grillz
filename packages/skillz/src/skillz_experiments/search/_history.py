@@ -19,6 +19,8 @@ RULES = ("Do not re-introduce a change that broke a case. "
          "Do not copy a case id into any component or into @hypothesis. "
          "The case-id check rejects a component that names one and drops such a hypothesis.")
 
+# Exploration (W4.7): the reason that an attempt records with its focus component.
+FOCUS_REASON = "under-tested"
 # Rejected memory (W4.5): the newest attempts that a deterministic reason rejected.
 SHOWN_REJECTED = 6
 NO_GAIN = "no-gain"
@@ -138,11 +140,32 @@ def attempts(outcomes: Sequence[Mapping[str, object]], seed: tuple[str, str],
                     broke.append(case)
             was, now = _mean(scored.get(parent), validation), _mean(scored.get(child), validation)
             delta = None if was is None or now is None else now - was
-        found.append({"index": index, "parent": parent, "candidate": child, "components": _text(item.get("components_digest")),
-                      "hypothesis": _text(item.get("hypothesis")), "fixed": fixed, "broke": broke,
-                      "validation_delta": delta, "accepted": child is not None, "rejected": _text(item.get("rejected")),
-                      "rejected_coded": item.get("rejected_coded") is True})
+        attempt: dict[str, object] = {
+            "index": index, "parent": parent, "candidate": child, "components": _text(item.get("components_digest")),
+            "hypothesis": _text(item.get("hypothesis")), "fixed": fixed, "broke": broke, "validation_delta": delta,
+            "accepted": child is not None, "rejected": _text(item.get("rejected")), "rejected_coded": item.get("rejected_coded") is True,
+            "changed": _ids(item.get("changed"))}
+        if isinstance(item.get("focus"), str):
+            attempt |= {"focus": item["focus"], "focus_reason": item.get("focus_reason")}
+        found.append(attempt)
     return found
+
+
+def focus(history: Sequence[Mapping[str, object]], editable: Sequence[str]) -> str | None:
+    """Return the editable component that the fewest attempts in `history` changed. A tie goes to the lexically first name.
+
+    `history` is the cohort: this run's attempts and the attempts of compatible earlier runs. An attempt counts once for
+    every component in its `changed` list. A reserved `@` name, such as `@new-cli` or a wedge source, is never a focus.
+    Return None when fewer than two components qualify: one component is no choice, so the generic advice stays.
+    """
+    counts = {name: 0 for name in editable if not name.startswith("@")}
+    if len(counts) < 2:
+        return None
+    for attempt in history:
+        for name in set(_ids(attempt.get("changed"))):
+            if name in counts:
+                counts[name] += 1
+    return min(counts, key=lambda name: (counts[name], name))
 
 
 def rejected(history: Sequence[Mapping[str, object]], *, band: float) -> list[dict[str, object]]:

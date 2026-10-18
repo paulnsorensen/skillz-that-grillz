@@ -47,7 +47,8 @@ from skillz_experiments.run._replay import drift as replay_drift
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import HYPOTHESIS, NOTES, Denylist, Edit, overshoot
 from skillz_experiments.search import is_reflection as _is_reflection
-from skillz_experiments.search import Progress, Signal, assess
+from skillz_experiments.search import FOCUS_REASON, Progress, Signal, assess, focus_advice
+from skillz_experiments.search import focus as focus_component
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search import check as check_leakage
@@ -753,9 +754,12 @@ class Session:
                 self._ended_proposal = None
                 raise ValueError("the reflection of this proposal ended with no candidate")
             stall = self._stall()
-            progress = Progress(spent=len(self._search_outcomes()), planned=self._search_ceiling(),
-                                proposal=1 + sum(1 for item in self._reflections() if not _faulted_reflection(item)), stalled=stall.streak, advice=stall.advice)
             history = build_attempts(self.outcomes, self._seed_ref(), self._validation_ids())
+            # At `shift`, the cohort is this run and the compatible earlier runs. The focus never bypasses validation.
+            chosen = focus_component([*self._earlier, *history], self.seed.editable) if stall.level == "shift" else None
+            progress = Progress(spent=len(self._search_outcomes()), planned=self._search_ceiling(),
+                                proposal=1 + sum(1 for item in self._reflections() if not _faulted_reflection(item)), stalled=stall.streak,
+                                advice=stall.advice if chosen is None else focus_advice(stall.streak, chosen))
             protect = protected_cases(self.outcomes, self._best_identity())
             memory = rejected_memory(history, band=self.statistics.min_gain)
             journal = build_journal(self.outcomes)
@@ -818,7 +822,12 @@ class Session:
                                           "minibatch": _case_ids(feedback), "hypothesis": hypothesis,
                                           "hypothesis_dropped": hypothesis_dropped, "notes": notes,
                                           "notes_dropped": notes_dropped,
-                                          "rejected": None if refusal is None else "reflection-shape"}
+                                          "rejected": None if refusal is None else "reflection-shape",
+                                          "changed": [] if refusal is not None else sorted(
+                                              name for name in components if proposal.get(name) != candidate.get(name))}
+            if chosen is not None:
+                # Recorded whenever the shift names a focus, even when the proposal changes another component.
+                outcome |= {"focus": chosen, "focus_reason": FOCUS_REASON}
             if refusal is not None:
                 outcome["rejected_coded"] = True
             if edits > progress.budget():

@@ -43,3 +43,10 @@ def assess(observations: Sequence[float | None], *, band: float) -> Signal:
     if streak >= SHIFT_AT:
         return Signal("shift", streak, head + "Change a different component or section. Do not refine the same lines again.")
     return Signal("warn", streak, head + "Try a different kind of change.")
+
+
+def focus_advice(streak: int, component: str) -> str:
+    """Return the `shift` advice that names the focus component. It replaces the generic `shift` advice."""
+    return (f"The last {streak} proposals gave no validation gain. "
+            f"Change {' '.join(component.split())}, because earlier attempts changed it least. "
+            "You may also change other components. Do not refine the same lines again.")

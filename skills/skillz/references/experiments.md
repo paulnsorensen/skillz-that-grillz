@@ -624,6 +624,7 @@ It is null unless both sides have a complete validation set. An evaluation-faile
 An attempt with no train score yet has empty lists and a null `validation_delta`. The runner fills these fields from later outcomes.
 `accepted` is true when the proposal produced a candidate. `rejected` holds the reason when it did not:
 `reflection-shape`, the leakage or build reason of the host check, or `proposal-build-failed`. A rejected attempt has a null `candidate`.
+`changed` lists the component names that the proposal changed.
 The runner rebuilds the attempts from the recorded outcomes. A resume keeps them and continues the index.
 The runner does not support a run that started before this record.
 
@@ -706,6 +707,19 @@ If the search ends with most of its allowance unspent, the train cases are too e
 The runner rebuilds the observations from the run record, so a resumed run gets the same streak.
 A resumed run that already reached a streak of 8 skips the search.
 ADR-016 in `docs/agents/decisions/skillz-autoimprove.md` records the thresholds.
+
+### Exploration
+
+From a streak of 5, before the stop at 8, the runner picks a focus component for the next proposal.
+The focus is the editable component with the fewest attempts in the cohort: this run and the compatible earlier runs of `### Cross-run history`.
+An attempt counts once for each component that it changed. A tie goes to the first name in lexical order.
+The choice stays inside the frozen editable set. A reserved name, such as `@new-cli` or a `@wedge/` source, is never a focus.
+The prompt names the focus in place of the generic advice: "Change NAME, because earlier attempts changed it least."
+The proposal may still change other components. Exploration never bypasses validation and never forces a change.
+The reflection outcome and its attempt record `focus` and `focus_reason` (`under-tested`) whenever the shift names a focus.
+Each attempt also records `changed`: the component names that the proposal changed.
+An unknown observation never adds to the streak, so it never triggers exploration. A real gain resets the streak and ends the focus.
+The choice reads only component names and attempt counts. It never reads case text or holdout data.
 
 ### Replay
 

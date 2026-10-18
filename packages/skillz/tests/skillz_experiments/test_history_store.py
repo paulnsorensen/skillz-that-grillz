@@ -24,7 +24,7 @@ def _record(**fields: object) -> dict[str, object]:
 def _attempt(index: int, **fields: object) -> dict[str, object]:
     return {"index": index, "parent": "p", "candidate": f"c{index}", "components": "d", "hypothesis": f"idea {index}",
             "fixed": ["t0-0"], "broke": [], "validation_delta": 0.1, "accepted": True, "rejected": None,
-            "rejected_coded": False} | fields
+            "rejected_coded": False, "changed": ["SKILL.md"]} | fields
 
 
 def _path() -> Path:

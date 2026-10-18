@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from skillz_experiments.search import attempts, journal, protected, rejected
+from skillz_experiments.search import attempts, focus, journal, protected, rejected
 from skillz_experiments.search._history import EARLIER_INTRO, JOURNAL_LIMIT, LIMIT, SHOWN, render, render_earlier, render_notes
 
 SEED = ("digest-seed", "seed-id")
@@ -36,7 +36,7 @@ def test_an_evaluated_proposal_records_fixed_and_broke_and_a_duplicate_resolves_
     assert attempt == {"index": 1, "parent": "seed-id", "candidate": "child-1", "components": "digest-1",
                        "hypothesis": "say it shorter", "fixed": ["a"], "broke": ["b"],
                        "validation_delta": pytest.approx(0.2), "accepted": True, "rejected": None,
-                       "rejected_coded": False}
+                       "rejected_coded": False, "changed": []}
 
 
 @pytest.mark.ac("gh-241:AC-1")
@@ -190,6 +190,37 @@ def test_the_earlier_run_section_numbers_runs_newest_first_and_stays_within_the_
     assert "and 2 more" in text and render_earlier([]) == ""
     long = [item | {"hypothesis": "h" * 2000} for item in earlier]
     assert len(render_earlier(long)) <= LIMIT and render_earlier(long).count("Run 1 attempt") >= 1
+
+
+@pytest.mark.ac("gh-244:AC-1")
+def test_the_focus_is_the_editable_component_with_the_fewest_attempts_and_a_tie_goes_to_the_lexical_first() -> None:
+    editable = ["b.md", "a.md", "c.md"]
+    cohort: list[dict[str, object]] = [{"changed": ["a.md", "b.md"]}, {"changed": ["a.md"]}, {"run_id": "old", "changed": ["c.md"]}]
+    assert focus(cohort, editable) == "b.md"
+    assert focus([{"changed": ["a.md", "a.md"]}], editable) == "b.md", "an attempt counts once per component"
+    assert focus([], editable) == "a.md" and focus([{"changed": ["a.md", "b.md", "c.md"]}], editable) == "a.md"
+    assert focus([{}, {"changed": None}], editable) == "a.md"
+
+
+@pytest.mark.ac("gh-244:AC-2")
+def test_the_focus_stays_inside_the_frozen_editable_set_and_never_names_a_reserved_component() -> None:
+    cohort: list[dict[str, object]] = [{"changed": ["SKILL.md"]}, {"changed": ["SKILL.md", "gone.md"]}]
+    assert focus(cohort, ["SKILL.md", "@new-cli", "@wedge/src/tool.py"]) is None, "reserved names do not count"
+    assert focus(cohort, ["SKILL.md", "@new-cli", "z.md"]) == "z.md" and focus(cohort, ["@new-cli"]) is None
+    assert focus([], []) is None
+
+
+@pytest.mark.ac("gh-244:AC-1")
+def test_a_single_editable_component_is_no_choice_so_the_focus_is_none() -> None:
+    assert focus([], ["SKILL.md"]) is None and focus([{"changed": ["SKILL.md"]}], ["SKILL.md"]) is None
+
+
+@pytest.mark.ac("gh-244:AC-1")
+def test_an_attempt_carries_its_changed_components_and_its_optional_focus() -> None:
+    outcomes = [_reflection(changed=["SKILL.md"], focus="guide.md", focus_reason="under-tested"), _reflection()]
+    first, second = attempts(outcomes, SEED, [])
+    assert first["changed"] == ["SKILL.md"] and (first["focus"], first["focus_reason"]) == ("guide.md", "under-tested")
+    assert second["changed"] == [] and "focus" not in second and "focus_reason" not in second
 
 
 @pytest.mark.ac("gh-242:AC-3")
