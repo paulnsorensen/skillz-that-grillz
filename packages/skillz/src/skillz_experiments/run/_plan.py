@@ -250,8 +250,14 @@ def scored_kinds(contract: Contract, requested: Sequence[str] = ()) -> tuple[str
     """Return the scored kinds: the `--kind` selection, else the contract default.
 
     Stop on an undeclared kind and on an audit-graded kind: intake never reviews labels, so no case is eligible.
+    Stop when the selection names more than one kind without the journey grader: every draft task case takes one
+    grading kind, so a second such kind would never score as itself.
     """
     chosen = tuple(dict.fromkeys(requested)) or _default_kinds(contract)
+    plain = [kind for kind in chosen if kind in contract.kinds and kind not in contract.journey_kinds()]
+    if len(plain) > 1:
+        raise CodedError("contract-kinds", f"--kind names {', '.join(plain)}; a run scores at most one kind "
+                         + "that does not use the journey grader")
     for kind in chosen:
         if kind not in contract.kinds:
             raise CodedError("contract-kinds", f"--kind {kind} names no declared kind; "

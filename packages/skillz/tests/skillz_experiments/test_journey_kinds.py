@@ -192,6 +192,9 @@ def test_the_default_kinds_follow_the_contract_and_a_bad_selection_stops(tmp_pat
     with pytest.raises(CodedError, match="--kind") as several:
         _ = scored_kinds(mixed)
     assert several.value.code == "contract-kinds" and scored_kinds(mixed, ["echo"]) == ("echo",)
+    with pytest.raises(CodedError, match="at most one kind") as two_plain:
+        _ = scored_kinds(mixed, ["echo", "rewrite"])
+    assert two_plain.value.code == "contract-kinds"
     set_contract(target, kinds={"echo": {"grader": "audit"}})
     with pytest.raises(CodedError) as audit:
         _ = scored_kinds(load_contract(target))

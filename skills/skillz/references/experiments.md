@@ -818,7 +818,8 @@ The contract has these fields:
 - `surface` (optional): the tool surface of the task role. See "Journeys".
 - `statistics` (optional): promotion thresholds for the holdout gate. See "Set promotion thresholds".
 
-A run scores the kinds that `--kind` names. Without `--kind` the split-driving kind is `task` when declared, else all journey kinds, else the single kind. Every declared kind that is not `audit` is evaluated. Otherwise it stops with `contract-kinds` and asks for `--kind`.
+A run scores the kinds that `--kind` names. Without `--kind` the split-driving kind is `task` when declared, else all journey kinds, else the single kind. Journey cases of the other journey kinds are still evaluated. Otherwise it stops with `contract-kinds` and asks for `--kind`.
+A `--kind` selection may name at most one kind that does not use the journey grader.
 It stops with `contract-unapproved` when `status` is `draft`.
 Unknown fields and malformed values stop the run.
 
