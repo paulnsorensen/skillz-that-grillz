@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
 from skillz_experiments._cases import CodedError, digest, mapping, relative, string
+from skillz_experiments._gate import expand_gates
 from skillz_experiments.gate import Statistics
 
 LOCATION = "evals/autoimprove.json"
@@ -341,4 +342,4 @@ def load_contract(target: Path) -> Contract:
         raise CodedError("contract-missing", f"no autoimprove contract: create {path}")
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_000_000:
         raise CodedError("contract-unreadable", f"{path} must be a bounded regular file, not a symlink or directory")
-    return parse(cast(object, json.loads(path.read_text(encoding="utf-8"))), "skill")
+    return parse(expand_gates(cast(object, json.loads(path.read_text(encoding="utf-8"))), target), "skill")

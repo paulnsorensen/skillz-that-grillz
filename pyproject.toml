@@ -28,7 +28,9 @@ pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
 include = ["packages", "skills"]
-exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache"]
+exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache",
+  # Byte-for-byte legacy gate source (gh-367): its bytes fix a content hash, so it stays untyped.
+  "packages/skillz/tests/skillz_experiments/fixtures/evals/gates"]
 extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/agent-session-analytics/src", "packages/fromargs/src", "packages/fromargs/examples"]
 typeCheckingMode = "recommended"
 failOnWarnings = true
@@ -41,6 +43,11 @@ extraPaths = ["packages/fromargs/src", "packages/fromargs/examples"]
 root = "packages/skillz/tests/skillz_experiments"
 extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/agent-session-analytics/src", "packages/fromargs/src", "packages/fromargs/examples"]
 # The test files share helper modules (`fake_provider`) from their own directory; it has no package marker.
+reportImplicitRelativeImport = false
+
+[[tool.basedpyright.executionEnvironments]]
+root = "skills/skillz/evals/gates"
+# Each gate runs as a script from its own directory, so it imports its sibling helpers by bare name.
 reportImplicitRelativeImport = false
 
 [tool.vulture]

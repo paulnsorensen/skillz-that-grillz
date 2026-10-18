@@ -13,6 +13,7 @@ import pytest
 
 from skillz_experiments._cases import CodedError, load_cases
 from skillz_experiments._contract import Contract, parse
+from skillz_experiments._gate import expand_gates
 from skillz_experiments._intake import HOLDOUT_MINIMUM, case_hash, freeze, load_draft, split_cases
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._plan import JOURNEY_SEARCH_CALLS, SEARCH_CASE_FACTOR, size_plan
@@ -33,7 +34,8 @@ def written(tmp_path: Path, *flags: str) -> Path:
 
 
 def contract(tmp_path: Path) -> Contract:
-    return parse(cast(object, json.loads((written(tmp_path, "--approve-contract") / "autoimprove.json").read_text())), "skill")
+    raw = cast(object, json.loads((written(tmp_path, "--approve-contract") / "autoimprove.json").read_text()))
+    return parse(expand_gates(raw, tmp_path), "skill")
 
 
 def test_the_kit_writes_a_draft_contract_until_the_user_approves_it(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from typing import cast
 import pytest
 from skillz_experiments._cases import CodedError
 from skillz_experiments._contract import LOCATION, parse
+from skillz_experiments._gate import expand_gates
 from skillz_experiments._scaffold import scaffold
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -52,13 +53,15 @@ def test_the_built_bundle_scaffolds_a_draft_contract_that_loads_once_approved(tm
     data = cast(dict[str, object], json.loads(written.read_text(encoding="utf-8")))
     assert data["schema_version"] == 1 and data["status"] == "draft" and data["skill"] == "toy-skill"
     journey = cast(dict[str, object], cast(dict[str, object], data["kinds"])["journey"])
-    assert journey["grader"] == "journey"
-    assert journey["argv"] == ["python3", "-I", "-c", GATE_SOURCE]
+    assert journey["grader"] == "journey" and journey["gate"] == "evals/gates/journey.py" and "argv" not in journey
+    assert (skill / "evals/gates/journey.py").read_text(encoding="utf-8") == GATE_SOURCE
+    assert parse(expand_gates(data | {"status": "approved"}, skill), "skill").grader("journey").argv == (
+        "python3", "-I", "-c", GATE_SOURCE)
     assert "reference.must" in cast(str, journey["rubric"]) and "reference.must_not" in cast(str, journey["rubric"])
     with pytest.raises(CodedError) as caught:
         _ = parse(data, "skill")
     assert caught.value.code == "contract-unapproved"
-    contract = parse(data | {"status": "approved"}, "skill")
+    contract = parse(expand_gates(data | {"status": "approved"}, skill), "skill")
     assert contract.skill == "toy-skill" and list(contract.kinds) == ["journey"]
     assert json.loads(done.stdout)["status"] == "draft"
 
