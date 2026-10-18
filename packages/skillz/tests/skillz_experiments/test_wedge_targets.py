@@ -805,6 +805,7 @@ def test_a_frozen_target_records_why_and_helper_missing_shows_it(world: World) -
     assert "--edit prose" in prose.reasons["beta"]
 
 
+@pytest.mark.ac("gh-336:AC-2")
 def test_export_lists_each_written_patch(
         world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
     _ = world.contract("scripts/beta.pyz")
@@ -812,6 +813,8 @@ def test_export_lists_each_written_patch(
     _completed(out, {"references/added.md": "new file\n"})
     assert export(out, tmp_path / "skill-only")["patches"] == ["candidate.patch"]
     _completed(out, {BETA: BETA_SOURCE.replace("v1", "v2")})
+    assert export(out, tmp_path / "wedge-only")["patches"] == ["wedge-sources.patch"]
+    _completed(out, {BETA: BETA_SOURCE.replace("v1", "v2"), "references/added.md": "new file\n"})
     assert export(out, tmp_path / "both")["patches"] == ["candidate.patch", "wedge-sources.patch"]
 
 
