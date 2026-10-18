@@ -204,12 +204,14 @@ def test_self_update_case_stays_out_of_the_published_tree() -> None:
 # Golden accepted, seeded-bad rejected, deterministic
 
 
+@pytest.mark.ac("gh-367:AC-7")
 @pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
 def test_golden_output_is_accepted_by_the_mode_grader(path: Path, name: str) -> None:
     cases = _cases(path)
     assert grade(path, cases[name], _golden(path, name)) == 1.0
 
 
+@pytest.mark.ac("gh-367:AC-7")
 @pytest.mark.parametrize(("path", "name", "variant"), BAD_CASES, ids=[f"{n}:{v}" for _, n, v in BAD_CASES])
 def test_seeded_bad_output_is_rejected_by_the_mode_grader(path: Path, name: str, variant: str) -> None:
     bad = _variants(_recorded(path, name), "bad")[variant]

@@ -1212,6 +1212,7 @@ To add a case, follow these steps:
 
 1. Add the case to the manifest with a unique `id` and `family`.
 2. Put a grader script under `skills/skillz/evals/gates/mode/` and name it in the `gate` of its kind. The script scores the golden output as 1 and the seeded defect as 0. Type-check it: `just build` covers it.
+   A new skill with sibling gate modules needs its own `executionEnvironments` entry in the root `pyproject.toml`; only `skills/skillz/evals/gates` has one.
 3. Record the golden output and one or more seeded-bad outputs in the repository's mode-output fixture file. Record only the files that the task writes or changes.
 4. Pin each step the case depends on in the step list of the mode-fixture test.
 5. Run `just build`.
