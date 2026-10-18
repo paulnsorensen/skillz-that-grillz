@@ -172,16 +172,20 @@ else:
 """
 
 
-def test_the_command_preflight_probe_keeps_the_run_budget_as_its_limit(
+def test_the_command_preflight_probe_gets_a_longer_bounded_limit_than_a_helper_fixture(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A container wrapper can start slowly once. The probe must not inherit the per-fixture sandbox cap."""
+    """A container wrapper can start slowly once. The probe has its own limit, and a probe hang fails preflight."""
     wrapper = tmp_path / "wrapper.py"
     _ = wrapper.write_text(SLOW_PROBE_WRAPPER)
     monkeypatch.setattr(_command, "SANDBOX_SECONDS", 1)
+    monkeypatch.setattr(_command, "PROBE_SECONDS", 10)
     adapter = Command((sys.executable, str(wrapper)), "m", Budget(10, 120, 0), lambda: None)
     assert adapter.preflight()["isolation"] == "passed"
     with pytest.raises(_runtime.SandboxTimeout):
         _ = adapter.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+    monkeypatch.setattr(_command, "PROBE_SECONDS", 1)
+    with pytest.raises(RuntimeError, match="the sandbox probe timed out"):
+        _ = adapter.preflight()
 
 
 @final
@@ -515,5 +519,8 @@ def test_a_final_replay_check_timeout_stops_resumably_and_never_refutes_the_expo
     assert replays and all(item.get("rejection_kind") == "timeout" for item in replays)
     _ = run(target, out, MODEL, live=True, factory=plan.factory())
     record = read(out / "run.json")
-    reasons = cast(list[str], cast(dict[str, object], record["replay"])["reasons"])
-    assert record["phase"] == "complete" and "replay-contract-rejected" not in reasons
+    replay = cast(dict[str, object], record["replay"])
+    holdout = [item for item in cast(list[dict[str, object]], json.loads((out / "cases.json").read_text())["cases"])
+               if item["split"] == "holdout"]
+    assert record["phase"] == "complete" and replay["reasons"] == []
+    assert replay["cases"] == len(holdout)

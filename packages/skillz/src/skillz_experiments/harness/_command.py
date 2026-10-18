@@ -16,7 +16,7 @@ from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments.evaluation import CheckResult, answer_schema
 from skillz_experiments._protocol import LEDGER_KEY, RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._budget import Budget
-from skillz_experiments._runtime import SANDBOX_SECONDS, model_call, process, sandboxed
+from skillz_experiments._runtime import SANDBOX_SECONDS, SandboxTimeout, model_call, process, sandboxed
 from skillz_experiments.harness._check import Check
 from skillz_experiments.harness._isolation import listening, probe
 from skillz_experiments.harness._witness import LedgerError, Witness, ledger_entries, stage_witness
@@ -120,6 +120,9 @@ def _failure(stderr: str) -> str:
     return message
 
 
+# The limit of the preflight isolation probe. It allows a slow first container start, as in the reference wrapper.
+PROBE_SECONDS = 300
+
 @final
 class Command:
     claude_sandbox: ClassVar[bool] = False
@@ -147,14 +150,14 @@ class Command:
         pass
 
     def _request(self, operation: str, workspace: Path, **payload: object) -> dict[str, object]:
-        return self._exchange(operation, workspace, payload, capped=True)
+        return self._exchange(operation, workspace, payload, limit=SANDBOX_SECONDS)
 
     def _exchange(self, operation: str, workspace: Path, payload: Mapping[str, object], *,
-                  capped: bool) -> dict[str, object]:
+                  limit: float) -> dict[str, object]:
         """Send one request to the wrapper. The request carries no time limit field.
 
-        A capped sandbox request that runs past `SANDBOX_SECONDS` kills the wrapper process group and raises
-        `SandboxTimeout`. An uncapped request runs under the remaining run budget.
+        A sandbox request that runs past `limit` seconds kills the wrapper process group and raises `SandboxTimeout`.
+        Other requests run under the remaining run budget.
         """
         request = {"schema_version": VERSION, "operation": operation, "workspace": str(workspace),
                    "model": self.model, **payload}
@@ -162,8 +165,8 @@ class Command:
         if operation == "infer":
             result = model_call(self.budget, list(self.command), cwd=workspace.parent, environment=environment,
                                 input_text=json.dumps(request))
-        elif operation == "sandbox" and capped:
-            result = sandboxed(list(self.command), cwd=workspace.parent, limit=SANDBOX_SECONDS, budget=self.budget,
+        elif operation == "sandbox":
+            result = sandboxed(list(self.command), cwd=workspace.parent, limit=limit, budget=self.budget,
                                environment=environment, input_text=json.dumps(request))
         else:
             result = process(list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
@@ -222,8 +225,12 @@ class Command:
             (workspace / "escape").symlink_to(sealed)
             with listening() as port:
                 script = probe(workspace, sealed, Path(__file__).resolve(), port)
-                # The isolation probe keeps the run budget as its limit: a container wrapper can start slowly once.
-                result = self._exchange("sandbox", workspace, {"argv": ["/usr/bin/python3", "-c", script]}, capped=False)
+                # A container wrapper can start slowly once, so the probe gets a longer limit than a helper fixture.
+                try:
+                    result = self._exchange("sandbox", workspace, {"argv": ["/usr/bin/python3", "-c", script]},
+                                            limit=PROBE_SECONDS)
+                except SandboxTimeout:
+                    raise RuntimeError("harness isolation preflight fails; the sandbox probe timed out") from None
             if result["returncode"] != 0 or cast(str, result["stdout"]).strip() != "isolation-ok":
                 raise RuntimeError("harness isolation preflight fails; no unsafe fallback")
             skill = workspace / ".agents/skills/skillz"
