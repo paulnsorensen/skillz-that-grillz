@@ -211,12 +211,12 @@ def test_an_answer_without_a_hypothesis_is_accepted_with_none() -> None:
     assert accept_proposal({"SKILL.md": "x", "@hypothesis": "it helps"}, ["SKILL.md"], {"SKILL.md": "t"})[2:] == ("it helps", None)
 
 
-@pytest.mark.ac("gh-241:AC-5")
-def test_a_command_answer_without_a_hypothesis_passes_the_schema_check_and_records_none() -> None:
+@pytest.mark.ac("gh-327:AC-1")
+def test_a_command_answer_without_a_hypothesis_fails_the_schema_check() -> None:
     _, schema = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)
-    answer = {"SKILL.md": "x"}
-    _validate_answer(answer, schema)
-    assert accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})[2:] == (None, None)
+    _validate_answer({"SKILL.md": "x", "@hypothesis": None}, schema)
+    with pytest.raises(ValueError):
+        _validate_answer({"SKILL.md": "x"}, schema)
     with pytest.raises(ValueError):
         _validate_answer({"@hypothesis": None}, schema)
 

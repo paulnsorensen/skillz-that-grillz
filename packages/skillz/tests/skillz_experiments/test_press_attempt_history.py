@@ -82,8 +82,20 @@ def test_validate_answer_non_text_hypothesis_is_rejected(value: object) -> None:
         _validate_answer({"SKILL.md": "t", "@hypothesis": value}, SCHEMA)
 
 
-def test_validate_answer_missing_nullable_key_is_accepted() -> None:
-    _validate_answer({"SKILL.md": "t"}, SCHEMA)
+@pytest.mark.ac("gh-327:AC-1")
+def test_validate_answer_missing_required_nullable_key_is_rejected() -> None:
+    with pytest.raises(ValueError):
+        _validate_answer({"SKILL.md": "t"}, SCHEMA)
+
+
+@pytest.mark.ac("gh-327:AC-2")
+@pytest.mark.parametrize("kind", [["string", "null"], ["null", "string"]])
+@pytest.mark.parametrize("value", [None, "why"])
+def test_validate_answer_nullable_type_list_matches_in_either_order(kind: list[str], value: object) -> None:
+    schema = SCHEMA | {"properties": {"SKILL.md": {"type": "string"}, "@hypothesis": {"type": kind}}}
+    _validate_answer({"SKILL.md": "t", "@hypothesis": value}, schema)
+    with pytest.raises(ValueError):
+        _validate_answer({"SKILL.md": "t", "@hypothesis": 7}, schema)
 
 
 def test_validate_answer_missing_non_nullable_key_or_extra_key_is_rejected() -> None:
