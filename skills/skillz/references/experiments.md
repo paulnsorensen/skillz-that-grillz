@@ -800,7 +800,7 @@ The contract has these fields:
 - `status`: `approved` or `draft`. A draft stops the run.
 - `skill`: the skill directory name.
 - `invocation`: the request that calls the skill. It supports `{skill}` and `{path}`.
-- `kinds`: a map of case kind to `{grader, argv?, rubric?, capture?, pillars?}`.
+- `kinds`: a map of case kind to `{grader, gate? or argv?, rubric?, capture?, pillars?}`.
 - `helper` (optional): `path`, `input`, and `fixtures` for a bundled helper script.
 - `editable` (optional): relative paths that search can change.
 - `surface` (optional): the tool surface of the task role. See "Journeys".
@@ -878,7 +878,13 @@ Each kind in `kinds` names one grader:
 - `journey`: scores a multi-turn conversation. See "Journeys".
 - `audit`: scores findings against reviewed labels in `expected`. The `run` command does not support audit-graded kinds yet, and stops with `contract-audit-unsupported`.
 
-A `command` or `hybrid` grader needs a nonempty `argv`.
+A `command` or `hybrid` grader needs a `gate` or a nonempty `argv`, not both.
+A `gate` is a relative path to a `.py` file under `evals/`, for example `evals/gates/check.py`.
+The loader replaces it with `argv` equal to `python3 -I -c` and the text of the file, so the contract identity covers the gate bytes.
+A gate imports only the standard library and the `.py` files next to it. A sibling is inlined in dependency order.
+The loader stops with a `contract-gate-*` code for a path outside `evals/`, a symlink, a syntax error, a non-standard import, or a file over 64 KiB.
+A gate file is never captured, shown to the judge, or editable. `editable` that names one stops with `contract-gate-editable`.
+The run freezes the expanded `argv` in `run.json`, so a later edit to the file does not change a resumed run.
 A `judge` or `hybrid` grader needs a `rubric`.
 
 A `judge` or `hybrid` grader can also declare these fields:
@@ -1186,7 +1192,7 @@ Each case has these fields:
 - `files`: the starting tree. It holds no grader.
 - `expected`: a tree check or a JSON report. The grader never sees it. The offline tests read it.
 
-The grader is a stdlib script in the kind's `argv`, so the task never reads it.
+The grader is a stdlib script that the kind's `gate` names, so the task never reads it.
 The runtime stages the case files at the workspace root and runs the task there.
 A task creates or edits files at their repository paths.
 The runtime then snapshots the whole workspace, including the files that the task did not change.
@@ -1205,7 +1211,7 @@ The tests pin the mode steps that each fixture depends on, so an edited step fai
 To add a case, follow these steps:
 
 1. Add the case to the manifest with a unique `id` and `family`.
-2. Put a grader script in the `argv` of its kind. The script scores the golden output as 1 and the seeded defect as 0.
+2. Put a grader script under `skills/skillz/evals/gates/mode/` and name it in the `gate` of its kind. The script scores the golden output as 1 and the seeded defect as 0. Type-check it: `just build` covers it.
 3. Record the golden output and one or more seeded-bad outputs in the repository's mode-output fixture file. Record only the files that the task writes or changes.
 4. Pin each step the case depends on in the step list of the mode-fixture test.
 5. Run `just build`.
