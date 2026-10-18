@@ -1,4 +1,4 @@
-"""Deterministic leakage check: a proposal may not copy case content into the skill.
+"""Deterministic leakage check: a proposal may not copy case content or runner context into the skill.
 
 The denylist holds train and validation cases only; the proposer never sees holdout. The check looks at text a
 proposal adds to a component, so content the seed already holds never triggers.
@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import PurePosixPath
 from typing import cast
 
+from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX, Candidate
 from skillz_experiments._cases import Case
 
 SHINGLE_WORDS = 8
@@ -19,6 +20,20 @@ MIN_ANSWER_CHARS = 20
 _EDGES = re.compile(r"^[\W_]+|[\W_]+$")
 # A fixture name followed by `.` and a word character is a longer file name such as `ledger.csv.bak`.
 _FIXTURE_TAIL = r"[\w-]|\.[\w-]"
+# Runner and wedge terms. A target that offers no wedge source and no `@new-cli` gets no wedge text in its prompt (gh-302).
+RUNNER_TERMS = ("wedge.toml", "fromargs", NEW_CLI)
+
+
+def _runner_terms(seed: Candidate | None) -> tuple[re.Pattern[str], ...]:
+    """Return the runner terms that are runner context for `seed`.
+
+    A seed that offers a wedge source or `@new-cli` gets wedge text in its prompt, so no term is runner context.
+    A term that any seed file holds is target vocabulary, so it is not runner context either.
+    """
+    if seed is None or any(name == NEW_CLI or name.startswith(WEDGE_PREFIX) for name in seed.editable):
+        return ()
+    patterns = (_token(term) for term in RUNNER_TERMS)
+    return tuple(pattern for pattern in patterns if not any(pattern.search(text) for text in seed.files.values()))
 
 
 @dataclass(frozen=True)
@@ -70,10 +85,14 @@ class Denylist:
     answers: frozenset[str] = field(repr=False)
     identifiers: tuple[re.Pattern[str], ...] = field(repr=False)
     fixtures: tuple[re.Pattern[str], ...] = field(repr=False)
+    runner_terms: tuple[re.Pattern[str], ...] = field(default=(), repr=False)
 
     @classmethod
-    def build(cls, cases: Iterable[Case]) -> Denylist:
-        """Build the denylist from the train and validation cases. Holdout cases are skipped."""
+    def build(cls, cases: Iterable[Case], *, seed: Candidate | None = None) -> Denylist:
+        """Build the denylist from the train and validation cases. Holdout cases are skipped.
+
+        With `seed`, the runner terms that are runner context for that seed are denied too.
+        """
         spans: set[tuple[str, ...]] = set()
         answers: set[str] = set()
         identifiers: set[str] = set()
@@ -88,7 +107,8 @@ class Denylist:
             identifiers.add(case.identifier)
             fixtures |= {PurePosixPath(name).name for name in case.files}
         return cls(frozenset(spans), frozenset(answers),
-                   tuple(_token(name) for name in sorted(identifiers)), tuple(_token(name, _FIXTURE_TAIL) for name in sorted(fixtures)))
+                   tuple(_token(name) for name in sorted(identifiers)), tuple(_token(name, _FIXTURE_TAIL) for name in sorted(fixtures)),
+                   _runner_terms(seed))
 
 
 def _rule(denylist: Denylist, before: str, after: str) -> str | None:
@@ -97,7 +117,8 @@ def _rule(denylist: Denylist, before: str, after: str) -> str | None:
     squashed_before, squashed_after = _squash(before), _squash(after)
     if any(answer in squashed_after and answer not in squashed_before for answer in denylist.answers):
         return "expected-answer"
-    for rule, patterns in (("case-id", denylist.identifiers), ("fixture-name", denylist.fixtures)):
+    for rule, patterns in (("case-id", denylist.identifiers), ("fixture-name", denylist.fixtures),
+                           ("runner-term", denylist.runner_terms)):
         if any(pattern.search(after) and not pattern.search(before) for pattern in patterns):
             return rule
     return None

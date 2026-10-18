@@ -6,6 +6,7 @@ from typing import cast
 
 import pytest
 
+from skillz_experiments._candidate import NEW_CLI, Candidate
 from skillz_experiments._cases import Audit, Case, Citation, Journey, Label, Split
 from skillz_experiments.search import Denylist, Leak, check
 
@@ -153,3 +154,44 @@ def test_the_leak_names_the_changed_component_and_ignores_unchanged_ones() -> No
 
 def test_an_empty_denylist_never_leaks() -> None:
     assert check(Denylist.build([]), SEED, {"SKILL.md": f"{SPAN} {ANSWER} case-7 ledger.csv"}) is None
+
+
+def _seed(files: dict[str, str], *extra: str) -> Candidate:
+    """A seed candidate whose editable names are `SKILL.md` and `extra`."""
+    return Candidate(dict(files), ("SKILL.md", *extra))
+
+
+@pytest.mark.ac("gh-302:AC-10")
+@pytest.mark.parametrize("added", [
+    "No buildable wedge.toml accompanies the supplied skill components.", "Parse the flags with fromargs.",
+    "The @new-cli value is empty.", "FromArgs parses the flags."])
+def test_a_runner_term_that_a_proposal_adds_to_a_wedge_free_target_is_a_runner_term_leak(added: str) -> None:
+    denylist = Denylist.build([_case()], seed=_seed(SEED))
+    assert check(denylist, SEED, {"SKILL.md": f"{SEED['SKILL.md']} {added}"}) == Leak("runner-term", "SKILL.md")
+
+
+@pytest.mark.ac("gh-302:AC-10")
+def test_a_runner_term_in_the_seed_exempts_only_that_term() -> None:
+    files = {**SEED, "references/a.md": "Parse the flags with fromargs."}
+    denylist = Denylist.build([_case()], seed=_seed(files, "references/a.md"))
+    assert check(denylist, files, {**files, "SKILL.md": f"{SEED['SKILL.md']} Ship a wedge.toml."}) == Leak("runner-term", "SKILL.md")
+
+
+@pytest.mark.ac("gh-302:AC-11")
+@pytest.mark.parametrize("offered", [{"@wedge/src/tool.py": "import sys\n"}, {NEW_CLI: ""}])
+def test_a_runner_term_is_no_leak_when_the_target_offers_a_wedge_source_or_new_cli(offered: dict[str, str]) -> None:
+    files = {**SEED, **offered}
+    added = {**files, "SKILL.md": f"{SEED['SKILL.md']} Build it from wedge.toml with fromargs and @new-cli."}
+    assert check(Denylist.build([_case()], seed=_seed(files, *offered)), files, added) is None
+    assert check(Denylist.build([_case()]), SEED, {"SKILL.md": added["SKILL.md"]}) is None
+
+
+@pytest.mark.ac("gh-302:AC-11")
+def test_a_runner_term_is_no_leak_when_any_seed_file_holds_it_or_it_is_part_of_a_longer_token() -> None:
+    files = {**SEED, "references/a.md": "See wedge.toml, fromargs, and @new-cli."}
+    denylist = Denylist.build([_case()], seed=_seed(files, "references/a.md"))
+    assert check(denylist, files, {**files, "SKILL.md": f"{SEED['SKILL.md']} Use fromargs."}) is None
+    assert check(denylist, files, {**files, "references/b.md": "Write wedge.toml and @new-cli."}) is None
+    assert check(denylist, {}, {"@hypothesis": "Move the fromargs note."}) is None
+    longer = {"SKILL.md": f"{SEED['SKILL.md']} Keep mywedge.toml and the fromargs-like parser."}
+    assert check(Denylist.build([_case()], seed=_seed(SEED)), SEED, longer) is None
