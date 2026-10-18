@@ -141,8 +141,8 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
         Keep and read the private cross-run attempt history (on by default). --no-history turns it off.
         The first run records the choice; a resume must not change it.
     kind
-        Contract kind to score. Repeat for more. Default: task and every journey kind, else all journey kinds.
-        A drafted case of another kind stays out of the run. The first run freezes the choice.
+        Contract kind to score. Repeat for more. Default: task drives the split and journey kinds are still evaluated, else all journey kinds.
+        With --kind, a drafted case of another kind stays out of the run. The first run freezes the choice.
     """
     flags = {"min_gain": min_gain, "min_lower_bound": min_lower_bound, "family_budget": family_budget,
              "max_token_increase_per_gain": max_token_increase_per_gain, "min_token_saving": min_token_saving,

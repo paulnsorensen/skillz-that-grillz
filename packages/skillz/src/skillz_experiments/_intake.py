@@ -129,13 +129,15 @@ def check_helper_input(contract: Contract, cases: Sequence[DraftCase]) -> None:
                          + f"add {needed} to the files of each task case")
 
 
-def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task",
-                journeys: Collection[str] = ()) -> list[IntakeCase]:
+def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task", journeys: Collection[str] = (),
+                also: Collection[str] = ()) -> list[IntakeCase]:
     """Assign splits from `seed`. A family never crosses splits.
 
     A non-journey case is scored when `kind` is set, and it takes that grading `kind`. A journey case is scored
     when its own kind is in `journeys`, and it keeps its kind. Any other case is not scored: it stays in the
     draft and keeps its kind. No scored case ever changes between a task kind and a journey kind.
+    A journey case of a kind in `also` is frozen and evaluated, but it does not size the split.
+    It takes a seeded split, as a journey family does in a task run.
 
     Train and validation get one scored family each. Holdout takes the next families until it holds
     `HOLDOUT_MINIMUM` scored cases. The rest alternate between train and validation.
@@ -173,7 +175,7 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task"
         assigned[family] = rng.choice(("train", "validation", "holdout"))
     return [IntakeCase(c.identifier, c.family, kind if scores(c) and c.journey is None and kind is not None else c.kind,
                        c.request, c.source, c.files, c.expected, c.journey, split=assigned[c.family],
-                       scored=scores(c)) for c in cases]
+                       scored=scores(c) or (not c.pending and c.journey is not None and c.kind in also)) for c in cases]
 
 
 def case_hash(cases: Sequence[IntakeCase], seed: int, statistics: Mapping[str, object] | None = None) -> str:

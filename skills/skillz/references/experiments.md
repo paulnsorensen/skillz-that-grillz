@@ -109,8 +109,9 @@ A resume without `--edit` keeps the mode of the first run.
 A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
 `--repeats` sets the repeats for each holdout case. The default is 3.
 `--kind KIND` picks a scored kind. Repeat it for more kinds. Each kind must be declared and not graded by `audit`.
-Without `--kind`, a contract with `task` scores `task` and every `journey`-graded kind. A contract of only journey kinds scores all of them. Otherwise the run scores the single kind.
-A drafted case of an unselected kind shows as `not scored` in the question and stays out of `cases.json` `cases`.
+Without `--kind`, the kind that drives the split is `task` when the contract declares it. Otherwise it is all journey kinds, or the single kind.
+Without `--kind`, the run still evaluates every declared kind that is not `audit`. Journey cases take a seeded split and do not size the task holdout.
+With `--kind`, a drafted case of an unselected kind shows as `not scored` in the question and stays out of `cases.json` `cases`.
 The first run freezes the choice, and a resume ignores `--kind`.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
@@ -817,7 +818,7 @@ The contract has these fields:
 - `surface` (optional): the tool surface of the task role. See "Journeys".
 - `statistics` (optional): promotion thresholds for the holdout gate. See "Set promotion thresholds".
 
-A run scores the kinds that `--kind` names. Without `--kind` it scores `task` and every `journey`-graded kind when `task` is declared, else every kind when all kinds use the `journey` grader, else the single kind. Otherwise it stops with `contract-kinds` and asks for `--kind`.
+A run scores the kinds that `--kind` names. Without `--kind` the split-driving kind is `task` when declared, else all journey kinds, else the single kind. Every declared kind that is not `audit` is evaluated. Otherwise it stops with `contract-kinds` and asks for `--kind`.
 It stops with `contract-unapproved` when `status` is `draft`.
 Unknown fields and malformed values stop the run.
 

@@ -236,7 +236,7 @@ def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, fro
 def _default_kinds(contract: Contract) -> tuple[str, ...]:
     journeys = contract.journey_kinds()
     if "task" in contract.kinds:
-        return ("task", *journeys)
+        return ("task",)
     if journeys and len(journeys) == len(contract.kinds):
         return journeys
     if len(contract.kinds) == 1:

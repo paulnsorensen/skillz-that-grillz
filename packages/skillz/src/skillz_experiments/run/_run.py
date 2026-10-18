@@ -126,12 +126,13 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     check_coverage(target, drafted)
     journeys = set(contract.journey_kinds())
     plain = [kind for kind in kinds if kind not in journeys]
-    cases = split_cases(drafted, split_seed, plain[0] if plain else None, [kind for kind in kinds if kind in journeys])
+    extra = [] if requested_kinds else [kind for kind in journeys if kind not in kinds]
+    cases = split_cases(drafted, split_seed, plain[0] if plain else None, [kind for kind in kinds if kind in journeys], extra)
     unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})
     if unknown:
         raise CodedError("contract-family-unknown", f"the contract family_budgets names no draft family: {', '.join(unknown)}; "
                          + f"the draft families are {', '.join(sorted({case.family for case in cases}))}")
-    held = sum(case.split == "holdout" and case.scored for case in cases)
+    held = sum(case.split == "holdout" and case.scored and case.kind in kinds for case in cases)
     if held < HOLDOUT_MINIMUM:
         raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
                          + "add task cases in more families to the draft, then call run again")

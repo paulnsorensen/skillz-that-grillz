@@ -14,6 +14,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError, load_cases
 from skillz_experiments._cli import main
 from skillz_experiments._contract import Contract, load_contract
+from skillz_experiments._intake import case_hash, load_draft, split_cases
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.run._plan import scored_kinds, size_plan
 from skillz_experiments.harness import ClaudeOptions
@@ -127,16 +128,42 @@ def test_kind_journey_scores_only_the_journey_cases(tmp_path: Path, capsys: pyte
 
 
 @pytest.mark.ac("gh-368:AC-8")
-def test_without_kind_the_task_and_journey_kinds_are_scored_as_before(tmp_path: Path,
-                                                                     capsys: pytest.CaptureFixture[str]) -> None:
+def test_without_kind_a_declared_task_drives_the_split_and_journeys_are_still_scored(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = echo_skill(tmp_path)
     task_and_journey(target)
     rules = load_contract(target)
-    assert scored_kinds(rules) == ("task", "journey")
+    assert scored_kinds(rules) == ("task",)
     data, out = walk(tmp_path, target, [*tasks(5), *journeys("journey", "j")], capsys)
     assert "| not scored |" not in str(data["question"])
     assert sorted(set(frozen(out, rules).values())) == ["journey", "task"] and len(frozen(out, rules)) == 18
 
+
+BASE_HASH = "f763d7a5a7941a28452f49e2bf4295d67bba6ed02de1790e644639167981cb3f"
+BASE_SPLITS = {"j0": "train", "j1": "holdout", "j2": "train", "t0": "validation", "t1": "holdout",
+               "t2": "holdout", "t3": "holdout", "t4": "train"}
+
+
+@pytest.mark.ac("gh-368:AC-8")
+def test_without_kind_the_mixed_draft_keeps_the_base_hash_and_splits(tmp_path: Path) -> None:
+    """The hash and splits come from commit b93a7ec, before journey kinds existed."""
+    items = [item | {"files": {"a.txt": "x\n"}} if item["kind"] == "journey" else item
+             for item in [*tasks(5), *journeys("journey", "j", 3)]]
+    path = tmp_path / "cases.draft.json"
+    _ = path.write_text(json.dumps(items))
+    cases = split_cases(load_draft(path), 7, "task", also=("journey",))
+    assert case_hash(cases, 7) == BASE_HASH
+    assert {case.family: case.split for case in cases} == BASE_SPLITS
+    assert all(case.scored and "scored" not in case.data() for case in cases)
+
+
+@pytest.mark.ac("gh-368:AC-8")
+def test_without_kind_journey_families_do_not_pad_the_task_minimum(tmp_path: Path) -> None:
+    items = [*tasks(2), *journeys("journey", "j", 3)]
+    path = tmp_path / "cases.draft.json"
+    _ = path.write_text(json.dumps(items))
+    with pytest.raises(ValueError, match="task families"):
+        _ = split_cases(load_draft(path), 7, "task", also=("journey",))
 
 @pytest.mark.ac("gh-368:AC-8")
 def test_task_families_do_not_fill_the_holdout_of_a_journey_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
