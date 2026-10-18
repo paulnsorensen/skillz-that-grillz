@@ -19,7 +19,7 @@ from skillz_experiments.run._plan import JOURNEY_SEARCH_CALLS, SEARCH_CASE_FACTO
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.search import REFLECTION_MINIBATCH, overshoot
 
-KIT = Path(__file__).resolve().parents[2] / "experiments" / "skillz-autoimprove"
+KIT = Path(__file__).resolve().parents[2] / "journey-kits" / "skillz-autoimprove"
 SEED = 20261006
 RUN = "python3 .agents/skills/skillz/scripts/skillz-experiment.pyz run --target toys/a --out /tmp/x"
 HASH = "ab" * 32
