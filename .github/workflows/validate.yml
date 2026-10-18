@@ -128,7 +128,8 @@ jobs:
   skillz-tests:
     # The main ruleset requires this check name. It passes only when every shard passes.
     # A rerun of one matrix job can make the matrix result pass while another shard
-    # stays failed, so the job also counts the latest result of each shard job.
+    # stays failed, so the job also counts the latest attempt of each shard job
+    # across all run attempts.
     name: skillz tests
     if: always()
     needs: skillz-shard
@@ -144,8 +145,9 @@ jobs:
           set -euo pipefail
           echo "skillz shards: $SHARDS"
           test "$SHARDS" = success
-          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq '[.jobs[] | select(.name | startswith("skillz shard (")) | select(.conclusion == "success")] | length')
+          passed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
+            | jq -s 'group_by(.name) | map(max_by(.completed_at)) | map(select(.conclusion == "success")) | length')
           echo "passed skillz shards: $passed of 6"
           test "$passed" = 6
 
