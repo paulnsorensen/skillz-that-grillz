@@ -196,6 +196,8 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     """Write the winner as a private patch and a redacted report. Never apply it.
 
     The patch comes from the builder that the replay uses. A patch that differs from the replayed one is refused.
+    Export writes only a patch that changes a file. A winner whose files equal the seed gets `patches: []` and the
+    reason `winner-equals-baseline`, so no empty patch reads as a change.
     """
     record = open_record(out / "run.json")
     if record.get("phase") != "complete":
@@ -213,13 +215,18 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     recorded = mapping(cast(dict[str, object], replayed)).get("patch_digest") if isinstance(replayed, dict) else None
     if recorded is not None and recorded != patch.digest:
         raise ValueError("export differs from the replayed patch; create a new run")
+    written = {name: text for name, text in patch.files.items() if text}
+    patches: dict[str, object] = {"patches": list(written)}
+    if not written:
+        patches["reason"] = "winner-equals-baseline"
     destination.mkdir(mode=0o700)
-    for name, text in patch.files.items():
+    for name, text in written.items():
         _private_file(destination / name, text)
-    report = summary(record, out) | {"sharing": "private-local-only",
-                                "outcomes": [_export_outcome(item) for item in record_outcomes(record)], "cost_usd": None}
+    report = summary(record, out) | patches | {"sharing": "private-local-only",
+                                          "outcomes": [_export_outcome(item) for item in record_outcomes(record)],
+                                          "cost_usd": None}
     if patch.cli is not None:
         report["new_cli"] = {"target": patch.cli.name, "package": patch.cli.package,
                              "unused_helpers": unused_helpers(patch.seed, patch.candidate)}
     write(destination / "report.json", report)
-    return {"export": str(destination), "sharing": "private-local-only", "installed": False, "patches": list(patch.files)}
+    return {"export": str(destination), "sharing": "private-local-only", "installed": False} | patches

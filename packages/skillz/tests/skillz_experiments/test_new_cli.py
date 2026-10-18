@@ -418,14 +418,16 @@ def test_export_carries_the_new_module_and_the_converted_wedge_toml(
     assert report["new_cli"] == {"target": "hello-cli", "package": "hello_cli", "unused_helpers": []}
 
 
+@pytest.mark.ac("gh-336:AC-1")
 def test_export_without_a_component_has_no_new_cli_report(
         world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
     out = prepared(world, tmp_path, write_draft, approvals)
     _completed(out, {})
     destination = tmp_path / "export"
-    _ = export(out, destination)
+    exported = export(out, destination)
     assert "new_cli" not in read(destination / "report.json")
-    assert (destination / "candidate.patch").read_text() == ""
+    assert exported["patches"] == [] and exported["reason"] == "winner-equals-baseline"
+    assert not (destination / "candidate.patch").exists()
 
 
 def test_a_helper_that_the_winner_guide_drops_is_reported_unused() -> None:
