@@ -994,6 +994,7 @@ A proposal leaks when the text that it adds to a component, compared with the se
 | `expected-answer` | an expected string of at least 20 characters (whitespace squashed, case-insensitive) |
 | `case-id` | a case id as a whole token |
 | `fixture-name` | a fixture file name as a whole token |
+| `runner-term` | `wedge.toml`, `fromargs`, or `@new-cli` as a whole token in any letter case, when the run offers no `@wedge/` source and no `@new-cli` and no seed file holds the term |
 
 Text that the seed already holds never fires a rule.
 A leaking proposal scores 0 and makes no task or judge call. It records no outcome.

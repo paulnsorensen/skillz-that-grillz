@@ -359,7 +359,7 @@ class Session:
         self._ended_proposal: str | None = None
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
         # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
-        self._denylist = Denylist.build(self._search_cases.values())
+        self._denylist = Denylist.build(self._search_cases.values(), seed=self.seed)
         self._leak_rules: dict[str, str | None] = {}
         # One contract check per candidate identity in this session (ADR-013). It never reaches `run.json`.
         self._checks = CheckMemo()
