@@ -190,3 +190,13 @@ def test_the_earlier_run_section_numbers_runs_newest_first_and_stays_within_the_
     assert "and 2 more" in text and render_earlier([]) == ""
     long = [item | {"hypothesis": "h" * 2000} for item in earlier]
     assert len(render_earlier(long)) <= LIMIT and render_earlier(long).count("Run 1 attempt") >= 1
+
+
+@pytest.mark.ac("gh-242:AC-3")
+def test_the_notes_cap_counts_the_separators_between_notes() -> None:
+    entries: list[dict[str, object]] = [
+        {"index": number, "notes": "n" * (499 - len(f"Attempt {number}: "))} for number in range(1, 11)]
+    text = render_notes(entries)
+    body = text.split("The runner does not check these notes: ", 1)[1]
+    assert len(body) <= JOURNAL_LIMIT
+    assert body.count(" | ") == 2

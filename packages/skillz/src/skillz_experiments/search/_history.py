@@ -32,6 +32,7 @@ DIFFERENT = "Propose a change that is structurally different from each rejected 
 JOURNAL_LIMIT = 2000
 NOTES_INTRO = ("Your own notes from earlier proposals, newest first. "
                "The runner does not check these notes: ")
+NOTE_SEPARATOR = " | "
 
 # Earlier runs (W4.6): attempts of compatible earlier runs, from the private history store. They feed the prompt only.
 EARLIER_INTRO = ("Attempts from earlier compatible runs, newest first. "
@@ -186,17 +187,24 @@ def _list(names: Sequence[str]) -> str:
     return ", ".join(_flat(name) for name in names[:MAX_IDS]) + (f" and {len(names) - MAX_IDS} more" if len(names) > MAX_IDS else "")
 
 
+def _said(hypothesis: str | None) -> str:
+    return _flat(hypothesis) if hypothesis else "none"
+
+
+def _cut(reason: str) -> str:
+    return _flat(reason)[:MAX_REASON]
+
+
 def _line(attempt: Mapping[str, object], label: str | None = None) -> str:
     hypothesis = _text(attempt.get("hypothesis"))
     delta = attempt.get("validation_delta")
     rejected = _text(attempt.get("rejected"))
     if rejected is not None:
-        result = "rejected, " + " ".join(rejected.split())[:MAX_REASON]
+        result = "rejected, " + _cut(rejected)
     else:
         result = "admitted" if attempt.get("candidate") is not None else "unknown"
     change = f"{delta:+.3f}" if isinstance(delta, (int, float)) else "unknown"
-    said = " ".join(hypothesis.split()) if hypothesis else "none"
-    return (f"{label or 'Attempt ' + str(attempt.get('index'))}: hypothesis {said}; "
+    return (f"{label or 'Attempt ' + str(attempt.get('index'))}: hypothesis {_said(hypothesis)}; "
             f"fixed {_list(_ids(attempt.get('fixed')))}; broke {_list(_ids(attempt.get('broke')))}; "
             f"validation change {change}; result {result}.")
 
@@ -230,9 +238,7 @@ def render_rejected(memory: Sequence[Mapping[str, object]]) -> str:
         return ""
     lines: list[str] = []
     for item in memory:
-        hypothesis = _text(item.get("hypothesis"))
-        said = " ".join(hypothesis.split()) if hypothesis else "none"
-        reason = " ".join(str(item.get("reason")).split())[:MAX_REASON]
+        said, reason = _said(_text(item.get("hypothesis"))), _cut(str(item.get("reason")))
         lines.append(f"Attempt {item.get('index')}: hypothesis {said}; reason {reason}.")
     return REJECTED_INTRO + " ".join(lines) + " " + DIFFERENT
 
@@ -245,12 +251,13 @@ def render_notes(entries: Sequence[Mapping[str, object]]) -> str:
     shown: list[str] = []
     size = 0
     for item in reversed(entries):
-        text = f"Attempt {item.get('index')}: {' '.join(str(item.get('notes')).split())}"
-        if size + len(text) > JOURNAL_LIMIT:
+        text = f"Attempt {item.get('index')}: {_flat(str(item.get('notes')))}"
+        added = len(text) + (len(NOTE_SEPARATOR) if shown else 0)
+        if size + added > JOURNAL_LIMIT:
             break
         shown.append(text)
-        size += len(text)
-    return NOTES_INTRO + " | ".join(shown) if shown else ""
+        size += added
+    return NOTES_INTRO + NOTE_SEPARATOR.join(shown) if shown else ""
 
 
 def render_earlier(earlier: Sequence[Mapping[str, object]]) -> str:
