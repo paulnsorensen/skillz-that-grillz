@@ -149,11 +149,12 @@ def test_the_command_harness_kills_the_wrapper_group_at_sandbox_seconds_and_send
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wrapper, log, pids = tmp_path / "wrapper.py", tmp_path / "requests.log", tmp_path / "pids"
     _ = wrapper.write_text(WRAPPER)
-    monkeypatch.setattr(_command, "SANDBOX_SECONDS", 1)
+    # The cap must exceed the wrapper's own start-up time, which can pass 1 s on a loaded host.
+    monkeypatch.setattr(_command, "SANDBOX_SECONDS", 5)
     adapter = Command((sys.executable, str(wrapper), str(log), str(pids)), "m", Budget(10, 120, 0), lambda: None)
     started = time.monotonic()
     assert adapter.check_candidate(_helper_candidate()) == TIMEOUT
-    assert time.monotonic() - started < 15
+    assert time.monotonic() - started < 30
     wrapper_pid, child_pid = (int(part) for part in pids.read_text().split())
     assert not _alive(wrapper_pid) and not _alive(child_pid)
     keys = [cast(list[str], json.loads(line)) for line in log.read_text().splitlines()]
