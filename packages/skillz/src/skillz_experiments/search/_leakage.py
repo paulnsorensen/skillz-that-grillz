@@ -11,7 +11,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from pathlib import PurePosixPath
 from typing import cast
 
-from skillz_experiments._candidate import NEW_CLI
+from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX, Candidate
 from skillz_experiments._cases import Case
 
 SHINGLE_WORDS = 8
@@ -22,6 +22,18 @@ _EDGES = re.compile(r"^[\W_]+|[\W_]+$")
 _FIXTURE_TAIL = r"[\w-]|\.[\w-]"
 # Runner and wedge terms. A target that offers no wedge source and no `@new-cli` gets no wedge text in its prompt (gh-302).
 RUNNER_TERMS = ("wedge.toml", "fromargs", NEW_CLI)
+
+
+def _runner_terms(seed: Candidate | None) -> tuple[re.Pattern[str], ...]:
+    """Return the runner terms that are runner context for `seed`.
+
+    A seed that offers a wedge source or `@new-cli` gets wedge text in its prompt, so no term is runner context.
+    A term that any seed file holds is target vocabulary, so it is not runner context either.
+    """
+    if seed is None or any(name == NEW_CLI or name.startswith(WEDGE_PREFIX) for name in seed.editable):
+        return ()
+    patterns = (_token(term) for term in RUNNER_TERMS)
+    return tuple(pattern for pattern in patterns if not any(pattern.search(text) for text in seed.files.values()))
 
 
 @dataclass(frozen=True)
@@ -76,10 +88,10 @@ class Denylist:
     runner_terms: tuple[re.Pattern[str], ...] = field(default=(), repr=False)
 
     @classmethod
-    def build(cls, cases: Iterable[Case], *, wedge_free: bool = False) -> Denylist:
+    def build(cls, cases: Iterable[Case], *, seed: Candidate | None = None) -> Denylist:
         """Build the denylist from the train and validation cases. Holdout cases are skipped.
 
-        With `wedge_free`, the target offers no wedge source and no `@new-cli`, so `RUNNER_TERMS` are runner context too.
+        With `seed`, the runner terms that are runner context for that seed are denied too.
         """
         spans: set[tuple[str, ...]] = set()
         answers: set[str] = set()
@@ -96,7 +108,7 @@ class Denylist:
             fixtures |= {PurePosixPath(name).name for name in case.files}
         return cls(frozenset(spans), frozenset(answers),
                    tuple(_token(name) for name in sorted(identifiers)), tuple(_token(name, _FIXTURE_TAIL) for name in sorted(fixtures)),
-                   tuple(_token(term) for term in RUNNER_TERMS) if wedge_free else ())
+                   _runner_terms(seed))
 
 
 def _rule(denylist: Denylist, before: str, after: str) -> str | None:
