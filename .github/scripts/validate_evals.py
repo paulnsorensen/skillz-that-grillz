@@ -2,11 +2,14 @@
 """Validate every skill eval file against one shared schema.
 
 All skills that ship behavioural evals keep them at exactly
-`skills/<name>/evals/evals.json`. This script finds every such file and
-checks it against one canonical contract:
+`skills/<name>/evals/evals.json`. A skill may also check in journey cases at
+`skills/<name>/evals/journeys.json`: a JSON list of draft-shaped cases that
+require `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`.
+This script finds every such file and checks it against one canonical contract:
 
-The reader is `skillz_experiments._evals_format.parse_evals`, which the
-autoimprove seed also uses. This script applies its strict profile.
+The readers are `skillz_experiments._evals_format.parse_evals` and
+`parse_journeys`, which the autoimprove seed also uses. This script applies
+their strict profile.
 
 Top-level (a JSON object):
 - `skill_name`: non-empty string.
@@ -46,7 +49,7 @@ from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "skillz" / "src"))
 
-from skillz_experiments._evals_format import parse_evals  # noqa: E402
+from skillz_experiments._evals_format import parse_evals, parse_journeys  # noqa: E402
 
 
 def validate_file(path: Path) -> list[str]:
@@ -54,6 +57,8 @@ def validate_file(path: Path) -> list[str]:
         data = cast(object, json.loads(path.read_text(encoding="utf-8")))
     except json.JSONDecodeError as exc:
         return [f"{path}: invalid JSON: {exc}"]
+    if path.name == "journeys.json":
+        return [f"{path}: {error}" for error in parse_journeys(data, strict=True).errors]
     parsed = parse_evals(data, strict=True)
     errors = [f"{path}: {error}" for error in parsed.errors]
     skill = path.parent.parent
@@ -156,6 +161,7 @@ def main() -> int:
     if not eval_files:
         print("ERROR: no skills/*/evals/evals.json files found", file=sys.stderr)
         return 1
+    eval_files += sorted(Path("skills").glob("*/evals/journeys.json"))
 
     all_errors: list[str] = []
     for ef in eval_files:

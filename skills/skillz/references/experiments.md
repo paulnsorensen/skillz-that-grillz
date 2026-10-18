@@ -322,6 +322,27 @@ Write each journey case with these fields:
 The runner adds the meaning of each `reference` field to the judge prompt. A rubric may name only `reference.must`, `reference.must_not`, `reference.questions`, and `reference.final_stop`. Any other `reference.<name>` stops with `contract-rubric-field`.
 A journey case may omit `files`.
 
+### Check in journey cases
+
+A skill may keep its journey cases in `evals/journeys.json`, next to `evals/evals.json`.
+The file is a JSON list. Each item has the draft-case shape:
+
+```json
+{"id": "age-1", "family": "age-gate", "kind": "journey", "request": "/age-check ...", "brief": "...",
+ "max_turns": 4, "requirements": ["AGE-1"], "files": {"venue/rules.md": "..."},
+ "expected": {"must": ["..."], "must_not": ["..."]}, "source": "skill"}
+```
+
+- `kind` names a journey kind of the contract. The seed accepts any nonempty name except `trigger`, `near-miss`, and `task`. Intake checks the name against the contract.
+- `files` is an inline map of path to text, and it is optional. `requirements` and `max_turns` are optional.
+- Any other key is an error. `expected` follows the closed object above.
+- CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. The seed fills `family` from `id` and `source` from `skill` when they are absent.
+- `id` values are unique across `evals.json` and `journeys.json`. A repeat stops the run with `evals-unreadable`.
+
+The first `run` call seeds `RUN/cases.seed.json` from both files. The call writes the seed when either file exists.
+The coverage check also covers `journeys.json`. The draft must keep each journey with its `id`, `kind`, `request`, and `brief`.
+Otherwise the run stops with `cases-uncovered`. To drop a journey, remove it from `journeys.json`.
+
 Make the cases hard. A family that the seed already passes adds no signal.
 Give each family one trap:
 

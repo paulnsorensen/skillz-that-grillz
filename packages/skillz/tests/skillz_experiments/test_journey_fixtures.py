@@ -21,6 +21,7 @@ from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.harness import ClaudeOptions, Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
+from skillz_experiments._seed import seed_cases
 from skillz_experiments._records import read
 from skillz_experiments._budget import (
     JOURNEY_CALLS,
@@ -75,7 +76,7 @@ def stage(name: str, destination: Path) -> Path:
 
 def frozen_case(target: Path, contract: Contract, tmp_path: Path) -> Case:
     # Intake wants three task families; the fixture's single case is copied into two more families.
-    draft = cast(list[dict[str, str]], json.loads((target / "evals/journeys.json").read_text()))
+    draft = [journey_seed(target)]
     copies = [draft[0] | {"id": f"{draft[0]['id']}-{n}", "family": f"{draft[0]['family']}-{n}"} for n in (1, 2)]
     drafted = tmp_path / DRAFT_NAME
     _ = drafted.write_text(json.dumps([*draft, *copies]), encoding="utf-8")
@@ -256,11 +257,19 @@ def test_journey_budget_ceiling_stops_at_28800_seconds() -> None:
     inside.claim()
 
 
-def write_journeys(out: Path, max_turns: int, families: int = 5) -> None:
-    brief = cast(list[dict[str, object]], json.loads((FIXTURES / "culture-journey/evals/journeys.json").read_text()))[0]
+def journey_seed(target: Path) -> dict[str, object]:
+    """Return the first journey case that the target's checked-in `evals/journeys.json` seeds."""
+    seeded = seed_cases(target)
+    assert seeded is not None
+    return seeded[0]
+
+
+def write_journeys(target: Path, out: Path, max_turns: int, families: int = 5) -> None:
+    brief = journey_seed(target)
     cases = [brief | {"id": f"j{family}-{index}", "family": f"f{family}", "max_turns": max_turns,
                       "request": f"/culture request-{family}-{index}"}
              for family in range(families) for index in range(2)]
+    cases[0] |= {"id": brief["id"], "request": brief["request"]}
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
     _ = (out / DRAFT_NAME).write_text(json.dumps(cases), encoding="utf-8")
 
@@ -307,7 +316,7 @@ class Provider(FakeProvider):
 
 def start(tmp_path: Path, max_turns: int) -> tuple[Path, Path, str, Callable[..., Provider], list[str]]:
     target, out = stage("culture-journey", tmp_path / "target"), tmp_path / "run"
-    write_journeys(out, max_turns)
+    write_journeys(target, out, max_turns)
     contract = load_contract(target)
     prompts: list[str] = []
 
@@ -473,9 +482,10 @@ def test_a_mold_journey_run_launches_the_task_with_the_surface_and_stages_the_co
     The live preflight sends its isolation probe through the real OS sandbox, so the test needs a working `bwrap`.
     """
     target, out = stage("mold-journey", tmp_path / "target"), tmp_path / "run"
-    brief = cast(list[dict[str, object]], json.loads((target / "evals/journeys.json").read_text()))[0]
+    brief = journey_seed(target)
     drafted = [brief | {"id": f"m{family}-{index}", "family": f"f{family}", "request": f"/mold shape {family}-{index}"}
                for family in range(5) for index in range(2)]
+    drafted[0] |= {"id": brief["id"], "request": brief["request"]}
     out.mkdir(mode=0o700)
     _ = (out / DRAFT_NAME).write_text(json.dumps(drafted), encoding="utf-8")
     executable, configuration = install_fake(tmp_path, "journey-mold")
