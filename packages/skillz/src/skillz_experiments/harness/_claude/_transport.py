@@ -63,7 +63,6 @@ from skillz_experiments.harness._claude._events import (
     token_events,
     tool_transcript,
     event_trace,
-    TRANSCRIPT_TEXT_LIMIT,
     user_line,
     write_failure,
 )
@@ -450,6 +449,8 @@ class ClaudeCode:
             abstract = f"skillz-{network_token[:16]}"
             with (watched() as (port, connected), watched_unix(sockets, active=probing) as (socket_path, socket_reached),
                   watched_abstract(abstract, active=probing) as abstract_reached):
+                if self.out is not None:
+                    (self.out / PREFLIGHT_TRANSCRIPT).unlink(missing_ok=True)
                 self.budget.claim(role="preflight")
                 self.checkpoint()
                 commands = network_commands(port, network_token)
@@ -505,13 +506,18 @@ class ClaudeCode:
     def _keep_transcript(self, error: CodedError, events: list[dict[str, object]]) -> None:
         """Write the redacted tool transcript of a failed live preflight to the run directory, and name it in `error`.
 
-        The file is private (mode 0600). Without a run directory, as in `--preflight-only`, nothing is written.
+        The file is private (mode 0600). Without a run directory, as in `--preflight-only`, nothing is written. A failed
+        write keeps the original stop and code, and the message says that the transcript is missing.
         """
         if self.out is None:
             return
         path = self.out / PREFLIGHT_TRANSCRIPT
-        write_transcript(path, {"schema_version": 1, "role": self.role, "failure": str(error),
-                                "tools": tool_transcript(events), "answer": assistant_text(events)[:TRANSCRIPT_TEXT_LIMIT]})
+        try:
+            write_transcript(path, {"schema_version": 1, "role": self.role, "failure": str(error),
+                                    "tools": tool_transcript(events), "answer": assistant_text(events)})
+        except OSError as failure:
+            error.args = (f"{error}; the preflight transcript could not be written: {failure.strerror}",)
+            return
         # The run records and prints `str(error)`, so the stop names the transcript through the message.
         error.args = (f"{error}; the preflight transcript is in {path}",)
 

@@ -174,9 +174,6 @@ def event_trace(events: list[dict[str, object]]) -> list[dict[str, object]]:
     return trace
 
 
-TRANSCRIPT_TEXT_LIMIT = 8192
-
-
 def _blocks(content: object) -> list[dict[str, object]]:
     """Return the object blocks of a content list, or none when `content` is not a list."""
     items = cast(list[object], content) if isinstance(content, list) else []
@@ -185,15 +182,14 @@ def _blocks(content: object) -> list[dict[str, object]]:
 
 def _result_text(content: object) -> str:
     """Join the text of a tool result. Claude Code sends it as a string or as a list of text blocks."""
-    text = content if isinstance(content, str) else "\n".join(
+    return content if isinstance(content, str) else "\n".join(
         str(block.get("text", "")) for block in _blocks(content) if block.get("type") == "text")
-    return text[:TRANSCRIPT_TEXT_LIMIT]
 
 
 def tool_transcript(events: list[dict[str, object]]) -> list[dict[str, object]]:
-    """List each tool use in stream order: the tool, its input, and the text and error flag of its result.
+    """List each tool use in stream order: the tool, its input, and the full text and error flag of its result.
 
-    A tool use with no result keeps `result` and `is_error` as None. Each result text keeps its first 8192 characters.
+    A tool use with no result keeps `result` and `is_error` as None.
     """
     uses: dict[str, dict[str, object]] = {}
     for event in events:

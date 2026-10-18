@@ -2360,6 +2360,31 @@ def test_a_failed_preflight_keeps_a_private_transcript_that_the_stop_names(tmp_p
     assert all("result" in tool for tool in tools)
 
 
+@pytest.mark.ac("gh-291:AC-3")
+def test_the_preflight_writes_its_transcript_through_the_redaction_seam(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    _, transcript = _failed_preflight(tmp_path, "write-broken")
+    text = transcript.read_text(encoding="utf-8")
+    assert "://" not in text and "[redacted]" in text
+
+
+@pytest.mark.ac("gh-291:AC-1")
+def test_a_failed_transcript_write_keeps_the_original_stop(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    out = tmp_path / "run"
+    out.mkdir(mode=0o500)
+    session = harness(tmp_path, fake_claude(tmp_path, "write-broken"), out=out)
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+        out.chmod(0o700)
+    assert caught.value.code == "preflight-leak" and "no positive control" in str(caught.value)
+    assert "the preflight transcript could not be written" in str(caught.value)
+    assert not (out / "preflight.events.json").exists()
+
+
 @pytest.mark.ac("gh-291:AC-1")
 def test_a_leak_found_in_the_init_event_also_keeps_the_transcript(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
@@ -2372,6 +2397,7 @@ def test_a_passed_preflight_keeps_no_transcript(tmp_path: Path, sandbox_passes: 
     del sandbox_passes
     out = tmp_path / "run"
     out.mkdir(mode=0o700)
+    _ = (out / "preflight.events.json").write_text("{}", encoding="utf-8")  # left by an earlier failed preflight
     session = harness(tmp_path, fake_claude(tmp_path), out=out)
     try:
         _ = session.preflight()
@@ -2402,3 +2428,42 @@ def test_the_transcript_redacts_credentials_through_the_shared_seam(tmp_path: Pa
     # The Codex failure evidence uses the same seam, so it also drops a spaced JSON credential value.
     excerpt = cast(str, _codex.failure_details(1, '{"refreshToken": "refresh-me-123"} more context', [])["stderr_excerpt"])
     assert "refresh-me-123" not in excerpt and "more context" in excerpt
+
+
+@pytest.mark.ac("gh-291:AC-3")
+@pytest.mark.parametrize("line", [
+    '{"password": "correct horse battery staple", "user": "kept"}',
+    '{\\"password\\": \\"correct horse battery staple\\", \\"user\\": \\"kept\\"}',
+    'password: "correct horse battery staple" user: kept',
+    "secret='correct horse battery staple' user: kept"])
+def test_redaction_removes_every_word_of_a_quoted_credential_value(line: str) -> None:
+    redacted = _redact.redact(line)
+    assert not any(word in redacted for word in ("correct", "horse", "battery", "staple")), redacted
+    assert "kept" in redacted
+
+
+@pytest.mark.ac("gh-291:AC-2")
+def test_the_transcript_keeps_a_long_tool_result_in_full() -> None:
+    output = "line of output\n" * 1000
+    events: list[dict[str, object]] = [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b1", "content": output}]}}]
+    assert _events.tool_transcript(events)[0]["result"] == output
+
+
+@pytest.mark.ac("gh-291:AC-3")
+@pytest.mark.parametrize(("line", "secret"), [
+    ('{"password":"ab,zzcd"}', "zzcd"),
+    ("--token=abc,zzdef", "zzdef"),
+    ('"clientSecret":"x\\"zzy"', "zzy")])
+def test_redaction_removes_a_credential_value_with_punctuation(line: str, secret: str) -> None:
+    assert secret not in _redact.redact(line)
+
+
+@pytest.mark.ac("gh-291:AC-3")
+def test_the_transcript_redacts_the_whole_value_of_a_credential_named_key(tmp_path: Path) -> None:
+    path = tmp_path / "transcript.json"
+    _redact.write_transcript(path, {"input": {"api_key": "abc123", "headers": {"Authorization": "xyz789"},
+                                              "command": "ls"}})
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document == {"input": {"api_key": "[redacted]", "headers": {"Authorization": "[redacted]"}, "command": "ls"}}
