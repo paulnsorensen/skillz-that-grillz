@@ -126,7 +126,7 @@ The repository validator also requires a unique `name` on each entry.
 - `assertions`: checkable statements about the output. A trigger case has none.
 - `files`: fixture paths relative to the skill directory. Each fixture must sit under `evals/files/`.
 
-`autoimprove` seeds its case draft from this file: the `cases-missing` stop lists one seed case for each entry in `seed_cases`.
+`autoimprove` seeds its case draft from this file: the `cases-missing` stop writes one seed case for each entry to `RUN/cases.seed.json` and names that file in `seed_file`.
 An entry may also have an optional `family` key with nonempty text. Related cases share one family, so near-copies stay in one split.
 
 ```json

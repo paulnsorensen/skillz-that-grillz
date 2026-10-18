@@ -137,7 +137,7 @@ Map each coded stop to its next step:
 | Code | Data on stdout | Next step |
 |---|---|---|
 | `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
-| `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_cases` (only when `evals/evals.json` exists), `doctor` (the host checks) | Write the case draft. Start from `seed_cases` when it is present. Then run again. |
+| `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_file` (the path of `RUN/cases.seed.json`) and `seed_summary` (`cases`, and the case count of each kind and each family; both only when `evals/evals.json` exists), `doctor` (the host checks) | Write the case draft. Start from the `seed_file` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `cases-too-easy` | The seed already scores at least 0.9 on a train or validation family. The message names each family, its split, and its mean. | Do not ask a new question. Draft harder cases in a new run directory, then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
@@ -233,8 +233,8 @@ Before the case draft, write one representative example. State the request, the 
 Show the example to the user with the case approval question.
 Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
 
-When `<skill>/evals/evals.json` exists, the stop holds `seed_cases`. Start the draft from it.
-`seed_cases` is a list of cases, one for each entry, in file order. The runner maps them and does not write the draft.
+When `<skill>/evals/evals.json` exists, the runner writes the seed cases to `RUN/cases.seed.json` (mode 0600). The stop names that file in `seed_file` and shows counts in `seed_summary`. Start the draft from the file.
+The seed file holds a list of cases, one for each entry, in file order. The runner maps them and does not write the draft. To accept the seed unchanged, copy the file to `RUN/cases.draft.json`.
 Each seed case has `source: skill`, the entry `name` as `id`, and the `prompt` as `request`.
 An entry with `expected_skill: null` is a `near-miss` case.
 An entry with no `assertions` is a `trigger` case. Every other entry is a `task` case.
@@ -248,7 +248,7 @@ Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged
 When the draft drops a seed case or changes its `id`, `kind`, or `request`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from `evals/evals.json`.
 Then add cases until the draft meets the minimums below. To add journey cases, read `Draft journeys`.
 The holdout split alone needs 6 scored cases, and a family never crosses splits, so a contract needs about 10 or more `task` cases.
-A skill with no `evals/evals.json` has no `seed_cases`. Draft every case from the `facts`.
+A skill with no `evals/evals.json` has no seed file, and the stop removes an old one. Draft every case from the `facts`.
 
 Each case has these fields:
 
