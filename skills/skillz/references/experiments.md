@@ -342,7 +342,7 @@ The file is a JSON list. Each item has the draft-case shape:
  "expected": {"must": ["..."], "must_not": ["..."]}, "source": "skill"}
 ```
 
-- The fields, the closed `expected` object, and the required keys are in `references/eval-formats.md`. The schema is `references/schemas/journeys.schema.json`.
+- The fields, the closed `expected` object, and the required keys are in the eval formats reference that `SKILL.md` names. The schema is `references/schemas/journeys.schema.json`.
 - `journeys.json` is a bare list, so it has no `$schema` key. Map the schema to the file name in your editor.
 - `id` values are unique across `evals.json` and `journeys.json`. A repeat stops the run with `evals-unreadable`.
 
@@ -848,7 +848,7 @@ It lives at `<skill>/evals/autoimprove.json`. The shipped `skills/skillz/evals/a
 Without it, the runner grades each `task` case with a judge against its `expected` answer.
 To start a journey contract, run `scaffold`. See `Draft journeys`.
 
-The fields of the contract, of a kind, of `helper`, of `surface`, and of `statistics` are in `references/eval-formats.md`.
+The fields of the contract, of a kind, of `helper`, of `surface`, and of `statistics` are in the eval formats reference that `SKILL.md` names.
 The schema `references/schemas/autoimprove.schema.json` lists them for your editor. Start the file with a relative `$schema` key to use it.
 The runner ignores that key.
 

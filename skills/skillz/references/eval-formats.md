@@ -2,7 +2,7 @@
 
 This page is the one reference for the files that you write for an autoimprove run.
 Read it before you edit `evals/evals.json`, `evals/journeys.json`, or `evals/autoimprove.json`.
-The run steps live in `references/experiments.md`.
+The run steps are in the `autoimprove` workflow that `SKILL.md` names.
 
 ## The files you write
 
@@ -138,7 +138,7 @@ The `statistics` object takes these fields. Every number is finite and at least 
 | `min_coverage` | The least share of holdout cases that both arms must score, from 0 to 1. |
 | `max_quality_loss` | The largest quality loss that `promote-cheaper` accepts. |
 
-See `references/experiments.md`, "Set promotion thresholds", for the effect of each threshold.
+The `autoimprove` workflow section "Set promotion thresholds" gives the effect of each threshold.
 
 ## The minimums
 
