@@ -16,6 +16,9 @@ _ACTIVE: dict[subprocess.Popen[bytes], tuple[str, BinaryIO]] = {}
 _cancelled = False
 PACKAGE_MODES = frozenset({"fromargs", "agent-session-analytics"})
 LIVE_FLAG = "SKILLZ_LIVE"
+SKIP_VARIABLE = "GATE_SKIP"
+# CI runs these lanes in their own job (`just test-skillz`) and skips them in the gate job.
+SKILLZ_LANES = ("skillz-e2e-pytest", "skillz-pytest")
 
 
 def _environment() -> dict[str, str]:
@@ -155,11 +158,38 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
     ]
 
 
+def _check_jobs() -> list[Job]:
+    root = ["uv", "run", "--locked", "--no-sync", "--all-groups"]
+    return [
+        ("yaml", ["just", "lint-yaml"]),
+        ("typecheck", root + ["basedpyright"]),
+        ("scripts-typecheck", root + ["basedpyright", "--project", ".github/scripts"]),
+        ("py-dead-code", root + ["python", ".github/scripts/check_dead_code.py"]),
+    ]
+
+
+def _skipped() -> frozenset[str]:
+    """Return the lane names in `GATE_SKIP`; reject a name that is not a lane."""
+    names = frozenset(part.strip() for part in os.environ.get(SKIP_VARIABLE, "").split(",") if part.strip())
+    lanes = {name for name, _ in _test_jobs(1, Path("/tmp")) + _check_jobs()}
+    unknown = sorted(names - lanes)
+    if unknown:
+        raise ValueError(f"{SKIP_VARIABLE} names unknown lanes: {', '.join(unknown)}")
+    return names
+
+
+def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
+    for name, _ in jobs:
+        if name in skip:
+            print(f"- {name} (skipped by {SKIP_VARIABLE})", flush=True)
+    return [job for job in jobs if job[0] not in skip]
+
+
 def _prepare() -> bool:
     return run_step("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups", "--all-extras"])
 
 
-def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path) -> int:
+def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str]) -> int:
     formatters = (
         [("markdown", ["just", "lint-md-fix"]), ("yaml-fmt", ["just", "lint-yaml-fmt-fix"])]
         if mode == "fix" else
@@ -170,14 +200,7 @@ def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path) -> int
             return 1
     if not _prepare():
         return 1
-    root = ["uv", "run", "--locked", "--no-sync", "--all-groups"]
-    checks = [
-        ("yaml", ["just", "lint-yaml"]),
-        ("typecheck", root + ["basedpyright"]),
-        ("scripts-typecheck", root + ["basedpyright", "--project", ".github/scripts"]),
-        ("py-dead-code", root + ["python", ".github/scripts/check_dead_code.py"]),
-    ]
-    jobs = _test_jobs(test_workers, temp_root) + checks
+    jobs = _without(_test_jobs(test_workers, temp_root) + _check_jobs(), skip)
     return 0 if run_jobs(jobs, workers) else 1
 
 
@@ -199,13 +222,14 @@ def _interrupted(_signum: int, _frame: object) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if not args or args[0] not in {"fix", "check", "test", *PACKAGE_MODES} or (
+    if not args or args[0] not in {"fix", "check", "test", "skillz", *PACKAGE_MODES} or (
         args[0] not in PACKAGE_MODES and len(args) != 1
     ) or len(args) > 2:
-        print("usage: run_gate.py fix|check|test|fromargs|agent-session-analytics [python]", file=sys.stderr)
+        print("usage: run_gate.py fix|check|test|skillz|fromargs|agent-session-analytics [python]", file=sys.stderr)
         return 2
     try:
         workers, test_workers = _workers("GATE_JOBS"), _workers("TEST_WORKERS")
+        skip = _skipped()
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2
@@ -227,11 +251,15 @@ def main(argv: list[str] | None = None) -> int:
                                 "--basetemp", str(temp_root / "f"),
                                 "-o", f"cache_dir={temp_root / 'fc'}"]
                     return 0 if run_step(f"{package}-pytest", command) else 1
-                if args[0] == "test":
+                if args[0] in {"test", "skillz"}:
+                    jobs = _test_jobs(test_workers, temp_root)
+                    if args[0] == "skillz":
+                        jobs = [job for job in jobs if job[0] in SKILLZ_LANES]
+                    jobs = _without(jobs, skip)
                     if not _prepare():
                         return 1
-                    return 0 if run_jobs(_test_jobs(test_workers, temp_root), workers) else 1
-                return run_gate(args[0], workers, test_workers, temp_root)
+                    return 0 if run_jobs(jobs, workers) else 1
+                return run_gate(args[0], workers, test_workers, temp_root, skip)
             except KeyboardInterrupt:
                 _stop_children()
                 print("interrupted", file=sys.stderr)

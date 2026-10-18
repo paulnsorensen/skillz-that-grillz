@@ -33,6 +33,10 @@ lint-py-dead-code:
 test-fromargs python="":
     python3 .github/scripts/run_gate.py fromargs {{python}}
 
+# Run the skillz unit and e2e pytest lanes; CI runs them in their own job and skips them in the gate job.
+test-skillz:
+    python3 .github/scripts/run_gate.py skillz
+
 # Run agent-session-analytics' pytest suite, optionally pinned to one Python version.
 test-agent-session-analytics python="":
     python3 .github/scripts/run_gate.py agent-session-analytics {{python}}

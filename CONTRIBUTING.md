@@ -54,12 +54,17 @@ This project has one canonical quality gate:
 
 ```sh
 just build   # autofix, then verify formats, Python types/dead code, and tests
-just ci      # the same gate with no autofixes — exactly what CI runs
+just ci      # the same gate with no autofixes — what CI runs
 ```
+
+CI splits the skillz pytest lanes into a parallel `skillz tests` job (`just test-skillz`).
+The `gate (just ci)` job sets `GATE_SKIP` to skip those lanes.
+The `skillz tests` job covers them, and local runs still include them.
 
 `just build` runs format fixes and prepares Python environments before parallel checks.
 Set `GATE_JOBS` to bound concurrent checks and `TEST_WORKERS` to bound each pytest suite.
 Both settings default to 4.
+Set `GATE_SKIP` to a comma list of lane names to skip those lanes; an unknown name fails before any work.
 
 Run `just build` and verify 0 failures before opening a PR.
 

@@ -41,7 +41,9 @@ class GateRunnerTest(unittest.TestCase):
             tool = root / name
             _ = tool.write_text(FAKE_TOOL)
             tool.chmod(0o755)
-        return {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+        # CI's gate job sets GATE_SKIP; drop it so each test sets its own lane selection.
+        inherited = {name: value for name, value in os.environ.items() if name != "GATE_SKIP"}
+        return {**inherited, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                 "EVENT_LOG": str(root / "events"), "GATE_JOBS": "2", "TEST_WORKERS": "3"}
 
     def test_jobs_overlap_with_a_bound(self) -> None:
@@ -157,6 +159,46 @@ class GateRunnerTest(unittest.TestCase):
             event = (root / "events").read_text().strip()
             self.assertIn("--project packages/agent-session-analytics pytest packages/agent-session-analytics/tests", event)
             self.assertIn("--python 3.11", event)
+
+    def test_gate_skip_drops_only_the_named_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_SKIP": " skillz-e2e-pytest, skillz-pytest ,"}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            self.assertFalse(any("packages/skillz/tests" in event for event in events))
+            pytest_events = [event for event in events if " pytest " in event]
+            self.assertEqual(len(pytest_events), 3)
+            self.assertTrue(any("packages/wedge/tests" in event for event in pytest_events))
+            self.assertTrue(any("basedpyright" in event for event in events))
+            self.assertIn("- skillz-pytest (skipped by GATE_SKIP)", result.stdout)
+            self.assertIn("- skillz-e2e-pytest (skipped by GATE_SKIP)", result.stdout)
+
+    def test_gate_skip_with_an_unknown_lane_fails_before_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_SKIP": "skillz-pytest,skilz-e2e-pytest"}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("GATE_SKIP names unknown lanes: skilz-e2e-pytest", result.stderr)
+            self.assertFalse((root / "events").exists())
+
+    def test_skillz_mode_prepares_then_runs_only_the_skillz_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self._fake_env(root)
+            result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            self.assertEqual(events[0], "uv sync --locked --all-packages --all-groups --all-extras")
+            e2e = "packages/skillz/tests/skillz_experiments/e2e"
+            self.assertEqual(len(events), 3)
+            self.assertTrue(any(f"pytest {e2e} " in event for event in events[1:]))
+            self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[1:]))
 
     def test_invalid_worker_count_fails_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

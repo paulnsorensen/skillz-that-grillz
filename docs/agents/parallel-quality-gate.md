@@ -31,6 +31,16 @@ Both settings default to four and require positive integers.
 These limits are separate.
 The four first pytest lanes can each start four workers at the same time.[^5]
 
+## CI lane split
+
+`GATE_SKIP` holds a comma list of lane names that the scheduler skips.
+An unknown name fails before any work.
+The CI `gate (just ci)` job skips `skillz-e2e-pytest` and `skillz-pytest`.
+The parallel `skillz tests` job runs those two lanes through `just test-skillz`.
+Before the split, these lanes set the full wait on all 12 sampled pull-request runs.
+The median full wait was 560.5 seconds.[^10]
+Local `just build` and `just ci` leave `GATE_SKIP` unset and run every lane.
+
 ## Resource ownership
 
 The scheduler creates a unique short directory under `/tmp`.
@@ -76,5 +86,6 @@ A still-live descendant fails after the observation deadline.[^9]
 
 [^8]: [Linux CI run 38102417849](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/38102417849); .context/parallelism/linux-ci-failure.log. The local log is gitignored.
 [^9]: packages/skillz/tests/skillz_experiments/test_runtime.py:14-32; .context/parallelism/implementation-contract.md:55-64. The user approves the test-only correction and CI rerun.
+[^10]: validate.yml pull-request runs 39095534699 to 39102429986, initial attempts; .cheese/ci-optimize/validate-pr/BEFORE.json. The local evidence file is gitignored.
 
 _Source: Approved parallel-build contract, workspace rebase, local verification, and Linux CI finding · Updated: 2026-10-10 · Supersedes: immediate descendant-state observation_

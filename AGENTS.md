@@ -12,6 +12,9 @@ doing anything else.
   basedpyright and Vulture checks, skill validators, fromargs/wedge suites,
   and wedge check. Run after every change.
 - `just ci` — the same gate with NO autofixes; this is what CI runs.
+  CI sets `GATE_SKIP=skillz-e2e-pytest,skillz-pytest` on the `gate (just ci)` job
+  and runs those two lanes in the parallel `skillz tests` job (`just test-skillz`).
+  Locally, `just build` and `just ci` still run every lane.
 
 ```bash
 just build
