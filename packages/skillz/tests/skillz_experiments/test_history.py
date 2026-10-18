@@ -177,3 +177,13 @@ def test_the_notes_section_shows_the_newest_notes_within_the_cap_and_drops_the_o
     assert shown == ["Attempt 10", "Attempt 9", "Attempt 8", "Attempt 7"]
     assert sum(len(part) for part in body.split(" | ")) <= JOURNAL_LIMIT
     assert render_notes([]) == "" and "\n" not in render_notes([{"index": 1, "notes": "a\nb"}])
+
+
+@pytest.mark.ac("gh-242:AC-3")
+def test_the_notes_cap_counts_the_separators_between_notes() -> None:
+    entries: list[dict[str, object]] = [
+        {"index": number, "notes": "n" * (499 - len(f"Attempt {number}: "))} for number in range(1, 11)]
+    text = render_notes(entries)
+    body = text.split("The runner does not check these notes: ", 1)[1]
+    assert len(body) <= JOURNAL_LIMIT
+    assert body.count(" | ") == 2
