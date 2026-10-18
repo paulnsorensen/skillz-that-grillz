@@ -83,11 +83,17 @@ jobs:
           GATE_SKIP: skillz-e2e-pytest,skillz-pytest
         run: just ci
 
-  skillz-tests:
+  skillz-shard:
     # The two skillz pytest lanes set the gate's wall time, so they run here
-    # in parallel. The gate job skips them through GATE_SKIP.
-    name: skillz tests
+    # in parallel. The gate job skips them through GATE_SKIP. One runner has
+    # 4 vCPUs and the lanes are CPU-bound, so each shard runs 1/6 of each lane.
+    # Six shards keep each shard under the gate job's time.
+    name: skillz shard (${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,7 +122,34 @@ jobs:
       - name: Run skillz tests
         env:
           REQUIRE_DUCKDB: "1"
+          GATE_SHARD: ${{ matrix.shard }}/6
         run: just test-skillz
+
+  skillz-tests:
+    # The main ruleset requires this check name. It passes only when every shard passes.
+    # A rerun of one matrix job can make the matrix result pass while another shard
+    # stays failed, so the job also counts the latest attempt of each shard job
+    # across all run attempts.
+    name: skillz tests
+    if: always()
+    needs: skillz-shard
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Check the skillz shards
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARDS: ${{ needs.skillz-shard.result }}
+        run: |
+          set -euo pipefail
+          echo "skillz shards: $SHARDS"
+          test "$SHARDS" = success
+          passed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
+            | jq -s 'group_by(.name) | map(max_by(.completed_at)) | map(select(.conclusion == "success")) | length')
+          echo "passed skillz shards: $passed of 6"
+          test "$passed" = 6
 
   fromargs-tests:
     name: fromargs tests (py${{ matrix.python }})

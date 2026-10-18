@@ -57,9 +57,9 @@ just build   # autofix, then verify formats, Python types/dead code, and tests
 just ci      # the same gate with no autofixes — what CI runs
 ```
 
-CI splits the skillz pytest lanes into a parallel `skillz tests` job (`just test-skillz`).
+CI splits the skillz pytest lanes into six parallel `skillz shard` jobs (`GATE_SHARD=<n>/6 just test-skillz`).
 The `gate (just ci)` job sets `GATE_SKIP` to skip those lanes.
-The `skillz tests` job covers them, and local runs still include them.
+The required `skillz tests` check passes when every shard passes, and local runs still include every lane.
 
 `just build` runs format fixes and prepares Python environments before parallel checks.
 Set `GATE_JOBS` to bound concurrent checks and `TEST_WORKERS` to bound each pytest suite.
