@@ -14,9 +14,9 @@ import pytest
 from skillz_experiments._budget import BudgetExhausted, CallTimeout, estimate, gate_seconds
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
+from skillz_experiments._cli import main
 from skillz_experiments._contract import Grader
 from skillz_experiments._graders import judge
-from skillz_experiments._cli import main
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, _export, _patch, _session, export, run, summary
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
@@ -712,6 +712,7 @@ def test_a_tie_run_exports_no_patch_file_and_names_the_reason(
     assert sorted(path.name for path in destination.iterdir()) == ["report.json"]
     report = read(destination / "report.json")
     assert report["patches"] == [] and report["reason"] == "winner-equals-baseline"
+
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-2")
 def test_a_winner_with_crlf_line_endings_replays_to_the_same_identity(

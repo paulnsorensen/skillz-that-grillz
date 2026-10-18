@@ -710,7 +710,7 @@ A completed run without a replay gives the `export` claim `inconclusive` with th
 python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export"
 ```
 
-Export is write-only. It writes `candidate.patch` and a redacted `report.json` to a new directory.
+Export is write-only. It writes each non-empty patch (`candidate.patch`, `wedge-sources.patch`) and a redacted `report.json` to a new directory.
 Its result and `report.json` list the written patch files under `patches`.
 Export writes no empty patch file.
 When the winner files equal the seed files, export writes only `report.json`. Its result has `patches: []` and `reason: "winner-equals-baseline"`.
