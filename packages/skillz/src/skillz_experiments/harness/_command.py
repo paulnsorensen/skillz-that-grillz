@@ -174,7 +174,7 @@ class Command:
     def _sandbox(self, workspace: Path, argv: list[str], *, limit: float | None = None) -> dict[str, object]:
         """Send one sandbox request. A run that reaches the sandbox time limit, `limit` (default `SANDBOX_SECONDS`),
         kills the wrapper process group and raises `SandboxTimeout`. The request carries no time limit field.
-        The default is read at call time, so a changed module limit applies.
+        The method reads `SANDBOX_SECONDS` at call time, so a changed module limit applies.
         """
         seconds = SANDBOX_SECONDS if limit is None else limit
         return self._exchange("sandbox", workspace, {"argv": argv}, lambda text: sandboxed(

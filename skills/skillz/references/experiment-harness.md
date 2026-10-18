@@ -315,7 +315,7 @@ The runner kills the wrapper process group 20 seconds after it sends a helper-fi
 This time includes the wrapper start-up, so start any container before the request or keep start-up short.
 The isolation probe gets 300 seconds.
 The request carries no time limit field.
-See `experiments.md` for the effect of a sandbox timeout on a contract check and a grader.
+A helper fixture that reaches this limit is a sandbox timeout, and a grader that reaches it scores as exit code 124.
 
 ### Discovery
 
