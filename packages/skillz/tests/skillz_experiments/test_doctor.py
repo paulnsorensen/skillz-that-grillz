@@ -118,6 +118,25 @@ def test_a_missing_tool_does_not_hide_the_skill_inventory(
     assert checks["skill-inventory"]["status"] == "pass" and "sandbox-probe" not in checks
 
 
+@pytest.mark.ac("gh-332:AC-1")
+def test_a_tool_row_detail_says_whether_the_tool_was_found(
+        host_bin: Callable[[str], Path], capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    _ = host_bin("ok")
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ("socat-missing-for-test",))
+    monkeypatch.setattr(_sandbox, "LIVE_TOOLS", (sys.executable, "/nonexistent/curl"))
+    assert main(["doctor", "--harness", "claude"]) == 0
+    report = cast(dict[str, object], json.loads(capsys.readouterr().out))
+    checks = rows(report)
+    assert report["ok"] is False
+    assert checks["tool:bwrap"]["status"] == "pass" and checks["tool:bwrap"]["detail"] == "`bwrap` found"
+    assert checks[f"tool:{sys.executable}"]["detail"] == f"`{sys.executable}` found"
+    assert checks["tool:socat-missing-for-test"]["status"] == "fail"
+    assert checks["tool:socat-missing-for-test"]["detail"] == "`socat-missing-for-test` not found on PATH"
+    assert checks["tool:/nonexistent/curl"]["status"] == "fail"
+    assert checks["tool:/nonexistent/curl"]["detail"] == "`/nonexistent/curl` not found"
+
+
 def test_a_failed_probe_names_its_fix_and_leaves_the_inventory_row(
         host_bin: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _ = host_bin("ok")
