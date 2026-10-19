@@ -53,9 +53,10 @@ of truth for repo-local skills (tooling for work on this repository only).
     (`docs/agents/decisions/harness-module-interface.md` ADR-002).
   - Move a flat root module into a slice when a change puts pressure on it
     (`docs/agents/decisions/skillz-autoimprove.md` ADR-011).
-  - `packages/skillz/tests/skillz_experiments/test_layout.py` holds the frozen sets: `ROOT_MODULES`.
+  - `packages/skillz/tests/skillz_experiments/test_layout.py` holds the frozen sets: `ROOT_MODULES`
+    and `KERNEL` (the root modules that a slice may import).
     Each entry cites an ADR id as `<decision file stem>:ADR-NNN`.
   - Write or amend an ADR when a PR adds, removes, or renames a slice or a workspace package,
-    adds a `ROOT_MODULES` entry, or adds a second public seam to a slice.
+    adds a `ROOT_MODULES` or `KERNEL` entry, or adds a second public seam to a slice.
     A move into an existing slice needs no ADR.
   - Do not add methods to `Session` or `ClaudeCode`. Add a collaborator in the slice.
