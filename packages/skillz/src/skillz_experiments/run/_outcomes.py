@@ -1,0 +1,155 @@
+"""Readers and builders for search and holdout outcome rows, and the search fault rules.
+"""
+from __future__ import annotations
+
+import re
+from collections import Counter
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from typing import TypeVar, cast
+
+from skillz_experiments._budget import CallTimeout
+from skillz_experiments._candidate import Candidate
+from skillz_experiments._cases import Case, CodedError
+from skillz_experiments.run._record_fields import unit_score
+
+# The search stops with `search-faulted` when at least this many search evaluations finished and more than half failed,
+# or when this many of the newest ones failed in a row. The values are defaults, not measured limits.
+FAULT_MIN_FINISHED = 4
+FAULT_STREAK = 5
+_FAULT_REASON = re.compile(r"\bfails: ([a-z][a-z-]*)")
+
+
+def faulted_reflection(item: Mapping[str, object]) -> bool:
+    """Return whether a reflection row records a skipped or timed-out call, which proposes nothing."""
+    return item.get("status") in ("skipped", "timeout", "failed") and "proposed" not in item
+
+
+def failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
+                   repeat: int | None = None) -> dict[str, object]:
+    """Return the outcome that records a failed evaluation. Its 0.0 score is a placeholder that no decision reads.
+
+    A holdout or replay failure names its arm and repeat.
+    """
+    outcome: dict[str, object] = {"arm": arm, "split": case.split, "case_id": case.identifier, "score": 0.0,
+                                  "status": "evaluation-failed", "failure": str(error)}
+    outcome["reason"] = fault_reason(error)
+    if arm == "search":
+        outcome["search_candidate"] = candidate.identity
+    if repeat is not None:
+        outcome["repeat"] = repeat
+    return outcome
+
+
+def fault_reason(error: Exception) -> str:
+    """Return the stable reason of a failed evaluation: `timeout`, the reason that an adapter names after `fails:`, else `error`."""
+    if isinstance(error, CallTimeout):
+        return "timeout"
+    match = _FAULT_REASON.search(str(error))
+    return match.group(1) if match else "error"
+
+
+def is_failed(item: Mapping[str, object]) -> bool:
+    return item.get("status") == "evaluation-failed"
+
+
+def reason_counts(failed: Sequence[Mapping[str, object]]) -> dict[str, int]:
+    return dict(sorted(Counter(str(item.get("reason", "error")) for item in failed).items()))
+
+
+def search_counts(rows: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """Return the scored and failed counts of the search evaluations in `rows`, and the failed counts by reason."""
+    failed = [item for item in rows if is_failed(item)]
+    return {"scored": len(rows) - len(failed), "failed": len(failed), "failed_by_reason": reason_counts(failed)}
+
+
+def search_fault(rows: Sequence[Mapping[str, object]]) -> CodedError | None:
+    """Return `search-faulted` when the search evaluations in `rows` fail in a majority or in a streak, else None."""
+    failed = [item for item in rows if is_failed(item)]
+    streak = 0
+    for item in reversed(rows):
+        if not is_failed(item):
+            break
+        streak += 1
+    majority = len(rows) >= FAULT_MIN_FINISHED and 2 * len(failed) > len(rows)
+    if not (majority or streak >= FAULT_STREAK):
+        return None
+    return CodedError("search-faulted", f"{len(failed)} of {len(rows)} search evaluations failed ({reason_counts(failed)}; "
+                      + f"the newest: {failed[-1].get('failure')}); wait for the provider, then resume the run in the same directory")
+
+
+def reflection_fault(rows: Sequence[Mapping[str, object]]) -> CodedError | None:
+    """Return `search-faulted` when the newest `FAULT_STREAK` reflection calls all failed, else None."""
+    newest = rows[-FAULT_STREAK:]
+    if len(newest) < FAULT_STREAK or any(item.get("status") != "failed" for item in newest):
+        return None
+    return CodedError("search-faulted", f"{FAULT_STREAK} reflection calls in a row failed ({reason_counts(newest)}; "
+                      + f"the newest: {newest[-1].get('failure')}); fix the cause, then resume the run in the same directory")
+
+
+def rejection_detail(outcome: dict[str, object]) -> str | None:
+    """Return the rejection reason of `outcome` when it is a string. A value read back from run.json can be any type."""
+    detail = outcome.get("rejection")
+    return detail if isinstance(detail, str) else None
+
+
+def timed_out(item: Mapping[str, object]) -> bool:
+    """Return whether `item` is a contract rejection by a final sandbox timeout.
+
+    A resume scores such a holdout or replay case again. A search outcome of this kind stays final for the run.
+    """
+    return item.get("status") == "candidate-contract-rejected" and item.get("rejection_kind") == "timeout"
+
+
+def holdout_unscored(item: Mapping[str, object]) -> bool:
+    """Return whether a holdout outcome has no gate score: a failed evaluation or a final check timeout."""
+    return is_failed(item) or timed_out(item)
+
+
+Outcome = TypeVar("Outcome", bound=Mapping[str, object])
+
+
+def scored_holdout(outcomes: Iterable[Outcome], arms: Collection[str]) -> Iterator[Outcome]:
+    """Yield the holdout outcomes of `arms` in order.
+
+    An `evaluation-failed` outcome and a final check timeout are unscored and drop out.
+    """
+    for item in outcomes:
+        if item.get("split") == "holdout" and item.get("arm") in arms and not holdout_unscored(item):
+            yield item
+
+
+def holdout_scores(outcomes: Sequence[Mapping[str, object]], arm: str) -> dict[str, dict[int, float]]:
+    """Return the scored holdout scores of `arm` by case and repeat. The newest outcome of a case and repeat wins."""
+    found: dict[str, dict[int, float]] = {}
+    for item in scored_holdout(outcomes, (arm,)):
+        found.setdefault(str(item.get("case_id")), {})[cast(int, item.get("repeat"))] = unit_score(item["score"])
+    return found
+
+
+def by_repeat_order(scores: Mapping[str, Mapping[int, float]]) -> dict[str, list[float]]:
+    """Return the scores of each case as a list in repeat order."""
+    return {case_id: [by_repeat[repeat] for repeat in sorted(by_repeat)] for case_id, by_repeat in scores.items()}
+
+
+def case_ids(feedback: Mapping[str, Sequence[Mapping[str, object]]]) -> list[str]:
+    """Return the train case ids in the feedback that the proposer saw, first seen first."""
+    names = (record.get("case_id") for records in feedback.values() for record in records)
+    return list(dict.fromkeys(name for name in names if isinstance(name, str)))
+
+
+def is_unscored(record: Mapping[str, object]) -> bool:
+    """Return whether a feedback record of GEPA, or a value nested in it, marks an unscored evaluation."""
+    return record.get("unscored") is True or any(isinstance(value, Mapping) and cast(Mapping[str, object], value).get("unscored") is True
+                                                 for value in record.values())
+
+
+def feedback_for(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
+    """Return the GEPA score and feedback of one search outcome."""
+    if is_failed(result):
+        # GEPA needs a number. The session ignores this 0.0 in every decision and drops the record from reflection feedback.
+        return 0.0, {"unscored": True, "request": case.request}
+    score = unit_score(result["score"])
+    feedback: dict[str, object] = {"task_correct": score, "request": case.request, "case_id": case.identifier}
+    if "scores" in result:
+        feedback["grader_scores"] = result["scores"]
+    return score, feedback

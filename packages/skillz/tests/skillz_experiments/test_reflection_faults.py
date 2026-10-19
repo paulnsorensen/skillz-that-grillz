@@ -10,7 +10,7 @@ import pytest
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read
 from skillz_experiments.run import run
-from skillz_experiments.run import _session
+from skillz_experiments.run import _outcomes
 from test_run_search import MODEL, _start  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
@@ -48,7 +48,7 @@ def test_a_failed_reflection_is_no_attempt_and_does_not_count_as_a_proposal(
 def test_reflection_calls_that_keep_failing_stop_the_search_with_search_faulted(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_session, "FAULT_STREAK", 2)
+    monkeypatch.setattr(_outcomes, "FAULT_STREAK", 2)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda _number: RuntimeError(API_REJECTED)
     with pytest.raises(CodedError) as caught:

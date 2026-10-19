@@ -8,7 +8,8 @@ from typing import cast
 
 from skillz_experiments._cases import Case, mapping
 from skillz_experiments.gate import holdout_deltas
-from skillz_experiments.run._session import by_repeat_order, holdout_scores, record_outcomes
+from skillz_experiments.run._outcomes import by_repeat_order, holdout_scores
+from skillz_experiments.run._record_fields import record_outcomes
 
 ARMS = ("baseline", "winner")
 

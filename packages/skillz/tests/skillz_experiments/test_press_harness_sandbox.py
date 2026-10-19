@@ -14,7 +14,7 @@ from typing import cast, final
 import pytest
 
 from skillz_experiments import _cli
-from skillz_experiments.run import _run, _session
+from skillz_experiments.run import _run, _state
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
 from skillz_experiments.harness import Configuration, _doctor
@@ -205,10 +205,10 @@ class _Provider(FakeProvider):
         raise RuntimeError('stop here')
 
 
-def _factory(provider: _Provider) -> _session.Factory:
+def _factory(provider: _Provider) -> _state.Factory:
     def make(_model: str, _budget: object, _checkpoint: object) -> _Provider:
         return provider
-    return cast(_session.Factory, make)
+    return cast(_state.Factory, make)
 
 
 def _prepared_run(tmp_path: Path, target: Path, write_draft: Callable[..., list[str]]) -> Path:

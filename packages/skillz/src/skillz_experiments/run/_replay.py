@@ -138,3 +138,8 @@ def drift(deltas: Sequence[float], tolerance: float) -> tuple[float, float, bool
     mean = math.fsum(deltas) / len(deltas)
     se = statistics.stdev(deltas) / math.sqrt(len(deltas)) if len(deltas) > 1 else 0.0
     return mean, se, mean + DRIFT_SE * se < -tolerance
+
+
+def is_inside(path: Path, root: Path) -> bool:
+    """Return whether `path` resolves, through any symlink, to `root` or below it."""
+    return path.resolve().is_relative_to(root.resolve())

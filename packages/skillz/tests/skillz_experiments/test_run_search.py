@@ -23,7 +23,7 @@ from skillz_experiments._records import read
 from skillz_experiments._records import write
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments.search import overshoot
-from skillz_experiments.run import _session
+from skillz_experiments.run import _outcomes, _session, _stall
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
@@ -560,7 +560,7 @@ def test_a_resumed_identical_proposal_keeps_the_gain_of_the_candidate_that_the_i
     state.fixed_number = 1
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     record = read(out / "run.json")
-    observations = _session.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)))
+    observations = _stall.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)))
     # The first window ends at the interrupt. The second window holds the same proposal, which now completes its validation.
     assert len(observations) >= 2 and observations[1] is not None and observations[1] > 0
 
@@ -1392,8 +1392,8 @@ def test_proposals_whose_evaluations_all_fail_never_stop_the_search(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     # The fault rule of gh-316 would stop this run first. Lift it, so that the test isolates the stall rule.
-    monkeypatch.setattr(_session, "FAULT_MIN_FINISHED", 10**9)
-    monkeypatch.setattr(_session, "FAULT_STREAK", 10**9)
+    monkeypatch.setattr(_outcomes, "FAULT_MIN_FINISHED", 10**9)
+    monkeypatch.setattr(_outcomes, "FAULT_STREAK", 10**9)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     seed_calls = _seed_pass(out)
     # The headroom pass scores the seed on the validation cases only. Its train cases fail, so the feedback stays unscored.
@@ -1477,7 +1477,7 @@ def test_each_proposal_observes_the_rise_of_its_own_candidate_over_every_earlier
                 _reflection("c"), _failed_train("c"), _validated("c", "v1", 1.0), _validated("c", "v2", 1.0),
                 _reflection(),
                 _reflection("d"), _validated("d", "v1", 1.0)]
-    assert _session.stall_observations(outcomes, {"v1", "v2"}) == [pytest.approx(0.25), 0.0, 0.0, 0.0, None, 0.0, 0.0]
+    assert _stall.stall_observations(outcomes, {"v1", "v2"}) == [pytest.approx(0.25), 0.0, 0.0, 0.0, None, 0.0, 0.0]
 
 
 def test_a_proposal_that_repeats_text_the_seed_already_holds_is_not_rejected(

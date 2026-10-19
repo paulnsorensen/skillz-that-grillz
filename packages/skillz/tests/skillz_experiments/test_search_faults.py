@@ -10,7 +10,7 @@ import pytest
 from skillz_experiments._budget import CallTimeout
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read
-from skillz_experiments.run import _session
+from skillz_experiments.run import _stall
 from skillz_experiments.run import run
 from skillz_experiments.run._export import export, summary
 from skillz_experiments.search import _engine
@@ -49,16 +49,16 @@ def _rows(out: Path) -> list[dict[str, object]]:
 
 @pytest.mark.ac("gh-316:AC-1")
 def test_a_failed_validation_outcome_adds_no_score_to_the_means() -> None:
-    scores = _session._add_validation_scores(  # pyright: ignore[reportPrivateUsage]
+    scores = _stall.add_validation_scores(
         {}, [_ok("a", "v1", 1.0), _failed("a", "v2"), _failed("b", "v1"), _failed("b", "v2")])
     assert scores == {"a": {"v1": 1.0}}
-    assert _session._complete_means(scores, {"v1", "v2"}) == {}  # pyright: ignore[reportPrivateUsage]
+    assert _stall.complete_means(scores, {"v1", "v2"}) == {}
 
 
 @pytest.mark.ac("gh-316:AC-1")
 def test_a_failed_evaluation_makes_the_stall_observation_unknown_not_zero() -> None:
     outcomes = [_ok("seed", "v1", 0.5), {"arm": "search", "split": "reflection", "proposed": "c"}, _failed("c", "v1")]
-    assert _session.stall_observations(outcomes, {"v1"}) == [None]
+    assert _stall.stall_observations(outcomes, {"v1"}) == [None]
 
 
 @pytest.mark.ac("gh-316:AC-1")

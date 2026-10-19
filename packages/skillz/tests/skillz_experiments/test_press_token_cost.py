@@ -23,10 +23,8 @@ from skillz_experiments.evaluation._evaluator import task_tokens
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, run
-from skillz_experiments.run._session import (
-    _mean_tokens as mean_tokens,  # pyright: ignore[reportPrivateUsage]
-    Session,
-)
+from skillz_experiments.run._session import Session
+from skillz_experiments.run._stall import mean_tokens
 from typing_extensions import override
 from fake_provider import FakeProvider
 

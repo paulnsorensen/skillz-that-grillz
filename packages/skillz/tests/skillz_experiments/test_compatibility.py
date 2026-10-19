@@ -16,7 +16,7 @@ from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._records import read
 from skillz_experiments.harness._harness import Configuration
 from skillz_experiments.run import compare, export
-from skillz_experiments.run._session import SCORING_FILES, leakage_digest, scoring_digest
+from skillz_experiments.run._open import SCORING_FILES, leakage_digest, scoring_digest
 
 if TYPE_CHECKING:
     from .conftest import JudgedRun
