@@ -8,7 +8,7 @@ authors = [{ name = "Paul Sorensen", email = "paulnsorensen@gmail.com" }]
 # skills/skillz/wedge.toml bundles these packages as .pyz assets. Nothing publishes this distribution.
 classifiers = ["Private :: Do Not Upload"]
 # skillz_experiments imports wedge. The skillz-that-grillz distribution in packages/wedge holds wedge.
-dependencies = ["fromargs>=0.2.0,<0.3", "skillz-that-grillz"]
+dependencies = ["fromargs>=0.2.0,<0.3", "skillz-that-grillz", "tenacity>=9.2.1,<10"]
 
 [project.optional-dependencies]
 experiments = ["gepa==0.1.4"]
