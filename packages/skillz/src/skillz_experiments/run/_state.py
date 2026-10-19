@@ -33,7 +33,10 @@ Factory = Callable[[str, Budget, Callable[[], None]], Provider]
 
 
 class RunState(Protocol):
-    """What a phase module reads and writes of its session. A phase runs under the session lock and takes none of its own."""
+    """What a phase module reads and writes of its session.
+
+    A phase takes `lock` itself, only around reads and writes of `record` and `outcomes`, and makes model calls outside it.
+    """
 
     out: Path
     lock: threading.RLock
