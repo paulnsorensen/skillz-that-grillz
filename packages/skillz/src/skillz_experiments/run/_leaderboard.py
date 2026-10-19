@@ -15,7 +15,7 @@ from skillz_experiments.run._state import RunState
 
 @final
 class Leaderboard:
-    """Rank the search candidates by validation mean. It reads the session and uses the caller's Session lock."""
+    """Rank the search candidates by validation mean. `keep_if_best` takes the session lock. The read methods take no lock."""
 
     def __init__(self, state: RunState) -> None:
         self._state = state

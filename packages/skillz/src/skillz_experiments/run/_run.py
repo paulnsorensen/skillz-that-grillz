@@ -47,7 +47,7 @@ from skillz_experiments.harness import (
     refuses_claude_options,
     stop_kind,
 )
-from skillz_experiments.run._export import summary
+from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._history_store import load as load_history
 from skillz_experiments.run._history_store import store_path
@@ -67,7 +67,6 @@ from skillz_experiments.run._resume import (
 )
 from skillz_experiments.run._open import engine_hash
 from skillz_experiments.run._record_fields import text_field
-from skillz_experiments.run._replay import is_inside
 from skillz_experiments.run._session import Session
 from skillz_experiments.run._state import Factory, HarnessName
 from skillz_experiments.run._stop import Stop

@@ -45,7 +45,11 @@ def recorded_rejections(record: dict[str, object]) -> dict[str, set[str]]:
 
 @final
 class SearchPhase:
-    """The state of one search and the callbacks of the GEPA engine. Its methods run under the lock of the session."""
+    """The state of one search and the callbacks of the GEPA engine.
+
+    The callbacks take the session lock only around record reads and writes, and make model calls outside it.
+    The read helpers take no lock.
+    """
 
     def __init__(self, state: RunState, *, edit: Edit, search_cases: Mapping[str, Case],
                  built: Callable[[Candidate], Candidate]) -> None:
