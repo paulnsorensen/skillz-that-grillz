@@ -1,4 +1,6 @@
 """The replay phase: check that the exported patch reproduces the winner, then score the patched copy on the holdout.
+
+The copy, patch, and compare primitives are in `_replay`.
 """
 from __future__ import annotations
 

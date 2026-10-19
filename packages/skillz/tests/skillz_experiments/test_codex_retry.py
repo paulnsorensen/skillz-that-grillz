@@ -19,7 +19,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._records import read
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._codex import Codex, failure_details, retry_after
-from skillz_experiments.run import _outcomes, _stall, run
+from skillz_experiments.run import _outcomes, run
 from skillz_experiments.run._export import summary
 from test_run_search import MODEL, _start  # pyright: ignore[reportPrivateUsage]
 
@@ -347,7 +347,7 @@ def test_a_usage_limited_fault_is_unscored(tmp_path: Path, make_target: Callable
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     rows = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("status") == "evaluation-failed"]
     assert len(rows) == 1 and rows[0]["reason"] == "usage-limited"
-    assert _stall.add_validation_scores({}, rows) == {}
+    assert _outcomes.add_validation_scores({}, rows) == {}
     search = cast(dict[str, object], result["search"])
     assert search["failed"] == 1 and search["failed_by_reason"] == {"usage-limited": 1}
 

@@ -23,8 +23,10 @@ from skillz_experiments.evaluation._evaluator import task_tokens
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, run
+from skillz_experiments.run._holdout import holdout_tokens
+from skillz_experiments.run._leaderboard import Leaderboard
+from skillz_experiments.run._outcomes import mean_tokens
 from skillz_experiments.run._session import Session
-from skillz_experiments.run._stall import mean_tokens
 from typing_extensions import override
 from fake_provider import FakeProvider
 
@@ -439,31 +441,31 @@ def test_holdout_tokens_average_repeats_and_ignore_other_arms_and_splits() -> No
                 _holdout("winner", "h1", 0, 10), _holdout("winner", "h1", 1, 30),
                 _holdout("search", "h1", 0, 999999), _holdout("baseline", "h1", 0, 888888, split="train")]
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
-    assert session._holdout_tokens() == {"h1": (150.0, 20.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (150.0, 20.0)}
 
 
 def test_holdout_tokens_with_one_unknown_repeat_make_that_arm_unknown() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100), _holdout("baseline", "h1", 1, None),
                 _holdout("winner", "h1", 0, 10), _holdout("winner", "h1", 1, 30)]
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
-    assert session._holdout_tokens() == {"h1": (None, 20.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (None, 20.0)}
 
 
 def test_holdout_tokens_with_a_missing_arm_are_unknown_for_that_arm() -> None:
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), [_holdout("baseline", "h1", 0, 100)])
-    assert session._holdout_tokens() == {"h1": (100.0, None)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (100.0, None)}
 
 
 def test_holdout_tokens_fall_back_to_usage_when_task_usage_is_absent() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100, 5, task=False), _holdout("winner", "h1", 0, 10, 5, task=False)]
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
-    assert session._holdout_tokens() == {"h1": (105.0, 15.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (105.0, 15.0)}
 
 
 def test_holdout_tokens_charge_only_the_uncached_input() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100, 5, cached=40), _holdout("winner", "h1", 0, 100, 5, cached=90)]
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
-    assert session._holdout_tokens() == {"h1": (65.0, 15.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (65.0, 15.0)}
 
 
 def _validation(identity: str, score: float, tokens: list[object]) -> list[dict[str, object]]:
@@ -478,7 +480,7 @@ def _keep(statistics: Statistics, *rounds: tuple[str, float, list[object]]) -> o
     for identity, score, tokens in rounds:
         session.outcomes.extend(_validation(identity, score, tokens))
         candidate = cast(Candidate, cast(object, SimpleNamespace(identity=identity, files={"a": identity})))
-        session._keep_if_best(candidate, case)  # pyright: ignore[reportPrivateUsage] -- unit test of the private keeper
+        Leaderboard(session).keep_if_best(candidate, case)
     kept = session.record.get("best_validated")
     return cast(dict[str, object], kept)["identity"] if isinstance(kept, dict) else None
 

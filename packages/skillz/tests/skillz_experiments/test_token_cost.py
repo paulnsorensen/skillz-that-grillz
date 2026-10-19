@@ -21,6 +21,8 @@ from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, ve
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
+from skillz_experiments.run._holdout import holdout_tokens
+from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._resume import resolve_statistics
 from skillz_experiments.run._session import Session
 from skillz_experiments.search import Progress
@@ -102,7 +104,7 @@ def test_the_change_averages_repeats_per_case_not_per_outcome() -> None:
                 _holdout("winner", "c0", 0, 100), _holdout("winner", "c0", 1, 100),
                 _holdout("baseline", "c1", 0, 50), _holdout("baseline", "c1", 1, 150),
                 _holdout("winner", "c1", 0, 100), _holdout("winner", "c1", 1, 100)]
-    tokens = _session(CAP, outcomes)._holdout_tokens()  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    tokens = holdout_tokens(_session(CAP, outcomes).outcomes)
     assert tokens == {"c0": (100.0, 100.0), "c1": (100.0, 100.0)}
     assert verdict(_deltas(1.0, 1.0), thresholds=CAP, tokens=tokens).token_delta == 0.0
 
@@ -299,9 +301,9 @@ def _holdout(arm: str, case_id: str, repeat: int, low: int) -> dict[str, object]
 def _kept_after(statistics: Statistics, first: int | None, second: int | None) -> object:
     outcomes = _outcomes("one", 0.5, first) + _outcomes("two", 0.5, second)
     session = _session(statistics, outcomes[:2])
-    session._keep_if_best(_candidate("one"), validation_case)  # pyright: ignore[reportPrivateUsage] -- unit test of the private keeper
+    Leaderboard(session).keep_if_best(_candidate("one"), validation_case)
     session.outcomes.extend(outcomes[2:])
-    session._keep_if_best(_candidate("two"), validation_case)  # pyright: ignore[reportPrivateUsage] -- unit test of the private keeper
+    Leaderboard(session).keep_if_best(_candidate("two"), validation_case)
     return cast(dict[str, object], session.record["best_validated"])["identity"]
 
 
@@ -322,9 +324,9 @@ def test_keep_if_best_keeps_the_first_candidate_for_equal_costlier_or_unknown_to
 def test_a_better_mean_still_beats_a_cheaper_tie() -> None:
     outcomes = _outcomes("one", 0.5, 10) + _outcomes("two", 0.6, 9000)
     session = _session(SAVE, outcomes[:2])
-    session._keep_if_best(_candidate("one"), validation_case)  # pyright: ignore[reportPrivateUsage] -- unit test of the private keeper
+    Leaderboard(session).keep_if_best(_candidate("one"), validation_case)
     session.outcomes.extend(outcomes[2:])
-    session._keep_if_best(_candidate("two"), validation_case)  # pyright: ignore[reportPrivateUsage] -- unit test of the private keeper
+    Leaderboard(session).keep_if_best(_candidate("two"), validation_case)
     assert cast(dict[str, object], session.record["best_validated"])["identity"] == "two"
 
 

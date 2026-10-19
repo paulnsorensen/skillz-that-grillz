@@ -17,9 +17,8 @@ from skillz_experiments.run._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, Harness, stop_kind
 from skillz_experiments.run._fault import FaultLatch
-from skillz_experiments.run._gate import run_gate
 from skillz_experiments.run._headroom import run_headroom
-from skillz_experiments.run._holdout import holdout_tokens
+from skillz_experiments.run._holdout import run_gate
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._open import freeze_compatibility, freeze_identities, open_budget
 from skillz_experiments.run._outcomes import is_failed, search_counts
@@ -190,14 +189,8 @@ class Session:
                  components: list[str]) -> dict[str, str]:
         return self._searching.propose(candidate, feedback, components)
 
-    def _keep_if_best(self, candidate: Candidate, case: Case) -> None:  # pyright: ignore[reportUnusedFunction] -- the unit tests drive it
-        Leaderboard(self).keep_if_best(candidate, case)
-
     def _best_validated(self, validation: list[str]) -> Candidate:
         return Leaderboard(self).best_validated(validation)
-
-    def _holdout_tokens(self) -> dict[str, tuple[float | None, float | None]]:  # pyright: ignore[reportUnusedFunction] -- the unit tests drive it
-        return holdout_tokens(self.outcomes)
 
     def take_budget_stop(self) -> None:
         """Clear a latched budget stop so the gate can run. Re-raise any other latched fault."""

@@ -13,10 +13,9 @@ from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._outcomes import (
     case_ids, fault_reason, faulted_reflection, feedback_for, failed_outcome, is_unscored,
-    reflection_fault, search_fault,
+    reflection_fault, search_fault, stall_observations,
 )
 from skillz_experiments.run._record_fields import field, int_field
-from skillz_experiments.run._stall import stall_observations
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import FOCUS_REASON, HYPOTHESIS, NOTES, Denylist, Edit, Progress, Signal, assess
 from skillz_experiments.search import accept as accept_proposal

@@ -1,4 +1,6 @@
 """The clean copy of a replay: build it, apply the exported patches with `git apply`, and compare it with the winner.
+
+The phase driver is in `_replay_phase`.
 """
 from __future__ import annotations
 

@@ -13,7 +13,7 @@ import pytest
 from skillz_experiments import _runtime
 from skillz_experiments._budget import SECONDS_PER_CALL, Budget, BudgetExhausted, CallTimeout
 from skillz_experiments.gate import DEFAULT_STATISTICS
-from skillz_experiments.run import Stop, _open, _plan, _stall, run
+from skillz_experiments.run import Stop, _open, _outcomes, _plan, run
 from skillz_experiments.run._session import Session
 from test_run_search import MODEL, Search
 
@@ -132,7 +132,7 @@ def test_a_failed_reflection_is_no_stall_observation(status: str) -> None:
     outcomes: list[dict[str, object]] = [
         {"arm": "search", "split": "validation", "case_id": "v1", "score": 0.5, "search_candidate": "seed"},
         {"arm": "search", "split": "reflection", "status": status}]
-    assert _stall.stall_observations(outcomes, {"v1"}) == [None]
+    assert _outcomes.stall_observations(outcomes, {"v1"}) == [None]
 
 
 @pytest.mark.ac("gh-319:AC-3")

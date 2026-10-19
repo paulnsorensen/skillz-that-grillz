@@ -23,7 +23,7 @@ from skillz_experiments._records import read
 from skillz_experiments._records import write
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments.search import overshoot
-from skillz_experiments.run import _outcomes, _session, _stall
+from skillz_experiments.run import _outcomes, _session
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
@@ -560,7 +560,7 @@ def test_a_resumed_identical_proposal_keeps_the_gain_of_the_candidate_that_the_i
     state.fixed_number = 1
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     record = read(out / "run.json")
-    observations = _stall.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)))
+    observations = _outcomes.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)))
     # The first window ends at the interrupt. The second window holds the same proposal, which now completes its validation.
     assert len(observations) >= 2 and observations[1] is not None and observations[1] > 0
 
@@ -1477,7 +1477,7 @@ def test_each_proposal_observes_the_rise_of_its_own_candidate_over_every_earlier
                 _reflection("c"), _failed_train("c"), _validated("c", "v1", 1.0), _validated("c", "v2", 1.0),
                 _reflection(),
                 _reflection("d"), _validated("d", "v1", 1.0)]
-    assert _stall.stall_observations(outcomes, {"v1", "v2"}) == [pytest.approx(0.25), 0.0, 0.0, 0.0, None, 0.0, 0.0]
+    assert _outcomes.stall_observations(outcomes, {"v1", "v2"}) == [pytest.approx(0.25), 0.0, 0.0, 0.0, None, 0.0, 0.0]
 
 
 def test_a_proposal_that_repeats_text_the_seed_already_holds_is_not_rejected(
