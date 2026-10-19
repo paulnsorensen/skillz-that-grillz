@@ -10,7 +10,7 @@ from typing import cast
 import pytest
 
 from skillz_experiments._facts import audit_facts
-from skillz_experiments._wedge_targets import WEDGE_EDIT_LIMIT, _scan, load_sites  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.run._wedge_targets import WEDGE_EDIT_LIMIT, _scan, load_sites  # pyright: ignore[reportPrivateUsage]
 
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = "---\nname: demo\ndescription: Does a demo thing. Use when asked. Do NOT use for other things.\n---\n# demo\n"

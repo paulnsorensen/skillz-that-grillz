@@ -170,3 +170,27 @@ def _is_facade_member(name: str, slice_name: str) -> bool:
     attribute = name.removeprefix(f"{PREFIX}.{slice_name}.")
     return "." not in attribute and not (PACKAGE / slice_name / f"{attribute}.py").exists() \
         and not (PACKAGE / slice_name / attribute).is_dir()
+
+
+def _imported_modules(path: Path) -> list[str]:
+    package = (PREFIX, *path.relative_to(PACKAGE).parts[:-1])
+    found: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            found += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                base = ".".join([*package[:len(package) - node.level + 1], *([node.module] if node.module else [])])
+            found += [f"{base}.{alias.name}" if alias.name.startswith("_") else base for alias in node.names]
+    return found
+
+
+@pytest.mark.ac("gh-389:AC-1")
+def test_harness_modules_take_evaluation_code_only_from_the_evaluation_facade() -> None:
+    evaluation = f"{PREFIX}.evaluation"
+    wrong = [f"{path.relative_to(PACKAGE)} imports {module}"
+             for path in sorted((PACKAGE / "harness").rglob("*.py"))
+             for module in _imported_modules(path)
+             if module.startswith(f"{evaluation}.") or module.startswith(f"{PREFIX}._evaluation")]
+    assert wrong == []

@@ -13,7 +13,7 @@ from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read
 from skillz_experiments._contract import load_contract
-from skillz_experiments._wedge_targets import TargetPlan, plan_targets
+from skillz_experiments.run._wedge_targets import TargetPlan, plan_targets
 from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments.run import Stop, _run, _session, run
 from test_new_cli import Recorder, layered_world

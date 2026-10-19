@@ -29,7 +29,7 @@ from skillz_experiments._cases import Case, CodedError, Split, digest, load_case
 from skillz_experiments._contract import parse
 from skillz_experiments.evaluation import CheckMemo, CheckResult, task_tokens
 from skillz_experiments._records import open_record, read, write
-from skillz_experiments._wedge_targets import Rebuilder, reopen
+from skillz_experiments.run._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics, Verdict, close, holdout_deltas
 from skillz_experiments.gate import verdict as gate_verdict
 from skillz_experiments.harness import (
@@ -80,7 +80,7 @@ FAULT_STREAK = 5
 _FAULT_REASON = re.compile(r"\bfails: ([a-z][a-z-]*)")
 
 # The modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
-SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
+SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "_graders.py", "_audit.py", "_contract.py")
 
 
 def too_easy_message(headroom: Mapping[str, object]) -> str:

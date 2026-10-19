@@ -5,7 +5,7 @@ import threading
 from typing import Protocol, final
 
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._evaluation import CheckResult
+from skillz_experiments.evaluation._scoring import CheckResult
 
 
 class Checker(Protocol):

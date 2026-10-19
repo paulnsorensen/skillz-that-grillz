@@ -32,7 +32,7 @@ from skillz_experiments.harness import Configuration
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
-from skillz_experiments._wedge_targets import WEDGE_EDIT_LIMIT, plan_targets
+from skillz_experiments.run._wedge_targets import WEDGE_EDIT_LIMIT, plan_targets
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override
 from fake_provider import FakeProvider
