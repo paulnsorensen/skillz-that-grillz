@@ -18,7 +18,7 @@ from skillz_experiments._cli import main
 from skillz_experiments._contract import Grader
 from skillz_experiments._graders import judge
 from skillz_experiments._records import read, write
-from skillz_experiments.run import Stop, _export, _patch, _session, export, run, summary
+from skillz_experiments.run import Stop, _export, _patch, _replay_phase, _session, export, run, summary
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run._replay import drift
 from test_run_search import MODEL, Provider, Search
@@ -139,14 +139,14 @@ def _overwrite(copy: Path, text: str) -> None:
 
 def _tamper_copy(monkeypatch: pytest.MonkeyPatch, step: str, change: Callable[[Path], None]) -> None:
     """Run the real replay helper `step`, then change the clean copy, as a stale or corrupt copy would be."""
-    real = cast(Callable[..., object], getattr(_session, step))
+    real = cast(Callable[..., object], getattr(_replay_phase, step))
 
     def wrapped(*args: object, **kwargs: object) -> object:
         found = real(*args, **kwargs)
         change(cast(Path, args[0]) if step == "apply_patches" else cast(Path, found))
         return found
 
-    monkeypatch.setattr(_session, step, wrapped)
+    monkeypatch.setattr(_replay_phase, step, wrapped)
 
 
 @pytest.mark.parametrize("fault", ["patch-apply-failed", "patch-bytes-differ", "replay-identity-differs"])
@@ -442,14 +442,14 @@ def test_the_rerun_candidate_comes_from_the_patched_copy_not_from_the_recorded_w
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
-    real = cast(Callable[..., list[str]], getattr(_session, "differences"))
+    real = cast(Callable[..., list[str]], getattr(_replay_phase, "differences"))
 
     def edited_after_the_check(copy: Path, seed: Candidate, patch: object) -> list[str]:
         _ = real(copy, seed, patch)
         _overwrite(copy, "edited after the byte check\n")
         return []
 
-    monkeypatch.setattr(_session, "differences", edited_after_the_check)
+    monkeypatch.setattr(_replay_phase, "differences", edited_after_the_check)
     state = Search(target)
     after = _resume(target, out, state)
     replay = _replay_of(after)

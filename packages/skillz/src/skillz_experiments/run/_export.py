@@ -16,9 +16,15 @@ from skillz_experiments.run._claims import claims
 from skillz_experiments.run._patch import build_patch
 from skillz_experiments.run._plan import case_calls
 from skillz_experiments.run._replay import STDERR_LIMIT
-from skillz_experiments.run._session import engine_hash, field, is_inside, record_outcomes, text_field
+from skillz_experiments.run._open import engine_hash
+from skillz_experiments.run._record_fields import field, record_outcomes, text_field
 
 _TOKEN_FIELDS = {"input_tokens": "input_tokens", "cached_tokens": "cached_input_tokens", "output_tokens": "output_tokens"}
+
+
+def is_inside(path: Path, root: Path) -> bool:
+    """Return whether `path` resolves, through any symlink, to `root` or below it."""
+    return path.resolve().is_relative_to(root.resolve())
 
 
 def _number(value: object) -> int | float | None:

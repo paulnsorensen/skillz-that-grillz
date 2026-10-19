@@ -21,8 +21,8 @@ from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import _options, _sandbox, _transport
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments.search import Edit
-from skillz_experiments.run import Stop, _session, run
-from skillz_experiments.run._session import Factory
+from skillz_experiments.run import Stop, _headroom, run
+from skillz_experiments.run._state import Factory
 
 FIXTURES = Path(__file__).parent / "fixtures"
 _REAL_NESTED_USERNS_BLOCKED = _sandbox.nested_userns_blocked
@@ -129,7 +129,7 @@ def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def headroom_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lift the headroom stop for a test whose fake provider scores every seed case at 1.0 and does not test the stop."""
-    monkeypatch.setattr(_session, "HEADROOM_CEILING", 1.1)
+    monkeypatch.setattr(_headroom, "HEADROOM_CEILING", 1.1)
 
 
 def _make_target(tmp_path: Path, *, helper: bool = False) -> Path:
