@@ -19,8 +19,8 @@ def normalize(adapter: str, path: Path, env: dict[str, str]) -> list[object]:
             sys.executable,
             "-B",
             "-c",
-            "import json, sys; from agent_session_analytics import _ingest; "
-            + "print(json.dumps(list(getattr(_ingest, sys.argv[1])(sys.argv[2]))))",
+            "import json, sys; from agent_session_analytics import _adapters; "
+            + "print(json.dumps(list(getattr(_adapters, sys.argv[1])(sys.argv[2]))))",
             adapter,
             str(path),
         ],
