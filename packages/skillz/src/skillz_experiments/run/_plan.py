@@ -20,7 +20,7 @@ from skillz_experiments._budget import (
 from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import Case, CodedError, Split
 from skillz_experiments._contract import Contract
-from skillz_experiments._wedge_targets import TargetPlan, mcp_text, never_editable
+from skillz_experiments.run._wedge_targets import TargetPlan, mcp_text, never_editable
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, overshoot

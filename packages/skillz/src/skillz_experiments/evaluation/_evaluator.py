@@ -10,7 +10,7 @@ from skillz_experiments import _audit, _graders
 from skillz_experiments._candidate import Candidate, helper_script
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
 from skillz_experiments._contract import Contract, resolve
-from skillz_experiments._evaluation import executed, grade, usage, witnessed_events
+from skillz_experiments.evaluation._scoring import executed, grade, usage, witnessed_events
 from skillz_experiments._budget import Budget
 from skillz_experiments._protocol import LEDGER_KEY
 from skillz_experiments.evaluation._memo import Checker, CheckMemo

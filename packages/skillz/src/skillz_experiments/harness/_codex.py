@@ -21,7 +21,7 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments.harness._discovery import discover
-from skillz_experiments._evaluation import helper_failure, usage
+from skillz_experiments.evaluation import helper_failure, usage
 from skillz_experiments._redact import redact
 from skillz_experiments.evaluation import CheckMemo, CheckResult, answer_schema, evaluate
 from skillz_experiments._budget import Budget, BudgetExhausted

@@ -13,7 +13,7 @@ from typing import ClassVar, cast, final
 from skillz_experiments._candidate import Candidate, helper_script, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
-from skillz_experiments._evaluation import helper_failure, usage
+from skillz_experiments.evaluation import helper_failure, usage
 from skillz_experiments.evaluation import CheckResult, answer_schema
 from skillz_experiments._protocol import LEDGER_KEY, RESPONSE_FIELDS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._budget import Budget

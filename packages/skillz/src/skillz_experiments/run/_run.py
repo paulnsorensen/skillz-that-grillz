@@ -35,7 +35,7 @@ from skillz_experiments._intake import (
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_inferred, seed_projection, seed_summary
-from skillz_experiments._wedge_targets import TargetPlan, plan_targets, seal, settle
+from skillz_experiments.run._wedge_targets import TargetPlan, plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
     ClaudeOptions,

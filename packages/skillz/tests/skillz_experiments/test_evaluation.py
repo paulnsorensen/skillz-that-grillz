@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._evaluation import fixture_failure, grade, usage
+from skillz_experiments.evaluation._scoring import fixture_failure, grade, usage
 
 
 def test_evaluator_rejects_parroting_and_missing_activation() -> None:
@@ -23,7 +23,7 @@ def test_usage_keeps_unknown_and_does_not_double_count_cache() -> None:
     assert usage(events) == {"input_tokens": 12, "cached_input_tokens": 5, "output_tokens": 3}
 
 def test_command_trace_rejects_spoofed_helper_names() -> None:
-    from skillz_experiments._evaluation import executed
+    from skillz_experiments.evaluation._scoring import executed
 
     def events(command: str) -> list[dict[str, object]]:
         return [{"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0, "command": command}}]

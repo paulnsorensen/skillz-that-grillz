@@ -31,7 +31,7 @@ from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
-from skillz_experiments._wedge_targets import Rebuilder, plan_targets
+from skillz_experiments.run._wedge_targets import Rebuilder, plan_targets
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override
 from fake_provider import FakeProvider
@@ -234,7 +234,7 @@ def count_builds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         calls.append(target.name)
         return real(layer, tree, target, out_dir)
 
-    monkeypatch.setattr("skillz_experiments._wedge_targets.build_from_layer", counted)
+    monkeypatch.setattr("skillz_experiments.run._wedge_targets.build_from_layer", counted)
     return calls
 
 
@@ -596,7 +596,7 @@ def test_a_failed_build_is_cached_and_raised_again_without_a_second_build(
             raise subprocess.CalledProcessError(1, ["shiv"], stderr="boom é".encode())
         return real(layer, tree, target, out_dir)
 
-    monkeypatch.setattr("skillz_experiments._wedge_targets.build_from_layer", flaky)
+    monkeypatch.setattr("skillz_experiments.run._wedge_targets.build_from_layer", flaky)
     recorder = Recorder()
     session = open_session(out, recorder)
     try:
@@ -623,7 +623,7 @@ def test_a_non_subprocess_build_error_is_also_build_failed(
     def broken(*_args: object, **_kwargs: object) -> Path:
         raise OSError("disk full")
 
-    monkeypatch.setattr("skillz_experiments._wedge_targets.build_from_layer", broken)
+    monkeypatch.setattr("skillz_experiments.run._wedge_targets.build_from_layer", broken)
     recorder = Recorder()
     result, feedback = evaluate(out, recorder, lambda c: c.update({BETA: BETA_SOURCE + "#\n"}))
     assert result == 0.0 and feedback["reason"] == "build-failed" and "disk full" in str(feedback["rejected"])
@@ -639,7 +639,7 @@ def test_a_build_failure_message_is_bounded(
     def broken(*_args: object, **_kwargs: object) -> Path:
         raise subprocess.CalledProcessError(1, ["shiv"], stderr="x" * 1_000_000)
 
-    monkeypatch.setattr("skillz_experiments._wedge_targets.build_from_layer", broken)
+    monkeypatch.setattr("skillz_experiments.run._wedge_targets.build_from_layer", broken)
     _, feedback = evaluate(Path(out), Recorder(), lambda c: c.update({BETA: BETA_SOURCE + "#\n"}))
     assert len(str(feedback["rejected"])) < 2_000
 

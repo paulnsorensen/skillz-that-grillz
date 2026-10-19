@@ -10,7 +10,7 @@ from typing import cast
 
 from skillz_experiments._candidate import snapshot_outputs
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
-from skillz_experiments._evaluation import usage
+from skillz_experiments.evaluation import usage
 from skillz_experiments.harness._claude._constants import AUTH_FAILED, PROBE_PREFIX
 from skillz_experiments.harness._claude._frontmatter import read_frontmatter
 from skillz_experiments.harness._claude._sandbox import sandbox_fix, SandboxUnavailable

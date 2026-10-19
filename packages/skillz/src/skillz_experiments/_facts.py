@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from skillz_experiments._cases import CodedError, repo_root
-from skillz_experiments._wedge_targets import audit_targets
+from skillz_experiments.run import audit_targets
 
 SCHEMA_VERSION = 1
 MAX_BYTES = 262144

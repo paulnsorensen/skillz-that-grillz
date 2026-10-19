@@ -170,3 +170,14 @@ def _is_facade_member(name: str, slice_name: str) -> bool:
     attribute = name.removeprefix(f"{PREFIX}.{slice_name}.")
     return "." not in attribute and not (PACKAGE / slice_name / f"{attribute}.py").exists() \
         and not (PACKAGE / slice_name / attribute).is_dir()
+
+
+@pytest.mark.ac("gh-389:AC-1")
+def test_harness_modules_take_evaluation_code_only_from_the_evaluation_facade() -> None:
+    wrong: list[str] = []
+    for path in sorted((PACKAGE / "harness").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.ImportFrom) and {alias.name for alias in node.names} & {"helper_failure", "usage"}:
+                if node.module != f"{PREFIX}.evaluation":
+                    wrong.append(f"{path.relative_to(PACKAGE)} imports from {node.module}")
+    assert wrong == []

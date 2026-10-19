@@ -131,7 +131,7 @@ def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_pa
 
 def test_partial_claude_usage_stays_unknown() -> None:
     from skillz_experiments.harness._claude._events import token_events
-    from skillz_experiments._evaluation import usage
+    from skillz_experiments.evaluation import usage
 
     assert usage(token_events({"usage": {"input_tokens": 2}})) == {
         "input_tokens": 2, "cached_input_tokens": 0, "output_tokens": None}
