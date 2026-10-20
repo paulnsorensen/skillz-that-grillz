@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
@@ -185,7 +187,74 @@ JOURNEY_EXPECTED_FIELDS = {
     "questions": "the only questions that the agent may ask; an empty list means the agent asks nothing; "
                  + "when absent, any question is allowed",
     "final_stop": "the stop or state in which the conversation must end",
+    "criteria": "the approved EARS statements that the judge grades, one level per criterion id",
 }
+CRITERIA_DRAFTING = "skills/skillz/references/criteria-drafting.md"
+CRITERION_FIELDS = {"id", "text", "must", "from"}
+CRITERION_ID = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_EARS = re.compile(r"(?:(?P<trigger>WHEN|WHILE|IF|WHERE)\s+\S.*?\s+)?THE\s+\S.*?\s+SHALL\s+\S.*", re.S)
+_EARS_WORDS = re.compile(r"\b(?:WHEN|WHILE|IF|WHERE|THE|SHALL)\b")
+_QUOTED = re.compile(r"`[^`]*`|\"[^\"]*\"")
+
+
+@dataclass(frozen=True)
+class Criterion:
+    """One approved EARS statement of a judged case. `source` is the JSON key `from`: the source item it converts."""
+
+    id: str
+    text: str
+    must: bool = False
+    source: str | None = None
+
+
+def _ears(text: str) -> bool:
+    """Return True for one EARS statement: at most one leading WHEN, WHILE, IF, or WHERE clause, then one THE ... SHALL ....
+
+    A keyword inside backticks or double quotes is plain text, so a response may name `WHERE` or "THE END".
+    """
+    plain = _QUOTED.sub('""', text).strip()
+    match = _EARS.fullmatch(plain)
+    return match is not None and _EARS_WORDS.findall(plain) == ([match["trigger"]] if match["trigger"] else []) + ["THE", "SHALL"]
+
+
+def _one_line(value: str) -> bool:
+    """Return True when `value` holds no control character, so it cannot add a line to a prompt or the approval question."""
+    return not any(unicodedata.category(character) == "Cc" for character in value)
+
+
+def case_criteria(value: object, case_id: object) -> tuple[Criterion, ...]:
+    """Return the `expected.criteria` of a judged case. Raise `case-criteria-missing` or `case-criteria-invalid`."""
+    raw = cast(dict[object, object], value).get("criteria") if isinstance(value, dict) else None
+    if raw is None or raw == []:
+        raise CodedError("case-criteria-missing", f"judged case {case_id!r} has no expected.criteria; draft them with "
+                         + f"the criteria drafting procedure in {CRITERIA_DRAFTING}")
+    code = "case-criteria-invalid"
+    if not isinstance(raw, list):
+        raise CodedError(code, f"judged case {case_id!r}: expected.criteria must be a list of criteria")
+    found: list[Criterion] = []
+    for position, entry in enumerate(cast(list[object], raw)):
+        item = cast(dict[object, object], entry) if isinstance(entry, dict) else {}
+        name = item.get("id")
+        where = f"judged case {case_id!r} criterion {name if isinstance(name, str) else '#' + str(position)}"
+        if not item or set(item) - CRITERION_FIELDS or not {"id", "text"} <= set(item):
+            raise CodedError(code, f"{where}: a criterion is an object with id and text, and optional must and from")
+        if not isinstance(name, str) or not CRITERION_ID.fullmatch(name):
+            raise CodedError(code, f"{where}: id must be 1 to 64 letters, digits, dots, dashes, or underscores")
+        if any(criterion.id == name for criterion in found):
+            raise CodedError(code, f"{where}: the id repeats")
+        text = item["text"]
+        if not isinstance(text, str) or not _one_line(text) or not _ears(text):
+            raise CodedError(code, f"{where}: text must be one EARS statement on one line: at most one leading WHEN, WHILE, "
+                             + "IF, or WHERE clause, then one THE <subject> SHALL <response>; quote a keyword inside the "
+                             + "response with backticks")
+        must = item.get("must", False)
+        source = item.get("from")
+        if type(must) is not bool:
+            raise CodedError(code, f"{where}: must must be true or false")
+        if source is not None and (not isinstance(source, str) or not source.strip() or not _one_line(source)):
+            raise CodedError(code, f"{where}: from must be one line of text that names a source item")
+        found.append(Criterion(name, text, must, source))
+    return tuple(found)
 
 
 def _entries(value: object, label: str, code: str, case_id: object) -> tuple[str, ...]:
@@ -221,6 +290,8 @@ def journey_expected(value: object, case_id: object) -> None:
         raise CodedError(code, f"{where}: expected needs a nonempty must or must_not; {advice}")
     if "final_stop" in expected and (not isinstance(expected["final_stop"], str) or not expected["final_stop"].strip()):
         raise CodedError(code, f"{where}: expected.final_stop must be nonempty text; {advice}")
+    if "criteria" in expected:  # a seed or an older frozen run may leave them out; intake requires them on a judged case
+        _ = case_criteria(expected, case_id)
 
 
 def journey_of(item: dict[str, object], journey: bool) -> Journey | None:

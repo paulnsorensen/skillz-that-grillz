@@ -19,7 +19,7 @@
         "description": "What the simulated user wants and knows."
       },
       "expected": {
-        "description": "The reference. A journey case takes the typed object; a task case takes any JSON."
+        "description": "The reference. A journey case takes the typed object. A judged task case takes an object with criteria, next to its expected_output and assertions."
       },
       "family": {
         "type": "string",

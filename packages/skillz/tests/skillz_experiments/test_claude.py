@@ -116,7 +116,7 @@ def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_pa
     try:
         judge = session.transports["judge"]
         assert isinstance(judge, Viewer)
-        result = judge.view("score it" + CAPTURE_INSTRUCTION, attachments, schema=judge_schema())
+        result = judge.view("score it" + CAPTURE_INSTRUCTION, attachments, schema=judge_schema(("answer",)))
     finally:
         session.close()
     call = calls(executable)[0]
@@ -126,7 +126,7 @@ def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_pa
     paths = "\n".join(str(workspace / "capture" / name) for name in sorted(attachments))
     assert call["prompt"] == "score it" + CAPTURE_INSTRUCTION + "\nCAPTURE FILES:\n" + paths
     assert "listed at the end of this prompt" in CAPTURE_INSTRUCTION
-    assert result["answer"] == {"score_percent": 80}
+    assert result["answer"] == {"criteria": {"answer": {"level": 3, "reason": "fake judge"}}}
 
 
 def test_partial_claude_usage_stays_unknown() -> None:

@@ -256,11 +256,10 @@ def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contr
                 result.update({"score": 0.0, "status": "capture-failed", "capture_failure": str(error)})
                 return result
             result["capture_files"] = sorted(attachments)
-        score, pillars, judge = _graders.judge(judge_transport, grader, case, answer.get("result_json"), files,
-                                               attachments, holdout=holdout, journey=_judge_data(case, journey))
+        score, verdicts, judge = _graders.judge(judge_transport, grader, case, answer.get("result_json"), files,
+                                                attachments, holdout=holdout, journey=_judge_data(case, journey))
         scores["judge"] = result["score"] = score
-        if pillars is not None:
-            scores["pillars"] = pillars
+        result["criteria"] = {name: {"level": verdict.level, "reason": verdict.reason} for name, verdict in verdicts.items()}
         result["judge_usage"] = judge.get("usage", usage([]))
         result["usage"] = _audit.combined_usage(mapping(result["task_usage"]), mapping(result["judge_usage"]))
         result["judge_latency_seconds"] = judge.get("latency_seconds")

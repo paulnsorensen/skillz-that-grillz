@@ -139,9 +139,15 @@ def task(workspace: Path, skill_name: str, mode: str = "normal") -> tuple[dict[s
     return {"result_json": json.dumps({"text": value}), "load_marker": marker}, trace
 
 
-def judge(prompt: str, fields: list[str]) -> dict[str, int]:
+def verdicts(reference: dict[str, object], level: int) -> dict[str, object]:
+    criteria = cast(list[dict[str, str]], reference["criteria"])
+    return {"criteria": {item["id"]: {"level": level, "reason": "fake judge"} for item in criteria}}
+
+
+def judge(prompt: str, fields: list[str]) -> dict[str, object]:
+    del fields
     payload = untrusted_payload(prompt)
     answer = cast(str, payload["answer"])
-    reference = payload["reference"]
-    score = 100 if json.loads(answer) == reference else 0
-    return {name: score for name in fields}
+    reference = cast(dict[str, object], payload["reference"])
+    expected = {key: value for key, value in reference.items() if key != "criteria"}
+    return verdicts(reference, 4 if json.loads(answer) == expected else 1)

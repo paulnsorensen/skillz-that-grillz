@@ -156,7 +156,9 @@ def _write_draft(out: Path, families: int = 5, per_family: int = 2) -> list[str]
         for index in range(per_family):
             name = f"t{family}-{index}"
             cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"request-{name}-end",
-                          "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"})
+                          "files": {"fixture.md": "hello\n"},
+                          "expected": {"criteria": [{"id": "answer", "text": "THE answer SHALL meet the request."}]},
+                          "source": "skill"})
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
     _ = (out / DRAFT_NAME).write_text(json.dumps(cases), encoding="utf-8")
     return [str(case["id"]) for case in cases]

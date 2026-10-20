@@ -25,6 +25,7 @@ from skillz_experiments._intake import (
     DRAFT_NAME,
     approval_question,
     case_hash,
+    check_criteria,
     check_helper_input,
     freeze,
     intake_contract,
@@ -143,6 +144,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     check_coverage(target, drafted)
     plain = [kind for kind in kinds if kind not in journeys]
     cases = split_cases(drafted, split_seed, plain[0] if plain else None, [kind for kind in kinds if kind in journeys], extra)
+    check_criteria(contract, cases)
     unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})
     if unknown:
         raise CodedError("contract-family-unknown", f"the contract family_budgets names no draft family: {', '.join(unknown)}; "

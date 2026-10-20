@@ -443,7 +443,8 @@ def _target_with_contract(tmp_path: Path, status: str) -> tuple[Path, dict[str, 
 
 def _draft(out: Path) -> None:
     cases = [{"id": f"c{family}-{index}", "family": f"f{family}", "kind": "task", "request": "Rewrite the note.",
-              "files": {"note.txt": "hello\n"}, "expected": {"text": "hello"}, "source": "skill"}
+              "files": {"note.txt": "hello\n"}, "expected": {"text": "hello", "criteria": [{"id": "text", "text": "THE answer SHALL be hello."}]},
+               "source": "skill"}
              for family in range(5) for index in range(2)]
     out.mkdir(mode=0o700, parents=True)
     _ = (out / "cases.draft.json").write_text(json.dumps(cases), encoding="utf-8")

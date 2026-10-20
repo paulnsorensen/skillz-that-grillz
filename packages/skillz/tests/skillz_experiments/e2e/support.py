@@ -20,6 +20,7 @@ from skillz_experiments.harness._claude import _sandbox
 from skillz_experiments.run import summary
 
 
+CRITERIA = [{"id": "text", "text": "THE output SHALL match the reference text."}]
 FIXTURES = Path(__file__).parent / "fixtures"
 ROOT = Path(__file__).resolve().parents[5]
 CLI = ROOT / ".venv/bin/skillz-experiment"
@@ -130,7 +131,7 @@ def make_scenario(base: Path, *, helper: bool = False) -> Scenario:
         source = f"case-{index}\n"
         draft.append({"id": f"t{index}", "family": f"f{index}", "kind": "task",
                       "request": "Transform fixture.md according to this skill.",
-                      "files": {"fixture.md": source}, "expected": {"text": source.upper()},
+                      "files": {"fixture.md": source}, "expected": {"text": source.upper(), "criteria": CRITERIA},
                       "source": "skill"})
     out = base / "run"
     out.mkdir(mode=0o700)

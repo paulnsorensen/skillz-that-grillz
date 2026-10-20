@@ -72,7 +72,7 @@ The file is a JSON list with at least one case. Each case has these fields:
 
 CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. Any other key is an error.
 
-The `expected` object takes only these keys, and it needs a nonempty `must` or `must_not`:
+The `expected` object takes only these keys. It needs a nonempty `must` or `must_not`, and a nonempty `criteria` list:
 
 | Key | Meaning |
 | --- | --- |
@@ -80,6 +80,20 @@ The `expected` object takes only these keys, and it needs a nonempty `must` or `
 | `must_not` | Each item is an observable that the transcript must not show. |
 | `questions` | The only questions that the agent may ask. An empty list means none. When absent, any question is allowed. |
 | `final_stop` | The stop or state in which the conversation must end. |
+| `criteria` | The approved EARS statements that the judge grades. |
+
+### Criteria
+
+Each judged case (grader `judge`, `hybrid`, or `journey`) needs `expected.criteria`. The judge gives each criterion a level from 1 to 4, and code computes the score. Each criterion has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Unique in the case. It matches `[A-Za-z0-9_.-]{1,64}`. |
+| `text` | One EARS statement: at most one leading `WHEN`, `WHILE`, `IF`, or `WHERE` clause, then one `THE <subject> SHALL <response>`. |
+| `must` | Optional. `true` marks a dealbreaker: level 1 or 2 scores the case 0. The default is `false`. |
+| `from` | Optional. The source item, such as `assertion:2`, `must:0`, `questions`, or `final_stop`. |
+
+A judged case without criteria stops with `case-criteria-missing`. A criterion with a bad shape, a duplicate id, or text that is not EARS stops with `case-criteria-invalid`.
 
 ## `autoimprove.json`
 
@@ -106,7 +120,8 @@ A kind object has these fields:
 | `gate` | A gate file under `evals/gates/`. It stands for `argv`. Do not set both. |
 | `rubric` | The judge rubric. The `judge`, `hybrid`, and `journey` graders need it. |
 | `capture` | A command that saves files for the judge to view. |
-| `pillars` | One to eight names of judge scores. The kind score is their mean. |
+
+A kind object has no `pillars` field. A contract that declares it stops with `contract-pillars-removed`. Move each pillar into case criteria.
 
 The `helper` object has these fields:
 
