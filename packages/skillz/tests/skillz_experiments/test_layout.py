@@ -47,6 +47,22 @@ ROOT_MODULES: dict[str, str] = {
     "_seed": ADR_011,
     "_validate": ADR_011,
 }
+# The root modules that a slice may import, with the decision that shares each one. A slice keeps other root code out.
+KERNEL: dict[str, str] = {
+    "_audit": ADR_011,
+    "_budget": ADR_011,
+    "_candidate": ADR_011,
+    "_cases": ADR_011,
+    "_contract": ADR_011,
+    "_graders": ADR_011,
+    "_intake": ADR_011,  # move into run
+    "_new_cli": ADR_011,
+    "_protocol": "harness-module-interface:ADR-002",
+    "_records": ADR_011,
+    "_redact": ADR_011,
+    "_runtime": ADR_011,
+    "_seed": ADR_011,  # move into run
+}
 
 
 def _modules() -> list[Path]:
@@ -241,8 +257,35 @@ def _decision_ids() -> set[str]:
 
 
 def test_each_frozen_set_entry_cites_a_recorded_decision() -> None:
-    cited = {f"ROOT_MODULES[{name!r}]": adr for name, adr in ROOT_MODULES.items()}
+    cited = {f"{label}[{name!r}]": adr for label, frozen in (("ROOT_MODULES", ROOT_MODULES), ("KERNEL", KERNEL))
+             for name, adr in frozen.items()}
     known = _decision_ids()
     unknown = sorted(f"{entry} = {adr!r}" for entry, adr in cited.items() if adr not in known)
     assert unknown == [], (f"{unknown}: cite `<file stem>:ADR-NNN` for a `### ADR-NNN` heading "
                            "in docs/agents/decisions/<file stem>.md, or write that ADR")
+
+
+def _root_imports_from_slices() -> dict[str, set[str]]:
+    """Map each root module that a slice module imports to the importing files, relative to the package."""
+    roots = {path.stem for path in PACKAGE.glob("*.py")}
+    importers: dict[str, set[str]] = {}
+    for path in _modules():
+        if _slice_of(path) is None:
+            continue
+        for module in _imported_modules(path):
+            parts = module.split(".")
+            if parts[0] == PREFIX and len(parts) > 1 and parts[1] in roots:
+                importers.setdefault(parts[1], set()).add(str(path.relative_to(PACKAGE)))
+    return importers
+
+
+def test_slices_import_only_kernel_root_modules() -> None:
+    outside = sorted(f"{file} imports {PREFIX}.{name}" for name, files in _root_imports_from_slices().items()
+                     if name not in KERNEL for file in files)
+    assert outside == [], (f"{outside}: move the root module into the slice that uses it (ADR-011), "
+                           "or add it to KERNEL in test_layout.py with an ADR id")
+
+
+def test_each_kernel_entry_has_a_slice_importer() -> None:
+    unused = sorted(KERNEL.keys() - _root_imports_from_slices().keys())
+    assert unused == [], f"no slice imports {unused}: remove their KERNEL entries in test_layout.py"
