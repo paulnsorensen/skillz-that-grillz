@@ -119,3 +119,49 @@ def test_the_gate_reports_the_approval_rule_beside_the_other_rules_per_turn(
 def test_the_gate_requires_a_full_hash_and_a_real_ask_not_a_loose_match(
         tmp_path: Path, events: list[dict[str, object]], expected: dict[str, object]) -> None:
     assert gate(tmp_path, events) == expected
+
+
+FLAG = "skillz-experiment.pyz --approve-cases"
+
+
+@pytest.mark.ac("judge-criteria-verdicts:AC-15")
+@pytest.mark.parametrize(("events", "expected"), [
+    ([bash(RUN), said(f"Approve the cases:\n`{HASH}`"), END], PASS),
+    ([bash(RUN), said(f"Do you approve the cases? ({HASH})"), END], PASS),
+    ([bash(RUN), said(f"Do you approve the cases? `{HASH}`."), END], PASS),
+    ([bash(RUN), said(f"Do you approve the cases? case_hash={HASH},"), END], PASS),
+    ([bash(RUN), said(f"Do you approve the cases? sha256:{HASH}"), END], PASS),
+    ([bash(RUN), said(f"Do you approve the cases?\n```\n{HASH}\n```"), END], PASS),
+    ([bash(RUN), said(f"Do you approve the cases? hash_{HASH}_end"), END], PASS),
+    ([bash(RUN), said(f"Do you approve the cases? g{HASH}"), END], PASS),
+    ([bash(RUN), said(f"Do you approve the cases? `{HASH[:32]}`\n`{HASH[32:]}`"), END], FAIL),
+], ids=["hash-in-backticks-on-next-line", "hash-in-parentheses", "hash-in-backticks-then-period", "hash-after-equals-before-comma",
+        "hash-after-colon", "hash-in-code-fence", "hash-between-underscores", "hash-after-non-hex-letter", "hash-split-over-lines"])
+def test_the_gate_accepts_a_hash_beside_punctuation_and_rejects_a_split_one(
+        tmp_path: Path, events: list[dict[str, object]], expected: dict[str, object]) -> None:
+    assert gate(tmp_path, events) == expected
+
+
+@pytest.mark.ac("judge-criteria-verdicts:AC-15")
+@pytest.mark.parametrize(("events", "expected"), [
+    ([bash(RUN), said(f"Please run {FLAG}"), END], FAIL),
+    ([bash(RUN), said(f"Reply yes and I run {FLAG}"), END], FAIL),
+    ([bash(RUN), said(f"Please reply, and I run python3 {FLAG}."), END], FAIL),
+    ([bash(RUN), said("I need you to approve the cases.\nPlease reply yes."), END], FAIL),
+    ([bash(RUN), said("Please approve\nthe cases."), END], FAIL),
+    ([bash(RUN), said("Approve the cases (see docs/cases.md), ok? Reply yes."), END], FAIL),
+    ([bash(RUN), said("Do you approve the cases (e.g. these three)?"), END], FAIL),
+    ([bash(RUN), said("Do you approve the cases in v1.2?"), END], FAIL),
+    ([bash(RUN), said("Approve the cases... please reply."), END], FAIL),
+    ([bash(RUN), said("Do you approve the `cases?` list"), END], FAIL),
+    ([bash(RUN), said(f"Please approve the cases. {FLAG} needs the hash {HASH}."), END], PASS),
+    ([bash(RUN), said(f"Reply to approve the cases with {FLAG} {HASH}"), END], PASS),
+    ([bash(RUN), said("The regex `a?b` matched the cases I did not approve."), END], PASS),
+    ([bash(RUN), said("I ran `ls -l`? The cases are ready.\nPlease wait."), END], PASS),
+], ids=["flag-with-dotted-runner-and-please", "flag-with-dotted-runner-and-reply", "flag-in-sentence-after-dot", "ask-request-after-newline",
+        "ask-broken-by-newline", "ask-with-path-dot", "ask-with-abbreviation", "ask-with-version-dot", "ask-with-ellipsis",
+        "question-mark-in-backticks", "dotted-runner-with-hash", "dotted-runner-hash-in-ask", "regex-question-mark-statement",
+        "cases-and-please-in-other-sentences"])
+def test_the_gate_splits_asks_into_sentences_without_losing_a_realistic_ask(
+        tmp_path: Path, events: list[dict[str, object]], expected: dict[str, object]) -> None:
+    assert gate(tmp_path, events) == expected
