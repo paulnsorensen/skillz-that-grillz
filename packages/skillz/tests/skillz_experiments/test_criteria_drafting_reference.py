@@ -22,7 +22,7 @@ STEP_MARKERS = (
     "Read the last run's `criteria_flags`",
     "Mark `must` only for dealbreakers",
 )
-OPTIONAL_MARKERS = ("if ", "optional", "when ")
+OPTIONAL = re.compile(r"\b(?:if|when)\b|(?<!not )\boptional\b")
 OPTIONAL_SKILLS = ("/mold", "/briesearch", "/session-analytics")
 
 
@@ -53,6 +53,13 @@ def test_ac12_step_is_present(marker: str) -> None:
 
 
 @pytest.mark.ac("judge-criteria-verdicts:AC-12")
+def test_ac12_fork_step_offers_a_fork_session() -> None:
+    steps = re.split(r"^\d+\. ", _section(DRAFTING.read_text() + "\n## end\n", "Steps"), flags=re.M)
+    fork = next(step for step in steps if step.startswith("**List the forks"))
+    assert "Offer to explore the forks in a fork session." in fork
+
+
+@pytest.mark.ac("judge-criteria-verdicts:AC-12")
 def test_ac12_reference_links_session_mining_and_shows_ears_example() -> None:
     text = DRAFTING.read_text()
     assert "`Check the files offline` section" in text
@@ -65,6 +72,6 @@ def test_ac13_optional_skills_sit_in_optional_sentences() -> None:
     mentions = [s for s in _sentences(DRAFTING.read_text()) if any(name in s for name in OPTIONAL_SKILLS)]
     assert len(mentions) >= len(OPTIONAL_SKILLS)
     for sentence in mentions:
-        assert any(marker in sentence.lower() for marker in OPTIONAL_MARKERS), sentence
+        assert OPTIONAL.search(sentence.lower()), sentence
     found = {name for name in OPTIONAL_SKILLS if any(name in s for s in mentions)}
     assert found == set(OPTIONAL_SKILLS)

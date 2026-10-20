@@ -288,7 +288,7 @@ Each case has these fields:
   The runner writes fixtures verbatim, so the request must tell the task to rename the file.
   When the contract declares a helper, each `task` case must list the contract helper input in `files`.
 - `expected`: the reference answer as JSON. A `task` case needs it.
-  A case with a judged kind also needs `expected.criteria`. Draft them with the criteria drafting reference that `SKILL.md` lists.
+  A scored case whose kind uses a `judge`, `hybrid`, or `journey` grader also needs `expected.criteria`. Draft them with the criteria drafting reference that `SKILL.md` lists.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
 
 A `trigger` case is a request that should load the skill. A `near-miss` case is a similar request that should not.
@@ -826,7 +826,7 @@ Export is write-only. It writes each non-empty patch (`candidate.patch`, `wedge-
 Its result and `report.json` list the written patch files under `patches`.
 Export writes no empty patch file.
 `report.json` also holds `criteria_flags`, sorted by `criterion`, `reason`, `case_id`, and `arm`. Each entry has `criterion`, `reason`, and `case_id`.
-A `spread` entry also has `arm` and `levels`. It marks a criterion whose level spreads by 2 or more across repeats of one arm and case.
+A `spread` entry also has `arm` and `levels`. It marks a criterion whose level spreads by 2 or more across repeats of one candidate on one arm and case.
 A `partly-met` entry also has `level_2` and `outcomes`. It marks a criterion with level 2 in at least half of the case outcomes, over all arms.
 `report.json` redacts the reasons of the outcome `criteria`.
 Read `criteria_flags` before you draft the next cases. The criteria drafting reference that `SKILL.md` lists says how.
@@ -963,7 +963,7 @@ A `judge` or `hybrid` grader can also declare these fields:
 A judge answer that leaves out a criterion `id` or adds one scores 0 with status `evaluation-failed`.
 A contract that declares `pillars` stops with `contract-pillars-removed`. Move each pillar into case criteria.
 
-The contract hash covers `capture`. The case hash covers the criteria.
+The contract hash covers the whole contract, `capture` included. The case hash covers every case, criteria included.
 
 A case of a `command` kind without `expected` stops with `expected-missing`.
 A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: one for the task and one for the judge.
