@@ -33,6 +33,7 @@ ROOT_MODULES: dict[str, str] = {
     "_contract": ADR_011,
     "_evals_format": ADR_011,
     "_facts": ADR_011,
+    "_frontmatter": ADR_011,
     "_gate_files": ADR_011,
     "_graders": ADR_011,
     "_intake": ADR_011,
@@ -54,6 +55,7 @@ KERNEL: dict[str, str] = {
     "_candidate": ADR_011,
     "_cases": ADR_011,
     "_contract": ADR_011,
+    "_frontmatter": ADR_011,
     "_graders": ADR_011,
     "_intake": ADR_011,  # move into run
     "_new_cli": ADR_011,

@@ -116,6 +116,7 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Decision:** One wave with no behaviour change creates four subpackages, each with an `__init__.py` facade: `run/`, `search/`, `gate/`, and `harness/`. `Budget` moves to a shared `_budget.py`. The other flat modules move into `evaluation/`, `cases/`, or `candidate/` when a later wave first touches them. `search/` and `gate/` never import `run/` or `harness/`.
 - **Alternatives:** All slices in one wave (largest diff for little gain). A flat split into `_x.py` siblings (no crust). No change (every proposer feature grows `_Session`).
 - **Consequences:** The four slices receive 42 of the 52 placed borrow ids. The first wave changes about 41 test import lines. Later waves can run in separate worktrees, but they all wire into `run/_session.py`.
+- **Amendment 2026-10-20 (ADR-011; PR #426):** `_frontmatter.py` is a shared root module. It holds the one standard-library frontmatter reader, `read_frontmatter`. The root `_intake.py` and the `harness/_claude/` slice both call it, so it is in `ROOT_MODULES` and `KERNEL`. `_facts.py` keeps its own parser, because it records the line of each field.
 
 ### ADR-012: Run the proposer line first, with the gate and harness waves beside it  [status: accepted]
 - **Context:** After the structural wave, seven feature waves remain. The #182 false-promotion ratchet guards gate changes only, and the gate, not the proposer, decides promotion.

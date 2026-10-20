@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from skillz_experiments._intake import skill_facts, skill_frontmatter
 from skillz_experiments.harness._claude._events import declares
 from skillz_experiments.harness._claude._settings import _frontmatter_name  # pyright: ignore[reportPrivateUsage]
 
@@ -69,3 +72,29 @@ def test_declares_reads_a_block_scalar_body_as_the_description() -> None:
 def test_declares_keeps_a_stray_quote_inside_an_unquoted_value() -> None:
     assert declares(_skill("name: echo", "description: it's fine"), "echo")
     assert not declares(_skill("name: \"echo'", "description: x"), "echo")
+
+
+def _intake_facts(tmp_path: Path, text: str) -> dict[str, object]:
+    _ = (tmp_path / "SKILL.md").write_text(text, encoding="utf-8")
+    return skill_facts(tmp_path)
+
+
+def test_skill_facts_reads_a_quoted_key_and_a_commented_value(tmp_path: Path) -> None:
+    facts = _intake_facts(tmp_path, _skill('"name": echo', "description: Say it  # short"))
+    assert (facts["name"], facts["description"]) == ("echo", "Say it")
+
+
+def test_skill_facts_reads_a_block_scalar_description(tmp_path: Path) -> None:
+    facts = _intake_facts(tmp_path, _skill("name: echo", "description: >-", "  Say it", "  twice"))
+    assert facts["description"] == "Say it\ntwice"
+
+
+def test_skill_frontmatter_drops_empty_values(tmp_path: Path) -> None:
+    _ = (tmp_path / "SKILL.md").write_text(_skill("name: echo", "hooks:", "  Stop: x"), encoding="utf-8")
+    assert skill_frontmatter(tmp_path) == {"name": "echo"}
+
+
+@pytest.mark.parametrize("text", ["name: echo\n", _skill("name: echo", "not a key")])
+def test_skill_facts_falls_back_to_the_directory_name_without_readable_frontmatter(tmp_path: Path, text: str) -> None:
+    facts = _intake_facts(tmp_path, text)
+    assert (facts["name"], facts["description"]) == (tmp_path.name, "")

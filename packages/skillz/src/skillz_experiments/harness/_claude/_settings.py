@@ -8,8 +8,8 @@ from pathlib import Path, PurePosixPath
 
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._contract import Surface
+from skillz_experiments._frontmatter import read_frontmatter
 from skillz_experiments.harness._claude._constants import CONFIG_PREFIX
-from skillz_experiments.harness._claude._frontmatter import read_frontmatter
 from skillz_experiments.harness._claude._options import unique
 
 
