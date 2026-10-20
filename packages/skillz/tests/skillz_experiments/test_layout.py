@@ -236,8 +236,8 @@ def test_the_package_root_holds_only_the_frozen_root_modules() -> None:
 
 def _decision_ids() -> set[str]:
     """Return `<file stem>:ADR-NNN` for each `### ADR-NNN` heading in `docs/agents/decisions/*.md`."""
-    return {f"{path.stem}:{line[4:11]}" for path in DECISIONS.glob("*.md")
-            for line in path.read_text().splitlines() if re.match(r"### ADR-\d{3}\b", line)}
+    return {f"{path.stem}:{match[1]}" for path in DECISIONS.glob("*.md")
+            for line in path.read_text().splitlines() if (match := re.match(r"### (ADR-\d+)\b", line))}
 
 
 def test_each_frozen_set_entry_cites_a_recorded_decision() -> None:
