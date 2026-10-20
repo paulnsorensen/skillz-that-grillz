@@ -14,7 +14,9 @@ MAX_WORDS = 25
 MAX_BYTES = 262144
 
 FRONTMATTER_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):")
-MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^\s)]+)\)")
+# An inline link: a bare or `<...>` destination, then an optional "title", 'title', or (title).
+MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(\s*(?:<(?P<angle>[^>\n]*)>|(?P<bare>[^\s)]+))"
+                           + r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
 
 # Line shapes for prose scanning.
 QUOTE_PREFIX = re.compile(r"^(?: {0,3}> ?)+")
@@ -115,7 +117,7 @@ def _local_links(package: Path, body: str) -> set[str]:
     """Collect relative link targets. Reject a target that escapes `package` or crosses a symlink."""
     links: set[str] = set()
     for match in MARKDOWN_LINK.finditer(body):
-        parsed = urlsplit(match[1])
+        parsed = urlsplit(match["bare"] or match["angle"])
         if parsed.scheme or parsed.netloc or not parsed.path:
             continue
         target = unquote(parsed.path)
