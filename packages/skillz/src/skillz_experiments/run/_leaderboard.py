@@ -8,9 +8,10 @@ from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case
 from skillz_experiments.evaluation import task_tokens
 from skillz_experiments.gate import close
-from skillz_experiments.run._outcomes import add_validation_scores, complete_means, is_search_validation, mean_tokens
+from skillz_experiments.run._outcomes import mean_tokens
 from skillz_experiments.run._record_fields import number_field, text_field
 from skillz_experiments.run._state import RunState
+from skillz_experiments.search import add_validation_scores, complete_means, is_search_validation
 
 
 @final
