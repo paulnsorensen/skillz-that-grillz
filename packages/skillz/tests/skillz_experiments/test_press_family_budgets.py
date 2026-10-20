@@ -184,11 +184,11 @@ def test_verdict_breachOnScoreRejectWithoutBudget_addsNothing() -> None:
 # --- non-finite and degenerate --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
-def test_verdict_nonFiniteDelta_skipsTheFamilyRuleButListsSkippedFamilies(bad: float) -> None:
+def test_verdict_nonFiniteDelta_skipsItsFamilyButListsSkippedFamilies(bad: float) -> None:
     result = verdict(CASES | {"a1": bad, "x": 1.0}, thresholds=Statistics(family_budget=0.0),
                      families=FAMILIES | {"x": "solo"})
     assert result.verdict == "inconclusive"
-    assert result.reasons == () and result.skipped_families == ("solo",)
+    assert result.reasons == ("non-finite-delta",) and result.skipped_families == ("solo",)
 
 
 def test_verdict_sequenceDeltasWithFamilies_raises() -> None:
