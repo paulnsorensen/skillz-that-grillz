@@ -527,8 +527,10 @@ def test_a_declared_agent_next_to_the_builtin_claude_agent_is_not_a_leak() -> No
     declared = Declared(agents=frozenset({"mine"}))
     assert _events.find_leak([event], [], declared=declared) is None
 
-def test_preflight_passes_when_only_the_probe_skill_loads(tmp_path: Path, sandbox_passes: None) -> None:
+def test_preflight_passes_when_only_the_probe_skill_loads(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "linux")  # macOS reads the Keychain, which holds no login file to link
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
