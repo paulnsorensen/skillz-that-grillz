@@ -1,31 +1,39 @@
 """The skillz journey gate fails a turn that asks the user to approve cases without the case hash."""
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
+from typing import cast
 
 import pytest
-from test_skillz_autoimprove_journeys import gate
+from test_skillz_autoimprove_journeys import bash, contract
+from test_skillz_autoimprove_journeys import tool as shown
 
 RUN = "python3 x/skillz-experiment.pyz run --target toys/a --out /tmp/x"
 HASH = "ab" * 32
 END: dict[str, object] = {"type": "result"}
+ARGV: list[str] = []
 
 
-def bash(command: str) -> dict[str, object]:
-    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}
+@pytest.fixture(scope="module", autouse=True)
+def journey_argv(tmp_path_factory: pytest.TempPathFactory) -> None:
+    ARGV[:] = contract(tmp_path_factory.mktemp("kit")).grader("journey").argv
+
+
+def gate(tmp_path: Path, events: list[dict[str, object]]) -> dict[str, object]:
+    (tmp_path / "trace").mkdir()
+    _ = (tmp_path / "trace/events.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events))
+    done = subprocess.run(ARGV, cwd=tmp_path, capture_output=True, text=True, timeout=30, check=True)
+    return cast(dict[str, object], json.loads(done.stdout))
 
 
 def said(text: str) -> dict[str, object]:
     return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
 
 
-def shown(text: str) -> dict[str, object]:
-    return {"type": "user", "message": {"content": [{"type": "tool_result", "content": [{"type": "text", "text": text}]}]}}
-
-
 FAIL: dict[str, object] = {"score": 0, "failed": ["approval-without-hash"]}
 PASS: dict[str, object] = {"score": 1, "failed": []}
-
 
 @pytest.mark.ac("judge-criteria-verdicts:AC-15")
 @pytest.mark.parametrize(("events", "expected"), [
@@ -171,3 +179,23 @@ def after_approval(text: str) -> list[dict[str, object]]:
 ], ids=["cases-approved-then-budget-ask", "cases-are-approved-then-run-question", "cases-passed-then-budget-approval"])
 def test_the_gate_does_not_read_a_mention_of_approved_cases_as_a_case_approval_ask(tmp_path: Path, text: str) -> None:
     assert gate(tmp_path, after_approval(text)) == PASS
+
+
+@pytest.mark.ac("judge-criteria-verdicts:AC-15")
+@pytest.mark.parametrize("text", [
+    "You approved the cases, so can I start the run now?",
+    "Thanks for approving the cases, should I start the run?",
+    "Since you approved the cases, do you approve the budget estimate of 40 calls?",
+    "Now that the cases are approved do you approve the budget?",
+    "Approved budget: 40 calls\nCases: 6 train, 6 holdout\nShould I start?",
+    "Run summary\n- 12 cases passed\n- budget approval needed next\nShould I continue?",
+    "I ran the cases\nDo you approve the budget?",
+], ids=["approved-then-start-question", "approving-then-start-question", "since-approved-then-budget-ask", "approved-without-comma-then-budget-ask",
+        "status-block-lines", "bullet-list-lines", "cases-line-then-budget-ask-line"])
+def test_the_gate_matches_only_ask_forms_and_splits_list_lines(tmp_path: Path, text: str) -> None:
+    assert gate(tmp_path, after_approval(text)) == PASS
+
+
+@pytest.mark.ac("judge-criteria-verdicts:AC-15")
+def test_the_gate_reads_a_question_mark_before_punctuation_as_a_request(tmp_path: Path) -> None:
+    assert gate(tmp_path, [bash(RUN), said("Approve the cases?(y/n)"), END]) == FAIL
