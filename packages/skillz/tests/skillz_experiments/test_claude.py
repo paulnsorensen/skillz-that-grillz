@@ -24,7 +24,7 @@ from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
 from skillz_experiments._cases import CodedError, digest, mapping
 from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
-from skillz_experiments.harness._claude._sandbox import sandbox_argv
+from skillz_experiments.harness._claude._sandbox import sandbox_argv, sandbox_fix
 from skillz_experiments._contract import Surface, load_contract, parse
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._transport import Transport
@@ -956,13 +956,61 @@ def test_seatbelt_profile_denies_network_host_reads_and_candidate_writes() -> No
     assert all("/Users" not in line and "/private/tmp" not in line and "/var/folders" not in line for line in reads)
 
 
-def test_seatbelt_argv_runs_the_command_with_a_clean_environment() -> None:
+def test_seatbelt_profile_allows_the_root_directory_literal_but_not_its_subtree() -> None:
+    lines = command_profile(Path("/w/workspace")).splitlines()
+    assert '(allow file-read* (literal "/"))' in lines
+    assert not any(line.startswith("(allow file-read*") and '(subpath "/")' in line for line in lines)
+
+
+def test_seatbelt_argv_runs_the_command_with_a_clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.DEVELOPER_DIR", "/nonexistent-developer-dir")
     workspace = Path("/w/workspace")
     argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", workspace, ["/usr/bin/python3", "-c", "pass"],
                         {"PATH": "/usr/bin:/bin", "HOME": "/w/workspace/home"})
     assert argv[:3] == ["/usr/bin/sandbox-exec", "-p", command_profile(workspace)]
     assert argv[3:] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=/w/workspace/home",
                         "/usr/bin/python3", "-c", "pass"]
+
+
+def test_seatbelt_argv_pins_the_xcrun_shim_to_the_allowed_developer_dir(tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.DEVELOPER_DIR", str(tmp_path))
+    argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", Path("/w/workspace"), ["/usr/bin/python3"], {"PATH": "/usr/bin"})
+    assert argv[4:7] == ["-i", "PATH=/usr/bin", f"DEVELOPER_DIR={tmp_path}"]
+
+
+def test_sandbox_fix_on_darwin_does_not_suggest_linux_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", "darwin")
+    fix = sandbox_fix("sandbox probe failed")
+    assert "sandbox-exec" in fix
+    assert not any(word in fix for word in ("apt", "bwrap", "bubblewrap", "apparmor"))
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", "linux")
+    assert "bubblewrap" in sandbox_fix("sandbox probe failed")
+
+
+def test_probe_environment_assertion_accepts_xcrun_names_only_on_darwin(monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments.harness._isolation import probe
+    monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin", "SDKROOT": "/sdk"})
+    for system, accepted in (("darwin", True), ("linux", False)):
+        script = probe(Path("/w"), Path("/s"), Path("/e"), 1, system=system)
+        line = next(line for line in script.splitlines() if line.startswith("assert set(os.environ)"))
+        if accepted:
+            exec(line, {"os": os})
+        else:
+            with pytest.raises(AssertionError):
+                exec(line, {"os": os})
+
+
+def test_probe_allows_only_the_xcrun_variables_on_darwin() -> None:
+    from skillz_experiments.harness._isolation import XCRUN_ENVIRONMENT, probe
+    base = (Path("/w"), Path("/s"), Path("/e"), 1)
+    darwin = probe(*base, system="darwin")
+    linux = probe(*base, system="linux")
+    assert all(repr(name) in darwin for name in XCRUN_ENVIRONMENT)
+    assert not any(repr(name) in linux for name in XCRUN_ENVIRONMENT)
+    assert "'HOME'" in linux
+    assert "'LD_PRELOAD'" not in darwin
+
 
 
 def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter(tmp_path: Path) -> None:
