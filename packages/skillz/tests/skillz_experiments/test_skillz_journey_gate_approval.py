@@ -67,11 +67,13 @@ CASES = "Approve the cases with hash " + HASH + "?"
     ([bash(RUN), said(f"Hash {HASH}"), STOP, END], FAIL),
     ([bash(RUN), STOP, said(f"Hash {HASH}"), shown(stop_text(OTHER)), END], FAIL),
     ([bash(RUN), STOP, said(f"Hash {HASH}"), shown(stop_text(OTHER)), said(f"Hash {OTHER}"), END], PASS),
+    ([bash(RUN), STOP, bash(RUN), shown(stop_text(OTHER)), said(f"Approve the cases with hash {OTHER}?"), END], PASS),
+    ([bash(RUN), shown(stop_text(OTHER)), bash(RUN), STOP, said(f"Approve the cases with hash {OTHER}?"), END], FAIL),
 ], ids=["hash-in-the-ask", "hash-in-a-later-text-of-the-turn", "earlier-text-without-hash-is-fine", "ask-without-hash",
         "budget-wording-without-hash", "reply-yes-without-hash", "a-different-hash", "truncated-hash", "hash-inside-a-longer-hex-run",
         "hash-only-before-the-stop", "hash-only-after-the-turn-ended", "hash-only-in-an-earlier-turn",
         "stop-then-no-text", "stop-at-the-end-of-the-trace", "hash-only-before-then-no-text", "second-stop-needs-its-own-hash",
-        "both-stops-answered"])
+        "both-stops-answered", "rerun-replaces-the-hash", "rerun-shows-the-stale-hash"])
 def test_the_gate_requires_the_stop_hash_in_the_text_after_a_cases_unapproved_stop(
         tmp_path: Path, events: list[dict[str, object]], expected: dict[str, object]) -> None:
     assert gate(tmp_path, events) == expected
