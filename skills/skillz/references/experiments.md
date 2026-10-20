@@ -251,6 +251,7 @@ Read the `facts` from the `cases-missing` stop, then the skill files that it lis
 Before the case draft, write one representative example. State the request, the expected target behavior, and the observable checks that refute it.
 Show the example to the user with the case approval question.
 Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
+Give each judged case its criteria. Follow the criteria drafting reference that `SKILL.md` lists.
 
 When `<skill>/evals/evals.json` or `<skill>/evals/journeys.json` exists, the runner writes the seed cases to `RUN/cases.seed.json` (mode 0600). The stop names that file in `seed_file` and shows counts in `seed_summary`. Start the draft from the file.
 The seed file holds a list of cases, one for each entry, in file order. The runner maps them and does not write the draft. To accept the seed unchanged, copy the file to `RUN/cases.draft.json`.
@@ -287,6 +288,7 @@ Each case has these fields:
   The runner writes fixtures verbatim, so the request must tell the task to rename the file.
   When the contract declares a helper, each `task` case must list the contract helper input in `files`.
 - `expected`: the reference answer as JSON. A `task` case needs it.
+  A case with a judged kind also needs `expected.criteria`. Draft them with the criteria drafting reference that `SKILL.md` lists.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
 
 A `trigger` case is a request that should load the skill. A `near-miss` case is a similar request that should not.
@@ -297,7 +299,7 @@ When the target contract has a `task` rubric, draft each `task` case so the rubr
 Do not assign splits. Code assigns them from the seed.
 When session analytics exists, run the Usage ceremony from `SKILL.md`.
 Add extra cases from past sessions with `source: session`. Remove private data first.
-The approval question lists every case, with its source, family, and split.
+The approval question lists every case, with its source, family, and split. It also lists each criterion with `must` and `from`.
 A change to the draft changes the case hash and asks the question again.
 
 ## Draft journeys
@@ -823,6 +825,11 @@ python3 "$SKILLZ/scripts/skillz-experiment.pyz" export "$OUT" --out "$OUT/export
 Export is write-only. It writes each non-empty patch (`candidate.patch`, `wedge-sources.patch`) and a redacted `report.json` to a new directory.
 Its result and `report.json` list the written patch files under `patches`.
 Export writes no empty patch file.
+`report.json` also holds `criteria_flags`, sorted by `criterion`, `reason`, `case_id`, and `arm`. Each entry has `criterion`, `reason`, and `case_id`.
+A `spread` entry also has `arm` and `levels`. It marks a criterion whose level spreads by 2 or more across repeats of one arm and case.
+A `partly-met` entry also has `level_2` and `outcomes`. It marks a criterion with level 2 in at least half of the case outcomes, over all arms.
+`report.json` redacts the reasons of the outcome `criteria`.
+Read `criteria_flags` before you draft the next cases. The criteria drafting reference that `SKILL.md` lists says how.
 When the winner files equal the seed files, export writes only `report.json`. Its result has `patches: []` and `reason: "winner-equals-baseline"`.
 Tell the user that the run found no change to apply.
 It never applies or installs a patch, and it never changes the target skill.
@@ -917,8 +924,12 @@ The runner reports `contract-unapproved` for a draft.
 Each kind in `kinds` names one grader:
 
 - `exact-json`: compares the task result with the case `expected` JSON. A `result_json` that is not a string scores 0 with status `invalid-answer`.
-- `judge`: a separate invocation scores the output against the `rubric`. It answers `score_percent`, an integer from 0 to 100, unless the kind declares `pillars`.
-  The judge sees the case `expected` as `reference`, so a rubric names `reference`. Without a contract, the default `task` rubric is: "The answer is correct when it satisfies the request and agrees in substance with `reference`. Ignore differences in JSON shape, quoting, or whitespace. Score 100 for a correct answer and 0 for a wrong answer."
+- `judge`: a separate invocation judges the output against the case criteria. It answers one level for each criterion `id`, with a one-line reason.
+  The levels are 1 (not met), 2 (partly met), 3 (mostly met), and 4 (fully met).
+  The score is 0 when any `must` criterion has level 1 or 2. Otherwise the score is the mean of `(level - 1) / 3` over all criteria.
+  The outcome holds the answers under `criteria`, as `{id: {level, reason}}`, outside `scores`.
+  The judge sees the case `expected` as `reference`, so a rubric names `reference`. The rubric holds only judge guidance. The criteria carry the checks.
+  A judged case without criteria stops with `case-criteria-missing`. A criterion that is not EARS, or an `id` that repeats, stops with `case-criteria-invalid`.
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
 - `hybrid`: runs the `command` gate first. A failed gate scores 0, skips the judge, and records `scores.judge` as null.
 - `journey`: scores a multi-turn conversation. See "Journeys".
@@ -949,13 +960,10 @@ A `judge` or `hybrid` grader can also declare these fields:
   Only the `claude` harness supports `capture`. Other harnesses stop with `contract-capture-unsupported`.
   The capture runs in the OS sandbox of the task role, so `--sandbox-read` and `--sandbox-seconds` apply.
   On macOS the sandbox blocks all network access, loopback included, so a capture that starts a local server needs Linux.
-- `pillars`: 1 to 8 unique names, such as `["ui", "ux", "information_flow"]`.
-  A name starts with a lowercase letter, has at most 32 characters, and holds only lowercase letters, digits, and underscores.
-  The judge answers one required integer from 0 to 100 for each pillar, and no `score_percent`.
-  The kind score is the mean of the pillar scores. The record holds each pillar score in `scores.pillars`, from 0 to 1.
-  An answer that leaves out a pillar or adds a field scores 0 with status `evaluation-failed`.
+A judge answer that leaves out a criterion `id` or adds one scores 0 with status `evaluation-failed`.
+A contract that declares `pillars` stops with `contract-pillars-removed`. Move each pillar into case criteria.
 
-The contract hash covers `capture` and `pillars`.
+The contract hash covers `capture`. The case hash covers the criteria.
 
 A case of a `command` kind without `expected` stops with `expected-missing`.
 A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: one for the task and one for the judge.
