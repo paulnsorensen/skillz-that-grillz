@@ -1,15 +1,11 @@
 """The skillz journey gate fails a turn that asks the user to approve cases without the case hash."""
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
 from pathlib import Path
-from typing import cast
 
 import pytest
+from test_skillz_autoimprove_journeys import gate
 
-GATE = Path(__file__).resolve().parents[4] / "skills/skillz/evals/gates/journey.py"
 RUN = "python3 x/skillz-experiment.pyz run --target toys/a --out /tmp/x"
 HASH = "ab" * 32
 END: dict[str, object] = {"type": "result"}
@@ -27,16 +23,8 @@ def shown(text: str) -> dict[str, object]:
     return {"type": "user", "message": {"content": [{"type": "tool_result", "content": [{"type": "text", "text": text}]}]}}
 
 
-def gate(tmp_path: Path, events: list[dict[str, object]]) -> dict[str, object]:
-    (tmp_path / "trace").mkdir()
-    _ = (tmp_path / "trace/events.jsonl").write_text("".join(json.dumps(event) + "\n" for event in events))
-    done = subprocess.run([sys.executable, "-I", "-c", GATE.read_text(encoding="utf-8")], cwd=tmp_path, capture_output=True,
-                          text=True, timeout=30, check=True)
-    return cast(dict[str, object], json.loads(done.stdout))
-
-
-FAIL = {"score": 0, "failed": ["approval-without-hash"]}
-PASS = {"score": 1, "failed": []}
+FAIL: dict[str, object] = {"score": 0, "failed": ["approval-without-hash"]}
+PASS: dict[str, object] = {"score": 1, "failed": []}
 
 
 @pytest.mark.ac("judge-criteria-verdicts:AC-15")
@@ -165,3 +153,21 @@ def test_the_gate_accepts_a_hash_beside_punctuation_and_rejects_a_split_one(
 def test_the_gate_splits_asks_into_sentences_without_losing_a_realistic_ask(
         tmp_path: Path, events: list[dict[str, object]], expected: dict[str, object]) -> None:
     assert gate(tmp_path, events) == expected
+
+
+APPROVED = bash(f"{RUN} --approve-cases {HASH}")
+UNAPPROVED = shown("budget-unapproved")
+
+
+def after_approval(text: str) -> list[dict[str, object]]:
+    return [bash(RUN), shown(f"case_hash {HASH}"), said(f"{ASK} Hash: {HASH}"), END, APPROVED, UNAPPROVED, said(text), END]
+
+
+@pytest.mark.ac("judge-criteria-verdicts:AC-15")
+@pytest.mark.parametrize("text", [
+    "With the cases approved, do you approve the budget estimate of 40 calls?",
+    "now that the cases are approved, should i run the budget estimate?",
+    "the 3 cases passed; should i approve the budget?",
+], ids=["cases-approved-then-budget-ask", "cases-are-approved-then-run-question", "cases-passed-then-budget-approval"])
+def test_the_gate_does_not_read_a_mention_of_approved_cases_as_a_case_approval_ask(tmp_path: Path, text: str) -> None:
+    assert gate(tmp_path, after_approval(text)) == PASS

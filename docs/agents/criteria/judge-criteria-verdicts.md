@@ -1,6 +1,6 @@
 # judge-criteria-verdicts: the journey gate fails a case approval ask without the hash
 
-Source: judge-criteria-verdicts (Mold spec in the durable cheese corpus; curd jcv-01-gate)
+Source: judge-criteria-verdicts (Mold spec in the durable cheese corpus)
 
 | id | kind | criterion | verified by |
 | --- | --- | --- | --- |

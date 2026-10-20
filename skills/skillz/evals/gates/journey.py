@@ -23,7 +23,8 @@ EDITS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 RUNNER = "skillz-experiment.pyz"
 ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=")
 HASH = re.compile(r"[0-9a-f]{64}")
-APPROVAL = re.compile(r"approv\w*\W+(?:\w+\W+){0,4}?(?:case|cases)\b|\bcases?\b\W+(?:\w+\W+){0,4}?approv|--approve-cases")
+APPROVAL = re.compile(r"approv\w*\W+(?:\w+\W+){0,4}?(?:case|cases)\b|\bcases?\b[^\w;,]+(?:\w+[^\w;,]+){0,4}?approv(?!ed\b)|"
+                      + r"\bconfirm\b\W+(?:\w+\W+){0,4}?cases?\b\W+(?:\w+\W+){0,2}?approved|--approve-cases")
 CASE_HASH = re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
 SENTENCE_END = re.compile(r"(?<!\be\.g\.)(?<!\bi\.e\.)(?<!\.\.)(?<=[.?!])\s+|\n\s*\n")
 REQUEST = re.compile(r"\?\W*$|\b(?:please|reply|confirm|let me know|tell me|i need you to|do you|can you|could you|would you)\b")
