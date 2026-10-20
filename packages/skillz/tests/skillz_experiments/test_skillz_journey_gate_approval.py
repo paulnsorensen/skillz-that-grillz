@@ -59,6 +59,8 @@ CASES = "Approve the cases with hash " + HASH + "?"
     ([bash(RUN), STOP, said(f"Approve the cases with hash {OTHER}?"), END], FAIL),
     ([bash(RUN), STOP, said(f"Approve the cases with hash {HASH[:-1]}?"), END], FAIL),
     ([bash(RUN), STOP, said(f"Approve the cases with hash {HASH}0?"), END], FAIL),
+    ([bash(RUN), STOP, said(f"Approve the cases with hash {HASH}F?"), END], FAIL),
+    ([bash(RUN), STOP, said(f"Approve the cases with hash A{HASH}?"), END], FAIL),
     ([bash(RUN), said(f"The case hash will be {HASH}"), STOP, said("Do you approve?"), END], FAIL),
     ([bash(RUN), STOP, said("Do you approve?"), END, said(f"Hash {HASH}"), END], FAIL),
     ([bash(RUN), said(f"Hash {HASH}"), END, STOP, said("Do you approve?"), END], FAIL),
@@ -71,6 +73,7 @@ CASES = "Approve the cases with hash " + HASH + "?"
     ([bash(RUN), shown(stop_text(OTHER)), bash(RUN), STOP, said(f"Approve the cases with hash {OTHER}?"), END], FAIL),
 ], ids=["hash-in-the-ask", "hash-in-a-later-text-of-the-turn", "earlier-text-without-hash-is-fine", "ask-without-hash",
         "budget-wording-without-hash", "reply-yes-without-hash", "a-different-hash", "truncated-hash", "hash-inside-a-longer-hex-run",
+        "uppercase-hex-after-the-hash", "uppercase-hex-before-the-hash",
         "hash-only-before-the-stop", "hash-only-after-the-turn-ended", "hash-only-in-an-earlier-turn",
         "stop-then-no-text", "stop-at-the-end-of-the-trace", "hash-only-before-then-no-text", "second-stop-needs-its-own-hash",
         "both-stops-answered", "rerun-replaces-the-hash", "rerun-shows-the-stale-hash"])
