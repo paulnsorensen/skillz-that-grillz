@@ -164,6 +164,8 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("eval-validator", root + ["python", ".github/scripts/validate_evals.py"]),
         ("reference-tests", root + ["python", ".github/scripts/test_check_skillz_references.py"]),
         ("reference-check", root + ["python", ".github/scripts/check_skillz_references.py"]),
+        ("architecture-tests", root + ["python", ".github/scripts/test_check_architecture.py"]),
+        ("architecture-check", root + ["python", ".github/scripts/check_architecture.py"]),
         ("ac-trace-tests", root + ["python", ".github/scripts/test_check_ac_trace.py"]),
         ("ac-trace", root + ["python", ".github/scripts/check_ac_trace.py"]),
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
