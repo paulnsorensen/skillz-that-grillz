@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,35 @@ SLICES = ("run", "search", "gate", "harness", "wrapper", "evaluation")
 LEAF_SLICES = ("search", "gate")
 FORBIDDEN_FROM_LEAVES = ("run", "harness")
 REMOVED_FLAT_FILES = ("_workflow.py", "_search.py", "_gate.py", "_harness.py", "_claude.py", "_evaluator.py")
+DECISIONS = Path(__file__).resolve().parents[4] / "docs" / "agents" / "decisions"
+# An ADR id is `<decision file stem>:ADR-NNN`, because each file in `docs/agents/decisions/` numbers its own records.
+ADR_011 = "skillz-autoimprove:ADR-011"
+# Each module at the package root, with the decision that keeps it there. A new flat module goes into a slice (ADR-011).
+ROOT_MODULES: dict[str, str] = {
+    "__init__": ADR_011,
+    "__main__": ADR_011,
+    "_audit": ADR_011,
+    "_budget": ADR_011,
+    "_candidate": ADR_011,
+    "_cases": ADR_011,
+    "_cli": "harness-module-interface:ADR-004",
+    "_contract": ADR_011,
+    "_evals_format": ADR_011,
+    "_facts": ADR_011,
+    "_gate_files": ADR_011,
+    "_graders": ADR_011,
+    "_intake": ADR_011,
+    "_journey_gate": ADR_011,
+    "_new_cli": ADR_011,
+    "_protocol": "harness-module-interface:ADR-002",
+    "_records": ADR_011,
+    "_redact": ADR_011,
+    "_runtime": ADR_011,
+    "_scaffold": ADR_011,
+    "_schemas": ADR_011,
+    "_seed": ADR_011,
+    "_validate": ADR_011,
+}
 
 
 def _modules() -> list[Path]:
@@ -194,3 +224,25 @@ def test_harness_modules_take_evaluation_code_only_from_the_evaluation_facade() 
              for module in _imported_modules(path)
              if module.startswith(f"{evaluation}.") or module.startswith(f"{PREFIX}._evaluation")]
     assert wrong == []
+
+
+def test_the_package_root_holds_only_the_frozen_root_modules() -> None:
+    on_disk = {path.stem for path in PACKAGE.glob("*.py")}
+    added, removed = sorted(on_disk - ROOT_MODULES.keys()), sorted(ROOT_MODULES.keys() - on_disk)
+    assert added == [], (f"new flat modules {added}: put it in a slice (ADR-011: evaluation/, cases/, candidate/) "
+                         "or add it here with an ADR id (ROOT_MODULES in test_layout.py)")
+    assert removed == [], f"root modules {removed} are gone: remove their ROOT_MODULES entries in test_layout.py"
+
+
+def _decision_ids() -> set[str]:
+    """Return `<file stem>:ADR-NNN` for each `### ADR-NNN` heading in `docs/agents/decisions/*.md`."""
+    return {f"{path.stem}:{match[1]}" for path in DECISIONS.glob("*.md")
+            for line in path.read_text().splitlines() if (match := re.match(r"### (ADR-\d+)\b", line))}
+
+
+def test_each_frozen_set_entry_cites_a_recorded_decision() -> None:
+    cited = {f"ROOT_MODULES[{name!r}]": adr for name, adr in ROOT_MODULES.items()}
+    known = _decision_ids()
+    unknown = sorted(f"{entry} = {adr!r}" for entry, adr in cited.items() if adr not in known)
+    assert unknown == [], (f"{unknown}: cite `<file stem>:ADR-NNN` for a `### ADR-NNN` heading "
+                           "in docs/agents/decisions/<file stem>.md, or write that ADR")
