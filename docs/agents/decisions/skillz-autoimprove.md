@@ -241,7 +241,7 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Consequences:** Criteria are reviewed and frozen in the case hash. The EARS check is lexical, so a vague statement can pass; the approval question and `criteria_flags` are the checks.
 ### ADR-029: Kinds hold no criteria, and `pillars` is removed  [status: accepted]
 - **Context:** The shipped journey rubric held three rules for every case: no question outside `reference.questions`, approval only with the case list, hash, and budget, and the `final_stop`. `pillars` named scores for every case of a kind. A kind selects how a case runs and is graded (ADR-001, ADR-002, ADR-024).
-- **Decision:** A kind holds no criteria. Journey `questions` and `final_stop` become case criteria. The approval rule moves into the journey gate, so a script checks it. The rubric keeps only judge guidance. A contract that declares `pillars` stops with `contract-pillars-removed`.
+- **Decision:** A kind holds no criteria. Journey `questions` and `final_stop` become case criteria. The approval rule moves into the journey gate, so a script checks it. The gate reads no wording: after a tool result holds the runner's `cases-unapproved` stop, the assistant text later in that turn must hold its `case_hash`. The rubric keeps only judge guidance. A contract that declares `pillars` stops with `contract-pillars-removed`.
 - **Alternatives:** A kind-level `criteria` list in the contract (one more contract field). A copy of each rule in every case (copies drift).
 - **Consequences:** Checks that a script can make leave the judge. No shipped contract used `pillars`.
 
