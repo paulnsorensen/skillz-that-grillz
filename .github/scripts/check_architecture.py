@@ -45,16 +45,44 @@ def _modules(node: ast.Import | ast.ImportFrom) -> list[str]:
     return [f"{node.module}.{alias.name}" for alias in node.names if _private(alias.name)]
 
 
+def _dotted(node: ast.expr) -> str | None:
+    """Return `a.b.c` for a chain of attributes on a name, or None for any other expression."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute) and (base := _dotted(node.value)):
+        return f"{base}.{node.attr}"
+    return None
+
+
+def _chain(node: ast.Attribute, bound: dict[str, str]) -> list[str]:
+    """Return the private module that an attribute chain such as `pkg._mod` reaches through an `import pkg` name."""
+    name, *parts = (_dotted(node) or "").split(".")
+    if name not in bound or not parts or not _private(parts[-1]) or any(map(_private, parts[:-1])):
+        return []
+    return [".".join([bound[name], *parts])]
+
+
 def cross_package_imports(root: Path) -> list[tuple[str, int, str, str]]:
-    """Return `(file, line, module, owner)` for each import of another workspace package's private module."""
+    """Return `(file, line, module, owner)` for each use of another workspace package's private module.
+
+    A use is an import statement or an attribute chain on an imported package name.
+    A dynamic import such as `importlib.import_module("pkg._mod")` is not seen.
+    """
     names = owners(root)
     found: list[tuple[str, int, str, str]] = []
     for path in sorted(root.glob("packages/*/src/**/*.py")):
         relative = path.relative_to(root)
-        for node in ast.walk(ast.parse(path.read_text(), relative.as_posix())):
-            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        tree = ast.parse(path.read_text(), relative.as_posix())
+        bound = {alias.asname or alias.name.split(".")[0]: alias.name if alias.asname else alias.name.split(".")[0]
+                 for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                modules = _modules(node)
+            elif isinstance(node, ast.Attribute):
+                modules = _chain(node, bound)
+            else:
                 continue
-            for module in _modules(node):
+            for module in modules:
                 owner = names.get(module.split(".")[0])
                 if owner is not None and owner != relative.parts[1]:
                     found.append((relative.as_posix(), node.lineno, module, owner))

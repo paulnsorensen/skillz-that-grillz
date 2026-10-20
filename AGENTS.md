@@ -50,13 +50,14 @@ of truth for repo-local skills (tooling for work on this repository only).
 - Conventional Commits format for all commits
 - Architecture (Sliced Bread):
   - A slice is a subpackage of `packages/skillz/src/skillz_experiments/`. Import it only through its
-    `__init__.py` facade (`docs/agents/decisions/harness-module-interface.md` ADR-002).
+    `__init__.py` facade (`docs/agents/decisions/skillz-autoimprove.md` ADR-011).
+    A test may import slice internals.
   - Move a flat root module into a slice when a change puts pressure on it
     (`docs/agents/decisions/skillz-autoimprove.md` ADR-011).
   - `packages/skillz/tests/skillz_experiments/test_layout.py` holds the frozen sets: `ROOT_MODULES`
     and `KERNEL` (the root modules that a slice may import).
     Each entry cites an ADR id as `<decision file stem>:ADR-NNN`.
-  - A workspace package does not import a private `_` module of another workspace package.
+  - The `src/` code of a workspace package does not use a private `_` module of another workspace package.
     `.github/scripts/check_architecture.py` enforces this. Its `ALLOWED` set may only shrink.
   - Write or amend an ADR when a PR adds, removes, or renames a slice or a workspace package,
     adds a `ROOT_MODULES` or `KERNEL` entry, adds a cross-package import edge or an `ALLOWED` entry,

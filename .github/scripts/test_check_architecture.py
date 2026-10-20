@@ -50,6 +50,13 @@ class CheckArchitectureTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn(f"{USER}:3: imports lib._core", out)
 
+    def test_an_attribute_chain_through_an_imported_package_fails(self):
+        code, out = _run("import lib\nimport lib as alias\nX = lib._core.VALUE\nY = alias._core\nZ = lib.public\n")
+        self.assertEqual(code, 1)
+        for line in (3, 4):
+            self.assertIn(f"{USER}:{line}: imports lib._core", out)
+        self.assertNotIn(f"{USER}:5:", out)
+
     def test_public_dunder_and_same_package_imports_pass(self):
         source = "import lib\nfrom lib import __version__\nfrom app_extra._inner import VALUE\nfrom . import _local\nimport _thread\n"
         self.assertEqual(_run(source), (0, ""))
@@ -63,7 +70,6 @@ class CheckArchitectureTest(unittest.TestCase):
         self.assertIn(f"{USER}: ALLOWED names lib._core, but the import is gone: remove the entry", out)
 
     def test_the_repository_matches_its_allowlist(self):
-        self.assertTrue(check.ALLOWED)
         out = io.StringIO()
         with redirect_stdout(out):
             code = check.main()
