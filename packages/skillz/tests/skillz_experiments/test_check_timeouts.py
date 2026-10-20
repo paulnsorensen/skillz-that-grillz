@@ -21,7 +21,7 @@ from skillz_experiments import _graders, _runtime
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import Case
-from skillz_experiments._evaluation import helper_failure
+from skillz_experiments.evaluation import helper_failure
 from skillz_experiments._records import read
 from skillz_experiments.evaluation import CheckMemo, CheckResult, evaluate
 from skillz_experiments.harness import _command
@@ -29,7 +29,8 @@ from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._command import Command
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._export import _frozen, calls_upper_bound  # pyright: ignore[reportPrivateUsage]
-from skillz_experiments.run._session import Session, holdout_scores
+from skillz_experiments.run._outcomes import holdout_scores
+from skillz_experiments.run._session import Session
 from fake_provider import PASSED, FakeProvider, ProviderCrash
 from memo_fixtures import SKILL, cases as _cases, contract as _contract
 

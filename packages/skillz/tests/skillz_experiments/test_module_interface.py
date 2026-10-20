@@ -235,7 +235,7 @@ def test_the_barrels_export_exactly_the_contract_names() -> None:
         "configured_selection", "has_claude_sandbox", "refuses_claude_options", "stop_kind"}
     assert set(wrapper_barrel.__all__) == {"register"}
     assert set(evaluation_barrel.__all__) == {
-        "CheckMemo", "CheckResult", "Reply", "Transcript", "answer_schema", "evaluate", "task_tokens"}
+        "CheckMemo", "CheckResult", "Reply", "Transcript", "answer_schema", "evaluate", "helper_failure", "task_tokens", "usage"}
 
 
 @pytest.mark.parametrize(("code", "kind"), [

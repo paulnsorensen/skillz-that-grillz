@@ -150,7 +150,7 @@ def test_converse_stream_loop_fails_when_the_process_ends_before_any_result(tmp_
 
 
 def test_a_journey_error_result_names_a_stable_reason_not_the_turn_word(tmp_path: Path) -> None:
-    from skillz_experiments.run._session import _fault_reason  # pyright: ignore[reportPrivateUsage]
+    from skillz_experiments.run._outcomes import fault_reason as _fault_reason
     with pytest.raises(RuntimeError, match="Claude Code fails") as caught:
         _ = run(tmp_path, "journey-error-result", 3, [Reply("again", False)])
     assert _fault_reason(caught.value) == "error-result"

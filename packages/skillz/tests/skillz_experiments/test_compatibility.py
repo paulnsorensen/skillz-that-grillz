@@ -16,7 +16,7 @@ from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._records import read
 from skillz_experiments.harness._harness import Configuration
 from skillz_experiments.run import compare, export
-from skillz_experiments.run._session import SCORING_FILES, leakage_digest, scoring_digest
+from skillz_experiments.run._open import SCORING_FILES, leakage_digest, scoring_digest
 
 if TYPE_CHECKING:
     from .conftest import JudgedRun
@@ -156,7 +156,7 @@ def test_an_export_carries_the_fingerprint_and_no_case_text(
 
 @pytest.mark.ac("gh-235:AC-6")
 def test_the_scoring_files_are_pinned_and_exist() -> None:
-    assert SCORING_FILES == ("evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
+    assert SCORING_FILES == ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "_graders.py", "_audit.py", "_contract.py")
     assert [name for name in SCORING_FILES if not (PACKAGE / name).is_file()] == []
 
 
@@ -168,7 +168,7 @@ def copied(tmp_path: Path) -> Path:
 
 
 @pytest.mark.ac("gh-235:AC-6")
-@pytest.mark.parametrize("module", ["gate/_rules.py", "gate/_statistics.py", "evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py",
+@pytest.mark.parametrize("module", ["gate/_rules.py", "gate/_statistics.py", "evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "_graders.py",
                                     "_audit.py", "_contract.py"])
 def test_a_scoring_module_edit_changes_the_scoring_digest(copied: Path, module: str) -> None:
     before = scoring_digest(copied)

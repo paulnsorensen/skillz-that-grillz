@@ -24,7 +24,7 @@ def eval_ingest(expr: str, env: dict[str, str], cwd: Path, *argv: str) -> str:
             sys.executable,
             "-B",
             "-c",
-            "import json, sys; from agent_session_analytics import _db, _ingest; " + f"print({expr})",
+            "import json, sys; from agent_session_analytics import _adapters, _db; " + f"print({expr})",
             *argv,
         ],
         env=env,
@@ -125,8 +125,8 @@ def _discovered(env: dict[str, str], cwd: Path) -> list[list[str]]:
         list[list[str]],
         json.loads(
             eval_ingest(
-                "json.dumps([_ingest.claude_discover(), _ingest.codex_discover(), "
-                + "_ingest.cursor_discover()])",
+                "json.dumps([_adapters.claude_discover(), _adapters.codex_discover(), "
+                + "_adapters.cursor_discover()])",
                 env,
                 cwd,
             )
@@ -162,5 +162,5 @@ def test_empty_adapter_value_uses_the_home_default(tmp_path: Path) -> None:
 def test_cursor_project_slug_resolves_under_home_default(tmp_path: Path) -> None:
     home, cwd, env = _adapter_sandbox(tmp_path)
     log = home / ".cursor" / "projects" / "tmp" / "agent-transcripts" / "s.jsonl"
-    decoded = eval_ingest("_ingest._cursor_project_cwd(sys.argv[1])", env, cwd, str(log))
+    decoded = eval_ingest("_adapters.cursor._cursor_project_cwd(sys.argv[1])", env, cwd, str(log))
     assert decoded == "/tmp"

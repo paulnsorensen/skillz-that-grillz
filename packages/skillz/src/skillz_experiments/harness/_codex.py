@@ -6,21 +6,23 @@ import math
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import ClassVar, cast, final
+from typing import ClassVar, TypeAlias, cast, final
+
+from tenacity import RetryCallState, Retrying
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments.harness._discovery import discover
-from skillz_experiments._evaluation import helper_failure, usage
 from skillz_experiments._redact import redact
-from skillz_experiments.evaluation import CheckMemo, CheckResult, answer_schema, evaluate
+from skillz_experiments.evaluation import CheckMemo, CheckResult, answer_schema, evaluate, helper_failure, usage
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import (SANDBOX_SECONDS, halve_call_slots, model_call, process, reset_call_slots,
                                          sandboxed)
@@ -82,6 +84,7 @@ MESSAGE_RECORD_COUNT = 10
 MAX_RETRIES = 3
 BACKOFF_SECONDS = 2.0
 _sleep = time.sleep
+_Attempt: TypeAlias = tuple[subprocess.CompletedProcess[str], list[dict[str, object]], dict[str, object] | None]
 _UNITS = r"milliseconds?|ms|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|d|h|m|s"
 _SCALE = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400}
 _RETRY_AFTER = re.compile(r"(?:retry[ _-]?after|try again (?:in|after)|resets? (?:in|at))\W{0,3}(?P<rest>.*)")
@@ -283,24 +286,40 @@ class Codex:
                   restage: Callable[[], None]) -> dict[str, object]:
         """Run one claimed call. Each attempt gets the per-call timeout; a rate limit retries within the remaining time."""
         started = time.monotonic()
-        retries = 0
-        while True:
+
+        def attempt() -> _Attempt:
             result = model_call(self.budget, command, cwd=workspace, environment=self._environment(workspace), input_text=prompt)
             events = _events(result.stdout)
             if not (result.returncode or not output.is_file() or output.is_symlink() or output.stat().st_size > 1_000_000):
-                break
-            evidence = failure_details(result.returncode, result.stderr, events)
-            if evidence["reason"] == "rate-limited":
+                return result, events, None
+            return result, events, failure_details(result.returncode, result.stderr, events)
+
+        def last(state: RetryCallState) -> _Attempt:
+            assert state.outcome is not None
+            return cast(_Attempt, state.outcome.result())
+
+        def rate_limited(state: RetryCallState) -> bool:
+            evidence = last(state)[2]
+            limited = evidence is not None and evidence["reason"] == "rate-limited"
+            if limited:
                 _ = halve_call_slots()
-                delay = self._retry_delay(retries, evidence)
-                if delay is not None:
-                    retries += 1
-                    self.budget.retry()
-                    self.checkpoint()
-                    output.unlink(missing_ok=True)
-                    restage()
-                    _sleep(delay)
-                    continue
+            return limited
+
+        def delay(state: RetryCallState) -> float | None:
+            evidence = last(state)[2]
+            return None if evidence is None else self._retry_delay(state.attempt_number - 1, evidence)
+
+        def prepare_retry(_state: RetryCallState) -> None:
+            self.budget.retry()
+            self.checkpoint()
+            output.unlink(missing_ok=True)
+            restage()
+
+        retrying = Retrying(retry=rate_limited, stop=lambda state: delay(state) is None, wait=lambda state: delay(state) or 0.0,
+                            before_sleep=prepare_retry, sleep=lambda seconds: _sleep(seconds), retry_error_callback=last)
+        result, events, evidence = retrying(attempt)
+        retries = cast(int, retrying.statistics["attempt_number"]) - 1
+        if evidence is not None:
             if evidence["reason"] in MODEL_REJECTIONS:
                 raise CodedError("model-unsupported", f"Codex rejected the model {self.model!r} or a feature: "
                                  + _rejection_message(result.stderr, events)[:MESSAGE_LIMIT])

@@ -33,13 +33,14 @@ from skillz_experiments._budget import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, B
 from skillz_experiments.search import Edit, overshoot
 from skillz_experiments.run import Stop, export, run, summary
 from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM
-from skillz_experiments.run._session import Factory
+from skillz_experiments.run._state import Factory
 from skillz_experiments.run._plan import (
     _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
     plan_estimate,
 )
-from skillz_experiments.run._session import Session, engine_hash
+from skillz_experiments.run._open import engine_hash
+from skillz_experiments.run._session import Session
 from fake_provider import PASSED, FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -371,7 +372,7 @@ def test_a_changed_judge_stops_a_resume_and_an_export(
     out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
     assert read(out / "run.json")["judge"]
     with monkeypatch.context() as patch:
-        patch.setattr("skillz_experiments.run._session.judge_identity", _changed_judge)
+        patch.setattr("skillz_experiments.run._open.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = run(target, out, MODEL, live=True, factory=state.factory())
     assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"

@@ -15,7 +15,8 @@ from skillz_experiments._records import read, write
 from skillz_experiments.harness._harness import Configuration
 from skillz_experiments.run import compare
 from skillz_experiments.run._resume import frozen_statistics
-from skillz_experiments.run._session import Session, scoring_digest
+from skillz_experiments.run._open import scoring_digest
+from skillz_experiments.run._session import Session
 
 PACKAGE = Path(skillz_experiments.__file__).parent
 

@@ -19,18 +19,18 @@ from typing import cast, final
 import pytest
 
 from skillz_experiments.harness._claude import _constants, _sandbox, _transport
-import skillz_experiments._evaluation as evaluation_module
+import skillz_experiments.evaluation._scoring as evaluation_module
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._command import Command
 from skillz_experiments._contract import HELPER_FIXTURES, load_contract, resolve
-from skillz_experiments._evaluation import fixture_failure, helper_failure
+from skillz_experiments.evaluation._scoring import fixture_failure, helper_failure
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments._graders import Sandbox
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments._budget import Budget
-from skillz_experiments._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
+from skillz_experiments.run._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
 
 ROOT = Path(__file__).resolve().parents[4]
 REAL_SKILL = ROOT / "skills/skillz"

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from typing import cast
 
-from agent_session_analytics import _ingest as ingest
+from agent_session_analytics import _adapters, _tables
 
 from .conftest import Sandbox, needs_duckdb
 
@@ -84,7 +84,7 @@ def normalize(rows: list[Row]) -> list[Row]:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "rollout.jsonl"
         _ = path.write_text("".join(json.dumps(r) + "\n" for r in rows))
-        return list(ingest.codex_normalize(str(path)))
+        return list(_adapters.codex_normalize(str(path)))
 
 
 def token_turns(entries: list[Row]) -> list[Row]:
@@ -104,7 +104,7 @@ class TestCodexIngest(unittest.TestCase):
         )
         self.assertEqual(len(entries), 3)
         self.assertEqual({e["version"] for e in entries}, {"0.159.3"})
-        self.assertIn("version", ingest.RAW_COLUMNS)
+        self.assertIn("version", _tables.RAW_COLUMNS)
 
     def test_missing_cli_version_yields_null_version(self) -> None:
         entries = normalize([meta(None), call("c1")])
@@ -224,7 +224,7 @@ class TestCodexIngest(unittest.TestCase):
         child = normalize([session_meta("child-1", spawn), *body])
         self.assertEqual({e["sessionId"] for e in child}, {"child-1"})
         self.assertEqual({e["parentSessionId"] for e in child}, {"parent-1"})
-        self.assertIn("parentSessionId", ingest.RAW_COLUMNS)
+        self.assertIn("parentSessionId", _tables.RAW_COLUMNS)
         sources: list[object] = [None, "cli", {"subagent": "review"}]
         for source in sources:
             top = normalize([session_meta("top-1", source), *body])
@@ -427,7 +427,7 @@ class TestCodexNormalizeAttacks(unittest.TestCase):
                 + "\n{not json\n"
                 + "".join(json.dumps(r) + "\n" for r in good[1:])
             )
-            entries = list(ingest.codex_normalize(str(path)))
+            entries = list(_adapters.codex_normalize(str(path)))
         self.assertEqual(len(token_turns(entries)), 1)
 
     def test_tokenTurnIds_filesWithoutSessionMeta_stayDistinctPerFile(self) -> None:
@@ -437,7 +437,7 @@ class TestCodexNormalizeAttacks(unittest.TestCase):
             for name in ("a.jsonl", "b.jsonl"):
                 path = Path(tmp) / name
                 _ = path.write_text("".join(json.dumps(r) + "\n" for r in rows))
-                found = list(ingest.codex_normalize(str(path)))
+                found = list(_adapters.codex_normalize(str(path)))
                 ids.extend(sub(t, "message")["id"] for t in token_turns(found))
         self.assertEqual(len(ids), 2)
         self.assertEqual(len(set(ids)), 2)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,53 @@ SLICES = ("run", "search", "gate", "harness", "wrapper", "evaluation")
 LEAF_SLICES = ("search", "gate")
 FORBIDDEN_FROM_LEAVES = ("run", "harness")
 REMOVED_FLAT_FILES = ("_workflow.py", "_search.py", "_gate.py", "_harness.py", "_claude.py", "_evaluator.py")
+DECISIONS = Path(__file__).resolve().parents[4] / "docs" / "agents" / "decisions"
+# An ADR id is `<decision file stem>:ADR-NNN`, because each file in `docs/agents/decisions/` numbers its own records.
+ADR_011 = "skillz-autoimprove:ADR-011"
+# Each module at the package root, with the decision that keeps it there. A new flat module goes into a slice (ADR-011).
+ROOT_MODULES: dict[str, str] = {
+    "__init__": ADR_011,
+    "__main__": ADR_011,
+    "_audit": ADR_011,
+    "_budget": ADR_011,
+    "_candidate": ADR_011,
+    "_cases": ADR_011,
+    "_cli": "harness-module-interface:ADR-004",
+    "_contract": ADR_011,
+    "_evals_format": ADR_011,
+    "_facts": ADR_011,
+    "_frontmatter": ADR_011,
+    "_gate_files": ADR_011,
+    "_graders": ADR_011,
+    "_intake": ADR_011,
+    "_journey_gate": ADR_011,
+    "_new_cli": ADR_011,
+    "_protocol": "harness-module-interface:ADR-002",
+    "_records": ADR_011,
+    "_redact": ADR_011,
+    "_runtime": ADR_011,
+    "_scaffold": ADR_011,
+    "_schemas": ADR_011,
+    "_seed": ADR_011,
+    "_validate": ADR_011,
+}
+# The root modules that a slice may import, with the decision that shares each one. A slice keeps other root code out.
+KERNEL: dict[str, str] = {
+    "_audit": ADR_011,
+    "_budget": ADR_011,
+    "_candidate": ADR_011,
+    "_cases": ADR_011,
+    "_contract": ADR_011,
+    "_frontmatter": ADR_011,
+    "_graders": ADR_011,
+    "_intake": ADR_011,  # move into run
+    "_new_cli": ADR_011,
+    "_protocol": "harness-module-interface:ADR-002",
+    "_records": ADR_011,
+    "_redact": ADR_011,
+    "_runtime": ADR_011,
+    "_seed": ADR_011,  # move into run
+}
 
 
 def _modules() -> list[Path]:
@@ -170,3 +218,76 @@ def _is_facade_member(name: str, slice_name: str) -> bool:
     attribute = name.removeprefix(f"{PREFIX}.{slice_name}.")
     return "." not in attribute and not (PACKAGE / slice_name / f"{attribute}.py").exists() \
         and not (PACKAGE / slice_name / attribute).is_dir()
+
+
+def _imported_modules(path: Path) -> list[str]:
+    package = (PREFIX, *path.relative_to(PACKAGE).parts[:-1])
+    found: list[str] = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            found += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level:
+                base = ".".join([*package[:len(package) - node.level + 1], *([node.module] if node.module else [])])
+            found += [f"{base}.{alias.name}" if alias.name.startswith("_") else base for alias in node.names]
+    return found
+
+
+@pytest.mark.ac("gh-389:AC-1")
+def test_harness_modules_take_evaluation_code_only_from_the_evaluation_facade() -> None:
+    evaluation = f"{PREFIX}.evaluation"
+    wrong = [f"{path.relative_to(PACKAGE)} imports {module}"
+             for path in sorted((PACKAGE / "harness").rglob("*.py"))
+             for module in _imported_modules(path)
+             if module.startswith(f"{evaluation}.") or module.startswith(f"{PREFIX}._evaluation")]
+    assert wrong == []
+
+
+def test_the_package_root_holds_only_the_frozen_root_modules() -> None:
+    on_disk = {path.stem for path in PACKAGE.glob("*.py")}
+    added, removed = sorted(on_disk - ROOT_MODULES.keys()), sorted(ROOT_MODULES.keys() - on_disk)
+    assert added == [], (f"new flat modules {added}: put it in a slice (ADR-011: evaluation/, cases/, candidate/) "
+                         "or add it here with an ADR id (ROOT_MODULES in test_layout.py)")
+    assert removed == [], f"root modules {removed} are gone: remove their ROOT_MODULES entries in test_layout.py"
+
+
+def _decision_ids() -> set[str]:
+    """Return `<file stem>:ADR-NNN` for each `### ADR-NNN` heading in `docs/agents/decisions/*.md`."""
+    return {f"{path.stem}:{match[1]}" for path in DECISIONS.glob("*.md")
+            for line in path.read_text().splitlines() if (match := re.match(r"### (ADR-\d+)\b", line))}
+
+
+def test_each_frozen_set_entry_cites_a_recorded_decision() -> None:
+    cited = {f"{label}[{name!r}]": adr for label, frozen in (("ROOT_MODULES", ROOT_MODULES), ("KERNEL", KERNEL))
+             for name, adr in frozen.items()}
+    known = _decision_ids()
+    unknown = sorted(f"{entry} = {adr!r}" for entry, adr in cited.items() if adr not in known)
+    assert unknown == [], (f"{unknown}: cite `<file stem>:ADR-NNN` for a `### ADR-NNN` heading "
+                           "in docs/agents/decisions/<file stem>.md, or write that ADR")
+
+
+def _root_imports_from_slices() -> dict[str, set[str]]:
+    """Map each root module that a slice module imports to the importing files, relative to the package."""
+    roots = {path.stem for path in PACKAGE.glob("*.py")}
+    importers: dict[str, set[str]] = {}
+    for path in _modules():
+        if _slice_of(path) is None:
+            continue
+        for module in _imported_modules(path):
+            parts = module.split(".")
+            if parts[0] == PREFIX and len(parts) > 1 and parts[1] in roots:
+                importers.setdefault(parts[1], set()).add(str(path.relative_to(PACKAGE)))
+    return importers
+
+
+def test_slices_import_only_kernel_root_modules() -> None:
+    outside = sorted(f"{file} imports {PREFIX}.{name}" for name, files in _root_imports_from_slices().items()
+                     if name not in KERNEL for file in files)
+    assert outside == [], (f"{outside}: move the root module into the slice that uses it (ADR-011), "
+                           "or add it to KERNEL in test_layout.py with an ADR id")
+
+
+def test_each_kernel_entry_has_a_slice_importer() -> None:
+    unused = sorted(KERNEL.keys() - _root_imports_from_slices().keys())
+    assert unused == [], f"no slice imports {unused}: remove their KERNEL entries in test_layout.py"

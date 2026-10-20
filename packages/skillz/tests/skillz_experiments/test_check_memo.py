@@ -11,12 +11,12 @@ import pytest
 from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
-from skillz_experiments._evaluation import helper_failure
+from skillz_experiments.evaluation import helper_failure
 from skillz_experiments.evaluation import CheckMemo, CheckResult, evaluate
 from skillz_experiments.evaluation._memo import Checker
 from skillz_experiments.harness import Harness
 from skillz_experiments.harness._transport import Transport
-from skillz_experiments.run._session import _Provider  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.run._state import Provider as _Provider
 from typing_extensions import override
 from fake_provider import PASSED, FakeProvider
 from memo_fixtures import cases as _cases, contract as _contract

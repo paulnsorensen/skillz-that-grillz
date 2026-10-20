@@ -23,7 +23,7 @@ import wedge._build as wedge_build
 from wedge._build import SiteLayer, build_many
 from wedge._config import load_targets, parse_targets
 
-from skillz_experiments import _wedge_targets
+from skillz_experiments.run import _wedge_targets
 from skillz_experiments.run import _plan, _session
 from skillz_experiments._candidate import NEW_CLI, TEXT_FILE_LIMIT, Candidate
 from skillz_experiments._cases import Case, CodedError
@@ -36,7 +36,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
 from skillz_experiments.search import Progress
 from skillz_experiments.search import request as reflection_request
-from skillz_experiments._wedge_targets import BuildFailed, plan_targets, settle
+from skillz_experiments.run._wedge_targets import BuildFailed, plan_targets, settle
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override
 from fake_provider import FakeProvider

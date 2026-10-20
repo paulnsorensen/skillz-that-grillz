@@ -16,7 +16,7 @@ from skillz_experiments._cases import (
 )
 from skillz_experiments._contract import LOCATION, Contract, Grader, load_contract, parse
 from skillz_experiments._evals_format import EVAL_KINDS, SOURCES
-from skillz_experiments._frontmatter import top_fields
+from skillz_experiments._frontmatter import read_frontmatter
 from skillz_experiments._records import write
 
 DRAFT_NAME = "cases.draft.json"
@@ -260,10 +260,16 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
 
 
 def skill_frontmatter(target: Path) -> dict[str, str]:
-    """Return the top-level frontmatter fields of `<target>/SKILL.md`. Read only that file."""
+    """Return the nonempty top-level frontmatter fields of `<target>/SKILL.md`. Read only that file.
+
+    Return no fields when the file is absent or its frontmatter is unreadable.
+    """
     skill = target / "SKILL.md"
-    fields = top_fields(skill.read_text(encoding="utf-8")) if skill.is_file() else None
-    return {key: value for key, value in (fields or {}).items() if value}
+    try:
+        fields = read_frontmatter(skill.read_text(encoding="utf-8")) if skill.is_file() else {}
+    except ValueError:
+        return {}
+    return {key: value for key, value in fields.items() if value}
 
 
 def skill_facts(target: Path) -> dict[str, object]:

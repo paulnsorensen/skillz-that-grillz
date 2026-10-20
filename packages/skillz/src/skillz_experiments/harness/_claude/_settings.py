@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._contract import Surface
-from skillz_experiments._frontmatter import top_fields
+from skillz_experiments._frontmatter import read_frontmatter
 from skillz_experiments.harness._claude._constants import CONFIG_PREFIX
 from skillz_experiments.harness._claude._options import unique
 
@@ -68,8 +68,11 @@ class Declared:
 
 def _frontmatter_name(text: str) -> str | None:
     """Return the `name:` value of the leading frontmatter block, or None when the block or the field is absent."""
-    fields = top_fields(text)
-    return (fields or {}).get("name") or None
+    try:
+        fields = read_frontmatter(text)
+    except ValueError:
+        return None
+    return fields.get("name") or None
 
 
 def declared_names(surface: Surface | None, files: Mapping[str, str] | None) -> Declared:

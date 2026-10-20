@@ -16,8 +16,7 @@ from typing import cast, ClassVar, final
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, relative, string
 from skillz_experiments._contract import resolve, Surface
-from skillz_experiments._evaluation import helper_failure, usage
-from skillz_experiments.evaluation import answer_schema, CheckResult, Reply, Transcript
+from skillz_experiments.evaluation import answer_schema, CheckResult, helper_failure, Reply, Transcript, usage
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._redact import write_transcript

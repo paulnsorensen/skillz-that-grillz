@@ -10,7 +10,7 @@ import pytest
 
 import skillz_experiments
 from skillz_experiments._cases import digest
-from skillz_experiments.run import _session
+from skillz_experiments.run import _open
 
 PACKAGE = Path(skillz_experiments.__file__).parent
 REPO = PACKAGE.parents[3]
@@ -21,18 +21,18 @@ def copied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point `_engine_hash` at a private copy of the package, so a test can change a module."""
     copy = tmp_path / "skillz_experiments"
     _ = shutil.copytree(PACKAGE, copy, ignore=shutil.ignore_patterns("__pycache__"))
-    monkeypatch.setattr(_session, "__file__", str(copy / "run" / "_session.py"))
+    monkeypatch.setattr(_open, "__file__", str(copy / "run" / "_open.py"))
     return copy
 
 
 def test_engine_hash_is_stable_across_two_calls() -> None:
-    first = _session.engine_hash()
-    assert first == _session.engine_hash()
+    first = _open.engine_hash()
+    assert first == _open.engine_hash()
 
 
 def test_engine_hash_of_a_pristine_copy_equals_the_hash_of_the_package(copied: Path) -> None:
     del copied
-    copy_hash = _session.engine_hash()
+    copy_hash = _open.engine_hash()
     assert copy_hash == digest({path.relative_to(PACKAGE).as_posix(): path.read_text()
                                 for path in PACKAGE.rglob("*.py")})
 
@@ -40,22 +40,22 @@ def test_engine_hash_of_a_pristine_copy_equals_the_hash_of_the_package(copied: P
 @pytest.mark.parametrize("module", ["harness/_claude/_events.py", "run/_session.py", "search/_engine.py",
                                     "gate/_rules.py", "_cli.py", "__init__.py"])
 def test_engine_hash_changes_when_any_module_changes(copied: Path, module: str) -> None:
-    before = _session.engine_hash()
+    before = _open.engine_hash()
     path = copied / module
     _ = path.write_text(path.read_text() + "\n# changed\n")
-    assert _session.engine_hash() != before
+    assert _open.engine_hash() != before
 
 
 def test_engine_hash_changes_when_a_module_is_added_to_a_subpackage(copied: Path) -> None:
-    before = _session.engine_hash()
+    before = _open.engine_hash()
     _ = (copied / "harness" / "_claude" / "_added.py").write_text("X = 1\n")
-    assert _session.engine_hash() != before
+    assert _open.engine_hash() != before
 
 
 def test_engine_hash_changes_when_a_module_moves_between_slices(copied: Path) -> None:
-    before = _session.engine_hash()
+    before = _open.engine_hash()
     _ = shutil.move(copied / "gate" / "_rules.py", copied / "search" / "_rules.py")
-    assert _session.engine_hash() != before
+    assert _open.engine_hash() != before
 
 
 def test_the_cli_module_imports_and_exposes_main() -> None:
