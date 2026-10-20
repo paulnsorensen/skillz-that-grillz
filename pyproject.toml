@@ -62,6 +62,12 @@ extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/agent-sessi
 reportImplicitRelativeImport = false
 
 [[tool.basedpyright.executionEnvironments]]
+root = "packages/skillz/tests/skillz_live"
+extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/fromargs/src"]
+# The live tests share `fromargs_benefit` and `semver_oracle` from their own directory; it has no package marker.
+reportImplicitRelativeImport = false
+
+[[tool.basedpyright.executionEnvironments]]
 root = "skills/skillz/evals/gates"
 # Each gate runs as a script from its own directory, so it imports its sibling helpers by bare name.
 reportImplicitRelativeImport = false

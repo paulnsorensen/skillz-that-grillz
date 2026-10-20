@@ -1,0 +1,67 @@
+---
+name: semver-next
+description: Compute the next semantic version of a project from its VERSION file and its conventional commits. Use when the user asks for the next release version or for the bump that the pending commits need.
+---
+# semver-next
+
+Read `VERSION` and `commits.txt` in the working directory.
+Apply the rules below to find the bump and the next version.
+Return one JSON object as the answer, and nothing else: `{"bump": "<bump>", "next": "<version>"}`.
+`bump` is `major`, `minor`, `patch`, `prerelease`, or `none`.
+
+## Input
+
+- `VERSION` holds one version: `MAJOR.MINOR.PATCH` or `MAJOR.MINOR.PATCH-rc.N`.
+- `commits.txt` lists the commits since that version, oldest first.
+  A line that holds only `---` separates two commits.
+  The first nonblank line of a commit is its header. The other lines are its body and footers.
+
+## Rules
+
+1. A commit is conventional when its header matches `type(scope)!: description`.
+   The type is ASCII letters. The `(scope)` is optional, and it is nonempty with no parentheses.
+   The `!` is optional, and it comes right before the colon.
+   One colon and one space follow, then a description that starts with a character that is not a space.
+   Ignore every commit that is not conventional, with its body and footers.
+2. Compare the type without regard to case. `Feat` is `feat`.
+3. A commit is breaking when its header has the `!`.
+   It is also breaking when a body line starts with `BREAKING CHANGE: ` or `BREAKING-CHANGE: `, in that exact case, at the start of the line.
+4. A commit of type `revert` can cancel an earlier commit.
+   It cancels the closest earlier live commit whose full header equals the revert description, character for character.
+   A live commit is conventional and is not cancelled. A revert that cancels a commit is not live.
+   The revert and the cancelled commit then have no impact. A cancelled commit never comes back.
+   A revert with no match has the impact `patch`, or `major` when it is breaking.
+5. The impact of every other commit: `major` when it is breaking. Otherwise `feat` is `minor`, and `fix` and `perf` are `patch`.
+   Every other type has no impact.
+6. The bump is the largest impact: `major`, then `minor`, then `patch`.
+   When no commit has an impact, the bump is `none` and `next` is the `VERSION` text unchanged.
+7. When `VERSION` is `MAJOR.MINOR.PATCH-rc.N` and the bump is not `none`, the bump is `prerelease`.
+   `next` is the same `MAJOR.MINOR.PATCH` with `rc.N+1`.
+8. When `VERSION` has no `-rc` part and `MAJOR` is `0`, a `major` bump becomes `minor`, and a `minor` bump becomes `patch`.
+9. Apply the bump: `major` gives `MAJOR+1.0.0`, `minor` gives `MAJOR.MINOR+1.0`, and `patch` gives `MAJOR.MINOR.PATCH+1`.
+
+## Example
+
+`VERSION` holds `1.4.2`. `commits.txt` holds:
+
+```text
+fix(api): handle empty body
+---
+feat: add export
+---
+revert: feat: add export
+---
+docs: explain flags
+```
+
+The revert cancels `feat: add export`. The fix is left, so the answer is `{"bump": "patch", "next": "1.4.3"}`.
+
+## Helper
+
+`scripts/version-parse.pyz` splits a version into its parts:
+
+```sh
+python3 .agents/skills/semver-next/scripts/version-parse.pyz 1.2.3-rc.4
+```
+
+It prints `{"major": 1, "minor": 2, "patch": 3, "rc": 4}`. `rc` is `null` for a version with no `-rc` part.

@@ -28,6 +28,7 @@ The gate fails on a `test` row with no marked test, a marker for an unknown sour
 A ticket's pull request adds `gh-<n>.md` and its markers together. The decision record is `docs/agents/decisions/ac-traceability.md`.
 
 <!-- HALLOUMINATE:INDEX-START -->
+- [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
 - [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
 - [gh-131](./gh-131.md) — gh-131: the network preflight probes name lookup and a non-loopback address
 - [gh-223](./gh-223.md) — gh-223: skillz_experiments module layout and borrow waves
