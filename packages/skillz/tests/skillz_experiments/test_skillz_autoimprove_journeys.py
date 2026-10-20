@@ -240,6 +240,32 @@ def test_the_gate_judges_each_out_spelling_by_where_it_lands_relative_to_the_toy
     assert gate(tmp_path, [run_out(out, target), END]) == {"score": 0 if failed else 1, "failed": failed}
 
 
+@pytest.mark.ac("gh-420:AC-1")
+@pytest.mark.parametrize(("command", "failed"), [
+    ("cd toys/a && python3 ../../x/skillz-experiment.pyz run --target . --out runs", ["out-inside-target"]),
+    ("cd toys; python3 ../x/skillz-experiment.pyz run --target a --out a/runs", ["out-inside-target"]),
+    ("cd toys/a && cd .. && python3 ../x/skillz-experiment.pyz run --target a --out a/runs", ["out-inside-target"]),
+    ("cd /w/toys/a && python3 /w/x/skillz-experiment.pyz run --target /w/toys/a --out runs", ["out-inside-target"]),
+    ("cd toys/a && python3 ../../x/skillz-experiment.pyz run --target . --out /tmp/x", []),
+    ("cd toys/a && python3 ../../x/skillz-experiment.pyz run --target . --out ../../runs", []),
+    ("cd /tmp && python3 /w/x/skillz-experiment.pyz run --target /w/toys/a --out runs", []),
+], ids=["cd-into-toy", "cd-into-toys", "cd-twice", "cd-absolute", "cd-out-tmp", "cd-out-back-up", "cd-elsewhere"])
+def test_the_gate_resolves_out_and_target_against_a_cd_in_the_same_command(
+        tmp_path: Path, command: str, failed: list[str]) -> None:
+    assert gate(tmp_path, [bash(command), END]) == {"score": 0 if failed else 1, "failed": failed}
+
+
+@pytest.mark.ac("gh-420:AC-2")
+@pytest.mark.parametrize("command", [
+    "cd && python3 x/skillz-experiment.pyz run --target toys/a --out runs",
+    "cd - && python3 x/skillz-experiment.pyz run --target toys/a --out runs",
+    "cd ~/w && python3 x/skillz-experiment.pyz run --target toys/a --out runs",
+    'cd "$D" && python3 x/skillz-experiment.pyz run --target toys/a --out runs',
+], ids=["bare-cd", "cd-dash", "cd-home", "cd-variable"])
+def test_the_gate_fails_closed_when_a_cd_goes_where_it_cannot_tell(tmp_path: Path, command: str) -> None:
+    assert gate(tmp_path, [bash(command), END]) == {"score": 0, "failed": ["out-inside-target"]}
+
+
 @pytest.mark.ac("kit-harder-journeys:AC-6")
 @pytest.mark.parametrize("events", [
     [bash(RUN), user_text(f"Approve with {STALE_HASH}"), END, bash(f"{RUN} --approve-cases {STALE_HASH}"), END],
