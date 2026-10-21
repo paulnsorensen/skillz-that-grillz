@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -610,6 +612,7 @@ def test_macos_sandbox_runs_the_command_under_the_shared_profile(tmp_path: Path,
     directory = fake_bin(tmp_path)
     root = workspace(tmp_path)
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path / "missing"))
     log = tmp_path / "sandbox-exec.log"
     _ = (directory / "sandbox-exec").write_text(
         f"#!{sys.executable}\nimport json, sys\nopen({str(log)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
@@ -643,3 +646,30 @@ def test_command_line_refuses_an_unknown_runtime(tmp_path: Path) -> None:
     assert result.returncode != 0 and result.stdout == "" and "Traceback" not in result.stderr
     assert "runtime" in result.stderr and "lxc" in result.stderr
     assert not (directory / "docker.log").exists()
+
+
+ESCAPEE = ("import subprocess, sys, time\n"
+           "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)\n"
+           "open(sys.argv[1], 'w').write(str(child.pid))\n"
+           "time.sleep(60)\n")
+
+
+@pytest.mark.ac("gh-418:AC-1")
+def test_a_timeout_stops_the_container_and_bounds_the_drain_when_a_descendant_left_the_group(tmp_path: Path) -> None:
+    pid_file = tmp_path / "escapee.pid"
+    stopped: list[float] = []
+
+    def stop() -> str:
+        stopped.append(time.monotonic())
+        return ""
+    started = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="timed out after 1 s"):
+            _ = _gemini._run([sys.executable, "-c", ESCAPEE, str(pid_file)], tmp_path, {"PATH": "/usr/bin:/bin"},  # pyright: ignore[reportPrivateUsage]
+                             timeout=1, stop=stop)
+        elapsed = time.monotonic() - started
+    finally:
+        if pid_file.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+    assert elapsed < 10 and stopped and stopped[0] - started < 1 + _gemini.DRAIN_GRACE / 2
