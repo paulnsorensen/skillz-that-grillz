@@ -255,6 +255,27 @@ def _without_links(facts: object) -> tuple[object, set[str]]:
     return rest, set(cast(list[str], rest.pop("local_link_targets")))
 
 
+def _may_sit_in_code(body: str, target: str) -> bool:
+    """Tell whether a line that holds `target` follows a fence line or shares its blank-line block with a backtick."""
+    lines = body.split("\n")
+    for number, line in enumerate(lines):
+        if target not in line:
+            continue
+        before = lines[:number]
+        block = [line]
+        for other in reversed(before):
+            if not other.strip():
+                break
+            block.append(other)
+        for other in lines[number + 1:]:
+            if not other.strip():
+                break
+            block.append(other)
+        if any("`" in text for text in block) or any("```" in text or "~~~" in text for text in before):
+            return True
+    return False
+
+
 def test_inspect_matches_the_old_inspector_on_three_hundred_generated_documents(
         tmp_path: Path, old_module: ModuleType) -> None:
     from skillz_inspect import inspect
@@ -273,7 +294,8 @@ def test_inspect_matches_the_old_inspector_on_three_hundred_generated_documents(
         if expected == "link escapes package" and not isinstance(actual, str):
             expected = _outcome(old_inspect, write(path, FRONT + body.replace("../up.md", "up.md") + "\n"))
         (actual_facts, actual_links), (expected_facts, expected_links) = _without_links(actual), _without_links(expected)
-        if actual_facts != expected_facts or not actual_links <= expected_links:
+        dropped = [target for target in expected_links - actual_links if not _may_sit_in_code(body, target)]
+        if actual_facts != expected_facts or not actual_links <= expected_links or dropped:
             mismatches.append(body)
     assert not mismatches, mismatches[:2]
 
@@ -363,6 +385,15 @@ def test_a_link_to_a_symlink_loop_stays_inside_the_error_contract(tmp_path: Path
     path = _link_to_a_symlink_loop(tmp_path / "root")
     _assert_inside_the_contract(run_pyz(str(path)))
     assert new_outcome(path) == ("error", "package must not contain symlinks")
+
+
+@pytest.mark.ac("gh-404:AC-1")
+def test_an_input_below_a_symlink_loop_stays_inside_the_error_contract(tmp_path: Path) -> None:
+    # Path.resolve raises RuntimeError on a symlink loop before Python 3.13; the exit code must not vary by version.
+    (tmp_path / "loop").symlink_to(tmp_path / "loop")
+    path = tmp_path / "loop/SKILL.md"
+    _assert_inside_the_contract(run_pyz(str(path)))
+    assert new_outcome(path) == ("error", "input must be a regular file of at most 262144 bytes")
 
 
 def test_a_very_long_link_target_stays_inside_the_error_contract(tmp_path: Path) -> None:
@@ -489,5 +520,14 @@ def test_a_sample_link_in_code_is_not_a_local_link_target_but_a_prose_link_is(tm
                                   "| a | [x](../y.md) |\n|---|---|\n",
                                   "``` not a fence because the info has a ` tick\n[x](../y.md)\n"])
 def test_a_link_outside_code_still_rejects_a_package_escape(tmp_path: Path, body: str) -> None:
+    path = write(tmp_path / "pkg" / "SKILL.md", FRONT + body)
+    assert new_outcome(path) == ("error", "link escapes package")
+
+
+@pytest.mark.ac("gh-403:AC-2")
+@pytest.mark.parametrize("body", ["# Title `x\nsome [x](../y.md) text` end\n",
+                                  "- a `b\n- [x](../y.md) c` d\n",
+                                  "| a ` | b |\n| [x](../y.md) | ` c |\n"])
+def test_a_code_span_does_not_cross_a_heading_list_item_or_table_row(tmp_path: Path, body: str) -> None:
     path = write(tmp_path / "pkg" / "SKILL.md", FRONT + body)
     assert new_outcome(path) == ("error", "link escapes package")

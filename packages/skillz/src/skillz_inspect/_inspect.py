@@ -31,7 +31,6 @@ ITEM = re.compile(r"^ *(?:[-*+]|\d+[.)])[ \t]+(?=\S)")  # A list item; its end i
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 FENCE_CLOSE = re.compile(r"^ {0,3}(`{3,}|~{3,})[ \t]*$")
 BACKTICKS = re.compile(r"`+")
-BLANK_LINE = re.compile(r"(\n[ \t]*\n)")
 
 # Text shapes for sentence counting.
 MASK = re.compile(r"`[^`]*`|\"[^\"]*\"|“[^”]*”|(?<=\])\([^)]*\)")  # Code spans, quotes, and link targets.
@@ -156,16 +155,28 @@ def _code_spans(paragraph: str) -> list[tuple[int, int]]:
 
 
 def _code_free_body(lines: list[str], start: int) -> str:
-    """Join the lines from index `start`. Blank code fences and mask code spans, so a sample link in code is no link."""
-    body = "\n".join("" if kind in ("code", "fence") else line for _number, line, kind in _body_lines(lines, start))
+    """Join the lines from index `start`. Blank code fences and mask code spans, so a sample link in code is no link.
+
+    A code span is inline, so it never crosses a blank line, a heading, a list item, or a table row.
+    """
+    segments: list[list[str]] = []
+    for _number, line, kind in _body_lines(lines, start):
+        line = "" if kind in ("code", "fence") else line
+        boundary = not line.strip() or bool(BREAK.match(line)) or line.lstrip().startswith("|")
+        single = bool(segments) and segments[-1][0].lstrip().startswith(("#", "|"))  # A heading or row is one line.
+        if boundary or single or not segments or not segments[-1][0].strip():
+            segments.append([])
+        segments[-1].append(line)
     masked: list[str] = []
-    for paragraph in BLANK_LINE.split(body):  # A code span never crosses a blank line; the split keeps blank lines.
+    for segment in segments:
+        paragraph = "\n".join(segment)
+        pieces: list[str] = []
         last = 0
         for begin, end in _code_spans(paragraph):
-            masked += [paragraph[last:begin], " " * (end - begin)]
+            pieces += [paragraph[last:begin], " " * (end - begin)]
             last = end
-        masked.append(paragraph[last:])
-    return "".join(masked)
+        masked.append("".join(pieces) + paragraph[last:])
+    return "\n".join(masked)
 
 
 def _local_links(package: Path, body: str) -> set[str]:
@@ -191,7 +202,8 @@ def inspect(path: Path) -> dict[str, object]:
     """Report the package facts of one Markdown file. Raise `ValueError` for input outside the contract."""
     if path.is_symlink():
         raise ValueError("input must not be a symlink")
-    path = path.parent.resolve() / path.name
+    # Path.resolve raises RuntimeError on a symlink loop before Python 3.13; realpath does not on any version.
+    path = Path(os.path.realpath(path.parent)) / path.name
     if not path.is_file() or path.stat().st_size > MAX_BYTES:
         raise ValueError(f"input must be a regular file of at most {MAX_BYTES} bytes")
     lines = path.read_text(encoding="utf-8").splitlines()
