@@ -113,3 +113,7 @@
 - 2026-10-15 · 1406d6d87eb17d68 · merged · ideas/session-driven-skill-optimization.md · Export section now states the replay on a clean copy and the three-claim report.
 
 - 2026-10-18 · pr-363-journey-kits · updated · decisions/skillz-autoimprove.md · Record the kit location `packages/skillz/journey-kits/` in an ADR-008 note and the ADR-019 context, and why PR #363 renamed it from `experiments/`.
+
+
+- 2026-10-19 · 82aa7d68c88aff27 · new-page · research/llm-judge-scoring-and-binary-criteria.md · Current judge scoring (0-100, pillar mean, one call per case) and judge-scale, binary-checklist, generated-criteria, and EARS research. Research only; the /mold judge design is open. No page owned the topic; ADR and criteria files left unchanged. All five frozen probes return the page at rank 1.
+

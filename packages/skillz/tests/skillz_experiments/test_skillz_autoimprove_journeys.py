@@ -143,12 +143,16 @@ def tool(text: str) -> dict[str, object]:
     return {"type": "user", "message": {"content": [{"type": "tool_result", "content": [{"type": "text", "text": text}]}]}}
 
 
+def said(text: str) -> dict[str, object]:
+    return {"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}
+
+
 def write_tool(path: str) -> dict[str, object]:
     return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Write", "input": {"file_path": path}}]}}
 
 
 @pytest.mark.parametrize(("events", "failed"), [
-    ([bash(RUN), tool(f'{{"stop": "cases-unapproved", "case_hash": "{HASH}"}}'), END,
+    ([bash(RUN), tool(f'{{"stop": "cases-unapproved", "case_hash": "{HASH}"}}'), said(f"Approve the cases {HASH}?"), END,
       bash(f"{RUN} --approve-cases {HASH}"), tool('{"stop": "budget-unapproved"}'), END,
       bash(f"{RUN} --approve-cases {HASH} --approve-budget 9"), END], []),
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
