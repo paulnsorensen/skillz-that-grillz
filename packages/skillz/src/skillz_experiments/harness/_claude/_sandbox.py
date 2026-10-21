@@ -12,7 +12,7 @@ from typing import cast
 
 from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments.harness._claude._constants import INSTALL_BUBBLEWRAP, SANDBOX_STDERR
-from skillz_experiments.harness._seatbelt import command_profile
+from skillz_experiments.harness._seatbelt import command_profile, seatbelt_environment
 
 
 # Curl exit codes that show a request attempt. Codes 5 and 6 are name-resolution failures, and 22 needs `-f`.
@@ -26,6 +26,8 @@ SANDBOX_CAPTURE = "/run/skillz-capture"
 
 
 INSTALL_SOCAT = "install socat (for example `sudo apt install socat`)"
+DARWIN_FIX = ("run on macOS with `sandbox-exec` and the Command Line Tools installed (`xcode-select --install`); "
+              "no Linux package is needed")
 
 
 USERNS_FIX = ("allow unprivileged user namespaces with `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, "
@@ -64,6 +66,8 @@ def host_tools() -> list[tuple[str, bool, str]]:
 def sandbox_fix(detail: str) -> str:
     """Pick the fix that matches the sandbox failure text."""
     text = detail.lower()
+    if sys.platform == "darwin":
+        return DARWIN_FIX
     if "socat" in text:
         return INSTALL_SOCAT
     if any(word in text for word in ("uid map", "operation not permitted", "permission denied", "namespace", "apparmor")):
@@ -213,6 +217,7 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
     """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
+        assignments.extend(seatbelt_environment())
         return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
     mount = ["--bind", str(capture), SANDBOX_CAPTURE] if capture is not None else []

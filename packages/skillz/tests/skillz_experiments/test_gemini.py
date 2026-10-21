@@ -157,6 +157,25 @@ def test_infer_passes_the_image_and_the_macos_profile(tmp_path: Path, monkeypatc
     assert env["GEMINI_SANDBOX_IMAGE"] is None and env["SANDBOX_FLAGS"] is None
 
 
+def test_sandbox_exec_argv_pins_the_developer_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    launched: list[list[str]] = []
+
+    def run(command: list[str], *_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        launched.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def runtime(_runtime: str | None, _bin_dir: Path | None) -> tuple[str, str]:
+        return "sandbox-exec", "/usr/bin/sandbox-exec"
+
+    monkeypatch.setattr(_gemini, "_runtime", runtime)
+    monkeypatch.setattr(_gemini, "_run", run)
+    root = workspace(tmp_path)
+    _ = _gemini._sandbox({"argv": ["true"]}, root, None, _gemini.IMAGE, None)  # pyright: ignore[reportPrivateUsage]
+    assert f"DEVELOPER_DIR={tmp_path}" in launched[0]
+    assert launched[0].index(f"DEVELOPER_DIR={tmp_path}") < launched[0].index("true")
+
+
 def test_infer_trace_holds_only_the_tool_calls_gemini_reported(tmp_path: Path) -> None:
     directory = fake_bin(tmp_path)
     result = infer(directory, workspace(tmp_path))
@@ -593,6 +612,7 @@ def test_macos_sandbox_runs_the_command_under_the_shared_profile(tmp_path: Path,
     directory = fake_bin(tmp_path)
     root = workspace(tmp_path)
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path / "missing"))
     log = tmp_path / "sandbox-exec.log"
     _ = (directory / "sandbox-exec").write_text(
         f"#!{sys.executable}\nimport json, sys\nopen({str(log)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")

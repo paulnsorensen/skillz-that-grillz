@@ -12,7 +12,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Collection, Iterator
 from pathlib import Path
-from typing import cast, final
+from typing import NoReturn, cast, final
 
 import pytest
 
@@ -24,7 +24,7 @@ from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
 from skillz_experiments._cases import CodedError, digest, mapping
 from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
-from skillz_experiments.harness._claude._sandbox import sandbox_argv
+from skillz_experiments.harness._claude._sandbox import sandbox_argv, sandbox_fix
 from skillz_experiments._contract import Surface, load_contract, parse
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._transport import Transport
@@ -958,13 +958,93 @@ def test_seatbelt_profile_denies_network_host_reads_and_candidate_writes() -> No
     assert all("/Users" not in line and "/private/tmp" not in line and "/var/folders" not in line for line in reads)
 
 
-def test_seatbelt_argv_runs_the_command_with_a_clean_environment() -> None:
+def test_seatbelt_profile_allows_the_root_directory_literal_but_not_its_subtree() -> None:
+    lines = command_profile(Path("/w/workspace")).splitlines()
+    assert '(allow file-read* (literal "/"))' in lines
+    assert not any(line.startswith("(allow file-read*") and '(subpath "/")' in line for line in lines)
+
+
+def test_seatbelt_argv_runs_the_command_with_a_clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", "/nonexistent-developer-dir")
     workspace = Path("/w/workspace")
     argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", workspace, ["/usr/bin/python3", "-c", "pass"],
                         {"PATH": "/usr/bin:/bin", "HOME": "/w/workspace/home"})
     assert argv[:3] == ["/usr/bin/sandbox-exec", "-p", command_profile(workspace)]
     assert argv[3:] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=/w/workspace/home",
                         "/usr/bin/python3", "-c", "pass"]
+
+
+def test_seatbelt_argv_pins_the_xcrun_shim_to_the_allowed_developer_dir(tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", Path("/w/workspace"), ["/usr/bin/python3"], {"PATH": "/usr/bin"})
+    assert argv[4:7] == ["-i", "PATH=/usr/bin", f"DEVELOPER_DIR={tmp_path}"]
+
+
+def test_seatbelt_environment_pins_only_an_existing_developer_dir(tmp_path: Path,
+                                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments.harness import seatbelt_environment
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    assert seatbelt_environment() == [f"DEVELOPER_DIR={tmp_path}"]
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path / "missing"))
+    assert seatbelt_environment() == []
+
+
+def test_sandbox_fix_on_darwin_does_not_suggest_linux_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", "darwin")
+    fix = sandbox_fix("sandbox probe failed")
+    assert "sandbox-exec" in fix
+    assert not any(word in fix for word in ("apt", "bwrap", "bubblewrap", "apparmor"))
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", "linux")
+    assert "bubblewrap" in sandbox_fix("sandbox probe failed")
+
+
+@pytest.mark.parametrize(("platform", "expected"), [("darwin", "sandbox-exec"), ("linux", "bubblewrap")])
+def test_doctor_sandbox_probe_row_fix_matches_the_platform(platform: str, expected: str,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    class Failing:
+        def check_helper_sandbox(self) -> None:
+            raise RuntimeError("sandbox probe failed")
+
+        def inventory(self) -> NoReturn:
+            raise RuntimeError("no inventory")
+
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", platform)
+    row = _transport._probe_checks(cast(ClaudeCode, cast(object, Failing())), True)[0]  # pyright: ignore[reportPrivateUsage]
+    fix = row.fix or ""
+    assert row.name == "sandbox-probe" and row.status == "fail"
+    assert expected in fix
+    assert ("bubblewrap" in fix) == (platform == "linux")
+
+
+def probe_assertion() -> str:
+    from skillz_experiments.harness._isolation import probe
+    script = probe(Path("/w"), Path("/s"), Path("/e"), 1)
+    return next(line for line in script.splitlines() if line.startswith("assert set(os.environ)"))
+
+
+@pytest.mark.parametrize(("platform", "accepted"), [("darwin", True), ("linux", False)])
+def test_probe_environment_assertion_accepts_xcrun_names_only_on_darwin(platform: str, accepted: bool,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from skillz_experiments.harness._seatbelt import XCRUN_ENVIRONMENT
+    line = probe_assertion()
+    environment = {"PATH": "/usr/bin", **{name: "x" for name in XCRUN_ENVIRONMENT}}
+    monkeypatch.setattr(os, "environ", environment)
+    names = {"os": os, "sys": SimpleNamespace(platform=platform)}
+    if accepted:
+        exec(line, names)
+    else:
+        with pytest.raises(AssertionError):
+            exec(line, names)
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_probe_environment_assertion_rejects_a_foreign_name(platform: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin", "SDKROOT": "/sdk", "ANTHROPIC_API_KEY": "secret"})
+    with pytest.raises(AssertionError):
+        exec(probe_assertion(), {"os": os, "sys": SimpleNamespace(platform=platform)})
 
 
 def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter(tmp_path: Path) -> None:

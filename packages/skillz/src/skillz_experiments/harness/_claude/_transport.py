@@ -85,8 +85,6 @@ from skillz_experiments.harness._claude._sandbox import (
     sandbox_argv,
     SandboxUnavailable,
     unix_command,
-    INSTALL_SOCAT,
-    USERNS_FIX,
 )
 from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings
 
@@ -717,7 +715,6 @@ class ClaudeCode:
 
 APPARMOR_SYSCTL = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns")
 APPARMOR_BWRAP = Path("/etc/apparmor.d/bwrap-userns-restrict")
-PROBE_FIX = "; ".join((INSTALL_BUBBLEWRAP, INSTALL_SOCAT, USERNS_FIX))
 INVENTORY_FIX = "run `claude` once to see why its skill list fails, and remove any plugin or setting that blocks it"
 SETUP_FIX = "check that TMPDIR and HOME name writable directories, then run again"
 LIVE_PREFLIGHT = ("one model call after budget approval checks Bash reads, writes, and network inside the sandbox; "
@@ -780,7 +777,7 @@ def _probe_checks(transport: ClaudeCode, probe: bool) -> list[Check]:
         try:
             transport.check_helper_sandbox()
         except (CodedError, OSError, RuntimeError) as error:
-            checks.append(failed("sandbox-probe", error, PROBE_FIX))
+            checks.append(failed("sandbox-probe", error, sandbox_fix("")))
         else:
             checks.append(Check("sandbox-probe", "pass", "the helper sandbox probe passed"))
     try:
