@@ -25,18 +25,19 @@ SCHEMAS = SKILLS / "skillz/references/schemas"
 FORMATS = SKILLS / "skillz/references/eval-formats.md"
 AUTHOR_FILES: dict[SchemaName, str] = {"evals": "evals", "contract": "autoimprove", "journeys": "journeys"}
 
+CRITERIA = [{"id": "refuses", "text": "THE agent SHALL refuse entry.", "from": "must:0"}]
 JOURNEY: dict[str, object] = {
     "id": "age-1", "family": "age-gate", "kind": "journey", "request": "/age-check Is a person of 17 allowed in?",
     "brief": "You run a venue. The guest is 17.", "max_turns": 4, "requirements": ["AGE-1"],
     "files": {"venue/rules.md": "Entry is for ages 18 and up.\n"},
-    "expected": {"must": ["refuses entry"], "must_not": ["asks for a name"]}, "source": "skill",
+    "expected": {"must": ["refuses entry"], "must_not": ["asks for a name"], "criteria": CRITERIA}, "source": "skill",
 }
 EVAL: dict[str, object] = {"id": 1, "name": "rename", "prompt": "Rename the note.", "expected_output": "The note is renamed.",
                            "files": ["evals/files/note.txt"], "kind": "task", "assertions": ["The note has a new name."],
                            "family": "rename"}
 CONTRACT: dict[str, object] = {
     "schema_version": 1, "status": "approved", "skill": "demo", "invocation": "/demo", "editable": ["SKILL.md"],
-    "kinds": {"task": {"grader": "judge", "rubric": "Score the answer.", "pillars": ["accuracy"]},
+    "kinds": {"task": {"grader": "judge", "rubric": "Grade the answer."},
               "check": {"grader": "command", "argv": ["python3", "-c", "print(1)"]}},
     "statistics": {"min_coverage": 0.5, "max_quality_loss": None, "family_budgets": {"a": 2}},
 }
@@ -59,7 +60,7 @@ def _kinds(**kinds: object) -> dict[str, object]:
 
 
 def _expected(**expected: object) -> dict[str, object]:
-    return _with(JOURNEY, expected=expected)
+    return _with(JOURNEY, expected={"criteria": CRITERIA} | expected)
 
 
 # (schema name, document, should pass). Each document goes through the schema and the Python reader.
@@ -75,6 +76,8 @@ EXAMPLES: list[tuple[SchemaName, object, bool, str]] = [
     ("journeys", [_expected(final_stop="done", must=["a"])], True, "journeys-final-stop"),
     ("journeys", [_expected(must=["a"], bogus=["b"])], False, "journeys-unknown-expected-key"),
     ("journeys", [_expected(questions=["a"])], False, "journeys-expected-needs-must"),
+    ("journeys", [_with(JOURNEY, expected={"must": ["a"]})], True, "journeys-seed-without-criteria"),
+    ("journeys", [_expected(must=["a"], criteria=[{"id": "a", "text": "t", "weight": 1}])], False, "journeys-criterion-field"),
     ("journeys", [_with(JOURNEY, kind="task")], False, "journeys-eval-kind"),
     ("journeys", [_with(JOURNEY, brief=None)], False, "journeys-no-brief"),
     ("journeys", [_with(JOURNEY, max_turns=0)], False, "journeys-zero-turns"),
@@ -88,7 +91,7 @@ EXAMPLES: list[tuple[SchemaName, object, bool, str]] = [
     ("contract", _kinds(task={"grader": "exact-json", "argv": ["x"]}), False, "contract-argv-on-exact-json"),
     ("contract", _kinds(task={"grader": "judge"}), False, "contract-judge-without-rubric"),
     ("contract", _kinds(task={"grader": "audit", "rubric": "r"}), False, "contract-rubric-on-audit"),
-    ("contract", _kinds(task={"grader": "judge", "rubric": "r", "pillars": ["Accuracy"]}), False, "contract-pillar-name"),
+    ("contract", _kinds(task={"grader": "judge", "rubric": "r", "pillars": ["accuracy"]}), False, "contract-pillars-removed"),
     ("contract", _with(CONTRACT, statistics={"min_coverage": 2}), False, "contract-coverage-range"),
     ("contract", _with(CONTRACT, statistics={"min_token_saving": 1}), False, "contract-saving-range"),
     ("contract", _with(CONTRACT, statistics={"bogus": 1}), False, "contract-unknown-statistic"),

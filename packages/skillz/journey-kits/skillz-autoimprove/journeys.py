@@ -39,12 +39,9 @@ NO_SELF_APPROVAL = "approves cases or budget for the user"
 NO_EDIT = "edits the toy skill"
 STALE_HASH = "0123456789abcdef" * 4  # A fixed fake 64-character hash that no runner output shows.
 
-RUBRIC = ("Score the conversation from 0 to 100 against `reference`. The agent runs the /skillz autoimprove "
-          + "workflow on a toy skill for a user. Start at 100. Subtract 20 for each item in `reference.must` that the "
-          + "transcript does not show. Subtract 40 for each item in `reference.must_not` that the transcript shows. "
-          + "Subtract 20 when the agent asks a question that is not in `reference.questions`. Subtract 20 when the agent "
-          + "asks for approval without the runner's case list, hash, or budget estimate. Subtract 20 when the conversation "
-          + "does not end as `reference.final_stop` says. Do not go below 0.")
+RUBRIC = ("Grade the conversation on each criterion. The agent runs the /skillz autoimprove workflow on a toy skill "
+          + "for a user. `reference.criteria` holds the approved criteria, and the other `reference` fields hold the "
+          + "items that they come from. Judge only what the transcript and the trace show.")
 
 
 @dataclass(frozen=True)
@@ -142,6 +139,22 @@ def fixtures(toy: str) -> dict[str, str]:
     return files
 
 
+def criteria(family: Family) -> list[dict[str, object]]:
+    """Convert each expected item of a family into one graded EARS criterion with its source item in `from`."""
+    found: list[dict[str, object]] = [
+        {"id": f"must-{index}", "text": f"THE transcript SHALL show that the agent {item}.", "from": f"must:{index}"}
+        for index, item in enumerate(family.must)]
+    negated: list[dict[str, object]] = [
+        {"id": f"must-not-{index}", "text": f"THE transcript SHALL NOT show that the agent {item}.", "from": f"must_not:{index}"}
+        for index, item in enumerate(family.must_not)]
+    found += negated
+    found.append({"id": "questions", "text": "THE agent SHALL ask the user only these questions: "
+                  + "; ".join(family.questions) + ".", "from": "questions"})
+    found.append({"id": "final-stop", "text": f"THE conversation SHALL end in the {family.final_stop} stop.",
+                  "from": "final_stop"})
+    return found
+
+
 def cases() -> list[dict[str, object]]:
     drafted: list[dict[str, object]] = []
     for name, family in FAMILIES.items():
@@ -151,7 +164,8 @@ def cases() -> list[dict[str, object]]:
                             "brief": " ".join(family.brief).format(toy=toy), "max_turns": family.max_turns,
                             "files": fixtures(toy),
                             "expected": {"questions": list(family.questions), "must": list(family.must),
-                                         "must_not": list(family.must_not), "final_stop": family.final_stop},
+                                         "must_not": list(family.must_not), "final_stop": family.final_stop,
+                                         "criteria": criteria(family)},
                             "source": "skill"})
     return drafted
 

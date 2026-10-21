@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import shutil
 import subprocess
 from pathlib import Path
@@ -113,6 +114,7 @@ def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path, mode: st
     config, _, log = configured(tmp_path, mode)
     budget = Budget(20, 0.5)
     adapter = Configuration.load(config, "offline").create("offline", budget, lambda: None)
+    budget.started = time.monotonic()  # the deadline window covers only the invoke, not the setup above
     try:
         with pytest.raises(BudgetExhausted, match="deadline"):
             _ = adapter.invoke("reflection", schema={"type": "object", "properties": {"x": {"type": "string"}},
@@ -176,14 +178,14 @@ def test_selected_judge_model_reaches_the_judge_calls_of_an_intake_run(tmp_path:
 def models_by_schema(log: Path) -> dict[str, set[str]]:
     """Group the models of the `infer` requests by the role that makes them.
 
-    A reply with `score_percent` is a judge call, a reply with `result_json` or `matches` is a task call,
+    A reply with `criteria` is a judge call, a reply with `result_json` or `matches` is a task call,
     and any other reply schema is a reflection call.
     """
     groups: dict[str, set[str]] = {"judge": set(), "task": set(), "reflection": set()}
     for item in requests(log):
         if item["operation"] == "infer":
             required = cast(list[str], cast(dict[str, object], item["response_schema"])["required"])
-            role = ("judge" if "score_percent" in required else
+            role = ("judge" if "criteria" in required else
                     "task" if {"result_json", "matches"} & set(required) else "reflection")
             groups[role].add(str(item["model"]))
     return groups

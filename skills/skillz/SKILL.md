@@ -280,6 +280,7 @@ Read on demand:
 - In the analytics ceremony, pass these three paths to each pack context as `schema`, `conventions`, and `coverage`.
 - `references/calibration.md` — when you tag a finding's severity and confidence; the confidence × severity kernel.
 - `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the run flow, case draft, gate verdict, export, optional contract, graders, isolation, and the helper contracts.
+- `references/criteria-drafting.md` — `autoimprove` case drafting: the steps that write `expected.criteria` for each judged case.
 - `references/eval-formats.md` — the eval files that an author writes: fields, schemas, `$schema`, the minimums, and `validate`.
 - `references/experiment-harness.md` — the user selects the `claude` adapter, or checks a custom command or role files.
 - `references/harness-recipes.md` — the user wants to run experiments through Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi.

@@ -37,9 +37,12 @@ def task_and_journey(target: Path) -> None:
     set_contract(target, kinds={"task": {"grader": "exact-json"}, "journey": journey_kind(JOURNEY_GATE, RUBRIC_B)})
 
 
+CRITERIA = [{"id": "must-0", "text": "THE transcript SHALL show a short plan.", "from": "must:0"}]
+
+
 def journeys(kind: str, prefix: str, families: int = 4, size: int = 2) -> list[dict[str, object]]:
     return [{"id": f"{prefix}{family}-{index}", "family": f"{prefix}{family}", "kind": kind, "request": "Plan the work.",
-             "brief": "BRIEF_SENTINEL: wants a short plan.", "expected": {"must": ["EXPECTED_SENTINEL"]},
+             "brief": "BRIEF_SENTINEL: wants a short plan.", "expected": {"must": ["EXPECTED_SENTINEL"], "criteria": CRITERIA},
              "source": "skill"} for family in range(families) for index in range(size)]
 
 
@@ -104,11 +107,11 @@ def test_each_journey_case_is_graded_by_its_own_kinds_gate_and_rubric(tmp_path: 
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": items}))
     by_kind = {case.kind: case for case in load_cases(path, rules.grader_types())}
     candidate = Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=rules)
-    judge = FakeJudge(70)
+    judge = FakeJudge(3)
     runner = harness(monkeypatch, JourneyTask(), judge)
     assert runner.evaluate(candidate, by_kind["journey-a"], checks=CheckMemo())["score"] == 0
     assert judge.prompts == []
-    assert runner.evaluate(candidate, by_kind["journey-b"], checks=CheckMemo())["score"] == 0.7
+    assert runner.evaluate(candidate, by_kind["journey-b"], checks=CheckMemo())["score"] == pytest.approx(2 / 3)
     assert len(judge.prompts) == 1 and RUBRIC_B in judge.prompts[0] and RUBRIC_A not in judge.prompts[0]
 
 
@@ -139,7 +142,8 @@ def test_without_kind_a_declared_task_drives_the_split_and_journeys_are_still_sc
     assert sorted(set(frozen(out, rules).values())) == ["journey", "task"] and len(frozen(out, rules)) == 18
 
 
-BASE_HASH = "f763d7a5a7941a28452f49e2bf4295d67bba6ed02de1790e644639167981cb3f"
+# judge-criteria-verdicts: the journey items gained expected.criteria, which the case hash covers, so the pin moved.
+BASE_HASH = "51d780c46ed9a9e5944b82a1d4b290ea62e896f24dd1813ec6ea2abe7ff132d4"
 BASE_SPLITS = {"j0": "train", "j1": "holdout", "j2": "train", "t0": "validation", "t1": "holdout",
                "t2": "holdout", "t3": "holdout", "t4": "train"}
 
@@ -204,7 +208,7 @@ def test_the_default_kinds_follow_the_contract_and_a_bad_selection_stops(tmp_pat
 @pytest.mark.ac("gh-368:AC-7")
 def test_a_journey_labeled_case_stops_in_a_contract_without_that_kind(tmp_path: Path) -> None:
     item = {"id": "j-0", "family": "j", "kind": "journey", "request": "Plan the work.", "source": "skill",
-            "expected": {"must": ["x"]}}
+            "expected": {"must": ["x"], "criteria": CRITERIA}}
     path = tmp_path / "cases.draft.json"
     _ = path.write_text(json.dumps([item]))
     with pytest.raises(ValueError, match="case j-0: kind must be one of trigger, near-miss, task, journey-review"):

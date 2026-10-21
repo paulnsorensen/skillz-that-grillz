@@ -26,7 +26,7 @@ from typing import Literal, NoReturn, cast
 from skillz_experiments._cases import loads_untrusted, mapping
 from skillz_experiments._protocol import OPERATIONS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._redact import redact
-from skillz_experiments.harness import command_profile
+from skillz_experiments.harness import command_profile, seatbelt_environment
 from skillz_experiments.wrapper._seatbelt import profile as seatbelt_profile
 
 Runtime = Literal["docker", "podman", "runsc", "sandbox-exec"]
@@ -40,6 +40,7 @@ PROFILE_FILE = f"sandbox-macos-{SEATBELT_PROFILE}.sb"
 TIMEOUTS = {"sandbox": 300, "discover": 60, "infer": 900}
 CONTAINER_GRACE = 10
 STOP_BUDGET = 6
+DRAIN_GRACE = 2
 DOTENV = "." + "env"
 PROMPT_FLAG = "Follow the request on standard input."
 EXIT_LINE = re.compile(r"^Exit Code: (.*)$", re.MULTILINE)
@@ -112,16 +113,23 @@ def _interrupted(signum: int, _frame: FrameType | None) -> NoReturn:
 
 
 def _abandon(process: subprocess.Popen[str], stop: Callable[[], str] | None) -> str:
-    """Kill the process group, then ask the container runtime to stop the container that the group started.
+    """Kill the process group, ask the container runtime to stop the container that the group started, then drain.
 
+    The drain waits at most `DRAIN_GRACE` seconds, because a descendant that left the group can hold the pipes open.
     Return a note when the cleanup may have left a container running. The note also goes to stderr.
     """
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
-    _ = process.communicate()
     note = stop() if stop is not None else ""
+    try:
+        _ = process.communicate(timeout=DRAIN_GRACE)
+    except subprocess.TimeoutExpired:
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
+        _ = process.wait()
     if note:
         print(note, file=sys.stderr, flush=True)
     return note
@@ -240,7 +248,8 @@ def _sandbox(request: dict[str, object], workspace: Path, runtime: str | None, i
     stop = None
     if kind == "sandbox-exec":
         launch = [executable, "-p", command_profile(root),
-                  "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", f"HOME={root}", f"TMPDIR={root}", *command]
+                  "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", f"HOME={root}", f"TMPDIR={root}",
+                  *seatbelt_environment(), *command]
     else:
         name = f"skillz-{secrets.token_hex(6)}"
         flags = ["--runtime=runsc"] if kind == "runsc" else []
@@ -382,14 +391,15 @@ def _infer(request: dict[str, object], workspace: Path, runtime: str | None, ima
     prompt, schema, model = request.get("prompt"), request.get("response_schema"), request.get("model")
     if not isinstance(prompt, str) or not isinstance(schema, dict) or not isinstance(model, str):
         raise ValueError("infer request needs prompt, response_schema, and model")
+    if not model.strip() or model.startswith("-"):
+        raise ValueError("model must be a model name that does not start with '-'")
     kind, executable = _runtime(runtime, bin_dir)
     gemini = _gemini(bin_dir)
     root = workspace.resolve()
     label = f"{LABEL}=skillz-{secrets.token_hex(6)}"
     full = (f"{prompt}\n\nReply with one JSON object that matches this JSON schema and no other text:\n"
             + json.dumps(schema))
-    command = [gemini, "-s", "--approval-mode=yolo", "-o", "stream-json", *(["-m", model] if model else []),
-               "-p", PROMPT_FLAG]
+    command = [gemini, "-s", "--approval-mode=yolo", "-o", "stream-json", "-m", model, "-p", PROMPT_FLAG]
     extra = {"GEMINI_SANDBOX": kind, "GOOGLE_GENAI_USE_GCA": "true", **_restrictions(kind, root, label)}
     if kind != "sandbox-exec":
         extra["GEMINI_SANDBOX_IMAGE"] = image

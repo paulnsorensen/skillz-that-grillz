@@ -11,7 +11,7 @@ from typing import cast
 
 import pytest
 
-from support import (FIXTURES, HARNESS_RUNS, HARNESSES, assert_promoted, assert_replayed, carries_answer, export_and_apply, holdout,
+from support import (CRITERIA, FIXTURES, HARNESS_RUNS, HARNESSES, assert_promoted, assert_replayed, carries_answer, export_and_apply, holdout,
                      make_scenario, raw_holdout, read_record, run_scenario, snapshot)
 
 
@@ -108,7 +108,7 @@ def test_protected_family_regression_rejects(tmp_path: Path, harness: str) -> No
     extra = dict(scenario.draft[9])
     extra["id"] = "t10"
     extra["files"] = {"fixture.md": "PROTECTED-10\n"}
-    extra["expected"] = {"text": "PROTECTED-10\n"}
+    extra["expected"] = {"text": "PROTECTED-10\n", "criteria": CRITERIA}
     scenario.draft.append(extra)
     result = run_scenario(scenario, tmp_path, harness=harness, mode="regress", extra_flags=("--seed", "1", "--family-budget", "0"))
     gate = cast(dict[str, object], result["gate"])

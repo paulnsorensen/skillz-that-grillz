@@ -11,7 +11,7 @@ from vendor_common import is_isolation_probe, parse_env_prefix
 
 def main() -> int:
     args = sys.argv[1:]
-    workspace = Path(args[args.index("--chdir") + 1])
+    workspace = Path(args[args.index("--chdir") + 1]) if "--chdir" in args else Path.cwd()  # sandbox-exec has no --chdir
     capture: Path | None = None
     for index, item in enumerate(args):
         if item == "--bind" and args[index + 2] == "/run/skillz-capture":

@@ -68,7 +68,7 @@ def execute(argv: list[str]) -> int:
         marker_code, _, _ = run_command(marker_command, workspace)
         print(json.dumps({"type": "item.completed", "item": {"type": "command_execution",
               "command": shlex.join(marker_command), "exit_code": marker_code}}), flush=True)
-    elif "score_percent" in fields:
+    elif "criteria" in fields:
         answer, role = judge(prompt, fields), "judge"
     else:
         answer, role = propose(prompt, fields, settings()["mode"]), "reflection"

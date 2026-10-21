@@ -54,6 +54,42 @@
             "type": "string",
             "pattern": "\\S",
             "description": "the stop or state in which the conversation must end"
+          },
+          "criteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "text"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                },
+                "text": {
+                  "type": "string",
+                  "pattern": "\\S",
+                  "maxLength": 1000,
+                  "description": "One EARS statement: at most one leading WHEN, WHILE, IF, or WHERE clause, then one THE <subject> SHALL <response>."
+                },
+                "must": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "A dealbreaker: level 1 or 2 scores the case 0."
+                },
+                "from": {
+                  "type": "string",
+                  "pattern": "\\S",
+                  "maxLength": 1000,
+                  "description": "The source item, such as assertion:2, must:0, questions, or final_stop."
+                }
+              }
+            },
+            "description": "the approved EARS statements that the judge grades, one level per criterion id"
           }
         },
         "additionalProperties": false,

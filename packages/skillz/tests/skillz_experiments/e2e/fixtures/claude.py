@@ -63,7 +63,7 @@ def one_shot(argv: list[str]) -> int:
         code, stdout, _ = execute(marker_command, Path.cwd())
         tool(marker_command, code, stdout)
         role = "task"
-    elif "score_percent" in fields:
+    elif "criteria" in fields:
         if mode == "journey":
             from journey import judge as journey_judge
             answer = journey_judge(prompt, fields)

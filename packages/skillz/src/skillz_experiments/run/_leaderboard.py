@@ -25,8 +25,12 @@ class Leaderboard:
         return [case.identifier for case in self._state.cases_for("validation")]
 
     def best_identity(self) -> str:
-        """Return the identity of the best validated candidate, or the seed when the seed is best."""
-        return self.best_validated(self.validation_ids()).identity
+        """Return the recorded identity of the best validated candidate, or the seed identity when the seed is best.
+
+        The recorded identity includes the rebuilt `.pyz` of each own target, so it matches the `search_candidate` of its outcomes.
+        """
+        kept = self._winning(self.validation_ids())
+        return self._state.seed.identity if kept is None else text_field(kept, "identity")
 
     def _means(self, validation: list[str]) -> dict[str, float]:
         """Return the mean score of each search candidate that has a score on every validation case."""
@@ -86,15 +90,21 @@ class Leaderboard:
 
         The seed wins ties, unless a token field is set and the candidate has fewer mean validation task tokens.
         """
+        kept = self._winning(validation)
+        seed = self._state.seed
+        return seed if kept is None else seed.changed(candidate_files(kept.get("files")))
+
+    def _winning(self, validation: list[str]) -> dict[str, object] | None:
+        """Return the `best_validated` record when its candidate beats the seed, else None."""
         seed = self._state.seed
         means = self._means(validation)
         kept = self._state.record.get("best_validated")
         if not isinstance(kept, dict):
-            return seed
+            return None
         kept = cast(dict[str, object], kept)
         identity = text_field(kept, "identity")
         if identity in means:
             seed_mean = means.get(seed.identity, -1.0)
             if self._beats(validation, means[identity], seed_mean, identity, seed.identity):
-                return seed.changed(candidate_files(kept.get("files")))
-        return seed
+                return kept
+        return None

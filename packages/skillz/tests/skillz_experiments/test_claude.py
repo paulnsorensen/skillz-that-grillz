@@ -10,21 +10,23 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from collections.abc import Callable, Collection, Iterator
 from pathlib import Path
-from typing import cast, final
+from typing import NoReturn, cast, final
 
 import pytest
 
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
-from skillz_experiments.harness._claude import _constants, _events, _options, _sandbox, _settings, _transport
+from skillz_experiments.harness._claude import _constants, _events, _late, _options, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
 from skillz_experiments._cases import CodedError, digest, mapping
 from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
-from skillz_experiments.harness._claude._sandbox import sandbox_argv
+from skillz_experiments.harness._claude._sandbox import sandbox_argv, sandbox_fix
 from skillz_experiments._contract import Surface, load_contract, parse
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._transport import Transport
@@ -116,7 +118,7 @@ def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_pa
     try:
         judge = session.transports["judge"]
         assert isinstance(judge, Viewer)
-        result = judge.view("score it" + CAPTURE_INSTRUCTION, attachments, schema=judge_schema())
+        result = judge.view("score it" + CAPTURE_INSTRUCTION, attachments, schema=judge_schema(("answer",)))
     finally:
         session.close()
     call = calls(executable)[0]
@@ -126,7 +128,7 @@ def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_pa
     paths = "\n".join(str(workspace / "capture" / name) for name in sorted(attachments))
     assert call["prompt"] == "score it" + CAPTURE_INSTRUCTION + "\nCAPTURE FILES:\n" + paths
     assert "listed at the end of this prompt" in CAPTURE_INSTRUCTION
-    assert result["answer"] == {"score_percent": 80}
+    assert result["answer"] == {"criteria": {"answer": {"level": 3, "reason": "fake judge"}}}
 
 
 def test_partial_claude_usage_stays_unknown() -> None:
@@ -527,8 +529,10 @@ def test_a_declared_agent_next_to_the_builtin_claude_agent_is_not_a_leak() -> No
     declared = Declared(agents=frozenset({"mine"}))
     assert _events.find_leak([event], [], declared=declared) is None
 
-def test_preflight_passes_when_only_the_probe_skill_loads(tmp_path: Path, sandbox_passes: None) -> None:
+def test_preflight_passes_when_only_the_probe_skill_loads(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "linux")  # macOS reads the Keychain, which holds no login file to link
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
@@ -956,13 +960,93 @@ def test_seatbelt_profile_denies_network_host_reads_and_candidate_writes() -> No
     assert all("/Users" not in line and "/private/tmp" not in line and "/var/folders" not in line for line in reads)
 
 
-def test_seatbelt_argv_runs_the_command_with_a_clean_environment() -> None:
+def test_seatbelt_profile_allows_the_root_directory_literal_but_not_its_subtree() -> None:
+    lines = command_profile(Path("/w/workspace")).splitlines()
+    assert '(allow file-read* (literal "/"))' in lines
+    assert not any(line.startswith("(allow file-read*") and '(subpath "/")' in line for line in lines)
+
+
+def test_seatbelt_argv_runs_the_command_with_a_clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", "/nonexistent-developer-dir")
     workspace = Path("/w/workspace")
     argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", workspace, ["/usr/bin/python3", "-c", "pass"],
                         {"PATH": "/usr/bin:/bin", "HOME": "/w/workspace/home"})
     assert argv[:3] == ["/usr/bin/sandbox-exec", "-p", command_profile(workspace)]
     assert argv[3:] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=/w/workspace/home",
                         "/usr/bin/python3", "-c", "pass"]
+
+
+def test_seatbelt_argv_pins_the_xcrun_shim_to_the_allowed_developer_dir(tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", Path("/w/workspace"), ["/usr/bin/python3"], {"PATH": "/usr/bin"})
+    assert argv[4:7] == ["-i", "PATH=/usr/bin", f"DEVELOPER_DIR={tmp_path}"]
+
+
+def test_seatbelt_environment_pins_only_an_existing_developer_dir(tmp_path: Path,
+                                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments.harness import seatbelt_environment
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    assert seatbelt_environment() == [f"DEVELOPER_DIR={tmp_path}"]
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path / "missing"))
+    assert seatbelt_environment() == []
+
+
+def test_sandbox_fix_on_darwin_does_not_suggest_linux_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", "darwin")
+    fix = sandbox_fix("sandbox probe failed")
+    assert "sandbox-exec" in fix
+    assert not any(word in fix for word in ("apt", "bwrap", "bubblewrap", "apparmor"))
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", "linux")
+    assert "bubblewrap" in sandbox_fix("sandbox probe failed")
+
+
+@pytest.mark.parametrize(("platform", "expected"), [("darwin", "sandbox-exec"), ("linux", "bubblewrap")])
+def test_doctor_sandbox_probe_row_fix_matches_the_platform(platform: str, expected: str,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    class Failing:
+        def check_helper_sandbox(self) -> None:
+            raise RuntimeError("sandbox probe failed")
+
+        def inventory(self) -> NoReturn:
+            raise RuntimeError("no inventory")
+
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", platform)
+    row = _transport._probe_checks(cast(ClaudeCode, cast(object, Failing())), True)[0]  # pyright: ignore[reportPrivateUsage]
+    fix = row.fix or ""
+    assert row.name == "sandbox-probe" and row.status == "fail"
+    assert expected in fix
+    assert ("bubblewrap" in fix) == (platform == "linux")
+
+
+def probe_assertion() -> str:
+    from skillz_experiments.harness._isolation import probe
+    script = probe(Path("/w"), Path("/s"), Path("/e"), 1)
+    return next(line for line in script.splitlines() if line.startswith("assert set(os.environ)"))
+
+
+@pytest.mark.parametrize(("platform", "accepted"), [("darwin", True), ("linux", False)])
+def test_probe_environment_assertion_accepts_xcrun_names_only_on_darwin(platform: str, accepted: bool,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from skillz_experiments.harness._seatbelt import XCRUN_ENVIRONMENT
+    line = probe_assertion()
+    environment = {"PATH": "/usr/bin", **{name: "x" for name in XCRUN_ENVIRONMENT}}
+    monkeypatch.setattr(os, "environ", environment)
+    names = {"os": os, "sys": SimpleNamespace(platform=platform)}
+    if accepted:
+        exec(line, names)
+    else:
+        with pytest.raises(AssertionError):
+            exec(line, names)
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_probe_environment_assertion_rejects_a_foreign_name(platform: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin", "SDKROOT": "/sdk", "ANTHROPIC_API_KEY": "secret"})
+    with pytest.raises(AssertionError):
+        exec(probe_assertion(), {"os": os, "sys": SimpleNamespace(platform=platform)})
 
 
 def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter(tmp_path: Path) -> None:
@@ -1722,6 +1806,120 @@ def test_inventory_turns_off_an_account_skill_without_a_model_call(tmp_path: Pat
     assert inventory.foreign == {"anthropic-skills:pdf"} and {"design", "doctor"} <= inventory.builtin
     assert live_settings(executable)["skillOverrides"] == {"anthropic-skills:pdf": "off"}
     assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-1")
+def test_preflight_accepts_a_builtin_skill_that_registers_after_the_first_listing(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, "late-builtin")
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        assert "design" not in transport.inventory().builtin
+        evidence = transport.preflight()
+        assert "design" in transport.inventory().builtin
+    finally:
+        transport.close()
+    assert evidence["live_calls"] == 1 and budget.calls == 1
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+@pytest.mark.parametrize("mode", ["late-plain", "late-absent"])
+def test_preflight_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path, sandbox_passes: None, mode: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="foreign skill in init event: \\['design'\\]") as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+def test_invoke_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "late-plain")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="skills in init event \\['design', 'echo-skill'\\]") as caught:
+            _ = transport.invoke("hello", echo_candidate(tmp_path))
+    finally:
+        transport.close()
+    assert caught.value.code == "isolation-failed"
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_invoke_accepts_a_late_builtin_skill_with_one_more_listing(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "late-builtin")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    candidate = echo_candidate(tmp_path)
+    try:
+        result = transport.invoke("hello", candidate)
+        _ = transport.invoke("again", candidate)
+    finally:
+        transport.close()
+    assert "answer" in result
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_invoke_with_only_the_candidate_skill_lists_the_commands_once(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    candidate = echo_candidate(tmp_path)
+    try:
+        _ = transport.invoke("hello", candidate)
+        _ = transport.invoke("again", candidate)
+    finally:
+        transport.close()
+    assert len(inventory_calls(executable)) == 1
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_two_threads_adopt_one_late_name_with_one_listing() -> None:
+    entered = threading.Barrier(2)
+    listings: list[int] = []
+
+    def listing(workspace: Path) -> frozenset[str]:
+        del workspace
+        listings.append(1)
+        time.sleep(0.2)
+        return frozenset({"design"})
+    late = _late.LateBuiltins(listing)
+    events: list[dict[str, object]] = [{"type": "system", "subtype": "init", "skills": ["design"]}]
+    results: list[_settings.Inventory] = []
+
+    def work() -> None:
+        _ = entered.wait(5)
+        results.append(late.adopt(events, [], _settings.Inventory(frozenset({"doctor"}), frozenset()), _settings.Declared()))
+    threads = [threading.Thread(target=work) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert len(listings) == 1
+    assert [result.builtin for result in results] == [frozenset({"doctor", "design"})] * 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+def test_preflight_reports_a_reached_listener_before_it_relists(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+
+    def relist_fails(self: object, *args: object, **kwargs: object) -> _settings.Inventory:
+        del self, args, kwargs
+        raise RuntimeError("relist failed")
+    monkeypatch.setattr(_late.LateBuiltins, "adopt", relist_fails)
+    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
 
 
 def calls_or_none(executable: Path) -> list[dict[str, object]] | None:
