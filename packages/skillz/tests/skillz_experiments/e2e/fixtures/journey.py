@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import cast
+
+CAT = shutil.which("cat", path="/usr/bin:/bin") or "/usr/bin/cat"  # macOS keeps cat in /bin
+
 
 def _command(workspace: Path, argv: list[str], name: str) -> tuple[str, list[dict[str, object]]]:
     result = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, check=False)
@@ -24,9 +28,9 @@ def _command(workspace: Path, argv: list[str], name: str) -> tuple[str, list[dic
 def handle(workspace: Path, skill_name: str, message: str, turn: int) -> tuple[str, list[dict[str, object]]]:
     root = f".agents/skills/{skill_name}"
     if turn == 1:
-        instructions, read_events = _command(workspace, ["/usr/bin/cat", f"{root}/SKILL.md"], "read-skill")
-        _, marker_events = _command(workspace, ["/usr/bin/cat", f"{root}/EXPERIMENT_MARKER"], "read-marker")
-        topic, topic_events = _command(workspace, ["/usr/bin/cat", "question.txt"], "read-question")
+        instructions, read_events = _command(workspace, [CAT, f"{root}/SKILL.md"], "read-skill")
+        _, marker_events = _command(workspace, [CAT, f"{root}/EXPERIMENT_MARKER"], "read-marker")
+        topic, topic_events = _command(workspace, [CAT, "question.txt"], "read-question")
         if "Transform" not in instructions:
             raise ValueError("the staged skill has no transform instruction")
         return f"Which {topic.strip()} should I transform?", [*read_events, *marker_events, *topic_events]
@@ -34,7 +38,7 @@ def handle(workspace: Path, skill_name: str, message: str, turn: int) -> tuple[s
         raise ValueError("the simulator did not provide a value")
     value = message.removeprefix("Value: ").strip() + "\n"
     _ = (workspace / "fixture.md").write_text(value)
-    instructions, read_events = _command(workspace, ["/usr/bin/cat", f"{root}/SKILL.md"], f"read-skill-{turn}")
+    instructions, read_events = _command(workspace, [CAT, f"{root}/SKILL.md"], f"read-skill-{turn}")
     helper = workspace / root / "scripts/transform.py"
     if helper.is_file():
         result, helper_events = _command(

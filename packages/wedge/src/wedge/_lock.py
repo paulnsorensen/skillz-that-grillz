@@ -192,7 +192,7 @@ def check(skill_dirs: list[Path]) -> list[CheckIssue]:
             continue
         try:
             key = compute_key(skill_dir, config)
-        except ConfigError as exc:
+        except (ConfigError, ValueError, OSError) as exc:
             issues.append(CheckIssue(skill_dir=str(skill_dir), reason=str(exc)))
             continue
         if key != existing.key:
