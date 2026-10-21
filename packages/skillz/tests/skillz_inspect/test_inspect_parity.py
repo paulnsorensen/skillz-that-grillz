@@ -424,3 +424,17 @@ def test_a_titled_link_through_a_symlink_is_rejected(tmp_path: Path) -> None:
     (root / "inner.md").symlink_to(root / "real.md")
     path = write(root / "SKILL.md", f'{FRONT}[a](inner.md "t")\n')
     assert new_outcome(path) == ("error", "package must not contain symlinks")
+
+
+@pytest.mark.ac("gh-414:AC-2")
+@pytest.mark.parametrize("link", ["[a](x.md (see [b](../../secret.md)))", '[a](x.md "\n\n[b](../../secret.md)\n\n")'])
+def test_a_title_does_not_hide_a_following_link_that_escapes(tmp_path: Path, link: str) -> None:
+    path = write(tmp_path / "pkg" / "SKILL.md", f"{FRONT}{link}\n")
+    assert new_outcome(path) == ("error", "link escapes package")
+
+
+@pytest.mark.ac("gh-414:AC-1")
+def test_a_title_with_an_escaped_quote_keeps_its_link(tmp_path: Path) -> None:
+    outcome = new_outcome(write(tmp_path / "SKILL.md", FRONT + '[a](a.md "x \\"y\\"")\n'))
+    assert outcome[0] == "ok"
+    assert cast(dict[str, object], outcome[1])["local_link_targets"] == ["a.md"]

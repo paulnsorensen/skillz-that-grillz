@@ -15,8 +15,11 @@ MAX_BYTES = 262144
 
 FRONTMATTER_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):")
 # An inline link: a bare or `<...>` destination, then an optional "title", 'title', or (title).
+# A title allows backslash escapes and never spans a blank line, so it cannot hide a later link.
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(\s*(?:<(?P<angle>[^>\n]*)>|(?P<bare>[^\s)]+))"
-                           + r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)")
+                           + r"(?:\s+(?:\"(?:[^\"\\\n]|\\.|\n(?![ \t]*\n))*\""
+                           + r"|'(?:[^'\\\n]|\\.|\n(?![ \t]*\n))*'"
+                           + r"|\((?:[^()\\\n]|\\.|\n(?![ \t]*\n))*\)))?\s*\)")
 
 # Line shapes for prose scanning.
 QUOTE_PREFIX = re.compile(r"^(?: {0,3}> ?)+")
