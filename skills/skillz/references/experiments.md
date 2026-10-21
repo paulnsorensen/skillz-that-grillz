@@ -477,6 +477,7 @@ Without a token field, the seed wins a tie.
 ### Reasons and reporting
 
 The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `min-lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`. The coverage reason is `low-coverage`.
+A holdout delta that is not finite makes the verdict `inconclusive` with the reason `non-finite-delta`, and the record shows a NaN `delta` and `se`. A family breach still turns it into `reject`.
 A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
 The summary and the export report show `reasons`, `skipped_families`, `token_delta`, and `token_se` in the `gate` object. The token fields are `null` while the token rule is off or the usage is unknown.
 The summary and the export report also show `statistics`, the frozen thresholds of the run.

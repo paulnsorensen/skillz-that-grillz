@@ -1,6 +1,7 @@
 """Verify joined CLI runs use private fixture credentials."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -14,8 +15,10 @@ SENTINEL_TOKENS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CLAU
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
-@pytest.mark.parametrize("harness, variable, key", [("claude", "CLAUDE_CONFIG_DIR", "config_dir"),
-                                                  ("codex", "CODEX_HOME", "codex_home")])
+@pytest.mark.parametrize("harness, variable, key", [
+    pytest.param("claude", "CLAUDE_CONFIG_DIR", "config_dir", marks=pytest.mark.skipif(
+        sys.platform == "darwin", reason="macOS uses the real config directory")),
+    ("codex", "CODEX_HOME", "codex_home")])
 def test_external_auth_override_does_not_replace_private_home(
         tmp_path: Path, harness: str, variable: str, key: str) -> None:
     external = tmp_path / "external"

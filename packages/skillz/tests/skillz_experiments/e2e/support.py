@@ -77,7 +77,8 @@ def make_vendor_bin(scenario: Scenario, home: Path, harness: str, mode: str) -> 
     settings = {"mode": mode, "log": str(scenario.out / "vendor.jsonl")}
     _ = (directory / "vendor-settings.json").write_text(json.dumps(settings))
     if harness == "claude":
-        for name, source in (("claude", FIXTURES / "claude.py"), ("bwrap", FIXTURES / "bwrap.py")):
+        for name, source in (("claude", FIXTURES / "claude.py"), ("bwrap", FIXTURES / "bwrap.py"),
+                             ("sandbox-exec", FIXTURES / "bwrap.py")):
             target = directory / name
             _ = shutil.copyfile(source, target)
             target.chmod(0o755)

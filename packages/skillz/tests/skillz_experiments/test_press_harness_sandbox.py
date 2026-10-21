@@ -657,6 +657,13 @@ def test_sandbox_badArgv_raisesValueErrorBeforeAnyRuntimeCall(tmp_path: Path, wo
     assert _logged(directory / 'docker.log') == []
 
 
+@pytest.fixture
+def docker_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    '''The wrapper picks sandbox-exec on macOS. These tests drive the docker shim, so they run as a Linux host.'''
+    monkeypatch.setattr(sys, 'platform', 'linux')
+
+
+@pytest.mark.usefixtures('docker_host')
 @pytest.mark.parametrize('first', ['--privileged', '-v', '--network=host', '--volume=/:/host', '--entrypoint=sh', '-i', '--rm'])
 def test_sandbox_flagLikeArgv_staysAfterTheImageAndNeverBecomesADockerFlag(
         tmp_path: Path, workspace: Path, first: str) -> None:
@@ -678,6 +685,7 @@ def test_sandbox_flagLikeArgv_staysAfterTheImageAndNeverBecomesADockerFlag(
     assert '-v' not in flags[:image] and not any(flag.startswith('--volume') for flag in flags[:image])
 
 
+@pytest.mark.usefixtures('docker_host')
 def test_sandbox_enormousStdout_isReturnedWithoutCrashing(tmp_path: Path, workspace: Path) -> None:
     directory = _bin(tmp_path)
     docker = directory / 'docker'
@@ -686,6 +694,7 @@ def test_sandbox_enormousStdout_isReturnedWithoutCrashing(tmp_path: Path, worksp
     assert result['returncode'] == 0 and len(cast(str, result['stdout'])) == 5_000_000
 
 
+@pytest.mark.usefixtures('docker_host')
 def test_sandbox_nonUtf8Output_doesNotCrashTheWrapper(tmp_path: Path, workspace: Path) -> None:
     '''AC-14: undecodable bytes from the sandboxed command must not kill the wrapper (text=True decodes strictly).'''
     directory = _bin(tmp_path)
