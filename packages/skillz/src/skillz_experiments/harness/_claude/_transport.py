@@ -86,6 +86,7 @@ from skillz_experiments.harness._claude._sandbox import (
     SandboxUnavailable,
     unix_command,
 )
+from skillz_experiments.harness._claude._late import LateBuiltins
 from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings
 
 
@@ -180,6 +181,12 @@ class ClaudeCode:
         self.credential = self.login.credential
         self.config_dir = self.login.config_dir
         self._inventory: Inventory | None = None
+
+        def builtin_listing(workspace: Path) -> frozenset[str]:
+            self._stage(workspace)
+            return self._list(workspace, frozenset())[0]
+
+        self._late = LateBuiltins(builtin_listing)
         self._unix_sockets: bool | None = None
 
     @property
@@ -431,7 +438,7 @@ class ClaudeCode:
             root = Path(directory)
             workspace, sealed, token = self._sealed(root)
             self._probe_sandbox(workspace, sealed)
-            builtin = self.inventory().builtin
+            _ = self.inventory()
             name = probe_name()
             probe_skill(workspace, name)
             control = secrets.token_hex(16)
@@ -471,6 +478,8 @@ class ClaudeCode:
                 raise NetworkIsolationFailed(LISTENER_REACHED)
             if socket_open:
                 raise NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
+            self._inventory = self._late.adopt(events, [name], self.inventory(), self.declared)
+            builtin = self._inventory.builtin
             leak = find_leak(events, [name], builtin, self.declared)
             if leak is not None:
                 raise preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
@@ -548,7 +557,7 @@ class ClaudeCode:
     def _invoke(self, prompt: str, candidate: Candidate | None, case: Case | None, attachments: Mapping[str, bytes],
                 *, holdout: bool, schema: dict[str, object] | None) -> dict[str, object]:
         self._check_memory()
-        builtin = self.inventory().builtin
+        _ = self.inventory()
         if candidate is not None:
             self.check_name(candidate)
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
@@ -569,12 +578,15 @@ class ClaudeCode:
             sent, names = safe_keys(schema or answer_schema())
             with self.budget.timed(self.role):
                 returncode, stderr, events = self._run(workspace, prompt, sent, expected, candidate)
-                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
+                latency = time.monotonic() - started
+                self._inventory = self._late.adopt(events, expected, self.inventory(), self.declared)
+                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected,
+                                                self._inventory.builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
-                return not_loaded(workspace, started, trace)
+                return not_loaded(workspace, started, trace) | {"latency_seconds": latency}
             return {"answer": restore(answer(final), names), "events": trace, "usage": usage(trace), "workspace": str(workspace),
-                    "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
+                    "latency_seconds": latency, "output_files": snapshot_outputs(workspace)}
 
     def converse(self, request: str, candidate: Candidate, case: Case, holdout: bool,
                  simulate: Callable[[Transcript], Reply]) -> dict[str, object]:
@@ -609,6 +621,9 @@ class ClaudeCode:
                         lines, ended = child.turn(user_line(message), self.budget.remaining(), is_result)
                     fresh = parse_events("".join(lines))
                     events += fresh
+                    if first is None:
+                        self._inventory = self._late.adopt(fresh, expected, self.inventory(), self.declared)
+                        builtin = self._inventory.builtin
                     for init in (event for event in fresh if event.get("type") == "system" and event.get("subtype") == "init"):
                         if first is None:
                             first = init_inventory(init)

@@ -10,6 +10,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from collections.abc import Callable, Collection, Iterator
 from pathlib import Path
 from typing import NoReturn, cast, final
@@ -18,7 +20,7 @@ import pytest
 
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
-from skillz_experiments.harness._claude import _constants, _events, _options, _sandbox, _settings, _transport
+from skillz_experiments.harness._claude import _constants, _events, _late, _options, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
@@ -1804,6 +1806,120 @@ def test_inventory_turns_off_an_account_skill_without_a_model_call(tmp_path: Pat
     assert inventory.foreign == {"anthropic-skills:pdf"} and {"design", "doctor"} <= inventory.builtin
     assert live_settings(executable)["skillOverrides"] == {"anthropic-skills:pdf": "off"}
     assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-1")
+def test_preflight_accepts_a_builtin_skill_that_registers_after_the_first_listing(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, "late-builtin")
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        assert "design" not in transport.inventory().builtin
+        evidence = transport.preflight()
+        assert "design" in transport.inventory().builtin
+    finally:
+        transport.close()
+    assert evidence["live_calls"] == 1 and budget.calls == 1
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+@pytest.mark.parametrize("mode", ["late-plain", "late-absent"])
+def test_preflight_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path, sandbox_passes: None, mode: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="foreign skill in init event: \\['design'\\]") as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+def test_invoke_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "late-plain")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="skills in init event \\['design', 'echo-skill'\\]") as caught:
+            _ = transport.invoke("hello", echo_candidate(tmp_path))
+    finally:
+        transport.close()
+    assert caught.value.code == "isolation-failed"
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_invoke_accepts_a_late_builtin_skill_with_one_more_listing(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "late-builtin")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    candidate = echo_candidate(tmp_path)
+    try:
+        result = transport.invoke("hello", candidate)
+        _ = transport.invoke("again", candidate)
+    finally:
+        transport.close()
+    assert "answer" in result
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_invoke_with_only_the_candidate_skill_lists_the_commands_once(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    candidate = echo_candidate(tmp_path)
+    try:
+        _ = transport.invoke("hello", candidate)
+        _ = transport.invoke("again", candidate)
+    finally:
+        transport.close()
+    assert len(inventory_calls(executable)) == 1
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_two_threads_adopt_one_late_name_with_one_listing() -> None:
+    entered = threading.Barrier(2)
+    listings: list[int] = []
+
+    def listing(workspace: Path) -> frozenset[str]:
+        del workspace
+        listings.append(1)
+        time.sleep(0.2)
+        return frozenset({"design"})
+    late = _late.LateBuiltins(listing)
+    events: list[dict[str, object]] = [{"type": "system", "subtype": "init", "skills": ["design"]}]
+    results: list[_settings.Inventory] = []
+
+    def work() -> None:
+        _ = entered.wait(5)
+        results.append(late.adopt(events, [], _settings.Inventory(frozenset({"doctor"}), frozenset()), _settings.Declared()))
+    threads = [threading.Thread(target=work) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert len(listings) == 1
+    assert [result.builtin for result in results] == [frozenset({"doctor", "design"})] * 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+def test_preflight_reports_a_reached_listener_before_it_relists(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+
+    def relist_fails(self: object, *args: object, **kwargs: object) -> _settings.Inventory:
+        del self, args, kwargs
+        raise RuntimeError("relist failed")
+    monkeypatch.setattr(_late.LateBuiltins, "adopt", relist_fails)
+    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
 
 
 def calls_or_none(executable: Path) -> list[dict[str, object]] | None:
