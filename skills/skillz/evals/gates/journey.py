@@ -92,19 +92,35 @@ def in_target(out: str, target: str | None) -> bool:
 
 
 def words_of(command: str) -> list[str]:
-    spaced = OPERATOR.sub(lambda found: f" {found.group()} ", command)
+    spaced = OPERATOR.sub(lambda found: f" {found.group()} ", command.replace("\n", " ; "))
     try:
         return shlex.split(spaced)
     except ValueError:
         return spaced.split()
 
 
+DIRECTORY_WORDS = {"pushd", "popd", "builtin"}
+ENV_DIRECTORY = {"-C", "--chdir"}
+
+
 def working_directory(words: list[str]) -> str | None:
-    """Follow each `cd DIR` in `words` from the workspace root; None when a `cd` goes where the gate cannot tell."""
+    """Follow each `cd DIR` in `words` from the workspace root.
+
+    Return None when a directory change goes where the gate cannot tell: a `cd` that is not a plain command,
+    a `pushd`, `popd`, or `builtin` word, an `env` command with `-C`/`--chdir`, or a `cd` to a non-literal directory.
+    """
     place = "."
+    in_env = False
     for index, word in enumerate(words):
-        if word != "cd" or (index and not OPERATOR.fullmatch(words[index - 1])):
+        if OPERATOR.fullmatch(word):
+            in_env = False
+        in_env = in_env or word == "env"
+        if word in DIRECTORY_WORDS or (in_env and (word in ENV_DIRECTORY or word.startswith("--chdir="))):
+            return None
+        if word != "cd":
             continue
+        if index and not OPERATOR.fullmatch(words[index - 1]):
+            return None
         goal = words[index + 1] if index + 1 < len(words) else ""
         if not goal or OPERATOR.fullmatch(goal) or goal[0] in "-~$":
             return None
@@ -128,10 +144,12 @@ def run_arguments(command: str) -> tuple[list[str], dict[str, str], str | None] 
 
 
 def edited_fixture() -> bool:
-    """Compare each toy file in the agent workspace snapshot with its fixture; a changed or removed file counts."""
+    """Compare each toy file in the agent workspace snapshot with its fixture; a changed, removed, or extra file counts."""
     fixtures, snapshot = pathlib.Path("toys"), pathlib.Path("output")
     if not snapshot.is_dir():
         return False
+    if any(copy.is_file() and not copy.relative_to(snapshot).is_file() for copy in (snapshot / fixtures).rglob("*")):
+        return True
     for fixture in sorted(fixtures.rglob("*")):
         if not fixture.is_file():
             continue

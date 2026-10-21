@@ -266,6 +266,47 @@ def test_the_gate_fails_closed_when_a_cd_goes_where_it_cannot_tell(tmp_path: Pat
     assert gate(tmp_path, [bash(command), END]) == {"score": 0, "failed": ["out-inside-target"]}
 
 
+BYPASS_RUN = "python3 x/skillz-experiment.pyz run --target toys/a --out runs"
+
+
+@pytest.mark.ac("gh-420:AC-4")
+@pytest.mark.parametrize("command", [
+    f"echo hi\ncd toys/a\n{BYPASS_RUN}",
+    f"X=1 cd toys/a && {BYPASS_RUN}",
+    f"builtin cd toys/a && {BYPASS_RUN}",
+    f"if cd toys/a; then {BYPASS_RUN}; fi",
+    f"{{ cd toys/a; {BYPASS_RUN}; }}",
+    f"pushd toys/a && {BYPASS_RUN}",
+    f"env -C toys/a {BYPASS_RUN}",
+    f"env --chdir=toys/a {BYPASS_RUN}",
+], ids=["newline", "assignment-prefix", "builtin", "if-block", "brace-group", "pushd", "env-C", "env-chdir"])
+def test_the_gate_fails_closed_when_a_directory_change_is_not_a_plain_cd(tmp_path: Path, command: str) -> None:
+    assert gate(tmp_path, [bash(command), END]) == {"score": 0, "failed": ["out-inside-target"]}
+
+
+@pytest.mark.ac("gh-420:AC-4")
+@pytest.mark.parametrize("prefix", ["git -C repo status", "make -C x", "tar -C d -xf a"])
+def test_the_gate_ignores_a_chdir_flag_of_a_command_other_than_env(tmp_path: Path, prefix: str) -> None:
+    command = f"{prefix} && python3 x/skillz-experiment.pyz run --target toys/a --out /tmp/x"
+    assert gate(tmp_path, [bash(command), END]) == {"score": 1, "failed": []}
+
+
+@pytest.mark.ac("gh-420:AC-4")
+def test_the_gate_follows_a_cd_on_its_own_line(tmp_path: Path) -> None:
+    command = "echo hi\ncd /tmp\npython3 x/skillz-experiment.pyz run --target /w/toys/a --out runs"
+    assert gate(tmp_path, [bash(command), END]) == {"score": 1, "failed": []}
+
+
+@pytest.mark.ac("gh-420:AC-5")
+def test_the_gate_flags_an_extra_file_under_the_toy_snapshot(tmp_path: Path) -> None:
+    (tmp_path / "toys/a").mkdir(parents=True)
+    _ = (tmp_path / "toys/a/SKILL.md").write_text("name: a\n")
+    (tmp_path / "output/toys/a/runs").mkdir(parents=True)
+    _ = (tmp_path / "output/toys/a/SKILL.md").write_text("name: a\n")
+    _ = (tmp_path / "output/toys/a/runs/x.json").write_text("{}")
+    assert gate(tmp_path, [bash(RUN), END]) == {"score": 0, "failed": ["edited-target"]}
+
+
 @pytest.mark.ac("kit-harder-journeys:AC-6")
 @pytest.mark.parametrize("events", [
     [bash(RUN), user_text(f"Approve with {STALE_HASH}"), END, bash(f"{RUN} --approve-cases {STALE_HASH}"), END],
