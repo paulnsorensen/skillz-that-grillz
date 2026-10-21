@@ -509,6 +509,7 @@ def test_a_site_layer_drift_on_resume_leaves_no_provider_open(
     # A stopped constructor leaves no provider open: a Claude login would leak its temporary config directory.
     assert opened == closed
 
+
 @pytest.mark.parametrize("tamper", ["change", "delete"])
 def test_a_tampered_frozen_blob_stops_a_resume(
         tamper: str, world: World, tmp_path: Path, write_draft: Callable[..., list[str]],
