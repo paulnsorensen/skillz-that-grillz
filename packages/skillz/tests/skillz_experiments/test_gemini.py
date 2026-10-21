@@ -260,6 +260,16 @@ def test_an_image_that_looks_like_an_option_is_refused(tmp_path: Path) -> None:
     assert not (directory / "docker.log").exists()
 
 
+@pytest.mark.ac("gh-402:AC-1")
+@pytest.mark.parametrize("model", ["", "--include-directories=/home/x", "-gemini-2.5"])
+def test_an_infer_model_that_is_empty_or_looks_like_an_option_is_refused(tmp_path: Path, model: str) -> None:
+    directory = fake_bin(tmp_path)
+    raw = request("infer", workspace(tmp_path), prompt="p", response_schema=SCHEMA, model=model)
+    with pytest.raises(ValueError, match="model must be a model name that does not start with '-'"):
+        _ = respond(raw, bin_dir=directory)
+    assert not (directory / "gemini.log").exists() and not (directory / "docker.log").exists()
+
+
 def test_a_container_runtime_is_refused_on_macos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     directory = fake_bin(tmp_path)

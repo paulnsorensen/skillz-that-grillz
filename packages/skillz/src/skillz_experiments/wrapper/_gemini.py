@@ -382,14 +382,15 @@ def _infer(request: dict[str, object], workspace: Path, runtime: str | None, ima
     prompt, schema, model = request.get("prompt"), request.get("response_schema"), request.get("model")
     if not isinstance(prompt, str) or not isinstance(schema, dict) or not isinstance(model, str):
         raise ValueError("infer request needs prompt, response_schema, and model")
+    if not model or model.startswith("-"):
+        raise ValueError("model must be a model name that does not start with '-'")
     kind, executable = _runtime(runtime, bin_dir)
     gemini = _gemini(bin_dir)
     root = workspace.resolve()
     label = f"{LABEL}=skillz-{secrets.token_hex(6)}"
     full = (f"{prompt}\n\nReply with one JSON object that matches this JSON schema and no other text:\n"
             + json.dumps(schema))
-    command = [gemini, "-s", "--approval-mode=yolo", "-o", "stream-json", *(["-m", model] if model else []),
-               "-p", PROMPT_FLAG]
+    command = [gemini, "-s", "--approval-mode=yolo", "-o", "stream-json", "-m", model, "-p", PROMPT_FLAG]
     extra = {"GEMINI_SANDBOX": kind, "GOOGLE_GENAI_USE_GCA": "true", **_restrictions(kind, root, label)}
     if kind != "sandbox-exec":
         extra["GEMINI_SANDBOX_IMAGE"] = image
