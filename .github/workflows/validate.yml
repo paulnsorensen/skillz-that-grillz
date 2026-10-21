@@ -129,7 +129,8 @@ jobs:
     # The main ruleset requires this check name. It passes only when every shard passes.
     # A rerun of one matrix job can make the matrix result pass while another shard
     # stays failed, so the job also counts the latest attempt of each shard job
-    # across all run attempts.
+    # across all run attempts. The jobs API can lag behind the needs result for a few
+    # seconds after the last shard ends, so the count retries for up to a minute.
     name: skillz tests
     if: always()
     needs: skillz-shard
@@ -145,11 +146,16 @@ jobs:
           set -euo pipefail
           echo "skillz shards: $SHARDS"
           test "$SHARDS" = success
-          passed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
-            --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
-            | jq -s 'group_by(.name) | map(max_by(.completed_at)) | map(select(.conclusion == "success")) | length')
-          echo "passed skillz shards: $passed of 6"
-          test "$passed" = 6
+          for attempt in $(seq 1 12); do
+            passed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
+              --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
+              | jq -s 'group_by(.name) | map(max_by(.completed_at)) | map(select(.conclusion == "success")) | length')
+            echo "passed skillz shards: $passed of 6 (check $attempt of 12)"
+            test "$passed" = 6 && exit 0
+            sleep 5
+          done
+          echo "::error::only $passed of 6 skillz shards report success"
+          exit 1
 
   fromargs-tests:
     name: fromargs tests (py${{ matrix.python }})

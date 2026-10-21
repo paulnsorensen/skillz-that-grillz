@@ -80,10 +80,11 @@ class Session:
         # Built before the provider gets `self.checkpoint`, which reads its leakage rejections.
         self._searching = SearchPhase(self, edit=self.edit, search_cases=self._search_cases,
                                       built=lambda candidate: self._built(candidate))
+        # Opened before the provider: a `Stop` here must not leave a provider, such as a Claude login, unclosed.
+        self.rebuilder = self._open_rebuilder()
         self.provider: Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
                                                         self.seed.files) if configuration is not None
                                    else cast(Factory, factory)(model, self.budget, self.checkpoint))
-        self.rebuilder = self._open_rebuilder()
 
     def _seed_frozen(self) -> dict[str, bytes]:
         """Load the frozen seed files from the run directory. A missing or changed file is tampering."""

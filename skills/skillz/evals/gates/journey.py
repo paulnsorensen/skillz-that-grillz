@@ -133,17 +133,39 @@ def working_directory(words: list[str]) -> str | None:
     return place
 
 
+def command_words(words: list[str]) -> list[str]:
+    """Return the words up to the first operator that ends the command.
+
+    An unquoted `$(...)` or backtick command substitution joins into one word, so its parentheses
+    and the operators inside it do not end the command.
+    """
+    rest: list[str] = []
+    depth, tick = 0, False
+    for word in words:
+        if depth or tick:
+            glued = rest[-1].endswith("(") or word == ")" or (word == "(" and rest[-1].endswith("$"))
+            rest[-1] += word if glued else f" {word}"
+            depth += (word == "(") - (word == ")")
+            tick = tick != (word.count("`") % 2 == 1)
+            continue
+        if word == "(" and rest and rest[-1].endswith("$"):
+            rest[-1] += word
+            depth = 1
+            continue
+        if OPERATOR.fullmatch(word):
+            break
+        rest.append(word)
+        tick = word.count("`") % 2 == 1
+    return rest
+
+
 def run_arguments(command: str) -> tuple[list[str], dict[str, str], str | None] | None:
     """Return the words after `skillz-experiment.pyz run`, the shell assignments, and the `cd` directory of the run, or None."""
     words = words_of(command)
     assigned = {word.split("=", 1)[0]: word.split("=", 1)[1] for word in words if ASSIGNMENT.match(word)}
     for index, word in enumerate(words[:-1]):
         if word.endswith(RUNNER) and words[index + 1] == "run":
-            rest: list[str] = []
-            for argument in words[index + 2:]:
-                if OPERATOR.fullmatch(argument):
-                    break
-                rest.append(argument)
+            rest = command_words(words[index + 2:])
             return None if {"--help", "-h"} & set(rest) else (rest, assigned, working_directory(words[:index]))
     return None
 
