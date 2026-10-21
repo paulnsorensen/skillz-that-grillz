@@ -91,10 +91,20 @@ def test_the_draft_check_names_a_case_whose_expected_answer_differs_from_the_ora
 
 
 @pytest.mark.ac("fromargs-benefit-smoke:AC-2")
+def test_the_draft_check_keeps_the_source_fields_that_the_criteria_drafting_steps_leave_in_expected() -> None:
+    draft = reference_draft()
+    for case in draft:
+        expected = cast(dict[str, object], case["expected"])
+        case["expected"] = expected | {"expected_output": json.dumps({key: expected[key] for key in ("bump", "next")}),
+                                       "assertions": ["The answer is one JSON object."]}
+    assert check_draft(draft) == []
+
+
+@pytest.mark.ac("fromargs-benefit-smoke:AC-2")
 @pytest.mark.parametrize(("change", "problem"), [
     ({"files": {"commits.txt": "fix: a\n"}}, "files lack VERSION or commits.txt"),
-    ({"expected": {"bump": "patch", "next": "1.0.1", "criteria": [], "why": "fix"}}, "only bump, next, and criteria"),
-    ({"expected": {"bump": "patch", "next": "1.0.1"}}, "only bump, next, and criteria"),
+    ({"expected": {"bump": "patch", "next": "1.0.1", "criteria": [], "why": "fix"}}, "only expected_output or assertions"),
+    ({"expected": {"bump": "patch", "next": "1.0.1"}}, "must hold bump, next, and criteria"),
     ({"files": {"VERSION": "v1\n", "commits.txt": _log(*["fix: a"] * 80)}}, "not a semantic version"),
     ({"files": {"VERSION": "1.0.0\n", "commits.txt": _log(*["fix: a"] * 79)}}, "holds 79 commits; the scenario needs 80"),
 ])

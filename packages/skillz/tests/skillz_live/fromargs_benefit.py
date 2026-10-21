@@ -31,6 +31,8 @@ CASE_FILES = ("VERSION", "commits.txt")
 ANSWER_KEYS = frozenset({"bump", "next"})
 EXPECTED_KEYS = ANSWER_KEYS | {"criteria"}
 """A judged case holds `expected.criteria` next to the answer (criteria-drafting.md)."""
+OPTIONAL_KEYS = frozenset({"expected_output", "assertions"})
+"""The source fields that the criteria come from may stay in `expected` (draft-case.schema.json)."""
 MIN_FAMILIES = 3
 MIN_COMMITS = 80
 """A short log lets the seed apply the rules by hand without a slip, and the run stops with `cases-too-easy`."""
@@ -163,8 +165,9 @@ def _case_problem(case: dict[str, object]) -> str | None:
     texts = cast(dict[str, str], files)
     if (count := commit_count(texts["commits.txt"])) < MIN_COMMITS:
         return f"commits.txt holds {count} commits; the scenario needs {MIN_COMMITS}"
-    if not isinstance(expected, dict) or frozenset(cast(dict[str, object], expected)) != EXPECTED_KEYS:
-        return "expected is not an object with only bump, next, and criteria"
+    keys = frozenset(cast(dict[str, object], expected)) if isinstance(expected, dict) else frozenset[str]()
+    if not EXPECTED_KEYS <= keys <= EXPECTED_KEYS | OPTIONAL_KEYS:
+        return "expected must hold bump, next, and criteria, and only expected_output or assertions besides"
     try:
         want = next_version(texts["VERSION"], texts["commits.txt"])
     except ValueError as error:
