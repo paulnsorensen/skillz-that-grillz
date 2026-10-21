@@ -29,6 +29,8 @@ FROMARGS = ROOT / "packages/fromargs/src/fromargs"
 NAME = "semver-next"
 CASE_FILES = ("VERSION", "commits.txt")
 ANSWER_KEYS = frozenset({"bump", "next"})
+EXPECTED_KEYS = ANSWER_KEYS | {"criteria"}
+"""A judged case holds `expected.criteria` next to the answer (criteria-drafting.md)."""
 MIN_FAMILIES = 3
 AUTHOR_SECONDS = 1800
 AUTHOR_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep", "Bash(python3:*)", "Bash(ls:*)", "Bash(mkdir:*)")
@@ -45,7 +47,8 @@ Use {out} as the run directory. It exists and is private.
 Skip the Usage lens and session mining. Do not write a contract.
 Draft exactly 12 task cases in 4 families of 3 cases.
 Each task case gives the files `VERSION` and `commits.txt`.
-Its `expected` is the exact JSON answer of the skill, with only `bump` and `next`.
+Its `expected` holds the exact JSON answer of the skill in `bump` and `next`, and the case `criteria`.
+Pick each criteria fork yourself and mark the pick agent-decided.
 Draft hard cases: long commit lists that mix the edge rules of the skill.
 Stop at the case approval question. Do not approve the cases or the budget, and do not start the search.
 """
@@ -137,10 +140,16 @@ def reference_draft() -> list[dict[str, object]]:
             rng = random.Random(f"{family}-{index}")
             version, planted = _planted(family, index, rng)
             files = {"VERSION": version + "\n", "commits.txt": _commits(rng, planted, 30)}
+            answer = next_version(files["VERSION"], files["commits.txt"])
             draft.append({"id": f"{family}-{index}", "family": family, "kind": "task", "source": "skill",
                           "request": "What is the next version of the project in this directory?",
-                          "files": files, "expected": next_version(files["VERSION"], files["commits.txt"])})
+                          "files": files, "expected": answer | {"criteria": _criteria(answer)}})
     return draft
+
+
+def _criteria(answer: dict[str, str]) -> list[dict[str, object]]:
+    return [{"id": key, "text": f"THE skill SHALL report `{key}` as `{answer[key]}` in its JSON answer.", "must": True,
+             "from": "expected_output"} for key in sorted(answer)]
 
 
 def _case_problem(case: dict[str, object]) -> str | None:
@@ -149,20 +158,22 @@ def _case_problem(case: dict[str, object]) -> str | None:
                                               for name in CASE_FILES):
         return "files lack VERSION or commits.txt"
     texts = cast(dict[str, str], files)
-    if not isinstance(expected, dict) or frozenset(cast(dict[str, object], expected)) != ANSWER_KEYS:
-        return "expected is not an object with only bump and next"
+    if not isinstance(expected, dict) or frozenset(cast(dict[str, object], expected)) != EXPECTED_KEYS:
+        return "expected is not an object with only bump, next, and criteria"
     try:
         want = next_version(texts["VERSION"], texts["commits.txt"])
     except ValueError as error:
         return str(error)
-    return None if expected == want else f"expected {json.dumps(expected)}, the oracle says {json.dumps(want)}"
+    answer = {key: cast(dict[str, object], expected)[key] for key in sorted(ANSWER_KEYS)}
+    return None if answer == want else f"expected {json.dumps(answer)}, the oracle says {json.dumps(want)}"
 
 
 def check_draft(draft: object) -> list[str]:
     """Return one problem per fault of an agent-written draft. An empty list means the draft passes.
 
-    Every task case must give `VERSION` and `commits.txt` and hold the oracle answer as `expected`. The task cases must
-    span at least `MIN_FAMILIES` families. The runner checks the split sizes itself.
+    Every task case must give `VERSION` and `commits.txt`, hold the oracle answer in `expected`, and give
+    `expected.criteria`. The task cases must span at least `MIN_FAMILIES` families. The runner checks the split sizes
+    and the criteria shape itself.
     """
     if not isinstance(draft, list) or not all(isinstance(case, dict) for case in cast(list[object], draft)):
         return ["the draft is not a list of case objects"]

@@ -78,7 +78,7 @@ def test_the_reference_draft_passes_the_draft_check_with_twelve_cases_in_four_fa
 def test_the_draft_check_names_a_case_whose_expected_answer_differs_from_the_oracle() -> None:
     draft = reference_draft()
     case = draft[0]
-    case["expected"] = {"bump": "major", "next": "9.9.9"}
+    case["expected"] = cast(dict[str, object], case["expected"]) | {"bump": "major", "next": "9.9.9"}
     problems = check_draft(draft)
     assert len(problems) == 1 and str(case["id"]) in problems[0] and "the oracle says" in problems[0], problems
 
@@ -86,7 +86,8 @@ def test_the_draft_check_names_a_case_whose_expected_answer_differs_from_the_ora
 @pytest.mark.ac("fromargs-benefit-smoke:AC-2")
 @pytest.mark.parametrize(("change", "problem"), [
     ({"files": {"commits.txt": "fix: a\n"}}, "files lack VERSION or commits.txt"),
-    ({"expected": {"bump": "patch", "next": "1.0.1", "why": "fix"}}, "only bump and next"),
+    ({"expected": {"bump": "patch", "next": "1.0.1", "criteria": [], "why": "fix"}}, "only bump, next, and criteria"),
+    ({"expected": {"bump": "patch", "next": "1.0.1"}}, "only bump, next, and criteria"),
     ({"files": {"VERSION": "v1\n", "commits.txt": "fix: a\n"}}, "not a semantic version"),
 ])
 def test_the_draft_check_refuses_a_malformed_task_case(change: dict[str, object], problem: str) -> None:
