@@ -10,6 +10,7 @@ from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._cases import Case, CodedError, load_cases, mapping
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._new_cli import unused_helpers
+from skillz_experiments._redact import redact
 from skillz_experiments._records import open_record, write
 from skillz_experiments.harness import stop_kind
 from skillz_experiments.run._claims import claims
@@ -181,6 +182,48 @@ def _export_search(value: object) -> object:
     return redacted_search
 
 
+def _levels(item: dict[str, object]) -> dict[str, int]:
+    """Return the criterion levels (1 to 4) that the judged outcome `item` stores. Anything else yields nothing."""
+    criteria = item.get("criteria")
+    if not isinstance(criteria, dict):
+        return {}
+    found: dict[str, int] = {}
+    for name, verdict in cast(dict[str, object], criteria).items():
+        level = cast(dict[str, object], verdict).get("level") if isinstance(verdict, dict) else None
+        if type(level) is int and 1 <= level <= 4:
+            found[name] = level
+    return found
+
+
+def criteria_flags(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return the noisy criteria, sorted by criterion, reason, case, and arm. A criterion id belongs to one case.
+
+    A `spread` flag marks a criterion whose levels span 2 or more across the repeats of one candidate on one arm and case.
+    Two search candidates are not repeats: their levels can differ because the candidates differ.
+    A `partly-met` flag marks a criterion that gets level 2 in at least half of its outcomes, over all arms.
+    An outcome without `criteria` adds nothing.
+    """
+    grouped: dict[tuple[str, str, str, str], list[int]] = {}
+    totals: dict[tuple[str, str], list[int]] = {}
+    for item in outcomes:
+        case = str(item.get("case_id"))
+        candidate = str(item.get("search_candidate", item.get("candidate_hash")))
+        for name, level in _levels(item).items():
+            grouped.setdefault((name, case, str(item.get("arm")), candidate), []).append(level)
+            totals.setdefault((name, case), []).append(level)
+    flags: list[dict[str, object]] = []
+    for (name, case, arm, _candidate), levels in grouped.items():
+        if max(levels) - min(levels) >= 2:
+            flags.append({"criterion": name, "reason": "spread", "case_id": case, "arm": arm, "levels": levels})
+    for (name, case), levels in totals.items():
+        partly = levels.count(2)
+        if partly * 2 >= len(levels):
+            flags.append({"criterion": name, "reason": "partly-met", "case_id": case, "level_2": partly,
+                          "outcomes": len(levels)})
+    return sorted(flags, key=lambda flag: (str(flag["criterion"]), str(flag["reason"]), str(flag["case_id"]),
+                                           str(flag.get("arm", ""))))
+
+
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     allowed = {"arm", "split", "case_id", "repeat", "score", "status", "reason", "loaded", "helper_executed", "candidate_hash",
                "case_hash", "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
@@ -191,6 +234,13 @@ def _export_outcome(item: dict[str, object]) -> dict[str, object]:
             value = item[key]
             result[key] = None if value is None else {
                 name: mapping(value).get(name) for name in ("input_tokens", "cached_input_tokens", "output_tokens")}
+    criteria = item.get("criteria")
+    if isinstance(criteria, dict):
+        verdicts = cast(dict[str, object], criteria)
+        result["criteria"] = {
+            name: {"level": cast(dict[str, object], verdict).get("level"),
+                   "reason": redact(str(cast(dict[str, object], verdict).get("reason", "")))}
+            for name, verdict in verdicts.items() if isinstance(verdict, dict)}
     return result
 
 
@@ -233,6 +283,7 @@ def export(out: Path, destination: Path) -> dict[str, object]:
         _private_file(destination / name, text)
     report = summary(record, out) | patches | {"sharing": "private-local-only",
                                           "outcomes": [_export_outcome(item) for item in record_outcomes(record)],
+                                          "criteria_flags": criteria_flags(record_outcomes(record)),
                                           "cost_usd": None}
     if patch.cli is not None:
         report["new_cli"] = {"target": patch.cli.name, "package": patch.cli.package,

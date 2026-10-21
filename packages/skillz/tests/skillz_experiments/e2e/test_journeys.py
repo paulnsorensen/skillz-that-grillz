@@ -8,7 +8,7 @@ from typing import cast
 
 import pytest
 
-from support import (BUNDLE, CLI, FIXTURES, Scenario, assert_promoted, call_cli, cli_error,
+from support import (BUNDLE, CLI, CRITERIA, FIXTURES, Scenario, assert_promoted, call_cli, cli_error,
                      command_adapter, export_and_apply, make_scenario, make_vendor_bin, read_cases, read_events,
                      read_record, run_scenario, snapshot)
 
@@ -37,7 +37,8 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
             "brief": f"Value: {label}. Answer only the agent's question.",
             "max_turns": 2,
             "files": {"fixture.md": "seed\n", "question.txt": f"{topic}\n"},
-            "expected": {"must": [label.upper() + "\n"]},
+            "expected": {"must": [label.upper() + "\n"], "criteria": [
+                {"id": "must-0", "text": "THE transcript SHALL show the asked value in output/result.txt.", "from": "must:0"}]},
             "source": "skill",
         })
     if mixed:
@@ -47,7 +48,7 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
                 source = f"case-{family}-{index}\n"
                 draft.append({"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task",
                               "request": "Transform fixture.md according to this skill.",
-                              "files": {"fixture.md": source}, "expected": {"text": source.upper()},
+                              "files": {"fixture.md": source}, "expected": {"text": source.upper(), "criteria": CRITERIA},
                               "source": "skill"})
     return Scenario(scenario.target, scenario.out, scenario.export, draft, scenario.original)
 

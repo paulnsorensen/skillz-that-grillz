@@ -158,12 +158,15 @@ def tool_use(name: str, **fields: object) -> dict[str, object]:
 
 
 GOOD: list[dict[str, object]] = [{"reply": "We review in pairs.", "done": False}, {"reply": "We ship on Fridays.", "done": True}]
+CULTURE_LEVELS: dict[str, object] = {"criteria": {"must-0": {"level": 4, "reason": "asked"},
+                                                  "must-1": {"level": 3, "reason": "mostly asked"}}}
+MOLD_LEVELS: dict[str, object] = {"criteria": {"must-0": {"level": 3, "reason": "mostly asked"}}}
 
 
 def test_culture_journey_runs_end_to_end_and_scores_the_clean_transcript(tmp_path: Path, local_sandbox: None) -> None:
     del local_sandbox
-    result, judge, executable = journey(tmp_path, "culture-journey", "journey-culture", [*GOOD, {"score_percent": 90}])
-    assert result["score"] == 0.9
+    result, judge, executable = journey(tmp_path, "culture-journey", "journey-culture", [*GOOD, CULTURE_LEVELS])
+    assert result["score"] == pytest.approx(5 / 6)
     assert len(judge.prompts) == 3 and not judge.answers
     assert "We review in pairs." in judge.prompts[-1] and "You lead a team of five" in judge.prompts[0]
     messages = [json.loads(line)["message"] for line in executable.with_name("claude.journey.log").read_text().splitlines()]
@@ -173,9 +176,9 @@ def test_culture_journey_runs_end_to_end_and_scores_the_clean_transcript(tmp_pat
 def test_culture_journey_scores_zero_when_the_seeded_bad_transcript_writes_a_source_file(
         tmp_path: Path, local_sandbox: None) -> None:
     del local_sandbox
-    result, judge, _ = journey(tmp_path, "culture-journey", "journey-culture-bad", [*GOOD, {"score_percent": 90}])
+    result, judge, _ = journey(tmp_path, "culture-journey", "journey-culture-bad", [*GOOD, CULTURE_LEVELS])
     assert result["score"] == 0.0
-    assert len(judge.prompts) == 2 and judge.answers == [{"score_percent": 90}]
+    assert len(judge.prompts) == 2 and judge.answers == [CULTURE_LEVELS]
 
 
 @pytest.mark.parametrize(("events", "expected"), [
@@ -196,8 +199,8 @@ def test_mold_journey_gate_finds_the_mcp_tool_call_and_the_companion_skill_call_
     assert contract.surface is not None
     assert contract.surface.mcp_config == "mcp/docs.json" and contract.surface.companions == ("skills/helper-skill",)
     result, judge, executable = journey(tmp_path / "run", "mold-journey", "journey-mold",
-                                        [{"reply": "Weekly reports.", "done": True}, {"score_percent": 80}])
-    assert result["score"] == 0.8 and not judge.answers
+                                        [{"reply": "Weekly reports.", "done": True}, MOLD_LEVELS])
+    assert result["score"] == 2 / 3 and not judge.answers
     argv = cast(list[str], json.loads(executable.with_name("claude.log").read_text().splitlines()[-1])["argv"])
     assert "--mcp-config" in argv and argv[argv.index("--tools") + 1].endswith("mcp__docs__search")
 

@@ -19,17 +19,14 @@ JUDGED = ("audit", "judge", "hybrid", "journey")
 ARGV_GRADERS = ("command", "hybrid", "journey")
 RUBRIC_GRADERS = ("judge", "hybrid", "journey")
 SKILL_PATTERN = r"[a-z0-9][a-z0-9-]{0,63}"
-PILLAR_PATTERN = r"[a-z][a-z0-9_]{0,31}"
 TOOL_PATTERN = r"[A-Za-z][A-Za-z0-9_]{0,127}"
 _SKILL = re.compile(SKILL_PATTERN)
-_PILLAR = re.compile(PILLAR_PATTERN)
 _TOOL = re.compile(TOOL_PATTERN)
 CONTRACT_FIELDS = ("schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface", "statistics")
-GRADER_FIELDS = ("grader", "argv", "gate", "rubric", "capture", "pillars")
+GRADER_FIELDS = ("grader", "argv", "gate", "rubric", "capture")
 HELPER_FIELDS = ("path", "input", "fixtures")
 SURFACE_FIELDS = ("tools", "mcp_config", "agents", "companions")
 SCHEMA_KEY = "$schema"
-PILLAR_LIMIT = 8
 
 
 @dataclass(frozen=True)
@@ -37,14 +34,13 @@ class Grader:
     """One kind's grader.
 
     `capture` is an argv that runs after the task, in the command grader workspace, and saves files under
-    `capture/` for the judge to view. `pillars` names the judge scores; the kind score is their mean.
+    `capture/` for the judge to view.
     """
 
     type: GraderType
     argv: tuple[str, ...] = ()
     rubric: str = ""
     capture: tuple[str, ...] = ()
-    pillars: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -140,8 +136,6 @@ class Contract:
                 entry["rubric"] = grader.rubric
             if grader.capture:
                 entry["capture"] = list(grader.capture)
-            if grader.pillars:
-                entry["pillars"] = list(grader.pillars)
             kinds[kind] = entry
         document: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": self.skill,
                                        "invocation": self.invocation, "kinds": kinds,
@@ -195,17 +189,11 @@ def _argv(raw: object, name: str) -> tuple[str, ...]:
     return tuple(string(part, "argv entry") for part in cast(list[object], raw))
 
 
-def _pillars(raw: object, kind: str) -> tuple[str, ...]:
-    if not isinstance(raw, list) or not 1 <= len(cast(list[object], raw)) <= PILLAR_LIMIT:
-        raise ValueError(f"kind {kind} pillars must be a list of 1 to {PILLAR_LIMIT} names")
-    names = cast(list[object], raw)
-    if not all(isinstance(name, str) and _PILLAR.fullmatch(name) for name in names) or len(set(cast(list[str], names))) != len(names):
-        raise ValueError(f"kind {kind} pillars must be unique lowercase names of letters, digits, and underscores; each starts with a letter and has at most 32 characters")
-    return tuple(cast(list[str], names))
-
-
 def _grader(value: object, kind: str) -> Grader:
     item = mapping(value)
+    if "pillars" in item:
+        raise CodedError("contract-pillars-removed", f"kind {kind} declares pillars, which the contract no longer takes; "
+                         + "move each pillar into case criteria (expected.criteria) and remove pillars")
     _fields(item, set[str](GRADER_FIELDS) - {"gate"}, f"kind {kind}")
     kind_type = item.get("grader")
     if kind_type not in GRADERS:
@@ -217,16 +205,14 @@ def _grader(value: object, kind: str) -> Grader:
         raise ValueError(f"kind {kind} grader does not take argv")
     rubric = ""
     capture: tuple[str, ...] = ()
-    pillars: tuple[str, ...] = ()
     if kind_type in RUBRIC_GRADERS:
         rubric = string(item.get("rubric"), f"kind {kind} rubric")
         capture = _argv(item["capture"], f"kind {kind} capture") if "capture" in item else ()
-        pillars = _pillars(item["pillars"], kind) if "pillars" in item else ()
     else:
-        for field in ("rubric", "capture", "pillars"):
+        for field in ("rubric", "capture"):
             if field in item:
                 raise ValueError(f"kind {kind} grader does not take {field}")
-    return Grader(cast(GraderType, item["grader"]), argv, rubric, capture, pillars)
+    return Grader(cast(GraderType, item["grader"]), argv, rubric, capture)
 
 
 def _helper(value: object) -> Helper:
