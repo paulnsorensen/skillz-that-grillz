@@ -3,15 +3,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
-SEATBELT_RUNTIME = ("/usr", "/bin", "/System", "/Library/Developer/CommandLineTools", "/private/var/db/dyld")
 DEVELOPER_DIR = "/Library/Developer/CommandLineTools"
+SEATBELT_RUNTIME = ("/usr", "/bin", "/System", DEVELOPER_DIR, "/private/var/db/dyld")
+# The `/usr/bin/python3` shim (`xcrun`) adds four of these names. `seatbelt_environment` sets `DEVELOPER_DIR`.
+XCRUN_ENVIRONMENT = ("CPATH", "DEVELOPER_DIR", "LIBRARY_PATH", "MANPATH", "SDKROOT")
+
+
+def seatbelt_environment() -> list[str]:
+    """Name the Command Line Tools as the developer directory, when they exist.
+
+    The pin keeps the `/usr/bin/python3` shim inside the readable runtime.
+    """
+    return [f"DEVELOPER_DIR={DEVELOPER_DIR}"] if Path(DEVELOPER_DIR).is_dir() else []
 
 
 def command_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
     """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
 
-    The profile allows no network. It allows reads of the root directory itself (not its children), the system runtime, the extra read roots, and the
-    workspace, and writes to the workspace except `.agents`. Later rules win, so the `.agents` deny follows
+    The profile allows no network. It allows reads of the root directory itself (not its children).
+    It also allows reads of the system runtime, the extra read roots, and the workspace.
+    It allows writes to the workspace except `.agents`. Later rules win, so the `.agents` deny follows
     the write allow.
     """
     path = str(workspace)

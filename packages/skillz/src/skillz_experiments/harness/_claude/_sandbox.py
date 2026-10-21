@@ -12,7 +12,7 @@ from typing import cast
 
 from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments.harness._claude._constants import INSTALL_BUBBLEWRAP, SANDBOX_STDERR
-from skillz_experiments.harness._seatbelt import DEVELOPER_DIR, command_profile
+from skillz_experiments.harness._seatbelt import command_profile, seatbelt_environment
 
 
 # Curl exit codes that show a request attempt. Codes 5 and 6 are name-resolution failures, and 22 needs `-f`.
@@ -217,8 +217,7 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
     """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
-        if Path(DEVELOPER_DIR).is_dir():
-            assignments.append(f"DEVELOPER_DIR={DEVELOPER_DIR}")
+        assignments.extend(seatbelt_environment())
         return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
     mount = ["--bind", str(capture), SANDBOX_CAPTURE] if capture is not None else []

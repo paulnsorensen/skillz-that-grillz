@@ -26,7 +26,7 @@ from typing import Literal, NoReturn, cast
 from skillz_experiments._cases import loads_untrusted, mapping
 from skillz_experiments._protocol import OPERATIONS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._redact import redact
-from skillz_experiments.harness import command_profile
+from skillz_experiments.harness import command_profile, seatbelt_environment
 from skillz_experiments.wrapper._seatbelt import profile as seatbelt_profile
 
 Runtime = Literal["docker", "podman", "runsc", "sandbox-exec"]
@@ -240,7 +240,8 @@ def _sandbox(request: dict[str, object], workspace: Path, runtime: str | None, i
     stop = None
     if kind == "sandbox-exec":
         launch = [executable, "-p", command_profile(root),
-                  "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", f"HOME={root}", f"TMPDIR={root}", *command]
+                  "/usr/bin/env", "-i", "PATH=/usr/bin:/bin", f"HOME={root}", f"TMPDIR={root}",
+                  *seatbelt_environment(), *command]
     else:
         name = f"skillz-{secrets.token_hex(6)}"
         flags = ["--runtime=runsc"] if kind == "runsc" else []

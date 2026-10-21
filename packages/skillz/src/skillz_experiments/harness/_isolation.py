@@ -1,11 +1,11 @@
 import socket
-import sys
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
 from skillz_experiments._cases import CodedError
+from skillz_experiments.harness._seatbelt import XCRUN_ENVIRONMENT
 
 # Linux and macOS limit an AF_UNIX path to about 104-108 bytes, including the terminating NUL.
 SOCKET_PATH_LIMIT = 100
@@ -96,20 +96,19 @@ def watched_abstract(name: str, *, active: bool = True) -> Generator[Callable[[s
         server.setblocking(False)
         yield _connected(server)
 
-XCRUN_ENVIRONMENT = ("CPATH", "DEVELOPER_DIR", "LIBRARY_PATH", "MANPATH", "SDKROOT")
 
-
-def probe(workspace: Path, sealed: Path, engine: Path, port: int, system: str = sys.platform) -> str:
+def probe(workspace: Path, sealed: Path, engine: Path, port: int) -> str:
     """Build the isolation probe script. It must fail to reach the host loopback listener on `port`.
 
-    On macOS, `/usr/bin/python3` is an `xcrun` shim that adds `XCRUN_ENVIRONMENT` to the environment.
-    The probe allows exactly those names there. Elsewhere it allows none.
+    On macOS, the `/usr/bin/python3` shim adds `CPATH`, `LIBRARY_PATH`, `MANPATH`, and `SDKROOT`.
+    The Claude adapter and the Gemini `sandbox` operation set `DEVELOPER_DIR`.
+    The script allows these names only when it runs on macOS.
+    On other systems, the script allows none of them.
     """
-    allowed = {"PATH", "HOME", "TMPDIR", "LANG", "LC_CTYPE", "__CF_USER_TEXT_ENCODING",
-               *(XCRUN_ENVIRONMENT if system == "darwin" else ())}
+    allowed = {"PATH", "HOME", "TMPDIR", "LANG", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"}
     denied = [str(sealed), str(workspace / "escape"), str(engine)]
     return (
-        "import os,pathlib,socket\n"
+        "import os,pathlib,socket,sys\n"
         f"for name in {denied!r}:\n"
         " try: pathlib.Path(name).read_bytes()\n"
         " except OSError: pass\n"
@@ -118,7 +117,7 @@ def probe(workspace: Path, sealed: Path, engine: Path, port: int, system: str = 
         "except OSError: pass\n"
         "else: raise SystemExit('candidate write isolation failed')\n"
         "assert 'CODEX_HOME' not in os.environ\n"
-        f"assert set(os.environ) <= set({sorted(allowed)!r})\n"
+        f"assert set(os.environ) <= set({sorted(allowed)!r})|(set({sorted(XCRUN_ENVIRONMENT)!r}) if sys.platform=='darwin' else set())\n"
         "p=pathlib.Path('allowed');p.write_text('ok');assert p.read_text()=='ok'\n"
         "try: sock=socket.socket(socket.AF_INET,socket.SOCK_STREAM)\n"
         "except OSError: pass\n"

@@ -12,7 +12,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Collection, Iterator
 from pathlib import Path
-from typing import cast, final
+from typing import NoReturn, cast, final
 
 import pytest
 
@@ -963,7 +963,7 @@ def test_seatbelt_profile_allows_the_root_directory_literal_but_not_its_subtree(
 
 
 def test_seatbelt_argv_runs_the_command_with_a_clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.DEVELOPER_DIR", "/nonexistent-developer-dir")
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", "/nonexistent-developer-dir")
     workspace = Path("/w/workspace")
     argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", workspace, ["/usr/bin/python3", "-c", "pass"],
                         {"PATH": "/usr/bin:/bin", "HOME": "/w/workspace/home"})
@@ -974,9 +974,18 @@ def test_seatbelt_argv_runs_the_command_with_a_clean_environment(monkeypatch: py
 
 def test_seatbelt_argv_pins_the_xcrun_shim_to_the_allowed_developer_dir(tmp_path: Path,
                                                                        monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.DEVELOPER_DIR", str(tmp_path))
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
     argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", Path("/w/workspace"), ["/usr/bin/python3"], {"PATH": "/usr/bin"})
     assert argv[4:7] == ["-i", "PATH=/usr/bin", f"DEVELOPER_DIR={tmp_path}"]
+
+
+def test_seatbelt_environment_pins_only_an_existing_developer_dir(tmp_path: Path,
+                                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments.harness import seatbelt_environment
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    assert seatbelt_environment() == [f"DEVELOPER_DIR={tmp_path}"]
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path / "missing"))
+    assert seatbelt_environment() == []
 
 
 def test_sandbox_fix_on_darwin_does_not_suggest_linux_packages(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -988,29 +997,52 @@ def test_sandbox_fix_on_darwin_does_not_suggest_linux_packages(monkeypatch: pyte
     assert "bubblewrap" in sandbox_fix("sandbox probe failed")
 
 
-def test_probe_environment_assertion_accepts_xcrun_names_only_on_darwin(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(("platform", "expected"), [("darwin", "sandbox-exec"), ("linux", "bubblewrap")])
+def test_doctor_sandbox_probe_row_fix_matches_the_platform(platform: str, expected: str,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    class Failing:
+        def check_helper_sandbox(self) -> None:
+            raise RuntimeError("sandbox probe failed")
+
+        def inventory(self) -> NoReturn:
+            raise RuntimeError("no inventory")
+
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", platform)
+    row = _transport._probe_checks(cast(ClaudeCode, cast(object, Failing())), True)[0]  # pyright: ignore[reportPrivateUsage]
+    fix = row.fix or ""
+    assert row.name == "sandbox-probe" and row.status == "fail"
+    assert expected in fix
+    assert ("bubblewrap" in fix) == (platform == "linux")
+
+
+def probe_assertion() -> str:
     from skillz_experiments.harness._isolation import probe
-    monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin", "SDKROOT": "/sdk"})
-    for system, accepted in (("darwin", True), ("linux", False)):
-        script = probe(Path("/w"), Path("/s"), Path("/e"), 1, system=system)
-        line = next(line for line in script.splitlines() if line.startswith("assert set(os.environ)"))
-        if accepted:
-            exec(line, {"os": os})
-        else:
-            with pytest.raises(AssertionError):
-                exec(line, {"os": os})
+    script = probe(Path("/w"), Path("/s"), Path("/e"), 1)
+    return next(line for line in script.splitlines() if line.startswith("assert set(os.environ)"))
 
 
-def test_probe_allows_only_the_xcrun_variables_on_darwin() -> None:
-    from skillz_experiments.harness._isolation import XCRUN_ENVIRONMENT, probe
-    base = (Path("/w"), Path("/s"), Path("/e"), 1)
-    darwin = probe(*base, system="darwin")
-    linux = probe(*base, system="linux")
-    assert all(repr(name) in darwin for name in XCRUN_ENVIRONMENT)
-    assert not any(repr(name) in linux for name in XCRUN_ENVIRONMENT)
-    assert "'HOME'" in linux
-    assert "'LD_PRELOAD'" not in darwin
+@pytest.mark.parametrize(("platform", "accepted"), [("darwin", True), ("linux", False)])
+def test_probe_environment_assertion_accepts_xcrun_names_only_on_darwin(platform: str, accepted: bool,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from skillz_experiments.harness._seatbelt import XCRUN_ENVIRONMENT
+    line = probe_assertion()
+    environment = {"PATH": "/usr/bin", **{name: "x" for name in XCRUN_ENVIRONMENT}}
+    monkeypatch.setattr(os, "environ", environment)
+    names = {"os": os, "sys": SimpleNamespace(platform=platform)}
+    if accepted:
+        exec(line, names)
+    else:
+        with pytest.raises(AssertionError):
+            exec(line, names)
 
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_probe_environment_assertion_rejects_a_foreign_name(platform: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin", "SDKROOT": "/sdk", "ANTHROPIC_API_KEY": "secret"})
+    with pytest.raises(AssertionError):
+        exec(probe_assertion(), {"os": os, "sys": SimpleNamespace(platform=platform)})
 
 
 def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter(tmp_path: Path) -> None:

@@ -232,7 +232,7 @@ def test_the_barrels_export_exactly_the_contract_names() -> None:
     assert set(harness_barrel.__all__) == {
         "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "CONFIGURED_SELECTIONS", "doctor",
         "host_report", "ClaudeOptions", "Effort", "NONO_REMOVED", "check_selection", "command_profile",
-        "configured_selection", "has_claude_sandbox", "refuses_claude_options", "stop_kind"}
+        "configured_selection", "has_claude_sandbox", "refuses_claude_options", "seatbelt_environment", "stop_kind"}
     assert set(wrapper_barrel.__all__) == {"register"}
     assert set(evaluation_barrel.__all__) == {
         "CheckMemo", "CheckResult", "Reply", "Transcript", "answer_schema", "evaluate", "helper_failure", "task_tokens", "usage"}
