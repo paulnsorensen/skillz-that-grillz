@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -10,6 +11,9 @@ import pytest
 
 from support import (BUNDLE, CLI, FIXTURES, Scenario, approve_and_run, cli_error, export_and_apply, make_scenario,
                      read_events, read_record, snapshot)
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "darwin", reason="the wrapper subprocess sees the real platform and picks sandbox-exec, not docker")
 
 
 def configured_wrapper(out: Path, home: Path, cli: Path, mode: str) -> tuple[Path, Path]:
