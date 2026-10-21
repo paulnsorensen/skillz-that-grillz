@@ -139,7 +139,8 @@ def inspect(path: Path) -> dict[str, object]:
     """Report the package facts of one Markdown file. Raise `ValueError` for input outside the contract."""
     if path.is_symlink():
         raise ValueError("input must not be a symlink")
-    path = path.parent.resolve() / path.name
+    # Path.resolve raises RuntimeError on a symlink loop before Python 3.13; realpath does not on any version.
+    path = Path(os.path.realpath(path.parent)) / path.name
     if not path.is_file() or path.stat().st_size > MAX_BYTES:
         raise ValueError(f"input must be a regular file of at most {MAX_BYTES} bytes")
     lines = path.read_text(encoding="utf-8").splitlines()
