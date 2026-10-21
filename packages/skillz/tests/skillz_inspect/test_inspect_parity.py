@@ -110,7 +110,7 @@ CONTENT: dict[str, str | bytes] = {
     "very-long-line-no-punctuation": f"{FRONT}{'w ' * 100000}",
     "table": f"{FRONT}| {LONG} |\n|---|\n{MID}\n",
     "links": (f"{FRONT}[a](a.md) [b](./b.md#frag) [c](c%20d.md?q=1) [d](https://x.example/{LONG[:5]}) "
-              '[e](mailto:a@b.c) [f](#top) [g](<h.md>) [i]() [j](k.md "title") ![img](i.png)\n'),
+              '[e](mailto:a@b.c) [f](#top) [i]() ![img](i.png)\n'),
     "links-with-newline": f"{FRONT}[a](x\ny.md)\n",
     "link-with-nul": f"{FRONT}[a](a%00b.md)\n",
     "link-escape-dotdot": f"{FRONT}[a](../x.md)\n",
@@ -398,3 +398,43 @@ def test_the_success_document_is_one_json_value_with_the_v4_keys(tmp_path: Path)
     assert json.loads(run.stdout) == GOOD["output"]
 
 
+# --- inline links with a title or an angle-bracketed destination (gh-414) ---------------------------------------
+
+@pytest.mark.ac("gh-414:AC-1")
+def test_titled_and_angle_bracketed_links_are_local_link_targets(tmp_path: Path) -> None:
+    body = ('See [guide](references/guide.md "Title") and [g2](<refs/a b.md>).\n'
+            "[s](single.md 'S') [p](paren.md (P)) [n]( spaced.md  \"T\" ) [h](<h.md> \"t\") [e](<>)\n")
+    outcome = new_outcome(write(tmp_path / "SKILL.md", FRONT + body))
+    assert outcome[0] == "ok"
+    assert cast(dict[str, object], outcome[1])["local_link_targets"] == [
+        "h.md", "paren.md", "references/guide.md", "refs/a b.md", "single.md", "spaced.md"]
+
+
+@pytest.mark.ac("gh-414:AC-2")
+@pytest.mark.parametrize("link", ['[x](../../secret "t")', "[x](<../secret>)", "[x](<../a b.md> 't')"])
+def test_titled_and_angle_bracketed_links_still_reject_a_package_escape(tmp_path: Path, link: str) -> None:
+    path = write(tmp_path / "pkg" / "SKILL.md", f"{FRONT}{link}\n")
+    assert new_outcome(path) == ("error", "link escapes package")
+
+
+@pytest.mark.ac("gh-414:AC-2")
+def test_a_titled_link_through_a_symlink_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    _ = write(root / "real.md", "x")
+    (root / "inner.md").symlink_to(root / "real.md")
+    path = write(root / "SKILL.md", f'{FRONT}[a](inner.md "t")\n')
+    assert new_outcome(path) == ("error", "package must not contain symlinks")
+
+
+@pytest.mark.ac("gh-414:AC-2")
+@pytest.mark.parametrize("link", ["[a](x.md (see [b](../../secret.md)))", '[a](x.md "\n\n[b](../../secret.md)\n\n")'])
+def test_a_title_does_not_hide_a_following_link_that_escapes(tmp_path: Path, link: str) -> None:
+    path = write(tmp_path / "pkg" / "SKILL.md", f"{FRONT}{link}\n")
+    assert new_outcome(path) == ("error", "link escapes package")
+
+
+@pytest.mark.ac("gh-414:AC-1")
+def test_a_title_with_an_escaped_quote_keeps_its_link(tmp_path: Path) -> None:
+    outcome = new_outcome(write(tmp_path / "SKILL.md", FRONT + '[a](a.md "x \\"y\\"")\n'))
+    assert outcome[0] == "ok"
+    assert cast(dict[str, object], outcome[1])["local_link_targets"] == ["a.md"]
