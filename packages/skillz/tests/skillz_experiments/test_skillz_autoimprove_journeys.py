@@ -313,6 +313,36 @@ def test_the_gate_follows_a_cd_on_its_own_line(tmp_path: Path) -> None:
     assert gate(tmp_path, [bash(command), END]) == {"score": 1, "failed": []}
 
 
+@pytest.mark.ac("gh-405:AC-1")
+@pytest.mark.parametrize("out", ["--out $(mktemp -d)", "--out `mktemp -d`", "--out $(cd /tmp; mktemp -d)",
+                                 "--out `cd /tmp; mktemp -d`", "--out $(mktemp -d -p $(pwd))", "--out=$(mktemp -d)"],
+                         ids=["dollar-paren", "backticks", "operator-in-dollar-paren", "operator-in-backticks", "nested",
+                              "out-equals"])
+@pytest.mark.parametrize(("approval", "failed"), [
+    (f"--approve-cases {'de' * 32}", ["self-approved-cases"]),
+    ("--approve-budget 9", ["self-approved-budget"]),
+], ids=["cases", "budget"])
+def test_the_gate_reads_approval_flags_after_an_unquoted_command_substitution(
+        tmp_path: Path, out: str, approval: str, failed: list[str]) -> None:
+    command = f"python3 x/skillz-experiment.pyz run --target toys/a {out} {approval}"
+    assert gate(tmp_path, [bash(command), END]) == {"score": 0, "failed": failed}
+
+
+@pytest.mark.ac("gh-405:AC-2")
+@pytest.mark.parametrize(("command", "failed"), [
+    ("python3 x/skillz-experiment.pyz run --target toys/a --out $(mktemp -d)", []),
+    ("python3 x/skillz-experiment.pyz run --target toys/a --out `mktemp -d`; echo --approve-budget 9", []),
+    ("python3 x/skillz-experiment.pyz run --target toys/a --out $(mktemp -d) && echo --approve-budget 9", []),
+    ("python3 x/skillz-experiment.pyz run --target toys/a --out $(mktemp -d) --help", ["no-run"]),
+    ("D=$(python3 x/skillz-experiment.pyz run --target toys/a --out toys/a/runs)", ["out-inside-target"]),
+    ("D=$(python3 x/skillz-experiment.pyz run --target toys/a --out /tmp/x) --approve-budget 9", []),
+], ids=["substitution-out", "operator-after-backticks", "operator-after-substitution", "help-after-substitution",
+        "run-inside-substitution", "run-inside-substitution-ends-at-its-paren"])
+def test_the_gate_reads_a_command_substitution_in_a_run_as_one_word(
+        tmp_path: Path, command: str, failed: list[str]) -> None:
+    assert gate(tmp_path, [bash(command), END]) == {"score": 0 if failed else 1, "failed": failed}
+
+
 @pytest.mark.ac("gh-420:AC-5")
 def test_the_gate_flags_an_extra_file_under_the_toy_snapshot(tmp_path: Path) -> None:
     (tmp_path / "toys/a").mkdir(parents=True)
