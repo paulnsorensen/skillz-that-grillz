@@ -171,10 +171,21 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     `inventory-error` sends an error response, `inventory-auth` fails to log in, and `inventory-hang` never answers.
     `inventory-nonzero` sends a valid list and still exits 1. `inventory-crash` exits 3 with stderr and no control response.
 
+    `late-builtin` omits the built-in `design` skill from the first listing only, as a fresh config directory does.
+    `late-plain` lists `design` later as an ordinary skill, and `late-absent` never lists it again.
+
     `builtin-echo` also lists `echo-skill` as a Claude Code command, so the echo candidate name collides with it.
     """
     commands: list[dict[str, object]] = [{"name": name, "description": ""} for name in listed_skills(mode, config)]
     builtin = [*BUILTIN_COMMANDS, *(["echo-skill"] if mode == "builtin-echo" else [])]
+    late = mode.startswith("late-")
+    if late and len(Path(__file__).with_name(Path(__file__).name + ".inventory.log").read_text().splitlines()) == 1:
+        builtin.remove("design")
+    elif mode == "late-plain":
+        builtin.remove("design")
+        commands.append({"name": "design", "description": ""})
+    elif mode == "late-absent":
+        builtin.remove("design")
     commands += [cast(dict[str, object], {"name": name, "description": "", "builtin": True}) for name in builtin]
     if mode == "inventory-hang":
         time.sleep(30)
