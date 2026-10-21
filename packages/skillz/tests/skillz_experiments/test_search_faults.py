@@ -13,7 +13,7 @@ from skillz_experiments._records import read
 from skillz_experiments.run import _outcomes
 from skillz_experiments.run import run
 from skillz_experiments.run._export import export, summary
-from skillz_experiments.search import _engine
+from skillz_experiments.search import _engine, add_validation_scores, complete_means
 from test_run_search import MODEL, Search, _seed_pass, _start  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
@@ -49,10 +49,10 @@ def _rows(out: Path) -> list[dict[str, object]]:
 
 @pytest.mark.ac("gh-316:AC-1")
 def test_a_failed_validation_outcome_adds_no_score_to_the_means() -> None:
-    scores = _outcomes.add_validation_scores(
+    scores = add_validation_scores(
         {}, [_ok("a", "v1", 1.0), _failed("a", "v2"), _failed("b", "v1"), _failed("b", "v2")])
     assert scores == {"a": {"v1": 1.0}}
-    assert _outcomes.complete_means(scores, {"v1", "v2"}) == {}
+    assert complete_means(scores, {"v1", "v2"}) == {}
 
 
 @pytest.mark.ac("gh-316:AC-1")

@@ -16,12 +16,13 @@ from skillz_experiments.run._holdout import arm_scores, replay_outcomes, score_h
 from skillz_experiments.run._outcomes import rejection_detail, timed_out
 from skillz_experiments.run._patch import build_patch
 from skillz_experiments.run._plan import case_calls
-from skillz_experiments.run._record_fields import field, text_field, unit_score
+from skillz_experiments.run._record_fields import field, text_field
 from skillz_experiments.run._replay import STDERR_LIMIT, apply_patches, differences, prepare_copy
 from skillz_experiments.run._replay import components as replay_components
 from skillz_experiments.run._replay import drift as replay_drift
 from skillz_experiments.run._state import RunState
 from skillz_experiments.run._stop import check_timeout
+from skillz_experiments.search import unit_score
 
 
 def _conclude(state: RunState, reasons: list[str], patch_digest: str | None = None, *,
