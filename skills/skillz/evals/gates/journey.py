@@ -107,19 +107,24 @@ def working_directory(words: list[str]) -> str | None:
     """Follow each `cd DIR` in `words` from the workspace root.
 
     Return None when a directory change goes where the gate cannot tell: a `cd` that is not a plain command,
-    a `pushd`, `popd`, or `builtin` word, an `env` command with `-C`/`--chdir`, or a `cd` to a non-literal directory.
+    a `cd` that an earlier command or `||` can skip, a `pushd`, `popd`, or `builtin` word,
+    an `env` command with `-C`/`--chdir`, or a `cd` to a non-literal directory.
     """
     place = "."
     in_env = False
+    other = False  # a command other than `cd` came earlier in the list since the last `;`
     for index, word in enumerate(words):
+        before = words[index - 1] if index else ";"
         if OPERATOR.fullmatch(word):
             in_env = False
+            other = other and word != ";"
         in_env = in_env or word == "env"
         if word in DIRECTORY_WORDS or (in_env and (word in ENV_DIRECTORY or word.startswith("--chdir="))):
             return None
         if word != "cd":
+            other = other or (OPERATOR.fullmatch(before) is not None and OPERATOR.fullmatch(word) is None)
             continue
-        if index and not OPERATOR.fullmatch(words[index - 1]):
+        if not OPERATOR.fullmatch(before) or before == "||" or (before == "&&" and other):
             return None
         goal = words[index + 1] if index + 1 < len(words) else ""
         if not goal or OPERATOR.fullmatch(goal) or goal[0] in "-~$":

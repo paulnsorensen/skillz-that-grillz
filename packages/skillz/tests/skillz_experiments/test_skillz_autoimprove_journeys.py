@@ -292,6 +292,22 @@ def test_the_gate_ignores_a_chdir_flag_of_a_command_other_than_env(tmp_path: Pat
 
 
 @pytest.mark.ac("gh-420:AC-4")
+@pytest.mark.parametrize("command", [
+    "cd toys/a && false && cd ../..; python3 x/skillz-experiment.pyz run --target . --out runs",
+    "cd toys/a || cd ../..; python3 x/skillz-experiment.pyz run --target . --out runs",
+    "FOO=bar cd toys/a && python3 x/skillz-experiment.pyz run --target . --out runs",
+], ids=["skipped-cd-after-and", "skipped-cd-after-or", "assignment-prefixed-cd"])
+def test_the_gate_fails_closed_when_an_earlier_command_or_or_can_skip_a_cd(tmp_path: Path, command: str) -> None:
+    assert gate(tmp_path, [bash(command), END]) == {"score": 0, "failed": ["out-inside-target"]}
+
+
+@pytest.mark.ac("gh-420:AC-4")
+def test_the_gate_ignores_an_operator_and_cd_inside_quotes(tmp_path: Path) -> None:
+    command = "echo '&& cd /tmp'; python3 x/skillz-experiment.pyz run --target toys/a --out toys/a/runs"
+    assert gate(tmp_path, [bash(command), END]) == {"score": 0, "failed": ["out-inside-target"]}
+
+
+@pytest.mark.ac("gh-420:AC-4")
 def test_the_gate_follows_a_cd_on_its_own_line(tmp_path: Path) -> None:
     command = "echo hi\ncd /tmp\npython3 x/skillz-experiment.pyz run --target /w/toys/a --out runs"
     assert gate(tmp_path, [bash(command), END]) == {"score": 1, "failed": []}
