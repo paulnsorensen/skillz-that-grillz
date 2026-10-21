@@ -45,9 +45,8 @@ from wedge._key import (
 from wedge._resolve import export_requirements, resolve_closure
 
 _VOLATILE_INSTALL_FILES = {"RECORD", "INSTALLER", "REQUESTED", "direct_url.json"}
-# Names that `_strip_volatile` deletes at the top of a tree. A first-party entry
-# with one of these names would vanish without a trace, so staging rejects it.
-_RESERVED_TOP_LEVEL = {"bin"} | _VOLATILE_INSTALL_FILES
+# Installed console scripts live in a top-level `bin`. Keep that name free of first-party sources.
+_RESERVED_TOP_LEVEL = {"bin"}
 _IMPORTABLE_SUFFIXES = {".py", ".so", ".pyd"}
 # 1980-01-01T00:00:00Z: the earliest timestamp a zip member can hold. shiv's
 # reproducible mode floors SOURCE_DATE_EPOCH=0 to this same value, but set it
@@ -324,6 +323,7 @@ def _build_from_layer(layer: SiteLayer, sources_tree: Path, target: WedgeConfig,
     with tempfile.TemporaryDirectory(prefix="wedge-site-") as tmp:
         site_dir = Path(tmp) / "site"
         _ = shutil.copytree(layer.path, site_dir, symlinks=True)
+        _strip_volatile(site_dir)
         for entry in sorted(Path(sources_tree).iterdir()):
             if entry.is_symlink():
                 raise ValueError(f"build source must not be a symlink: {entry}")
@@ -333,7 +333,6 @@ def _build_from_layer(layer: SiteLayer, sources_tree: Path, target: WedgeConfig,
                 _copy_tree(entry, destination)
             else:
                 _ = shutil.copy2(entry, destination, follow_symlinks=False)
-        _strip_volatile(site_dir)
         _reject_links(site_dir)
         return _shiv_into(site_dir, target.name, target.entry, out_dir)
 
@@ -549,7 +548,9 @@ def _strip_volatile(site_dir: Path) -> None:
         if path.is_dir():
             if path.name == "__pycache__":
                 shutil.rmtree(path, ignore_errors=True)
-        elif path.name in _VOLATILE_INSTALL_FILES or path.suffix == ".pyc":
+        elif path.suffix == ".pyc" or (
+            path.name in _VOLATILE_INSTALL_FILES and path.parent.name.endswith(".dist-info")
+        ):
             path.unlink()
 
 
