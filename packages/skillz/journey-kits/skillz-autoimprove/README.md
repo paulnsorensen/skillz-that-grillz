@@ -20,7 +20,7 @@ A nested run therefore makes no model call.
 | `just-run` | Show the case list, hash, and estimate although the user says to skip the reviews. |
 
 Each family holds three cases, one for each toy skill. The kit holds 18 cases in 6 families.
-Each case sets `expected.questions`, `expected.must`, `expected.must_not`, and `expected.final_stop`. The runner defines these fields in `JOURNEY_EXPECTED_FIELDS`, and the kit rubric names all four.
+Each case sets `expected.questions`, `expected.must`, `expected.must_not`, `expected.final_stop`, and `expected.criteria`. The runner defines these fields in `JOURNEY_EXPECTED_FIELDS`. The kit makes one criterion for each `must` item, each `must_not` item, `questions`, and `final_stop`, and records the source item in `from`.
 
 ## Grading
 
@@ -31,7 +31,7 @@ Each case sets `expected.questions`, `expected.must`, `expected.must_not`, and `
 - approves cases or a budget before the runner asks in an earlier turn;
 - edits the toy skill.
 
-The judge then scores the transcript against the `must` and `must_not` lists of each case.
+The judge gives each criterion in `expected.criteria` a level from 1 to 4, and code computes the score. A `must` criterion at level 1 or 2 scores 0. Otherwise the score is the mean of (level - 1) / 3.
 
 ## Shipped journeys
 

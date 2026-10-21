@@ -27,7 +27,10 @@ EASY_CHEESE_CASE: dict[str, object] = {
     "id": "age-1", "family": "age-gate", "kind": "journey", "request": "/age-check Is a person of 17 allowed in?",
     "brief": "You run a venue. The guest is 17. Answer one question at a time and stay brief.", "max_turns": 4,
     "requirements": ["AGE-1", "AGE-2"], "files": {"venue/rules.md": "Entry is for ages 18 and up.\n"},
-    "expected": {"must": ["refuses entry"], "must_not": ["asks for a name"]}, "source": "skill",
+    "expected": {"must": ["refuses entry"], "must_not": ["asks for a name"], "criteria": [
+        {"id": "must-0", "text": "THE transcript SHALL show that the agent refuses entry.", "from": "must:0"},
+        {"id": "must-not-0", "text": "THE transcript SHALL NOT show that the agent asks for a name.", "from": "must_not:0"}]},
+    "source": "skill",
 }
 
 

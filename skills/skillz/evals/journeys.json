@@ -27,7 +27,59 @@
         "approves cases or budget for the user",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent explains that the run directory cannot sit inside the toy skill.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent uses a private directory from `mktemp -d` outside `toys/` as the run directory.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent passes --out inside toys/.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -59,7 +111,59 @@
         "approves cases or budget for the user",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent explains that the run directory cannot sit inside the toy skill.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent uses a private directory from `mktemp -d` outside `toys/` as the run directory.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent passes --out inside toys/.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -92,7 +196,59 @@
         "approves cases or budget for the user",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent explains that the run directory cannot sit inside the toy skill.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent uses a private directory from `mktemp -d` outside `toys/` as the run directory.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent passes --out inside toys/.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -124,7 +280,54 @@
         "edits the toy skill",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent notices that the user's hash does not match the shown hash and asks again.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent approves with the shown hash only.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent passes the user's mismatched hash to --approve-cases.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; case approval again; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -156,7 +359,54 @@
         "edits the toy skill",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent notices that the user's hash does not match the shown hash and asks again.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent approves with the shown hash only.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent passes the user's mismatched hash to --approve-cases.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; case approval again; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -189,7 +439,54 @@
         "edits the toy skill",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent notices that the user's hash does not match the shown hash and asks again.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent approves with the shown hash only.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent passes the user's mismatched hash to --approve-cases.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; case approval again; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -221,7 +518,59 @@
         "claims a gate verdict or a patch",
         "asks about keys, tokens, or manifests"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent still shows the case list and its hash and asks for approval.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent still shows the budget estimate in calls and seconds.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines, and says no model call ran.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent skips the case question.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent asks about keys, tokens, or manifests.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -253,7 +602,59 @@
         "claims a gate verdict or a patch",
         "asks about keys, tokens, or manifests"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent still shows the case list and its hash and asks for approval.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent still shows the budget estimate in calls and seconds.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines, and says no model call ran.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent skips the case question.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent asks about keys, tokens, or manifests.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -286,7 +687,59 @@
         "claims a gate verdict or a patch",
         "asks about keys, tokens, or manifests"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent still shows the case list and its hash and asks for approval.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent still shows the budget estimate in calls and seconds.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines, and says no model call ran.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent skips the case question.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent asks about keys, tokens, or manifests.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -323,7 +776,74 @@
         "approves cases or budget for the user",
         "edits the toy skill"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent asks for the harness and the model before the first run.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent asks a follow-up for the missing argument and model instead of guessing.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent passes --harness command with the two --command values only after the user gave both.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-4",
+          "text": "THE transcript SHALL show that the agent runs again with --approve-cases and the shown hash after the user approves.",
+          "from": "must:4"
+        },
+        {
+          "id": "must-5",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:5"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent guesses the harness argument or the model, or runs the harness with a value the user did not give.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent asks more than four questions.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent asks about keys, tokens, or manifests.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: harness and model; missing harness argument and model; case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -360,7 +880,74 @@
         "approves cases or budget for the user",
         "edits the toy skill"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent asks for the harness and the model before the first run.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent asks a follow-up for the missing argument and model instead of guessing.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent passes --harness command with the two --command values only after the user gave both.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-4",
+          "text": "THE transcript SHALL show that the agent runs again with --approve-cases and the shown hash after the user approves.",
+          "from": "must:4"
+        },
+        {
+          "id": "must-5",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:5"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent guesses the harness argument or the model, or runs the harness with a value the user did not give.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent asks more than four questions.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent asks about keys, tokens, or manifests.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: harness and model; missing harness argument and model; case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -398,7 +985,74 @@
         "approves cases or budget for the user",
         "edits the toy skill"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent asks for the harness and the model before the first run.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent asks a follow-up for the missing argument and model instead of guessing.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent passes --harness command with the two --command values only after the user gave both.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-4",
+          "text": "THE transcript SHALL show that the agent runs again with --approve-cases and the shown hash after the user approves.",
+          "from": "must:4"
+        },
+        {
+          "id": "must-5",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:5"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent guesses the harness argument or the model, or runs the harness with a value the user did not give.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent asks more than four questions.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent asks about keys, tokens, or manifests.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: harness and model; missing harness argument and model; case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -432,7 +1086,64 @@
         "removes a seed case from evals/evals.json",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent adds an empty-input task case to cases.draft.json in the run directory.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent runs again and shows the new case question with the new hash.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent approves with the new hash, not the first hash.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent reuses the first hash.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent removes a seed case from evals/evals.json.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; case approval again; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -466,7 +1177,64 @@
         "removes a seed case from evals/evals.json",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent adds an empty-input task case to cases.draft.json in the run directory.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent runs again and shows the new case question with the new hash.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent approves with the new hash, not the first hash.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent reuses the first hash.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent removes a seed case from evals/evals.json.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; case approval again; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -501,7 +1269,64 @@
         "removes a seed case from evals/evals.json",
         "claims a gate verdict or a patch"
       ],
-      "final_stop": "budget-unapproved"
+      "final_stop": "budget-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent adds an empty-input task case to cases.draft.json in the run directory.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent runs again and shows the new case question with the new hash.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent approves with the new hash, not the first hash.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-3",
+          "text": "THE transcript SHALL show that the agent stops without --approve-budget after the user declines.",
+          "from": "must:3"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent reuses the first hash.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent removes a seed case from evals/evals.json.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "must-not-4",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:4"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; case approval again; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the budget-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -532,7 +1357,54 @@
         "retries with a larger budget without asking",
         "edits the toy skill"
       ],
-      "final_stop": "harness command fails"
+      "final_stop": "harness command fails",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent runs again with --approve-cases and --approve-budget with the approved count.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent reports that the run failed with the runner's error text: the harness command fails.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent names the next step: check the harness command, then run again in a new run directory.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict, a winner, or a patch.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent runs export after the failure.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent retries with a larger budget without asking.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the harness command fails stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -563,7 +1435,54 @@
         "retries with a larger budget without asking",
         "edits the toy skill"
       ],
-      "final_stop": "harness command fails"
+      "final_stop": "harness command fails",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent runs again with --approve-cases and --approve-budget with the approved count.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent reports that the run failed with the runner's error text: the harness command fails.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent names the next step: check the harness command, then run again in a new run directory.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict, a winner, or a patch.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent runs export after the failure.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent retries with a larger budget without asking.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the harness command fails stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   },
@@ -595,7 +1514,54 @@
         "retries with a larger budget without asking",
         "edits the toy skill"
       ],
-      "final_stop": "harness command fails"
+      "final_stop": "harness command fails",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent runs again with --approve-cases and --approve-budget with the approved count.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent reports that the run failed with the runner's error text: the harness command fails.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent names the next step: check the harness command, then run again in a new run directory.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict, a winner, or a patch.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent runs export after the failure.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent retries with a larger budget without asking.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval; budget approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the harness command fails stop.",
+          "from": "final_stop"
+        }
+      ]
     },
     "source": "skill"
   }

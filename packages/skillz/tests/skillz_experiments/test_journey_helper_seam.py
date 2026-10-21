@@ -31,11 +31,16 @@ def _contract() -> Contract:
     return parse(document, "skill")
 
 
+LEVEL_3: dict[str, object] = {"criteria": {"plan": {"level": 3, "reason": "mostly"}}}
+
+
 def _cases(tmp_path: Path, rules: Contract) -> dict[str, Case]:
     common = {"family": "f", "split": "train", "request": REQUEST, "provenance": "test", "provider_approved": True}
-    items = [common | {"id": "t1", "kind": "task", "files": {"input.md": "x\n"}, "expected": {"expected_output": "x"}},
+    criteria = [{"id": "plan", "text": "THE answer SHALL hold a plan."}]
+    items = [common | {"id": "t1", "kind": "task", "files": {"input.md": "x\n"},
+                       "expected": {"expected_output": "x", "criteria": criteria}},
              common | {"id": "j1", "kind": "journey", "brief": "wants a plan", "max_turns": 4,
-                       "files": {"input.txt": "hello\n"}, "expected": {"must": ["a plan"]}}]
+                       "files": {"input.txt": "hello\n"}, "expected": {"must": ["a plan"], "criteria": criteria}}]
     path = tmp_path / "cases.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": items}))
     return {case.identifier: case for case in load_cases(path, rules.grader_types())}
@@ -55,7 +60,7 @@ def test_evaluate_rejects_a_task_case_for_a_helper_that_never_ran_but_not_a_jour
     candidate = Candidate({"SKILL.md": SKILL_TEXT, "run.py": "pass\n"}, ("SKILL.md",), contract=rules)
     session = open_session(tmp_path, install(tmp_path, {}), budget=Budget(40, 2400, 0))
     task = cast(ClaudeCode, session.transports["task"])
-    judge = Judge([*SIMULATE_THEN_DONE, {"score_percent": 70}, {"score_percent": 70}])
+    judge = Judge([*SIMULATE_THEN_DONE, LEVEL_3, LEVEL_3])
     judge.budget = task.budget
     try:
         checks = CheckMemo()
@@ -64,6 +69,6 @@ def test_evaluate_rejects_a_task_case_for_a_helper_that_never_ran_but_not_a_jour
     finally:
         session.close()
     assert journey["loaded"] is True and journey["helper_executed"] is True
-    assert journey.get("status") != "activation-rejected" and journey["score"] == 0.7
+    assert journey.get("status") != "activation-rejected" and journey["score"] == 2 / 3
     assert plain["loaded"] is True and plain["helper_executed"] is False
     assert plain["status"] == "activation-rejected"

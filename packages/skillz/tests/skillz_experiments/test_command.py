@@ -176,14 +176,14 @@ def test_selected_judge_model_reaches_the_judge_calls_of_an_intake_run(tmp_path:
 def models_by_schema(log: Path) -> dict[str, set[str]]:
     """Group the models of the `infer` requests by the role that makes them.
 
-    A reply with `score_percent` is a judge call, a reply with `result_json` or `matches` is a task call,
+    A reply with `criteria` is a judge call, a reply with `result_json` or `matches` is a task call,
     and any other reply schema is a reflection call.
     """
     groups: dict[str, set[str]] = {"judge": set(), "task": set(), "reflection": set()}
     for item in requests(log):
         if item["operation"] == "infer":
             required = cast(list[str], cast(dict[str, object], item["response_schema"])["required"])
-            role = ("judge" if "score_percent" in required else
+            role = ("judge" if "criteria" in required else
                     "task" if {"result_json", "matches"} & set(required) else "reflection")
             groups[role].add(str(item["model"]))
     return groups

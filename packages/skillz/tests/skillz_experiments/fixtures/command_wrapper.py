@@ -67,8 +67,10 @@ def infer(request: dict[str, object], mode: str, workspace: Path) -> dict[str, o
     answer: dict[str, object]
     if "result_json" in fields:
         answer, trace = inspection(request, workspace)
-    elif "score_percent" in fields:
-        answer = {"score_percent": 0 if mode == "low-score" else 100}
+    elif "criteria" in fields:
+        level = 1 if mode == "low-score" else 4
+        ids = cast(list[str], cast(dict[str, dict[str, object]], schema["properties"])["criteria"]["required"])
+        answer = {"criteria": {name: {"level": level, "reason": "fake judge"} for name in ids}}
     elif "matches" in fields:
         assert not list((workspace / ".agents/skills").iterdir())
         answer = {"matches": []}

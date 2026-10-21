@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 PACKAGE = Path(skillz_experiments.__file__).parent
 FIELDS = {"contract_hash", "skill", "adapter", "task_model", "judge_model", "claude_options", "edit",
           "repeats", "statistics", "split_digest", "scoring_digest", "leakage_digest"}
+CRITERIA = [{"id": "answer", "text": "THE answer SHALL meet the request."}]
 
 
 def _judged_run(base: Path, judge_model: str, make_target: Callable[..., Path],
@@ -144,7 +145,7 @@ def test_compare_names_every_differing_field_including_one_present_on_one_side()
 @pytest.mark.ac("gh-235:AC-5")
 def test_an_export_carries_the_fingerprint_and_no_case_text(
         tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
-    out, record, _ = _judged_run(tmp_path / "a", "judge-a", make_target, approved_run, expected={"marker": "expected-sentinel"})
+    out, record, _ = _judged_run(tmp_path / "a", "judge-a", make_target, approved_run, expected={"marker": "expected-sentinel", "criteria": CRITERIA})
     destination = Path(cast(str, export(out, tmp_path / "export")["export"]))
     text = (destination / "report.json").read_text()
     report = cast(dict[str, object], json.loads(text))

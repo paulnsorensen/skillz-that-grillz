@@ -377,16 +377,17 @@ class _Recorder:
     def invoke(self, prompt: str, *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
         del holdout, schema
         self.prompts.append(prompt)
-        return {"answer": {"score_percent": 80}}
+        return {"answer": {"criteria": {"echo": {"level": 3, "reason": "echoes the request"}}}}
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-12")
 def test_the_judge_prompt_names_no_arm_and_no_candidate_identity() -> None:
-    case = Case("case-1", "family-1", "holdout", "Echo this request.", {"input.txt": "hello"}, "hello", "synthetic", True)
+    case = Case("case-1", "family-1", "holdout", "Echo this request.", {"input.txt": "hello"},
+                {"criteria": [{"id": "echo", "text": "THE answer SHALL echo the request."}]}, "synthetic", True)
     recorder = _Recorder()
-    score, _pillars, _result = judge(recorder, Grader("judge", rubric="Rate the echo."), case, {"text": "hello"}, None,
+    score, _verdicts, _result = judge(recorder, Grader("judge", rubric="Rate the echo."), case, {"text": "hello"}, None,
                                      holdout=True)
-    assert score == 0.8 and len(recorder.prompts) == 1
+    assert score == pytest.approx(2 / 3) and len(recorder.prompts) == 1
     prompt = recorder.prompts[0]
     data = cast(dict[str, object], json.loads(prompt.split("UNTRUSTED DATA (JSON):\n", 1)[1]))
     assert set(data) == {"request", "files", "answer", "output_files", "reference"}
@@ -400,7 +401,7 @@ def test_no_judge_prompt_of_a_real_run_holds_an_arm_name_or_a_candidate_hash(jud
     assert result["phase"] == "complete" and record["winner_hash"] and record["seed_hash"]
     requests = [cast(dict[str, object], json.loads(line)) for line in judged.log.read_text().splitlines()]
     prompts = [str(item["prompt"]) for item in requests if item["operation"] == "infer"
-               and "score_percent" in cast(list[str], cast(dict[str, object], item["response_schema"])["required"])]
+               and "criteria" in cast(list[str], cast(dict[str, object], item["response_schema"])["required"])]
     assert prompts
     forbidden = (cast(str, record["winner_hash"]), cast(str, record["seed_hash"]), "baseline", "winner", "replay")
     for prompt in prompts:

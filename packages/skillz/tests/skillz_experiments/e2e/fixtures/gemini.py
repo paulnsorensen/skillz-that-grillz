@@ -51,7 +51,7 @@ def main() -> int:
         tool("e2e-marker", command, code, stdout, stderr)
         role = "task"
         usage = task_usage(workspace, skill, mode)
-    elif "score_percent" in fields:
+    elif "criteria" in fields:
         answer, role, usage = judge(source_prompt, fields), "judge", USAGE
     else:
         answer, role, usage = propose(source_prompt, fields, mode), "reflection", USAGE
