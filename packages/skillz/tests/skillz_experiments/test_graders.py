@@ -247,11 +247,31 @@ def test_judge_grader_uses_a_separate_invocation_and_hides_the_rubric(tmp_path: 
     assert result["score"] == 1.0 and result["scores"] == {"judge": 1.0}
 
 
+@pytest.mark.ac("judge-criteria-verdicts:AC-19")
+@pytest.mark.parametrize(("kind", "scores"), [("style", {"judge": 1.0}), ("rewrite", {"command": 1.0, "judge": 1.0}),
+                                              ("journey", {"command": 1.0, "judge": 1.0})])
+def test_judged_outcome_stores_the_verdicts_under_criteria_outside_scores(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, scores: dict[str, float]) -> None:
+    judge = FakeJudge(4)
+    if kind == "journey":
+        case, candidate = journey_case(tmp_path, journey_contract(JOURNEY_GATE))
+        task: FakeTask | SandboxedTask = JourneyTask()
+    else:
+        case, candidate = case_and_candidate(tmp_path, kind, contract(GATE_SCRIPT["pass"]) if kind == "rewrite" else contract())
+        task = SandboxedTask() if kind == "rewrite" else FakeTask()
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
+    sent = judge.schemas[0]
+    assert sent is not None
+    ids = cast(list[str], cast(dict[str, dict[str, object]], sent["properties"])["criteria"]["required"])
+    assert ids and result["criteria"] == {name: {"level": 4, "reason": "ok"} for name in ids}
+    assert result["scores"] == scores
+
+
 @pytest.mark.parametrize("level", [0, 5, 2.5, True, "3"])
 def test_judge_grader_rejects_an_out_of_range_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, level: object) -> None:
     rules = contract()
     case, candidate = case_and_candidate(tmp_path, "style", rules)
-    with pytest.raises(ValueError, match="judge"):
+    with pytest.raises(ValueError, match="^invalid judge response$"):
         _ = harness(monkeypatch, FakeTask(), FakeJudge(level)).evaluate(candidate, case, checks=CheckMemo())
 
 class ScriptTask(FakeTask):

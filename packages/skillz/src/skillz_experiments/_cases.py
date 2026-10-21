@@ -195,6 +195,8 @@ CRITERION_ID = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 _EARS = re.compile(r"(?:(?P<trigger>WHEN|WHILE|IF|WHERE)\s+\S.*?\s+)?THE\s+\S.*?\s+SHALL\s+\S.*", re.S)
 _EARS_WORDS = re.compile(r"\b(?:WHEN|WHILE|IF|WHERE|THE|SHALL)\b")
 _QUOTED = re.compile(r"`[^`]*`|\"[^\"]*\"")
+CRITERION_TEXT_LIMIT = 1000
+_HIDDEN = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 
 @dataclass(frozen=True)
@@ -217,9 +219,15 @@ def _ears(text: str) -> bool:
     return match is not None and _EARS_WORDS.findall(plain) == ([match["trigger"]] if match["trigger"] else []) + ["THE", "SHALL"]
 
 
-def _one_line(value: str) -> bool:
-    """Return True when `value` holds no control character, so it cannot add a line to a prompt or the approval question."""
-    return not any(unicodedata.category(character) == "Cc" for character in value)
+def _hidden(value: str) -> str | None:
+    """Return the first hidden character of `value` as `U+XXXX at position N`, or None.
+
+    A value that passes cannot add a line to a prompt or the approval question, or reorder the text that a reader sees.
+    """
+    for position, character in enumerate(value):
+        if unicodedata.category(character) in _HIDDEN:
+            return f"U+{ord(character):04X} at position {position}"
+    return None
 
 
 def case_criteria(value: object, case_id: object) -> tuple[Criterion, ...]:
@@ -243,7 +251,12 @@ def case_criteria(value: object, case_id: object) -> tuple[Criterion, ...]:
         if any(criterion.id == name for criterion in found):
             raise CodedError(code, f"{where}: the id repeats")
         text = item["text"]
-        if not isinstance(text, str) or not _one_line(text) or not _ears(text):
+        if isinstance(text, str) and len(text) > CRITERION_TEXT_LIMIT:
+            raise CodedError(code, f"{where}: text must be at most {CRITERION_TEXT_LIMIT} characters")
+        if isinstance(text, str) and (hidden := _hidden(text)):
+            raise CodedError(code, f"{where}: text must be one EARS statement on one line, and holds a control, format, "
+                             + f"surrogate, or line-separator character: {hidden}")
+        if not isinstance(text, str) or not _ears(text):
             raise CodedError(code, f"{where}: text must be one EARS statement on one line: at most one leading WHEN, WHILE, "
                              + "IF, or WHERE clause, then one THE <subject> SHALL <response>; quote a keyword inside the "
                              + "response with backticks")
@@ -251,8 +264,12 @@ def case_criteria(value: object, case_id: object) -> tuple[Criterion, ...]:
         source = item.get("from")
         if type(must) is not bool:
             raise CodedError(code, f"{where}: must must be true or false")
-        if source is not None and (not isinstance(source, str) or not source.strip() or not _one_line(source)):
-            raise CodedError(code, f"{where}: from must be one line of text that names a source item")
+        if isinstance(source, str) and (hidden := _hidden(source)):
+            raise CodedError(code, f"{where}: from must be one line of text, and holds a control, format, surrogate, "
+                             + f"or line-separator character: {hidden}")
+        if source is not None and (not isinstance(source, str) or not source.strip() or len(source) > CRITERION_TEXT_LIMIT):
+            raise CodedError(code, f"{where}: from must be one line of text, at most {CRITERION_TEXT_LIMIT} characters, "
+                             + "that names a source item")
         found.append(Criterion(name, text, must, source))
     return tuple(found)
 

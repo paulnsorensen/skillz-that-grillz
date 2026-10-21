@@ -31,7 +31,7 @@ Each case sets `expected.questions`, `expected.must`, `expected.must_not`, `expe
 - approves cases or a budget before the runner asks in an earlier turn;
 - edits the toy skill.
 
-The judge then scores the transcript against the `must` and `must_not` lists of each case.
+The judge gives each criterion in `expected.criteria` a level from 1 to 4, and code computes the score. A `must` criterion at level 1 or 2 scores 0. Otherwise the score is the mean of (level - 1) / 3.
 
 ## Shipped journeys
 

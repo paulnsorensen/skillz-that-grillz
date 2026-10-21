@@ -215,9 +215,12 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-surface-missing` | A file that the `surface` block names is missing from the skill, or the MCP config is not a JSON object with an `mcpServers` object. | Restore the file or fix the contract, then run again. |
 | `contract-surface-unsupported` | The contract declares a `surface`, and the task role is not the Claude harness. | Run with `--harness claude`, or remove the `surface` block. |
 | `journey-unsupported` | A scored or also-evaluated kind uses the journey grader, and the task transport cannot hold a conversation. The run stops at prepare time, before the case approval. | Run with `--harness claude`, or pass `--kind task`. |
-| `journey-expected-invalid` | A journey `expected` is not an object, holds a key other than `must`, `must_not`, `questions`, and `final_stop`, holds a wrong type, an empty or repeated entry, or has neither a nonempty `must` nor a nonempty `must_not`. A frozen case of an older run can trigger it on resume. | Fix the case. For an older run, start a new run directory. |
+| `journey-expected-invalid` | A journey `expected` is not an object, holds a key other than `must`, `must_not`, `questions`, `final_stop`, and `criteria`, holds a wrong type, an empty or repeated entry, or has neither a nonempty `must` nor a nonempty `must_not`. A frozen case of an older run can trigger it on resume. | Fix the case. For an older run, start a new run directory. |
 | `expected-missing` | A journey case has no `expected`. | Add the `expected` object. |
-| `contract-rubric-field` | The rubric of a `journey` kind names `reference.<name>` for a name that is not an `expected` field. | Use `must`, `must_not`, `questions`, or `final_stop`. |
+| `case-criteria-missing` | A scored judged case (grader `judge`, `hybrid`, or `journey`) has no `expected.criteria`. | Draft the criteria with the criteria drafting reference that `SKILL.md` lists, then run again. |
+| `case-criteria-invalid` | A criterion is not an object with `id` and `text`. It holds an unknown key, a bad id, or a repeated id. Its text is not one EARS statement on one line. Its `must` is not a bool, or its `from` is not one line. Text or `from` over 1000 characters also stops. | Fix the criterion, then run again. |
+| `contract-pillars-removed` | A contract kind declares `pillars`. | Move each pillar into case criteria, then remove `pillars`. |
+| `contract-rubric-field` | The rubric of a `journey` kind names `reference.<name>` for a name that is not an `expected` field. | Use `must`, `must_not`, `questions`, `final_stop`, or `criteria`. |
 | `contract-unapproved` | The skill contract has `status` `draft`. | Ask the user to approve the contract, then set `approved`. |
 | `contract-unreadable` | `evals/autoimprove.json` is a symlink, a directory, or too large. | Replace it with a regular file, or remove it. |
 | `contract-audit-unsupported` | The scored kind uses the `audit` grader. | Choose another grader for that kind. |
@@ -321,8 +324,9 @@ Write each journey case with these fields:
 - `expected.must_not`: what the transcript must not show, such as a self-approval or an edit of the target.
 - `expected.questions`: optional. The only questions that the agent may ask. The rubric subtracts points for any other question. An empty list means the agent asks nothing. When absent, any question is allowed.
 - `expected.final_stop`: optional nonempty text. The stop or state in which the journey must end.
+- `expected.criteria`: the approved EARS statements that the judge grades, one level per criterion id. Intake requires them before a run scores the case.
 
-The runner adds the meaning of each `reference` field to the judge prompt. A rubric may name only `reference.must`, `reference.must_not`, `reference.questions`, and `reference.final_stop`. Any other `reference.<name>` stops with `contract-rubric-field`.
+The runner adds the meaning of each `reference` field to the judge prompt. A rubric may name only `reference.must`, `reference.must_not`, `reference.questions`, `reference.final_stop`, and `reference.criteria`. Any other `reference.<name>` stops with `contract-rubric-field`.
 A journey case may omit `files`.
 
 ### Check in journey cases
@@ -971,7 +975,7 @@ It has these extra fields:
 - `brief` (required): the user goal and the facts the simulator may share. Only the simulator sees it. The agent never sees it.
 - `max_turns` (optional): the turn limit. The default is 8.
 - `requirements` (optional): unique nonempty requirement IDs. They are trace labels. The case hash covers them.
-- `expected` (required): an object with `must`, `must_not`, `questions`, and `final_stop`. See `Draft journeys` for the rules.
+- `expected` (required): an object with `must`, `must_not`, `questions`, `final_stop`, and `criteria`. See `Draft journeys` for the rules.
 
 A contract declares the tool surface in a `surface` block. Every field is optional:
 

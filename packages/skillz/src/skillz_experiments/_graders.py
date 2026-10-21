@@ -79,21 +79,24 @@ def judge_schema(ids: tuple[str, ...]) -> dict[str, object]:
 
 def _verdicts(answer: object, ids: tuple[str, ...]) -> dict[str, Verdict]:
     """Read the judge answer. Raise `invalid judge response` for an omitted id, an added id, or a level outside 1 to 4."""
-    invalid = ValueError("invalid judge response")
-    if not isinstance(answer, dict) or set(cast(dict[object, object], answer)) != {"criteria"}:
-        raise invalid
-    given = cast(dict[str, object], answer)["criteria"]
-    if not isinstance(given, dict) or set(cast(dict[object, object], given)) != set(ids):
-        raise invalid
-    verdicts: dict[str, Verdict] = {}
-    for name in ids:
-        entry = cast(dict[str, object], given)[name]
-        if not isinstance(entry, dict) or set(cast(dict[object, object], entry)) != {"level", "reason"}:
-            raise invalid
-        level, reason = cast(dict[str, object], entry)["level"], cast(dict[str, object], entry)["reason"]
-        if type(level) is not int or level not in LEVELS or not isinstance(reason, str):
-            raise invalid
-        verdicts[name] = Verdict(level, " ".join(reason.split()))
+
+    def keyed(value: object, keys: set[str]) -> dict[str, object]:
+        found = mapping(value)
+        if set(found) != keys:
+            raise ValueError
+        return found
+
+    try:
+        given = keyed(keyed(answer, {"criteria"})["criteria"], set(ids))
+        verdicts: dict[str, Verdict] = {}
+        for name in ids:
+            entry = keyed(given[name], {"level", "reason"})
+            level, reason = entry["level"], entry["reason"]
+            if type(level) is not int or level not in LEVELS or not isinstance(reason, str):
+                raise ValueError
+            verdicts[name] = Verdict(level, " ".join(reason.split()))
+    except ValueError:
+        raise ValueError("invalid judge response") from None
     return verdicts
 
 

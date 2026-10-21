@@ -87,7 +87,11 @@ def test_ac1_the_judge_is_asked_for_one_level_per_criterion_id(grader: Grader) -
     {"criteria": {"answer": {"level": 4}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
     {"score_percent": 80},
     levels(answer=4, short=3, safe=4) | {"score_percent": 80},
-], ids=["omitted-id", "added-id", "level-0", "level-5", "level-text", "level-bool", "no-reason", "old-shape", "extra-key"])
+    {"criteria": {"answer": {"level": 4, "reason": "r", "extra": 1}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
+    {"criteria": [{"level": 4, "reason": "r"}]},
+    {"criteria": {"answer": {"level": 4, "reason": 5}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
+], ids=["omitted-id", "added-id", "level-0", "level-5", "level-text", "level-bool", "no-reason", "old-shape", "extra-key",
+         "extra-key-in-entry", "criteria-not-a-dict", "reason-not-text"])
 def test_ac1_a_reply_that_omits_adds_or_misranges_a_level_is_an_invalid_judge_response(grader: Grader, reply: object) -> None:
     with pytest.raises(ValueError, match="^invalid judge response$"):
         _ = grade(reply, grader)

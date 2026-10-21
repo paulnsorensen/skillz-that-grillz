@@ -73,6 +73,7 @@
                 "text": {
                   "type": "string",
                   "pattern": "\\S",
+                  "maxLength": 1000,
                   "description": "One EARS statement: at most one leading WHEN, WHILE, IF, or WHERE clause, then one THE <subject> SHALL <response>."
                 },
                 "must": {
@@ -83,6 +84,7 @@
                 "from": {
                   "type": "string",
                   "pattern": "\\S",
+                  "maxLength": 1000,
                   "description": "The source item, such as assertion:2, must:0, questions, or final_stop."
                 }
               }

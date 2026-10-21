@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import fields
 from typing import Literal, cast
 
-from skillz_experiments._cases import CRITERION_ID, JOURNEY_EXPECTED_FIELDS
+from skillz_experiments._cases import CRITERION_ID, CRITERION_TEXT_LIMIT, JOURNEY_EXPECTED_FIELDS
 from skillz_experiments._contract import (
     ARGV_GRADERS, CONTRACT_FIELDS, GRADER_FIELDS, GRADERS, HELPER_FIELDS, RUBRIC_GRADERS, SCHEMA_KEY, SKILL_PATTERN,
     SURFACE_FIELDS, TOOL_PATTERN,
@@ -87,10 +87,10 @@ def evals() -> Json:
 def _criteria() -> Json:
     criterion: Json = {"type": "object", "required": ["id", "text"], "additionalProperties": False, "properties": {
         "id": {"type": "string", "pattern": "^" + CRITERION_ID.pattern + "$"},
-        "text": NONEMPTY | {"description": "One EARS statement: at most one leading WHEN, WHILE, IF, or WHERE clause, "
+        "text": NONEMPTY | {"maxLength": CRITERION_TEXT_LIMIT, "description": "One EARS statement: at most one leading WHEN, WHILE, IF, or WHERE clause, "
                                             + "then one THE <subject> SHALL <response>."},
         "must": {"type": "boolean", "default": False, "description": "A dealbreaker: level 1 or 2 scores the case 0."},
-        "from": NONEMPTY | {"description": "The source item, such as assertion:2, must:0, questions, or final_stop."}}}
+        "from": NONEMPTY | {"maxLength": CRITERION_TEXT_LIMIT, "description": "The source item, such as assertion:2, must:0, questions, or final_stop."}}}
     return {"type": "array", "minItems": 1, "items": criterion, "description": JOURNEY_EXPECTED_FIELDS["criteria"]}
 
 
@@ -133,7 +133,8 @@ def draft() -> Json:
     properties["kind"] = NONEMPTY | {"description": "trigger, near-miss, task, or a journey kind of the contract."}
     properties["source"] = {"enum": list(SOURCES)}
     properties["expected"] = {"description": "The reference. A journey case takes the typed object. A judged task case "
-                              + "takes an object with criteria, next to its expected_output and assertions."}
+                              + "takes an object with criteria, next to its expected_output and assertions.",
+                              "properties": {"criteria": _criteria()}}
     return _top("RUN/cases.draft.json", {
         "type": "array",
         "minItems": 1,

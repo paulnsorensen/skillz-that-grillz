@@ -72,7 +72,7 @@ The file is a JSON list with at least one case. Each case has these fields:
 
 CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. Any other key is an error.
 
-The `expected` object takes only these keys. It needs a nonempty `must` or `must_not`, and a nonempty `criteria` list:
+The `expected` object takes only these keys. It needs a nonempty `must` or `must_not`. The `criteria` list is optional in `journeys.json`, but intake requires it before a run scores a judged case:
 
 | Key | Meaning |
 | --- | --- |
