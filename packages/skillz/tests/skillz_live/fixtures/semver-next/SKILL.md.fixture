@@ -28,8 +28,11 @@ Return one JSON object as the answer, and nothing else: `{"bump": "<bump>", "nex
    It is also breaking when a body line starts with `BREAKING CHANGE: ` or `BREAKING-CHANGE: `, in that exact case, at the start of the line.
 4. A commit of type `revert` can cancel an earlier commit.
    It cancels the closest earlier live commit whose full header equals the revert description, character for character.
-   A live commit is conventional and is not cancelled. A revert that cancels a commit is not live.
-   The revert and the cancelled commit then have no impact. A cancelled commit never comes back.
+   Find that commit among the commits before the revert, as they are at that point.
+   A live commit is conventional, and no live revert cancels it.
+   A revert can cancel another revert. The commit that the cancelled revert cancelled is then live again,
+   unless another live revert also cancels it.
+   A revert that cancels a commit has no impact.
    A revert with no match has the impact `patch`, or `major` when it is breaking.
 5. The impact of every other commit: `major` when it is breaking. Otherwise `feat` is `minor`, and `fix` and `perf` are `patch`.
    Every other type has no impact.

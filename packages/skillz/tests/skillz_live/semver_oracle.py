@@ -6,7 +6,7 @@ The rules match `fixtures/semver-next/SKILL.md.fixture` one for one. The live sm
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 HEADER = re.compile(r"(?P<type>[A-Za-z]+)(?:\((?P<scope>[^()\n]+)\))?(?P<bang>!)?: (?P<description>\S.*)")
 VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-rc\.(0|[1-9]\d*))?")
@@ -22,7 +22,12 @@ class _Commit:
     header: str
     description: str
     breaking: bool
-    cancelled: bool = False
+    matched: bool = False
+    cancelled_by: list[_Commit] = field(default_factory=list["_Commit"])
+
+    def live(self) -> bool:
+        """Return whether no live revert cancels this commit. A cancelling revert is always later in the log."""
+        return not any(revert.live() for revert in self.cancelled_by)
 
 
 def _blocks(text: str) -> list[list[str]]:
@@ -47,6 +52,11 @@ def _blocks(text: str) -> list[list[str]]:
     return trimmed
 
 
+def commit_count(text: str) -> int:
+    """Return the number of commits in the text of `commits.txt`, conventional or not."""
+    return len(_blocks(text))
+
+
 def _parse(block: list[str]) -> _Commit | None:
     """Return the conventional commit of `block`, or None when its header does not match the grammar."""
     found = HEADER.fullmatch(block[0])
@@ -63,24 +73,26 @@ def _impact(commit: _Commit, revert: bool) -> str:
 
 
 def bump_of(commits: str) -> str:
-    """Return the largest impact of the live commits in `commits`: `none`, `patch`, `minor`, or `major`."""
-    live: list[_Commit] = []
-    impacts: list[tuple[_Commit, str]] = []
+    """Return the largest impact of the live commits in `commits`: `none`, `patch`, `minor`, or `major`.
+
+    A revert matches from the commits before it. Cancelling a revert makes the commit it cancelled live again,
+    unless another live revert cancels it too.
+    """
+    seen: list[_Commit] = []
     for block in _blocks(commits):
         commit = _parse(block)
         if commit is None:
             continue
         if commit.kind == "revert":
-            target = next((earlier for earlier in reversed(live)
-                           if not earlier.cancelled and earlier.header == commit.description), None)
+            target = next((earlier for earlier in reversed(seen)
+                           if earlier.live() and earlier.header == commit.description), None)
             if target is not None:
-                target.cancelled = True
-                continue
-            impacts.append((commit, _impact(commit, revert=True)))
-        else:
-            impacts.append((commit, _impact(commit, revert=False)))
-        live.append(commit)
-    return max((impact for commit, impact in impacts if not commit.cancelled), key=RANK.index, default="none")
+                target.cancelled_by.append(commit)
+                commit.matched = True
+        seen.append(commit)
+    impacts = ["none" if commit.matched else _impact(commit, revert=commit.kind == "revert")
+               for commit in seen if commit.live()]
+    return max(impacts, key=RANK.index, default="none")
 
 
 def next_version(version: str, commits: str) -> dict[str, str]:

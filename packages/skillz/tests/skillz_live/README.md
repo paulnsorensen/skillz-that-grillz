@@ -52,6 +52,7 @@ SKILLZ_LIVE=1 just live-smoke claude haiku fromargs-benefit
 2. Stage 1 runs `/skillz autoimprove` in `claude -p` with project settings only and no MCP server. The agent stops at the case approval question.
    `semver_oracle.py` must agree with the `bump` and `next` of every drafted `expected`. A wrong answer stops the test at stage `author` with `draft-wrong`.
    Each `expected` also holds the case `criteria`, because the intake contract grades a task case with the judge.
+   Each `commits.txt` must hold at least 80 commits. With short logs, the seed applies the rules by hand without a slip, and the run stops with `cases-too-easy`.
 3. Stage 2 runs the shared path with the agent's draft: preflight, `run --edit prose+cli --repeats 1`, and `export`.
 4. The test applies the patch to a copy, rebuilds the new target with `wedge.pyz`, and runs it on every drafted case. It reads the command from the winner `SKILL.md`.
 

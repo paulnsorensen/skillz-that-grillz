@@ -38,7 +38,14 @@ def _log(*commits: str) -> str:
     ("1.4.2", _log("feat: x", "revert: feat: x"), "none", "1.4.2"),
     ("1.4.2", _log("feat: x", "feat: x", "revert: feat: x"), "minor", "1.5.0"),
     ("1.4.2", _log("revert: feat: never existed"), "patch", "1.4.3"),
-    ("1.4.2", _log("feat: x", "revert: feat: x", "revert: revert: feat: x"), "patch", "1.4.3"),
+    ("1.4.2", _log("feat: x", "revert: feat: x", "revert: revert: feat: x"), "minor", "1.5.0"),
+    ("1.4.2", _log("feat: x", "revert: feat: x", "revert: revert: feat: x", "revert: revert: revert: feat: x"),
+     "none", "1.4.2"),
+    ("1.4.2", _log("feat: x", "revert: feat: x", "revert: revert: feat: x", "revert: feat: x",
+                    "revert: revert: revert: feat: x"), "none", "1.4.2"),
+    ("1.4.2", _log("revert: feat: ghost", "revert: revert: feat: ghost"), "none", "1.4.2"),
+    ("1.4.2", _log("feat: x", "Revert: feat: x", "revert: Revert: feat: x"), "minor", "1.5.0"),
+    ("1.4.2", _log("feat: x", "revert: feat: x", "revert: revert: feat: x "), "patch", "1.4.3"),
     ("1.4.2", _log("revert!: feat: gone"), "major", "2.0.0"),
     ("0.4.1", _log("feat!: new config"), "minor", "0.5.0"),
     ("0.4.1", _log("feat: y"), "patch", "0.4.2"),
@@ -88,7 +95,8 @@ def test_the_draft_check_names_a_case_whose_expected_answer_differs_from_the_ora
     ({"files": {"commits.txt": "fix: a\n"}}, "files lack VERSION or commits.txt"),
     ({"expected": {"bump": "patch", "next": "1.0.1", "criteria": [], "why": "fix"}}, "only bump, next, and criteria"),
     ({"expected": {"bump": "patch", "next": "1.0.1"}}, "only bump, next, and criteria"),
-    ({"files": {"VERSION": "v1\n", "commits.txt": "fix: a\n"}}, "not a semantic version"),
+    ({"files": {"VERSION": "v1\n", "commits.txt": _log(*["fix: a"] * 80)}}, "not a semantic version"),
+    ({"files": {"VERSION": "1.0.0\n", "commits.txt": _log(*["fix: a"] * 79)}}, "holds 79 commits; the scenario needs 80"),
 ])
 def test_the_draft_check_refuses_a_malformed_task_case(change: dict[str, object], problem: str) -> None:
     draft = reference_draft()

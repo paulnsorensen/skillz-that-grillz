@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from semver_oracle import next_version
+from semver_oracle import commit_count, next_version
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
@@ -32,6 +32,8 @@ ANSWER_KEYS = frozenset({"bump", "next"})
 EXPECTED_KEYS = ANSWER_KEYS | {"criteria"}
 """A judged case holds `expected.criteria` next to the answer (criteria-drafting.md)."""
 MIN_FAMILIES = 3
+MIN_COMMITS = 80
+"""A short log lets the seed apply the rules by hand without a slip, and the run stops with `cases-too-easy`."""
 AUTHOR_SECONDS = 1800
 AUTHOR_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep", "Bash(python3:*)", "Bash(ls:*)", "Bash(mkdir:*)")
 """The drafting agent runs the bundled runner, reads the target, and writes the draft. It gets no other shell command."""
@@ -49,7 +51,8 @@ Draft exactly 12 task cases in 4 families of 3 cases.
 Each task case gives the files `VERSION` and `commits.txt`.
 Its `expected` holds the exact JSON answer of the skill in `bump` and `next`, and the case `criteria`.
 Pick each criteria fork yourself and mark the pick agent-decided.
-Draft hard cases: long commit lists that mix the edge rules of the skill.
+Draft hard cases. Each `commits.txt` holds at least {min_commits} commits.
+Every case mixes revert chains, reverts of reverts, and near-miss headers with the other edge rules.
 Stop at the case approval question. Do not approve the cases or the budget, and do not start the search.
 """
 
@@ -124,7 +127,7 @@ def _planted(family: str, index: int, rng: random.Random) -> tuple[str, list[lis
         return f"2.{index}.7", [markers[index], [rng.choice(FIXES), "", rng.choice(FOOTER_DECOYS)]] + decoys
     if family == "reverts":
         feat = rng.choice(FEATS)
-        chains = [[[feat], [f"revert: {feat}"]], [[feat], [feat], [f"revert: {feat}"]],
+        chains = [[[feat], [f"revert: {feat}"], [f"revert: revert: {feat}"]], [[feat], [feat], [f"revert: {feat}"]],
                   [["feat!: drop flag"], ["revert: feat!: drop flag"], ["revert: feat: never existed"]]]
         return f"3.1.{index}", chains[index] + [[rng.choice(NOISE)]] + decoys
     versions = ("0.4.1", "0.9.0", "1.2.0-rc.3")
@@ -139,7 +142,7 @@ def reference_draft() -> list[dict[str, object]]:
         for index in range(3):
             rng = random.Random(f"{family}-{index}")
             version, planted = _planted(family, index, rng)
-            files = {"VERSION": version + "\n", "commits.txt": _commits(rng, planted, 30)}
+            files = {"VERSION": version + "\n", "commits.txt": _commits(rng, planted, MIN_COMMITS)}
             answer = next_version(files["VERSION"], files["commits.txt"])
             draft.append({"id": f"{family}-{index}", "family": family, "kind": "task", "source": "skill",
                           "request": "What is the next version of the project in this directory?",
@@ -158,6 +161,8 @@ def _case_problem(case: dict[str, object]) -> str | None:
                                               for name in CASE_FILES):
         return "files lack VERSION or commits.txt"
     texts = cast(dict[str, str], files)
+    if (count := commit_count(texts["commits.txt"])) < MIN_COMMITS:
+        return f"commits.txt holds {count} commits; the scenario needs {MIN_COMMITS}"
     if not isinstance(expected, dict) or frozenset(cast(dict[str, object], expected)) != EXPECTED_KEYS:
         return "expected is not an object with only bump, next, and criteria"
     try:
@@ -171,8 +176,8 @@ def _case_problem(case: dict[str, object]) -> str | None:
 def check_draft(draft: object) -> list[str]:
     """Return one problem per fault of an agent-written draft. An empty list means the draft passes.
 
-    Every task case must give `VERSION` and `commits.txt`, hold the oracle answer in `expected`, and give
-    `expected.criteria`. The task cases must span at least `MIN_FAMILIES` families. The runner checks the split sizes
+    Every task case must give `VERSION` and a `commits.txt` of at least `MIN_COMMITS` commits, hold the oracle answer
+    in `expected`, and give `expected.criteria`. The task cases must span at least `MIN_FAMILIES` families. The runner checks the split sizes
     and the criteria shape itself.
     """
     if not isinstance(draft, list) or not all(isinstance(case, dict) for case in cast(list[object], draft)):
@@ -200,7 +205,7 @@ def author(target: Path, work: Path, task_model: str) -> tuple[list[dict[str, ob
             "--add-dir", str(target), str(out)]
     environment = {key: value for key, value in os.environ.items() if not key.startswith("CLAUDE_CODE_")
                    and key != "CLAUDECODE"}
-    prompt = PROMPT.format(target=target, task_model=task_model, out=out)
+    prompt = PROMPT.format(target=target, task_model=task_model, out=out, min_commits=MIN_COMMITS)
     try:
         result = subprocess.run(argv, input=prompt, cwd=driver, env=environment, capture_output=True, text=True,
                                 timeout=AUTHOR_SECONDS, check=False)
