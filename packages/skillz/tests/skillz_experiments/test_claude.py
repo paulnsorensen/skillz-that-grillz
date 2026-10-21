@@ -10,6 +10,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from collections.abc import Callable, Collection, Iterator
 from pathlib import Path
 from typing import cast, final
@@ -18,7 +20,7 @@ import pytest
 
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
-from skillz_experiments.harness._claude import _constants, _events, _options, _sandbox, _settings, _transport
+from skillz_experiments.harness._claude import _constants, _events, _late, _options, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
@@ -1792,6 +1794,50 @@ def test_invoke_with_only_the_candidate_skill_lists_the_commands_once(tmp_path: 
     finally:
         transport.close()
     assert len(inventory_calls(executable)) == 1
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_two_threads_adopt_one_late_name_with_one_listing() -> None:
+    entered = threading.Barrier(2)
+    listings: list[int] = []
+
+    def listing(workspace: Path) -> frozenset[str]:
+        del workspace
+        listings.append(1)
+        time.sleep(0.2)
+        return frozenset({"design"})
+    late = _late.LateBuiltins(listing)
+    events: list[dict[str, object]] = [{"type": "system", "subtype": "init", "skills": ["design"]}]
+    results: list[_settings.Inventory] = []
+
+    def work() -> None:
+        _ = entered.wait(5)
+        results.append(late.adopt(events, [], _settings.Inventory(frozenset({"doctor"}), frozenset()), _settings.Declared()))
+    threads = [threading.Thread(target=work) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert len(listings) == 1
+    assert [result.builtin for result in results] == [frozenset({"doctor", "design"})] * 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+def test_preflight_reports_a_reached_listener_before_it_relists(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+
+    def relist_fails(self: object, *args: object, **kwargs: object) -> _settings.Inventory:
+        del self, args, kwargs
+        raise RuntimeError("relist failed")
+    monkeypatch.setattr(_late.LateBuiltins, "adopt", relist_fails)
+    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
 
 
 def calls_or_none(executable: Path) -> list[dict[str, object]] | None:

@@ -476,12 +476,12 @@ class ClaudeCode:
             wrote = any(file.exists() for file in protected)
             controlled = write_control.is_file() and write_control.read_text() == write_token
         try:
-            self._inventory = self._late.adopt(events, [name], self.inventory(), self.declared)
-            builtin = self._inventory.builtin
             if reached:
                 raise NetworkIsolationFailed(LISTENER_REACHED)
             if socket_open:
                 raise NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
+            self._inventory = self._late.adopt(events, [name], self.inventory(), self.declared)
+            builtin = self._inventory.builtin
             leak = find_leak(events, [name], builtin, self.declared)
             if leak is not None:
                 raise preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
@@ -580,14 +580,15 @@ class ClaudeCode:
             sent, names = safe_keys(schema or answer_schema())
             with self.budget.timed(self.role):
                 returncode, stderr, events = self._run(workspace, prompt, sent, expected, candidate)
+                latency = time.monotonic() - started
                 self._inventory = self._late.adopt(events, expected, self.inventory(), self.declared)
                 final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected,
                                                 self._inventory.builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
-                return not_loaded(workspace, started, trace)
+                return not_loaded(workspace, started, trace) | {"latency_seconds": latency}
             return {"answer": restore(answer(final), names), "events": trace, "usage": usage(trace), "workspace": str(workspace),
-                    "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace)}
+                    "latency_seconds": latency, "output_files": snapshot_outputs(workspace)}
 
     def converse(self, request: str, candidate: Candidate, case: Case, holdout: bool,
                  simulate: Callable[[Transcript], Reply]) -> dict[str, object]:
@@ -622,8 +623,9 @@ class ClaudeCode:
                         lines, ended = child.turn(user_line(message), self.budget.remaining(), is_result)
                     fresh = parse_events("".join(lines))
                     events += fresh
-                    self._inventory = self._late.adopt(fresh, expected, self.inventory(), self.declared)
-                    builtin = self._inventory.builtin
+                    if first is None:
+                        self._inventory = self._late.adopt(fresh, expected, self.inventory(), self.declared)
+                        builtin = self._inventory.builtin
                     for init in (event for event in fresh if event.get("type") == "system" and event.get("subtype") == "init"):
                         if first is None:
                             first = init_inventory(init)
