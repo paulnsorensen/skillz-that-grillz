@@ -35,7 +35,10 @@ OPTIONAL_KEYS = frozenset({"expected_output", "assertions"})
 """The source fields that the criteria come from may stay in `expected` (draft-case.schema.json)."""
 MIN_FAMILIES = 3
 MIN_COMMITS = 80
-"""A short log lets the seed apply the rules by hand without a slip, and the run stops with `cases-too-easy`."""
+"""A long log costs the seed many tokens to apply the rules by hand. A CLI applies them for a fixed cost."""
+TOKEN_RULE = ("--min-token-saving", "0.3", "--max-quality-loss", "0.05")
+"""A sonnet seed answers every case exactly, so the CLI can only win on task tokens (experiments.md `The token rule`).
+With `min_token_saving` set, the headroom pass records the seed scores and does not stop with `cases-too-easy`."""
 AUTHOR_SECONDS = 1800
 AUTHOR_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep", "Bash(python3:*)", "Bash(ls:*)", "Bash(mkdir:*)")
 """The drafting agent runs the bundled runner, reads the target, and writes the draft. It gets no other shell command."""

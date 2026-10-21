@@ -23,7 +23,7 @@ from typing import cast
 
 import pytest
 
-from fromargs_benefit import author, build_target, check_cli, cli_verdict, reference_draft, strong_model
+from fromargs_benefit import TOKEN_RULE, author, build_target, check_cli, cli_verdict, reference_draft, strong_model
 from skillz_experiments._cli import main
 from skillz_experiments._records import read
 
@@ -210,14 +210,19 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
 
 
 def _fromargs_benefit(work: Path, harness: str, model: str) -> Setup:
-    """Search a skill that applies version rules by hand. The task role runs `model`; reflection and judge run stronger."""
+    """Search a skill that applies version rules by hand. The task role runs `model`; reflection and judge run stronger.
+
+    The token rule lets a CLI that keeps the score and cuts the task tokens promote, so a strong seed does not stop
+    the run with `cases-too-easy`.
+    """
     del model
     stronger = {"model": strong_model()}
     config: dict[str, object] = {"schema_version": 1, "adapter": harness,
                                  "roles": {"reflection": stronger, "judge": stronger}}
     path = work / "harness.json"
     _ = path.write_text(json.dumps(config), encoding="utf-8")
-    return Setup(build_target(work), reference_draft(), config, ("--harness-config", str(path)), ("--edit", "prose+cli"))
+    return Setup(build_target(work), reference_draft(), config, ("--harness-config", str(path)),
+                 ("--edit", "prose+cli", *TOKEN_RULE))
 
 
 SCENARIOS: dict[str, Scenario] = {

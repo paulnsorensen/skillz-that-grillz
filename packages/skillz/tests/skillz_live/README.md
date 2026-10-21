@@ -41,19 +41,20 @@ Git ignores that folder.
 ## fromargs-benefit
 
 This scenario tests the claim that autoimprove can write its own eval and turn hand-applied rules into a fromargs CLI.
-`MODEL` sets the task role. Use a small model, such as `haiku`, so the seed has headroom.
+`MODEL` sets the task role. Use `sonnet`: `haiku` failed the isolation preflight in 2 of 2 runs.
 `SKILLZ_LIVE_STRONG_MODEL` sets the drafting agent, the reflection role, and the judge role. The default is `sonnet`.
 
 ```sh
-SKILLZ_LIVE=1 just live-smoke claude haiku fromargs-benefit
+SKILLZ_LIVE=1 just live-smoke claude sonnet fromargs-benefit
 ```
 
 1. The test builds `semver-next` in a fresh git repository: a uv project with a lock, a vendored fromargs, and one wedge target, `version-parse`. The run therefore offers `@new-cli`.
 2. Stage 1 runs `/skillz autoimprove` in `claude -p` with project settings only and no MCP server. The agent stops at the case approval question.
    `semver_oracle.py` must agree with the `bump` and `next` of every drafted `expected`. A wrong answer stops the test at stage `author` with `draft-wrong`.
    Each `expected` also holds the case `criteria`, because the intake contract grades a task case with the judge.
-   Each `commits.txt` must hold at least 80 commits. With short logs, the seed applies the rules by hand without a slip, and the run stops with `cases-too-easy`.
-3. Stage 2 runs the shared path with the agent's draft: preflight, `run --edit prose+cli --repeats 1`, and `export`.
+   Each `commits.txt` must hold at least 80 commits, so that applying the rules by hand costs the seed many tokens.
+3. Stage 2 runs the shared path with the agent's draft: preflight, `run --edit prose+cli --repeats 1 --min-token-saving 0.3 --max-quality-loss 0.05`, and `export`.
+   A sonnet seed answers every case exactly, so the CLI can win only by the token rule (`promote-cheaper`). With `min_token_saving` set, the run does not stop with `cases-too-easy`.
 4. The test applies the patch to a copy, rebuilds the new target with `wedge.pyz`, and runs it on every drafted case. It reads the command from the winner `SKILL.md`.
 
 The test passes only when the run completes and the exported fromargs CLI matches the oracle on every case.
