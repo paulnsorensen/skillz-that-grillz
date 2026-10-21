@@ -351,6 +351,7 @@ def test_a_link_to_a_symlink_loop_stays_inside_the_error_contract(tmp_path: Path
     assert new_outcome(path) == ("error", "package must not contain symlinks")
 
 
+@pytest.mark.ac("gh-404:AC-1")
 def test_an_input_below_a_symlink_loop_stays_inside_the_error_contract(tmp_path: Path) -> None:
     # Path.resolve raises RuntimeError on a symlink loop before Python 3.13; the exit code must not vary by version.
     (tmp_path / "loop").symlink_to(tmp_path / "loop")
