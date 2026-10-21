@@ -485,6 +485,31 @@ def test_a_changed_lock_or_config_stops_a_resume_with_site_layer_drift(
     assert stopped.value.code == "site-layer-drift"
 
 
+@pytest.mark.ac("gh-415:AC-1")
+def test_a_site_layer_drift_on_resume_leaves_no_provider_open(
+        world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    _ = world.contract("scripts/beta.pyz")
+    out = prepared(world, tmp_path, write_draft, approvals)
+    config = world.skill / "wedge.toml"
+    _ = config.write_text(config.read_text() + "\n# drift\n")
+    recorder, opened, closed = Recorder(), list[_Provider](), list[_Provider]()
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> _Provider:
+        opened.append(recorder.factory(model, budget, checkpoint))
+        return opened[-1]
+
+    def close(provider: _Provider) -> None:
+        closed.append(provider)
+
+    monkeypatch.setattr(_Provider, "close", close)
+    with pytest.raises(Stop) as stopped:
+        _ = _session.Session(out, MODEL, "claude", factory, None, statistics=DEFAULT_STATISTICS)
+    assert stopped.value.code == "site-layer-drift"
+    # A stopped constructor leaves no provider open: a Claude login would leak its temporary config directory.
+    assert opened == closed
+
+
 @pytest.mark.parametrize("tamper", ["change", "delete"])
 def test_a_tampered_frozen_blob_stops_a_resume(
         tamper: str, world: World, tmp_path: Path, write_draft: Callable[..., list[str]],

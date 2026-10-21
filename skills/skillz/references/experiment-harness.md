@@ -185,6 +185,11 @@ The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
 By default, those commands read only the system runtime and the workspace.
+On macOS, the profile also allows a read of the root directory itself, but not its children, because every sandboxed process aborts without it.
+The runner sets `DEVELOPER_DIR` to the Command Line Tools, when present, so the `/usr/bin/python3` shim stays inside the readable runtime.
+The shim adds `CPATH`, `LIBRARY_PATH`, `MANPATH`, and `SDKROOT` to the environment.
+The macOS isolation probe allows exactly those names and `DEVELOPER_DIR`. On other systems, it allows none of them.
+The Gemini `sandbox` operation pins `DEVELOPER_DIR` the same way.
 The runner mounts each `sandbox_read` root read-only at its own path.
 A root must exist, and it must not be a symlink.
 A root must not equal or hold the home directory.

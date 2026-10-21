@@ -842,7 +842,21 @@ def test_build_from_layer_output_has_no_bytecode_or_install_metadata_and_keeps_l
     assert _tree_digest(layer.path) == before
 
 
-@pytest.mark.ac("skillz-wedge-first-class:AC-4")
+@pytest.mark.ac("gh-406:AC-2")
+def test_first_party_nested_dist_info_files_survive_the_build(tmp_path: Path) -> None:
+    layer = _hand_layer(tmp_path / "layer")
+    sources = _sources(tmp_path / "sources")
+    vendored = sources / "pkg" / "_vendor" / "x-1.0.dist-info"
+    vendored.mkdir(parents=True)
+    _ = (sources / "pkg" / "__init__.py").write_text("")
+    _ = (vendored / "RECORD").write_text("data")
+
+    out = build_from_layer(layer, sources, _target(), tmp_path / "out")
+
+    assert "site-packages/pkg/_vendor/x-1.0.dist-info/RECORD" in _pyz_members(out)
+
+
+@pytest.mark.ac("gh-406:AC-1")
 def test_install_metadata_names_outside_dist_info_survive_the_build(tmp_path: Path) -> None:
     names = ("RECORD", "INSTALLER", "REQUESTED", "direct_url.json")
     layer = _hand_layer(tmp_path / "layer")

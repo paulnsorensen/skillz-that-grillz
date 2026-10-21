@@ -240,6 +240,42 @@ def _fragments() -> list[str]:
             "\t- " + _words(22), "   > ```", _words(5) + "?!? " + _words(20) + "...", "1.", "10. " + _words(30)]
 
 
+def _outcome(inspect: Callable[[Path], dict[str, object]], path: Path) -> object:
+    try:
+        return inspect(path) | {"schema_version": 4}
+    except ValueError as error:
+        return str(error)
+
+
+def _without_links(facts: object) -> tuple[object, set[str]]:
+    """Split the link targets from the other facts; an error has no link targets."""
+    if not isinstance(facts, dict):
+        return facts, set()
+    rest = dict(cast(dict[str, object], facts))
+    return rest, set(cast(list[str], rest.pop("local_link_targets")))
+
+
+def _may_sit_in_code(body: str, target: str) -> bool:
+    """Tell whether a line that holds `target` follows a fence line or shares its blank-line block with a backtick."""
+    lines = body.split("\n")
+    for number, line in enumerate(lines):
+        if target not in line:
+            continue
+        before = lines[:number]
+        block = [line]
+        for other in reversed(before):
+            if not other.strip():
+                break
+            block.append(other)
+        for other in lines[number + 1:]:
+            if not other.strip():
+                break
+            block.append(other)
+        if any("`" in text for text in block) or any("```" in text or "~~~" in text for text in before):
+            return True
+    return False
+
+
 def test_inspect_matches_the_old_inspector_on_three_hundred_generated_documents(
         tmp_path: Path, old_module: ModuleType) -> None:
     from skillz_inspect import inspect
@@ -251,15 +287,15 @@ def test_inspect_matches_the_old_inspector_on_three_hundred_generated_documents(
         body = "\n".join(generator.choice(pool) for _ in range(generator.randint(1, 40)))
         path = write(tmp_path / f"doc{number}" / "SKILL.md", FRONT + body + "\n")
         _ = write(tmp_path / f"doc{number}" / "a.md", "a")
-        try:
-            expected: object = old_inspect(path) | {"schema_version": 4}
-        except ValueError as error:
-            expected = str(error)
-        try:
-            actual: object = inspect(path)
-        except ValueError as error:
-            actual = str(error)
-        if actual != expected:
+        actual = _outcome(inspect, path)
+        expected = _outcome(old_inspect, path)
+        # gh-403: the old inspector also reads links in code fences and code spans; the new one may only drop those.
+        # When the old one fails on such a link, compare with the escaping target made local.
+        if expected == "link escapes package" and not isinstance(actual, str):
+            expected = _outcome(old_inspect, write(path, FRONT + body.replace("../up.md", "up.md") + "\n"))
+        (actual_facts, actual_links), (expected_facts, expected_links) = _without_links(actual), _without_links(expected)
+        dropped = [target for target in expected_links - actual_links if not _may_sit_in_code(body, target)]
+        if actual_facts != expected_facts or not actual_links <= expected_links or dropped:
             mismatches.append(body)
     assert not mismatches, mismatches[:2]
 
@@ -351,6 +387,15 @@ def test_a_link_to_a_symlink_loop_stays_inside_the_error_contract(tmp_path: Path
     assert new_outcome(path) == ("error", "package must not contain symlinks")
 
 
+@pytest.mark.ac("gh-404:AC-1")
+def test_an_input_below_a_symlink_loop_stays_inside_the_error_contract(tmp_path: Path) -> None:
+    # Path.resolve raises RuntimeError on a symlink loop before Python 3.13; the exit code must not vary by version.
+    (tmp_path / "loop").symlink_to(tmp_path / "loop")
+    path = tmp_path / "loop/SKILL.md"
+    _assert_inside_the_contract(run_pyz(str(path)))
+    assert new_outcome(path) == ("error", "input must be a regular file of at most 262144 bytes")
+
+
 def test_a_very_long_link_target_stays_inside_the_error_contract(tmp_path: Path) -> None:
     _assert_inside_the_contract(run_pyz(str(write(tmp_path / "SKILL.md", f"{FRONT}[a]({'a' * 70000}.md)\n"))))
 
@@ -438,3 +483,51 @@ def test_a_title_with_an_escaped_quote_keeps_its_link(tmp_path: Path) -> None:
     outcome = new_outcome(write(tmp_path / "SKILL.md", FRONT + '[a](a.md "x \\"y\\"")\n'))
     assert outcome[0] == "ok"
     assert cast(dict[str, object], outcome[1])["local_link_targets"] == ["a.md"]
+
+
+# --- links inside code fences and code spans are not links (gh-403) ---------------------------------------------
+
+@pytest.mark.ac("gh-403:AC-1")
+@pytest.mark.parametrize("body", ["```md\nSee [other](../other-skill/SKILL.md).\n```\n",
+                                  "~~~\n[x](../../secret)\n~~~\n",
+                                  "- item\n\n  ```\n  [x](../y.md)\n  ```\n",
+                                  "> ```\n> [x](../y.md)\n> ```\n",
+                                  "````\n```\n[x](../y.md)\n```\n````\n",
+                                  "Use `[x](../y)` as a sample.\n",
+                                  "Use ``[x](../y) with a ` tick`` here.\n",
+                                  "A span `[x](../y)\ncontinues` on the next line.\n"])
+def test_a_link_inside_a_code_fence_or_code_span_is_not_a_link(tmp_path: Path, body: str) -> None:
+    outcome = new_outcome(write(tmp_path / "pkg" / "SKILL.md", FRONT + body))
+    assert outcome[0] == "ok", outcome
+    assert cast(dict[str, object], outcome[1])["local_link_targets"] == []
+
+
+@pytest.mark.ac("gh-403:AC-1")
+def test_a_sample_link_in_code_is_not_a_local_link_target_but_a_prose_link_is(tmp_path: Path) -> None:
+    body = "```\n[a](a.md)\n```\nUse `[b](b.md)` like [c](c.md).\n"
+    outcome = new_outcome(write(tmp_path / "SKILL.md", FRONT + body))
+    assert outcome[0] == "ok"
+    assert cast(dict[str, object], outcome[1])["local_link_targets"] == ["c.md"]
+
+
+@pytest.mark.ac("gh-403:AC-2")
+@pytest.mark.parametrize("body", ["```\n[a](a.md)\n```\n[x](../y.md)\n",
+                                  "Use `code` then [x](../y.md) then `code`.\n",
+                                  "An unclosed ` tick before [x](../y.md).\n",
+                                  "A ``span` does not close here [x](../y.md).\n",
+                                  "A span `opens\n\nbut a blank line ends it [x](../y.md)`.\n",
+                                  "An escaped \\` tick [x](../y.md) and a ` tick.\n",
+                                  "| a | [x](../y.md) |\n|---|---|\n",
+                                  "``` not a fence because the info has a ` tick\n[x](../y.md)\n"])
+def test_a_link_outside_code_still_rejects_a_package_escape(tmp_path: Path, body: str) -> None:
+    path = write(tmp_path / "pkg" / "SKILL.md", FRONT + body)
+    assert new_outcome(path) == ("error", "link escapes package")
+
+
+@pytest.mark.ac("gh-403:AC-2")
+@pytest.mark.parametrize("body", ["# Title `x\nsome [x](../y.md) text` end\n",
+                                  "- a `b\n- [x](../y.md) c` d\n",
+                                  "| a ` | b |\n| [x](../y.md) | ` c |\n"])
+def test_a_code_span_does_not_cross_a_heading_list_item_or_table_row(tmp_path: Path, body: str) -> None:
+    path = write(tmp_path / "pkg" / "SKILL.md", FRONT + body)
+    assert new_outcome(path) == ("error", "link escapes package")
