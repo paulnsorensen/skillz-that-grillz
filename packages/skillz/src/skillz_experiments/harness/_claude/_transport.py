@@ -88,6 +88,7 @@ from skillz_experiments.harness._claude._sandbox import (
     INSTALL_SOCAT,
     USERNS_FIX,
 )
+from skillz_experiments.harness._claude._late import LateBuiltins
 from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings
 
 
@@ -182,6 +183,12 @@ class ClaudeCode:
         self.credential = self.login.credential
         self.config_dir = self.login.config_dir
         self._inventory: Inventory | None = None
+
+        def builtin_listing(workspace: Path) -> frozenset[str]:
+            self._stage(workspace)
+            return self._list(workspace, frozenset())[0]
+
+        self._late = LateBuiltins(builtin_listing)
         self._unix_sockets: bool | None = None
 
     @property
@@ -433,7 +440,7 @@ class ClaudeCode:
             root = Path(directory)
             workspace, sealed, token = self._sealed(root)
             self._probe_sandbox(workspace, sealed)
-            builtin = self.inventory().builtin
+            _ = self.inventory()
             name = probe_name()
             probe_skill(workspace, name)
             control = secrets.token_hex(16)
@@ -469,6 +476,8 @@ class ClaudeCode:
             wrote = any(file.exists() for file in protected)
             controlled = write_control.is_file() and write_control.read_text() == write_token
         try:
+            self._inventory = self._late.adopt(events, [name], self.inventory(), self.declared)
+            builtin = self._inventory.builtin
             if reached:
                 raise NetworkIsolationFailed(LISTENER_REACHED)
             if socket_open:
@@ -550,7 +559,7 @@ class ClaudeCode:
     def _invoke(self, prompt: str, candidate: Candidate | None, case: Case | None, attachments: Mapping[str, bytes],
                 *, holdout: bool, schema: dict[str, object] | None) -> dict[str, object]:
         self._check_memory()
-        builtin = self.inventory().builtin
+        _ = self.inventory()
         if candidate is not None:
             self.check_name(candidate)
         with tempfile.TemporaryDirectory(prefix="skillz-task-") as directory:
@@ -571,7 +580,9 @@ class ClaudeCode:
             sent, names = safe_keys(schema or answer_schema())
             with self.budget.timed(self.role):
                 returncode, stderr, events = self._run(workspace, prompt, sent, expected, candidate)
-                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
+                self._inventory = self._late.adopt(events, expected, self.inventory(), self.declared)
+                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected,
+                                                self._inventory.builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
                 return not_loaded(workspace, started, trace)
@@ -611,6 +622,8 @@ class ClaudeCode:
                         lines, ended = child.turn(user_line(message), self.budget.remaining(), is_result)
                     fresh = parse_events("".join(lines))
                     events += fresh
+                    self._inventory = self._late.adopt(fresh, expected, self.inventory(), self.declared)
+                    builtin = self._inventory.builtin
                     for init in (event for event in fresh if event.get("type") == "system" and event.get("subtype") == "init"):
                         if first is None:
                             first = init_inventory(init)

@@ -1724,6 +1724,76 @@ def test_inventory_turns_off_an_account_skill_without_a_model_call(tmp_path: Pat
     assert len(inventory_calls(executable)) == 2
 
 
+@pytest.mark.ac("gh-448:AC-1")
+def test_preflight_accepts_a_builtin_skill_that_registers_after_the_first_listing(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, "late-builtin")
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        assert "design" not in transport.inventory().builtin
+        evidence = transport.preflight()
+        assert "design" in transport.inventory().builtin
+    finally:
+        transport.close()
+    assert evidence["live_calls"] == 1 and budget.calls == 1
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+@pytest.mark.parametrize("mode", ["late-plain", "late-absent"])
+def test_preflight_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path, sandbox_passes: None, mode: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="foreign skill in init event: \\['design'\\]") as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+def test_invoke_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "late-plain")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="skills in init event \\['design', 'echo-skill'\\]") as caught:
+            _ = transport.invoke("hello", echo_candidate(tmp_path))
+    finally:
+        transport.close()
+    assert caught.value.code == "isolation-failed"
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_invoke_accepts_a_late_builtin_skill_with_one_more_listing(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "late-builtin")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    candidate = echo_candidate(tmp_path)
+    try:
+        result = transport.invoke("hello", candidate)
+        _ = transport.invoke("again", candidate)
+    finally:
+        transport.close()
+    assert "answer" in result
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_invoke_with_only_the_candidate_skill_lists_the_commands_once(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    candidate = echo_candidate(tmp_path)
+    try:
+        _ = transport.invoke("hello", candidate)
+        _ = transport.invoke("again", candidate)
+    finally:
+        transport.close()
+    assert len(inventory_calls(executable)) == 1
+
+
 def calls_or_none(executable: Path) -> list[dict[str, object]] | None:
     return calls(executable) if executable.with_name("claude.log").exists() else None
 
