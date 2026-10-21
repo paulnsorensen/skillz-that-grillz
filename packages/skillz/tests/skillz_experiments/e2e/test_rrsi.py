@@ -8,7 +8,8 @@ from typing import cast
 
 import pytest
 
-from support import BUNDLE, CLI, call_cli, carries_answer, command_adapter, make_scenario, read_cases, read_events, read_record, run_scenario
+from support import (BUNDLE, CLI, CRITERIA, call_cli, carries_answer, command_adapter, make_scenario, read_cases, read_events,
+                     read_record, run_scenario)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
@@ -104,7 +105,7 @@ def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Pat
     source = "leak_answer_private_12345\n"
     for case in scenario.draft:
         case["files"] = {"fixture.md": source}
-        case["expected"] = {"text": source.upper()}
+        case["expected"] = {"text": source.upper(), "criteria": CRITERIA}
     result = run_scenario(scenario, tmp_path, mode="leak-answer")
     search = cast(dict[str, object], result["search"])
     gate = cast(dict[str, object], result["gate"])

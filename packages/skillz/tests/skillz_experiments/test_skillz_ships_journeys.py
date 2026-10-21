@@ -20,6 +20,8 @@ from skillz_experiments._seed import seed_cases
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = ROOT / "skills" / "skillz"
 KIT = ROOT / "packages/skillz/journey-kits/skillz-autoimprove/journeys.py"
+# The drafting agent adds criteria to the task seeds at intake; this stands in for that step.
+DRAFTED = [{"id": "answer", "text": "THE answer SHALL satisfy the request."}]
 
 
 def _kit() -> ModuleType:
@@ -59,6 +61,8 @@ def _staged(tmp_path: Path) -> Path:
 def _first_stop(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], *flags: str) -> dict[str, object]:
     seeded = seed_cases(target)
     assert seeded is not None
+    for case in seeded:
+        _ = cast(dict[str, object], case["expected"]).setdefault("criteria", DRAFTED)
     out = tmp_path / "run"
     out.mkdir(mode=0o700)
     _ = (out / "cases.draft.json").write_text(json.dumps(seeded), encoding="utf-8")

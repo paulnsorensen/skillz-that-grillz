@@ -7,7 +7,12 @@
     "brief": "You want a mold for weekly status reports. Answer one question at a time and stay brief.",
     "max_turns": 2,
     "requirements": ["MOLD-1"],
-    "expected": {"must": ["asks about the report audience"]},
+    "expected": {
+      "must": ["asks about the report audience"],
+      "criteria": [
+        {"id": "must-0", "text": "THE transcript SHALL show that the agent asks about the report audience.", "from": "must:0"}
+      ]
+    },
     "source": "skill"
   }
 ]

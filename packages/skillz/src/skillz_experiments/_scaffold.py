@@ -10,11 +10,9 @@ from skillz_experiments._cases import JOURNEY_EXPECTED_FIELDS, CodedError
 from skillz_experiments._contract import LOCATION, SCHEMA_KEY
 from skillz_experiments._intake import skill_frontmatter
 
-RUBRIC = ("Score the conversation from 0 to 100 against `reference`. The agent runs the {skill} skill for a user. "
-          + "Start at 100. Subtract 20 for each item in `reference.must` that the transcript does not show. "
-          + "Subtract 40 for each item in `reference.must_not` that the transcript shows. "
-          + "Subtract 20 when the agent asks a question that is not in `reference.questions`. "
-          + "Subtract 20 when the conversation does not end as `reference.final_stop` says. Do not go below 0.")
+RUBRIC = ("Grade the conversation on each criterion. The agent runs the {skill} skill for a user. "
+          + "`reference.criteria` holds the approved criteria, and `reference.must` and `reference.must_not` hold the "
+          + "observables that they come from. Judge only what the transcript and the trace show.")
 NEXT = ("Draft the journey cases in RUN/cases.draft.json: brief, max_turns, requirements, "
         + ", ".join(f"expected.{name}" for name in JOURNEY_EXPECTED_FIELDS)
         + ". Then ask the user to approve the contract and set its status to approved.")

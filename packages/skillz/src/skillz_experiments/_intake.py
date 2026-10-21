@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import cast
 
 from skillz_experiments._cases import (
-    JOURNEY_FIELDS, CodedError, Journey, Split, digest, journey_of, loads_untrusted, string, text_map,
+    JOURNEY_FIELDS, CodedError, Journey, Split, case_criteria, digest, journey_of, loads_untrusted, string, text_map,
 )
-from skillz_experiments._contract import LOCATION, Contract, Grader, load_contract, parse
+from skillz_experiments._contract import LOCATION, RUBRIC_GRADERS, Contract, Grader, load_contract, parse
 from skillz_experiments._evals_format import EVAL_KINDS, SOURCES
 from skillz_experiments._frontmatter import read_frontmatter
 from skillz_experiments._records import write
@@ -25,9 +25,8 @@ HOLDOUT_MINIMUM = 6
 REQUEST_PREVIEW = 80
 DRAFT_LIMIT = 2_000_000
 MINIMUM_FAMILIES = 3
-TASK_RUBRIC = ("The answer is correct when it satisfies the request and agrees in substance with `reference`. "
-               "Ignore differences in JSON shape, quoting, or whitespace. "
-               "Score 100 for a correct answer and 0 for a wrong answer.")
+TASK_RUBRIC = ("Grade the answer on each criterion. `reference` holds the expected output and the assertions that the "
+               "criteria come from. Ignore differences in JSON shape, quoting, or whitespace.")
 DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
 DRAFT_REQUIRED = {"id", "family", "kind", "request", "source"}
 
@@ -125,6 +124,17 @@ def check_helper_input(contract: Contract, cases: Sequence[DraftCase]) -> None:
     if missing:
         raise CodedError("cases-invalid", f"task case {', '.join(missing)}: files lacks the contract helper input {needed}; "
                          + f"add {needed} to the files of each task case")
+
+
+def _judged(contract: Contract | None, case: IntakeCase) -> bool:
+    return contract is not None and case.scored and contract.grader(case.kind).type in RUBRIC_GRADERS
+
+
+def check_criteria(contract: Contract, cases: Sequence[IntakeCase]) -> None:
+    """Raise `case-criteria-missing` or `case-criteria-invalid` for a scored case of a judge, hybrid, or journey kind."""
+    for case in cases:
+        if _judged(contract, case):
+            _ = case_criteria(case.expected, case.identifier)
 
 
 def projection(size: Mapping[str, int]) -> dict[str, object]:
@@ -234,6 +244,10 @@ def approval_question(cases: Sequence[IntakeCase], seed: int, contract: Contract
             request = request[:REQUEST_PREVIEW - 3] + "..."
         lines.append(f"- {case.identifier} | family {case.family} | split {case.split} | kind {case.kind} "
                      + f"| source {case.source} | {status} | {request}")
+        if _judged(contract, case):
+            lines.extend(f"  - criterion {criterion.id} | must {str(criterion.must).lower()} "
+                         + f"| from {criterion.source or '-'} | {' '.join(criterion.text.split())}"
+                         for criterion in case_criteria(case.expected, case.identifier))
     lines.append(f"case hash: {case_hash(cases, seed, statistics)}")
     return "\n".join(lines)
 

@@ -403,8 +403,9 @@ def main() -> int:
     properties = cast(dict[str, object], schema.get("properties", {}))
     marker = Path.cwd() / ".agents/skills/skillz/EXPERIMENT_MARKER"
     structured: dict[str, object]
-    if "score_percent" in properties:
-        structured = {"score_percent": 80}
+    if "criteria" in properties:
+        ids = cast(list[str], cast(dict[str, object], properties["criteria"])["required"])
+        structured = {"criteria": {name: {"level": 3, "reason": "fake judge"} for name in ids}}
     elif "reply" in properties:
         structured = {"reply": "Weekly reports.", "done": True}
     else:

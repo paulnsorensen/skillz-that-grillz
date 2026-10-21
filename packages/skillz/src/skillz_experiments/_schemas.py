@@ -11,10 +11,10 @@ from collections.abc import Sequence
 from dataclasses import fields
 from typing import Literal, cast
 
-from skillz_experiments._cases import JOURNEY_EXPECTED_FIELDS
+from skillz_experiments._cases import CRITERION_ID, CRITERION_TEXT_LIMIT, JOURNEY_EXPECTED_FIELDS
 from skillz_experiments._contract import (
-    ARGV_GRADERS, CONTRACT_FIELDS, GRADER_FIELDS, GRADERS, HELPER_FIELDS, PILLAR_LIMIT, PILLAR_PATTERN, RUBRIC_GRADERS,
-    SCHEMA_KEY, SKILL_PATTERN, SURFACE_FIELDS, TOOL_PATTERN,
+    ARGV_GRADERS, CONTRACT_FIELDS, GRADER_FIELDS, GRADERS, HELPER_FIELDS, RUBRIC_GRADERS, SCHEMA_KEY, SKILL_PATTERN,
+    SURFACE_FIELDS, TOOL_PATTERN,
 )
 from skillz_experiments._evals_format import EVAL_FIELDS, EVAL_KINDS, FIXTURES, JOURNEY_KEYS, JOURNEY_REQUIRED, SOURCES
 from skillz_experiments._intake import DRAFT_FIELDS, DRAFT_REQUIRED
@@ -84,10 +84,21 @@ def evals() -> Json:
     })
 
 
+def _criteria() -> Json:
+    criterion: Json = {"type": "object", "required": ["id", "text"], "additionalProperties": False, "properties": {
+        "id": {"type": "string", "pattern": "^" + CRITERION_ID.pattern + "$"},
+        "text": NONEMPTY | {"maxLength": CRITERION_TEXT_LIMIT, "description": "One EARS statement: at most one leading WHEN, WHILE, IF, or WHERE clause, "
+                                            + "then one THE <subject> SHALL <response>."},
+        "must": {"type": "boolean", "default": False, "description": "A dealbreaker: level 1 or 2 scores the case 0."},
+        "from": NONEMPTY | {"maxLength": CRITERION_TEXT_LIMIT, "description": "The source item, such as assertion:2, must:0, questions, or final_stop."}}}
+    return {"type": "array", "minItems": 1, "items": criterion, "description": JOURNEY_EXPECTED_FIELDS["criteria"]}
+
+
 def _expected() -> Json:
     lists = {name: {"type": "array", "items": NONEMPTY, "uniqueItems": True, "description": meaning}
-             for name, meaning in JOURNEY_EXPECTED_FIELDS.items() if name != "final_stop"}
-    properties: Json = {**lists, "final_stop": NONEMPTY | {"description": JOURNEY_EXPECTED_FIELDS["final_stop"]}}
+             for name, meaning in JOURNEY_EXPECTED_FIELDS.items() if name not in ("final_stop", "criteria")}
+    properties: Json = {**lists, "final_stop": NONEMPTY | {"description": JOURNEY_EXPECTED_FIELDS["final_stop"]},
+                        "criteria": _criteria()}
     return {"type": "object", "properties": properties, "additionalProperties": False,
             "anyOf": [{"required": [name], "properties": {name: {"minItems": 1}}} for name in ("must", "must_not")]}
 
@@ -121,7 +132,9 @@ def draft() -> Json:
     properties = {name: value for name, value in _journey_properties().items() if name in DRAFT_FIELDS}
     properties["kind"] = NONEMPTY | {"description": "trigger, near-miss, task, or a journey kind of the contract."}
     properties["source"] = {"enum": list(SOURCES)}
-    properties["expected"] = {"description": "The reference. A journey case takes the typed object; a task case takes any JSON."}
+    properties["expected"] = {"description": "The reference. A journey case takes the typed object. A judged task case "
+                              + "takes an object with criteria, next to its expected_output and assertions.",
+                              "properties": {"criteria": _criteria()}}
     return _top("RUN/cases.draft.json", {
         "type": "array",
         "minItems": 1,
@@ -156,8 +169,6 @@ def _kind() -> Json:
             "gate": NONEMPTY | {"description": "A gate file under evals/gates/, as a relative path. It stands for argv."},
             "rubric": NONEMPTY,
             "capture": {"type": "array", "minItems": 1, "items": NONEMPTY},
-            "pillars": {"type": "array", "minItems": 1, "maxItems": PILLAR_LIMIT, "uniqueItems": True,
-                        "items": {"type": "string", "pattern": "^" + PILLAR_PATTERN + "$"}},
         }, GRADER_FIELDS),
         "additionalProperties": False,
         "not": {"required": ["argv", "gate"]},
@@ -165,7 +176,7 @@ def _kind() -> Json:
             {"if": {"properties": {"grader": {"enum": list(ARGV_GRADERS)}}, "required": ["grader"]},
              "then": has_gate, "else": {"not": has_gate}},
             {"if": {"properties": {"grader": {"enum": list(RUBRIC_GRADERS)}}, "required": ["grader"]},
-             "then": {"required": ["rubric"]}, "else": {"not": _any_of("rubric", "capture", "pillars")}},
+             "then": {"required": ["rubric"]}, "else": {"not": _any_of("rubric", "capture")}},
         ],
     }
 

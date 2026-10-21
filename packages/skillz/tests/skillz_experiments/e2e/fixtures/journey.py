@@ -64,9 +64,9 @@ def simulate(prompt: str, fields: list[str]) -> dict[str, object]:
     return {"reply": f"Value: {label}", "done": False}
 
 
-def judge(prompt: str, fields: list[str]) -> dict[str, int]:
-    from vendor_common import untrusted_payload
-    if fields != ["score_percent"]:
+def judge(prompt: str, fields: list[str]) -> dict[str, object]:
+    from vendor_common import untrusted_payload, verdicts
+    if fields != ["criteria"]:
         raise ValueError("unexpected judge schema")
     data = untrusted_payload(prompt)
     reference = cast(dict[str, list[str]], data["reference"])
@@ -76,7 +76,8 @@ def judge(prompt: str, fields: list[str]) -> dict[str, int]:
     asked = any(row["role"] == "assistant" and row["text"] == f"Which {topic} should I transform?"
                 for row in transcript)
     answered = any(row["role"] == "user" and row["text"].startswith("Value: ") for row in transcript)
-    return {"score_percent": 100 if asked and answered and files.get("output/result.txt") == reference["must"][0] else 0}
+    passed = asked and answered and files.get("output/result.txt") == reference["must"][0]
+    return verdicts(cast(dict[str, object], reference), 4 if passed else 1)
 
 
 def grade() -> None:

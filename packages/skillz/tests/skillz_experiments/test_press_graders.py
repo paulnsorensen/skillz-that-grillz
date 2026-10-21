@@ -82,10 +82,14 @@ class Task(FakeProvider):
         return run.returncode, run.stdout, run.stderr
 
 
+def levels(level: object) -> dict[str, object]:
+    return {"criteria": {"good": {"level": level, "reason": "ok"}}}
+
+
 class Judge(FakeProvider):
     def __init__(self, answer: object = None) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
-        self.answer: object = {"score_percent": 70} if answer is None else answer
+        self.answer: object = levels(3) if answer is None else answer
         self.prompts: list[str] = []
         self.holdouts: list[bool] = []
 
@@ -118,6 +122,8 @@ def case_for(tmp_path: Path, kind: str, rules: Contract, request: str = "Rewrite
     item: dict[str, object] = {"id": "one", "family": "one", "split": "train", "kind": kind, "request": request,
                                "files": {"input.txt": "hello\n"}, "provenance": "test", "provider_approved": True,
                                "expected": {"echo": "hello", "secret": EXPECTED}}
+    if kind in {"style", "rewrite"}:
+        item["expected"] = {"echo": "hello", "secret": EXPECTED, "criteria": [{"id": "good", "text": "THE rewrite SHALL be good."}]}
     if kind == "review":
         item["expected"] = {"labels": [LABEL]}
         item["labels_reviewed"] = True
@@ -185,9 +191,12 @@ def test_judge_prompt_marks_output_files_as_data_inside_one_json_document(
 
 
 @pytest.mark.parametrize("answer", [
-    {}, {"score_percent": 50, "extra": 1}, {"score": 50}, {"score_percent": None}, {"score_percent": 100.0},
-    {"score_percent": float("nan")}, {"score_percent": [50]}, {"score_percent": "50"}, {"score_percent": 10**30},
-    {"score_percent": -1}, {"score_percent": True}, "50", [50], None, 50])
+    {}, {"criteria": {}}, {"score_percent": 50}, levels(3) | {"extra": 1},
+    {"criteria": {"good": {"level": 3, "reason": "ok"}, "extra": {"level": 3, "reason": "ok"}}},
+    {"criteria": {"good": {"level": 3}}}, {"criteria": {"good": {"level": 3, "reason": 3}}},
+    {"criteria": {"good": {"level": 3, "reason": "ok", "extra": 1}}}, {"criteria": {"good": 3}},
+    levels(0), levels(5), levels(3.0), levels(float("nan")), levels("3"), levels(True), levels(None), levels([3]),
+    "50", [50], None, 50])
 def test_judge_rejects_every_malformed_answer_shape(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: object) -> None:
     rules = contract()
@@ -199,12 +208,12 @@ def test_judge_rejects_every_malformed_answer_shape(
         _ = harness(monkeypatch, Task(), judge).evaluate(candidate, case, checks=CheckMemo())
 
 
-@pytest.mark.parametrize(("percent", "score"), [(0, 0.0), (100, 1.0), (1, 0.01)])
-def test_judge_accepts_the_boundary_percentages(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, percent: int, score: float) -> None:
+@pytest.mark.parametrize(("level", "score"), [(1, 0.0), (4, 1.0), (2, 1 / 3)])
+def test_judge_accepts_the_boundary_levels(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, level: int, score: float) -> None:
     rules = contract()
     case, candidate = case_for(tmp_path, "style", rules)
-    result = harness(monkeypatch, Task(), Judge({"score_percent": percent})).evaluate(candidate, case, checks=CheckMemo())
+    result = harness(monkeypatch, Task(), Judge(levels(level))).evaluate(candidate, case, checks=CheckMemo())
     assert result["score"] == score
 
 
@@ -339,7 +348,7 @@ def test_hybrid_failed_gate_makes_no_judge_call_and_scores_zero_with_both_scores
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str) -> None:
     rules = contract()
     case, candidate = case_for(tmp_path, "rewrite", rules)
-    judge = Judge({"score_percent": 100})
+    judge = Judge(levels(4))
     result = harness(monkeypatch, Task(stdout=stdout), judge).evaluate(candidate, case, checks=CheckMemo())
     assert judge.prompts == []
     assert result["score"] == 0.0 and result["scores"] == {"command": 0.0, "judge": None}
@@ -352,7 +361,7 @@ def test_hybrid_gate_with_nonzero_exit_makes_no_judge_call(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int) -> None:
     rules = contract()
     case, candidate = case_for(tmp_path, "rewrite", rules)
-    judge = Judge({"score_percent": 100})
+    judge = Judge(levels(4))
     result = harness(monkeypatch, Task(stdout='{"score": 1}', code=code), judge).evaluate(candidate, case, checks=CheckMemo())
     assert judge.prompts == [] and result["score"] == 0.0
 
@@ -370,7 +379,7 @@ def test_hybrid_gate_pass_with_a_zero_judge_score_scores_zero_without_a_gate_fai
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract()
     case, candidate = case_for(tmp_path, "rewrite", rules)
-    judge = Judge({"score_percent": 0})
+    judge = Judge(levels(1))
     result = harness(monkeypatch, Task(stdout='{"score": 1}'), judge).evaluate(candidate, case, checks=CheckMemo())
     assert len(judge.prompts) == 1 and result["score"] == 0.0 and result["scores"] == {"command": 1.0, "judge": 0.0}
     assert result.get("status") != "gate-failed"
@@ -380,9 +389,9 @@ def test_hybrid_gate_score_below_one_still_passes_the_gate_and_the_judge_score_w
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract()
     case, candidate = case_for(tmp_path, "rewrite", rules)
-    judge = Judge({"score_percent": 40})
+    judge = Judge(levels(2))
     result = harness(monkeypatch, Task(stdout='{"score": 0.000001}'), judge).evaluate(candidate, case, checks=CheckMemo())
-    assert result["score"] == 0.4 and result["scores"] == {"command": 0.000001, "judge": 0.4}
+    assert result["score"] == 1 / 3 and result["scores"] == {"command": 0.000001, "judge": 1 / 3}
 
 
 def test_hybrid_sandbox_failure_propagates_and_never_reaches_the_judge(

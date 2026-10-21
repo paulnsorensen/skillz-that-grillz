@@ -24,6 +24,7 @@ from typing_extensions import override
 from fake_provider import FakeProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
+EXPECTED = {"criteria": [{"id": "answer", "text": "THE answer SHALL meet the request."}]}
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -143,7 +144,7 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
     code, missing = call()
     assert code == 1 and cast(dict[str, object], missing["facts"])["name"] == "echo-skill"
     draft = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-{family}-{index}",
-              "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"}
+              "files": {"fixture.md": "hello\n"}, "expected": EXPECTED, "source": "skill"}
              for family in range(5) for index in range(2)]
     _ = Path(cast(str, missing["draft"])).write_text(json.dumps(draft))
     _, cases = call()
@@ -178,7 +179,7 @@ def test_missing_builtin_harness_stops_with_a_code_before_any_approval(
     assert main(args) == 1
     _ = capsys.readouterr()
     draft = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-{family}-{index}",
-              "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"}
+              "files": {"fixture.md": "hello\n"}, "expected": EXPECTED, "source": "skill"}
              for family in range(5) for index in range(2)]
     _ = (out / "cases.draft.json").write_text(json.dumps(draft))
     assert main(args) == 1

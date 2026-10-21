@@ -25,11 +25,14 @@ KIT = Path(__file__).parents[2] / "journey-kits/skillz-autoimprove/journeys.py"
 EASY_CHEESE: dict[str, object] = {
     "id": "age-1", "family": "age", "kind": "journey", "request": "/plate the change",
     "brief": "You want a PR. Answer briefly.", "max_turns": 6, "requirements": ["AGE-1", "AGE-2"],
-    "files": {"src/a.py": "x = 1\n"}, "expected": {"must": ["opens a PR"], "must_not": ["force-pushes"]},
+    "files": {"src/a.py": "x = 1\n"},
+    "expected": {"must": ["opens a PR"], "must_not": ["force-pushes"], "criteria": [
+        {"id": "must-0", "text": "THE transcript SHALL show that the agent opens a PR.", "from": "must:0"}]},
     "source": "skill",
 }
-# gh-369: the ask-harness family gained a partial-answer trap, so this content change moved the pin.
-KIT_HASH = "33ce4fee9af54aa76408dcea0c59ad1bb52f0b81de2ce8997a91646f74cd1378"
+CRITERIA = [{"id": "c-0", "text": "WHEN the user asks, THE agent SHALL answer."}]
+# judge-criteria-verdicts: the kit cases gained expected.criteria, which the case hash covers, so the pin moved.
+KIT_HASH = "ec109da9f860807577623e9549f4d86205dcac6fe6ba885057d196427a9af9a5"
 TASK_HASH = "37dffac39b162cbff4a6e2ecb98ac7d355bff74a38856c080b1d2763047488b8"
 
 
@@ -85,7 +88,8 @@ def test_a_journey_without_expected_stops_with_expected_missing(tmp_path: Path) 
 
 @pytest.mark.ac("gh-368:AC-2")
 @pytest.mark.parametrize("expected", [
-    {"must_not": ["x"]}, {"must": ["x"], "questions": []}, {"must": ["x"], "final_stop": "stops", "questions": ["q"]},
+    {"must_not": ["x"], "criteria": CRITERIA}, {"must": ["x"], "questions": [], "criteria": CRITERIA},
+    {"must": ["x"], "final_stop": "stops", "questions": ["q"], "criteria": CRITERIA},
 ])
 def test_a_conforming_expected_object_keeps_its_raw_form(tmp_path: Path, expected: dict[str, object]) -> None:
     cases = load_one(tmp_path, expected=expected)
@@ -105,11 +109,11 @@ def test_load_cases_rejects_a_misspelled_expected_key(tmp_path: Path) -> None:
 def test_the_journey_judge_prompt_defines_every_expected_field_and_the_judge_kind_does_not(tmp_path: Path) -> None:
     rules = journey_contract(JOURNEY_GATE)
     case = load_one(tmp_path)[0]
-    judge = FakeJudge(70)
+    judge = FakeJudge(4)
     _ = judge_case(judge, rules.grader("journey"), case, {}, None, holdout=False)
     prompt = judge.prompts[0].split("UNTRUSTED DATA (JSON):\n", 1)[0]
     assert all(f"reference.{name}" in prompt and meaning in prompt for name, meaning in JOURNEY_EXPECTED_FIELDS.items())
-    plain = FakeJudge(70)
+    plain = FakeJudge(4)
     _ = judge_case(plain, echo_contract().grader("style"), case, {}, None, holdout=False)
     assert not any(f"reference.{name}" in plain.prompts[0] for name in JOURNEY_EXPECTED_FIELDS)
 
@@ -130,7 +134,8 @@ def kit() -> ModuleType:
 @pytest.mark.ac("gh-368:AC-5")
 def test_the_scaffold_and_kit_rubrics_name_every_field_and_the_next_step_lists_them() -> None:
     fields = set(JOURNEY_EXPECTED_FIELDS)
-    assert names(RUBRIC) == fields and names(cast(str, kit().RUBRIC)) == fields
+    for rubric in (RUBRIC, cast(str, kit().RUBRIC)):
+        assert "criteria" in names(rubric) and names(rubric) <= fields
     assert all(f"expected.{name}" in NEXT for name in fields)
 
 
@@ -193,8 +198,8 @@ def test_a_journey_case_without_files_is_evaluated(tmp_path: Path, monkeypatch: 
     rules = journey_contract(JOURNEY_GATE)
     case = load_one(tmp_path, brief=JOURNEY_BRIEF, files={})[0]
     candidate = Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=rules)
-    result = harness(monkeypatch, JourneyTask(), FakeJudge(70)).evaluate(candidate, case, checks=CheckMemo())
-    assert result["score"] == 0.7
+    result = harness(monkeypatch, JourneyTask(), FakeJudge(3)).evaluate(candidate, case, checks=CheckMemo())
+    assert result["score"] == pytest.approx(2 / 3)
 
 
 @pytest.mark.ac("gh-368:AC-9")
