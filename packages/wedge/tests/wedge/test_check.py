@@ -120,3 +120,22 @@ def test_invalid_lock_metadata_is_rejected(
 
     assert len(issues) == 1
     assert "invalid lock" in issues[0].reason or "repository" in issues[0].reason
+
+
+@pytest.mark.ac("gh-412:AC-1")
+def test_symlinked_source_is_an_issue_and_later_skills_are_still_checked(
+    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]
+) -> None:
+    linked = copy_locked_fixture(tmp_path / "linked")
+    source = linked.parent.parent.parent.parent / "fromargs" / "examples" / "cheese_cave.py"
+    real = tmp_path / "linked" / "cheese_cave_real.py"
+    _ = source.rename(real)
+    source.symlink_to(real)
+    stale = copy_locked_fixture(tmp_path / "stale")
+    stale_source = stale.parent.parent.parent.parent / "fromargs" / "examples" / "cheese_cave.py"
+    _ = stale_source.write_text(stale_source.read_text() + "\n# touched\n")
+
+    issues = check([linked, stale])
+
+    assert any(issue.skill_dir == str(linked) and "symlink" in issue.reason for issue in issues)
+    assert any(issue.skill_dir == str(stale) and "stale" in issue.reason for issue in issues)
