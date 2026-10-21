@@ -43,8 +43,8 @@ def test_simulate_default_rates_are_pinned() -> None:
     [-0.1, -0.1], [0.0, 0.0, 0.0], [0.5], [], [math.nan, 1.0], [math.inf, 0.0, 0.0]])
 def test_default_thresholds_return_the_unchanged_verdict(values: list[float]) -> None:
     plain, explicit = verdict(values), verdict(values, thresholds=Statistics())
-    assert plain.reasons == ()
-    assert (explicit.verdict, explicit.cases, explicit.reasons) == (plain.verdict, plain.cases, ())
+    assert plain.reasons == (() if all(math.isfinite(value) for value in values) else ("non-finite-delta",))
+    assert (explicit.verdict, explicit.cases, explicit.reasons) == (plain.verdict, plain.cases, plain.reasons)
     assert str(explicit.delta) == str(plain.delta) and str(explicit.se) == str(plain.se)
 
 
@@ -106,7 +106,8 @@ def test_the_floors_apply_to_a_zero_se_promotion_with_two_se_as_zero() -> None:
 def test_the_floors_never_change_a_verdict_that_is_not_a_promotion(values: list[float]) -> None:
     tight = Statistics(min_gain=9.0, min_lower_bound=9.0)
     plain, floored = verdict(values), verdict(values, thresholds=tight)
-    assert (floored.verdict, floored.cases, floored.reasons) == (plain.verdict, plain.cases, ())
+    assert (floored.verdict, floored.cases, floored.reasons) == (plain.verdict, plain.cases, plain.reasons)
+    assert not {"min-gain", "min-lower-bound"} & set(floored.reasons)
 
 
 # --- contract --------------------------------------------------------------------------------------------

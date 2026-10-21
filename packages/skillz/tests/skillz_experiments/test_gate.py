@@ -218,3 +218,24 @@ def test_low_coverage_masks_a_reject_and_the_floors_but_a_family_breach_still_re
     families = {"a": "x", "b": "x", "c": "y", "d": "y", "e": "y"}
     breach = verdict(deltas, thresholds=Statistics(family_budget=0.0), families=families, planned=10)
     assert breach.verdict == "reject" and breach.reasons == ("low-coverage", "family-regression:x")
+
+
+MIXED_FAMILIES = {"a1": "a", "a2": "a", "a3": "a", "b1": "b", "b2": "b"}
+
+
+@pytest.mark.ac("gh-417:AC-1")
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_a_non_finite_delta_does_not_hide_a_finite_family_breach(bad: float) -> None:
+    deltas = {"a1": -0.9, "a2": -0.8, "a3": -0.85, "b1": bad, "b2": 0.1}
+    result = verdict(deltas, thresholds=Statistics(family_budget=0.1), families=MIXED_FAMILIES)
+    assert (result.verdict, result.reasons) == ("reject", ("non-finite-delta", "family-regression:a"))
+    assert math.isnan(result.delta) and math.isnan(result.se) and result.cases == 5
+
+
+@pytest.mark.ac("gh-417:AC-2")
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_a_non_finite_delta_names_its_reason(bad: float) -> None:
+    assert verdict([bad, 1.0]).reasons == ("non-finite-delta",)
+    covered = verdict({"a": bad, "b": 0.1}, thresholds=Statistics(family_budget=0.1), families={"a": "x", "b": "x"},
+                      planned=10)
+    assert (covered.verdict, covered.reasons) == ("inconclusive", ("low-coverage", "non-finite-delta"))
