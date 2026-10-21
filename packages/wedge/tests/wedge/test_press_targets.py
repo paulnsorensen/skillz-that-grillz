@@ -843,6 +843,26 @@ def test_build_from_layer_output_has_no_bytecode_or_install_metadata_and_keeps_l
 
 
 @pytest.mark.ac("skillz-wedge-first-class:AC-4")
+def test_install_metadata_names_outside_dist_info_survive_the_build(tmp_path: Path) -> None:
+    names = ("RECORD", "INSTALLER", "REQUESTED", "direct_url.json")
+    layer = _hand_layer(tmp_path / "layer")
+    _ = (layer.path / "fakepkg-1.0.dist-info" / "RECORD").write_text("r")
+    _ = (layer.path / "fakepkg" / "INSTALLER").write_text("data")
+    sources = _sources(tmp_path / "sources")
+    (sources / "pkg" / "data").mkdir(parents=True)
+    _ = (sources / "pkg" / "__init__.py").write_text("")
+    for name in names:
+        _ = (sources / "pkg" / "data" / name).write_text("data")
+
+    out = build_from_layer(layer, sources, _target(), tmp_path / "out")
+
+    members = _pyz_members(out)
+    assert all(f"site-packages/pkg/data/{name}" in members for name in names)
+    assert "site-packages/fakepkg/INSTALLER" in members
+    assert "site-packages/fakepkg-1.0.dist-info/RECORD" not in members
+
+
+@pytest.mark.ac("skillz-wedge-first-class:AC-4")
 @pytest.mark.parametrize("shadow", ["fakepkg", "fakepkg-1.0.dist-info", "dangling"])
 @pytest.mark.parametrize("kind", ["dir", "file"])
 def test_build_from_layer_first_party_shadowing_an_installed_path_is_rejected(

@@ -45,8 +45,8 @@ from wedge._key import (
 from wedge._resolve import export_requirements, resolve_closure
 
 _VOLATILE_INSTALL_FILES = {"RECORD", "INSTALLER", "REQUESTED", "direct_url.json"}
-# Names that `_strip_volatile` deletes at the top of a tree. A first-party entry
-# with one of these names would vanish without a trace, so staging rejects it.
+# `_strip_volatile` deletes a top-level `bin`, so a first-party `bin` would vanish
+# without a trace. Staging rejects it and the install-metadata names at the top level.
 _RESERVED_TOP_LEVEL = {"bin"} | _VOLATILE_INSTALL_FILES
 _IMPORTABLE_SUFFIXES = {".py", ".so", ".pyd"}
 # 1980-01-01T00:00:00Z: the earliest timestamp a zip member can hold. shiv's
@@ -549,7 +549,9 @@ def _strip_volatile(site_dir: Path) -> None:
         if path.is_dir():
             if path.name == "__pycache__":
                 shutil.rmtree(path, ignore_errors=True)
-        elif path.name in _VOLATILE_INSTALL_FILES or path.suffix == ".pyc":
+        elif path.suffix == ".pyc" or (
+            path.name in _VOLATILE_INSTALL_FILES and path.parent.name.endswith(".dist-info")
+        ):
             path.unlink()
 
 
