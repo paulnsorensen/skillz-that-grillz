@@ -67,10 +67,5 @@ def record_outcomes(record: dict[str, object]) -> list[dict[str, object]]:
     return cast(list[dict[str, object]], value)
 
 
-def unit_score(value: object) -> float:
-    """Clamp a provider score to 0..1. A NaN counts as 0."""
-    return min(1.0, max(0.0, float(cast(float, value))))
-
-
 def phase(record: dict[str, object]) -> str:
     return text_field(record, "phase")

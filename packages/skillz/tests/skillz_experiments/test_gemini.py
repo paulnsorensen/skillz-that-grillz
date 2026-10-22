@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -155,6 +157,25 @@ def test_infer_passes_the_image_and_the_macos_profile(tmp_path: Path, monkeypatc
     assert env["GEMINI_SANDBOX_IMAGE"] is None and env["SANDBOX_FLAGS"] is None
 
 
+def test_sandbox_exec_argv_pins_the_developer_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    launched: list[list[str]] = []
+
+    def run(command: list[str], *_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        launched.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def runtime(_runtime: str | None, _bin_dir: Path | None) -> tuple[str, str]:
+        return "sandbox-exec", "/usr/bin/sandbox-exec"
+
+    monkeypatch.setattr(_gemini, "_runtime", runtime)
+    monkeypatch.setattr(_gemini, "_run", run)
+    root = workspace(tmp_path)
+    _ = _gemini._sandbox({"argv": ["true"]}, root, None, _gemini.IMAGE, None)  # pyright: ignore[reportPrivateUsage]
+    assert f"DEVELOPER_DIR={tmp_path}" in launched[0]
+    assert launched[0].index(f"DEVELOPER_DIR={tmp_path}") < launched[0].index("true")
+
+
 def test_infer_trace_holds_only_the_tool_calls_gemini_reported(tmp_path: Path) -> None:
     directory = fake_bin(tmp_path)
     result = infer(directory, workspace(tmp_path))
@@ -258,6 +279,16 @@ def test_an_image_that_looks_like_an_option_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="--image"):
         _ = respond(request("sandbox", workspace(tmp_path), argv=["true"]), bin_dir=directory, image="--privileged")
     assert not (directory / "docker.log").exists()
+
+
+@pytest.mark.ac("gh-402:AC-1")
+@pytest.mark.parametrize("model", ["", " \t", "--include-directories=/home/x", "-gemini-2.5"])
+def test_an_infer_model_that_is_empty_or_looks_like_an_option_is_refused(tmp_path: Path, model: str) -> None:
+    directory = fake_bin(tmp_path)
+    raw = request("infer", workspace(tmp_path), prompt="p", response_schema=SCHEMA, model=model)
+    with pytest.raises(ValueError, match="model must be a model name that does not start with '-'"):
+        _ = respond(raw, bin_dir=directory)
+    assert not (directory / "gemini.log").exists() and not (directory / "docker.log").exists()
 
 
 def test_a_container_runtime_is_refused_on_macos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -591,6 +622,7 @@ def test_macos_sandbox_runs_the_command_under_the_shared_profile(tmp_path: Path,
     directory = fake_bin(tmp_path)
     root = workspace(tmp_path)
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path / "missing"))
     log = tmp_path / "sandbox-exec.log"
     _ = (directory / "sandbox-exec").write_text(
         f"#!{sys.executable}\nimport json, sys\nopen({str(log)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
@@ -624,3 +656,30 @@ def test_command_line_refuses_an_unknown_runtime(tmp_path: Path) -> None:
     assert result.returncode != 0 and result.stdout == "" and "Traceback" not in result.stderr
     assert "runtime" in result.stderr and "lxc" in result.stderr
     assert not (directory / "docker.log").exists()
+
+
+ESCAPEE = ("import subprocess, sys, time\n"
+           "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)\n"
+           "open(sys.argv[1], 'w').write(str(child.pid))\n"
+           "time.sleep(60)\n")
+
+
+@pytest.mark.ac("gh-418:AC-1")
+def test_a_timeout_stops_the_container_and_bounds_the_drain_when_a_descendant_left_the_group(tmp_path: Path) -> None:
+    pid_file = tmp_path / "escapee.pid"
+    stopped: list[float] = []
+
+    def stop() -> str:
+        stopped.append(time.monotonic())
+        return ""
+    started = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="timed out after 1 s"):
+            _ = _gemini._run([sys.executable, "-c", ESCAPEE, str(pid_file)], tmp_path, {"PATH": "/usr/bin:/bin"},  # pyright: ignore[reportPrivateUsage]
+                             timeout=1, stop=stop)
+        elapsed = time.monotonic() - started
+    finally:
+        if pid_file.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+    assert elapsed < 10 and stopped and stopped[0] - started < 1 + _gemini.DRAIN_GRACE / 2

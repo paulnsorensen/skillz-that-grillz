@@ -10,9 +10,9 @@ from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 from skillz_experiments._cases import Case, CodedError, Split, mapping
 from skillz_experiments.gate import close
 from skillz_experiments.run._outcomes import failed_outcome, is_failed
-from skillz_experiments.run._record_fields import unit_score
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import RunState
+from skillz_experiments.search import unit_score
 
 # The headroom pass stops the run when a train or validation family has a seed mean at or above this value.
 HEADROOM_CEILING = 0.9

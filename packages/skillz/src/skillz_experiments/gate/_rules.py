@@ -127,6 +127,8 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     A family whose mean delta plus twice its standard error is below the negative budget turns any verdict
     into `reject`, and `reasons` gets `family-regression:<name>`.
     `skipped_families` lists each family that the rule skipped, on every path.
+    A delta that is not finite gives `inconclusive` with NaN `delta` and `se` and reason `non-finite-delta`.
+    The family rule still runs on the finite families, so a breach still turns it into `reject`.
     `tokens` maps each case id to its (baseline, winner) mean task tokens; it needs deltas keyed by the same case ids.
     The token rule runs only when `max_token_increase_per_gain` or `min_token_saving` is set. It runs after the
     floors and before the families:
@@ -156,12 +158,14 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
            and (planned <= 0 or count / planned < thresholds.min_coverage))
     cover = ["low-coverage"] if low else []
     breached, skipped = _family_rule(deltas if isinstance(deltas, Mapping) else {}, families, thresholds)
+    regressions = [f"family-regression:{family}" for family in breached]
     limit, saving = thresholds.max_token_increase_per_gain, thresholds.min_token_saving
     active = thresholds.token_rule
     change = _token_change(tokens) if active and tokens is not None else None
     token_delta, token_se = change if change is not None else (None, None)
     if not all(math.isfinite(value) for value in values):
-        return Verdict("inconclusive", math.nan, math.nan, count, tuple(cover), skipped_families=skipped,
+        return Verdict("reject" if breached else "inconclusive", math.nan, math.nan, count,
+                       (*cover, "non-finite-delta", *regressions), skipped_families=skipped,
                        token_delta=token_delta, token_se=token_se, se_floor=se_floor, n_shared=count)
     if count < 2:
         return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, se_floor, count,
@@ -210,5 +214,5 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
                 name = "promote-cheaper"
     if breached:
         name = "reject"
-        reasons.extend(f"family-regression:{family}" for family in breached)
+        reasons.extend(regressions)
     return Verdict(name, delta, se, count, tuple(reasons), skipped, token_delta, token_se, se_floor, n_shared=count)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import shutil
 import subprocess
 from pathlib import Path
@@ -113,6 +114,7 @@ def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path, mode: st
     config, _, log = configured(tmp_path, mode)
     budget = Budget(20, 0.5)
     adapter = Configuration.load(config, "offline").create("offline", budget, lambda: None)
+    budget.started = time.monotonic()  # the deadline window covers only the invoke, not the setup above
     try:
         with pytest.raises(BudgetExhausted, match="deadline"):
             _ = adapter.invoke("reflection", schema={"type": "object", "properties": {"x": {"type": "string"}},

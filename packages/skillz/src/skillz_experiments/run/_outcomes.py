@@ -11,19 +11,13 @@ from typing import TypeVar, cast
 from skillz_experiments._budget import CallTimeout
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments.run._record_fields import unit_score
-from skillz_experiments.search import is_reflection
+from skillz_experiments.search import add_validation_scores, complete_means, is_reflection, unit_score
 
 # The search stops with `search-faulted` when at least this many search evaluations finished and more than half failed,
 # or when this many of the newest ones failed in a row. The values are defaults, not measured limits.
 FAULT_MIN_FINISHED = 4
 FAULT_STREAK = 5
 _FAULT_REASON = re.compile(r"\bfails: ([a-z][a-z-]*)")
-
-
-def faulted_reflection(item: Mapping[str, object]) -> bool:
-    """Return whether a reflection row records a skipped or timed-out call, which proposes nothing."""
-    return item.get("status") in ("skipped", "timeout", "failed") and "proposed" not in item
 
 
 def failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
@@ -215,23 +209,3 @@ def _observation(window: Sequence[Mapping[str, object]], identity: object, valid
     return max(0.0, math.fsum(scores.values()) / len(scores) - best)
 
 
-def is_search_validation(item: Mapping[str, object]) -> bool:
-    return item.get("arm") == "search" and item.get("split") == "validation" and "search_candidate" in item
-
-
-def add_validation_scores(scores: dict[str, dict[str, float]],
-                          items: Sequence[Mapping[str, object]]) -> dict[str, dict[str, float]]:
-    """Add each search validation score in `items` to `scores` by candidate and case, and return `scores`.
-
-    A later score for a case replaces the earlier one. An `evaluation-failed` outcome has no score and adds none.
-    """
-    for item in items:
-        if is_search_validation(item) and not is_failed(item):
-            scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = unit_score(item["score"])
-    return scores
-
-
-def complete_means(scores: Mapping[str, Mapping[str, float]], validation: set[str]) -> dict[str, float]:
-    """Return the mean score of each candidate that has a score on every validation case."""
-    return {identity: math.fsum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
-            if set(by_case) == validation}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from skillz_experiments.run._outcomes import stall_observations
 from skillz_experiments.search import attempts, focus, journal, protected, rejected
 from skillz_experiments.search._history import EARLIER_INTRO, JOURNAL_LIMIT, LIMIT, SHOWN, render, render_earlier, render_notes
 
@@ -69,6 +70,16 @@ def test_a_legacy_outcome_and_an_unresolved_parent_give_empty_lists_and_a_reject
     assert first["parent"] is None and first["components"] is None
     assert third["candidate"] is None and third["accepted"] is False and third["rejected"] == "candidate-leakage-rejected"
     assert [attempt["index"] for attempt in (first, second, third)] == [1, 2, 3]
+
+
+@pytest.mark.ac("gh-416:AC-1")
+def test_the_validation_delta_equals_the_stall_observation_of_the_same_proposal() -> None:
+    cases = [f"v{number}" for number in range(10)]
+    outcomes = [*(_score("seed-id", "validation", case, 0.0) for case in cases), _reflection(),
+                *(_score("child-1", "validation", case, 0.1) for case in cases)]
+    (attempt,) = attempts(outcomes, SEED, cases)
+    assert stall_observations(outcomes, set(cases)) == [0.1]
+    assert attempt["validation_delta"] == 0.1
 
 
 def test_the_protect_set_holds_the_train_cases_with_a_full_newest_score() -> None:

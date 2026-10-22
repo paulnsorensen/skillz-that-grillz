@@ -12,7 +12,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._outcomes import (
-    case_ids, fault_reason, faulted_reflection, feedback_for, failed_outcome, is_unscored,
+    case_ids, fault_reason, feedback_for, failed_outcome, is_unscored,
     reflection_fault, search_fault, stall_observations,
 )
 from skillz_experiments.run._record_fields import field, int_field
@@ -22,7 +22,7 @@ from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import attempts as build_attempts
 from skillz_experiments.search import check as check_leakage
 from skillz_experiments.search import focus as focus_component
-from skillz_experiments.search import focus_advice, is_reflection, overshoot
+from skillz_experiments.search import faulted_reflection, focus_advice, is_reflection, overshoot
 from skillz_experiments.search import journal as build_journal
 from skillz_experiments.search import notes as accept_notes
 from skillz_experiments.search import protected as protected_cases
