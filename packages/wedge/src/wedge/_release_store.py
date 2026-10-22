@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import Callable, Protocol, cast, final
+from typing import Protocol, cast, final
 
 RELEASE = "wedge"
 
@@ -46,9 +46,6 @@ class ReleaseStore(Protocol):
         ...
 
 
-GhRun = Callable[[list[str]], subprocess.CompletedProcess[str]]
-
-
 def run_gh(args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["gh", *args], capture_output=True, text=True)
 
@@ -57,15 +54,14 @@ def run_gh(args: list[str]) -> subprocess.CompletedProcess[str]:
 class GhReleaseStore:
     """``ReleaseStore`` backed by the ``gh`` CLI."""
 
-    def __init__(self, repo: str, run: GhRun = run_gh) -> None:
+    def __init__(self, repo: str) -> None:
         self._repo: str = repo
-        self._run: GhRun = run
 
     def view(self) -> bool:
-        return self._run(["release", "view", RELEASE, "--repo", self._repo]).returncode == 0
+        return run_gh(["release", "view", RELEASE, "--repo", self._repo]).returncode == 0
 
     def create(self, target: str) -> None:
-        created = self._run(
+        created = run_gh(
             [
                 "release",
                 "create",
@@ -86,7 +82,7 @@ class GhReleaseStore:
             raise ReleaseStoreError(created.stderr)
 
     def list_assets(self) -> set[str]:
-        result = self._run(["release", "view", RELEASE, "--repo", self._repo, "--json", "assets"])
+        result = run_gh(["release", "view", RELEASE, "--repo", self._repo, "--json", "assets"])
         if result.returncode != 0:
             raise ReleaseStoreError(f"cannot view release {RELEASE!r} in {self._repo}: {result.stderr}")
         payload_raw: object = cast(object, json.loads(result.stdout))
@@ -101,12 +97,12 @@ class GhReleaseStore:
         return {cast(str, entry["name"]) for entry in typed_assets if isinstance(entry.get("name"), str)}
 
     def upload(self, path: Path) -> None:
-        upload = self._run(["release", "upload", RELEASE, str(path), "--repo", self._repo])
+        upload = run_gh(["release", "upload", RELEASE, str(path), "--repo", self._repo])
         if upload.returncode != 0:
             raise ReleaseStoreError(upload.stderr)
 
     def download(self, asset: str, directory: Path) -> None:
-        download = self._run(
+        download = run_gh(
             [
                 "release",
                 "download",

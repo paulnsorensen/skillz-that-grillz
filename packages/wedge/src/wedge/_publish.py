@@ -26,17 +26,8 @@ from wedge._release_store import RELEASE, GhReleaseStore, ReleaseStore, ReleaseS
 __all__ = ["RELEASE", "publish"]
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return run_gh(args)
-
-
-def _gh_store(repo: str) -> ReleaseStore:
-    return GhReleaseStore(repo, lambda args: _run(args))
-
-
-def _ensure_release(repo: str, target: str, store: ReleaseStore | None = None) -> None:
+def _ensure_release(repo: str, target: str, store: ReleaseStore) -> None:
     """Make sure the rolling ``wedge`` prerelease exists, tolerating a race."""
-    store = store or _gh_store(repo)
     if store.view():
         return
     try:
@@ -78,7 +69,7 @@ def _require_on_branch(repo: str, branch: str, target: str, skill_dirs: list[Pat
             raise ValueError(
                 f"target {target!r} resolves to {target_sha}, but {skill_dir} HEAD is {head_sha}"
             )
-    result = _run(["api", f"repos/{repo}/compare/refs/heads/{branch}...{target_sha}", "--jq", ".status"])
+    result = run_gh(["api", f"repos/{repo}/compare/refs/heads/{branch}...{target_sha}", "--jq", ".status"])
     if result.returncode != 0:
         raise RuntimeError(f"cannot compare {target_sha} with {branch} in {repo}: {result.stderr}")
     status = result.stdout.strip()
@@ -218,7 +209,7 @@ def publish(
         return results
     if branch is not None:
         _require_on_branch(repo, branch, target, [skill_dir for skill_dir, _config, _lock in prepared])
-    store = store or _gh_store(repo)
+    store = store or GhReleaseStore(repo)
     _ensure_release(repo, target, store)
     known_assets = store.list_assets()
     with tempfile.TemporaryDirectory(prefix="wedge-publish-") as tmp:

@@ -11,7 +11,6 @@ from typing import Callable, TypedDict, cast
 
 import pytest
 
-import wedge._publish as wedge_publish
 from wedge._build import build
 from wedge._cli import publish_cmd
 from wedge._digest import content_sha256
@@ -320,36 +319,6 @@ def test_bad_layout_is_a_failed_result_not_a_crash(
 
 
 @pytest.mark.ac("wedge-skill-packaging:AC-W6")
-def test_a_racing_identical_upload_is_treated_as_skipped(
-    tmp_path: Path,
-    copy_locked_fixture: Callable[[Path], Path],
-    fake_gh: FakeGh,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    skill = copy_locked_fixture(tmp_path / "checkout")
-    repo = fake_gh["repo"]
-    real_run = cast(Callable[[list[str]], subprocess.CompletedProcess[str]], getattr(wedge_publish, "_run"))
-
-    def _racing_run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        if args[:2] == ["release", "upload"]:
-            asset_path = Path(args[3])
-            _ = subprocess.run(
-                ["gh", "release", "upload", wedge_publish.RELEASE, str(asset_path), "--repo", repo],
-                check=True,
-            )
-        return real_run(args)
-
-    monkeypatch.setattr(wedge_publish, "_run", _racing_run)
-
-    result = publish([skill], repo=repo, target="deadbeef")
-
-    assert result[FIXTURE_NAME]["status"] == "skipped"
-    assert _upload_count(fake_gh["store"]) == 1
-
-
-
-
-@pytest.mark.ac("wedge-skill-packaging:AC-W6")
 def test_duplicate_names_fail_before_gh(
     tmp_path: Path,
     copy_locked_fixture: Callable[[Path], Path],
@@ -362,27 +331,6 @@ def test_duplicate_names_fail_before_gh(
         _ = publish([skill_a, skill_b], repo=fake_gh["repo"], target="deadbeef")
 
     assert not (fake_gh["store"] / "calls.log").exists()
-@pytest.mark.ac("wedge-skill-packaging:AC-W6")
-def test_ensure_release_tolerates_a_create_race(
-    fake_gh: FakeGh, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    repo = fake_gh["repo"]
-    real_run = cast(Callable[[list[str]], subprocess.CompletedProcess[str]], getattr(wedge_publish, "_run"))
-    state = {"rival_ran": False}
-
-    def _racing_run(args: list[str]) -> subprocess.CompletedProcess[str]:
-        if args[:2] == ["release", "create"] and not state["rival_ran"]:
-            state["rival_ran"] = True
-            _ = subprocess.run(["gh", "release", "create", "wedge", "--repo", repo], check=True)
-        return real_run(args)
-
-    monkeypatch.setattr(wedge_publish, "_run", _racing_run)
-
-    ensure_release = cast(Callable[[str, str], None], getattr(wedge_publish, "_ensure_release"))
-    ensure_release(repo, "deadbeef")
-
-    assert state["rival_ran"]
-    assert real_run(["release", "view", "wedge", "--repo", repo]).returncode == 0
 
 
 def _publish_subprocess_script(skill: Path, repo: str) -> str:

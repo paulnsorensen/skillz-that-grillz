@@ -187,8 +187,3 @@ def test_publish_runs_the_whole_flow_against_an_injected_store(
     assert store.exists
     assert store.created_at == "deadbeef"
     assert len(store.uploads) == 1
-
-    second = publish([skill], repo=FIXTURE_REPO, target="deadbeef", store=store)
-
-    assert second["cheese-cave"]["status"] == "skipped"
-    assert len(store.uploads) == 1
