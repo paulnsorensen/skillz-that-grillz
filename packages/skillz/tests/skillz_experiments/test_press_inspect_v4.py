@@ -30,6 +30,7 @@ from skillz_experiments.evaluation import CheckResult
 from skillz_experiments._graders import Sandbox
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments._budget import Budget
+from skillz_experiments.harness._seatbelt import command_profile
 from skillz_experiments.run._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -407,6 +408,32 @@ def test_claude_sandbox_on_macos_returns_the_command_stderr_from_the_capture_fil
         claude.close()
     assert result == (3, "out", "err line\n")
     assert commands[0][0] == "/usr/bin/sandbox-exec"
+    capture = Path(commands[0][6]).parent
+    assert commands[0][3:6] == ["/bin/sh", "-c", 'exec "$@" 2>"$0"']
+    assert f'(allow file-write* (subpath "{capture.resolve()}"))' in commands[0][2].splitlines()
+
+
+@pytest.mark.ac("gh-395:AC-1")
+def test_macos_sandbox_argv_allows_writes_to_the_resolved_capture_directory(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    argv = _sandbox.sandbox_argv("darwin", "/usr/bin/sandbox-exec", tmp_path / "w", ["x"], {}, capture=link)
+    assert link.resolve() != link
+    assert argv[3:7] == ["/bin/sh", "-c", 'exec "$@" 2>"$0"', f"{real.resolve()}/stderr"]
+    lines = argv[2].splitlines()
+    assert f'(allow file-write* (subpath "{real.resolve()}"))' in lines
+    assert f'(allow file-write* (subpath "{link}"))' not in lines
+
+
+@pytest.mark.ac("gh-395:AC-1")
+def test_seatbelt_profile_has_a_capture_write_allow_only_when_given_a_capture(tmp_path: Path) -> None:
+    workspace = tmp_path / "w"
+    capture = tmp_path / "cap"
+    assert f'(allow file-write* (subpath "{capture}"))' in command_profile(workspace, (), capture).splitlines()
+    assert str(capture) not in command_profile(workspace, (), None)
+    assert command_profile(workspace, (), None) == command_profile(workspace)
 
 
 @needs_bwrap
