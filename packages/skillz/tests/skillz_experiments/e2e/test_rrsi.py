@@ -115,7 +115,7 @@ def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Pat
 
     record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
-    assert not any(item.get("split") == "holdout" for item in outcomes)
+    assert {item.get("arm") for item in outcomes if item.get("split") == "holdout"} == {"baseline"}
     events = read_events(scenario.out)
     tasks = [item for item in events if item["role"] == "task"]
     assert tasks
@@ -143,7 +143,7 @@ def test_invalid_helper_proposal_keeps_the_seed_without_task_inference(tmp_path:
 
     record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
-    assert not any(item.get("split") == "holdout" for item in outcomes)
+    assert {item.get("arm") for item in outcomes if item.get("split") == "holdout"} == {"baseline"}
     tasks = [item for item in read_events(scenario.out) if item["role"] == "task"]
     assert tasks
     assert {item["candidate"] for item in tasks} == {record["seed_hash"]}

@@ -699,10 +699,10 @@ def test_a_tie_run_replays_nothing_and_never_applies(
     assert record["phase"] == "complete" and record["winner_hash"] == record["seed_hash"]
     replay = _replay_of(record)
     assert _export_status(record, out) == "inconclusive" and replay["reasons"] == ["winner-equals-baseline"]
-    assert replay["patch_digest"] is None and not _replays(record) and state.holdout_calls == 0
+    assert replay["patch_digest"] is None and not _replays(record) and state.holdout_calls > 0
     claims = _claims(record, out)
     assert claims["export"]["status"] == "inconclusive" and claims["improvement"]["status"] == "inconclusive"
-    assert claims["runner"]["checks"]["holdout-coverage"] == "unknown" and claims["runner"]["status"] == "inconclusive"
+    assert claims["runner"]["checks"]["holdout-coverage"] == "pass" and claims["runner"]["status"] == "supported"
     assert claims["apply"] is False
 
 

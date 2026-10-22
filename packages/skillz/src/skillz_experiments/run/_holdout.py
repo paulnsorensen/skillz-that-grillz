@@ -2,6 +2,7 @@
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -96,6 +97,49 @@ def score_holdout(state: RunState, tasks: Sequence[tuple[Candidate, Case, str, i
         _ = list(pool.map(score, tasks))
 
 
+def _holdout_todo(outcomes: Sequence[dict[str, object]], arms: Mapping[str, Candidate], holdout: Sequence[Case],
+                  repeats: int) -> list[tuple[str, Case, int]]:
+    """Return the (arm, case, repeat) slots of `arms` that have no scored holdout outcome yet."""
+    done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in outcomes
+            if item.get("split") == "holdout" and not holdout_unscored(item)}
+    return [(arm, case, repeat) for arm in arms for case in holdout for repeat in range(repeats)
+            if (arm, case.identifier, repeat) not in done]
+
+
+def _holdout_need(state: RunState, todo: Sequence[tuple[str, Case, int]]) -> tuple[int, int]:
+    """Return the calls that `todo` needs and the calls left in the approved budget after the replay reserve."""
+    need = sum(case_calls(state.contract, case) for _, case, _ in todo)
+    return need, state.budget.maximum - state.budget.calls - replay_need(state)
+
+
+def _score_retained_baseline(state: RunState, holdout: Sequence[Case], repeats: int) -> dict[str, object]:
+    """Score the baseline alone on the holdout when the search retained the seed, and return the gate fields.
+
+    The verdict stays a tie, so no fault stops the run. A budget or deadline stop that leaves the baseline partly or
+    fully unscored records `baseline_skipped` `budget-short` and keeps the scores that exist. A case that faults or
+    ends in a check timeout stays unscored, and `baseline_skipped` is `faulted` when no case scored.
+    """
+    arms = {"baseline": state.seed}
+    short = False
+    try:
+        _ = state.budget.remaining()
+        todo = _holdout_todo(state.outcomes, arms, holdout, repeats)
+        need, left = _holdout_need(state, todo)
+        if left < need:
+            return {"baseline_skipped": "budget-short"}
+        score_holdout(state, [(state.seed, case, arm, repeat) for arm, case, repeat in todo])
+    except BudgetExhausted:
+        short = True
+    scores = arm_scores(state.outcomes, "baseline")
+    found: dict[str, object] = ({"baseline_scores": {case_id: math.fsum(each) / len(each) for case_id, each in scores.items()}}
+                                if scores else {})
+    if short:
+        return {**found, "baseline_skipped": "budget-short"}
+    if not scores:
+        return {"baseline_skipped": "faulted"}
+    return found
+
+
 def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
     """Score baseline and winner on the unseen holdout, `repeats` times per case, then record the verdict."""
     holdout = state.cases_for("holdout")
@@ -109,7 +153,7 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
     if winner.identity == seed.identity:
         tie = gate_verdict({case.identifier: 0.0 for case in holdout}, thresholds=statistics, families=families)
         outcome = Verdict("inconclusive", 0.0, 0.0, tie.cases, ("winner-equals-baseline",), tie.skipped_families)
-        record["gate"] = {**outcome.data(), "repeats": repeats}
+        record["gate"] = {**outcome.data(), "repeats": repeats, **_score_retained_baseline(state, holdout, repeats)}
     else:
         _ = state.budget.remaining()
         rejected = next((item for item in outcomes if item.get("arm") == "baseline"
@@ -117,10 +161,7 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
         if rejected is not None:
             raise baseline_rejected(rejection_detail(rejected))
         arms = {"baseline": seed, "winner": winner}
-        done = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in outcomes
-                if item.get("split") == "holdout" and not holdout_unscored(item)}
-        todo = [(arm, case, repeat) for arm in arms for case in holdout for repeat in range(repeats)
-                if (arm, case.identifier, repeat) not in done]
+        todo = _holdout_todo(outcomes, arms, holdout, repeats)
 
         def inspect(arm: str, result: dict[str, object]) -> None:
             if timed_out(result):
@@ -128,8 +169,7 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
             if arm == "baseline" and result.get("status") == "candidate-contract-rejected":
                 raise baseline_rejected(rejection_detail(result))
 
-        need = sum(case_calls(state.contract, case) for _, case, _ in todo)
-        left = state.budget.maximum - state.budget.calls - replay_need(state)
+        need, left = _holdout_need(state, todo)
         if left < need:
             raise Stop("gate-budget-exhausted", f"the holdout gate needs {need} more calls; "
                        + f"{left} remain in the approved budget after the replay reserve",

@@ -221,7 +221,7 @@ def test_a_failed_gate_keeps_the_search_and_resumes_with_the_approved_budget_wit
     assert run(target, out, "local-test", live=True, factory=factory) == result
 
 
-def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_call(tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
+def test_a_winner_equal_to_the_baseline_is_inconclusive_and_scores_only_the_baseline_on_the_holdout(tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
 
     @final
@@ -244,7 +244,9 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
     assert gate["reasons"] == ["winner-equals-baseline"]
     assert gate["skipped_families"] == []
     assert gate["n_shared"] == 0 and gate["cases"] == len(split_ids(out, "holdout"))
-    assert not any(held for _, held in provider.evaluated)
+    held = [item for item in provider.evaluated if item[1]]
+    assert held and len(held) == len(split_ids(out, "holdout")) * cast(int, read(out / "run.json")["repeats"])
+    assert set(cast(dict[str, float], gate["baseline_scores"])) == set(split_ids(out, "holdout"))
 
 
 @pytest.mark.parametrize(("edit", "components"), [("prose", ["SKILL.md"]),
