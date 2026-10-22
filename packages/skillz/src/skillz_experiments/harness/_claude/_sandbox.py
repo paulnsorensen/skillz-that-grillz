@@ -10,8 +10,9 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from skillz_experiments._cases import CodedError, mapping
+from skillz_experiments._cases import CodedError
 from skillz_experiments.harness._claude._constants import INSTALL_BUBBLEWRAP, SANDBOX_STDERR
+from skillz_experiments.harness._claude._pairs import tool_pairs
 from skillz_experiments.harness._seatbelt import command_profile, seatbelt_environment
 
 
@@ -110,18 +111,11 @@ def network_commands(port: int, token: str) -> list[str]:
 
 def _results(events: list[dict[str, object]], command: str) -> list[str]:
     """Return the Bash results that answer a tool call whose command equals `command`."""
-    uses: set[str] = set()
     results: list[str] = []
-    for event in events:
-        message = event.get("message")
-        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
-        for block in cast(list[object], content) if isinstance(content, list) else []:
-            item = mapping(block)
-            if item.get("type") == "tool_use" and item.get("name") == "Bash" and isinstance(item.get("id"), str):
-                if mapping(item.get("input", {})).get("command") == command:
-                    uses.add(cast(str, item["id"]))
-            elif item.get("type") == "tool_result" and item.get("tool_use_id") in uses:
-                results.append(json.dumps(item))
+    for use, result in tool_pairs(events, "Bash"):
+        raw = use.get("input")
+        if result is not None and isinstance(raw, dict) and cast(dict[str, object], raw).get("command") == command:
+            results.append(json.dumps(result))
     return results
 
 
