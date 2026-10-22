@@ -30,3 +30,9 @@ def check_timeout(arm: str, text: str | None = None) -> Stop:
     """Return the resumable stop for a contract check of `arm` that reached the sandbox time limit twice."""
     return Stop(_CHECK_TIMEOUT_CODES[arm], f"the {arm} contract check reached the sandbox time limit twice",
                 {"next": "resume the run in the same directory; a resume retries the check"} | detail(text))
+
+
+def preflight_timeout(text: str | None = None) -> Stop:
+    """Return the resumable stop for a live-preflight model call that reached its per-call timeout."""
+    return Stop("preflight-timeout", "a model call in the live preflight exceeded its per-call timeout",
+                {"next": "resume the run in the same directory; a resume repeats the preflight"} | detail(text))

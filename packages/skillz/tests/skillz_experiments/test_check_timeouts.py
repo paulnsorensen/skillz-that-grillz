@@ -18,7 +18,7 @@ import pytest
 from typing_extensions import override
 
 from skillz_experiments import _graders, _runtime
-from skillz_experiments._budget import Budget, BudgetExhausted
+from skillz_experiments._budget import Budget, BudgetExhausted, CallTimeout
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import Case
 from skillz_experiments.evaluation import helper_failure
@@ -383,6 +383,7 @@ class Plan:
 
     timeouts: dict[str, int] = field(default_factory=lambda: cast(dict[str, int], {}))
     crash_holdout: bool = False
+    preflight_error: Exception | None = None
     checks: Counter[str] = field(default_factory=lambda: cast(Counter[str], Counter()))
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -410,6 +411,12 @@ class _Timed(FakeRunProvider):
     def __init__(self, plan: Plan) -> None:
         super().__init__()
         self.plan = plan
+
+    @override
+    def preflight(self) -> dict[str, object]:
+        if self.plan.preflight_error is not None:
+            raise self.plan.preflight_error
+        return {}
 
     @override
     def check_candidate(self, candidate: object) -> CheckResult:
@@ -469,6 +476,39 @@ def test_a_final_seed_check_timeout_stops_resumably_and_a_resume_checks_again(
     assert (record["phase"], record["failure_code"], plan.checks["seed"]) == ("prepared", "baseline-check-timeout", 2)
     _ = run(target, out, MODEL, live=True, factory=plan.factory())
     assert read(out / "run.json")["phase"] == "complete"
+
+
+@pytest.mark.ac("gh-460:AC-1")
+@pytest.mark.ac("gh-460:AC-2")
+@pytest.mark.ac("gh-460:AC-3")
+def test_a_preflight_call_timeout_stops_resumably_and_a_resume_passes_the_preflight(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, plan = make_target(tmp_path), tmp_path / "run", Plan(preflight_error=CallTimeout("per-call timeout"))
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    with pytest.raises(Stop) as caught:
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plan.factory())
+    assert caught.value.code == "preflight-timeout"
+    assert "resume" in str(caught.value.data["next"])
+    assert isinstance(caught.value.__cause__, CallTimeout)
+    record = read(out / "run.json")
+    assert (record["phase"], record["failure_code"], "preflight" in record) == ("prepared", "preflight-timeout", False)
+    plan.preflight_error = None
+    _ = run(target, out, MODEL, live=True, factory=plan.factory())
+    resumed = read(out / "run.json")
+    assert resumed["phase"] == "complete" and "preflight" in resumed
+
+
+@pytest.mark.ac("gh-460:AC-4")
+def test_a_preflight_runtime_error_that_is_not_a_call_timeout_propagates_unchanged(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    error = RuntimeError("provider fell over")
+    target, out, plan = make_target(tmp_path), tmp_path / "run", Plan(preflight_error=error)
+    _ = write_draft(out)
+    case_hash, calls = approvals(target, out)
+    with pytest.raises(RuntimeError) as caught:
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plan.factory())
+    assert caught.value is error and not isinstance(caught.value, Stop)
 
 
 @pytest.mark.ac("gh-287:AC-8")
