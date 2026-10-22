@@ -202,6 +202,10 @@ def nested_userns_blocked() -> bool:
     return result.returncode != 0 and result.stderr.strip() in {"unshare", "map"}
 
 
+_TO_CAPTURE = 'exec "$@" 2>"$0"'
+"""Shell script that sends the command's standard error to the file named by `$0`, then runs the command."""
+
+
 def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str],
                  read_roots: tuple[str, ...] = (), capture: Path | None = None) -> list[str]:
     """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No external network.
@@ -224,11 +228,11 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
         if capture is None:
             return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
         resolved = capture.resolve()
-        return [tool, "-p", command_profile(workspace, read_roots, resolved), "/bin/sh", "-c", 'exec "$@" 2>"$0"',
+        return [tool, "-p", command_profile(workspace, read_roots, resolved), "/bin/sh", "-c", _TO_CAPTURE,
                 str(resolved / SANDBOX_STDERR), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
     mount = ["--bind", str(capture), SANDBOX_CAPTURE] if capture is not None else []
-    shell = ['/bin/sh', '-c', 'exec "$@" 2>"$0"', f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [
+    shell = ['/bin/sh', '-c', _TO_CAPTURE, f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [
         '/bin/sh', '-c', 'exec "$@" 2>/dev/null', 'sh']
     return [tool, "--unshare-all", "--die-with-parent", "--clearenv",
             "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",

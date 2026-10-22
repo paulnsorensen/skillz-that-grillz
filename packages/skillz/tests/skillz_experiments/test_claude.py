@@ -918,6 +918,36 @@ def test_a_genuine_sandbox_exec_failure_still_raises_on_macos(
         _ = transport.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
 
 
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_a_failed_stderr_redirect_raises_a_setup_failure(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 2, "", "/bin/sh: 1: cannot create stderr: Operation not permitted")
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    monkeypatch.setattr(_transport, "sandboxed", process)
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(shutil, "which", which)
+    with pytest.raises(CodedError, match="sandbox setup fails: /bin/sh: 1: cannot create stderr"):
+        _ = cast(Sandbox, cast(object, adapter)).sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+
+
+def test_a_command_that_removes_its_stderr_file_still_returns_its_exit(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "out", "")
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    monkeypatch.setattr(_transport, "sandboxed", process)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", which)
+    transport = cast(Sandbox, cast(object, adapter))
+    assert transport.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"]) == (1, "out", "")
+
 @pytest.mark.parametrize(("platform", "tool"), [("linux", "bwrap"), ("darwin", "sandbox-exec")])
 def test_sandbox_without_its_platform_tool_fails_closed(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, tool: str) -> None:

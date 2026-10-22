@@ -708,7 +708,8 @@ class ClaudeCode:
             result = sandboxed(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots,
                                             capture), cwd=workspace, limit=limit, budget=self.budget,
                                environment={"PATH": "/usr/bin:/bin"})
-            if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
+            redirect_failed = result.stderr.strip() != "" and not os.path.lexists(capture / SANDBOX_STDERR)
+            if result.returncode != 0 and (result.stderr.startswith(f"{name}:") or redirect_failed):
                 raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", sandbox_fix(result.stderr))
             return result.returncode, result.stdout, _take_stderr(capture)
         finally:

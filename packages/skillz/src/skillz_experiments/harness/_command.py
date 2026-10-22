@@ -26,7 +26,11 @@ WITNESS_ERROR_KEY = "helper_witness_error"
 """The run-record field that names why the helper witness could not confirm a helper run."""
 PROBE_SECONDS = 300
 """The limit of the preflight isolation probe. It allows a slow first container start, as in the reference wrapper."""
-_WRAPPER_ENVIRONMENT = {"PATH": "/usr/bin:/bin"}
+
+
+def _wrapper_environment() -> dict[str, str]:
+    """Name the runner's temporary directory, so the wrapper accepts the workspaces that the runner creates there."""
+    return {"PATH": "/usr/bin:/bin", "TMPDIR": tempfile.gettempdir()}
 
 
 def _response(value: object, operation: str) -> dict[str, object]:
@@ -153,11 +157,11 @@ class Command:
         """Send one request that runs under the remaining run budget. The request carries no time limit field."""
         if operation == "infer":
             return self._exchange(operation, workspace, payload, lambda text: model_call(
-                self.budget, list(self.command), cwd=workspace.parent, environment=_WRAPPER_ENVIRONMENT,
+                self.budget, list(self.command), cwd=workspace.parent, environment=_wrapper_environment(),
                 input_text=text))
         return self._exchange(operation, workspace, payload, lambda text: process(
             list(self.command), cwd=workspace.parent, timeout=self.budget.remaining(),
-            environment=_WRAPPER_ENVIRONMENT, input_text=text))
+            environment=_wrapper_environment(), input_text=text))
 
     def _exchange(self, operation: str, workspace: Path, payload: Mapping[str, object],
                   run: Callable[[str], subprocess.CompletedProcess[str]]) -> dict[str, object]:
@@ -178,7 +182,7 @@ class Command:
         seconds = SANDBOX_SECONDS if limit is None else limit
         return self._exchange("sandbox", workspace, {"argv": argv}, lambda text: sandboxed(
             list(self.command), cwd=workspace.parent, limit=seconds, budget=self.budget,
-            environment=_WRAPPER_ENVIRONMENT, input_text=text))
+            environment=_wrapper_environment(), input_text=text))
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
         result = self._sandbox(workspace, argv)
