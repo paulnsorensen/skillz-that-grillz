@@ -17,7 +17,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-PACKAGES = ("skillz", "wedge", "fromargs")
+PACKAGES = ("skillz", "wedge", "fromargs", "agent-session-analytics")
 GATE_TESTS = Path(".github/scripts")
 CRITERIA_DIR = Path("docs/agents/criteria")
 SOURCE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
