@@ -14,8 +14,9 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments.run._holdout import arm_scores, replay_outcomes, score_holdout
 from skillz_experiments.run._outcomes import rejection_detail, timed_out
-from skillz_experiments.run._patch import build_patch
+from skillz_experiments.run._patch import Patch, build_patch
 from skillz_experiments.run._plan import case_calls
+from skillz_experiments.run._ports import PatchApplier
 from skillz_experiments.run._record_fields import field, text_field
 from skillz_experiments.run._replay import STDERR_LIMIT, apply_patches, differences, prepare_copy
 from skillz_experiments.run._replay import components as replay_components
@@ -37,7 +38,14 @@ def _conclude(state: RunState, reasons: list[str], patch_digest: str | None = No
     state.checkpoint()
 
 
-def run_replay(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
+class GitPatchApplier:
+    """The default `PatchApplier`: `git apply` in the copy."""
+
+    def apply(self, directory: Path, patch: Patch) -> str | None:
+        return apply_patches(directory, patch)
+
+
+def run_replay(state: RunState, built: Callable[[Candidate], Candidate], patches: PatchApplier) -> None:
     """Check that the exported patch reproduces the winner, then score the patched copy once on the holdout.
 
     The copy sits under `out/replay`. Git applies the patches to it, as a user does. The rerun candidate
@@ -55,7 +63,7 @@ def run_replay(state: RunState, built: Callable[[Candidate], Candidate]) -> None
         _conclude(state, ["patch-apply-failed"], detail={"code": error.code, "error": str(error)[:STDERR_LIMIT]})
         return
     copy = prepare_copy(state.out / "replay", seed, patch)
-    failure = apply_patches(copy, patch)
+    failure = patches.apply(copy, patch)
     if failure is not None:
         _conclude(state, ["patch-apply-failed"], patch.digest, detail={"stderr": failure})
         return

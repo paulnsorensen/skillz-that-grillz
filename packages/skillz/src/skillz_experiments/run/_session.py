@@ -25,6 +25,7 @@ from skillz_experiments.run._outcomes import is_failed, search_counts
 from skillz_experiments.run._record_fields import (
     PHASES, POST_GATE_PHASES, field, judge_flag, number_field, phase, record_outcomes, text_field,
 )
+from skillz_experiments.run._ports import PatchApplier
 from skillz_experiments.run._replay_phase import run_replay
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import Factory, HarnessName, Provider
@@ -320,9 +321,9 @@ class Session:
         """Score baseline and winner on the unseen holdout, `repeats` times per case, then record the verdict."""
         run_gate(self, self._built)
 
-    def replay(self) -> None:
+    def replay(self, patches: PatchApplier) -> None:
         """Check that the exported patch reproduces the winner, then score the patched copy once on the holdout."""
-        run_replay(self, self._built)
+        run_replay(self, self._built, patches)
 
     def finish(self) -> None:
         self.record["phase"] = "complete"
