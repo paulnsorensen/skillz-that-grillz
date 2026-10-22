@@ -27,8 +27,7 @@ from skillz_experiments.run._holdout import holdout_tokens
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._outcomes import mean_tokens
 from skillz_experiments.run._session import Session
-from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -716,18 +715,14 @@ def test_a_frozen_record_with_a_malformed_token_key_is_tampered(
 SENTENCE = " Prefer fewer tokens when correctness is equal."
 
 
-class _Probe(FakeProvider):
+class _Probe(FakeRunProvider):
     """A fake provider whose improved candidate always scores 1.0 and costs `IMPROVED` task tokens."""
 
     IMPROVED: int = 101
     prompts: list[str] = []
 
     def __init__(self, _model: str, _budget: object, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:

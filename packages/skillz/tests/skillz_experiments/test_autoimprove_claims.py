@@ -19,8 +19,10 @@ from skillz_experiments._contract import Grader
 from skillz_experiments._graders import judge
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, _export, _patch, _replay_phase, _session, export, run, summary
+from skillz_experiments.run._patch import Patch
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
-from skillz_experiments.run._replay import drift
+from skillz_experiments.run._ports import Ports
+from skillz_experiments.run._replay import apply_patches, drift, prepare_copy
 from test_run_search import MODEL, Provider, Search
 
 if TYPE_CHECKING:
@@ -64,8 +66,8 @@ def _rewind(out: Path, record: dict[str, object], keep: int = 0) -> dict[str, ob
     return record
 
 
-def _resume(target: Path, out: Path, state: Search) -> dict[str, object]:
-    _ = run(target, out, MODEL, live=True, factory=state.factory)
+def _resume(target: Path, out: Path, state: Search, ports: Ports | None = None) -> dict[str, object]:
+    _ = run(target, out, MODEL, live=True, factory=state.factory, ports=ports)
     return read(out / "run.json")
 
 
@@ -137,16 +139,25 @@ def _overwrite(copy: Path, text: str) -> None:
     _ = (copy / "skill" / "SKILL.md").write_text(text)
 
 
-def _tamper_copy(monkeypatch: pytest.MonkeyPatch, step: str, change: Callable[[Path], None]) -> None:
-    """Run the real replay helper `step`, then change the clean copy, as a stale or corrupt copy would be."""
-    real = cast(Callable[..., object], getattr(_replay_phase, step))
+def _tamper_copy(monkeypatch: pytest.MonkeyPatch, change: Callable[[Path], None]) -> None:
+    """Run the real `prepare_copy`, then change the clean copy, as a stale or corrupt copy would be."""
 
-    def wrapped(*args: object, **kwargs: object) -> object:
-        found = real(*args, **kwargs)
-        change(cast(Path, args[0]) if step == "apply_patches" else cast(Path, found))
-        return found
+    def wrapped(directory: Path, seed: Candidate, patch: Patch) -> Path:
+        copy = prepare_copy(directory, seed, patch)
+        change(copy)
+        return copy
 
-    monkeypatch.setattr(_replay_phase, step, wrapped)
+    monkeypatch.setattr(_replay_phase, "prepare_copy", wrapped)
+
+
+def _tampering_ports(change: Callable[[Path], None]) -> Ports:
+    """Ports whose applier runs the real `git apply`, then changes the patched copy."""
+    def tampering(directory: Path, patch: Patch) -> str | None:
+        failure = apply_patches(directory, patch)
+        change(directory)
+        return failure
+
+    return Ports(patches=tampering)
 
 
 @pytest.mark.parametrize("fault", ["patch-apply-failed", "patch-bytes-differ", "replay-identity-differs"])
@@ -156,15 +167,16 @@ def test_a_patch_that_fails_differs_or_rebuilds_another_identity_refutes_the_exp
         monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
     record = _rewind(out, record)
+    ports: Ports | None = None
     if fault == "patch-apply-failed":
-        _tamper_copy(monkeypatch, "prepare_copy", lambda copy: _overwrite(copy, "another seed\n"))
+        _tamper_copy(monkeypatch, lambda copy: _overwrite(copy, "another seed\n"))
     elif fault == "patch-bytes-differ":
-        _tamper_copy(monkeypatch, "apply_patches", lambda copy: _overwrite(copy, "patched, then edited\n"))
+        ports = _tampering_ports(lambda copy: _overwrite(copy, "patched, then edited\n"))
     else:
         record["winner_hash"] = "f" * 64
         write(out / "run.json", record)
     state = Search(target)
-    after = _resume(target, out, state)
+    after = _resume(target, out, state, ports)
     assert after["phase"] == "complete" and state.holdout_calls == 0
     assert _replay_of(after)["reasons"] == [fault]
     claim = cast(dict[str, object], summary(after, out)["claims"])
@@ -743,7 +755,7 @@ def test_the_report_omits_the_replay_detail_that_holds_git_stderr(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
-    _tamper_copy(monkeypatch, "prepare_copy", lambda copy: _overwrite(copy, "another seed\n"))
+    _tamper_copy(monkeypatch, lambda copy: _overwrite(copy, "another seed\n"))
     after = _resume(target, out, Search(target))
     stderr = cast(str, _replay_of(after)["detail"]["stderr"])
     assert stderr

@@ -50,9 +50,6 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
-from skillz_experiments.run._history_store import load as load_history
-from skillz_experiments.run._history_store import store_path
-from skillz_experiments.run._history_store import write as write_history
 from skillz_experiments.run._plan import editable_files, plan_estimate, scored_kinds, size_plan
 from skillz_experiments.run._resume import (
     check_resume,
@@ -67,6 +64,7 @@ from skillz_experiments.run._resume import (
     resolve_statistics,
 )
 from skillz_experiments.run._open import engine_hash
+from skillz_experiments.run._ports import HistoryStore, Ports
 from skillz_experiments.run._record_fields import text_field
 from skillz_experiments.run._session import Session
 from skillz_experiments.run._state import Factory, HarnessName
@@ -278,12 +276,11 @@ def _check_statistics_flags(statistics: Mapping[str, float] | None) -> dict[str,
     return accepted
 
 
-def _record_history(session: Session, loaded: Loaded) -> None:
+def _record_history(session: Session, history: HistoryStore, loaded: Loaded) -> None:
     """Add this run's attempts to the store, then write the history block of the search. A store fault adds a warning."""
-    path = store_path(session.contract.skill, text_field(session.record, "target_root"))
     attempts = cast(dict[str, object], session.record["search"]).get("attempts")
-    warning = write_history(path, session.record, text_field(session.record, "run_id"),
-                            cast(list[dict[str, object]], attempts or []))
+    warning = history.write(session.contract.skill, text_field(session.record, "target_root"), session.record,
+                            text_field(session.record, "run_id"), cast(list[dict[str, object]], attempts or []))
     if warning is not None and warning not in loaded.warnings:
         loaded.warnings.append(warning)
     with session.lock:
@@ -291,7 +288,7 @@ def _record_history(session: Session, loaded: Loaded) -> None:
         session.checkpoint()
 
 
-def _search(session: Session) -> None:
+def _search(session: Session, history: HistoryStore) -> None:
     """Run the search with the compatible earlier attempts of the history store, then add this run's attempts to it.
 
     A run with `history` off neither reads nor writes the store. A store fault adds a warning and keeps the result.
@@ -302,13 +299,13 @@ def _search(session: Session) -> None:
             cast(dict[str, object], session.record["search"])["history"] = {"enabled": False}
             session.checkpoint()
         return
-    path = store_path(session.contract.skill, text_field(session.record, "target_root"))
-    loaded = load_history(path, session.record, text_field(session.record, "run_id"))
+    loaded = history.load(session.contract.skill, text_field(session.record, "target_root"), session.record,
+                          text_field(session.record, "run_id"))
     session.search(earlier=loaded.attempts)
-    _record_history(session, loaded)
+    _record_history(session, history, loaded)
 
 
-def _repair_history(session: Session) -> None:
+def _repair_history(session: Session, history: HistoryStore) -> None:
     """Write the store for a run that stopped after the `searched` checkpoint and before the store write.
 
     The write replaces the line of the same run id, so a repeat is safe. The block names no earlier run, because this
@@ -316,10 +313,10 @@ def _repair_history(session: Session) -> None:
     """
     search = session.record.get("search")
     if session.record.get("history") is True and isinstance(search, dict) and "history" not in search:
-        _record_history(session, Loaded())
+        _record_history(session, history, Loaded())
 
 
-def _drive(session: Session) -> dict[str, object]:
+def _drive(session: Session, ports: Ports) -> dict[str, object]:
     """Run the remaining phases of `session`, close the provider, and return the run summary."""
     pending: BaseException | None = None
     try:
@@ -329,13 +326,13 @@ def _drive(session: Session) -> dict[str, object]:
             session.preflight()
             if session.phase == "prepared":
                 session.check_seed()
-                _search(session)
+                _search(session, ports.history)
             elif session.phase == "searched":
-                _repair_history(session)
+                _repair_history(session, ports.history)
             if session.phase == "searched":
                 session.gate()
             if session.phase == "gated":
-                session.replay()
+                session.replay(ports.patches)
             if session.phase == "replayed":
                 session.finish()
         except EnvironmentDiffers:
@@ -360,7 +357,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
         statistics: Mapping[str, float] | None = None,
-        judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = ()) -> dict[str, object]:
+        judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = (),
+        ports: Ports | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `judge_model` sets the model of the judge calls. Task and reflection calls use `model`. The first run records it,
@@ -371,6 +369,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
 
     `history` turns the private cross-run attempt history on or off. It is on by default. The first run records it,
     and a resume that passes another value stops with `run-config-differs`.
+
+    `ports` replaces the default infrastructure adapters: `git apply` for the replay and the XDG history store.
     """
     requested, given = _check_arguments(
         adapter, configuration, factory, edit, repeats,
@@ -416,4 +416,4 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)
-        return _drive(session)
+        return _drive(session, ports or Ports())

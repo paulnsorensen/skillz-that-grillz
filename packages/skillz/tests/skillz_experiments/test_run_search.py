@@ -7,7 +7,7 @@ import os
 import stat
 import threading
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast, final
 
@@ -28,8 +28,9 @@ from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
 from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
-from skillz_experiments.run._history_store import UNREADABLE, store_path
-from fake_provider import PASSED, FakeProvider, ProviderCrash
+from skillz_experiments.run._history_store import UNREADABLE, FileHistoryStore, store_path
+from skillz_experiments.run._ports import Ports
+from fake_provider import PASSED, FakeRunProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -83,15 +84,17 @@ class Search:
 
 
 @final
-class Provider(FakeProvider):
+class Provider(FakeRunProvider):
     def __init__(self, state: Search, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.state = state
         self.budget = budget
         self.checkpoint = checkpoint
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         """Claim the live calls once. A resume reuses the recorded pass, as the real harness does."""
+        del recorded
         if self.state.preflight_error is not None:
             raise self.state.preflight_error
         if self.budget.calls == 0:
@@ -2158,16 +2161,19 @@ class _Killed(BaseException):
 @pytest.mark.ac("gh-243:AC-5")
 def test_a_resume_at_the_searched_phase_without_a_history_block_writes_the_store(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
-        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+        approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
 
-    def killed(*_args: object, **_kwargs: object) -> str | None:
-        raise _Killed
+    @final
+    class KilledStore(FileHistoryStore):
+        @override
+        def write(self, skill: str, target_root: str, record: Mapping[str, object], run_id: str,
+                  attempts: Sequence[Mapping[str, object]]) -> str | None:
+            raise _Killed
 
-    with monkeypatch.context() as patch:
-        patch.setattr("skillz_experiments.run._run.write_history", killed)
-        with pytest.raises(_Killed):
-            _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    with pytest.raises(_Killed):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
+                ports=Ports(history=KilledStore()))
     assert read(out / "run.json")["phase"] == "searched" and "history" not in cast(dict[str, object], read(out / "run.json")["search"])
     assert not _store(out).exists()
     result = run(target, out, MODEL, live=True, factory=state.factory)

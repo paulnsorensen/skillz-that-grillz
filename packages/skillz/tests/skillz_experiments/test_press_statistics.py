@@ -21,8 +21,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._resume import resolve_statistics
-from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 MODEL = "local-test"
 SPREAD = [1.0, 2.0, 3.0]
@@ -36,15 +35,11 @@ def _document(**extra: object) -> dict[str, object]:
 
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     """A fake provider. The seed scores 0 and a proposal that says `improved` scores 1."""
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:

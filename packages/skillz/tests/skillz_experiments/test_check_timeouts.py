@@ -31,7 +31,7 @@ from skillz_experiments.run import Stop, run
 from skillz_experiments.run._export import _frozen, calls_upper_bound  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run._outcomes import holdout_scores
 from skillz_experiments.run._session import Session
-from fake_provider import PASSED, FakeProvider, ProviderCrash
+from fake_provider import PASSED, FakeProvider, FakeRunProvider, ProviderCrash
 from memo_fixtures import SKILL, cases as _cases, contract as _contract
 
 pytestmark = pytest.mark.usefixtures("host_login", "headroom_off")
@@ -404,10 +404,11 @@ class Plan:
 
 
 @final
-class _Timed(FakeProvider):
+class _Timed(FakeRunProvider):
     """A provider that routes each evaluation through the session memo, as `evaluate` does."""
 
     def __init__(self, plan: Plan) -> None:
+        super().__init__()
         self.plan = plan
 
     @override

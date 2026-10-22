@@ -27,8 +27,7 @@ from skillz_experiments.run._resume import resolve_statistics
 from skillz_experiments.run._session import Session
 from skillz_experiments.search import Progress
 from skillz_experiments.search import request as reflection_request
-from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -471,7 +470,7 @@ def test_the_cli_passes_both_token_flags_to_run(tmp_path: Path, monkeypatch: pyt
 
 # --- workflow: provider with usage -----------------------------------------------------------------------
 
-class _Priced(FakeProvider):
+class _Priced(FakeRunProvider):
     """A fake provider. The `improved` candidate scores `GAIN` on every case and uses `IMPROVED` task tokens.
 
     `HOLDOUT_GAIN`, when set, replaces `GAIN` on the holdout. Every other candidate scores `BASE_SCORE`.
@@ -488,11 +487,7 @@ class _Priced(FakeProvider):
     prompts: list[str] = []
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
