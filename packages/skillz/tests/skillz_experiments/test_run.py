@@ -235,7 +235,7 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
             assert schema is not None
             seed = cast(dict[str, str], json.loads(prompt.rsplit("\n", 1)[1])["candidate"])
             self.budget.claim(holdout=holdout)
-            return {"answer": {name: seed[name] for name in cast(list[str], schema["required"])}}
+            return {"answer": {name: seed.get(name) for name in cast(list[str], schema["required"])}}
 
     provider = Recorder()
     def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
