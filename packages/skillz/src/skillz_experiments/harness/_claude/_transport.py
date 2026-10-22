@@ -19,8 +19,7 @@ from skillz_experiments._contract import resolve, Surface
 from skillz_experiments.evaluation import answer_schema, CheckResult, helper_failure, Reply, Transcript, usage
 from skillz_experiments._graders import CAPTURE_DIRECTORY
 from skillz_experiments._budget import Budget, BudgetExhausted
-from skillz_experiments._redact import write_transcript
-from skillz_experiments._runtime import SANDBOX_SECONDS, SandboxTimeout, live, model_call, process, sandboxed
+from skillz_experiments._runtime import live, model_call, process, sandboxed
 from skillz_experiments.harness._check import (
     Check,
     credential_row,
@@ -29,7 +28,6 @@ from skillz_experiments.harness._check import (
     SUBSCRIPTION_LOGIN,
     UNVERIFIED_CREDENTIAL,
 )
-from skillz_experiments.harness._isolation import listening, probe, watched, watched_abstract, watched_unix
 from skillz_experiments.harness._claude._constants import (
     AUTH_FAILED,
     INSTALL_BUBBLEWRAP,
@@ -41,28 +39,19 @@ from skillz_experiments.harness._claude._constants import (
 from skillz_experiments.harness._claude._keys import restore, safe_keys
 from skillz_experiments.harness._claude._events import (
     answer,
-    assistant_text,
     declared_commands,
     control_response,
     declares,
     parse_events,
     failure,
     final_event,
-    init_inventory,
-    is_result,
-    find_leak,
     loaded_skills,
     marker_seen,
     not_loaded,
     probe_name,
     probe_skill,
-    read_failure,
-    read_tool_failure,
     token_events,
-    tool_transcript,
     event_trace,
-    user_line,
-    write_failure,
 )
 from skillz_experiments.harness._claude._login import (
     check_ancestors,
@@ -74,19 +63,16 @@ from skillz_experiments.harness._claude._login import (
 )
 from skillz_experiments.harness._claude._options import ClaudeOptions, resolve_read_roots
 from skillz_experiments.harness._claude._sandbox import (
-    network_failure,
     remove_tree,
     sandbox_fix,
-    unix_failure,
     host_tools,
     nested_userns_blocked,
-    network_commands,
-    NetworkIsolationFailed,
     sandbox_argv,
     SandboxUnavailable,
-    unix_command,
 )
+from skillz_experiments.harness._claude._journey import Exit, NO_INIT, TurnRunner
 from skillz_experiments.harness._claude._late import LateBuiltins
+from skillz_experiments.harness._claude._preflight import Preflight, probe_sandbox
 from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings
 
 
@@ -97,9 +83,6 @@ NETWORK_PROBE = "loopback-dns-nonloopback-v3"
 
 
 READ_PROBE = "read-tool-outside-workspace-v1"
-
-
-LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted a connection from the Bash probe"
 
 
 SANDBOX_STDERR_LIMIT = 100_000
@@ -118,13 +101,6 @@ INVENTORY_SECONDS = 60
 
 
 MCP_FILE = "mcp.json"
-
-
-# The private file in the run directory that holds the tool transcript of a failed live preflight.
-PREFLIGHT_TRANSCRIPT = "preflight.events.json"
-
-
-_NO_INIT = "has no init event, so the skill list is unknown; the invocation counts against the budget"
 
 
 def _take_stderr(capture: Path) -> str:
@@ -186,7 +162,7 @@ class ClaudeCode:
             self._stage(workspace)
             return self._list(workspace, frozenset())[0]
 
-        self._late = LateBuiltins(builtin_listing)
+        self.late = LateBuiltins(builtin_listing)
         self._unix_sockets: bool | None = None
 
     @property
@@ -334,7 +310,7 @@ class ClaudeCode:
         inventory, so a foreign skill cannot pass as the probe.
         """
         if self._inventory is not None:
-            return self._inventory
+            return self.late.merged(self._inventory)
         name = probe_name()
         with tempfile.TemporaryDirectory(prefix="skillz-inventory-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
@@ -350,7 +326,7 @@ class ClaudeCode:
                     raise preflight_leak(f"skillOverrides cannot turn off {sorted(left - {name})}, "
                                           + f"or it hides the probe skill (listed: {sorted(left)})")
         self._inventory = Inventory(builtin, foreign)
-        return self._inventory
+        return self.late.merged(self._inventory)
 
     def environment_key(self) -> str:
         """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment.
@@ -387,20 +363,6 @@ class ClaudeCode:
         self.owns_login = False
         return self.login
 
-    def _probe_sandbox(self, workspace: Path, sealed: Path) -> None:
-        for name, found, fix in host_tools():
-            if not found:
-                raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
-        with listening() as port:
-            script = probe(workspace, sealed, Path(__file__).resolve(), port)
-            try:
-                code, output, _stderr = self.sandbox(workspace, ["/usr/bin/python3", "-c", script],
-                                                     max(SANDBOX_SECONDS, self.options.sandbox_seconds))
-            except SandboxTimeout:
-                code, output = 124, ""
-        if code != 0 or output.strip() != "isolation-ok":
-            raise preflight_leak("sandbox probe failed")
-
     def _sealed(self, root: Path) -> tuple[Path, Path, str]:
         workspace = make_workspace(root / "workspace")
         sealed = root / "sealed"
@@ -421,112 +383,10 @@ class ClaudeCode:
         self._check_memory()
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             workspace, sealed, _token = self._sealed(Path(directory))
-            self._probe_sandbox(workspace, sealed)
-
-    def _prompt(self, sealed: Path, control_file: Path, protected: list[Path], write_control: Path, write_token: str,
-                commands: list[str]) -> str:
-        return (f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
-                + f"Then read the file `{sealed}` with the Read tool, not Bash. "
-                + "".join(f"Then run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
-                + f"Then run `printf {write_token} > {write_control}` with the Bash tool. "
-                + "".join(f"Then run `{command}` with the Bash tool. " for command in commands)
-                + "Reply with the read outputs, or the word denied for each command that fails.")
+            probe_sandbox(self, workspace, sealed)
 
     def preflight(self) -> dict[str, object]:
-        self._check_memory()
-        with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
-            root = Path(directory)
-            workspace, sealed, token = self._sealed(root)
-            self._probe_sandbox(workspace, sealed)
-            _ = self.inventory()
-            name = probe_name()
-            probe_skill(workspace, name)
-            control = secrets.token_hex(16)
-            control_file = workspace / "control.txt"
-            _ = control_file.write_text(control)
-            protected = [workspace / ".agents/write-probe", workspace / ".claude/skills" / name / "write-probe"]
-            write_control = workspace / "write-control.txt"
-            write_token = secrets.token_hex(16)
-            network_token = secrets.token_hex(16)
-            sockets = root / "s"
-            sockets.mkdir()
-            probing = self.unix_sockets()
-            abstract = f"skillz-{network_token[:16]}"
-            with (watched() as (port, connected), watched_unix(sockets, active=probing) as (socket_path, socket_reached),
-                  watched_abstract(abstract, active=probing) as abstract_reached):
-                if self.out is not None:
-                    (self.out / PREFLIGHT_TRANSCRIPT).unlink(missing_ok=True)
-                self.budget.claim(role="preflight")
-                self.checkpoint()
-                commands = network_commands(port, network_token)
-                if probing:
-                    commands += [unix_command(str(socket_path), network_token), unix_command("\\0" + abstract, network_token)]
-                try:
-                    returncode, stderr, events = self._run(
-                        workspace, self._prompt(sealed, control_file, protected, write_control, write_token, commands),
-                        None, [name])
-                except Exception:
-                    if connected(network_token) or socket_reached(network_token) or abstract_reached(network_token):
-                        raise NetworkIsolationFailed(LISTENER_REACHED) from None
-                    raise
-                reached = connected(network_token)
-                socket_open = socket_reached(network_token) or abstract_reached(network_token)
-            wrote = any(file.exists() for file in protected)
-            controlled = write_control.is_file() and write_control.read_text() == write_token
-        try:
-            if reached:
-                raise NetworkIsolationFailed(LISTENER_REACHED)
-            if socket_open:
-                raise NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
-            self._inventory = self._late.adopt(events, [name], self.inventory(), self.declared)
-            builtin = self._inventory.builtin
-            leak = find_leak(events, [name], builtin, self.declared)
-            if leak is not None:
-                raise preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
-            reason = failure(returncode, stderr, events, [name], builtin, allowed=self.declared.skills)
-            if reason == AUTH_FAILED:
-                raise login_failed(LOGIN_HINT)
-            network = network_failure(events, port, network_token)
-            if network is None and probing:
-                network = unix_failure(events, str(socket_path), network_token)
-            if network is None and probing:
-                network = unix_failure(events, "\\0" + abstract, network_token)
-            if reason is None:
-                reason = read_tool_failure(events, token, sealed, evidence=False)
-            if reason is None:
-                reason = read_failure(events, token, str(sealed), control, str(control_file))
-            if reason is None:
-                reason = read_tool_failure(events, token, sealed, evidence=True)
-            if reason is None:
-                reason = write_failure(events, [str(file) for file in protected], wrote, controlled)
-            if reason is None and network is not None:
-                raise NetworkIsolationFailed(network)
-            if reason is not None:
-                raise preflight_leak(reason)
-        except CodedError as error:
-            self._keep_transcript(error, events)
-            raise
-        return {"adapter": "claude", "model": self.model, "isolation": "passed", "credential": self.credential_kind,
-                "network": "denied", "live_calls": 1, "unix_socket_filter": "off" if self.unix_sockets() else "on",
-                "environment_key": self.environment_key()}
-
-    def _keep_transcript(self, error: CodedError, events: list[dict[str, object]]) -> None:
-        """Write the redacted tool transcript of a failed live preflight to the run directory, and name it in `error`.
-
-        The file is private (mode 0600). Without a run directory, as in `--preflight-only`, nothing is written. A failed
-        write keeps the original stop and code, and the message says that the transcript is missing.
-        """
-        if self.out is None:
-            return
-        path = self.out / PREFLIGHT_TRANSCRIPT
-        try:
-            write_transcript(path, {"schema_version": 1, "role": self.role, "failure": str(error),
-                                    "tools": tool_transcript(events), "answer": assistant_text(events)})
-        except OSError as failure:
-            error.args = (f"{error}; the preflight transcript could not be written: {failure.strerror}",)
-            return
-        # The run records and prints `str(error)`, so the stop names the transcript through the message.
-        error.args = (f"{error}; the preflight transcript is in {path}",)
+        return Preflight(self).run()
 
     def check_name(self, candidate: Candidate) -> None:
         """Stop when the candidate name matches a Claude Code command or a foreign skill. The init event lists names
@@ -579,9 +439,8 @@ class ClaudeCode:
             with self.budget.timed(self.role):
                 returncode, stderr, events = self._run(workspace, prompt, sent, expected, candidate)
                 latency = time.monotonic() - started
-                self._inventory = self._late.adopt(events, expected, self.inventory(), self.declared)
-                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected,
-                                                self._inventory.builtin)
+                builtin = self.late.adopt(events, expected, self.inventory(), self.declared).builtin
+                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
                 return not_loaded(workspace, started, trace) | {"latency_seconds": latency}
@@ -603,56 +462,20 @@ class ClaudeCode:
         builtin = self.inventory().builtin
         self.check_name(candidate)
         expected = [candidate.skill]
-        events: list[dict[str, object]] = []
-        transcript: Transcript = []
-        first: tuple[list[str], ...] | None = None
         with tempfile.TemporaryDirectory(prefix="skillz-journey-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)
             command, environment = self._start(workspace, None, expected, candidate, stream=True)
             started = time.monotonic()
-            message, shown = request, case.request
-            closed = False
             with live(command, cwd=workspace, environment=environment) as child:
-                for turn in range(case.journey.max_turns):
-                    self.budget.claim(holdout=holdout, role=self.role)
-                    self.checkpoint()
-                    with self.budget.timed(self.role):
-                        lines, ended = child.turn(user_line(message), self.budget.remaining(), is_result)
-                    fresh = parse_events("".join(lines))
-                    events += fresh
-                    if first is None:
-                        self._inventory = self._late.adopt(fresh, expected, self.inventory(), self.declared)
-                        builtin = self._inventory.builtin
-                    for init in (event for event in fresh if event.get("type") == "system" and event.get("subtype") == "init"):
-                        if first is None:
-                            first = init_inventory(init)
-                        elif init_inventory(init) != first:
-                            raise CodedError("isolation-failed", "Claude Code isolation fails: the skill, tool, agent, MCP server, or plugin inventory "
-                                             + f"changed in turn {turn + 1}; the invocation counts against the budget")
-                    if any(event.get("type") == "result" and event.get("is_error") is True for event in fresh):
-                        raise RuntimeError(f"Claude Code fails: error-result (turn {turn + 1} reports an error result); "
-                                           + "the invocation counts against the budget")
-                    if not ended:
-                        break
-                    if first is None:
-                        raise CodedError("isolation-failed", "Claude Code isolation fails: turn 1 " + _NO_INIT)
-                    transcript += [{"role": "user", "text": shown}, {"role": "assistant", "text": assistant_text(fresh)}]
-                    if turn == 0 and not [name for name in cast(list[str], loaded_skills(fresh, builtin))
-                                          if name not in self.declared.skills]:
-                        closed = True
-                        break
-                    if turn + 1 >= case.journey.max_turns:
-                        closed = True
-                        break
-                    reply = simulate(transcript)
-                    if reply.done:
-                        closed = True
-                        break
-                    message = shown = reply.reply
+                runner = TurnRunner(self, child, expected=expected, builtin=builtin, request=request, shown=case.request,
+                                    max_turns=case.journey.max_turns, holdout=holdout, simulate=simulate)
+                outcome = runner.run()
                 returncode = child.close()
                 stderr = child.stderr
-            _, unloaded = self._verdict(events, not closed, returncode, stderr, expected, builtin)
+            events, transcript = runner.events, runner.transcript
+            _, unloaded = self._verdict(events, outcome is Exit.PROCESS_DIED, returncode, stderr, expected,
+                                          runner.builtin)
             results = [event for event in events if event.get("type") == "result"]
             trace = event_trace(events) + [token for result in results for token in token_events(result)]
             if unloaded:
@@ -672,7 +495,7 @@ class ClaudeCode:
         failed = crashed or final is None or final.get("is_error") is True
         loaded = loaded_skills(events, builtin)
         if loaded is None and not failed:
-            raise CodedError("isolation-failed", "Claude Code isolation fails: the stream " + _NO_INIT)
+            raise CodedError("isolation-failed", "Claude Code isolation fails: the stream " + NO_INIT)
         unloaded = False
         if loaded is not None:
             loaded = [name for name in loaded if name not in self.declared.skills]

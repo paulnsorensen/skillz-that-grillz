@@ -20,7 +20,8 @@ import pytest
 
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
-from skillz_experiments.harness._claude import _constants, _events, _late, _options, _sandbox, _settings, _transport
+from skillz_experiments.harness._claude import _constants, _events, _late, _options, _preflight, _sandbox, _settings, _transport
+from skillz_experiments.harness._claude._preflight import probe_sandbox
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
@@ -402,7 +403,7 @@ def test_the_claude_sandbox_limit_is_the_configured_sandbox_seconds_and_the_prob
     workspace = make_workspace(tmp_path / "workspace")
     try:
         _ = adapter.sandbox(workspace, ["/usr/bin/true"])
-        adapter._probe_sandbox(workspace, tmp_path / "sealed")  # pyright: ignore[reportPrivateUsage]
+        probe_sandbox(adapter, workspace, tmp_path / "sealed")
         _ = adapter.sandbox(workspace, ["/usr/bin/true"])
     finally:
         adapter.close()
@@ -425,7 +426,7 @@ def test_a_sandbox_probe_timeout_fails_the_probe_like_exit_124(tmp_path: Path, m
         for fake in (timeout, exit_124):
             monkeypatch.setattr(ClaudeCode, "sandbox", fake)
             with pytest.raises(CodedError) as caught:
-                adapter._probe_sandbox(make_workspace(tmp_path / fake.__name__), tmp_path / "sealed")  # pyright: ignore[reportPrivateUsage]
+                probe_sandbox(adapter, make_workspace(tmp_path / fake.__name__), tmp_path / "sealed")
             messages.append(f"{caught.value.code}: {caught.value}")
     finally:
         adapter.close()
@@ -623,6 +624,7 @@ def test_preflight_asks_the_read_tool_for_the_sealed_file_and_passes_when_it_is_
     ("read-tool-escape", "the Read tool reached a path outside the workspace"),
     ("read-tool-skipped", "read-tool probe has no evidence"),
 ])
+@pytest.mark.ac("gh-396:AC-3")
 def test_preflight_stops_when_the_read_tool_leaves_the_workspace_or_is_not_probed(
         tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
     del sandbox_passes
@@ -766,14 +768,15 @@ def test_a_network_leak_keeps_its_code_when_the_run_then_fails(
     assert caught.value.code == "network-isolation-failed"
 
 
-def test_a_network_leak_keeps_its_code_when_an_earlier_check_also_fails(
+@pytest.mark.ac("gh-396:AC-3")
+def test_the_listener_check_wins_over_the_write_check_and_keeps_the_network_code(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
 
-    def write_fails(events: list[dict[str, object]], files: list[str], wrote: bool, controlled: bool) -> str:
+    def write_must_not_run(events: list[dict[str, object]], files: list[str], wrote: bool, controlled: bool) -> str:
         del events, files, wrote, controlled
-        return "write isolation failed: test"
-    monkeypatch.setattr(_transport, "write_failure", write_fails)
+        raise AssertionError("the listener check must stop the preflight before the write check")
+    monkeypatch.setattr(_preflight, "write_failure", write_must_not_run)
     session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
@@ -2276,6 +2279,36 @@ def test_an_abstract_socket_failure_stops_the_preflight(
         transport.close()
 
 
+@pytest.mark.ac("gh-396:AC-2")
+@pytest.mark.parametrize("reach", [True, False])
+def test_a_run_that_raises_after_the_abstract_listener_was_reached_is_a_network_isolation_failure(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch, reach: bool) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
+
+    def run(self: ClaudeCode, workspace: Path, prompt: str, schema: dict[str, object] | None, expected: list[str],
+            candidate: object = None) -> tuple[int, str, list[dict[str, object]]]:
+        del self, workspace, schema, expected, candidate
+        if reach:
+            name = cast(re.Match[str], re.search(r"connect_ex\('\\0(skillz-[0-9a-f]+)'\)", prompt)).group(1)
+            token = cast(re.Match[str], re.search(r"c\.send\(b'([0-9a-f]+)'\)", prompt)).group(1)
+            with socket.socket(socket.AF_UNIX) as client:
+                client.connect("\0" + name)
+                _ = client.send(token.encode())
+        raise RuntimeError("claude crashed")
+    monkeypatch.setattr(ClaudeCode, "_run", run)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    try:
+        if reach:
+            with pytest.raises(NetworkIsolationFailed, match="runner-owned listener accepted a connection"):
+                _ = transport.preflight()
+        else:
+            with pytest.raises(RuntimeError, match="claude crashed"):
+                _ = transport.preflight()
+    finally:
+        transport.close()
+
+
 def test_the_write_probe_also_targets_the_claude_skills_directory(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
     executable = fake_claude(tmp_path)
@@ -2292,6 +2325,7 @@ def test_the_write_probe_also_targets_the_claude_skills_directory(tmp_path: Path
     ("write-claude", "write isolation failed"),
     ("write-skips-claude", "no failed Bash printf to .claude"),
 ])
+@pytest.mark.ac("gh-396:AC-3")
 def test_a_claude_directory_write_failure_stops_the_preflight(
         tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
     del sandbox_passes
