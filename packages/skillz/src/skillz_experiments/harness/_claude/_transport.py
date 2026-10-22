@@ -703,17 +703,16 @@ class ClaudeCode:
         environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                        "TMPDIR": str(workspace / "tmp"), "LANG": "C.UTF-8"}
         limit = self.options.sandbox_seconds if seconds is None else seconds
-        capture = (Path(tempfile.mkdtemp(prefix="skillz-capture-")) if system == "linux" else None)
+        capture = Path(tempfile.mkdtemp(prefix="skillz-capture-"))
         try:
             result = sandboxed(sandbox_argv(system, tool, workspace.resolve(), argv, environment, self.read_roots,
                                             capture), cwd=workspace, limit=limit, budget=self.budget,
                                environment={"PATH": "/usr/bin:/bin"})
             if result.returncode != 0 and result.stderr.startswith(f"{name}:"):
                 raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", sandbox_fix(result.stderr))
-            return result.returncode, result.stdout, result.stderr if capture is None else _take_stderr(capture)
+            return result.returncode, result.stdout, _take_stderr(capture)
         finally:
-            if capture is not None:
-                remove_tree(capture)
+            remove_tree(capture)
 
     def check_candidate(self, candidate: Candidate) -> CheckResult:
         self.check_name(candidate)

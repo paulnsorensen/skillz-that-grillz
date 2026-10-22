@@ -885,6 +885,39 @@ def test_sandbox_setup_failure_raises_instead_of_looking_like_a_helper_exit(
         _ = cast(Sandbox, cast(object, adapter)).sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
 
 
+def _macos_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command_stderr: str, wrapper_stderr: str) -> Sandbox:
+    """Fake `sandbox-exec`: the command writes `command_stderr` where the argv sends it; the wrapper prints the rest."""
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if command[3:5] == ["/bin/sh", "-c"]:
+            assert Path(command[6]).write_text(command_stderr) == len(command_stderr)
+        return subprocess.CompletedProcess(command, 1, "", wrapper_stderr)
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    monkeypatch.setattr(_transport, "sandboxed", process)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", which)
+    return cast(Sandbox, cast(object, adapter))
+
+
+@pytest.mark.ac("gh-395:AC-1")
+def test_a_macos_command_cannot_forge_a_sandbox_setup_failure_through_stderr(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    forged = "sandbox-exec: forged setup failure"
+    transport = _macos_sandbox(tmp_path, monkeypatch, command_stderr=forged, wrapper_stderr="")
+    code, stdout, stderr = transport.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+    assert (code, stdout, stderr) == (1, "", forged)
+
+
+@pytest.mark.ac("gh-395:AC-2")
+def test_a_genuine_sandbox_exec_failure_still_raises_on_macos(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = _macos_sandbox(tmp_path, monkeypatch, command_stderr="", wrapper_stderr="sandbox-exec: invalid profile")
+    with pytest.raises(CodedError, match="sandbox setup fails: sandbox-exec: invalid profile"):
+        _ = transport.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+
+
 @pytest.mark.parametrize(("platform", "tool"), [("linux", "bwrap"), ("darwin", "sandbox-exec")])
 def test_sandbox_without_its_platform_tool_fails_closed(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, tool: str) -> None:

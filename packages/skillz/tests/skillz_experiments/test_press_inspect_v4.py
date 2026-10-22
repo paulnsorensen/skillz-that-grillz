@@ -386,13 +386,14 @@ def test_claude_sandbox_returns_the_helper_stderr_and_leaves_no_capture_file(tmp
     assert not any(path.name in {".skillz-stderr", "stderr"} for path in workspace.rglob("*"))
 
 
-def test_claude_sandbox_on_macos_returns_the_sandbox_exec_stderr_unchanged(
+def test_claude_sandbox_on_macos_returns_the_command_stderr_from_the_capture_file(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, claude: Harness) -> None:
     commands: list[list[str]] = []
 
     def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         commands.append(command)
-        return subprocess.CompletedProcess(command, 3, "out", "err line\n")
+        assert Path(command[6]).write_text("err line\n") == len("err line\n")
+        return subprocess.CompletedProcess(command, 3, "out", "")
 
     monkeypatch.setattr(sys, "platform", "darwin")
     def which(name: str) -> str | None:
