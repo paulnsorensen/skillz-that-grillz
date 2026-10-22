@@ -14,7 +14,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError, load_cases
 from skillz_experiments._cli import main
 from skillz_experiments._contract import Contract, load_contract
-from skillz_experiments._intake import case_hash, load_draft, split_cases
+from skillz_experiments._intake import approval_question, case_hash, load_draft, split_cases
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.run._plan import scored_kinds, size_plan
 from skillz_experiments.harness import ClaudeOptions
@@ -181,6 +181,42 @@ def test_task_families_do_not_fill_the_holdout_of_a_journey_run(tmp_path: Path, 
               "--kind", "journey"])
     error = cast(dict[str, object], json.loads(capsys.readouterr().err))
     assert "scored families" in str(error["error"]) and error["code"] == "cases-too-few" and "has 2" in str(error["error"])
+
+
+@pytest.mark.ac("gh-390:AC-1")
+def test_a_task_case_in_a_journey_only_split_stays_unscored_and_keeps_its_kind(tmp_path: Path) -> None:
+    items = [*journeys("journey", "j", 4), *tasks(1)[:1]]
+    path = tmp_path / "cases.draft.json"
+    _ = path.write_text(json.dumps(items))
+    cases = split_cases(load_draft(path), 7, None, ["journey"])
+    task = next(case for case in cases if case.identifier == "t0-0")
+    assert task.kind == "task" and not task.scored
+    assert {case.kind for case in cases if case.scored} == {"journey"}
+    assert all(case.kind == "journey" for case in cases if case.identifier.startswith("j"))
+    assert "| not scored |" in approval_question(cases, 7).split("- t0-0")[1].splitlines()[0]
+
+
+@pytest.mark.ac("gh-390:AC-1")
+def test_a_task_case_does_not_count_toward_the_families_of_a_journey_only_split(tmp_path: Path) -> None:
+    items = [*journeys("journey", "j", 2), *tasks(3)]
+    path = tmp_path / "cases.draft.json"
+    _ = path.write_text(json.dumps(items))
+    with pytest.raises(ValueError, match="scored families"):
+        _ = split_cases(load_draft(path), 7, None, ["journey"])
+
+
+@pytest.mark.ac("gh-390:AC-2")
+def test_a_journey_only_contract_with_a_task_case_in_the_draft_freezes_and_loads(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = echo_skill(tmp_path)
+    set_contract(target, kinds={"journey": journey_kind(JOURNEY_GATE, RUBRIC_B)})
+    rules = load_contract(target)
+    assert scored_kinds(rules) == ("journey",)
+    data, out = walk(tmp_path, target, [*tasks(2), *journeys("journey", "j", size=3)], capsys)
+    question = str(data["question"]).splitlines()
+    assert sum("| not scored |" in line for line in question if line.startswith("- t")) == 4
+    loaded = load_cases(out / "cases.json", rules.grader_types())
+    assert {case.kind for case in loaded} == {"journey"} and len(loaded) == 12
 
 
 def test_the_default_kinds_follow_the_contract_and_a_bad_selection_stops(tmp_path: Path) -> None:

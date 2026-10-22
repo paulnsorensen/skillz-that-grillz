@@ -253,7 +253,7 @@ class _Tie(_Provider):
         del candidate, case, holdout
         assert schema is not None
         seed = cast(dict[str, str], json.loads(prompt.rsplit("\n", 1)[1])["candidate"])
-        return {"answer": {name: seed[name] for name in cast(list[str], schema["required"])}}
+        return {"answer": {name: seed.get(name) for name in cast(list[str], schema["required"])}}
 
 
 def test_a_tie_run_lists_every_one_case_family_as_skipped(

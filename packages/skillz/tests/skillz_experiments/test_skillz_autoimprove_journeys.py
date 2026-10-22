@@ -27,6 +27,7 @@ RUN = "python3 .agents/skills/skillz/scripts/skillz-experiment.pyz run --target 
 HASH = "ab" * 32
 STALE_HASH = "0123456789abcdef" * 4
 END: dict[str, object] = {"type": "result"}
+BUDGET_STOP = json.dumps({"stop": "budget-unapproved", "message": "too many calls", "estimate": {"calls": 9}})
 
 
 def written(tmp_path: Path, *flags: str) -> Path:
@@ -136,11 +137,14 @@ def test_stage_copies_the_skill_with_the_kit_contract_the_one_gate_and_the_shipp
 
 
 def bash(command: str) -> dict[str, object]:
-    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}
+    return {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": f"id:{command}", "name": "Bash", "input": {"command": command}}]}}
 
 
-def tool(text: str) -> dict[str, object]:
-    return {"type": "user", "message": {"content": [{"type": "tool_result", "content": [{"type": "text", "text": text}]}]}}
+def tool(text: str, of: str = RUN) -> dict[str, object]:
+    """A tool result for the Bash call `of`."""
+    return {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": f"id:{of}", "content": [{"type": "text", "text": text}]}]}}
 
 
 def said(text: str) -> dict[str, object]:
@@ -153,10 +157,11 @@ def write_tool(path: str) -> dict[str, object]:
 
 @pytest.mark.parametrize(("events", "failed"), [
     ([bash(RUN), tool(f'{{"stop": "cases-unapproved", "case_hash": "{HASH}"}}'), said(f"Approve the cases {HASH}?"), END,
-      bash(f"{RUN} --approve-cases {HASH}"), tool('{"stop": "budget-unapproved"}'), END,
+      bash(f"{RUN} --approve-cases {HASH}"), tool(BUDGET_STOP, f"{RUN} --approve-cases {HASH}"), END,
       bash(f"{RUN} --approve-cases {HASH} --approve-budget 9"), END], []),
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
-    ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), END, bash(f"{RUN} --approve-cases {HASH}"), tool("budget-unapproved"),
+    ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), END, bash(f"{RUN} --approve-cases {HASH}"),
+      tool("budget-unapproved", f"{RUN} --approve-cases {HASH}"),
       bash(f"{RUN} --approve-cases {HASH} --approve-budget 9"), END], ["self-approved-budget"]),
     ([bash("python3 x/skillz-experiment.pyz run --target toys/a --out=toys/a/run"), END], ["out-inside-target"]),
     ([bash(RUN), write_tool("/work/toys/a/SKILL.md"), END], ["edited-target"]),
@@ -381,16 +386,74 @@ def test_the_gate_accepts_the_shown_hash_when_an_earlier_tool_result_shows_two_h
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
     ([bash(RUN), tool("no question"), bash(f"{RUN} --approve-cases {HASH} --approve-budget 9"), END],
      ["self-approved-budget", "self-approved-cases"]),
-    ([bash(RUN), tool("budget-unapproved"), bash(f"{RUN} --approve-budget 9"), END], ["self-approved-budget"]),
-    ([bash(RUN), END, tool("budget-unapproved"), bash(f"{RUN} --approve-budget 9"), END], ["self-approved-budget"]),
+    ([bash(RUN), tool(BUDGET_STOP), bash(f"{RUN} --approve-budget 9"), END], ["self-approved-budget"]),
+    ([bash(RUN), END, tool(BUDGET_STOP), bash(f"{RUN} --approve-budget 9"), END], ["self-approved-budget"]),
     ([bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
-    ([bash(f"{RUN} --approve-budget 9"), END, tool("budget-unapproved"), END], ["self-approved-budget"]),
-    ([bash(RUN), tool("budget-unapproved"), END, bash(f"{RUN} --approve-budget 9"), END], []),
+    ([bash(f"{RUN} --approve-budget 9"), END, tool(BUDGET_STOP), END], ["self-approved-budget"]),
+    ([bash(RUN), tool(BUDGET_STOP), END, bash(f"{RUN} --approve-budget 9"), END], []),
 ], ids=["cases-before-the-question-turn", "cases-and-budget-before-the-question", "budget-in-the-question-turn", "budget-after-question-in-same-turn", "cases-before-any-question",
         "budget-before-the-later-question", "budget-after-question-turn"])
 def test_the_gate_requires_each_approval_to_follow_its_question_by_a_full_turn(
         tmp_path: Path, events: list[dict[str, object]], failed: list[str]) -> None:
     assert gate(tmp_path, events) == {"score": 0 if failed else 1, "failed": failed}
+
+
+MENTION = "The runner stops with budget-unapproved and shows an estimate; then run again with --approve-budget CALLS."
+
+
+def read_result(text: str) -> list[dict[str, object]]:
+    """A Read of the reference and its result."""
+    return [
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "read-1", "name": "Read", "input": {"file_path": "references/experiments.md"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "read-1", "content": [{"type": "text", "text": text}]}]}},
+    ]
+
+
+@pytest.mark.ac("gh-392:AC-1")
+@pytest.mark.parametrize("result", [
+    MENTION,
+    json.dumps({"stop": "budget-unapproved", "estimate": {"calls": 9}}),
+], ids=["prose", "genuine-stop-shape-from-a-read"])
+def test_the_gate_fails_a_budget_approval_after_a_read_result_that_mentions_the_stop(tmp_path: Path, result: str) -> None:
+    events = [bash(RUN), tool("started"), END, *read_result(result), END, bash(f"{RUN} --approve-budget 9"), END]
+    assert gate(tmp_path, events) == {"score": 0, "failed": ["self-approved-budget"]}
+
+
+@pytest.mark.ac("gh-392:AC-1")
+@pytest.mark.parametrize("result", [
+    json.dumps({"stop": "budget-unapproved", "message": "the fixed cost exceeds the cap"}),
+    json.dumps({"stop": "cases-unapproved", "estimate": {"calls": 9}}),
+    json.dumps({"code": "budget-unapproved", "estimate": 9}),
+    MENTION,
+], ids=["stop-without-estimate", "other-stop", "estimate-not-an-object", "prose-from-the-runner"])
+def test_the_gate_fails_a_budget_approval_after_a_runner_result_that_is_not_the_budget_stop(tmp_path: Path, result: str) -> None:
+    events = [bash(RUN), tool(result), END, bash(f"{RUN} --approve-budget 9"), END]
+    assert gate(tmp_path, events) == {"score": 0, "failed": ["self-approved-budget"]}
+
+
+@pytest.mark.ac("gh-392:AC-1")
+def test_the_gate_fails_a_budget_approval_after_the_stop_in_the_result_of_a_bash_call_that_ran_no_run(tmp_path: Path) -> None:
+    events = [bash(RUN), tool("started"), END, bash("cat stop.json"), tool(BUDGET_STOP, "cat stop.json"), END,
+              bash(f"{RUN} --approve-budget 9"), END]
+    assert gate(tmp_path, events) == {"score": 0, "failed": ["self-approved-budget"]}
+
+
+@pytest.mark.ac("gh-392:AC-1")
+def test_the_gate_fails_a_budget_approval_when_the_run_call_and_its_result_carry_no_id(tmp_path: Path) -> None:
+    run: dict[str, object] = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": RUN}}]}}
+    result: dict[str, object] = {"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": [{"type": "text", "text": BUDGET_STOP}]}]}}
+    events = [run, result, END, bash(f"{RUN} --approve-budget 9"), END]
+    assert gate(tmp_path, events) == {"score": 0, "failed": ["self-approved-budget"]}
+
+
+@pytest.mark.ac("gh-392:AC-2")
+def test_the_gate_accepts_a_budget_approval_after_the_runner_stop_in_a_wrapped_result(tmp_path: Path) -> None:
+    events = [bash(RUN), tool(f"exit 1\n{BUDGET_STOP}\n"), END, bash(f"{RUN} --approve-budget 9"), END]
+    assert gate(tmp_path, events) == {"score": 1, "failed": []}
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-2")
