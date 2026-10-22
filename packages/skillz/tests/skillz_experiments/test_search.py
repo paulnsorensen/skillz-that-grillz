@@ -8,6 +8,7 @@ from typing import cast, final
 import pytest
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
+from skillz_experiments._cases import CodedError
 from skillz_experiments.search import Edit, search
 from skillz_experiments.search._engine import overshoot, skip_limit
 
@@ -207,3 +208,30 @@ def test_search_rejects_an_unknown_edit() -> None:
     with pytest.raises(ValueError, match="prose or prose\\+cli"):
         _ = search({"SKILL.md": "x"}, cast(Edit, cast(object, "cli")), ["t"], ["v"], lambda c, e: (0.0, {}),
                    lambda c, f, k: {}, metric_calls=5)
+
+
+@pytest.mark.ac("gh-401:AC-1")
+def test_search_stops_with_a_coded_fault_on_an_uncoded_proposer_exception() -> None:
+    def evaluate(_candidate: dict[str, str], _example: object) -> tuple[float, dict[str, object]]:
+        return 0.0, {"task_correct": 0.0}
+
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                _components: list[str]) -> dict[str, str]:
+        raise RuntimeError("boom")
+
+    with pytest.raises(CodedError, match="boom") as raised:
+        _ = search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=20)
+    assert raised.value.code == "proposer-faulted"
+
+
+@pytest.mark.ac("gh-401:AC-2")
+@pytest.mark.parametrize("error", [ValueError("skip"), CodedError("some-code", "coded")])
+def test_search_keeps_a_proposer_value_error_as_a_skipped_proposal(error: ValueError) -> None:
+    def evaluate(_candidate: dict[str, str], _example: object) -> tuple[float, dict[str, object]]:
+        return 0.0, {"task_correct": 0.0}
+
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                _components: list[str]) -> dict[str, str]:
+        raise error
+
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=20) is False
