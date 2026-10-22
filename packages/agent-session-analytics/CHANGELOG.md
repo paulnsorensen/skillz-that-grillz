@@ -20,7 +20,9 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 - `SESSIONS_DUCKDB_MEMORY_LIMIT` must be at least 16MiB and below 16EiB. Ingest checks the value before the stage step.
 - An invalid `SESSIONS_DUCKDB_*` value makes `sql` exit 5 (a query error), not 4.
 - `tool_uses.input` keeps an explicit JSON `null`, and `tool_results.content` prints floats the way DuckDB prints them.
-- The schema version is now 2, so ingest rebuilds a version 1 database.
+- The schema version is now 3, so ingest rebuilds a version 1 or version 2 database.
+- omp and pi `model_turns.cache_creation_tokens` now holds the cache-write count (`cacheWrite`). It was NULL.
+- omp and pi `model_turns.context_tokens` now equals input + cache_read + cache_creation tokens, as it does for Claude.
 - The Codex adapter keeps `item_completed` `UserMessage` prompts, `task_complete`, and `turn_aborted` events as `raw_entries` rows. Codex `sessions.entry_count` counts them.
 - The omp and pi adapters keep the `attribution` of a user row in `raw_entries.message`. A row with `attribution` `agent` is not a real prompt.
 - Codex `raw_entries.isSidechain` is now `true` for every row of a rollout whose `session_meta.source` has a `subagent` value (`thread_spawn`, `guardian`, or `review`) and `false` otherwise. It was NULL.

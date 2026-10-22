@@ -123,4 +123,4 @@ def test_sql_reads_a_database_in_a_read_only_directory(sandbox: Sandbox) -> None
     finally:
         database.parent.chmod(0o700)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == [{"version": 2}]
+    assert json.loads(result.stdout) == [{"version": 3}]
