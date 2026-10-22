@@ -233,7 +233,7 @@ SCENARIOS: dict[str, Scenario] = {
     "prose-cli": Scenario(_prose_cli, 53),
     "journey": Scenario(_journey, 229),
     "resume": Scenario(_basic, 97, resume=True),
-    "fromargs-benefit": Scenario(_fromargs_benefit, 103, author=author, check=check_cli),
+    "fromargs-benefit": Scenario(_fromargs_benefit, 122, author=author, check=check_cli),
 }
 """Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it)."""
 NAMES = (*SCENARIOS, "analytics")

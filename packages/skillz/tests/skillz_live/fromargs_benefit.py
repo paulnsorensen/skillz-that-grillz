@@ -29,10 +29,14 @@ FROMARGS = ROOT / "packages/fromargs/src/fromargs"
 NAME = "semver-next"
 CASE_FILES = ("VERSION", "commits.txt")
 ANSWER_KEYS = frozenset({"bump", "next"})
-EXPECTED_KEYS = ANSWER_KEYS | {"criteria"}
-"""A judged case holds `expected.criteria` next to the answer (criteria-drafting.md)."""
-OPTIONAL_KEYS = frozenset({"expected_output", "assertions"})
-"""The source fields that the criteria come from may stay in `expected` (draft-case.schema.json)."""
+"""The `exact-json` grader compares the whole answer with `expected`, so `expected` holds these keys and no other."""
+CONTRACT: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": NAME, "invocation": f"${NAME}",
+            "kinds": {"task": {"grader": "exact-json"}}, "editable": []}
+"""An `exact-json` evaluation costs one call, half of a judged one, so the budget buys more search."""
+FAMILIES = ("plain-bumps", "breaking-markers", "reverts", "zero-and-rc")
+CASES_PER_FAMILY = 3
+DRAFT_FAMILIES = 8
+"""Twice the four reference families: the search budget is 4 metric calls per train and validation case."""
 MIN_FAMILIES = 3
 MIN_COMMITS = 80
 """A long log costs the seed many tokens to apply the rules by hand. A CLI applies them for a fixed cost."""
@@ -51,11 +55,11 @@ PROMPT = """/skillz autoimprove {target}
 
 Use the claude harness. The task model is {task_model}.
 Use {out} as the run directory. It exists and is private.
-Skip the Usage lens and session mining. Do not write a contract.
-Draft exactly 12 task cases in 4 families of 3 cases.
+Skip the Usage lens and session mining.
+The skill has an approved contract with an exact-json grader. Do not change it.
+Draft exactly {cases} task cases in {families} families of {per_family} cases.
 Each task case gives the files `VERSION` and `commits.txt`.
-Its `expected` holds the exact JSON answer of the skill in `bump` and `next`, and the case `criteria`.
-Pick each criteria fork yourself and mark the pick agent-decided.
+Its `expected` is the exact JSON answer of the skill, with only the keys `bump` and `next`.
 Draft hard cases. Each `commits.txt` holds at least {min_commits} commits.
 Every case mixes revert chains, reverts of reverts, and near-miss headers with the other edge rules.
 Stop at the case approval question. Do not approve the cases or the budget, and do not start the search.
@@ -106,6 +110,8 @@ def build_target(work: Path) -> Path:
     _ = shutil.copytree(FROMARGS, skill / "lib/fromargs", ignore=junk)
     _ = (skill / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
     _ = (skill / "wedge.toml").write_text(WEDGE_TOML, encoding="utf-8")
+    (skill / "evals").mkdir()
+    _ = (skill / "evals/autoimprove.json").write_text(json.dumps(CONTRACT, indent=2) + "\n", encoding="utf-8")
     _ = _checked(["uv", "lock", "--project", str(skill)])
     built = build_wedge(skill, work / "seed-build")
     (skill / "scripts").mkdir()
@@ -144,23 +150,21 @@ def _planted(family: str, index: int, rng: random.Random) -> tuple[str, list[lis
 
 
 def reference_draft() -> list[dict[str, object]]:
-    """Return a 12-case draft in 4 families with oracle answers. A dry run uses it in place of the stage 1 draft."""
+    """Return a 24-case draft in 8 families with oracle answers. A dry run uses it in place of the stage 1 draft.
+
+    Each reference family appears twice, with its second copy drawn from another random stream.
+    """
     draft: list[dict[str, object]] = []
-    for family in ("plain-bumps", "breaking-markers", "reverts", "zero-and-rc"):
-        for index in range(3):
+    for family in (*FAMILIES, *(f"{name}-b" for name in FAMILIES)):
+        for index in range(CASES_PER_FAMILY):
             rng = random.Random(f"{family}-{index}")
-            version, planted = _planted(family, index, rng)
+            version, planted = _planted(family.removesuffix("-b"), index, rng)
             files = {"VERSION": version + "\n", "commits.txt": _commits(rng, planted, MIN_COMMITS)}
             answer = next_version(files["VERSION"], files["commits.txt"])
             draft.append({"id": f"{family}-{index}", "family": family, "kind": "task", "source": "skill",
                           "request": "What is the next version of the project in this directory?",
-                          "files": files, "expected": answer | {"criteria": _criteria(answer)}})
+                          "files": files, "expected": answer})
     return draft
-
-
-def _criteria(answer: dict[str, str]) -> list[dict[str, object]]:
-    return [{"id": key, "text": f"THE skill SHALL report `{key}` as `{answer[key]}` in its JSON answer.", "must": True,
-             "from": "expected_output"} for key in sorted(answer)]
 
 
 def _case_problem(case: dict[str, object]) -> str | None:
@@ -172,8 +176,8 @@ def _case_problem(case: dict[str, object]) -> str | None:
     if (count := commit_count(texts["commits.txt"])) < MIN_COMMITS:
         return f"commits.txt holds {count} commits; the scenario needs {MIN_COMMITS}"
     keys = frozenset(cast(dict[str, object], expected)) if isinstance(expected, dict) else frozenset[str]()
-    if not EXPECTED_KEYS <= keys <= EXPECTED_KEYS | OPTIONAL_KEYS:
-        return "expected must hold bump, next, and criteria, and only expected_output or assertions besides"
+    if keys != ANSWER_KEYS:
+        return "expected must hold exactly bump and next"
     try:
         want = next_version(texts["VERSION"], texts["commits.txt"])
     except ValueError as error:
@@ -186,8 +190,8 @@ def check_draft(draft: object) -> list[str]:
     """Return one problem per fault of an agent-written draft. An empty list means the draft passes.
 
     Every task case must give `VERSION` and a `commits.txt` of at least `MIN_COMMITS` commits, hold the oracle answer
-    in `expected`, and give `expected.criteria`. The task cases must span at least `MIN_FAMILIES` families. The runner checks the split sizes
-    and the criteria shape itself.
+    as all of `expected`. The task cases must span at least `MIN_FAMILIES` families. The runner checks the split sizes
+    itself.
     """
     if not isinstance(draft, list) or not all(isinstance(case, dict) for case in cast(list[object], draft)):
         return ["the draft is not a list of case objects"]
@@ -214,7 +218,8 @@ def author(target: Path, work: Path, task_model: str) -> tuple[list[dict[str, ob
             "--add-dir", str(target), str(out)]
     environment = {key: value for key, value in os.environ.items() if not key.startswith("CLAUDE_CODE_")
                    and key != "CLAUDECODE"}
-    prompt = PROMPT.format(target=target, task_model=task_model, out=out, min_commits=MIN_COMMITS)
+    prompt = PROMPT.format(target=target, task_model=task_model, out=out, min_commits=MIN_COMMITS,
+                           cases=DRAFT_FAMILIES * CASES_PER_FAMILY, families=DRAFT_FAMILIES, per_family=CASES_PER_FAMILY)
     try:
         result = subprocess.run(argv, input=prompt, cwd=driver, env=environment, capture_output=True, text=True,
                                 timeout=AUTHOR_SECONDS, check=False)

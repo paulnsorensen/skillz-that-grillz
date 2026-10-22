@@ -11,7 +11,9 @@ from typing import cast
 
 import pytest
 
-from fromargs_benefit import FIXTURE, check_draft, cli_verdict, invocations, match_cli, reference_draft
+from skillz_experiments._contract import parse
+
+from fromargs_benefit import CONTRACT, FIXTURE, check_draft, cli_verdict, invocations, match_cli, reference_draft
 from semver_oracle import next_version
 
 HERE = Path(__file__).resolve().parent
@@ -74,10 +76,11 @@ def test_the_oracle_refuses_a_version_that_is_not_semantic() -> None:
 
 
 @pytest.mark.ac("fromargs-benefit-smoke:AC-2")
-def test_the_reference_draft_passes_the_draft_check_with_twelve_cases_in_four_families() -> None:
+def test_the_reference_draft_passes_the_draft_check_with_twenty_four_cases_in_eight_families() -> None:
     draft = reference_draft()
     assert check_draft(draft) == []
-    assert len(draft) == 12 and len({case["family"] for case in draft}) == 4
+    assert len(draft) == 24 and len({case["family"] for case in draft}) == 8
+    assert len({json.dumps(case["files"]) for case in draft}) == 24, "a second family copy repeats a case"
     assert len({json.dumps(case["expected"]) for case in draft}) > 3, "the reference answers do not vary"
 
 
@@ -91,20 +94,17 @@ def test_the_draft_check_names_a_case_whose_expected_answer_differs_from_the_ora
 
 
 @pytest.mark.ac("fromargs-benefit-smoke:AC-2")
-def test_the_draft_check_keeps_the_source_fields_that_the_criteria_drafting_steps_leave_in_expected() -> None:
-    draft = reference_draft()
-    for case in draft:
-        expected = cast(dict[str, object], case["expected"])
-        case["expected"] = expected | {"expected_output": json.dumps({key: expected[key] for key in ("bump", "next")}),
-                                       "assertions": ["The answer is one JSON object."]}
-    assert check_draft(draft) == []
+def test_the_scenario_contract_grades_the_task_kind_with_exact_json() -> None:
+    contract = parse(CONTRACT, "test")
+    assert contract.grader("task").type == "exact-json"
+    assert not contract.judged("task")
 
 
 @pytest.mark.ac("fromargs-benefit-smoke:AC-2")
 @pytest.mark.parametrize(("change", "problem"), [
     ({"files": {"commits.txt": "fix: a\n"}}, "files lack VERSION or commits.txt"),
-    ({"expected": {"bump": "patch", "next": "1.0.1", "criteria": [], "why": "fix"}}, "only expected_output or assertions"),
-    ({"expected": {"bump": "patch", "next": "1.0.1"}}, "must hold bump, next, and criteria"),
+    ({"expected": {"bump": "patch", "next": "1.0.1", "criteria": []}}, "must hold exactly bump and next"),
+    ({"expected": {"bump": "patch"}}, "must hold exactly bump and next"),
     ({"files": {"VERSION": "v1\n", "commits.txt": _log(*["fix: a"] * 80)}}, "not a semantic version"),
     ({"files": {"VERSION": "1.0.0\n", "commits.txt": _log(*["fix: a"] * 79)}}, "holds 79 commits; the scenario needs 80"),
 ])
@@ -148,7 +148,7 @@ GUIDE = "Run `python3 .agents/skills/semver-next/scripts/next.pyz commits.txt` a
 @pytest.mark.ac("fromargs-benefit-smoke:AC-3")
 def test_the_cli_check_passes_a_cli_that_answers_every_case_as_the_oracle(tmp_path: Path) -> None:
     fields = match_cli(GUIDE, _archive(tmp_path, ORACLE_CLI), "next", reference_draft(), tmp_path / "cases")
-    assert fields["cli"] == "ok" and fields["cli_cases"] == 12 and fields["cli_mismatches"] == [], fields
+    assert fields["cli"] == "ok" and fields["cli_cases"] == 24 and fields["cli_mismatches"] == [], fields
     assert fields["cli_command"] == "python3 .agents/skills/semver-next/scripts/next.pyz commits.txt", fields
 
 
