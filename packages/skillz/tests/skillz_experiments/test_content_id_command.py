@@ -1,5 +1,6 @@
 """The package content id command in skills/skillz/SKILL.md, run against a real git repository."""
 
+import os
 import re
 import shutil
 import subprocess
@@ -52,6 +53,25 @@ def test_missing_input_fails_closed(repo: Path) -> None:
     (repo / "skills/demo").mkdir()
     assert _run(repo).returncode != 0
 
+
+@pytest.mark.ac("gh-409:AC-2")
+def test_empty_file_list_fails_closed_when_xargs_skips_the_run(repo: Path, tmp_path: Path) -> None:
+    real = shutil.which("xargs")
+    assert real is not None
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    _ = (shim / "xargs").write_text(f'#!/bin/sh\nexec {real} -r "$@"\n', encoding="utf-8")
+    (shim / "xargs").chmod(0o755)
+    env = {**os.environ, "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}"}
+
+    def run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["bash", "-c", _command()], cwd=repo, env=env, capture_output=True, text=True, check=False)
+
+    shutil.rmtree(repo / "skills/demo")
+    _ = subprocess.run(["git", "rm", "-rq", "--cached", "skills/demo"], cwd=repo, check=True)
+    assert run().returncode != 0
+    (repo / "skills/demo").mkdir()
+    assert run().returncode != 0
 
 @pytest.mark.ac("gh-409:AC-3")
 @pytest.mark.parametrize("shell", ["bash", "zsh"])
