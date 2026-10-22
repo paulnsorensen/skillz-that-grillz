@@ -247,6 +247,7 @@ def _seed(sandbox: Sandbox, entries: list[dict[str, object]]) -> None:
                 "message": {
                     "role": "assistant",
                     "model": "om",
+                    "usage": {"input": 10, "output": 2, "cacheRead": 5, "cacheWrite": 3},
                     "content": [{"type": "toolCall", "id": "k", "name": "bash", "arguments": "not json"}],
                 },
             },
