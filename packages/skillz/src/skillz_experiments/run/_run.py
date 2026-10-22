@@ -49,7 +49,7 @@ from skillz_experiments.harness import (
     stop_kind,
 )
 from skillz_experiments.run._export import is_inside, summary
-from skillz_experiments.run._history_store import FileHistoryStore, Loaded
+from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._plan import editable_files, plan_estimate, scored_kinds, size_plan
 from skillz_experiments.run._resume import (
     check_resume,
@@ -65,7 +65,6 @@ from skillz_experiments.run._resume import (
 )
 from skillz_experiments.run._open import engine_hash
 from skillz_experiments.run._ports import HistoryStore, Ports
-from skillz_experiments.run._replay import GitPatchApplier
 from skillz_experiments.run._record_fields import text_field
 from skillz_experiments.run._session import Session
 from skillz_experiments.run._state import Factory, HarnessName
@@ -277,10 +276,6 @@ def _check_statistics_flags(statistics: Mapping[str, float] | None) -> dict[str,
     return accepted
 
 
-def _default_ports() -> Ports:
-    return Ports(patches=GitPatchApplier(), history=FileHistoryStore())
-
-
 def _record_history(session: Session, history: HistoryStore, loaded: Loaded) -> None:
     """Add this run's attempts to the store, then write the history block of the search. A store fault adds a warning."""
     attempts = cast(dict[str, object], session.record["search"]).get("attempts")
@@ -421,4 +416,4 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)
-        return _drive(session, ports or _default_ports())
+        return _drive(session, ports or Ports())

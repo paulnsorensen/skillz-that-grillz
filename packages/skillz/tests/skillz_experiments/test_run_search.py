@@ -30,7 +30,6 @@ from typing_extensions import override
 from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
 from skillz_experiments.run._history_store import UNREADABLE, FileHistoryStore, store_path
 from skillz_experiments.run._ports import Ports
-from skillz_experiments.run._replay import GitPatchApplier
 from fake_provider import PASSED, FakeProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -2172,7 +2171,7 @@ def test_a_resume_at_the_searched_phase_without_a_history_block_writes_the_store
 
     with pytest.raises(_Killed):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
-                ports=Ports(patches=GitPatchApplier(), history=KilledStore()))
+                ports=Ports(history=KilledStore()))
     assert read(out / "run.json")["phase"] == "searched" and "history" not in cast(dict[str, object], read(out / "run.json")["search"])
     assert not _store(out).exists()
     result = run(target, out, MODEL, live=True, factory=state.factory)

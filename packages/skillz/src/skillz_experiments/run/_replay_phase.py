@@ -56,7 +56,7 @@ def run_replay(state: RunState, built: Callable[[Candidate], Candidate], patches
         _conclude(state, ["patch-apply-failed"], detail={"code": error.code, "error": str(error)[:STDERR_LIMIT]})
         return
     copy = prepare_copy(state.out / "replay", seed, patch)
-    failure = patches.apply(copy, patch)
+    failure = patches(copy, patch)
     if failure is not None:
         _conclude(state, ["patch-apply-failed"], patch.digest, detail={"stderr": failure})
         return

@@ -1,23 +1,21 @@
 """The infrastructure boundaries of a run: `git apply` for the replay and the cross-run attempt history store.
 
-The defaults are `GitPatchApplier` in `_replay`, next to `apply_patches`, and `FileHistoryStore` in `_history_store`.
+The defaults are `apply_patches` in `_replay` and `FileHistoryStore` in `_history_store`.
 `run(ports=...)` replaces them.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from skillz_experiments.run._history_store import Loaded
+from skillz_experiments.run._history_store import FileHistoryStore, Loaded
 from skillz_experiments.run._patch import Patch
+from skillz_experiments.run._replay import apply_patches
 
-
-class PatchApplier(Protocol):
-    def apply(self, directory: Path, patch: Patch) -> str | None:
-        """Apply the patches to the clean copy in `directory`. Return the stderr of the first failure, else None."""
-        ...
+# Apply the patches to the clean copy in `directory`. Return the stderr of the first failure, else None.
+PatchApplier = Callable[[Path, Patch], str | None]
 
 
 class HistoryStore(Protocol):
@@ -33,5 +31,5 @@ class HistoryStore(Protocol):
 
 @dataclass(frozen=True)
 class Ports:
-    patches: PatchApplier
-    history: HistoryStore
+    patches: PatchApplier = field(default=apply_patches)
+    history: HistoryStore = field(default_factory=FileHistoryStore)

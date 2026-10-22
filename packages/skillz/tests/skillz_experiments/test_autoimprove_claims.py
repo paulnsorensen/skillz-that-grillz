@@ -19,11 +19,10 @@ from skillz_experiments._contract import Grader
 from skillz_experiments._graders import judge
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, _export, _patch, _replay_phase, _session, export, run, summary
-from skillz_experiments.run._history_store import FileHistoryStore
 from skillz_experiments.run._patch import Patch
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run._ports import Ports
-from skillz_experiments.run._replay import GitPatchApplier, drift
+from skillz_experiments.run._replay import apply_patches, drift, prepare_copy
 from test_run_search import MODEL, Provider, Search
 
 if TYPE_CHECKING:
@@ -142,10 +141,9 @@ def _overwrite(copy: Path, text: str) -> None:
 
 def _tamper_copy(monkeypatch: pytest.MonkeyPatch, change: Callable[[Path], None]) -> None:
     """Run the real `prepare_copy`, then change the clean copy, as a stale or corrupt copy would be."""
-    real = cast(Callable[..., Path], getattr(_replay_phase, "prepare_copy"))
 
-    def wrapped(*args: object, **kwargs: object) -> Path:
-        copy = real(*args, **kwargs)
+    def wrapped(directory: Path, seed: Candidate, patch: Patch) -> Path:
+        copy = prepare_copy(directory, seed, patch)
         change(copy)
         return copy
 
@@ -154,13 +152,12 @@ def _tamper_copy(monkeypatch: pytest.MonkeyPatch, change: Callable[[Path], None]
 
 def _tampering_ports(change: Callable[[Path], None]) -> Ports:
     """Ports whose applier runs the real `git apply`, then changes the patched copy."""
-    class Tampering:
-        def apply(self, directory: Path, patch: Patch) -> str | None:
-            failure = GitPatchApplier().apply(directory, patch)
-            change(directory)
-            return failure
+    def tampering(directory: Path, patch: Patch) -> str | None:
+        failure = apply_patches(directory, patch)
+        change(directory)
+        return failure
 
-    return Ports(patches=Tampering(), history=FileHistoryStore())
+    return Ports(patches=tampering)
 
 
 @pytest.mark.parametrize("fault", ["patch-apply-failed", "patch-bytes-differ", "replay-identity-differs"])
