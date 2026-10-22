@@ -43,3 +43,8 @@ class LateBuiltins:
                     listed = self._listing(workspace)
                 self._late |= unknown & listed
             return Inventory(inventory.builtin | self._late, inventory.foreign)
+
+    def merged(self, inventory: Inventory) -> Inventory:
+        """Return `inventory` with every name that an earlier `adopt` call found."""
+        with self._lock:
+            return Inventory(inventory.builtin | self._late, inventory.foreign)

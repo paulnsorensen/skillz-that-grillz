@@ -21,7 +21,7 @@ import pytest
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
 from skillz_experiments.harness._claude import _constants, _events, _late, _options, _preflight, _sandbox, _settings, _transport
-from skillz_experiments.harness._claude._preflight import Preflight
+from skillz_experiments.harness._claude._preflight import probe_sandbox
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
@@ -403,7 +403,7 @@ def test_the_claude_sandbox_limit_is_the_configured_sandbox_seconds_and_the_prob
     workspace = make_workspace(tmp_path / "workspace")
     try:
         _ = adapter.sandbox(workspace, ["/usr/bin/true"])
-        Preflight(adapter).probe_sandbox(workspace, tmp_path / "sealed")
+        probe_sandbox(adapter, workspace, tmp_path / "sealed")
         _ = adapter.sandbox(workspace, ["/usr/bin/true"])
     finally:
         adapter.close()
@@ -426,7 +426,7 @@ def test_a_sandbox_probe_timeout_fails_the_probe_like_exit_124(tmp_path: Path, m
         for fake in (timeout, exit_124):
             monkeypatch.setattr(ClaudeCode, "sandbox", fake)
             with pytest.raises(CodedError) as caught:
-                Preflight(adapter).probe_sandbox(make_workspace(tmp_path / fake.__name__), tmp_path / "sealed")
+                probe_sandbox(adapter, make_workspace(tmp_path / fake.__name__), tmp_path / "sealed")
             messages.append(f"{caught.value.code}: {caught.value}")
     finally:
         adapter.close()

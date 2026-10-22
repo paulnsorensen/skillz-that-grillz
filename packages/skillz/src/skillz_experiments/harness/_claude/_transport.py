@@ -72,7 +72,7 @@ from skillz_experiments.harness._claude._sandbox import (
 )
 from skillz_experiments.harness._claude._journey import Exit, NO_INIT, TurnRunner
 from skillz_experiments.harness._claude._late import LateBuiltins
-from skillz_experiments.harness._claude._preflight import Preflight
+from skillz_experiments.harness._claude._preflight import Preflight, probe_sandbox
 from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings
 
 
@@ -162,7 +162,7 @@ class ClaudeCode:
             self._stage(workspace)
             return self._list(workspace, frozenset())[0]
 
-        self._late = LateBuiltins(builtin_listing)
+        self.late = LateBuiltins(builtin_listing)
         self._unix_sockets: bool | None = None
 
     @property
@@ -310,7 +310,7 @@ class ClaudeCode:
         inventory, so a foreign skill cannot pass as the probe.
         """
         if self._inventory is not None:
-            return self._inventory
+            return self.late.merged(self._inventory)
         name = probe_name()
         with tempfile.TemporaryDirectory(prefix="skillz-inventory-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
@@ -326,7 +326,7 @@ class ClaudeCode:
                     raise preflight_leak(f"skillOverrides cannot turn off {sorted(left - {name})}, "
                                           + f"or it hides the probe skill (listed: {sorted(left)})")
         self._inventory = Inventory(builtin, foreign)
-        return self._inventory
+        return self.late.merged(self._inventory)
 
     def environment_key(self) -> str:
         """Hash what the live preflight depends on besides the role fingerprint: sandbox settings and process environment.
@@ -383,7 +383,7 @@ class ClaudeCode:
         self._check_memory()
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             workspace, sealed, _token = self._sealed(Path(directory))
-            Preflight(self).probe_sandbox(workspace, sealed)
+            probe_sandbox(self, workspace, sealed)
 
     def preflight(self) -> dict[str, object]:
         return Preflight(self).run()
@@ -439,9 +439,8 @@ class ClaudeCode:
             with self.budget.timed(self.role):
                 returncode, stderr, events = self._run(workspace, prompt, sent, expected, candidate)
                 latency = time.monotonic() - started
-                self._inventory = self._late.adopt(events, expected, self.inventory(), self.declared)
-                final, unloaded = self._verdict(events, Exit.PROCESS_DIED if returncode else Exit.DONE, returncode, stderr,
-                                                expected, self._inventory.builtin)
+                builtin = self.late.adopt(events, expected, self.inventory(), self.declared).builtin
+                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected, builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
                 return not_loaded(workspace, started, trace) | {"latency_seconds": latency}
@@ -475,7 +474,8 @@ class ClaudeCode:
                 returncode = child.close()
                 stderr = child.stderr
             events, transcript = runner.events, runner.transcript
-            _, unloaded = self._verdict(events, outcome, returncode, stderr, expected, runner.builtin)
+            _, unloaded = self._verdict(events, outcome is Exit.PROCESS_DIED, returncode, stderr, expected,
+                                          runner.builtin)
             results = [event for event in events if event.get("type") == "result"]
             trace = event_trace(events) + [token for result in results for token in token_events(result)]
             if unloaded:
@@ -485,14 +485,14 @@ class ClaudeCode:
                     "usage": usage(trace), "workspace": str(workspace), "latency_seconds": time.monotonic() - started,
                     "output_files": snapshot_outputs(workspace), "transcript": transcript, "raw_events": events}
 
-    def _verdict(self, events: list[dict[str, object]], outcome: Exit, returncode: int, stderr: str, expected: list[str],
+    def _verdict(self, events: list[dict[str, object]], crashed: bool, returncode: int, stderr: str, expected: list[str],
                  builtin: Collection[str]) -> tuple[dict[str, object], bool]:
         """Judge the finished stream. Return the final result and whether Claude Code never registered the candidate.
 
         Raise when the isolation check fails or when the run failed: a crash, an error result, or no result.
         """
         final = final_event(events)
-        failed = outcome is Exit.PROCESS_DIED or final is None or final.get("is_error") is True
+        failed = crashed or final is None or final.get("is_error") is True
         loaded = loaded_skills(events, builtin)
         if loaded is None and not failed:
             raise CodedError("isolation-failed", "Claude Code isolation fails: the stream " + NO_INIT)

@@ -1,7 +1,7 @@
 """The turn loop of a journey on one live Claude Code process.
 
 `TurnRunner` is a thin friend of one `ClaudeCode` instance. It reads `budget`, `checkpoint`, `role`, `declared`,
-`_inventory`, and `_late`, and it ends with exactly one `Exit` value.
+`late`, and `inventory`, and it ends with exactly one `Exit` value.
 """
 # pyright: reportImportCycles=false
 from __future__ import annotations
@@ -71,9 +71,7 @@ class TurnRunner:
         fresh = parse_events("".join(lines))
         self.events += fresh
         if self.first is None:
-            claude._inventory = claude._late.adopt(  # pyright: ignore[reportPrivateUsage]
-                fresh, self.expected, claude.inventory(), claude.declared)
-            self.builtin = claude._inventory.builtin  # pyright: ignore[reportPrivateUsage]
+            self.builtin = claude.late.adopt(fresh, self.expected, claude.inventory(), claude.declared).builtin
         for init in (event for event in fresh if event.get("type") == "system" and event.get("subtype") == "init"):
             if self.first is None:
                 self.first = init_inventory(init)

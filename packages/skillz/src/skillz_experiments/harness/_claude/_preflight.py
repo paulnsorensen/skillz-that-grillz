@@ -1,7 +1,7 @@
 """The live preflight of Claude Code: one model call checks Bash reads, writes, and network inside the sandbox.
 
-`Preflight` is a thin friend of one `ClaudeCode` instance. It calls the private members that the two share:
-`_run`, `_sealed`, `_check_memory`, `_inventory`, and `_late`.
+`Preflight` is a thin friend of one `ClaudeCode` instance. It calls the private members `_run`, `_sealed`,
+and `_check_memory`, and the public `late` and `inventory`.
 """
 # pyright: reportImportCycles=false
 from __future__ import annotations
@@ -11,6 +11,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import final, TYPE_CHECKING
 
@@ -77,28 +78,34 @@ class _Attempt:
     builtin: Collection[str] = field(default_factory=frozenset[str])
 
 
+def _leak(reason: str | None) -> CodedError | None:
+    return None if reason is None else preflight_leak(reason)
+
+
+def probe_sandbox(claude: ClaudeCode, workspace: Path, sealed: Path) -> None:
+    """Run the free sandbox probe in `workspace`. Raise when a host tool is missing or the probe reports a leak."""
+    for name, found, fix in host_tools():
+        if not found:
+            raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
+    with listening() as port:
+        script = probe(workspace, sealed, Path(__file__).resolve(), port)
+        try:
+            code, output, _stderr = claude.sandbox(workspace, ["/usr/bin/python3", "-c", script],
+                                                   max(SANDBOX_SECONDS, claude.options.sandbox_seconds))
+        except SandboxTimeout:
+            code, output = 124, ""
+    if code != 0 or output.strip() != "isolation-ok":
+        raise preflight_leak("sandbox probe failed")
+
+
 @final
 class Preflight:
     def __init__(self, claude: ClaudeCode) -> None:
         self.claude = claude
-        # The order decides which reason wins when several fire. The first step that returns an error stops the run.
-        self.steps: tuple[Callable[[_Attempt], CodedError | None], ...] = (
-            self._listener, self._socket, self._adopt, self._leak, self._failed,
-            self._read_tool, self._read, self._read_tool_evidence, self._write, self._network)
-
-    def probe_sandbox(self, workspace: Path, sealed: Path) -> None:
-        for name, found, fix in host_tools():
-            if not found:
-                raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
-        with listening() as port:
-            script = probe(workspace, sealed, Path(__file__).resolve(), port)
-            try:
-                code, output, _stderr = self.claude.sandbox(workspace, ["/usr/bin/python3", "-c", script],
-                                                            max(SANDBOX_SECONDS, self.claude.options.sandbox_seconds))
-            except SandboxTimeout:
-                code, output = 124, ""
-        if code != 0 or output.strip() != "isolation-ok":
-            raise preflight_leak("sandbox probe failed")
+        # The order decides which reason wins when several fire. The first check that returns an error stops the run.
+        self.checks: tuple[Callable[[_Attempt], CodedError | None], ...] = (
+            self._leaked, self._failed, partial(self._read_tool, evidence=False), self._read,
+            partial(self._read_tool, evidence=True), self._write, self._network)
 
     def run(self) -> dict[str, object]:
         claude = self.claude
@@ -106,10 +113,7 @@ class Preflight:
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             attempt = self._attempt(Path(directory))
         try:
-            for step in self.steps:
-                error = step(attempt)
-                if error is not None:
-                    raise error
+            self._verify(attempt)
         except CodedError as error:
             self._keep_transcript(error, attempt.events)
             raise
@@ -120,7 +124,7 @@ class Preflight:
     def _attempt(self, root: Path) -> _Attempt:
         claude = self.claude
         workspace, sealed, token = claude._sealed(root)  # pyright: ignore[reportPrivateUsage]
-        self.probe_sandbox(workspace, sealed)
+        probe_sandbox(claude, workspace, sealed)
         _ = claude.inventory()
         name = probe_name()
         probe_skill(workspace, name)
@@ -168,22 +172,20 @@ class Preflight:
                 + "".join(f"Then run `{command}` with the Bash tool. " for command in commands)
                 + "Reply with the read outputs, or the word denied for each command that fails.")
 
-    def _listener(self, attempt: _Attempt) -> CodedError | None:
-        return NetworkIsolationFailed(LISTENER_REACHED) if attempt.reached else None
-
-    def _socket(self, attempt: _Attempt) -> CodedError | None:
-        if attempt.socket_open:
-            return NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
-        return None
-
-    def _adopt(self, attempt: _Attempt) -> CodedError | None:
+    def _verify(self, attempt: _Attempt) -> None:
+        """Raise the first error of the ordered verdict. The relist for a late built-in skill runs after the listener and socket checks."""
         claude = self.claude
-        claude._inventory = claude._late.adopt(  # pyright: ignore[reportPrivateUsage]
-            attempt.events, [attempt.name], claude.inventory(), claude.declared)
-        attempt.builtin = claude._inventory.builtin  # pyright: ignore[reportPrivateUsage]
-        return None
+        if attempt.reached:
+            raise NetworkIsolationFailed(LISTENER_REACHED)
+        if attempt.socket_open:
+            raise NetworkIsolationFailed("network isolation failed: the Bash probe reached a runner-owned host Unix socket")
+        attempt.builtin = claude.late.adopt(attempt.events, [attempt.name], claude.inventory(), claude.declared).builtin
+        for check in self.checks:
+            error = check(attempt)
+            if error is not None:
+                raise error
 
-    def _leak(self, attempt: _Attempt) -> CodedError | None:
+    def _leaked(self, attempt: _Attempt) -> CodedError | None:
         leak = find_leak(attempt.events, [attempt.name], attempt.builtin, self.claude.declared)
         if leak is None:
             return None
@@ -192,25 +194,18 @@ class Preflight:
     def _failed(self, attempt: _Attempt) -> CodedError | None:
         reason = failure(attempt.returncode, attempt.stderr, attempt.events, [attempt.name], attempt.builtin,
                          allowed=self.claude.declared.skills)
-        if reason == AUTH_FAILED:
-            return login_failed(LOGIN_HINT)
-        return None if reason is None else preflight_leak(reason)
+        return login_failed(LOGIN_HINT) if reason == AUTH_FAILED else _leak(reason)
 
-    def _read_tool(self, attempt: _Attempt) -> CodedError | None:
-        reason = read_tool_failure(attempt.events, attempt.token, attempt.sealed, evidence=False)
-        return None if reason is None else preflight_leak(reason)
+    def _read_tool(self, attempt: _Attempt, *, evidence: bool) -> CodedError | None:
+        return _leak(read_tool_failure(attempt.events, attempt.token, attempt.sealed, evidence=evidence))
 
     def _read(self, attempt: _Attempt) -> CodedError | None:
-        reason = read_failure(attempt.events, attempt.token, str(attempt.sealed), attempt.control, str(attempt.control_file))
-        return None if reason is None else preflight_leak(reason)
-
-    def _read_tool_evidence(self, attempt: _Attempt) -> CodedError | None:
-        reason = read_tool_failure(attempt.events, attempt.token, attempt.sealed, evidence=True)
-        return None if reason is None else preflight_leak(reason)
+        return _leak(read_failure(attempt.events, attempt.token, str(attempt.sealed), attempt.control,
+                                  str(attempt.control_file)))
 
     def _write(self, attempt: _Attempt) -> CodedError | None:
-        reason = write_failure(attempt.events, [str(file) for file in attempt.protected], attempt.wrote, attempt.controlled)
-        return None if reason is None else preflight_leak(reason)
+        return _leak(write_failure(attempt.events, [str(file) for file in attempt.protected], attempt.wrote,
+                                   attempt.controlled))
 
     def _network(self, attempt: _Attempt) -> CodedError | None:
         network = network_failure(attempt.events, attempt.port, attempt.network_token)
