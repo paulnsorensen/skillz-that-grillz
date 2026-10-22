@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
-from typing import final
+from typing import Callable, final
 from zipfile import ZipFile
 
 import pytest
@@ -11,10 +12,11 @@ import pytest
 from wedge._build import BuildResult
 from wedge._digest import content_sha256
 from wedge._lock import LockData
-from wedge._publish import _ensure_release, _publish_built  # pyright: ignore[reportPrivateUsage]
+from wedge._publish import _ensure_release, _publish_built, publish  # pyright: ignore[reportPrivateUsage]
 from wedge._release_store import ReleaseStoreError
 
 ASSET = "demo-abc.pyz"
+FIXTURE_REPO = "paulnsorensen/skillz-that-grillz"
 
 
 def _zip(path: Path, body: str) -> Path:
@@ -35,6 +37,7 @@ class FakeStore:
         self.uploads: list[Path] = []
         self.views: int = 0
         self.created_at: str = ""
+        self.keep: Path | None = None
 
     def view(self) -> bool:
         self.views += 1
@@ -51,6 +54,8 @@ class FakeStore:
         return set(self.assets)
 
     def upload(self, path: Path) -> None:
+        if self.keep is not None:
+            path = Path(shutil.copy2(path, self.keep / path.name))
         self.uploads.append(path)
         if self.race_asset is not None:
             name, source = self.race_asset
@@ -162,3 +167,28 @@ def test_a_published_asset_that_is_no_archive_fails_as_invalid(tmp_path: Path) -
 
     assert status == "failed"
     assert "has content digest invalid" in reason
+
+
+@pytest.mark.ac("gh-413:AC-1")
+def test_publish_runs_the_whole_flow_against_an_injected_store(
+    tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]
+) -> None:
+    """Needs ``uv`` and network to build the fixture skill; it uses no ``gh`` and no PATH fake."""
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    kept = tmp_path / "kept"
+    kept.mkdir()
+    store = FakeStore()
+    store.exists = False
+    store.keep = kept
+
+    first = publish([skill], repo=FIXTURE_REPO, target="deadbeef", store=store)
+
+    assert first["cheese-cave"]["status"] == "published"
+    assert store.exists
+    assert store.created_at == "deadbeef"
+    assert len(store.uploads) == 1
+
+    second = publish([skill], repo=FIXTURE_REPO, target="deadbeef", store=store)
+
+    assert second["cheese-cave"]["status"] == "skipped"
+    assert len(store.uploads) == 1
