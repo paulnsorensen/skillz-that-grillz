@@ -13,15 +13,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SKILLZ = "packages/skillz/src/skillz_experiments"
 # (importing file, imported private module). Remove an entry when its import goes. A new entry needs an ADR.
-ALLOWED: frozenset[tuple[str, str]] = frozenset({
-    (f"{SKILLZ}/_new_cli.py", "wedge._config"),
-    (f"{SKILLZ}/run/_wedge_targets.py", "wedge._build"),
-    (f"{SKILLZ}/run/_wedge_targets.py", "wedge._bundle"),
-    (f"{SKILLZ}/run/_wedge_targets.py", "wedge._config"),
-    (f"{SKILLZ}/run/_wedge_targets.py", "wedge._key"),
-})
+ALLOWED: frozenset[tuple[str, str]] = frozenset()
 
 
 def _private(part: str) -> bool:
