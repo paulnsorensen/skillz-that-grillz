@@ -202,6 +202,10 @@ def nested_userns_blocked() -> bool:
     return result.returncode != 0 and result.stderr.strip() in {"unshare", "map"}
 
 
+_TO_CAPTURE = 'exec "$@" 2>"$0"'
+"""Shell script that sends the command's standard error to the file named by `$0`, then runs the command."""
+
+
 def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str],
                  read_roots: tuple[str, ...] = (), capture: Path | None = None) -> list[str]:
     """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No external network.
@@ -214,14 +218,21 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
     workspace, and a shell sends the command's standard error to a file there before the command starts.
     `sandbox` reads it. Only bubblewrap can then write to the process standard error,
     so a message that starts with `bwrap:` is a setup failure that the command cannot forge.
+
+    Under `sandbox-exec` with `capture`, the profile allows writes to `capture`, and a shell sends the command's
+    standard error to a file there. A message that starts with `sandbox-exec:` is then a setup failure too.
     """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
         assignments.extend(seatbelt_environment())
-        return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
+        if capture is None:
+            return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
+        resolved = capture.resolve()
+        return [tool, "-p", command_profile(workspace, read_roots, resolved), "/bin/sh", "-c", _TO_CAPTURE,
+                str(resolved / SANDBOX_STDERR), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
     mount = ["--bind", str(capture), SANDBOX_CAPTURE] if capture is not None else []
-    shell = ['/bin/sh', '-c', 'exec "$@" 2>"$0"', f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [
+    shell = ['/bin/sh', '-c', _TO_CAPTURE, f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [
         '/bin/sh', '-c', 'exec "$@" 2>/dev/null', 'sh']
     return [tool, "--unshare-all", "--die-with-parent", "--clearenv",
             "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",

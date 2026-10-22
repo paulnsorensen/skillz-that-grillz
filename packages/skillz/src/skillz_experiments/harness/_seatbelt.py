@@ -17,13 +17,13 @@ def seatbelt_environment() -> list[str]:
     return [f"DEVELOPER_DIR={DEVELOPER_DIR}"] if Path(DEVELOPER_DIR).is_dir() else []
 
 
-def command_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
+def command_profile(workspace: Path, read_roots: tuple[str, ...] = (), capture: Path | None = None) -> str:
     """Build the macOS `sandbox-exec` profile. Everything is denied unless this profile allows it.
 
     The profile allows no network. It allows reads of the root directory itself (not its children).
     It also allows reads of the system runtime, the extra read roots, and the workspace.
     It allows writes to the workspace except `.agents`. Later rules win, so the `.agents` deny follows
-    the write allow.
+    the write allow. A `capture` directory also gets a write allow, for the command's standard error file.
     """
     path = str(workspace)
     rules = ["(version 1)", "(deny default)", "(allow process-fork)", "(allow process-exec)",
@@ -33,4 +33,6 @@ def command_profile(workspace: Path, read_roots: tuple[str, ...] = ()) -> str:
              '(allow file-read* (literal "/dev/null") (literal "/dev/urandom"))',
              f'(allow file-read* (subpath "{path}"))', f'(allow file-write* (subpath "{path}"))',
              f'(deny file-write* (subpath "{path}/.agents"))', '(allow file-write* (literal "/dev/null"))']
+    if capture is not None:
+        rules.append(f'(allow file-write* (subpath "{capture}"))')
     return "\n".join(rules) + "\n"
