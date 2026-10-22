@@ -21,11 +21,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import cast, final
 
-from wedge._build import (SiteLayer, build_from_layer, layer_import_names, open_site_layer, populate_site_layer,
-                          resolve_target, stage_sources)
-from wedge._bundle import bundle_path
-from wedge._config import ConfigError, WedgeConfig, defaults_path, load_targets, parse_targets
-from wedge._key import BuildPaths, first_party_files
+from wedge import (BuildPaths, ConfigError, SiteLayer, WedgeConfig, build_from_layer, bundle_path, defaults_path,
+                   first_party_files, layer_import_names, load_targets, open_site_layer, parse_targets,
+                   populate_site_layer, resolve_target, stage_sources)
 
 from skillz_experiments._candidate import (FROZEN_FILE_LIMIT, NEW_CLI, PACKAGE_LIMIT, WEDGE_PREFIX, Candidate, as_text,
                                            ignored_files, is_skill_file)

@@ -64,6 +64,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-336](./gh-336.md) — gh-336: export writes no empty patch when the winner equals the baseline
 - [gh-366](./gh-366.md) — gh-366: explicit eval kinds and one evals.json validator
 - [gh-390](./gh-390.md) — gh-390: a task case stays unscored in a journey-only run
+- [gh-391](./gh-391.md) — gh-391: skillz imports the wedge API from the wedge package, not from private modules
 - [gh-392](./gh-392.md) — gh-392: the journey gate accepts only a runner budget stop as a budget question
 - [gh-394](./gh-394.md) — gh-394: omp and pi context_tokens counts cache tokens
 - [gh-395](./gh-395.md) — gh-395: a macOS sandboxed command forges a sandbox setup failure through stderr
