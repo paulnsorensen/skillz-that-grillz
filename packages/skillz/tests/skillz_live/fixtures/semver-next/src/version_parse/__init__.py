@@ -1,4 +1,4 @@
-"""Split a semantic version into its parts. The one wedge target of the `semver-next` fixture skill."""
+"""Split a semantic version into its parts."""
 from __future__ import annotations
 
 import re

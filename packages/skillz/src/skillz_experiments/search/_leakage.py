@@ -91,7 +91,8 @@ class Denylist:
     def build(cls, cases: Iterable[Case], *, seed: Candidate | None = None) -> Denylist:
         """Build the denylist from the train and validation cases. Holdout cases are skipped.
 
-        With `seed`, the runner terms that are runner context for that seed are denied too.
+        With `seed`, the runner terms that are runner context for that seed are denied too. A fixture file name that
+        a seed file already holds is target vocabulary, as a runner term is, so the denylist drops it.
         """
         spans: set[tuple[str, ...]] = set()
         answers: set[str] = set()
@@ -106,8 +107,10 @@ class Denylist:
             answers |= {leaf for leaf in map(_squash, _leaves(case.expected)) if len(leaf) >= MIN_ANSWER_CHARS}
             identifiers.add(case.identifier)
             fixtures |= {PurePosixPath(name).name for name in case.files}
-        return cls(frozenset(spans), frozenset(answers),
-                   tuple(_token(name) for name in sorted(identifiers)), tuple(_token(name, _FIXTURE_TAIL) for name in sorted(fixtures)),
+        held = () if seed is None else tuple(seed.files.values())
+        named = (_token(name, _FIXTURE_TAIL) for name in sorted(fixtures))
+        return cls(frozenset(spans), frozenset(answers), tuple(_token(name) for name in sorted(identifiers)),
+                   tuple(pattern for pattern in named if not any(pattern.search(text) for text in held)),
                    _runner_terms(seed))
 
 
