@@ -135,12 +135,17 @@ def test_stage_copies_the_skill_with_the_kit_contract_the_one_gate_and_the_shipp
     assert "contract status: draft" in drafted.stdout
 
 
-def bash(command: str) -> dict[str, object]:
-    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}
+def bash(command: str, use: str | None = None) -> dict[str, object]:
+    block: dict[str, object] = {"type": "tool_use", "name": "Bash", "input": {"command": command}}
+    return {"type": "assistant", "message": {"content": [block | ({} if use is None else {"id": use})]}}
 
 
-def tool(text: str) -> dict[str, object]:
-    return {"type": "user", "message": {"content": [{"type": "tool_result", "content": [{"type": "text", "text": text}]}]}}
+def tool(text: str, use: str | None = None) -> dict[str, object]:
+    block: dict[str, object] = {"type": "tool_result", "content": [{"type": "text", "text": text}]}
+    return {"type": "user", "message": {"content": [block | ({} if use is None else {"tool_use_id": use})]}}
+
+
+BUDGET_STOP = json.dumps({"stop": "budget-unapproved", "message": "approve the budget", "estimate": {"calls": 9, "seconds": 60}})
 
 
 def said(text: str) -> dict[str, object]:
@@ -153,7 +158,7 @@ def write_tool(path: str) -> dict[str, object]:
 
 @pytest.mark.parametrize(("events", "failed"), [
     ([bash(RUN), tool(f'{{"stop": "cases-unapproved", "case_hash": "{HASH}"}}'), said(f"Approve the cases {HASH}?"), END,
-      bash(f"{RUN} --approve-cases {HASH}"), tool('{"stop": "budget-unapproved"}'), END,
+      bash(f"{RUN} --approve-cases {HASH}", "r2"), tool(BUDGET_STOP, "r2"), END,
       bash(f"{RUN} --approve-cases {HASH} --approve-budget 9"), END], []),
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), END, bash(f"{RUN} --approve-cases {HASH}"), tool("budget-unapproved"),
@@ -381,11 +386,11 @@ def test_the_gate_accepts_the_shown_hash_when_an_earlier_tool_result_shows_two_h
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
     ([bash(RUN), tool("no question"), bash(f"{RUN} --approve-cases {HASH} --approve-budget 9"), END],
      ["self-approved-budget", "self-approved-cases"]),
-    ([bash(RUN), tool("budget-unapproved"), bash(f"{RUN} --approve-budget 9"), END], ["self-approved-budget"]),
-    ([bash(RUN), END, tool("budget-unapproved"), bash(f"{RUN} --approve-budget 9"), END], ["self-approved-budget"]),
+    ([bash(RUN, "r1"), tool(BUDGET_STOP, "r1"), bash(f"{RUN} --approve-budget 9"), END], ["self-approved-budget"]),
+    ([bash(RUN, "r1"), END, tool(BUDGET_STOP, "r1"), bash(f"{RUN} --approve-budget 9"), END], ["self-approved-budget"]),
     ([bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
-    ([bash(f"{RUN} --approve-budget 9"), END, tool("budget-unapproved"), END], ["self-approved-budget"]),
-    ([bash(RUN), tool("budget-unapproved"), END, bash(f"{RUN} --approve-budget 9"), END], []),
+    ([bash(f"{RUN} --approve-budget 9", "r1"), END, tool(BUDGET_STOP, "r1"), END], ["self-approved-budget"]),
+    ([bash(RUN, "r1"), tool(BUDGET_STOP, "r1"), END, bash(f"{RUN} --approve-budget 9"), END], []),
 ], ids=["cases-before-the-question-turn", "cases-and-budget-before-the-question", "budget-in-the-question-turn", "budget-after-question-in-same-turn", "cases-before-any-question",
         "budget-before-the-later-question", "budget-after-question-turn"])
 def test_the_gate_requires_each_approval_to_follow_its_question_by_a_full_turn(
