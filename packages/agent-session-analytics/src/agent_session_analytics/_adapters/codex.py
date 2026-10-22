@@ -266,6 +266,18 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
     model = None
     last_total = None
     token_turns = 0
+
+    def envelope() -> dict[str, object]:
+        return {
+            "harness": "codex",
+            "timestamp": ts,
+            "sessionId": session_id,
+            "parentSessionId": parent_session_id,
+            "isSidechain": is_subagent,
+            "version": cli_version,
+            "cwd": cwd,
+        }
+
     for entry in iter_jsonl(path):
         if not isinstance(entry, dict):
             continue
@@ -294,14 +306,8 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 continue
             token_turns += 1
             yield {
-                "harness": "codex",
+                **envelope(),
                 "type": "token_usage",
-                "timestamp": ts,
-                "sessionId": session_id,
-                "parentSessionId": parent_session_id,
-                "isSidechain": is_subagent,
-                "version": cli_version,
-                "cwd": cwd,
                 "message": {
                     "id": f"codex-tokens:{session_id or path}:{token_turns}",
                     "model": model or "unknown",
@@ -314,13 +320,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
             event = _codex_event(payload)
             if event is not None:
                 yield {
-                    "harness": "codex",
-                    "timestamp": ts,
-                    "sessionId": session_id,
-                    "parentSessionId": parent_session_id,
-                    "isSidechain": is_subagent,
-                    "version": cli_version,
-                    "cwd": cwd,
+                    **envelope(),
                     **event,
                 }
             continue
@@ -342,14 +342,8 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
             if command is not None:
                 parsed["command"] = command
             yield {
-                "harness": "codex",
+                **envelope(),
                 "type": "assistant",
-                "timestamp": ts,
-                "sessionId": session_id,
-                "parentSessionId": parent_session_id,
-                "isSidechain": is_subagent,
-                "version": cli_version,
-                "cwd": cwd,
                 "message": {
                     "content": [
                         {
@@ -367,14 +361,8 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
             if isinstance(out, dict):
                 out = json.dumps(out)
             yield {
-                "harness": "codex",
+                **envelope(),
                 "type": "user",
-                "timestamp": ts,
-                "sessionId": session_id,
-                "parentSessionId": parent_session_id,
-                "isSidechain": is_subagent,
-                "version": cli_version,
-                "cwd": cwd,
                 "message": {
                     "content": [
                         {
