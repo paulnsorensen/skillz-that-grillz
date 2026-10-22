@@ -3,7 +3,7 @@
 `Preflight` is a thin friend of one `ClaudeCode` instance. It calls the private members that the two share:
 `_run`, `_sealed`, `_check_memory`, `_inventory`, and `_late`.
 """
-# pyright: reportPrivateUsage=false, reportImportCycles=false
+# pyright: reportImportCycles=false
 from __future__ import annotations
 
 import secrets
@@ -102,7 +102,7 @@ class Preflight:
 
     def run(self) -> dict[str, object]:
         claude = self.claude
-        claude._check_memory()
+        claude._check_memory()  # pyright: ignore[reportPrivateUsage]
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             attempt = self._attempt(Path(directory))
         try:
@@ -119,7 +119,7 @@ class Preflight:
 
     def _attempt(self, root: Path) -> _Attempt:
         claude = self.claude
-        workspace, sealed, token = claude._sealed(root)
+        workspace, sealed, token = claude._sealed(root)  # pyright: ignore[reportPrivateUsage]
         self.probe_sandbox(workspace, sealed)
         _ = claude.inventory()
         name = probe_name()
@@ -145,7 +145,7 @@ class Preflight:
             if probing:
                 commands += [unix_command(str(socket_path), network_token), unix_command("\\0" + abstract, network_token)]
             try:
-                returncode, stderr, events = claude._run(
+                returncode, stderr, events = claude._run(  # pyright: ignore[reportPrivateUsage]
                     workspace, self._prompt(sealed, control_file, protected, write_control, write_token, commands),
                     None, [name])
             except Exception:
@@ -178,8 +178,9 @@ class Preflight:
 
     def _adopt(self, attempt: _Attempt) -> CodedError | None:
         claude = self.claude
-        claude._inventory = claude._late.adopt(attempt.events, [attempt.name], claude.inventory(), claude.declared)
-        attempt.builtin = claude._inventory.builtin
+        claude._inventory = claude._late.adopt(  # pyright: ignore[reportPrivateUsage]
+            attempt.events, [attempt.name], claude.inventory(), claude.declared)
+        attempt.builtin = claude._inventory.builtin  # pyright: ignore[reportPrivateUsage]
         return None
 
     def _leak(self, attempt: _Attempt) -> CodedError | None:

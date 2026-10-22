@@ -769,14 +769,14 @@ def test_a_network_leak_keeps_its_code_when_the_run_then_fails(
 
 
 @pytest.mark.ac("gh-396:AC-3")
-def test_a_network_leak_keeps_its_code_when_an_earlier_check_also_fails(
+def test_the_listener_check_wins_over_the_write_check_and_keeps_the_network_code(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
 
-    def write_fails(events: list[dict[str, object]], files: list[str], wrote: bool, controlled: bool) -> str:
+    def write_must_not_run(events: list[dict[str, object]], files: list[str], wrote: bool, controlled: bool) -> str:
         del events, files, wrote, controlled
-        return "write isolation failed: test"
-    monkeypatch.setattr(_preflight, "write_failure", write_fails)
+        raise AssertionError("the listener check must stop the preflight before the write check")
+    monkeypatch.setattr(_preflight, "write_failure", write_must_not_run)
     session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
