@@ -474,11 +474,12 @@ def test_the_cli_passes_both_token_flags_to_run(tmp_path: Path, monkeypatch: pyt
 class _Priced(FakeProvider):
     """A fake provider. The `improved` candidate scores `GAIN` on every case and uses `IMPROVED` task tokens.
 
-    `HOLDOUT_GAIN`, when set, replaces `GAIN` on the holdout.
+    `HOLDOUT_GAIN`, when set, replaces `GAIN` on the holdout. Every other candidate scores `BASE_SCORE`.
     """
 
     GAIN: float = 1.0
     HOLDOUT_GAIN: float | None = None
+    BASE_SCORE: float = 0.0
     BASE: int = 100
     IMPROVED: int = 150
     JUDGE: int = 0
@@ -498,7 +499,7 @@ class _Priced(FakeProvider):
         del checks
         improved = "improved" in candidate.files["SKILL.md"]
         gain = self.HOLDOUT_GAIN if holdout and self.HOLDOUT_GAIN is not None else self.GAIN
-        result: dict[str, object] = {"score": gain if improved else 0.0, "candidate_hash": candidate.identity,
+        result: dict[str, object] = {"score": gain if improved else self.BASE_SCORE, "candidate_hash": candidate.identity,
                                      "case_hash": case.identifier}
         if self.KNOWN:
             low = self.IMPROVED if improved else self.BASE
@@ -613,6 +614,33 @@ def test_the_reflection_prompt_carries_the_token_sentence_while_a_token_field_is
     _ = _finish(tmp_path, make_target, write_draft, approvals, provider,
                  {"min_token_saving": 0.5, "max_quality_loss": 1.0})
     assert provider.prompts and all(SENTENCE in prompt for prompt in provider.prompts)
+
+
+@pytest.mark.ac("skillz-search-token-tie:AC-3")
+def test_a_saturated_seed_loses_to_a_cheaper_tie_under_the_token_rule(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    """The seed scores 1.0 everywhere. Before the fix, GEPA skipped every perfect minibatch, so no proposal ran.
+
+    Without `min_token_saving`, the headroom pass stops such a run with `cases-too-easy` before the search.
+    """
+    provider = _priced(BASE_SCORE=1.0, IMPROVED=50)
+    result = _finish(tmp_path, make_target, write_draft, approvals, provider,
+                     {"min_token_saving": 0.3, "max_quality_loss": 0.05})
+    assert provider.prompts
+    assert (_gate(result)["verdict"], _gate(result)["reasons"]) == ("promote-cheaper", [])
+    assert _gate(result)["token_delta"] == pytest.approx(-0.5)
+
+
+@pytest.mark.ac("skillz-search-token-tie:AC-1")
+def test_a_costlier_tie_on_a_saturated_seed_keeps_the_seed(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    provider = _priced(BASE_SCORE=1.0, IMPROVED=150)
+    result = _finish(tmp_path, make_target, write_draft, approvals, provider,
+                     {"min_token_saving": 0.3, "max_quality_loss": 0.05})
+    assert provider.prompts
+    assert (_gate(result)["verdict"], _gate(result)["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
 
 
 def test_a_resume_flag_must_match_the_frozen_token_fields(

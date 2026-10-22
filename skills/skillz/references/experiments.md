@@ -469,6 +469,10 @@ A `promote-cheaper` winner is advisory. Export it and report it, but do not appl
 With a token field set, the winner choice breaks a validation-mean tie in favor of fewer mean task tokens. This holds for the best candidate and for the seed.
 A candidate with unknown task tokens, or equal task tokens, keeps the usual winner. In a tie, that is the incumbent.
 The reflection prompt then also says: "Prefer fewer tokens when correctness is equal."
+The search then also reflects on a train minibatch that the parent scores perfectly.
+A child can tie the minibatch score sum of its parent.
+Such a child enters the candidate pool only when its mean task tokens on that minibatch are known and lower.
+Without a token field, the search skips a perfect minibatch, and a child must score a higher sum.
 
 The winner choice treats two validation means as equal when they differ by a relative 1e-9 or an absolute 1e-12.
 This holds in every run, with or without a token field.

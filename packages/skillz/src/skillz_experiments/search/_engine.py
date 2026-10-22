@@ -7,7 +7,7 @@ import math
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
-from typing import Literal, Protocol, cast, get_args
+from typing import Literal, Protocol, cast, final, get_args
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 
@@ -15,6 +15,44 @@ REFLECTION_MINIBATCH = 2
 Edit = Literal["prose", "prose+cli"]
 Evaluate = Callable[[dict[str, str], object], tuple[float, dict[str, object]]]
 Propose = Callable[[dict[str, str], Mapping[str, Sequence[Mapping[str, object]]], list[str]], dict[str, str]]
+Cheaper = Callable[[dict[str, str], dict[str, str], Sequence[object]], bool]
+"""Return whether the child (second) has known, lower mean task tokens than the parent (first) on the examples."""
+
+
+class _Proposal(Protocol):
+    """The fields of a GEPA 0.1.4 `CandidateProposal` that the token tie-break reads."""
+    candidate: dict[str, str]
+    parent_program_ids: list[int]
+    subsample_indices: list[int] | None
+    subsample_scores_before: list[float] | None
+    subsample_scores_after: list[float] | None
+
+
+class _State(Protocol):
+    program_candidates: list[dict[str, str]]
+
+
+@final
+class CheaperTie:
+    """The GEPA acceptance of a token-rule search: a higher minibatch score sum, or an equal sum with fewer task tokens.
+
+    The sums are equal when they differ by a relative 1e-9 or an absolute 1e-12, as in the token thresholds.
+    """
+
+    def __init__(self, cheaper: Cheaper, train: Sequence[object]) -> None:
+        self._cheaper = cheaper
+        self._train = train
+
+    def should_accept(self, proposal: _Proposal, state: _State) -> bool:
+        before = math.fsum(proposal.subsample_scores_before or [])
+        after = math.fsum(proposal.subsample_scores_after or [])
+        if not math.isclose(after, before, rel_tol=1e-9, abs_tol=1e-12):
+            return after > before
+        ids = proposal.subsample_indices or []
+        if len(proposal.parent_program_ids) != 1 or not ids:
+            return False
+        parent = state.program_candidates[proposal.parent_program_ids[0]]
+        return self._cheaper(parent, proposal.candidate, [self._train[index] for index in ids])
 
 
 
@@ -41,13 +79,15 @@ def skip_limit(train: int) -> int:
 def search(seed: dict[str, str], edit: Edit, train: list[object], validation: list[object],
            evaluate: Evaluate, propose: Propose, *, metric_calls: int,
            workers: int = MAX_CONCURRENT_CALLS, stalled: Callable[[], bool] | None = None,
-           spent: Callable[[], bool] | None = None) -> bool:
+           spent: Callable[[], bool] | None = None, cheaper: Cheaper | None = None) -> bool:
     """Run one GEPA search over `seed`, which holds only the editable components.
 
     `metric_calls` bounds the distinct candidate and case evaluations. GEPA scores the parent again on each minibatch,
     and the caller serves that repeat from its record, so a repeat does not count. A result whose feedback holds
     `rejected` makes no live call and does not count either. GEPA skips reflection when the parent scores perfectly on
     the minibatch. `skip_limit` consecutive iterations without a new evaluation end the search.
+    `cheaper` is set while the token rule is on. Then GEPA reflects on a perfect minibatch too, and a child whose minibatch
+    score sum equals its parent's enters the pool when `cheaper` returns true. Else a child must score a higher sum.
     GEPA calls `stalled` and `spent` before each iteration and stops when either returns true.
     Return whether `stalled` stopped it. `spent` ends the search without that mark: the caller's live-call share is used up.
     """
@@ -105,10 +145,11 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
                                 max_workers=max(1, min(workers, MAX_CONCURRENT_CALLS)),
                                 use_cloudpickle=False, cache_evaluation=False, raise_on_exception=True,
                                 candidate_selection_strategy="pareto",
-                                acceptance_criterion="strict_improvement"),
+                                acceptance_criterion=("strict_improvement" if cheaper is None
+                                                      else CheaperTie(cheaper, train))),
         reflection=api.ReflectionConfig(custom_candidate_proposer=propose, reflection_lm=None,
                                         module_selector="all", reflection_minibatch_size=REFLECTION_MINIBATCH,
-                                        skip_perfect_score=True, perfect_score=1.0),
+                                        skip_perfect_score=cheaper is None, perfect_score=1.0),
         stop_callbacks=[stop],
     )
     with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):

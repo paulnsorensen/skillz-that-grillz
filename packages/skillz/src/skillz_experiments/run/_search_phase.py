@@ -10,9 +10,10 @@ from typing import cast, final
 from skillz_experiments._budget import CallTimeout
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping
+from skillz_experiments.evaluation import task_tokens
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._outcomes import (
-    case_ids, fault_reason, feedback_for, failed_outcome, is_unscored,
+    case_ids, fault_reason, feedback_for, failed_outcome, is_unscored, mean_tokens,
     reflection_fault, search_fault, stall_observations,
 )
 from skillz_experiments.run._record_fields import field, int_field
@@ -63,6 +64,8 @@ class SearchPhase:
         self._ended_proposal: str | None = None
         # Recorded search outcomes that a resumed search reuses, one per earlier call. `recorded_for_reuse` fills it.
         self._reusable: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+        # The built identity of each admitted component map, by its digest. `cheaper` reads it.
+        self._identities: dict[str, str] = {}
         # The live search evaluations of the running search. Reused outcomes do not count.
         self._live = 0
         # The count of recorded search evaluations when this session started its search. The fault rule counts after it.
@@ -202,6 +205,8 @@ class SearchPhase:
         candidate = self._admit(components)
         if not isinstance(candidate, Candidate):
             return 0.0, {"task_correct": 0.0, "request": case.request, "case_id": case.identifier} | candidate
+        with state.lock:
+            self._identities[digest(components)] = candidate.identity
         recorded = self._reuse(candidate, case)
         if recorded is not None:
             Leaderboard(state).keep_if_best(candidate, case)
@@ -220,6 +225,28 @@ class SearchPhase:
             self.stop_if_faulted()
         Leaderboard(state).keep_if_best(candidate, case)
         return feedback_for(result, case)
+
+    def cheaper(self, parent: dict[str, str], child: dict[str, str], examples: Sequence[object]) -> bool:
+        """Return whether `child` has known, lower mean task tokens than `parent` on the train cases `examples`.
+
+        GEPA asks after it scores both on the minibatch. Each count comes from the newest scored outcome of the pair.
+        A component map that was never admitted, or a missing count, gives False.
+        """
+        with self._state.lock:
+            old, new = (self._train_tokens(self._identities.get(digest(components)), examples) for components in (parent, child))
+        return old is not None and new is not None and new < old
+
+    def _train_tokens(self, identity: str | None, examples: Sequence[object]) -> float | None:
+        """Return the mean task tokens of `identity` on the train cases `examples`, or None. The caller holds the lock."""
+        if identity is None:
+            return None
+        counts: list[int | None] = []
+        for example in examples:
+            item = next((item for item in reversed(self.search_outcomes())
+                         if item.get("search_candidate") == identity and item.get("split") == "train"
+                         and item.get("case_id") == example and item.get("status") != "evaluation-failed"), None)
+            counts.append(None if item is None else task_tokens(item))
+        return mean_tokens(counts)
 
     def _invoke(self, prompt: str, schema: dict[str, object], asked: str) -> dict[str, object]:
         """Call the reflection model. A failure records its row, marks the proposal as ended, and raises."""

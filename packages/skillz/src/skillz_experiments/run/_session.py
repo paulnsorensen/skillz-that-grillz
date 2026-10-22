@@ -274,7 +274,8 @@ class Session:
             try:
                 stopped = pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
                                         self._evaluate_example, self._propose, metric_calls=allowance + reusable,
-                                        stalled=searching.stalled, spent=lambda: searching.share_spent(allowance))
+                                        stalled=searching.stalled, spent=lambda: searching.share_spent(allowance),
+                                        cheaper=searching.cheaper if self.statistics.token_rule else None)
                 self.faults.raise_held()
                 reason = "converged-stalled" if stopped else "validation-mean"
             except BudgetExhausted:
