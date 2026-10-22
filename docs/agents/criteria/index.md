@@ -67,6 +67,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-403](./gh-403.md) — gh-403: links inside code fences and code spans are not local link targets
 - [gh-404](./gh-404.md) — gh-404: an input below a symlink loop stays inside the inspect error contract
 - [gh-406](./gh-406.md) — gh-406: wedge strips install metadata only inside *.dist-info
+- [gh-407](./gh-407.md) — gh-407: the codex adapter builds the row envelope once
 - [gh-412](./gh-412.md) — gh-412: wedge check reports a key failure as a per-skill issue
 - [gh-419](./gh-419.md) — gh-419: the Gemini dotenv guard stays inside the temporary directory and keeps existing files
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
