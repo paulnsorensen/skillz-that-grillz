@@ -39,9 +39,6 @@ from skillz_experiments.harness._claude._constants import (
 from skillz_experiments.harness._claude._keys import restore, safe_keys
 from skillz_experiments.harness._claude._events import (
     answer,
-    assistant_text,
-    init_inventory,
-    is_result,
     declared_commands,
     control_response,
     declares,
@@ -55,7 +52,6 @@ from skillz_experiments.harness._claude._events import (
     probe_skill,
     token_events,
     event_trace,
-    user_line,
 )
 from skillz_experiments.harness._claude._login import (
     check_ancestors,
@@ -74,6 +70,7 @@ from skillz_experiments.harness._claude._sandbox import (
     sandbox_argv,
     SandboxUnavailable,
 )
+from skillz_experiments.harness._claude._journey import Exit, NO_INIT, TurnRunner
 from skillz_experiments.harness._claude._late import LateBuiltins
 from skillz_experiments.harness._claude._preflight import Preflight
 from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings
@@ -104,9 +101,6 @@ INVENTORY_SECONDS = 60
 
 
 MCP_FILE = "mcp.json"
-
-
-_NO_INIT = "has no init event, so the skill list is unknown; the invocation counts against the budget"
 
 
 def _take_stderr(capture: Path) -> str:
@@ -446,8 +440,8 @@ class ClaudeCode:
                 returncode, stderr, events = self._run(workspace, prompt, sent, expected, candidate)
                 latency = time.monotonic() - started
                 self._inventory = self._late.adopt(events, expected, self.inventory(), self.declared)
-                final, unloaded = self._verdict(events, bool(returncode), returncode, stderr, expected,
-                                                self._inventory.builtin)
+                final, unloaded = self._verdict(events, Exit.PROCESS_DIED if returncode else Exit.DONE, returncode, stderr,
+                                                expected, self._inventory.builtin)
             trace = event_trace(events) + token_events(final)
             if unloaded:
                 return not_loaded(workspace, started, trace) | {"latency_seconds": latency}
@@ -469,56 +463,19 @@ class ClaudeCode:
         builtin = self.inventory().builtin
         self.check_name(candidate)
         expected = [candidate.skill]
-        events: list[dict[str, object]] = []
-        transcript: Transcript = []
-        first: tuple[list[str], ...] | None = None
         with tempfile.TemporaryDirectory(prefix="skillz-journey-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             stage_task(workspace, candidate, case)
             command, environment = self._start(workspace, None, expected, candidate, stream=True)
             started = time.monotonic()
-            message, shown = request, case.request
-            closed = False
             with live(command, cwd=workspace, environment=environment) as child:
-                for turn in range(case.journey.max_turns):
-                    self.budget.claim(holdout=holdout, role=self.role)
-                    self.checkpoint()
-                    with self.budget.timed(self.role):
-                        lines, ended = child.turn(user_line(message), self.budget.remaining(), is_result)
-                    fresh = parse_events("".join(lines))
-                    events += fresh
-                    if first is None:
-                        self._inventory = self._late.adopt(fresh, expected, self.inventory(), self.declared)
-                        builtin = self._inventory.builtin
-                    for init in (event for event in fresh if event.get("type") == "system" and event.get("subtype") == "init"):
-                        if first is None:
-                            first = init_inventory(init)
-                        elif init_inventory(init) != first:
-                            raise CodedError("isolation-failed", "Claude Code isolation fails: the skill, tool, agent, MCP server, or plugin inventory "
-                                             + f"changed in turn {turn + 1}; the invocation counts against the budget")
-                    if any(event.get("type") == "result" and event.get("is_error") is True for event in fresh):
-                        raise RuntimeError(f"Claude Code fails: error-result (turn {turn + 1} reports an error result); "
-                                           + "the invocation counts against the budget")
-                    if not ended:
-                        break
-                    if first is None:
-                        raise CodedError("isolation-failed", "Claude Code isolation fails: turn 1 " + _NO_INIT)
-                    transcript += [{"role": "user", "text": shown}, {"role": "assistant", "text": assistant_text(fresh)}]
-                    if turn == 0 and not [name for name in cast(list[str], loaded_skills(fresh, builtin))
-                                          if name not in self.declared.skills]:
-                        closed = True
-                        break
-                    if turn + 1 >= case.journey.max_turns:
-                        closed = True
-                        break
-                    reply = simulate(transcript)
-                    if reply.done:
-                        closed = True
-                        break
-                    message = shown = reply.reply
+                runner = TurnRunner(self, child, expected=expected, builtin=builtin, request=request, shown=case.request,
+                                    max_turns=case.journey.max_turns, holdout=holdout, simulate=simulate)
+                outcome = runner.run()
                 returncode = child.close()
                 stderr = child.stderr
-            _, unloaded = self._verdict(events, not closed, returncode, stderr, expected, builtin)
+            events, transcript = runner.events, runner.transcript
+            _, unloaded = self._verdict(events, outcome, returncode, stderr, expected, runner.builtin)
             results = [event for event in events if event.get("type") == "result"]
             trace = event_trace(events) + [token for result in results for token in token_events(result)]
             if unloaded:
@@ -528,17 +485,17 @@ class ClaudeCode:
                     "usage": usage(trace), "workspace": str(workspace), "latency_seconds": time.monotonic() - started,
                     "output_files": snapshot_outputs(workspace), "transcript": transcript, "raw_events": events}
 
-    def _verdict(self, events: list[dict[str, object]], crashed: bool, returncode: int, stderr: str, expected: list[str],
+    def _verdict(self, events: list[dict[str, object]], outcome: Exit, returncode: int, stderr: str, expected: list[str],
                  builtin: Collection[str]) -> tuple[dict[str, object], bool]:
         """Judge the finished stream. Return the final result and whether Claude Code never registered the candidate.
 
         Raise when the isolation check fails or when the run failed: a crash, an error result, or no result.
         """
         final = final_event(events)
-        failed = crashed or final is None or final.get("is_error") is True
+        failed = outcome is Exit.PROCESS_DIED or final is None or final.get("is_error") is True
         loaded = loaded_skills(events, builtin)
         if loaded is None and not failed:
-            raise CodedError("isolation-failed", "Claude Code isolation fails: the stream " + _NO_INIT)
+            raise CodedError("isolation-failed", "Claude Code isolation fails: the stream " + NO_INIT)
         unloaded = False
         if loaded is not None:
             loaded = [name for name in loaded if name not in self.declared.skills]
