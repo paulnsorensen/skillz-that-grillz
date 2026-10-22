@@ -63,6 +63,8 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-332](./gh-332.md) — gh-332: the doctor detail of a missing host tool says that the tool is missing
 - [gh-336](./gh-336.md) — gh-336: export writes no empty patch when the winner equals the baseline
 - [gh-366](./gh-366.md) — gh-366: explicit eval kinds and one evals.json validator
+- [gh-390](./gh-390.md) — gh-390: a task case stays unscored in a journey-only run
+- [gh-392](./gh-392.md) — gh-392: the journey gate accepts only a runner budget stop as a budget question
 - [gh-394](./gh-394.md) — gh-394: omp and pi context_tokens counts cache tokens
 - [gh-401](./gh-401.md) — gh-401: the search stops on an uncoded proposer exception
 - [gh-403](./gh-403.md) — gh-403: links inside code fences and code spans are not local link targets
