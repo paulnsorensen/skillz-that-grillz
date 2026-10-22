@@ -42,18 +42,12 @@ Ask for a target when the mode requires one.
 | `wedge <path>` | none | a `SKILL.md` | no | the target skill: each selected CLI, its delivery files, its call site, and any dependency write | an offload brief, then one CLI per selected candidate, each in its own directory when wedged, or with a stated reason |
 | `autoimprove <path>` | `experiment` | a skill directory; no contract or manifest | cases that the user approves; agent-drafted session cases when analytics exists | isolated run directory | a holdout gate verdict and a private candidate patch |
 
-`audit` never modifies the target. The Usage ceremony of `audit` and `improve` runs `scripts/agent-session-analytics.pyz ingest`, which creates or refreshes the analytics cache.
-`references/analytics-ceremony.md` has the details. Skip Usage and the raw-log fallback write no cache.
+The Usage ceremony of `audit` and `improve` runs `scripts/agent-session-analytics.pyz ingest`, which creates or refreshes the analytics cache.
+Skip Usage and the raw-log fallback write no cache.
 
 For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
 Before you write or check `evals/evals.json`, `evals/journeys.json`, or `evals/autoimprove.json`, read `references/eval-formats.md`.
-The agent drafts the cases. The user needs no contract and no case manifest.
 Run `scripts/skillz-experiment.pyz run`, answer each coded stop, and then run `export`.
-Ask at most three questions: harness and model, case approval, and budget approval.
-Report the `runner`, `export`, and `improvement` claims, each with its status and evidence. Apply a winner only when `claims.apply` is true.
-When the user selects the `claude` adapter or a custom command check, also read `references/experiment-harness.md`.
-For Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi, also read `references/harness-recipes.md`.
-Use the installed `scripts/skillz-experiment.pyz`. Do not require a source checkout.
 
 ## Shared protocol
 
@@ -79,21 +73,20 @@ List the deploy targets the definition reaches (`references/harness-layout.md §
 
 Score each lens.
 Each row names the principle, the failure mode it catches, and a checkable test.
-Read `references/anti-patterns.md` when a finding needs the expanded form.
 
 | Lens | Principle → catches | Check |
 |---|---|---|
 | **Predictability** | Fixed protocol with checkable completion → «premature completion» | Every step ends on a done-condition an agent can verify. |
-| **Invocation** | `description` = trigger conditions, front-loaded, third person → «workflow summary», «summary description» | Trigger phrases + "Do NOT use for"; no internal workflow; skills take length from `description.length`, agent files stay at ≤1024 chars by hand; first sentence carries the trigger. `references/description-optimization.md`. |
-| **Portability** | Spec-core frontmatter plus additive Claude fields; user-only policy on every host → «Claude-only assumption», «sidecar missing», «`$ARGUMENTS` dependence» | Cite failed `audit-facts` checks for keys, sidecar pairing, and argument, skill-directory, or file-mention syntax. Judge by hand: args are parsed from the text after the skill name; skills are cross-referenced by `/name`; dispatch and GitHub ops name the contract before host syntax. Full matrix: `references/harness-layout.md`. |
-| **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Cite failed `audit-facts` checks for the token budget, nested references, orphans, and missing read triggers. Judge by hand: relocation counts only when runs branch on the block and the `## References` entry names the trigger. `references/progressive-disclosure.md`. |
+| **Invocation** | `description` = trigger conditions, front-loaded, third person → «workflow summary», «summary description» | Trigger phrases + "Do NOT use for"; no internal workflow; skills take length from `description.length`, agent files stay at ≤1024 chars by hand; first sentence carries the trigger. |
+| **Portability** | Spec-core frontmatter plus additive Claude fields; user-only policy on every host → «Claude-only assumption», «sidecar missing», «`$ARGUMENTS` dependence» | Cite failed `audit-facts` checks for keys, sidecar pairing, and argument, skill-directory, or file-mention syntax. Judge by hand: args are parsed from the text after the skill name; skills are cross-referenced by `/name`; dispatch and GitHub ops name the contract before host syntax. |
+| **Information hierarchy** | Disclose only what some runs skip; body ≤5k tok; references one level deep, each with a read trigger → «sprawl», «untriggered split», «`@file` force-load» | Cite failed `audit-facts` checks for the token budget, nested references, orphans, and missing read triggers. Judge by hand: relocation counts only when runs branch on the block and the `## References` entry names the trigger. |
 | **Prose (ASD-STE100)** | Active voice, present tense, one instruction per sentence, short sentences → «passive voice», «multi-instruction sentence», «long sentence» | Cite `inspect-skill.pyz` `long_sentences` facts (sentences over 25 words). Cite `advisory_sentences` (21 to 25 words) only for procedural steps. Report passive voice and multi-instruction sentences as findings. |
 | **Leading words** | One pretrained word beats a restated triad → «duplication», «no-op weak word» | Collapse restatements; strengthen weak words (`be thorough` → `relentless`). |
 | **Pruning** | Single source of truth; delete no-ops → «sediment» | No meaning in two places; no line the model obeys by default. Delete whole sentences. |
 | **Deterministic offload** | Fixed computation runs as a bundled command, not regenerated prose → «inline script» | No step makes the model write or re-derive the same parse, count, filter, sort, or projection on every run; `scripts.invocation-line` covers the invocation line; `wedge.own-targets` and `wedge.foreign-binary` cover wedge state; judge whether each bundled script has an output contract. Fix with `references/offload.md`. |
 | **Tool scoping** | Read-only / write-scoped / focused; use host enforcement when available → «prose-only constraint» | Claude skills use `disallowed-tools` to remove tools for the current turn. Their `allowed-tools` grants permission without prompts; it is not a deny list. Claude agents use `disallowedTools`. Report actual enforcement per mode and mark prose-only limits as degraded. Do not disable writes for `improve`. |
 | **Context & fork** | Fork when output > ~500 lines or only a digest is needed → «monolithic output» | Fork matches size; a wrap-up signal exists; the `model-policy.*` checks cover `model:` + `effort:`. |
-| **Prompt quality** | Positive framing, why-over-what, one strong example, "What this never does" → «negation-heavy», «rules without reasons» | Judgment tasks use a scaffold, not always/never. `references/decision-frameworks.md`. |
+| **Prompt quality** | Positive framing, why-over-what, one strong example, "What this never does" → «negation-heavy», «rules without reasons» | Judgment tasks use a scaffold, not always/never. |
 | **Calibration** | Judgment agents tag confidence × severity → «judgment without calibration» | `<certain>` / `<speculative>` / `<don't know>`; don't-know never surfaces. |
 | **Output format** | Summary first, tables for findings, clean-vs-issues signal → «no output format» | Format defined; summary and detail split. |
 | **Usage** *(audit, improve)* | Declared matches actual → «declared-vs-actual», «decay» | Declared tools are the used tools; error rate near baseline; usage not declining. |
@@ -191,7 +184,7 @@ Follow `references/offload.md`; its steps are Find, Contract, Implement, Deliver
 2. Run Find and Contract for each candidate. Cite each candidate's line.
    Rank candidates by how often a run repeats the work, then by target line, ascending.
    With zero candidates, report `No offload candidates` and stop.
-3. Emit the brief below.
+3. Emit the brief from `references/offload.md § Brief`.
    Ask the user which candidates to implement, with your recommendation.
    Ask in the same question whether the user declines fromargs or wedging.
    Name each dependency write in that question.
@@ -205,16 +198,6 @@ Follow `references/offload.md`; its steps are Find, Contract, Implement, Deliver
 Done means: every candidate cites a line and has all seven contract fields.
 Each selected CLI passes its contract tests through its invocation line.
 Each CLI that is not wedged states the reason.
-
-```markdown
-## skillz wedge: <name>
-
-| # | Step (line) | Transformation | Command | Delivery | Stays in prose |
-|---|---|---|---|---|---|
-
-### Candidate <n>: <command>
-**Inputs** · **Output** · **Ordering** · **Empty** · **Errors** · **Side effects** · **Caller line**
-```
 
 ## Report
 
@@ -260,7 +243,7 @@ N findings were `<don't know>` or trivial (not shown).
 Read on demand:
 
 - `references/harness-layout.md` — Portability lens fires or `add` (global or repo-local); the frontmatter matrix, rules, template, evals, sidecar, and sources.
-- `references/analytics-ceremony.md` — `audit`, or `improve` without a reusable audit; use `scripts/agent-session-analytics.pyz` for best-effort per-pack analytics.
+- `references/analytics-ceremony.md` — when `audit` runs, or when `improve` has no reusable audit.
 - `references/raw-log-fallback.md` — DuckDB is absent; the user installs it, opts into a sampled, read-only Usage scan, or skips.
 - `references/anti-patterns.md` — a finding needs the expanded failure mode.
 - `references/offload.md` — when `wedge` runs, or when `improve` implements an approved offload; the shared procedure.
@@ -277,7 +260,6 @@ Read on demand:
 - `references/canonical-schema.md` — the pack input `schema`; read it when you write or check pack SQL.
 - `references/query-conventions.md` — the pack input `conventions`; read it when you write a pack or run its queries.
 - `references/harness-coverage.md` — the pack input `coverage`; read it before cross-harness comparisons and in the raw-log fallback.
-- In the analytics ceremony, pass these three paths to each pack context as `schema`, `conventions`, and `coverage`.
 - `references/calibration.md` — when you tag a finding's severity and confidence; the confidence × severity kernel.
 - `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the run flow, case draft, gate verdict, export, optional contract, graders, isolation, and the helper contracts.
 - `references/criteria-drafting.md` — `autoimprove` case drafting: the steps that write `expected.criteria` for each judged case.

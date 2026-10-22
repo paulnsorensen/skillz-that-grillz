@@ -115,6 +115,20 @@ State when to run the command and the recovery action for each error status.
 Keep the interpretation in prose.
 Tell the agent to run the CLI, not to read its source on each use.
 
+## Brief
+
+`wedge` step 3 emits this brief, one row and one candidate block per candidate.
+
+```markdown
+## skillz wedge: <name>
+
+| # | Step (line) | Transformation | Command | Delivery | Stays in prose |
+|---|---|---|---|---|---|
+
+### Candidate <n>: <command>
+**Inputs** · **Output** · **Ordering** · **Empty** · **Errors** · **Side effects** · **Caller line**
+```
+
 ## Red flags
 
 Stop when you see a hand-copied `.pyz`, a `.pyz` beside a launcher, a handler-owned `--full`, or an assumed dependency installation.

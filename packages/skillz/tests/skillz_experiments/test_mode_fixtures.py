@@ -401,7 +401,7 @@ def test_propose_cases_declare_a_tool_that_only_usage_data_shows_unused(tmp_path
 
 
 def _template_fields() -> list[str]:
-    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    text = (SKILL_DIR / "references/offload.md").read_text(encoding="utf-8")
     line = next(row for row in text.splitlines() if row.startswith("**Inputs**"))
     return re.findall(r"\*\*([^*]+)\*\*", line)
 
@@ -550,7 +550,8 @@ STEPS: list[tuple[str, Path, str | None, str]] = [
     ("wedge", OFFLOAD, "2. Contract",
      "command, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects"),
     ("wedge", SKILL, "Mode: wedge", "report `No offload candidates` and stop"),
-    ("wedge", SKILL, None, "| # | Step (line) | Transformation | Command | Delivery | Stays in prose |"),
+    ("wedge", OFFLOAD, None, "| # | Step (line) | Transformation | Command | Delivery | Stays in prose |"),
+    ("wedge", SKILL, "Mode: wedge", "3. Emit the brief from `references/offload.md § Brief`."),
     ("wedge", SKILL, "Mode: wedge", "every candidate cites a line and has all seven contract fields"),
     ("contract", EXPERIMENTS, "The autoimprove contract", "It stops with `contract-unapproved` when `status` is `draft`."),
     ("contract", EXPERIMENTS, "No contract", "Save every drafted contract with `\"status\": \"draft\"`, for both choices."),

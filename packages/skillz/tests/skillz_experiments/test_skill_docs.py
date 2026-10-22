@@ -1,6 +1,7 @@
 """Guard tests over the skillz documentation: mode table, audit lens, mode steps, and sentence length."""
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -8,6 +9,8 @@ from types import ModuleType
 from typing import cast
 
 import pytest
+
+from skillz_experiments._cli import main
 
 SKILL_DIR = Path(__file__).resolve().parents[4] / "skills/skillz"
 SKILL = SKILL_DIR / "SKILL.md"
@@ -136,3 +139,11 @@ def test_experiments_documents_code_enforced_fixture_and_case_rules() -> None:
                    "does not clear a hidden part"):
         assert phrase in text, phrase
     assert re.search(r"holdout split alone needs (6|six) scored cases", text)
+
+
+@pytest.mark.ac("gh-388:AC-1")
+def test_skillz_body_fits_its_own_token_budget(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["audit-facts", str(SKILL_DIR)]) == 0
+    checks = cast(list[dict[str, object]], json.loads(capsys.readouterr().out)["checks"])
+    budget = next(check for check in checks if check["id"] == "body.token-estimate")
+    assert budget["status"] == "pass", budget["detail"]
