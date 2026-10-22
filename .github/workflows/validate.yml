@@ -55,8 +55,12 @@ jobs:
 
       - name: Install just
         # The gate uses `[script]` recipes, which require just >= 1.34 — newer
-        # than distro apt packages ship. setup-just installs a current release.
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        # than distro apt packages ship. install-action fetches this pinned release
+        # from its checksum manifest, with no GitHub releases-API lookup.
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Install gate tooling
         # `just ci` is the single source of truth — the same gate runs locally.
@@ -109,7 +113,10 @@ jobs:
           version: "0.11.32"
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Install DuckDB CLI
         # test_analytics_packs.py requires the DuckDB CLI when REQUIRE_DUCKDB is set.
@@ -128,9 +135,11 @@ jobs:
   skillz-tests:
     # The main ruleset requires this check name. It passes only when every shard passes.
     # A rerun of one matrix job can make the matrix result pass while another shard
-    # stays failed, so the job also counts the latest attempt of each shard job
-    # across all run attempts. The jobs API can lag behind the needs result for a few
-    # seconds after the last shard ends, so the count retries for up to a minute.
+    # stays failed. The job list of the current run attempt holds a completed copy of
+    # each shard that did not run again, so the job fails when a shard in that list
+    # completed without success. The jobs API can show a shard that ended in this
+    # attempt as in_progress for minutes (run 39818883914), so the job does not wait
+    # for that status: the needs result already covers the shards of this attempt.
     name: skillz tests
     if: always()
     needs: skillz-shard
@@ -146,16 +155,14 @@ jobs:
           set -euo pipefail
           echo "skillz shards: $SHARDS"
           test "$SHARDS" = success
-          for attempt in $(seq 1 12); do
-            passed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
-              --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
-              | jq -s 'group_by(.name) | map(max_by(.completed_at)) | map(select(.conclusion == "success")) | length')
-            echo "passed skillz shards: $passed of 6 (check $attempt of 12)"
-            test "$passed" = 6 && exit 0
-            sleep 5
-          done
-          echo "::error::only $passed of 6 skillz shards report success"
-          exit 1
+          shards=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
+            | jq -s 'map({name, started_at, status, conclusion})')
+          jq -r '.[] | "\(.name): started \(.started_at), \(.status), \(.conclusion)"' <<<"$shards"
+          if ! jq -e 'length == 6 and all(.status != "completed" or .conclusion == "success")' <<<"$shards" >/dev/null; then
+            echo "::error::a skillz shard in run attempt $GITHUB_RUN_ATTEMPT is missing or completed without success"
+            exit 1
+          fi
 
   fromargs-tests:
     name: fromargs tests (py${{ matrix.python }})
@@ -173,7 +180,10 @@ jobs:
           version: "0.11.32"
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Run fromargs tests
         run: just test-fromargs ${{ matrix.python }}
@@ -194,7 +204,10 @@ jobs:
           version: "0.11.32"
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Install DuckDB CLI
         run: |

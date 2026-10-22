@@ -9,6 +9,7 @@ from typing import cast, final
 import pytest
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
+from skillz_experiments._cases import CodedError
 from skillz_experiments.search import Edit, search
 from skillz_experiments.search._engine import CheaperTie, overshoot, skip_limit
 
@@ -313,3 +314,30 @@ def test_the_token_tie_accepts_a_gain_rejects_a_loss_and_asks_cheaper_only_on_a_
     assert tie.should_accept(_Proposal([0.1, 0.2], [0.2, 0.1]), state) is True
     assert asked == [("seed", "child", ["t2", "t1"])]
     assert tie.should_accept(_Proposal([1.0, 1.0], [1.0, 1.0], [0, 0]), state) is False
+
+
+@pytest.mark.ac("gh-401:AC-1")
+def test_search_stops_with_a_coded_fault_on_an_uncoded_proposer_exception() -> None:
+    def evaluate(_candidate: dict[str, str], _example: object) -> tuple[float, dict[str, object]]:
+        return 0.0, {"task_correct": 0.0}
+
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                _components: list[str]) -> dict[str, str]:
+        raise RuntimeError("boom")
+
+    with pytest.raises(CodedError, match="boom") as raised:
+        _ = search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=20)
+    assert raised.value.code == "proposer-faulted"
+
+
+@pytest.mark.ac("gh-401:AC-2")
+@pytest.mark.parametrize("error", [ValueError("skip"), CodedError("some-code", "coded")])
+def test_search_keeps_a_proposer_value_error_as_a_skipped_proposal(error: ValueError) -> None:
+    def evaluate(_candidate: dict[str, str], _example: object) -> tuple[float, dict[str, object]]:
+        return 0.0, {"task_correct": 0.0}
+
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                _components: list[str]) -> dict[str, str]:
+        raise error
+
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=20) is False

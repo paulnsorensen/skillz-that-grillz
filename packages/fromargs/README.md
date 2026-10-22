@@ -75,8 +75,10 @@ a truncated list result.
   `AssertionError` is a usage error at exit code `2`. Any other exception
   from a converter, a validator, the handler, or the result serialization
   reports at exit code `1`. Its envelope adds a `traceback` key with the
-  path of a temporary file. `fromargs` keeps the file, so the caller can
-  read it after the process exits.
+  path of a file in a per-user directory under the temp root
+  (`fromargs-<uid>` on POSIX). The directory has no group or other
+  permission bits. `fromargs` keeps the newest 20 traceback files there and
+  deletes older ones, so read the file soon after the process exits.
 - `sys.exit(n)` sets the exit status, and `run()` catches it while it
   parses, runs the handler, and prints the result. `0` or `None` exits `0`
   with no output. An `int` from `1` to `255` reports an error envelope at

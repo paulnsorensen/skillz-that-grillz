@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Literal, Protocol, cast, final, get_args
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
+from skillz_experiments._cases import CodedError
 
 REFLECTION_MINIBATCH = 2
 Edit = Literal["prose", "prose+cli"]
@@ -123,6 +124,7 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
                 scored.add(key)
         return result
 
+    faults: list[Exception] = []
     stopped = False
     idle = 0
     seen = 0
@@ -135,9 +137,21 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
             seen = len(evaluated)
             ended = idle >= skip_limit(len(train)) or len(scored) >= metric_calls
         stopped = stopped or (stalled is not None and stalled())
-        return stopped or ended or (spent is not None and spent())
+        return stopped or ended or bool(faults) or (spent is not None and spent())
 
     # GEPA turns each proposer exception into a skipped proposal. The caller's session latch re-raises a coded fault.
+    # A ValueError, coded or not, is a deliberate skip. Any other exception is a defect, so it ends the search below.
+    def guarded(candidate: dict[str, str], feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                components: list[str]) -> dict[str, str]:
+        try:
+            return propose(candidate, feedback, components)
+        except ValueError:
+            raise
+        except Exception as error:
+            with lock:
+                faults.append(error)
+            raise
+
     # GEPA's own `max_metric_calls` stays unset: it counts each repeat, so free repeats would end the search.
     config = api.GEPAConfig(
         engine=api.EngineConfig(parallel=True,
@@ -147,7 +161,7 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
                                 candidate_selection_strategy="pareto",
                                 acceptance_criterion=("strict_improvement" if cheaper is None
                                                       else CheaperTie(cheaper, train))),
-        reflection=api.ReflectionConfig(custom_candidate_proposer=propose, reflection_lm=None,
+        reflection=api.ReflectionConfig(custom_candidate_proposer=guarded, reflection_lm=None,
                                         module_selector="all", reflection_minibatch_size=REFLECTION_MINIBATCH,
                                         skip_perfect_score=cheaper is None, perfect_score=1.0),
         stop_callbacks=[stop],
@@ -155,4 +169,8 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
     with open(os.devnull, "w", encoding="utf-8") as sink, contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
         _ = api.optimize_anything(seed, evaluator=score, dataset=train, valset=validation,
                                   objective="Maximize independent task correctness.", config=config)
+    if faults:
+        fault = faults[0]
+        raise CodedError("proposer-faulted",
+                         f"the proposer raised {type(fault).__name__}: {fault}; fix the cause in that error, then resume") from fault
     return stopped
