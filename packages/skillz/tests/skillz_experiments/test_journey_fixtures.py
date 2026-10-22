@@ -282,6 +282,7 @@ class Provider(FakeRunProvider):
     """A fake provider that claims the budget of a journey like the real harness. `improved` text scores best."""
 
     def __init__(self, contract: Contract, budget: Budget, checkpoint: Callable[[], None], prompts: list[str]) -> None:
+        super().__init__()
         self.contract = contract
         self.budget = budget
         self.checkpoint = checkpoint

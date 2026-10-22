@@ -95,6 +95,7 @@ class State:
 
 class _Fake(FakeRunProvider):
     def __init__(self, state: State, budget: Budget | None = None) -> None:
+        super().__init__()
         self.state: State = state
         self.budget: Budget | None = budget
 
@@ -596,6 +597,7 @@ class _Spending(FakeRunProvider):
     """
 
     def __init__(self, state: State, budget: Budget, delay: float) -> None:
+        super().__init__()
         self.state: State = state
         self.budget: Budget = budget
         self.delay: float = delay

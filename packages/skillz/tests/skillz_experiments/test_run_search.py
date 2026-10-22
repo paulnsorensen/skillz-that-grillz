@@ -86,14 +86,15 @@ class Search:
 @final
 class Provider(FakeRunProvider):
     def __init__(self, state: Search, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.state = state
         self.budget = budget
         self.checkpoint = checkpoint
 
     @override
     def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
-        del recorded
         """Claim the live calls once. A resume reuses the recorded pass, as the real harness does."""
+        del recorded
         if self.state.preflight_error is not None:
             raise self.state.preflight_error
         if self.budget.calls == 0:

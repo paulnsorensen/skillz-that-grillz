@@ -27,7 +27,6 @@ from skillz_experiments.run._resume import resolve_statistics
 from skillz_experiments.run._session import Session
 from skillz_experiments.search import Progress
 from skillz_experiments.search import request as reflection_request
-from typing_extensions import override
 from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -487,12 +486,7 @@ class _Priced(FakeRunProvider):
     prompts: list[str] = []
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
-        del recorded
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:

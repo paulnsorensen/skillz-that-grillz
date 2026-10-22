@@ -42,14 +42,10 @@ class Recorder:
 
 class Provider(FakeRunProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.recorder: Recorder = recorder
         self.budget: Budget = budget
         self.checkpoint: Callable[[], None] = checkpoint
-
-    @override
-    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
-        del recorded
-        return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:

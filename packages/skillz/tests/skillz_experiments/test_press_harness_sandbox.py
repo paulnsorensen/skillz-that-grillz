@@ -191,6 +191,7 @@ def test_codexRun_recordsTheCredentialKindOfEveryBuiltInRoleInRunJson(
 @final
 class _Provider(FakeRunProvider):
     def __init__(self) -> None:
+        super().__init__()
         self.calls = 0
 
     @override

@@ -83,9 +83,10 @@ class Session:
                                       built=lambda candidate: self._built(candidate))
         # Opened before the provider: a `Stop` here must not leave a provider, such as a Claude login, unclosed.
         self.rebuilder = self._open_rebuilder()
-        build: Factory = factory or (lambda m, b, c: cast(Configuration, configuration).create(
-            m, b, c, out, self.contract.surface, self.seed.files))
-        self.provider: Provider = build(model, self.budget, self.checkpoint)
+        self.provider: Provider = (
+            factory(model, self.budget, self.checkpoint) if factory is not None else
+            cast(Configuration, configuration).create(model, self.budget, self.checkpoint, out, self.contract.surface,
+                                                      self.seed.files))
 
     def _seed_frozen(self) -> dict[str, bytes]:
         """Load the frozen seed files from the run directory. A missing or changed file is tampering."""

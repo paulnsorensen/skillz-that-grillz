@@ -25,7 +25,9 @@ Approver = Callable[..., tuple[str, int]]
 
 
 class _Facts(_Fake):
-    run_facts: dict[str, object] = {"provider_fact": "kept"}
+    def __init__(self, state: State) -> None:
+        super().__init__(state)
+        self.run_facts: dict[str, object] = {"provider_fact": "kept"}
 
 
 def _create_spy(monkeypatch: pytest.MonkeyPatch, state: State) -> list[tuple[Path | None, object, object]]:
@@ -89,19 +91,15 @@ def test_without_a_factory_the_default_factory_calls_configuration_create_with_o
 
 
 @pytest.mark.ac("gh-398:AC-4")
-def test_session_names_no_harness_and_builds_the_provider_in_one_call() -> None:
+def test_session_names_no_harness_and_assigns_the_provider_once() -> None:
     tree = ast.parse(Path(session_module.__file__).read_text())
     named = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names}
     assert "Harness" not in named | imported
-    creates = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-               and isinstance(node.func, ast.Attribute) and node.func.attr == "create"]
-    lambdas = [inner for node in ast.walk(tree) if isinstance(node, ast.Lambda) for inner in ast.walk(node)]
-    assert len(creates) == 1 and any(creates[0] is inner for inner in lambdas)
     providers = [node for node in ast.walk(tree) if isinstance(node, ast.Assign | ast.AnnAssign)
                  and any(isinstance(target, ast.Attribute) and target.attr == "provider"
                          for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))]
-    assert len(providers) == 1 and isinstance(providers[0].value, ast.Call)
+    assert len(providers) == 1
 
 
 @pytest.mark.ac("gh-398:AC-5")

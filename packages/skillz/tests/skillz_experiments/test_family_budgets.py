@@ -223,12 +223,7 @@ class _Provider(FakeRunProvider):
     """A fake provider. `improved` always wins the search. On the holdout, families f0 and f1 reverse that."""
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
-        del recorded
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:

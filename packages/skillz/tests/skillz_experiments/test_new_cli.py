@@ -137,12 +137,8 @@ class Recorder:
 @final
 class _Provider(FakeRunProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
-
-    @override
-    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
-        del recorded
-        return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -752,6 +748,7 @@ class Preferring:
 @final
 class _Preferred(FakeRunProvider):
     def __init__(self, state: Preferring, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.state, self.budget, self.checkpoint = state, budget, checkpoint
 
     @override

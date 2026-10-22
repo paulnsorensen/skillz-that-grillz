@@ -408,6 +408,7 @@ class _Timed(FakeRunProvider):
     """A provider that routes each evaluation through the session memo, as `evaluate` does."""
 
     def __init__(self, plan: Plan) -> None:
+        super().__init__()
         self.plan = plan
 
     @override

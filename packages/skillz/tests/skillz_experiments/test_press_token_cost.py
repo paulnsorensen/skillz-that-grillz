@@ -27,7 +27,6 @@ from skillz_experiments.run._holdout import holdout_tokens
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._outcomes import mean_tokens
 from skillz_experiments.run._session import Session
-from typing_extensions import override
 from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -723,12 +722,7 @@ class _Probe(FakeRunProvider):
     prompts: list[str] = []
 
     def __init__(self, _model: str, _budget: object, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
-        del recorded
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:

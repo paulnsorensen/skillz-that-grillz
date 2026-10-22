@@ -165,6 +165,7 @@ class Searcher(FakeRunProvider):
     """
 
     def __init__(self, budget: Budget, checkpoint: Callable[[], None], counts: Counter[str], contract: Contract) -> None:
+        super().__init__()
         self.budget = budget
         self.checkpoint = checkpoint
         self.counts = counts

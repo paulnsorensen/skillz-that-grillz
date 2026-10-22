@@ -6,7 +6,6 @@ and writes only the members its test cares about, so a new protocol member is on
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing_extensions import override
 
 from skillz_experiments.evaluation import CheckResult
 
@@ -48,12 +47,21 @@ class FakeProvider:
         return PASSED
 
 
-class FakeRunProvider(FakeProvider):
-    """The run `Provider` port: `preflight` takes the recorded evidence and `run_facts` is a dict, not a method."""
+class FakeRunProvider:
+    """No-op defaults for the run `Provider` port (`run/_state.py`): the members that a run fake rarely overrides."""
 
-    run_facts: dict[str, object] = {}  # pyright: ignore[reportIncompatibleMethodOverride]
-
-    @override
+    def __init__(self) -> None:
+        self.run_facts: dict[str, object] = {}
     def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         del recorded
-        return {}
+        return {"isolation": "test-provider"}
+
+    def close(self) -> None:
+        pass
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> CheckResult:
+        del candidate
+        return PASSED
