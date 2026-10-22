@@ -52,6 +52,10 @@ def test_missing_input_fails_closed(repo: Path) -> None:
     assert _run(repo).returncode != 0
     (repo / "skills/demo").mkdir()
     assert _run(repo).returncode != 0
+    _ = subprocess.run(["git", "rm", "-rq", "--cached", "skills/demo"], cwd=repo, check=True)
+    assert _run(repo).returncode != 0
+    (repo / "skills/demo").rmdir()
+    assert _run(repo).returncode != 0
 
 
 @pytest.mark.ac("gh-409:AC-2")
@@ -72,6 +76,7 @@ def test_empty_file_list_fails_closed_when_xargs_skips_the_run(repo: Path, tmp_p
     assert run().returncode != 0
     (repo / "skills/demo").mkdir()
     assert run().returncode != 0
+
 
 @pytest.mark.ac("gh-409:AC-3")
 @pytest.mark.parametrize("shell", ["bash", "zsh"])

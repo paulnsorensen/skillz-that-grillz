@@ -344,7 +344,7 @@ def test_improve_starting_tree_holds_the_seeded_defects(tmp_path: Path) -> None:
 PROPOSE = ["mode-improve-usage", "mode-improve-reuse", "mode-improve-stale"]
 
 
-PACKAGE_ID = "o=$(git ls-files -z -co --exclude-standard skills/demo | LC_ALL=C sort -z | xargs -0 sh -c '[ $# -gt 0 ] || exit 1; for f; do b=$(git hash-object -- \"$f\") || exit 1; printf \"%s %s\\n\" \"$b\" \"$f\"; done' sh) && [ -n \"$o\" ] && printf '%s\\n' \"$o\" | git hash-object --stdin"
+PACKAGE_ID = "o=$(git ls-files -z -co --exclude-standard skills/demo | LC_ALL=C sort -z | xargs -0 sh -c 'for f; do b=$(git hash-object -- \"$f\") || exit 1; printf \"%s %s\\n\" \"$b\" \"$f\"; done' sh) && [ -n \"$o\" ] && printf '%s\\n' \"$o\" | git hash-object --stdin"
 
 
 def _content_id(tmp_path: Path, files: dict[str, str]) -> str:

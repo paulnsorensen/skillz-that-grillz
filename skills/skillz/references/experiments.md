@@ -1240,7 +1240,7 @@ The `wedge` mode has one kind per outcome: `wedge-candidates`, `wedge-clean`, an
 The `improve` mode has two kinds. `improve` applies the approved findings.
 `improve-propose` stops at the approval question and covers the audit-first flow.
 Its cases supply Usage evidence for a declared tool that no run uses: fresh pack digests, a current audit report, or a stale audit report.
-Its grader computes the package content id of the staged skill: the `git hash-object` of the sorted `<blob id> <path>` lines of every package file.
+Its grader computes the package content id of the staged skill: the `git hash-object` of the `<blob id> <path>` lines of every package file, in path order.
 It requires a reused audit only when the earlier report has that id.
 Each case has these fields:
 
