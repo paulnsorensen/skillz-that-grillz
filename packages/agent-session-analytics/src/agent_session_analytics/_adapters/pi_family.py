@@ -51,6 +51,7 @@ def _pi_family_turn_meta(msg: dict[str, JsonValue]) -> dict[str, JsonValue]:
             "input_tokens": usage.get("input"),
             "output_tokens": usage.get("output"),
             "cache_read_input_tokens": usage.get("cacheRead"),
+            "cache_creation_input_tokens": usage.get("cacheWrite"),
         },
         "duration_ms": msg.get("duration"),
         "ttft_ms": msg.get("ttft"),

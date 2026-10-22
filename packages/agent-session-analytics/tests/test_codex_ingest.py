@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from agent_session_analytics import _adapters, _tables
 
 from .conftest import Sandbox, needs_duckdb
@@ -601,3 +603,56 @@ def test_model_turns_codex_tool_calls_are_null_and_context_tokens_stay_the_input
         + "FROM model_turns WHERE harness='codex'"
     )
     assert rows == [{"unmeasured": True, "context_tokens": 10, "cache_read_tokens": 4}]
+
+
+def test_pi_family_usage_maps_cache_write_to_cache_creation(tmp_path: Path) -> None:
+    path = tmp_path / "s.jsonl"
+    usage_in = {"input": 9608, "output": 28, "cacheRead": 29696, "cacheWrite": 512}
+    entry = {"type": "message", "message": {"role": "assistant", "model": "m", "usage": usage_in}}
+    _ = path.write_text(json.dumps(entry) + "\n")
+    rows = list(_adapters.omp_normalize(str(path)))
+    assert sub(rows[0], "message")["usage"] == {
+        "input_tokens": 9608,
+        "output_tokens": 28,
+        "cache_read_input_tokens": 29696,
+        "cache_creation_input_tokens": 512,
+    }
+
+
+@needs_duckdb
+@pytest.mark.parametrize("harness", ["omp", "pi"])
+def test_model_turns_pi_family_context_tokens_add_cache_reads_and_writes(
+    sandbox: Sandbox, harness: str
+) -> None:
+    # Pi-family usage.input excludes cache reads and writes, like Claude's input_tokens.
+    turn: Row = {
+        "type": "message",
+        "timestamp": "2026-05-30T12:00:00Z",
+        "message": {
+            "role": "assistant",
+            "model": "m",
+            "content": [{"type": "text", "text": "x"}],
+            "usage": {
+                "input": 9608,
+                "output": 28,
+                "cacheRead": 29696,
+                "cacheWrite": 512,
+                "totalTokens": 39844,
+            },
+        },
+    }
+    session: Row = {"type": "session", "id": "p-1", "cwd": "/w"}
+    _ = sandbox.write_log(f".{harness}/agent/sessions/-w/s.jsonl", [session, turn])
+    assert sandbox.run("ingest", "--force").returncode == 0
+    rows = sandbox.query(
+        "SELECT input_tokens, cache_read_tokens, cache_creation_tokens, context_tokens "
+        + f"FROM model_turns WHERE harness='{harness}'"
+    )
+    assert rows == [
+        {
+            "input_tokens": 9608,
+            "cache_read_tokens": 29696,
+            "cache_creation_tokens": 512,
+            "context_tokens": 9608 + 29696 + 512,
+        }
+    ]
