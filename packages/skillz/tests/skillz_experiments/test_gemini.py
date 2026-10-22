@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import cast
@@ -683,3 +684,54 @@ def test_a_timeout_stops_the_container_and_bounds_the_drain_when_a_descendant_le
             with contextlib.suppress(ProcessLookupError):
                 os.kill(int(pid_file.read_text()), signal.SIGKILL)
     assert elapsed < 10 and stopped and stopped[0] - started < 1 + _gemini.DRAIN_GRACE / 2
+
+
+def discover_request(root: Path) -> str:
+    return request("discover", root, skill_name="demo", skill_path=str(root / ".agents/skills/demo"))
+
+
+@pytest.mark.ac("gh-419:AC-1")
+@pytest.mark.parametrize("operation", ["discover", "infer"])
+def test_the_dotenv_guard_refuses_a_workspace_outside_the_temporary_directory(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str) -> None:
+    directory = fake_bin(tmp_path)
+    (tmp_path / "temporary").mkdir()
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path / "temporary"))
+    root = workspace(tmp_path)
+    sibling = root.parent / ".env"
+    _ = sibling.write_text("SECRET=keep")
+    raw = (discover_request(root) if operation == "discover"
+           else request("infer", root, prompt="p", response_schema=SCHEMA))
+    with pytest.raises(ValueError, match="temporary directory"):
+        _ = respond(raw, bin_dir=directory)
+    assert sibling.read_text() == "SECRET=keep"
+
+
+@pytest.mark.ac("gh-419:AC-2")
+@pytest.mark.parametrize("kind", ["text", "symlink"])
+def test_the_dotenv_guard_never_destroys_an_existing_dotenv_file(tmp_path: Path, kind: str) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    target = tmp_path / "target.env"
+    _ = target.write_text("SECRET=keep")
+    existing = root.parent / ".env"
+    if kind == "text":
+        _ = existing.write_text("SECRET=keep")
+    else:
+        existing.symlink_to(target)
+    with pytest.raises(ValueError, match="dotenv"):
+        _ = respond(discover_request(root), bin_dir=directory)
+    assert existing.is_symlink() == (kind == "symlink") and existing.read_text() == "SECRET=keep"
+    assert target.read_text() == "SECRET=keep"
+
+
+@pytest.mark.ac("gh-419:AC-3")
+def test_an_invalid_request_writes_no_dotenv_guard(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    bad = [request("discover", root, skill_name="demo", skill_path=str(tmp_path / "other")),
+           request("infer", root, prompt="p", response_schema=SCHEMA, model="-x")]
+    for raw in bad:
+        with pytest.raises(ValueError):
+            _ = respond(raw, bin_dir=directory)
+        assert not (root.parent / ".env").exists()
