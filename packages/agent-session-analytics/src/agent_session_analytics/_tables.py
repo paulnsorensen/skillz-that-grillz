@@ -139,9 +139,9 @@ def build_tables(log: Callable[[str], None]) -> None:
     # TRY_CAST keeps one malformed metric from aborting the whole ingest.
     # Latency and prompt_tokens are omp-only.
     # Codex token rows carry no content, so tool_calls stays NULL (not measured).
-    # context_tokens is the prompt size the model read: Claude's input_tokens
-    # excludes cache reads and creation, so they are added; Codex's
-    # input_tokens already includes cached tokens.
+    # context_tokens is the prompt size the model read: Claude's and Pi-family
+    # (omp, pi) input tokens exclude cache reads and creation, so they are
+    # added; Codex's input_tokens already includes cached tokens.
     log("  Creating model_turns...")
     run_sql(f"""
         CREATE TABLE model_turns AS
@@ -171,7 +171,7 @@ def build_tables(log: Callable[[str], None]) -> None:
             max(out_tokens) AS output_tokens,
             max(cache_read) AS cache_read_tokens,
             max(cache_creation) AS cache_creation_tokens,
-            CASE WHEN harness = 'claude'
+            CASE WHEN harness IN ('claude', 'omp', 'pi')
                 THEN max(in_tokens)
                     + coalesce(max(cache_read), 0)
                     + coalesce(max(cache_creation), 0)
