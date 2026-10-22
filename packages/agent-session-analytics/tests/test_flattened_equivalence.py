@@ -98,7 +98,7 @@ OLD_MODEL_TURNS = """
             AS cache_read_tokens,
         max(TRY_CAST(json_extract(message, '$.usage.cache_creation_input_tokens') AS BIGINT))
             AS cache_creation_tokens,
-        CASE WHEN harness = 'claude'
+        CASE WHEN harness IN ('claude', 'omp', 'pi')
             THEN max(TRY_CAST(json_extract(message, '$.usage.input_tokens') AS BIGINT))
                 + coalesce(max(TRY_CAST(json_extract(message, '$.usage.cache_read_input_tokens') AS BIGINT)), 0)
                 + coalesce(max(TRY_CAST(json_extract(message, '$.usage.cache_creation_input_tokens') AS BIGINT)), 0)
