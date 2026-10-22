@@ -735,3 +735,40 @@ def test_an_invalid_request_writes_no_dotenv_guard(tmp_path: Path) -> None:
         with pytest.raises(ValueError):
             _ = respond(raw, bin_dir=directory)
         assert not (root.parent / ".env").exists()
+
+
+@pytest.mark.ac("gh-419:AC-5")
+def test_the_command_adapter_passes_the_runner_temp_dir_so_the_guard_accepts_its_workspace(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments.harness._command import Command
+
+    directory = fake_bin(tmp_path)
+    runner_tmp = tmp_path / "t"
+    runner_tmp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(runner_tmp))
+    monkeypatch.setattr(tempfile, "tempdir", None)
+    script = tmp_path / "wrapper.py"
+    _ = script.write_text("\n".join([
+        "import json, sys, tempfile",
+        "from pathlib import Path",
+        "from skillz_experiments.wrapper._gemini import respond",
+        f"Path({str(tmp_path / 'seen')!r}).write_text(tempfile.gettempdir())",
+        f"print(json.dumps(respond(sys.stdin.read(), bin_dir=Path({str(directory)!r}))))",
+        ""]))
+    task = Path(tempfile.mkdtemp(prefix="skillz-task-"))
+    root = task / "workspace"
+    (root / ".agents/skills").mkdir(parents=True)
+    adapter = Command((sys.executable, str(script)), "m", Budget(10, 60, 0), lambda: None)
+    _ = adapter._request("discover", root, skill_name="demo",  # pyright: ignore[reportPrivateUsage]
+                         skill_path=str(root / ".agents/skills/demo"))
+    assert (tmp_path / "seen").read_text() == str(runner_tmp)
+    assert (task / ".env").read_text() == ""
+
+
+@pytest.mark.ac("gh-419:AC-2")
+def test_the_dotenv_guard_refuses_a_fifo(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    os.mkfifo(root.parent / ".env")
+    with pytest.raises(ValueError, match="dotenv"):
+        _ = respond(discover_request(root), bin_dir=directory)

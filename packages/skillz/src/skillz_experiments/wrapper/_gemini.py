@@ -7,6 +7,7 @@ The `infer` operation runs Gemini CLI in its native sandbox and passes the restr
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import secrets
 import shutil
 import signal
 import subprocess
+import stat
 import sys
 import tempfile
 import time
@@ -223,9 +225,18 @@ def _stop_dotenv_search(root: Path) -> None:
     if not root.parent.resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()):
         raise ValueError("workspace must be below the temporary directory; the dotenv guard goes in its parent")
     guard = root.parent / DOTENV
-    if guard.is_symlink() or (guard.exists() and guard.stat().st_size):
+    try:
+        descriptor = os.open(guard, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    except OSError as error:
+        if error.errno not in (errno.ELOOP, errno.ENXIO):
+            raise
+        raise ValueError(f"{guard} is a symlink or holds text; the dotenv guard must be an empty file") from None
+    try:
+        status = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if not stat.S_ISREG(status.st_mode) or status.st_size:
         raise ValueError(f"{guard} is a symlink or holds text; the dotenv guard must be an empty file")
-    _ = guard.write_text("")
 
 
 @contextmanager
