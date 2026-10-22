@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import cast
 
@@ -14,6 +15,7 @@ import pytest
 from skillz_experiments._contract import parse
 
 from fromargs_benefit import CONTRACT, FIXTURE, check_draft, cli_verdict, invocations, match_cli, reference_draft
+from fromargs_benefit import target_edits
 from semver_oracle import next_version
 
 HERE = Path(__file__).resolve().parent
@@ -48,6 +50,7 @@ def _log(*commits: str) -> str:
     ("1.4.2", _log("revert: feat: ghost", "revert: revert: feat: ghost"), "none", "1.4.2"),
     ("1.4.2", _log("feat: x", "Revert: feat: x", "revert: Revert: feat: x"), "minor", "1.5.0"),
     ("1.4.2", _log("feat: x", "revert: feat: x", "revert: revert: feat: x "), "patch", "1.4.3"),
+    ("1.4.2", _log("fix: \tuse tab"), "patch", "1.4.3"),
     ("1.4.2", _log("revert!: feat: gone"), "major", "2.0.0"),
     ("0.4.1", _log("feat!: new config"), "minor", "0.5.0"),
     ("0.4.1", _log("feat: y"), "patch", "0.4.2"),
@@ -130,6 +133,26 @@ def test_invocations_reads_fenced_and_inline_commands_and_skips_shell_operators_
     assert invocations(guide, "next") == [["python3", "scripts/next.pyz", "commits.txt"],
                                           ["python3", ".agents/skills/semver-next/scripts/next.pyz", "--version-file",
                                            "VERSION"]]
+
+
+@pytest.mark.ac("fromargs-benefit-smoke:AC-3")
+def test_invocations_keeps_only_a_command_that_runs_the_archive() -> None:
+    guide = ("Run `python3 -c 'print(1)' scripts/next.pyz` and `python3 -m x scripts/next.pyz`.\n"
+             "Then `scripts/next.pyz commits.txt` and `python scripts/next.pyz commits.txt`.\n")
+    assert invocations(guide, "next") == [["scripts/next.pyz", "commits.txt"], ["python", "scripts/next.pyz", "commits.txt"]]
+
+
+@pytest.mark.ac("fromargs-benefit-smoke:AC-2")
+def test_the_target_check_sees_an_edit_that_the_author_agent_made(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("one\n", encoding="utf-8")
+    git = ["git", "-C", str(target), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+    for command in (["init", "-q"], ["add", "."], ["commit", "-q", "-m", "fixture"]):
+        _ = subprocess.run([*git, *command], check=True, capture_output=True)
+    assert target_edits(target) == ""
+    _ = (target / "SKILL.md").write_text("two\n", encoding="utf-8")
+    assert "SKILL.md" in target_edits(target)
 
 
 def _archive(tmp_path: Path, body: str) -> Path:

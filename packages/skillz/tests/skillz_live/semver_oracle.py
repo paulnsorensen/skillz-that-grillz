@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-HEADER = re.compile(r"(?P<type>[A-Za-z]+)(?:\((?P<scope>[^()\n]+)\))?(?P<bang>!)?: (?P<description>\S.*)")
+HEADER = re.compile(r"(?P<type>[A-Za-z]+)(?:\((?P<scope>[^()\n]+)\))?(?P<bang>!)?: (?P<description>[^ ].*)")
 VERSION = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-rc\.(0|[1-9]\d*))?")
 BREAKING = ("BREAKING CHANGE: ", "BREAKING-CHANGE: ")
 IMPACT = {"feat": "minor", "fix": "patch", "perf": "patch"}

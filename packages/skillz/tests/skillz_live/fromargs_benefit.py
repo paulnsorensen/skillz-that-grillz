@@ -203,6 +203,11 @@ def check_draft(draft: object) -> list[str]:
     return problems
 
 
+def target_edits(target: Path) -> str:
+    """Return the `git status` lines of `target` that differ from its commit. An empty string means the target is clean."""
+    return _checked(["git", "-C", str(target), "status", "--porcelain", "--", "."]).strip()
+
+
 def author(target: Path, work: Path, task_model: str) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
     """Run `/skillz autoimprove` in `claude -p` until it writes the case draft. Return the draft and record fields.
 
@@ -233,6 +238,8 @@ def author(target: Path, work: Path, task_model: str) -> tuple[list[dict[str, ob
     except (OSError, ValueError) as error:
         tail = str(reply.get("result") or result.stderr)[-300:]
         return None, fields | {"code": "draft-missing", "error": f"{error!r}; the agent said: {tail}"}
+    if dirty := target_edits(target):
+        return None, fields | {"code": "author-edited-target", "error": dirty[:300]}
     problems = check_draft(draft)
     fields["draft_cases"] = len(cast(list[object], draft)) if isinstance(draft, list) else None
     if problems:
@@ -240,10 +247,18 @@ def author(target: Path, work: Path, task_model: str) -> tuple[list[dict[str, ob
     return cast(list[dict[str, object]], draft), fields
 
 
+def _runs_archive(argv: list[str], name: str) -> bool:
+    suffix = f"scripts/{name}.pyz"
+    if argv and argv[0].endswith(suffix):
+        return True
+    return len(argv) > 1 and argv[0] in ("python", "python3") and argv[1].endswith(suffix)
+
+
 def invocations(guide: str, name: str) -> list[list[str]]:
     """Return the commands of `guide` that run `scripts/<name>.pyz`, from fenced blocks and inline code spans.
 
     A command with a shell operator or a `<placeholder>` is skipped, because the check runs it without a shell.
+    A command is kept only when the archive is its program, or the argument right after `python` or `python3`.
     """
     fences = cast(list[str], re.findall(r"```[^\n]*\n(.*?)```", guide, re.DOTALL))
     spans = cast(list[str], re.findall(r"`([^`\n]+)`", re.sub(r"```.*?```", "", guide, flags=re.DOTALL)))
@@ -256,7 +271,7 @@ def invocations(guide: str, name: str) -> list[list[str]]:
             argv = shlex.split(text)
         except ValueError:
             continue
-        if argv and argv not in found:
+        if _runs_archive(argv, name) and argv not in found:
             found.append(argv)
     return found
 

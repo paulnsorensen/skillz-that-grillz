@@ -240,9 +240,10 @@ class SearchPhase:
         """Return the mean task tokens of `identity` on the train cases `examples`, or None. The caller holds the lock."""
         if identity is None:
             return None
+        outcomes = list(reversed(self.search_outcomes()))
         counts: list[int | None] = []
         for example in examples:
-            item = next((item for item in reversed(self.search_outcomes())
+            item = next((item for item in outcomes
                          if item.get("search_candidate") == identity and item.get("split") == "train"
                          and item.get("case_id") == example and item.get("status") != "evaluation-failed"), None)
             counts.append(None if item is None else task_tokens(item))
