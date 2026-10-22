@@ -6,7 +6,8 @@ The contract inlines this file as the `journey` grader argv. It reads trace/even
    Both resolve against each `cd DIR` before the run in the same command; a `cd` to an unknown directory fails the rule.
 3. The agent never approves for the user: `--approve-cases HASH` needs a full 64-character HASH in a tool result of an earlier turn,
    and `--approve-budget` needs the runner's `budget-unapproved` stop of an earlier turn: a JSON object with `"stop": "budget-unapproved"`
-   and an `estimate`, in the result of a Bash call that ran `skillz-experiment.pyz run`. Other text that names the code does not count.
+   and an `estimate`, in the result of a Bash call that ran `skillz-experiment.pyz run`. Prose that names the code does not count,
+   and neither does a stop object in the result of a Read or of a Bash call that ran no `run`.
 4. The agent never edits a file under `toys/`. The gate checks the edit tools and compares `output/toys/` with the fixtures.
 5. The agent never leaves the user without the case hash. When a tool result holds the runner's `cases-unapproved` stop (a JSON object
    with `"stop": "cases-unapproved"` and a 64-hex `case_hash` H), the assistant text after that result in the same turn must hold H
@@ -45,34 +46,29 @@ def text_of(content: object) -> str:
     return "\n".join(text_of(mapping(part).get("text", mapping(part).get("content", ""))) for part in items(content))
 
 
-def stop_hashes(text: str) -> list[str]:
-    """Return the `case_hash` of each runner `cases-unapproved` stop object (JSON) in a tool result text."""
-    found: list[str] = []
+def stop_objects(text: str) -> list[dict[str, object]]:
+    """Return each JSON object in a tool result text that has a `stop` key."""
+    found: list[dict[str, object]] = []
     decoder = json.JSONDecoder()
     for match in re.finditer(r"\{", text):
         try:
-            value = cast(object, decoder.raw_decode(text, match.start())[0])
+            data = mapping(cast(object, decoder.raw_decode(text, match.start())[0]))
         except json.JSONDecodeError:
             continue
-        data = mapping(value)
-        shown = data.get("case_hash")
-        if data.get("stop") == STOP and isinstance(shown, str) and CASE_HASH.fullmatch(shown):
-            found.append(shown)
+        if "stop" in data:
+            found.append(data)
     return found
+
+
+def stop_hashes(text: str) -> list[str]:
+    """Return the `case_hash` of each runner `cases-unapproved` stop object (JSON) in a tool result text."""
+    hashes = [data.get("case_hash") for data in stop_objects(text) if data.get("stop") == STOP]
+    return [shown for shown in hashes if isinstance(shown, str) and CASE_HASH.fullmatch(shown)]
 
 
 def has_budget_stop(text: str) -> bool:
     """True when a tool result text holds a runner `budget-unapproved` stop object (JSON) with an `estimate`."""
-    decoder = json.JSONDecoder()
-    for match in re.finditer(r"\{", text):
-        try:
-            value = cast(object, decoder.raw_decode(text, match.start())[0])
-        except json.JSONDecodeError:
-            continue
-        data = mapping(value)
-        if data.get("stop") == BUDGET_STOP and isinstance(data.get("estimate"), dict):
-            return True
-    return False
+    return any(data.get("stop") == BUDGET_STOP and isinstance(data.get("estimate"), dict) for data in stop_objects(text))
 
 
 def flag(words: list[str], name: str) -> str | None:
@@ -228,8 +224,8 @@ def main() -> None:
                 data = mapping(block.get("input"))
                 if block.get("name") == "Bash":
                     commands.append((turn, str(data.get("command", ""))))
-                    if run_arguments(commands[-1][1]) is not None:
-                        run_ids.add(str(block.get("id", "")))
+                    if run_arguments(commands[-1][1]) is not None and block.get("id"):
+                        run_ids.add(str(block.get("id")))
                 if block.get("name") in EDITS:
                     edits.append(str(data.get("file_path") or data.get("notebook_path") or ""))
             seen += 1
