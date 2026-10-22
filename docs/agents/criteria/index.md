@@ -63,6 +63,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-332](./gh-332.md) — gh-332: the doctor detail of a missing host tool says that the tool is missing
 - [gh-336](./gh-336.md) — gh-336: export writes no empty patch when the winner equals the baseline
 - [gh-366](./gh-366.md) — gh-366: explicit eval kinds and one evals.json validator
+- [gh-388](./gh-388.md) — gh-388: the skillz body exceeds its 5k-token budget
 - [gh-390](./gh-390.md) — gh-390: a task case stays unscored in a journey-only run
 - [gh-391](./gh-391.md) — gh-391: skillz imports the wedge API from the wedge package, not from private modules
 - [gh-392](./gh-392.md) — gh-392: the journey gate accepts only a runner budget stop as a budget question
