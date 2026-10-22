@@ -81,6 +81,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-407](./gh-407.md) — gh-407: the codex adapter builds the row envelope once
 - [gh-411](./gh-411.md) — gh-411: fromargs bounds its traceback files in a per-user directory
 - [gh-412](./gh-412.md) — gh-412: wedge check reports a key failure as a per-skill issue
+- [gh-413](./gh-413.md) — gh-413: the wedge publish policy runs against a release store, not the gh CLI
 - [gh-419](./gh-419.md) — gh-419: the Gemini dotenv guard stays inside the temporary directory and keeps existing files
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [skillz-autoimprove-claims](./skillz-autoimprove-claims.md) — skillz-autoimprove-claims: validate the three autoimprove claims separately

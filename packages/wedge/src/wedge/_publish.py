@@ -15,47 +15,39 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 from wedge._build import BuildResult, build_many
 from wedge._config import ConfigError, WedgeConfig, load_targets, multi_target_message
 from wedge._digest import content_sha256
 from wedge._fanout import fan_out
 from wedge._lock import LockData, load_lock, lock_path
+from wedge._release_store import RELEASE, GhReleaseStore, ReleaseStore, ReleaseStoreError, run_gh
 
-RELEASE = "wedge"
+__all__ = ["RELEASE", "publish"]
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["gh", *args], capture_output=True, text=True)
+    return run_gh(args)
 
 
-def _ensure_release(repo: str, target: str) -> None:
+def _gh_store(repo: str) -> ReleaseStore:
+    return GhReleaseStore(repo, lambda args: _run(args))
+
+
+def _ensure_release(repo: str, target: str, store: ReleaseStore | None = None) -> None:
     """Make sure the rolling ``wedge`` prerelease exists, tolerating a race."""
-    if _run(["release", "view", RELEASE, "--repo", repo]).returncode == 0:
+    store = store or _gh_store(repo)
+    if store.view():
         return
-    created = _run(
-        [
-            "release",
-            "create",
-            RELEASE,
-            "--repo",
-            repo,
-            "--title",
-            RELEASE,
-            "--notes",
-            "Rolling release: content-addressed wedge .pyz assets.",
-            "--prerelease",
-            "--latest=false",
-            "--target",
-            target,
-        ]
-    )
-    if created.returncode == 0:
+    try:
+        store.create(target)
+    except ReleaseStoreError as exc:
+        created_error = str(exc)
+    else:
         return
-    if _run(["release", "view", RELEASE, "--repo", repo]).returncode == 0:
+    if store.view():
         return
-    raise RuntimeError(f"cannot create or find release {RELEASE!r} in {repo}: {created.stderr}")
+    raise RuntimeError(f"cannot create or find release {RELEASE!r} in {repo}: {created_error}")
 
 
 def _resolve_commit(skill_dir: Path, ref: str) -> str:
@@ -94,43 +86,18 @@ def _require_on_branch(repo: str, branch: str, target: str, skill_dirs: list[Pat
         raise ValueError(f"{target_sha} is not on {branch} in {repo} (compare status {status!r})")
 
 
-def _list_assets(repo: str) -> set[str]:
-    """Every asset name already on the rolling ``wedge`` release."""
-    result = _run(["release", "view", RELEASE, "--repo", repo, "--json", "assets"])
-    if result.returncode != 0:
-        raise RuntimeError(f"cannot view release {RELEASE!r} in {repo}: {result.stderr}")
-    payload_raw: object = cast(object, json.loads(result.stdout))
-    if not isinstance(payload_raw, dict):
-        raise ValueError("release assets response is invalid")
-    payload = cast(dict[str, object], payload_raw)
-    assets_raw: object = payload.get("assets")
-    if not isinstance(assets_raw, list):
-        raise ValueError("release assets response is invalid")
-    assets = cast(list[object], assets_raw)
-    typed_assets = [cast(dict[str, object], entry) for entry in assets if isinstance(entry, dict)]
-    return {cast(str, entry["name"]) for entry in typed_assets if isinstance(entry.get("name"), str)}
-
-
-def _asset_exists(repo: str, asset: str) -> bool:
-    return asset in _list_assets(repo)
-
-
-def _published_digest(repo: str, asset: str) -> str:
+def _published_digest(store: ReleaseStore, asset: str) -> str:
     """Download the asset and return its content digest; ``"invalid"`` if it is no archive."""
     with tempfile.TemporaryDirectory(prefix="wedge-digest-") as tmp:
-        download = _run(
-            ["release", "download", RELEASE, "--repo", repo, "--pattern", asset, "--dir", tmp, "--clobber"]
-        )
-        if download.returncode != 0:
-            raise RuntimeError(f"cannot download asset {asset!r}: {download.stderr}")
+        store.download(asset, Path(tmp))
         try:
             return content_sha256(Path(tmp) / asset)
         except Exception:  # any unreadable archive (bad zip, zlib, CRC) is a mismatch
             return "invalid"
 
 
-def _verdict(lock_data: LockData, repo: str, found: str) -> tuple[str, str]:
-    published = _published_digest(repo, lock_data.asset)
+def _verdict(lock_data: LockData, store: ReleaseStore, found: str) -> tuple[str, str]:
+    published = _published_digest(store, lock_data.asset)
     if published == lock_data.content_sha256:
         return "skipped", f"asset {lock_data.asset} {found}"
     return (
@@ -140,7 +107,7 @@ def _verdict(lock_data: LockData, repo: str, found: str) -> tuple[str, str]:
 
 
 def _publish_built(
-    lock_data: LockData, result: BuildResult, repo: str, known_assets: set[str]
+    lock_data: LockData, result: BuildResult, store: ReleaseStore, known_assets: set[str]
 ) -> tuple[str, str]:
     """Publish one freshly built skill; returns ``(status, reason)``.
 
@@ -156,13 +123,14 @@ def _publish_built(
             f"built content digest {result.content_sha256} != lock {lock_data.content_sha256}",
         )
     if lock_data.asset in known_assets:
-        return _verdict(lock_data, repo, "already published")
-    upload = _run(["release", "upload", RELEASE, str(result.path), "--repo", repo])
-    if upload.returncode == 0:
-        return "published", f"uploaded {lock_data.asset}"
-    if _asset_exists(repo, lock_data.asset):
-        return _verdict(lock_data, repo, "published by a racing run")
-    return "failed", f"upload failed: {upload.stderr}"
+        return _verdict(lock_data, store, "already published")
+    try:
+        store.upload(result.path)
+    except ReleaseStoreError as exc:
+        if lock_data.asset in store.list_assets():
+            return _verdict(lock_data, store, "published by a racing run")
+        return "failed", f"upload failed: {exc}"
+    return "published", f"uploaded {lock_data.asset}"
 
 
 def _load_publishable(
@@ -235,6 +203,7 @@ def publish(
     target: str,
     jobs: int | None = None,
     branch: str | None = None,
+    store: ReleaseStore | None = None,
 ) -> dict[str, dict[str, str]]:
     """Publish every skill, ``jobs`` at a time; returns ``{name: {status, reason}}``.
 
@@ -249,8 +218,9 @@ def publish(
         return results
     if branch is not None:
         _require_on_branch(repo, branch, target, [skill_dir for skill_dir, _config, _lock in prepared])
-    _ensure_release(repo, target)
-    known_assets = _list_assets(repo)
+    store = store or _gh_store(repo)
+    _ensure_release(repo, target, store)
+    known_assets = store.list_assets()
     with tempfile.TemporaryDirectory(prefix="wedge-publish-") as tmp:
         built = build_many([skill_dir for skill_dir, _config, _lock in prepared], Path(tmp), jobs=jobs)
         ready: list[_Ready] = []
@@ -262,7 +232,7 @@ def publish(
                 ready.append(_Ready(config.name, lock_data, outcome.value))
 
         def _publish_one(item: _Ready) -> tuple[str, str]:
-            return _publish_built(item.lock_data, item.build_result, repo, known_assets)
+            return _publish_built(item.lock_data, item.build_result, store, known_assets)
 
         uploads = fan_out(ready, _publish_one, jobs=jobs)
     for item, outcome in zip(ready, uploads):
