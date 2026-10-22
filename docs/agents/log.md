@@ -117,7 +117,5 @@
 
 - 2026-10-19 · 82aa7d68c88aff27 · new-page · research/llm-judge-scoring-and-binary-criteria.md · Current judge scoring (0-100, pillar mean, one call per case) and judge-scale, binary-checklist, generated-criteria, and EARS research. Research only; the /mold judge design is open. No page owned the topic; ADR and criteria files left unchanged. All five frozen probes return the page at rank 1.
 
-
-
 - 2026-10-22 · c1182c6ea19c3c0d · merged · decisions/wedge-skill-packaging.md · Record consumer merge-group validation and separate publication policies. All three frozen probes return the decision page at rank 1; corpus reconciliation remains pending.
 

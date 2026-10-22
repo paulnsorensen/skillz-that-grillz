@@ -35,33 +35,18 @@ requires `uv`; publishing also requires an authenticated `gh` CLI.
 
 ## Merge queues and publication races
 
-Use a merge queue for repositories where concurrent pull requests change shared
-skill sources, dependencies, or packaging configuration. Separate green pull
-requests do not prove that their combined tree has current locks or bundles.
-The queue checks that combined tree before merging; it does not repair artifacts
-or serialize post-merge publication.
-
-Run the appropriate packaging check on both `pull_request` and
-`merge_group: {types: [checks_requested]}`:
+Run the check that matches each skill's packaging mode on both `pull_request`
+and `merge_group: {types: [checks_requested]}`:
 
 - **Locks and launchers:** run `wedge check --root skills`, or use the action's `command: check`.
-- **Committed direct bundles:** run `wedge bundle --root skills --check` without first overwriting the committed bundles.
+- **Committed direct bundles:** run `wedge bundle --root skills --check`. It checks the committed bundles and does not overwrite them.
 - **Bundles built only in CI:** build them from the event checkout, then test the generated distribution before merging.
 
-Require these checks in the target branch's rules and enable its merge queue
-where available. Keep the event checkout so checks test the merge-group SHA,
-not an individual pull request or `main` alone. The
-[action workflow guide](../../actions/wedge/README.md#check-pull-requests-and-merge-groups)
-shows the triggers, required-check setup, and stale-artifact recovery.
-
-Publication needs a separate policy:
-
-- **Release assets:** preserve every post-merge publication run. Immutable,
-  content-addressed assets support concurrent uploads; a later run does not
-  necessarily publish the asset an older lock needs.
-- **A distribution branch:** publish one complete source snapshot and its bundles
-  together. Serialize writers and reject an older source snapshot after a newer
-  snapshot has shipped. A merge queue alone does not provide these guarantees.
+`wedge check` rejects a direct-bundle skill, and `wedge bundle --check` rejects a
+lock-mode skill. Keep each mode under its own root, or pass the skill directories
+of one mode. The
+[action workflow guide](../../actions/wedge/README.md#workflows)
+defines the merge-queue setup, stale-artifact recovery, and publication policy.
 
 ### Example: easy-cheese
 
@@ -76,7 +61,7 @@ release-asset workflow. These links pin the implementation inspected on
 - [Distribution workflow](https://github.com/paulnsorensen/easy-cheese/blob/d70e619dc0cda9c4d52140b1689d2e744c51a754/.github/workflows/publish-dist.yml):
   uses a shared `publish-dist` concurrency group with `cancel-in-progress: false`.
   Each run checks out the latest `main` tip, rather than the triggering commit.
-  Manual and hourly runs retry publication when an earlier run fails or is replaced.
+  Manual and hourly runs retry publication when an earlier run fails or a newer pending run replaces it.
 - [Distribution publisher](https://github.com/paulnsorensen/easy-cheese/blob/d70e619dc0cda9c4d52140b1689d2e744c51a754/scripts/publish_dist.py):
   puts the source snapshot and all built archives in one `dist` commit.
   Its `Source-Commit` trailer identifies the source. It skips older snapshots,
@@ -84,8 +69,7 @@ release-asset workflow. These links pin the implementation inspected on
   rather than overwrite another publication.
 
 This example shows merge-group-ready validation and race-safe distribution,
-not proof of queue enforcement. The active `main-protection` ruleset inspected
-on 2026-10-22 has no `merge_queue` rule. Check your own repository settings before
+not proof of queue enforcement. Check your own repository settings before
 relying on a queue.
 
 Do not copy the distribution workflow's pending-run replacement into a

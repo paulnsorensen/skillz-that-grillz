@@ -95,17 +95,15 @@ _Source: `packages/wedge/src/wedge/` and `packages/wedge/tests/wedge/test_target
 
 ## Consumer CI guidance
 
-Wedge consumer documentation separates merge-group validation from post-merge publication.[^17]
-The action guide shows required checks for the event checkout and stale-artifact recovery.
-The package guide distinguishes lock checks, committed-bundle checks, and CI-built distributions.
+The action guide is the canonical consumer guide for merge-group validation and post-merge publication.[^17]
+The package guide lists the check command for each packaging mode and links to the action guide.
 Append-only release publication must preserve each commit's run, as ADR-004 requires.
 A complete distribution snapshot can replace pending work only when later runs cover missed source changes.
-The easy-cheese example documents that distinction without claiming its live ruleset requires a merge queue.
 This guidance changes no runtime behavior, workflow, or repository guard.
 
 _Source: consumer documentation · Updated: 2026-10-22_
 
-[^17]: `actions/wedge/README.md:89-191`; `packages/wedge/README.md:36-93`.
+[^17]: `actions/wedge/README.md` § Workflows; `packages/wedge/README.md` § Merge queues and publication races.
 
 ## Teaching the packaging workflow
 
