@@ -34,7 +34,7 @@ from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, PENDING_KIN
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget
 from skillz_experiments.search import Edit, search
-from skillz_experiments.search._engine import Evaluate, Propose
+from skillz_experiments.search._engine import Cheaper, Evaluate, Propose
 from skillz_experiments.run import Stop, export, run
 from fake_provider import FakeRunProvider
 
@@ -432,10 +432,11 @@ def test_holdout_ids_requests_and_expected_values_never_reach_search_or_reflecti
 
     def spy_search(seed: dict[str, str], edit_mode: Edit, train: list[object], validation: list[object],
                    evaluate: Evaluate, propose: Propose, *, metric_calls: int,
-                   stalled: Callable[[], bool] | None = None, spent: Callable[[], bool] | None = None) -> object:
+                   stalled: Callable[[], bool] | None = None, spent: Callable[[], bool] | None = None,
+                   cheaper: Cheaper | None = None) -> object:
         seen["train"], seen["validation"] = list(train), list(validation)
         return search(seed, edit_mode, train, validation, evaluate, propose, metric_calls=metric_calls,
-                      stalled=stalled, spent=spent)
+                      stalled=stalled, spent=spent, cheaper=cheaper)
 
     monkeypatch.setattr(_session, "pareto_search", spy_search)
     spy = Spy()

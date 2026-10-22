@@ -23,6 +23,7 @@ from typing import cast
 
 import pytest
 
+from fromargs_benefit import TOKEN_RULE, author, build_target, check_cli, cli_verdict, reference_draft, strong_model
 from skillz_experiments._cli import main
 from skillz_experiments._records import read
 
@@ -59,12 +60,18 @@ class Setup:
 
 @dataclass(frozen=True)
 class Scenario:
-    """One run scenario. `cap` is the largest run estimate that it approves. `bridge` needs Codex for the command bridge."""
+    """One run scenario. `cap` is the largest run estimate that it approves. `bridge` needs Codex for the command bridge.
+
+    `author` writes the case draft with a live agent in place of `Setup.draft`; a dry run keeps `Setup.draft`. `check`
+    adds record fields after the export, and a scenario with `check` passes only by `cli_verdict`.
+    """
 
     build: Callable[[Path, str, str], Setup]
     cap: int
     bridge: bool = False
     resume: bool = False
+    author: Callable[[Path, Path, str], tuple[list[dict[str, object]] | None, dict[str, object]]] | None = None
+    check: Callable[[Path, Path, list[dict[str, object]]], dict[str, object]] | None = None
 
 
 def _cases(case: Callable[[str], dict[str, object]]) -> list[dict[str, object]]:
@@ -202,6 +209,22 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
                  expect=None if harness == "claude" else "journey-unsupported")
 
 
+def _fromargs_benefit(work: Path, harness: str, model: str) -> Setup:
+    """Search a skill that applies version rules by hand. The task role runs `model`; reflection and judge run stronger.
+
+    The token rule lets a CLI that keeps the score and cuts the task tokens promote, so a strong seed does not stop
+    the run with `cases-too-easy`.
+    """
+    del model
+    stronger = {"model": strong_model()}
+    config: dict[str, object] = {"schema_version": 1, "adapter": harness,
+                                 "roles": {"reflection": stronger, "judge": stronger}}
+    path = work / "harness.json"
+    _ = path.write_text(json.dumps(config), encoding="utf-8")
+    return Setup(build_target(work), reference_draft(), config, ("--harness-config", str(path)),
+                 ("--edit", "prose+cli", *TOKEN_RULE))
+
+
 SCENARIOS: dict[str, Scenario] = {
     "basic": Scenario(_basic, 97),
     "command-harness": Scenario(_command_harness, 97, bridge=True),
@@ -210,6 +233,7 @@ SCENARIOS: dict[str, Scenario] = {
     "prose-cli": Scenario(_prose_cli, 53),
     "journey": Scenario(_journey, 229),
     "resume": Scenario(_basic, 97, resume=True),
+    "fromargs-benefit": Scenario(_fromargs_benefit, 122, author=author, check=check_cli),
 }
 """Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it)."""
 NAMES = (*SCENARIOS, "analytics")
@@ -276,13 +300,20 @@ def _run(scenario: Scenario, harness: str, model: str, work: Path, capsys: pytes
         if code:
             return fields | _stopped("preflight", error)
         fields["preflight_calls"] = preflight.get("live_calls")
+    draft = setup.draft
+    if scenario.author is not None and not dry:
+        authored, notes = scenario.author(setup.target, work, model)
+        fields |= notes
+        if authored is None:
+            return fields | _stopped("author", notes)
+        draft = authored
     out = work / "run"
     run = ("run", "--target", str(setup.target), "--out", str(out), "--model", model, *setup.harness, "--live",
            "--repeats", "1", *setup.flags)
     _, stop, error = _call(capsys, *run)
     if error.get("code") != "cases-missing":
         return fields | _stopped("cases", error)
-    _ = Path(cast(str, stop["draft"])).write_text(json.dumps(setup.draft), encoding="utf-8")
+    _ = Path(cast(str, stop["draft"])).write_text(json.dumps(draft), encoding="utf-8")
     _, stop, error = _call(capsys, *run)
     if error.get("code") != "cases-unapproved":
         return fields | _stopped("cases", error)
@@ -306,9 +337,10 @@ def _run(scenario: Scenario, harness: str, model: str, work: Path, capsys: pytes
     if code:
         return fields | _stopped("export", error)
     gate = cast(dict[str, object], result.get("gate")) if isinstance(result.get("gate"), dict) else {}
-    return fields | {"verdict": gate.get("verdict"), "stage": "complete", "phase": result.get("phase"),
-                     "gate_reasons": gate.get("reasons"), "holdout_scored": gate.get("n_shared"),
-                     "patch": str(work / "export/candidate.patch")}
+    fields |= {"verdict": gate.get("verdict"), "stage": "complete", "phase": result.get("phase"),
+               "gate_reasons": gate.get("reasons"), "holdout_scored": gate.get("n_shared"),
+               "patch": str(work / "export/candidate.patch")}
+    return fields | ({} if scenario.check is None else scenario.check(setup.target, work, draft))
 
 
 def _analytics(work: Path) -> dict[str, object]:
@@ -370,6 +402,8 @@ def _verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
         return code == expect, f"{stop}; the scenario expects {expect}"
     if stage == "preflight":
         return False, f"{stop}; the scenario does not expect a preflight stop, so the run made no task call"
+    if scenario.check is not None:
+        return cli_verdict(entry)
     if scenario.resume and interrupted and (entry["interrupted_exit"] == 0 or entry.get("interrupted_phase") == "complete"):
         return False, (f"the run was not interrupted: the first process exited {entry['interrupted_exit']} "
                        f"in phase {entry.get('interrupted_phase')}")
@@ -508,3 +542,13 @@ def test_a_resume_that_reaches_the_interrupt_must_leave_a_nonzero_exit_and_an_un
     passed, reason = _verdict(entry, RESUME)
     assert passed is passes, reason
     assert passes or "not interrupted" in reason, reason
+
+
+@pytest.mark.ac("fromargs-benefit-smoke:AC-4")
+@pytest.mark.parametrize("entry", [{"stage": "run", "code": "cases-too-easy", "expect": None}, None])
+def test_the_fromargs_benefit_scenario_fails_a_record_that_the_shared_rule_passes(entry: dict[str, object] | None,
+                                                                                  tmp_path: Path) -> None:
+    record = entry or _complete(tmp_path, 6)
+    assert _verdict(record, BASIC)[0], "the shared rule passes a coded stop and a completed run"
+    passed, reason = _verdict(record, SCENARIOS["fromargs-benefit"])
+    assert not passed and ("cli=None" in reason or "cases-too-easy" in reason), reason

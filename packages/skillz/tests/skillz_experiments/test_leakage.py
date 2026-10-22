@@ -93,6 +93,17 @@ def test_a_fixture_file_base_name_is_a_fixture_name_leak() -> None:
     assert _leak(f"{SEED['SKILL.md']} Read ledger.csv.", case) == Leak("fixture-name", "SKILL.md")
 
 
+@pytest.mark.ac("skillz-search-token-tie:AC-5")
+def test_a_fixture_name_that_a_seed_file_holds_is_target_vocabulary_in_every_component() -> None:
+    case = _case(files={"VERSION": "1.0.0", "commits.txt": "fix: x"})
+    seed = Candidate({"SKILL.md": "Read `VERSION` and `commits.txt`.", NEW_CLI: ""}, ("SKILL.md", NEW_CLI))
+    module = 'name = "next-version"\nmodule = """Read the version and commits.txt."""'
+    assert check(Denylist.build((case,), seed=seed), seed.files, {NEW_CLI: module}) is None
+    assert check(Denylist.build((case,)), seed.files, {NEW_CLI: module}) == Leak("fixture-name", NEW_CLI)
+    other = Candidate({"SKILL.md": "Read the files."}, ("SKILL.md",))
+    assert check(Denylist.build((case,), seed=other), other.files, {"SKILL.md": "Read commits.txt."}) == Leak("fixture-name", "SKILL.md")
+
+
 @pytest.mark.ac("gh-236:AC-3")
 @pytest.mark.parametrize("proposal", ["see case-70 and xcase-7 and case-7x and case-7-b", "open myledger.csv or ledger.csvx or ledger.csv.bak"])
 def test_an_identifier_or_file_name_inside_a_longer_word_is_not_a_leak(proposal: str) -> None:
