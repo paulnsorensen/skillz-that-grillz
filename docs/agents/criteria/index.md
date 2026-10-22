@@ -71,6 +71,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-395](./gh-395.md) — gh-395: a macOS sandboxed command forges a sandbox setup failure through stderr
 - [gh-396](./gh-396.md) — gh-396: split the live preflight and the converse loop out of ClaudeCode
 - [gh-397](./gh-397.md) — gh-397: tool_use and tool_result pairing is written once
+- [gh-398](./gh-398.md) — gh-398: Close the run provider port
 - [gh-399](./gh-399.md) — gh-399: the run slice reaches git and the history store through ports
 - [gh-401](./gh-401.md) — gh-401: the search stops on an uncoded proposer exception
 - [gh-403](./gh-403.md) — gh-403: links inside code fences and code spans are not local link targets

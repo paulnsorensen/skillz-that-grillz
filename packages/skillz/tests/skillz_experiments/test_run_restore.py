@@ -41,7 +41,7 @@ from skillz_experiments.run._plan import (
 )
 from skillz_experiments.run._open import engine_hash
 from skillz_experiments.run._session import Session
-from fake_provider import PASSED, FakeProvider, ProviderCrash
+from fake_provider import PASSED, FakeRunProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -93,16 +93,17 @@ class State:
         return lambda _model, budget, _checkpoint: _Fake(self, budget if self.claims else None)
 
 
-class _Fake(FakeProvider):
+class _Fake(FakeRunProvider):
     def __init__(self, state: State, budget: Budget | None = None) -> None:
+        super().__init__()
         self.state: State = state
         self.budget: Budget | None = budget
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         if self.budget is not None:
             self.budget.claim()
-        return self.state.preflight(None)
+        return self.state.preflight(recorded)
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -589,21 +590,22 @@ def test_a_symlinked_run_lock_is_refused_and_its_target_stays_intact(
     assert victim.read_text() == "keep me" and state.evaluated == []
 
 
-class _Spending(FakeProvider):
+class _Spending(FakeRunProvider):
     """A fake that claims the budget for each call and spends `delay` seconds on each search call.
 
     Its preflight reads the time left, as the real transports do through the sandbox probe.
     """
 
     def __init__(self, state: State, budget: Budget, delay: float) -> None:
+        super().__init__()
         self.state: State = state
         self.budget: Budget = budget
         self.delay: float = delay
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         _ = self.budget.remaining()
-        return self.state.preflight(None)
+        return self.state.preflight(recorded)
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -1093,8 +1095,8 @@ def test_a_preflight_that_fails_after_its_claim_saves_the_count(
 
     class Failing(_Fake):
         @override
-        def preflight(self) -> dict[str, object]:
-            _ = super().preflight()
+        def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+            _ = super().preflight(recorded)
             raise EnvironmentDiffers("the environment changed after the claim")
 
     def factory(_model: str, budget: Budget, _checkpoint: Callable[[], None]) -> Failing:
