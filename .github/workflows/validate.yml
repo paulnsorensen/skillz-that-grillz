@@ -135,11 +135,11 @@ jobs:
   skillz-tests:
     # The main ruleset requires this check name. It passes only when every shard passes.
     # A rerun of one matrix job can make the matrix result pass while another shard
-    # stays failed, so the job also reads the shard jobs of the current run attempt.
-    # That list holds one job per shard: the job that ran in this attempt, or a copy
-    # of its result from an earlier attempt, so a stale failed shard still fails.
-    # Do not use filter=all: while the run is in progress, it omits the jobs of the
-    # current attempt and returns only earlier attempts.
+    # stays failed. The job list of the current run attempt holds a completed copy of
+    # each shard that did not run again, so the job fails when a shard in that list
+    # completed without success. The jobs API can show a shard that ended in this
+    # attempt as in_progress for minutes (run 39818883914), so the job does not wait
+    # for that status: the needs result already covers the shards of this attempt.
     name: skillz tests
     if: always()
     needs: skillz-shard
@@ -155,18 +155,14 @@ jobs:
           set -euo pipefail
           echo "skillz shards: $SHARDS"
           test "$SHARDS" = success
-          for check in $(seq 1 12); do
-            shards=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
-              --jq '.jobs[] | select(.name | startswith("skillz shard (")) | {id, name, run_attempt, status, conclusion}' \
-              | jq -s 'group_by(.name) | map(max_by(.id))')
-            passed=$(jq 'map(select(.conclusion == "success")) | length' <<<"$shards")
-            echo "passed skillz shards: $passed of 6 (check $check of 12)"
-            test "$passed" = 6 && exit 0
-            sleep 5
-          done
-          jq -r '.[] | "\(.name): attempt \(.run_attempt), \(.status), \(.conclusion)"' <<<"$shards"
-          echo "::error::only $passed of 6 skillz shards report success in run attempt $GITHUB_RUN_ATTEMPT"
-          exit 1
+          shards=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
+            | jq -s 'map({name, started_at, status, conclusion})')
+          jq -r '.[] | "\(.name): started \(.started_at), \(.status), \(.conclusion)"' <<<"$shards"
+          if ! jq -e 'length == 6 and all(.status != "completed" or .conclusion == "success")' <<<"$shards" >/dev/null; then
+            echo "::error::a skillz shard in run attempt $GITHUB_RUN_ATTEMPT is missing or completed without success"
+            exit 1
+          fi
 
   fromargs-tests:
     name: fromargs tests (py${{ matrix.python }})
