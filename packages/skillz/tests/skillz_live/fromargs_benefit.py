@@ -71,8 +71,11 @@ FOOTER_DECOYS = ("breaking change: lower case", "  BREAKING CHANGE: indented", "
 
 
 def strong_model() -> str:
-    """Return the model of the drafting agent, the reflection role, and the judge role."""
-    return os.environ.get("SKILLZ_LIVE_STRONG_MODEL") or "sonnet"
+    """Return the model of the drafting agent, the reflection role, and the judge role.
+
+    The default is opus: a sonnet reflector made only prose edits and never tried `@new-cli`.
+    """
+    return os.environ.get("SKILLZ_LIVE_STRONG_MODEL") or "opus"
 
 
 def _checked(argv: list[str], cwd: Path | None = None) -> str:

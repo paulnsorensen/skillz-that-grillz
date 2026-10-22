@@ -68,3 +68,5 @@ python3 .agents/skills/semver-next/scripts/version-parse.pyz 1.2.3-rc.4
 ```
 
 It prints `{"major": 1, "minor": 2, "patch": 3, "rc": 4}`. `rc` is `null` for a version with no `-rc` part.
+
+No helper applies the commit rules yet. Apply rules 1 to 9 by hand to every commit in `commits.txt`.

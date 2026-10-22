@@ -42,13 +42,15 @@ Git ignores that folder.
 
 This scenario tests the claim that autoimprove can write its own eval and turn hand-applied rules into a fromargs CLI.
 `MODEL` sets the task role. Use `sonnet`: `haiku` failed the isolation preflight in 2 of 2 runs.
-`SKILLZ_LIVE_STRONG_MODEL` sets the drafting agent, the reflection role, and the judge role. The default is `sonnet`.
+`SKILLZ_LIVE_STRONG_MODEL` sets the drafting agent, the reflection role, and the judge role. The default is `opus`.
+A sonnet reflector made only prose edits in 5 of 5 proposals and never tried `@new-cli`. Its feedback holds scores, not criterion reasons or token counts.
 
 ```sh
 SKILLZ_LIVE=1 just live-smoke claude sonnet fromargs-benefit
 ```
 
 1. The test builds `semver-next` in a fresh git repository: a uv project with a lock, a vendored fromargs, and one wedge target, `version-parse`. The run therefore offers `@new-cli`.
+   The seed `SKILL.md` says that no helper applies the commit rules yet. A skill author writes such a gap note, and it points the reflector at a CLI.
 2. Stage 1 runs `/skillz autoimprove` in `claude -p` with project settings only and no MCP server. The agent stops at the case approval question.
    `semver_oracle.py` must agree with the `bump` and `next` of every drafted `expected`. A wrong answer stops the test at stage `author` with `draft-wrong`.
    Each `expected` also holds the case `criteria`, because the intake contract grades a task case with the judge.
@@ -58,6 +60,6 @@ SKILLZ_LIVE=1 just live-smoke claude sonnet fromargs-benefit
 4. The test applies the patch to a copy, rebuilds the new target with `wedge.pyz`, and runs it on every drafted case. It reads the command from the winner `SKILL.md`.
 
 The test passes only when the run completes and the exported fromargs CLI matches the oracle on every case.
-A coded stop fails this scenario, `cases-too-easy` included. The record keeps the gate verdict, but the verdict does not decide the result.
+A coded stop fails this scenario. The record keeps the gate verdict, but the verdict does not decide the result.
 With `SKILLZ_LIVE_DRY=1`, stage 1 is skipped, and the run uses the 12-case reference draft from the oracle.
 The drafting session is outside the run cap. The record holds its `author_turns` and `author_cost_usd`.
