@@ -264,9 +264,8 @@ def test_converter_rejection_still_tries_repair(
 
 
 def test_handler_cyclopts_error_is_an_unexpected_envelope(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     app = fromargs.App("t")
 
     @app.command
@@ -283,9 +282,8 @@ def test_handler_cyclopts_error_is_an_unexpected_envelope(
 
 
 def test_handler_value_error_is_an_unexpected_envelope(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     app = fromargs.App("t")
 
     @app.command
@@ -325,8 +323,6 @@ def test_traceback_write_failure_removes_the_partial_file(
     tmp_path: Path,
     single_json_line: JsonLine,
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-
     def _broken_open(*_args: object, **_kwargs: object) -> object:
         raise OSError("disk full")
 
@@ -342,6 +338,7 @@ def test_traceback_write_failure_removes_the_partial_file(
     assert envelope == {"error": "ValueError: bad shape", "exit_code": 1}
     assert list(tmp_path.rglob("fromargs-*.traceback")) == []
 
+
 @pytest.mark.ac("gh-411:AC-1")
 def test_tracebacks_are_bounded_to_the_newest_twenty_in_a_per_user_directory(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
@@ -352,15 +349,18 @@ def test_tracebacks_are_bounded_to_the_newest_twenty_in_a_per_user_directory(
     def inner() -> None:
         raise ValueError("bad shape")
 
-    last = ""
-    for _ in range(25):
+    paths: list[Path] = []
+    for index in range(25):
         assert app.run(["inner"]) == 1
-        last = str(_unexpected_envelope(capsys.readouterr().err)["traceback"])
+        path = Path(str(_unexpected_envelope(capsys.readouterr().err)["traceback"]))
+        # Pin distinct, increasing mtimes so coarse filesystem clocks cannot tie.
+        stamp = 1_700_000_000 + index
+        os.utime(path, (stamp, stamp))
+        paths.append(path)
 
-    directory = Path(last).parent
+    directory = paths[-1].parent
     assert directory.parent == tmp_path
-    assert len(list(directory.glob("fromargs-*.traceback"))) == 20
-    assert Path(last).exists()
+    assert sorted(directory.glob("fromargs-*.traceback")) == sorted(paths[-20:])
     assert list(tmp_path.iterdir()) == [directory]
 
 
@@ -876,10 +876,8 @@ def test_generator_exit_still_propagates() -> None:
 
 
 def test_validator_unexpected_exception_is_an_unexpected_envelope(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-
     def boom(_type_: object, _value: object) -> None:
         raise RuntimeError("validator boom")
 

@@ -55,7 +55,7 @@ TTL_SECONDS = 3600  # 1 hour
 # The schema version is an integer stamped in the one-row `schema_info` table.
 # Raise it on every change to a table or column; a database with another
 # version is stale, so ingest rebuilds it even inside the freshness window.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 EXIT_NO_DUCKDB = 3
 EXIT_INGEST = 4

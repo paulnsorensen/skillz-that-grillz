@@ -7,6 +7,7 @@ The `infer` operation runs Gemini CLI in its native sandbox and passes the restr
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import secrets
 import shutil
 import signal
 import subprocess
+import stat
 import sys
 import tempfile
 import time
@@ -208,6 +210,8 @@ def _stop_dotenv_search(root: Path) -> None:
     Gemini loads only the first dotenv file that it finds at or above its working directory. A file in the workspace or in
     its `.gemini` directory (even a symlink) would load before the guard and could carry credentials. The guard stops the
     search before a shared directory such as `/tmp`, where any local user can write a dotenv file.
+    The guard goes only in the parent of a workspace below the temporary directory. It never replaces a dotenv file
+    that is a symlink or holds text.
     """
     if os.path.lexists(root / DOTENV):
         raise ValueError(f"workspace must not contain {DOTENV}; Gemini CLI would load it")
@@ -218,9 +222,21 @@ def _stop_dotenv_search(root: Path) -> None:
         for entry in directory.iterdir():
             if entry.name != PROFILE_FILE:
                 raise ValueError(f"workspace must not contain .gemini/{entry.name}; Gemini CLI would load it")
+    if not root.parent.resolve().is_relative_to(Path(tempfile.gettempdir()).resolve()):
+        raise ValueError("workspace must be below the temporary directory; the dotenv guard goes in its parent")
     guard = root.parent / DOTENV
-    guard.unlink(missing_ok=True)
-    _ = guard.write_text("")
+    try:
+        descriptor = os.open(guard, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    except OSError as error:
+        if error.errno not in (errno.ELOOP, errno.ENXIO):
+            raise
+        raise ValueError(f"{guard} is a symlink or holds text; the dotenv guard must be an empty file") from None
+    try:
+        status = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if not stat.S_ISREG(status.st_mode) or status.st_size:
+        raise ValueError(f"{guard} is a symlink or holds text; the dotenv guard must be an empty file")
 
 
 @contextmanager
@@ -283,6 +299,7 @@ def _skill_listing(request: dict[str, object], workspace: Path, bin_dir: Path | 
     requested = Path(path)
     if ".." in requested.parts or requested.resolve() != skills / name:
         raise ValueError("skill_path must be <workspace>/.agents/skills/<skill_name>")
+    _stop_dotenv_search(workspace)
     gemini = _gemini(bin_dir)
     with _login_home() as home:
         result = _run([gemini, "skills", "list"], workspace, _environment(gemini, bin_dir, home),
@@ -393,6 +410,7 @@ def _infer(request: dict[str, object], workspace: Path, runtime: str | None, ima
         raise ValueError("infer request needs prompt, response_schema, and model")
     if not model.strip() or model.startswith("-"):
         raise ValueError("model must be a model name that does not start with '-'")
+    _stop_dotenv_search(workspace)
     kind, executable = _runtime(runtime, bin_dir)
     gemini = _gemini(bin_dir)
     root = workspace.resolve()
@@ -459,10 +477,8 @@ def respond(raw: str, *, bin_dir: Path | None = None, runtime: str | None = None
         if operation == "sandbox":
             body = _sandbox(asked, root, runtime, image, bin_dir)
         elif operation == "discover":
-            _stop_dotenv_search(root)
             body = _skill_listing(asked, root, bin_dir)
         else:
-            _stop_dotenv_search(root)
             body = _infer(asked, root, runtime, image, bin_dir)
     except OSError as error:
         raise RuntimeError(f"host fault while running {operation}: {error.strerror or error}") from None

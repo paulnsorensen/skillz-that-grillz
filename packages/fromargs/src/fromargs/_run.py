@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import getpass
 import inspect
 import json
 import os
@@ -207,15 +206,14 @@ def _report_system_exit(exc: SystemExit) -> int:
 
 def _traceback_dir() -> str:
     """Create and return this user's private traceback directory under the temp root."""
-    if hasattr(os, "getuid"):
-        owner = str(os.getuid())
-    else:
-        owner = getpass.getuser()
-    path = os.path.join(tempfile.gettempdir(), f"fromargs-{owner}")
+    uid = os.getuid() if hasattr(os, "getuid") else None
+    # Without getuid (Windows), the temp root is already per-user.
+    name = "fromargs" if uid is None else f"fromargs-{uid}"
+    path = os.path.join(tempfile.gettempdir(), name)
     os.makedirs(path, mode=0o700, exist_ok=True)
-    if hasattr(os, "getuid"):
+    if uid is not None:
         st = os.lstat(path)
-        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != uid:
             raise PermissionError(f"{path} is not a directory that this user owns")
         if st.st_mode & 0o077:
             os.chmod(path, 0o700)
@@ -226,10 +224,11 @@ def _prune_tracebacks(directory: str, keep_path: str) -> None:
     """Delete all but the newest ``_KEEP_TRACEBACKS`` traceback files; never ``keep_path``."""
     with contextlib.suppress(OSError):
         dated: list[tuple[int, str]] = []
-        for entry in os.scandir(directory):
-            if entry.path != keep_path and entry.name.endswith(_TRACEBACK_SUFFIX):
-                with contextlib.suppress(OSError):
-                    dated.append((entry.stat().st_mtime_ns, entry.path))
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if entry.path != keep_path and entry.name.endswith(_TRACEBACK_SUFFIX):
+                    with contextlib.suppress(OSError):
+                        dated.append((entry.stat().st_mtime_ns, entry.path))
         dated.sort()
         for _, stale in dated[: max(0, len(dated) - (_KEEP_TRACEBACKS - 1))]:
             with contextlib.suppress(OSError):
