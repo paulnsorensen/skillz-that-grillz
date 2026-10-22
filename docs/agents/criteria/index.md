@@ -63,11 +63,13 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-332](./gh-332.md) — gh-332: the doctor detail of a missing host tool says that the tool is missing
 - [gh-336](./gh-336.md) — gh-336: export writes no empty patch when the winner equals the baseline
 - [gh-366](./gh-366.md) — gh-366: explicit eval kinds and one evals.json validator
+- [gh-394](./gh-394.md) — gh-394: omp and pi context_tokens counts cache tokens
 - [gh-401](./gh-401.md) — gh-401: the search stops on an uncoded proposer exception
 - [gh-403](./gh-403.md) — gh-403: links inside code fences and code spans are not local link targets
 - [gh-404](./gh-404.md) — gh-404: an input below a symlink loop stays inside the inspect error contract
 - [gh-406](./gh-406.md) — gh-406: wedge strips install metadata only inside *.dist-info
 - [gh-412](./gh-412.md) — gh-412: wedge check reports a key failure as a per-skill issue
+- [gh-419](./gh-419.md) — gh-419: the Gemini dotenv guard stays inside the temporary directory and keeps existing files
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [skillz-autoimprove-claims](./skillz-autoimprove-claims.md) — skillz-autoimprove-claims: validate the three autoimprove claims separately
 - [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
