@@ -841,7 +841,7 @@ def test_candidate_run_records_bash_commands_as_completed_executions(tmp_path: P
     assert cast(dict[str, object], result["answer"])["load_marker"] == candidate.identity
 
 
-@pytest.mark.skipif(shutil.which("bwrap") is None, reason="bubblewrap is unavailable")
+@needs_bwrap
 def test_sandbox_hides_host_files_and_returns_output(tmp_path: Path) -> None:
     session = harness(tmp_path, fake_claude(tmp_path))
     sealed = tmp_path / "sealed"
