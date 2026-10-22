@@ -31,7 +31,7 @@ from skillz_experiments._intake import intake_contract
 from skillz_experiments.run import run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
-from fake_provider import PASSED, FakeProvider
+from fake_provider import PASSED, FakeProvider, FakeRunProvider
 from memo_fixtures import SKILL, cases as _cases, contract as _contract
 
 if TYPE_CHECKING:
@@ -158,7 +158,7 @@ def test_a_full_command_run_checks_the_seed_once_across_check_seed_and_every_cas
 
 
 @final
-class Searcher(FakeProvider):
+class Searcher(FakeRunProvider):
     """A provider that routes each evaluation through the session memo, as `Harness.evaluate` does, then scores.
 
     Proposals are new identities, so GEPA's `parallel=True` minibatch evaluates each one on several cases at once.
@@ -173,7 +173,8 @@ class Searcher(FakeProvider):
         self.proposals = 0
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         if self.budget.calls == 0:
             for _ in range(PREFLIGHT_CALLS):
                 self.budget.claim()

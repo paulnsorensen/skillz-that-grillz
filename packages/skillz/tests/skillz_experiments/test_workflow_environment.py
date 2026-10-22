@@ -15,7 +15,10 @@ def _session(recorded: dict[str, object], observed: dict[str, object]) -> Sessio
     session.budget = Budget(1, 60.0, reserve=0)
     session.lock = threading.RLock()
     session.record = {"preflight": recorded, "environment_hash": recorded["environment_hash"]}
-    session.provider = cast(object, SimpleNamespace(preflight=lambda: observed))  # pyright: ignore[reportAttributeAccessIssue]
+    def preflight(_recorded: dict[str, object] | None = None) -> dict[str, object]:
+        return observed
+
+    session.provider = cast(object, SimpleNamespace(preflight=preflight, run_facts={}))  # pyright: ignore[reportAttributeAccessIssue]
     return session
 
 

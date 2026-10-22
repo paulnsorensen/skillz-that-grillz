@@ -15,7 +15,7 @@ from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments._records import open_record, read, write
 from skillz_experiments.run._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics
-from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, Harness, stop_kind
+from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, stop_kind
 from skillz_experiments.run._fault import FaultLatch
 from skillz_experiments.run._headroom import run_headroom
 from skillz_experiments.run._holdout import run_gate
@@ -83,9 +83,9 @@ class Session:
                                       built=lambda candidate: self._built(candidate))
         # Opened before the provider: a `Stop` here must not leave a provider, such as a Claude login, unclosed.
         self.rebuilder = self._open_rebuilder()
-        self.provider: Provider = (configuration.create(model, self.budget, self.checkpoint, out, self.contract.surface,
-                                                        self.seed.files) if configuration is not None
-                                   else cast(Factory, factory)(model, self.budget, self.checkpoint))
+        build: Factory = factory or (lambda m, b, c: cast(Configuration, configuration).create(
+            m, b, c, out, self.contract.surface, self.seed.files))
+        self.provider: Provider = build(model, self.budget, self.checkpoint)
 
     def _seed_frozen(self) -> dict[str, bytes]:
         """Load the frozen seed files from the run directory. A missing or changed file is tampering."""
@@ -141,8 +141,7 @@ class Session:
         recorded = self.record.get("preflight")
         before = self.budget.calls
         try:
-            preflight = (self.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
-                         if isinstance(self.provider, Harness) else self.provider.preflight())
+            preflight = self.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
         finally:
             claimed = self.budget.calls - before
             with self.lock:
@@ -161,8 +160,7 @@ class Session:
                                      + evidence + "; restore the first-run environment and resume, "
                                      + "or start a new run")
         self.record["preflight"] = preflight
-        if isinstance(self.provider, Harness):
-            self.record |= self.provider.run_facts
+        self.record |= self.provider.run_facts
         self.checkpoint()
 
     def evaluate_case(self, candidate: Candidate, case: Case, arm: str, *, holdout: bool = False,

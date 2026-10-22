@@ -37,7 +37,7 @@ from skillz_experiments.search import Edit, search
 from skillz_experiments.search._engine import Evaluate, Propose
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -79,12 +79,13 @@ class Spy:
 
 
 @final
-class _Fake(FakeProvider):
+class _Fake(FakeRunProvider):
     def __init__(self, spy: Spy, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.spy, self.budget, self.checkpoint = spy, budget, checkpoint
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,

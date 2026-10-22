@@ -21,7 +21,7 @@ from skillz_experiments.harness._codex import Codex
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EXPECTED = {"criteria": [{"id": "answer", "text": "THE answer SHALL meet the request."}]}
@@ -85,14 +85,15 @@ def test_run_accepts_only_claude_or_codex_and_launches_headless(tmp_path: Path, 
 
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     """A fake provider: the seed scores 0 and any proposal that says `improved` scores 1."""
 
     def __init__(self, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.budget, self.checkpoint, self.lock = budget, checkpoint, threading.Lock()
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,

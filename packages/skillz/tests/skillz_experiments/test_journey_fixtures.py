@@ -41,7 +41,7 @@ from skillz_experiments.run._plan import (
     size_plan,
 )
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeProvider, FakeRunProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FAKE = FIXTURES / "fake_claude.py"
@@ -278,7 +278,7 @@ def write_journeys(target: Path, out: Path, max_turns: int, families: int = 5) -
 
 
 @final
-class Provider(FakeProvider):
+class Provider(FakeRunProvider):
     """A fake provider that claims the budget of a journey like the real harness. `improved` text scores best."""
 
     def __init__(self, contract: Contract, budget: Budget, checkpoint: Callable[[], None], prompts: list[str]) -> None:
@@ -289,7 +289,8 @@ class Provider(FakeProvider):
         self.lock = threading.Lock()
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         if self.budget.calls == 0:
             for _ in range(PREFLIGHT_CALLS):
                 self.budget.claim()

@@ -21,7 +21,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._resume import resolve_statistics
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 MODEL = "local-test"
 
@@ -219,14 +219,15 @@ def test_a_contract_without_the_new_keys_hashes_as_before() -> None:
 REGRESSING = ("f0", "f1")
 
 
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     """A fake provider. `improved` always wins the search. On the holdout, families f0 and f1 reverse that."""
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
         pass
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,

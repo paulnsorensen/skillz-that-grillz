@@ -35,7 +35,7 @@ from skillz_experiments.search import Edit
 from skillz_experiments.run._wedge_targets import WEDGE_EDIT_LIMIT, plan_targets
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -133,12 +133,13 @@ class Recorder:
 
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,

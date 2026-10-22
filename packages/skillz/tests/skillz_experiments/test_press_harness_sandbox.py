@@ -25,7 +25,7 @@ from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from typing_extensions import override
-from fake_provider import PASSED, FakeProvider
+from fake_provider import PASSED, FakeRunProvider
 from skillz_experiments.evaluation import CheckResult
 
 FIXTURES = Path(__file__).parent / 'fixtures'
@@ -189,12 +189,13 @@ def test_codexRun_recordsTheCredentialKindOfEveryBuiltInRoleInRunJson(
 # ---------------------------------------------------------------- AC-6 nono records
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     def __init__(self) -> None:
         self.calls = 0
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         self.calls += 1
         return {'environment_hash': 'e1', 'isolation': 'passed'}
 

@@ -30,7 +30,7 @@ from typing_extensions import override
 from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
 from skillz_experiments.run._history_store import UNREADABLE, FileHistoryStore, store_path
 from skillz_experiments.run._ports import Ports
-from fake_provider import PASSED, FakeProvider, ProviderCrash
+from fake_provider import PASSED, FakeRunProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -84,14 +84,15 @@ class Search:
 
 
 @final
-class Provider(FakeProvider):
+class Provider(FakeRunProvider):
     def __init__(self, state: Search, budget: Budget, checkpoint: Callable[[], None]) -> None:
         self.state = state
         self.budget = budget
         self.checkpoint = checkpoint
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         """Claim the live calls once. A resume reuses the recorded pass, as the real harness does."""
         if self.state.preflight_error is not None:
             raise self.state.preflight_error
