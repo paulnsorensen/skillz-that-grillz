@@ -49,10 +49,7 @@ from skillz_experiments.harness import (
     stop_kind,
 )
 from skillz_experiments.run._export import is_inside, summary
-from skillz_experiments.run._history_store import Loaded
-from skillz_experiments.run._history_store import load as load_history
-from skillz_experiments.run._history_store import store_path
-from skillz_experiments.run._history_store import write as write_history
+from skillz_experiments.run._history_store import FileHistoryStore, Loaded
 from skillz_experiments.run._plan import editable_files, plan_estimate, scored_kinds, size_plan
 from skillz_experiments.run._resume import (
     check_resume,
@@ -68,7 +65,7 @@ from skillz_experiments.run._resume import (
 )
 from skillz_experiments.run._open import engine_hash
 from skillz_experiments.run._ports import HistoryStore, Ports
-from skillz_experiments.run._replay_phase import GitPatchApplier
+from skillz_experiments.run._replay import GitPatchApplier
 from skillz_experiments.run._record_fields import text_field
 from skillz_experiments.run._session import Session
 from skillz_experiments.run._state import Factory, HarnessName
@@ -280,17 +277,6 @@ def _check_statistics_flags(statistics: Mapping[str, float] | None) -> dict[str,
     return accepted
 
 
-class FileHistoryStore:
-    """The default `HistoryStore`: the JSONL files under the XDG state directory."""
-
-    def load(self, skill: str, target_root: str, record: Mapping[str, object], run_id: str) -> Loaded:
-        return load_history(store_path(skill, target_root), record, run_id)
-
-    def write(self, skill: str, target_root: str, record: Mapping[str, object], run_id: str,
-              attempts: Sequence[Mapping[str, object]]) -> str | None:
-        return write_history(store_path(skill, target_root), record, run_id, attempts)
-
-
 def _default_ports() -> Ports:
     return Ports(patches=GitPatchApplier(), history=FileHistoryStore())
 
@@ -376,7 +362,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
         statistics: Mapping[str, float] | None = None,
-        judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = ()) -> dict[str, object]:
+        judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = (),
+        ports: Ports | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `judge_model` sets the model of the judge calls. Task and reflection calls use `model`. The first run records it,
@@ -387,6 +374,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
 
     `history` turns the private cross-run attempt history on or off. It is on by default. The first run records it,
     and a resume that passes another value stops with `run-config-differs`.
+
+    `ports` replaces the default infrastructure adapters: `git apply` for the replay and the XDG history store.
     """
     requested, given = _check_arguments(
         adapter, configuration, factory, edit, repeats,
@@ -432,4 +421,4 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)
-        return _drive(session, _default_ports())
+        return _drive(session, ports or _default_ports())

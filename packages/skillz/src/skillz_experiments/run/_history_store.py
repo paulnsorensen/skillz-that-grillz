@@ -213,3 +213,14 @@ def write(path: Path, record: Mapping[str, object], run_id: str, attempts: Seque
     except OSError:
         return UNREADABLE
     return None
+
+
+class FileHistoryStore:
+    """The default `HistoryStore`: the JSONL files under the XDG state directory."""
+
+    def load(self, skill: str, target_root: str, record: Mapping[str, object], run_id: str) -> Loaded:
+        return load(store_path(skill, target_root), record, run_id)
+
+    def write(self, skill: str, target_root: str, record: Mapping[str, object], run_id: str,
+              attempts: Sequence[Mapping[str, object]]) -> str | None:
+        return write(store_path(skill, target_root), record, run_id, attempts)

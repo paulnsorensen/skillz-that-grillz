@@ -83,6 +83,13 @@ def apply_patches(directory: Path, patch: Patch) -> str | None:
     return None
 
 
+class GitPatchApplier:
+    """The default `PatchApplier`: `git apply` in the copy."""
+
+    def apply(self, directory: Path, patch: Patch) -> str | None:
+        return apply_patches(directory, patch)
+
+
 def _tree(root: Path) -> dict[str, bytes | None]:
     """Return the bytes of every file under `root` by posix name. A symlink maps to None."""
     found: dict[str, bytes | None] = {}

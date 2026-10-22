@@ -1,6 +1,7 @@
 """The infrastructure boundaries of a run: `git apply` for the replay and the cross-run attempt history store.
 
-The defaults are `GitPatchApplier` in `_replay_phase` and `FileHistoryStore` in `_run`.
+The defaults are `GitPatchApplier` in `_replay`, next to `apply_patches`, and `FileHistoryStore` in `_history_store`.
+`run(ports=...)` replaces them.
 """
 from __future__ import annotations
 
