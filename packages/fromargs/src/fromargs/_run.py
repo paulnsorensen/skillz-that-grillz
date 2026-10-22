@@ -8,6 +8,7 @@ import getpass
 import inspect
 import json
 import os
+import stat
 import sys
 import tempfile
 import traceback
@@ -212,8 +213,12 @@ def _traceback_dir() -> str:
         owner = getpass.getuser()
     path = os.path.join(tempfile.gettempdir(), f"fromargs-{owner}")
     os.makedirs(path, mode=0o700, exist_ok=True)
-    if hasattr(os, "getuid") and os.stat(path).st_uid != os.getuid():
-        raise PermissionError(f"{path} belongs to another user")
+    if hasattr(os, "getuid"):
+        st = os.lstat(path)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+            raise PermissionError(f"{path} is not a directory that this user owns")
+        if st.st_mode & 0o077:
+            os.chmod(path, 0o700)
     return path
 
 

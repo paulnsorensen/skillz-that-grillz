@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
@@ -376,6 +377,48 @@ def test_traceback_directory_is_private_to_the_user(capsys: pytest.CaptureFixtur
     directory = Path(str(_unexpected_envelope(capsys.readouterr().err)["traceback"])).parent
     assert directory.parent == tmp_path
     assert directory.stat().st_mode & 0o077 == 0
+
+
+@pytest.mark.ac("gh-411:AC-4")
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks and permission bits")
+def test_symlinked_traceback_directory_is_refused_and_its_target_is_untouched(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, single_json_line: JsonLine
+) -> None:
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    kept = foreign / "x.traceback"
+    _ = kept.write_text("keep")
+    (tmp_path / f"fromargs-{os.getuid()}").symlink_to(foreign, target_is_directory=True)
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    envelope = single_json_line(capsys.readouterr().err)
+    assert envelope == {"error": "ValueError: bad shape", "exit_code": 1}
+    assert list(foreign.iterdir()) == [kept]
+
+
+@pytest.mark.ac("gh-411:AC-4")
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_existing_open_traceback_directory_is_made_private(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    existing = tmp_path / f"fromargs-{os.getuid()}"
+    existing.mkdir()
+    existing.chmod(0o755)
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    directory = Path(str(_unexpected_envelope(capsys.readouterr().err)["traceback"])).parent
+    assert directory == existing
+    assert existing.stat().st_mode & 0o077 == 0
 
 
 def test_handler_returning_nan_is_an_unexpected_envelope(
