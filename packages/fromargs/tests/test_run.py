@@ -277,7 +277,7 @@ def test_handler_cyclopts_error_is_an_unexpected_envelope(
     assert envelope["error"] == "CycloptsError: inner"
     assert envelope["exit_code"] == 1
     traceback_path = Path(str(envelope["traceback"]))
-    assert traceback_path.parent == tmp_path
+    assert traceback_path.parent.parent == tmp_path
     assert "CycloptsError" in traceback_path.read_text()
 
 
@@ -296,7 +296,7 @@ def test_handler_value_error_is_an_unexpected_envelope(
     assert envelope["error"] == "ValueError: bad shape"
     assert envelope["exit_code"] == 1
     traceback_path = Path(str(envelope["traceback"]))
-    assert traceback_path.parent == tmp_path
+    assert traceback_path.parent.parent == tmp_path
     assert "bad shape" in traceback_path.read_text()
 
 
@@ -339,7 +339,43 @@ def test_traceback_write_failure_removes_the_partial_file(
     assert app.run(["inner"]) == 1
     envelope = single_json_line(capsys.readouterr().err)
     assert envelope == {"error": "ValueError: bad shape", "exit_code": 1}
-    assert list(tmp_path.glob("fromargs-*.traceback")) == []
+    assert list(tmp_path.rglob("fromargs-*.traceback")) == []
+
+@pytest.mark.ac("gh-411:AC-1")
+def test_tracebacks_are_bounded_to_the_newest_twenty_in_a_per_user_directory(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    last = ""
+    for _ in range(25):
+        assert app.run(["inner"]) == 1
+        last = str(_unexpected_envelope(capsys.readouterr().err)["traceback"])
+
+    directory = Path(last).parent
+    assert directory.parent == tmp_path
+    assert len(list(directory.glob("fromargs-*.traceback"))) == 20
+    assert Path(last).exists()
+    assert list(tmp_path.iterdir()) == [directory]
+
+
+@pytest.mark.ac("gh-411:AC-2")
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_traceback_directory_is_private_to_the_user(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    directory = Path(str(_unexpected_envelope(capsys.readouterr().err)["traceback"])).parent
+    assert directory.parent == tmp_path
+    assert directory.stat().st_mode & 0o077 == 0
 
 
 def test_handler_returning_nan_is_an_unexpected_envelope(

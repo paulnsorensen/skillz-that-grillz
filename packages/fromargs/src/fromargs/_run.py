@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import getpass
 import inspect
 import json
 import os
@@ -20,6 +21,9 @@ from cyclopts import App, CycloptsError
 from fromargs._argv import command_chain, parse_once, repair_rejected, strip_global_flags
 from fromargs._errors import CliError
 from fromargs._output import write_result
+
+_KEEP_TRACEBACKS = 20
+_TRACEBACK_SUFFIX = ".traceback"
 
 
 class _AsyncContractError(TypeError):
@@ -200,16 +204,46 @@ def _report_system_exit(exc: SystemExit) -> int:
     return _report(str(code), 1)
 
 
+def _traceback_dir() -> str:
+    """Create and return this user's private traceback directory under the temp root."""
+    if hasattr(os, "getuid"):
+        owner = str(os.getuid())
+    else:
+        owner = getpass.getuser()
+    path = os.path.join(tempfile.gettempdir(), f"fromargs-{owner}")
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    if hasattr(os, "getuid") and os.stat(path).st_uid != os.getuid():
+        raise PermissionError(f"{path} belongs to another user")
+    return path
+
+
+def _prune_tracebacks(directory: str, keep_path: str) -> None:
+    """Delete all but the newest ``_KEEP_TRACEBACKS`` traceback files; never ``keep_path``."""
+    with contextlib.suppress(OSError):
+        dated: list[tuple[int, str]] = []
+        for entry in os.scandir(directory):
+            if entry.path != keep_path and entry.name.endswith(_TRACEBACK_SUFFIX):
+                with contextlib.suppress(OSError):
+                    dated.append((entry.stat().st_mtime_ns, entry.path))
+        dated.sort()
+        for _, stale in dated[: max(0, len(dated) - (_KEEP_TRACEBACKS - 1))]:
+            with contextlib.suppress(OSError):
+                os.unlink(stale)
+
+
 def _report_unexpected(exc: Exception) -> int:
     """Report an unexpected exception as a two- or three-key envelope; return 1.
 
     The envelope gets a ``traceback`` path when the traceback file writes
-    successfully. An ``OSError`` while creating or writing that file omits
-    the ``traceback`` key instead of escaping the ADR-001 envelope.
+    successfully. The file lives in a per-user directory under the temp root,
+    which keeps only the newest ``_KEEP_TRACEBACKS`` files. An ``OSError``
+    while creating or writing that file omits the ``traceback`` key instead
+    of escaping the ADR-001 envelope.
     """
     envelope: dict[str, object] = {"error": f"{type(exc).__name__}: {exc}", "exit_code": 1}
     try:
-        descriptor, path = tempfile.mkstemp(prefix="fromargs-", suffix=".traceback")
+        directory = _traceback_dir()
+        descriptor, path = tempfile.mkstemp(prefix="fromargs-", suffix=_TRACEBACK_SUFFIX, dir=directory)
     except OSError:
         pass
     else:
@@ -221,5 +255,6 @@ def _report_unexpected(exc: Exception) -> int:
                 os.unlink(path)
         else:
             envelope["traceback"] = path
+            _prune_tracebacks(directory, path)
     print(json.dumps(envelope), file=sys.stderr)
     return 1
