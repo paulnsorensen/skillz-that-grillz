@@ -489,7 +489,7 @@ def test_a_preflight_call_timeout_stops_resumably_and_a_resume_passes_the_prefli
     with pytest.raises(Stop) as caught:
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plan.factory())
     assert caught.value.code == "preflight-timeout"
-    assert "resume" in str(caught.value.data["next"])
+    assert "repeats the preflight" in str(caught.value.data["next"])
     assert isinstance(caught.value.__cause__, CallTimeout)
     record = read(out / "run.json")
     assert (record["phase"], record["failure_code"], "preflight" in record) == ("prepared", "preflight-timeout", False)

@@ -155,7 +155,7 @@ Map each coded stop to its next step:
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `baseline-check-timeout` | `next`, and optional `detail` | The contract check of the original skill reached the sandbox time limit twice, before the search or in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
 | `winner-check-timeout` | `next`, and optional `detail` | The contract check of the winner reached the sandbox time limit twice in the holdout gate or the replay. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
-| `preflight-timeout` | `next`, and optional `detail` | A model call in the live preflight exceeded its per-call timeout. The run recorded no preflight and stays in its phase. Resume the run in the same directory. A resume repeats the preflight. |
+| `preflight-timeout` | `next`, and optional `detail` | A model call in the live preflight exceeded its per-call timeout. The timed-out preflight records no result, and the run stays in its phase. Resume the run in the same directory. A resume repeats the preflight. |
 | `gate-budget-exhausted` | `next` | The holdout gate cannot finish within the approved calls. Start a new run directory. |
 | `live-required` | `next` | The run needs a model call and `--live` is missing. Run again with `--live`. |
 | `run-in-progress` | `next` | Another run holds the run directory. Wait for it to finish, then run again. |
