@@ -14,6 +14,13 @@ Then relock, and push a `fromargs-v<version>` tag after the release commit merge
 
 ## [Unreleased]
 
+### Changed
+
+- An unexpected exception now writes its traceback file to a private per-user directory under the temp root.
+  On POSIX the directory is `fromargs-<uid>`; `fromargs` refuses a symlink there and removes group and other permission bits.
+  The directory keeps only the newest 20 traceback files, so an older path from the envelope can disappear.
+  Before, each failure left a new `fromargs-*.traceback` file in the shared temp root, without a limit.
+
 ### Fixed
 
 - Quote repair now splits an option merged with its value, such as `"--count 3"`.
