@@ -47,7 +47,7 @@ Ask for a target when the mode requires one.
 
 For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
 Before you write or check `evals/evals.json`, `evals/journeys.json`, or `evals/autoimprove.json`, read `references/eval-formats.md`.
-Read `references/autoimprove-run.md` before you run `autoimprove`; it has the run, question, report, and harness-reading steps.
+Read `references/autoimprove-run.md` before you run `autoimprove`; it has the run, question, and report steps.
 
 ## Shared protocol
 
