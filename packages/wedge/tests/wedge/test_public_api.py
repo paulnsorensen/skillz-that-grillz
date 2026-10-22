@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
+import importlib.util
 from pathlib import Path
+from collections.abc import Callable
+from typing import cast
 
 import pytest
 
@@ -26,7 +27,10 @@ def test_the_crust_lists_and_resolves_every_name_skillz_uses() -> None:
 
 @pytest.mark.ac("gh-391:AC-2")
 def test_no_skillz_module_imports_a_private_wedge_module() -> None:
-    script = SCRIPTS / "check_architecture.py"
-    assert "ALLOWED: frozenset[tuple[str, str]] = frozenset()" in script.read_text(encoding="utf-8")
-    done = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, check=False)
-    assert done.returncode == 0, done.stdout + done.stderr
+    spec = importlib.util.spec_from_file_location("check_architecture", SCRIPTS / "check_architecture.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    namespace = cast("dict[str, object]", vars(module))
+    assert namespace["ALLOWED"] == frozenset()
+    assert cast("Callable[[], int]", namespace["main"])() == 0

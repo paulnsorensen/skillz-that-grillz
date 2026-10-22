@@ -91,7 +91,7 @@ _Source: PR #103, `packages/wedge/src/wedge/`, `packages/wedge/tests/wedge/test_
 - **Consequences:** The bytes of a single-target build do not change. The build rejects a first-party top-level `bin`, a symlink, and a name that shadows an installed package. It writes each archive through a temporary file and an atomic replace. A later change defines the lock shape for several targets.
 - **Amendment 2026-10-22 (gh-391, gh-393):** `wedge/__init__.py` is the public API of the package. Besides `main`, it exports the names that `skillz_experiments` imports: `TARGET_KEYS`, `BuildPaths`, `ConfigError`, `SiteLayer`, `WedgeConfig`, `build_from_layer`, `bundle_path`, `defaults_path`, `first_party_files`, `layer_import_names`, `load_targets`, `open_site_layer`, `parse_targets`, `populate_site_layer`, `resolve_target`, and `stage_sources`. The `_build`, `_bundle`, `_config`, and `_key` modules stay private. Another workspace package imports these names with `from wedge import ...` and never reads a `wedge._*` module. `check_architecture.py` enforces this, and its `ALLOWED` set is empty. A new export needs a caller outside `wedge` and an amendment here. No new cross-package edge appears: `skillz` already depends on `wedge`.
 
-_Source: `packages/wedge/src/wedge/` and `packages/wedge/tests/wedge/test_targets.py` · Updated: 2026-10-10_
+_Source: `packages/wedge/src/wedge/` and `packages/wedge/tests/wedge/test_targets.py` · Updated: 2026-10-22_
 
 ## Teaching the packaging workflow
 

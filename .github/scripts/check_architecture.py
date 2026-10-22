@@ -3,8 +3,8 @@
 
 A workspace package is a directory `packages/<name>/`. It owns each import package
 `packages/<name>/src/<import>/`. A private module is a dotted part that starts with `_`
-and is not a dunder name. `ALLOWED` holds the imports that existed when this check landed.
-It may only shrink: a new import fails, and an entry with no matching import also fails.
+and is not a dunder name. `ALLOWED` is empty. It may only shrink, so a new entry is not allowed:
+a new import fails, and a stale entry with no matching import also fails.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# (importing file, imported private module). Remove an entry when its import goes. A new entry needs an ADR.
+# (importing file, imported private module). The set is empty. A new entry is not allowed.
 ALLOWED: frozenset[tuple[str, str]] = frozenset()
 
 
