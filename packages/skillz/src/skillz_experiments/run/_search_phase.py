@@ -23,7 +23,7 @@ from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import attempts as build_attempts
 from skillz_experiments.search import check as check_leakage
 from skillz_experiments.search import focus as focus_component
-from skillz_experiments.search import faulted_reflection, focus_advice, is_reflection, overshoot
+from skillz_experiments.search import faulted_reflection, focus_advice, is_reflection, search_allowance
 from skillz_experiments.search import journal as build_journal
 from skillz_experiments.search import notes as accept_notes
 from skillz_experiments.search import protected as protected_cases
@@ -102,13 +102,14 @@ class SearchPhase:
         return sum(1 for item in self.reflections() if item.get("over_budget") is True)
 
     def search_ceiling(self) -> int:
-        """Return the GEPA call budget: the estimate plus the headroom train outcomes, less the overshoot margin.
+        """Return the GEPA call budget: the search allowance plus the seed outcomes that the headroom pass spent.
 
-        The last iteration can pass it by up to that margin.
+        The last iteration can pass it by up to the overshoot margin. The plan admits a run with the same formula.
         """
         estimate = mapping(field(self._state.record, "estimate"))
-        planned = int_field(estimate, "metric_calls") + int_field(mapping(field(estimate, "headroom")), "outcomes")
-        return planned - overshoot(len(self._state.cases_for("validation")))
+        validation = len(self._state.cases_for("validation"))
+        spent = int_field(mapping(field(estimate, "headroom")), "outcomes") + validation
+        return search_allowance(int_field(estimate, "metric_calls"), validation) + spent
 
     def _stall(self) -> Signal:
         """Return the stall signal that the recorded outcomes give. The caller holds the lock."""
