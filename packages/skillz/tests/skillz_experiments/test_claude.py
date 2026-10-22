@@ -2504,6 +2504,43 @@ def test_a_bash_approval_block_is_named_by_the_write_and_read_probes() -> None:
     assert "no positive control" in str(_events.write_failure(denied, ["/w/.agents/write-probe"], False, False))
 
 
+def _noisy(events: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Put a string block and a number block in front of every content list of `events`."""
+    noise: list[object] = ["noise", 7]
+    return [{**event, "message": {"content": [*noise, *cast(list[object], mapping(event["message"])["content"])]}}
+            for event in events]
+
+
+@pytest.mark.ac("gh-397:AC-1")
+def test_every_probe_judge_skips_a_non_object_content_block(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    blocked = _noisy(_approval_events("cat /sealed", "This command requires approval"))
+    control = _noisy(_approval_events("cat /w/control.txt", "ctl"))
+    read = _noisy([{"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "r1", "name": "Read", "input": {"file_path": str(sealed)}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1", "is_error": True,
+                                                  "content": "denied"}]}}])
+    assert _events.approval_blocked(blocked) is True
+    assert _events._bash_control_passed(control, "/w/control.txt", "ctl") is True  # pyright: ignore[reportPrivateUsage]
+    assert _events.read_tool_failure(read, "tok", sealed, evidence=True) is None
+    assert _sandbox._results(control, "cat /w/control.txt") == [  # pyright: ignore[reportPrivateUsage]
+        json.dumps(mapping(cast(list[object], mapping(control[1]["message"])["content"])[2]))]
+    assert _events.event_trace(control) == [{"type": "item.completed", "item": {
+        "type": "command_execution", "command": "cat /w/control.txt", "exit_code": 1}}]
+
+
+@pytest.mark.ac("gh-397:AC-2")
+def test_a_tool_use_whose_input_is_not_an_object_answers_no_probe(tmp_path: Path) -> None:
+    def pair(name: str) -> list[dict[str, object]]:
+        return [{"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "x1", "name": name, "input": "cat /w/control.txt"}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "x1", "content": "ctl tok"}]}}]
+    assert _events._bash_control_passed(pair("Bash"), "/w/control.txt", "ctl") is False  # pyright: ignore[reportPrivateUsage]
+    assert _sandbox._results(pair("Bash"), "cat /w/control.txt") == []  # pyright: ignore[reportPrivateUsage]
+    assert _events.event_trace(pair("Bash")) == []
+    assert _events.read_tool_failure(pair("Read"), "tok", tmp_path / "sealed", evidence=False) is None
+
+
 @pytest.mark.ac("gh-131:AC-12")
 def test_the_network_probe_key_moved_past_the_loopback_only_probe() -> None:
     assert _transport.NETWORK_PROBE != "loopback-tcp-http-v2"

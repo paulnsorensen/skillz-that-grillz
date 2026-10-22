@@ -63,6 +63,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-332](./gh-332.md) — gh-332: the doctor detail of a missing host tool says that the tool is missing
 - [gh-336](./gh-336.md) — gh-336: export writes no empty patch when the winner equals the baseline
 - [gh-366](./gh-366.md) — gh-366: explicit eval kinds and one evals.json validator
+- [gh-397](./gh-397.md) — gh-397: the Claude probe judges share one tool-use and tool-result pairing walk
 - [gh-403](./gh-403.md) — gh-403: links inside code fences and code spans are not local link targets
 - [gh-404](./gh-404.md) — gh-404: an input below a symlink loop stays inside the inspect error contract
 - [gh-406](./gh-406.md) — gh-406: wedge strips install metadata only inside *.dist-info
