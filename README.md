@@ -88,7 +88,9 @@ for the design decisions.
 
 [`actions/wedge`](actions/wedge/README.md) packages a pure-Python skill CLI
 as a content-addressed `.pyz` release asset in your own repository. Use it to
-check locks on pull requests and to publish assets after a merge:
+check locks on pull requests and merge groups, then publish assets after a merge.
+See the [merge-queue setup](actions/wedge/README.md#check-pull-requests-and-merge-groups)
+and [easy-cheese example](packages/wedge/README.md#example-easy-cheese) for race prevention:
 
 ```yaml
 - uses: paulnsorensen/skillz-that-grillz/actions/wedge@<full-commit-sha>

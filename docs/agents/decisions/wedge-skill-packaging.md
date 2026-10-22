@@ -93,6 +93,20 @@ _Source: PR #103, `packages/wedge/src/wedge/`, `packages/wedge/tests/wedge/test_
 
 _Source: `packages/wedge/src/wedge/` and `packages/wedge/tests/wedge/test_targets.py` · Updated: 2026-10-22_
 
+## Consumer CI guidance
+
+Wedge consumer documentation separates merge-group validation from post-merge publication.[^17]
+The action guide shows required checks for the event checkout and stale-artifact recovery.
+The package guide distinguishes lock checks, committed-bundle checks, and CI-built distributions.
+Append-only release publication must preserve each commit's run, as ADR-004 requires.
+A complete distribution snapshot can replace pending work only when later runs cover missed source changes.
+The easy-cheese example documents that distinction without claiming its live ruleset requires a merge queue.
+This guidance changes no runtime behavior, workflow, or repository guard.
+
+_Source: consumer documentation · Updated: 2026-10-22_
+
+[^17]: `actions/wedge/README.md:89-191`; `packages/wedge/README.md:36-93`.
+
 ## Teaching the packaging workflow
 
 `/skillz` teaches the offload and packaging workflow without expanding the runtime contract.[^12]
