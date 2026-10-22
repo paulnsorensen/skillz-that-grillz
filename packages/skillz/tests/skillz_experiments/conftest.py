@@ -132,7 +132,7 @@ def headroom_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_headroom, "HEADROOM_CEILING", 1.1)
 
 
-def _make_target(tmp_path: Path, *, helper: bool = False) -> Path:
+def _make_target(tmp_path: Path, *, helper: bool = False, surface: dict[str, object] | None = None) -> Path:
     """Copy the echo skill and give it a one-kind contract, so every drafted task case scores with `echo`."""
     target = tmp_path / "echo-skill"
     _ = shutil.copytree(FIXTURES / "echo-skill", target)
@@ -140,6 +140,8 @@ def _make_target(tmp_path: Path, *, helper: bool = False) -> Path:
     contract: dict[str, object] = {
         "schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
         "kinds": {"echo": {"grader": "exact-json"}}, "editable": []}
+    if surface is not None:
+        contract["surface"] = surface
     if helper:
         (target / "scripts").mkdir()
         _ = (target / "scripts/echo.py").write_text("import json\nprint(json.dumps({'ok': True}))\n")

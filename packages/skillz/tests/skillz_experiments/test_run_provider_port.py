@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from skillz_experiments._budget import Budget
+from skillz_experiments._candidate import candidate_files
+from skillz_experiments._contract import parse
 from skillz_experiments._records import read
 from skillz_experiments.harness import Configuration, EnvironmentDiffers
 from skillz_experiments.run import run
@@ -26,15 +28,18 @@ class _Facts(_Fake):
     run_facts: dict[str, object] = {"provider_fact": "kept"}
 
 
-def _create_spy(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Path | None, object, object]]:
-    """Record the `out`, surface, and files that each `Configuration.create` call gets, then build as before."""
+def _create_spy(monkeypatch: pytest.MonkeyPatch, state: State) -> list[tuple[Path | None, object, object]]:
+    """Record the `out`, surface, and files that each `Configuration.create` call gets, and hand back a fake provider.
+
+    The real `create` rejects a surface on a non-Claude harness, so the fake stands in for it.
+    """
     calls: list[tuple[Path | None, object, object]] = []
-    original = Configuration.create
 
     def create(self: Configuration, model: str, budget: Budget, checkpoint: Callable[[], None],
                out: Path | None = None, surface: object = None, files: object = None):  # noqa: ANN202
+        del self, model, budget, checkpoint
         calls.append((out, surface, files))
-        return original(self, model, budget, checkpoint, out, surface, files)  # pyright: ignore[reportArgumentType]
+        return _Fake(state)
 
     monkeypatch.setattr(Configuration, "create", create)
     return calls
@@ -67,16 +72,20 @@ def test_the_run_facts_of_a_fake_provider_reach_the_run_record(
 def test_without_a_factory_the_default_factory_calls_configuration_create_with_out_surface_and_files(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch, supplied: bool) -> None:
-    target, out, state = make_target(tmp_path), tmp_path / "run", State()
+    target, out, state = make_target(tmp_path, surface={"tools": ["lookup"]}), tmp_path / "run", State()
     configuration = _harness(tmp_path, monkeypatch, state)
-    calls = _create_spy(monkeypatch)
+    calls = _create_spy(monkeypatch, state)
     _ = write_draft(out)
     case_hash, approved = approvals(target, out)
     _ = run(target, out, MODEL, adapter="codex", live=True, approve_cases=case_hash,
             approve_budget=approved, configuration=configuration if supplied else None)
     assert len(calls) == 1
     created_out, surface, files = calls[0]
-    assert created_out == out and surface is None and files
+    record = read(out / "run.json")
+    expected = parse(record["contract"], str(record["contract_source"])).surface
+    assert expected is not None and expected.tools == ("lookup",)
+    assert created_out == out and surface == expected
+    assert files and files == candidate_files(record["seed"])
 
 
 @pytest.mark.ac("gh-398:AC-4")
