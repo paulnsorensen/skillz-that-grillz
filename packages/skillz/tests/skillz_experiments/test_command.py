@@ -116,12 +116,11 @@ def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path, mode: st
     adapter = Configuration.load(config, "offline").create("offline", budget, lambda: None)
     claim = budget.claim
 
-    def claim_then_start_window(*, holdout: bool = False, role: str = "task") -> None:
+    def start_window_then_claim(*, holdout: bool = False, role: str = "task") -> None:
         budget.started = time.monotonic()  # the deadline window opens at the claim, so host load before it cannot spend it
         claim(holdout=holdout, role=role)
-        budget.started = time.monotonic()
 
-    monkeypatch.setattr(budget, "claim", claim_then_start_window)
+    monkeypatch.setattr(budget, "claim", start_window_then_claim)
     try:
         with pytest.raises(BudgetExhausted, match="deadline"):
             _ = adapter.invoke("reflection", schema={"type": "object", "properties": {"x": {"type": "string"}},
