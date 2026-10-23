@@ -9,8 +9,9 @@ from typing import cast
 import pytest
 
 from skillz_experiments._budget import BudgetExhausted
+from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read
-from skillz_experiments.run import _holdout, run
+from skillz_experiments.run import _holdout, run, summary
 from skillz_experiments.run._state import RunState
 
 from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
@@ -112,6 +113,26 @@ def test_a_budget_stop_partway_through_the_baseline_keeps_the_scores_and_reports
     runner = cast(dict[str, dict[str, object]], result["claims"])["runner"]
     assert cast(dict[str, str], runner["checks"])["holdout-coverage"] == "unknown"
 
+
+@pytest.mark.ac("gh-317:AC-3")
+def test_a_resume_with_too_little_budget_keeps_the_restored_baseline_scores(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _tie(tmp_path, make_target, write_draft, approvals)
+    state.holdout_head_delay = 0.3
+    state.holdout_fault = lambda number: CodedError("provider-unavailable", "the provider went away") if number > 1 else None
+    with pytest.raises(CodedError):
+        _ = _go(target, out, state, case_hash, calls)
+    restored = set(_holdout.arm_scores(_baseline_holdout(out), "baseline"))
+    assert restored and restored < _holdout_ids(out)
+    state.holdout_fault = lambda _number: None
+    monkeypatch.setattr(_holdout, "replay_need", _huge_need)
+    result = _go(target, out, state, case_hash, calls)
+    gate = _gate(out)
+    assert result["phase"] == "complete" and gate["baseline_skipped"] == "budget-short"
+    assert set(cast(dict[str, float], gate["baseline_scores"])) == restored
+
+
 @pytest.mark.ac("gh-317:AC-4")
 def test_a_retained_seed_whose_baseline_evaluations_all_fault_completes(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
@@ -142,3 +163,23 @@ def test_the_claims_keep_holdout_coverage_unknown_when_the_baseline_was_skipped(
     result = _go(target, out, state, case_hash, calls)
     runner = cast(dict[str, dict[str, object]], result["claims"])["runner"]
     assert cast(dict[str, str], runner["checks"])["holdout-coverage"] == "unknown"
+
+
+@pytest.mark.ac("gh-317:AC-5")
+def test_a_baseline_slot_that_ends_in_a_check_timeout_leaves_holdout_coverage_unknown(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, case_hash, calls = _tie(tmp_path, make_target, write_draft, approvals)
+    _ = _go(target, out, state, case_hash, calls)
+    record = read(out / "run.json")
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    victims = [item for item in outcomes if item.get("arm") == "baseline" and item.get("split") == "holdout"]
+    victim, other = victims[0], next(item for item in victims if item["case_id"] != victims[0]["case_id"])
+    outcomes[outcomes.index(victim)] = {**{key: value for key, value in victim.items() if key != "score"},
+                                        "status": "candidate-contract-rejected", "rejection_kind": "timeout"}
+
+    def coverage() -> str:
+        return cast(dict[str, dict[str, dict[str, str]]], summary(record, out)["claims"])["runner"]["checks"]["holdout-coverage"]
+
+    assert coverage() == "unknown"
+    outcomes.remove(other)
+    assert coverage() == "fail"

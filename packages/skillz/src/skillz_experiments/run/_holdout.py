@@ -126,8 +126,9 @@ def _score_retained_baseline(state: RunState, holdout: Sequence[Case], repeats: 
         todo = _holdout_todo(state.outcomes, arms, holdout, repeats)
         need, left = _holdout_need(state, todo)
         if left < need:
-            return {"baseline_skipped": "budget-short"}
-        score_holdout(state, [(state.seed, case, arm, repeat) for arm, case, repeat in todo])
+            short = True
+        else:
+            score_holdout(state, [(state.seed, case, arm, repeat) for arm, case, repeat in todo])
     except BudgetExhausted:
         short = True
     scores = arm_scores(state.outcomes, "baseline")
