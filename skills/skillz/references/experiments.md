@@ -990,6 +990,7 @@ The `request` holds `[harness]` in place of each harness token. The `unmet` text
 A judged outcome adds `unmet`: each criterion below level 4, with `id`, `must`, `level`, `text`, and the judge `reason`.
 The list puts `must` criteria first, then the lowest level first. Each `text` and `reason` is redacted and holds at most 300 characters.
 When the `text` and `reason` fields would pass 4,000 characters in total, the later entries hold `[truncated]` in both fields.
+When the markers alone would pass that limit, the later entries hold empty text instead. Every entry keeps its `id`, `must`, and `level`.
 A judged outcome also adds `edit_hint`: the sorted editable files that share 4 words in a row with an unmet criterion text.
 With no match, `edit_hint` is `["unknown"]`. The hint is advice only, and every editable file stays editable.
 An outcome with a `gate_diagnostic` adds it as `gate_feedback`.
