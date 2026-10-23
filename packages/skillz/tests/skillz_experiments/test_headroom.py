@@ -14,8 +14,8 @@ from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read, write
 from skillz_experiments.harness import EnvironmentDiffers
 from skillz_experiments.run import Stop, _session, run
-from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, _plan  # pyright: ignore[reportPrivateUsage]
-from skillz_experiments.search import overshoot
+from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, MINIMUM_SEARCH_MARGIN, _plan  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.search import overshoot, search_allowance
 
 from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
 
@@ -298,3 +298,35 @@ def test_a_headroom_pass_that_pushes_the_fixed_cost_over_the_call_cap_names_call
     named = [message for message in messages if "headroom pass alone need" in message]
     assert named, messages[:1]
     assert all("calls; the cap is" in message and "seconds" not in message.split("cap is")[0] for message in named)
+
+
+@pytest.mark.ac("gh-459:AC-1")
+def test_the_plan_stops_when_the_validation_pass_leaves_too_little_search_room() -> None:
+    with pytest.raises(Stop) as stop:
+        _ = _plan(20, 26, 6, 2, 1, 0, holdout_costs=[2] * 6, headroom_costs=[2] * 20)
+    assert stop.value.code == "budget-unapproved"
+    assert "26 validation cases" in str(stop.value)
+    assert "--seed" in str(stop.value)
+
+
+@pytest.mark.ac("gh-459:AC-2")
+def test_the_plan_admits_a_run_with_enough_search_room_after_the_validation_pass() -> None:
+    plan = _plan(33, 11, 8, 2, 1, 0, holdout_costs=[2] * 8, headroom_costs=[2] * 33)
+    assert search_allowance(plan.metric_calls, 11) >= MINIMUM_SEARCH_MARGIN
+
+
+@pytest.mark.ac("gh-459:AC-3")
+def test_every_admitted_plan_leaves_the_minimum_margin_at_runtime() -> None:
+    admitted = 0
+    for train in (4, 10, 20, 33):
+        for validation in (1, 6, 11, 26):
+            for holdout in (2, 6, 8):
+                try:
+                    plan = _plan(train, validation, holdout, 2, 1, 0, holdout_costs=[2] * holdout, headroom_costs=[2] * train)
+                except Stop as stop:
+                    assert stop.code == "budget-unapproved"
+                    continue
+                admitted += 1
+                ceiling = plan.metric_calls + plan.headroom_outcomes - overshoot(validation)
+                assert ceiling - (train + validation) >= MINIMUM_SEARCH_MARGIN
+    assert admitted

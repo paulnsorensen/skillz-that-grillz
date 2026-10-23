@@ -421,16 +421,16 @@ def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_
     assert (task_cost, journey_cost) == (1, 17)
     cases = [_mixed_case(split, f"{split}-{n}", journey=n == 0 and split != "train")
              for split in ("train", "validation", "holdout") for n in range(6)]
-    plan = size_plan(contract, cases, 2, ClaudeOptions())
+    plan = size_plan(contract, cases, 1, ClaudeOptions())
     searched = [task_cost] * 6 + [journey_cost] + [task_cost] * 5
     mean = -(-sum(searched) // len(searched))
     holdout = [journey_cost] + [task_cost] * 5
     retry = 2 * HOLDOUT_RETRIES_PER_ARM * max(holdout)
-    assert plan.retry_calls == retry and plan.holdout_calls == 2 * 2 * sum(holdout) + retry
+    assert plan.retry_calls == retry and plan.holdout_calls == 2 * sum(holdout) + retry
     assert plan.sized.journey
     sandbox = command_seconds(contract, cases, ClaudeOptions())
-    at_maximum = plan_run(6, 6, 6, journey_cost, 2, sandbox, journey=True)
-    at_mean = plan_run(6, 6, 6, mean, 2, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
+    at_maximum = plan_run(6, 6, 6, journey_cost, 1, sandbox, journey=True)
+    at_mean = plan_run(6, 6, 6, mean, 1, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
     assert plan == at_mean and 1 < mean < journey_cost
     assert plan.sized.calls < at_maximum.sized.calls and plan.holdout_calls < at_maximum.holdout_calls
 
