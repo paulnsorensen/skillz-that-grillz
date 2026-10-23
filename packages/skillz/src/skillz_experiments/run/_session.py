@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._budget import SEARCH_ROLES, BudgetExhausted
+from skillz_experiments._budget import SEARCH_ROLES, BudgetExhausted, CallTimeout
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
@@ -29,7 +29,7 @@ from skillz_experiments.run._ports import PatchApplier
 from skillz_experiments.run._replay_phase import run_replay
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import Factory, HarnessName, Provider
-from skillz_experiments.run._stop import Stop, baseline_rejected, check_timeout
+from skillz_experiments.run._stop import Stop, baseline_rejected, check_timeout, preflight_timeout
 from skillz_experiments.search import Edit
 from skillz_experiments.search import attempts as build_attempts
 from skillz_experiments.search import journal as build_journal
@@ -143,6 +143,8 @@ class Session:
         before = self.budget.calls
         try:
             preflight = self.provider.preflight(cast(dict[str, object], recorded) if isinstance(recorded, dict) else None)
+        except CallTimeout as error:
+            raise preflight_timeout(str(error)) from error
         finally:
             claimed = self.budget.calls - before
             with self.lock:
