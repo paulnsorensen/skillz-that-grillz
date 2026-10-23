@@ -306,6 +306,18 @@ def test_a_failed_command_gate_records_its_redacted_stderr_tail_and_both_feedbac
 
 
 @pytest.mark.ac("gh-501:AC-4")
+def test_a_secret_that_the_stderr_window_splits_never_reaches_the_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = "password=HUNTER2SPLITSECRET"
+    # The 4,000-character window starts 3 characters into the secret. Redaction then shrinks the rest below 1,000.
+    rest = (" " + ("token=" + "a" * 90 + " ") * 50)[:4000 - (len(secret) - 3)]
+    script = f"import sys;sys.stderr.write({('pad ' + secret + rest)!r});raise SystemExit(1)"
+    case, candidate = case_and_candidate(tmp_path, "gate", contract(script))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    diagnostic = cast(str, result["gate_diagnostic"])
+    assert len(diagnostic) < 1000 and diagnostic.startswith("[redacted]") and "SPLITSECRET" not in diagnostic
+
+
+@pytest.mark.ac("gh-501:AC-4")
 def test_a_failed_capture_gives_its_redacted_failure_text_as_gate_feedback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     case, candidate = case_and_candidate(tmp_path, "look", capture_contract("raise SystemExit(3)"))
     result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case, checks=CheckMemo())

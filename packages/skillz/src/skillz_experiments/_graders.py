@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 import tempfile
 import unicodedata
@@ -199,7 +200,11 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     require_sandbox(task)
     with _grading_workspace(case, files, "command", trace) as workspace:
         code, stdout, stderr = _run(task, workspace, argv)
-    tail = redact(stderr[-_DIAGNOSTIC_WINDOW:])[-DIAGNOSTIC_LIMIT:]
+    window = stderr[-_DIAGNOSTIC_WINDOW:]
+    if len(stderr) > _DIAGNOSTIC_WINDOW:
+        # The cut can split a `key=value` word, and its rest would not match a redaction pattern, so the word goes.
+        window = re.sub(r"^\S+", "", window)
+    tail = redact(window)[-DIAGNOSTIC_LIMIT:]
     return _command_score(code, stdout), tail or f"the grader argv exits with code {code}"
 
 

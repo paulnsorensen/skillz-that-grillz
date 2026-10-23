@@ -9,6 +9,7 @@ from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from typing import TypeVar, cast
 
 from skillz_experiments._budget import CallTimeout
+from skillz_experiments._graders import DIAGNOSTIC_LIMIT
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, Criterion, case_criteria
 from skillz_experiments._redact import redact
@@ -171,7 +172,7 @@ def feedback_for(result: dict[str, object], case: Case, harness: HarnessText,
         feedback["edit_hint"] = _edit_hint([criterion.text for criterion, _level, _reason in unmet], candidate)
     diagnostic = result.get("gate_diagnostic")
     if isinstance(diagnostic, str):
-        feedback["gate_feedback"] = harness.mask(diagnostic)
+        feedback["gate_feedback"] = harness.mask(diagnostic)[-DIAGNOSTIC_LIMIT:]
     return score, feedback
 
 
@@ -195,22 +196,21 @@ def _unmet(result: Mapping[str, object], case: Case) -> list[tuple[Criterion, in
 def _bounded(unmet: Sequence[tuple[Criterion, int, str]], harness: HarnessText) -> list[dict[str, object]]:
     """Return the unmet entries. Each keeps its id, must flag, and level.
 
-    Each text and reason is redacted, masked, and cut to `FIELD_LIMIT`. When the next entry would push the text and reason
-    fields, the markers of the later entries included, past `FIELDS_LIMIT`, it and every later entry get `[truncated]`.
+    Each text and reason is redacted, masked, and cut to `FIELD_LIMIT`. The first entries keep their fields while all the
+    fields, the markers of the cut entries included, stay within `FIELDS_LIMIT`. Each later entry gets `[truncated]` in both
+    fields, or an empty text when even the markers alone pass the limit.
     """
-    entries: list[dict[str, object]] = []
-    used = 0
-    cut = False
-    for position, (criterion, level, reason) in enumerate(unmet):
-        text, why = (harness.mask(redact(value))[:FIELD_LIMIT] for value in (criterion.text, reason))
-        markers = 2 * len(TRUNCATED) * (len(unmet) - position - 1)
-        cut = cut or used + len(text) + len(why) + markers > FIELDS_LIMIT
-        if cut:
-            text = why = TRUNCATED
-        else:
-            used += len(text) + len(why)
-        entries.append({"id": criterion.id, "must": criterion.must, "level": level, "text": text, "reason": why})
-    return entries
+    # Redaction time grows with the square of a run without whitespace, so it reads only a window of each text.
+    fields = [tuple(harness.mask(redact(value[:4 * FIELD_LIMIT]))[:FIELD_LIMIT] for value in (criterion.text, reason))
+              for criterion, _level, reason in unmet]
+    marker = TRUNCATED if 2 * len(TRUNCATED) * len(fields) <= FIELDS_LIMIT else ""
+    kept = len(fields)
+    while sum(len(text) + len(why) for text, why in fields[:kept]) + 2 * len(marker) * (len(fields) - kept) > FIELDS_LIMIT:
+        kept -= 1
+    return [{"id": criterion.id, "must": criterion.must, "level": level,
+             "text": fields[position][0] if position < kept else marker,
+             "reason": fields[position][1] if position < kept else marker}
+            for position, (criterion, level, _reason) in enumerate(unmet)]
 
 
 def _runs(text: str) -> set[tuple[str, ...]]:

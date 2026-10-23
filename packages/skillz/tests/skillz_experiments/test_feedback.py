@@ -49,6 +49,31 @@ def test_the_edit_hint_names_each_editable_file_that_shares_four_words_with_an_u
     assert candidate.editable == ("SKILL.md", "reference.md")
 
 
+@pytest.mark.ac("gh-501:AC-5")
+def test_more_unmet_criteria_than_the_markers_fit_keep_every_id_within_the_limit(tmp_path: Path) -> None:
+    criteria: list[dict[str, object]] = [{"id": f"c{index:03}", "text": "THE summary SHALL list it."} for index in range(200)]
+    case = _case(tmp_path, criteria)
+    levels = {cast(str, item["id"]): (2, "missing") for item in criteria}
+    unmet = cast(list[dict[str, object]], _feedback(case, levels, Candidate({"SKILL.md": "x"}, ("SKILL.md",)))["unmet"])
+    assert len(unmet) == 200 and {cast(str, entry["id"]) for entry in unmet} == {f"c{index:03}" for index in range(200)}
+    fields = [cast(str, entry[key]) for entry in unmet for key in ("text", "reason")]
+    assert sum(map(len, fields)) <= FIELDS_LIMIT
+    # 200 markers pass the limit alone, so a cut field is empty; the first entries keep their whole text.
+    assert unmet[0]["text"] == "THE summary SHALL list it." and unmet[-1]["text"] == unmet[-1]["reason"] == ""
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_the_gate_feedback_is_masked_before_its_cut_so_it_stays_within_1000_characters(tmp_path: Path) -> None:
+    case = _case(tmp_path, [{"id": "overdue", "text": RULE}])
+    result: dict[str, object] = {"score": 0.0, "gate_diagnostic": "missing output/x " * 58 + "exit 1"}
+    harness = HarnessText.build([], phrases=["output/x"])
+    gate = cast(str, feedback_for(result, case, harness, Candidate({"SKILL.md": "x"}, ("SKILL.md",)))[1]["gate_feedback"])
+    diagnostic = cast(str, result["gate_diagnostic"])
+    # The mask makes the text longer than the limit, so the cut must come after it.
+    assert len(diagnostic) <= 1000 < len(harness.mask(diagnostic))
+    assert len(gate) == 1000 and gate.endswith("[harness] exit 1") and "output/x" not in gate
+
+
 def test_a_fully_met_outcome_has_no_unmet_criteria_and_no_hint(tmp_path: Path) -> None:
     case = _case(tmp_path, [{"id": "overdue", "text": RULE}])
     feedback = _feedback(case, {"overdue": (4, "complete")}, Candidate({"SKILL.md": "x"}, ("SKILL.md",)))
