@@ -61,7 +61,7 @@ Use both JSON outputs as objective package facts, not a fitness score. An agent 
 Read `references/experiments.md § Audit facts contract` for the check ids and statuses.
 Report a helper error without treating it as a successful audit.
 Classify it as **agent** (`tools:` / `disallowedTools:` or an `agents/registry.yaml` entry) or **skill** (`name:` + `description:`).
-For a skill, run `git ls-files -z -co --exclude-standard <skill-dir> | LC_ALL=C sort -z | xargs -0 git hash-object | git hash-object --stdin`.
+For a skill, run `o=$(git ls-files -z -co --exclude-standard <skill-dir> | LC_ALL=C sort -z | xargs -0 sh -c 'for f; do b=$(git hash-object -- "$f") || exit 1; printf "%s %s\n" "$b" "$f"; done' sh) && [ -n "$o" ] && printf '%s\n' "$o" | git hash-object --stdin`.
 Its output is the content id. It covers every package file, so a sidecar or reference edit changes it.
 For an agent file, run `git hash-object <target>`. Its output is the content id.
 When a command fails, the content id is `unavailable`.

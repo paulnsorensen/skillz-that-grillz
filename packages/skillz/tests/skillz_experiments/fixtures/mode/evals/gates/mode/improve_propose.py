@@ -11,7 +11,7 @@ def blob(data: bytes) -> str:
 
 def package(root: str) -> str:
     names = sorted(n for n in staged_files() if n.startswith(root))
-    return blob(''.join(blob(pathlib.Path(n).read_bytes()) + '\n' for n in names).encode())
+    return blob(''.join(blob(pathlib.Path(n).read_bytes()) + ' ' + n + '\n' for n in names).encode())
 
 
 def check() -> bool:
