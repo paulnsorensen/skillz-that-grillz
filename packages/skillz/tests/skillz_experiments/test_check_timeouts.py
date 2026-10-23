@@ -413,10 +413,10 @@ class _Timed(FakeRunProvider):
         self.plan = plan
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         if self.plan.preflight_error is not None:
             raise self.plan.preflight_error
-        return {}
+        return super().preflight(recorded)
 
     @override
     def check_candidate(self, candidate: object) -> CheckResult:
