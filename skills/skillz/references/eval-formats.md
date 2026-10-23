@@ -110,6 +110,7 @@ The contract tells the runner how to grade the cases. These top-level fields exi
 | `editable` | Optional. Relative paths that search can change. |
 | `surface` | Optional. The extra tool surface of the task role. |
 | `statistics` | Optional. Promotion thresholds for the holdout gate. |
+| `harness_phrases` | Optional. Sandbox-only phrases of the requests, each of at least two words. Search rejects a proposal that adds one. |
 
 A kind object has these fields:
 
@@ -154,6 +155,10 @@ The `statistics` object takes these fields. Every number is finite and at least 
 | `max_quality_loss` | The largest quality loss that `promote-cheaper` accepts. |
 
 The `autoimprove` workflow section "Set promotion thresholds" gives the effect of each threshold.
+
+Search also rejects a proposal that adds a sandbox path from a train or validation request, such as `output/plan.json` or `capture/log.txt`.
+A `<n>` placeholder in a path, as in `output/pr-<n>.md`, matches any number.
+A path or phrase that a seed file already holds stays allowed.
 
 ## The minimums
 
