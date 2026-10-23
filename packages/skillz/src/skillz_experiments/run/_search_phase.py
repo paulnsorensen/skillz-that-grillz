@@ -60,7 +60,7 @@ class SearchPhase:
         self._search_cases = search_cases
         self._built = built
         # Rebuilt from the frozen cases on every open. It never reaches `run.json` or an export.
-        self._denylist = Denylist.build(search_cases.values(), seed=state.seed)
+        self._denylist = Denylist.build(search_cases.values(), seed=state.seed, phrases=state.contract.harness_phrases)
         self._leak_rules: dict[str, str | None] = {}
         self._ended_proposal: str | None = None
         # Recorded search outcomes that a resumed search reuses, one per earlier call, by candidate, split, case, and
