@@ -1,23 +1,30 @@
-"""The validation leaderboard of the search: the best validated candidate and the tie-break by task tokens.
+"""The validation leaderboard of the search: the incumbent, and the 2-SE rule of the holdout gate that replaces it.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import cast, final
 
 from skillz_experiments._candidate import Candidate, candidate_files
 from skillz_experiments._cases import Case
 from skillz_experiments.evaluation import task_tokens
-from skillz_experiments.gate import close
+from skillz_experiments.gate import Verdict, holdout_deltas, verdict
 from skillz_experiments.run._outcomes import mean_tokens
-from skillz_experiments.run._record_fields import number_field, text_field
+from skillz_experiments.run._record_fields import text_field
 from skillz_experiments.run._state import RunState
 from skillz_experiments.run._plan import VALIDATION_REPEATS
-from skillz_experiments.search import complete_means, is_search_validation
+from skillz_experiments.search import complete_means, scored_runs, unit_score, validation_complete
+
+# A challenger replaces the incumbent only on these verdicts of the holdout gate rule.
+REPLACES = ("promote", "promote-cheaper")
 
 
 @final
 class Leaderboard:
-    """Rank the search candidates by validation mean. `keep_if_best` takes the session lock. The read methods take no lock."""
+    """Keep the incumbent of the search: the seed, until a challenger passes the 2-SE rule against it.
+
+    `keep_if_best` takes the session lock. The read methods take no lock.
+    """
 
     def __init__(self, state: RunState) -> None:
         self._state = state
@@ -26,87 +33,78 @@ class Leaderboard:
         return [case.identifier for case in self._state.cases_for("validation")]
 
     def best_identity(self) -> str:
-        """Return the recorded identity of the best validated candidate, or the seed identity when the seed is best.
+        """Return the recorded identity of the incumbent: the `best_validated` candidate, else the seed.
 
         The recorded identity includes the rebuilt `.pyz` of each own target, so it matches the `search_candidate` of its outcomes.
         """
-        kept = self._winning(self.validation_ids())
+        kept = self._kept()
         return self._state.seed.identity if kept is None else text_field(kept, "identity")
 
-    def _means(self, validation: list[str]) -> dict[str, float]:
-        """Return the validation mean of each search candidate that completes every repeat of every validation case."""
-        return complete_means(self._state.outcomes, set(validation), VALIDATION_REPEATS)
-
-    def _tokens(self, validation: list[str], identities: tuple[str, ...]) -> dict[str, float | None]:
-        """Return the mean task tokens of each listed candidate that has an outcome on every validation case.
-
-        The newest outcome of each case and repeat counts. A candidate with a missing count on any of them maps to None.
-        """
-        counts: dict[str, dict[tuple[str, object], int | None]] = {}
-        for item in (item for item in self._state.outcomes if is_search_validation(item)):
-            if item["search_candidate"] in identities:
-                key = (cast(str, item["case_id"]), item.get("repeat"))
-                counts.setdefault(cast(str, item["search_candidate"]), {})[key] = task_tokens(item)
-        return {identity: mean_tokens(list(by_run.values())) for identity, by_run in counts.items()
-                if {case for case, _ in by_run} == set(validation)}
-
-    def _tied_cheaper(self, validation: list[str], challenger: str, incumbent: str) -> bool:
-        """Return whether a token field is set and the challenger has known, lower mean validation task tokens."""
-        if not self._state.statistics.token_rule:
-            return False
-        tokens = self._tokens(validation, (challenger, incumbent))
-        new, old = tokens.get(challenger), tokens.get(incumbent)
-        return new is not None and old is not None and new < old
-
-    def _beats(self, validation: list[str], mean: float, other: float, challenger: str, incumbent: str) -> bool:
-        """Return whether `mean` is above `other`, or ties it and the challenger is cheaper."""
-        if close(mean, other):
-            return self._tied_cheaper(validation, challenger, incumbent)
-        return mean > other
+    def _kept(self) -> dict[str, object] | None:
+        kept = self._state.record.get("best_validated")
+        return cast(dict[str, object], kept) if isinstance(kept, dict) else None
 
     def keep_if_best(self, candidate: Candidate, case: Case) -> None:
-        """Record the files of the best non-seed candidate when it completes the validation set. The record stays small.
+        """Compare a challenger with the incumbent once both complete every validation repeat. The record stays small.
 
-        A mean tie goes to lower mean task tokens while a token field is set.
+        The comparison is the holdout gate rule: `holdout_deltas` pairs the scored repeats per case, then `verdict`
+        applies the 2-SE rule with the repeat noise floor, the floors, the family rule, and the token rule of the run.
+        Each comparison joins `search.comparisons`. The challenger becomes the incumbent on `promote` or
+        `promote-cheaper`, and `best_validated` keeps its files and that comparison. A pair is compared once.
         """
         state = self._state
         if case.split != "validation" or candidate.identity == state.seed.identity:
             return
         with state.lock:
             validation = self.validation_ids()
-            mean = self._means(validation).get(candidate.identity)
-            kept = state.record.get("best_validated")
-            if mean is None:
+            incumbent = self.best_identity()
+            challenger = candidate.identity
+            if challenger == incumbent or not all(validation_complete(state.outcomes, identity, validation, VALIDATION_REPEATS)
+                                                  for identity in (challenger, incumbent)):
                 return
-            if isinstance(kept, dict):
-                kept_record = cast(dict[str, object], kept)
-                kept_mean = number_field(kept_record, "mean")
-                if not self._beats(validation, mean, kept_mean, candidate.identity, text_field(kept_record, "identity")):
-                    return
-            state.record["best_validated"] = {"identity": candidate.identity, "mean": mean,
-                                              "files": {name: candidate.files[name] for name in state.seed.editable}}
+            comparisons = self._comparisons()
+            if any(item.get("challenger") == challenger and item.get("incumbent") == incumbent for item in comparisons):
+                return
+            result = self._compare(incumbent, challenger, validation)
+            comparison: dict[str, object] = {"challenger": challenger, "incumbent": incumbent, "verdict": result.verdict,
+                                             "delta": result.delta, "se": result.se, "reasons": list(result.reasons)}
+            comparisons.append(comparison)
+            if result.verdict in REPLACES:
+                mean = complete_means(state.outcomes, set(validation), VALIDATION_REPEATS).get(challenger)
+                state.record["best_validated"] = {"identity": challenger, "mean": mean, "comparison": comparison,
+                                                  "files": {name: candidate.files[name] for name in state.seed.editable}}
             state.checkpoint()
 
-    def best_validated(self, validation: list[str]) -> Candidate:
-        """Return the recorded candidate with the best validation mean.
+    def _comparisons(self) -> list[dict[str, object]]:
+        """Return the `search.comparisons` list of the record, created empty. The caller holds the lock."""
+        search = cast(dict[str, object], self._state.record.setdefault("search", {}))
+        return cast(list[dict[str, object]], search.setdefault("comparisons", []))
 
-        The seed wins ties, unless a token field is set and the candidate has fewer mean validation task tokens.
+    def _compare(self, incumbent: str, challenger: str, validation: list[str]) -> Verdict:
+        """Return the gate verdict of `challenger` against `incumbent` on the scored validation repeats.
+
+        The tokens of a case pair the mean task tokens of the scored repeats of each arm. The planned cases are the
+        validation cases, so the coverage rule of the gate runs when failed repeats leave cases unscored.
         """
-        kept = self._winning(validation)
+        state = self._state
+        runs = scored_runs(state.outcomes)
+
+        def scores(identity: str) -> dict[str, list[float]]:
+            return {name: [unit_score(by_repeat[index]["score"]) for index in sorted(by_repeat)]
+                    for name, by_repeat in runs.get(identity, {}).items() if name in validation}
+
+        def tokens(identity: str, name: str) -> float | None:
+            by_repeat: Mapping[int, Mapping[str, object]] = runs.get(identity, {}).get(name, {})
+            return mean_tokens([task_tokens(item) for item in by_repeat.values()])
+
+        paired = holdout_deltas(scores(incumbent), scores(challenger))
+        families = {case.identifier: case.family for case in state.cases_for("validation")}
+        return verdict(paired.deltas, thresholds=state.statistics, families=families, se_floor=paired.se_floor,
+                       tokens={name: (tokens(incumbent, name), tokens(challenger, name)) for name in paired.deltas},
+                       planned=len(validation))
+
+    def best_validated(self) -> Candidate:
+        """Return the incumbent: the `best_validated` candidate, else the seed."""
+        kept = self._kept()
         seed = self._state.seed
         return seed if kept is None else seed.changed(candidate_files(kept.get("files")))
-
-    def _winning(self, validation: list[str]) -> dict[str, object] | None:
-        """Return the `best_validated` record when its candidate beats the seed, else None."""
-        seed = self._state.seed
-        means = self._means(validation)
-        kept = self._state.record.get("best_validated")
-        if not isinstance(kept, dict):
-            return None
-        kept = cast(dict[str, object], kept)
-        identity = text_field(kept, "identity")
-        if identity in means:
-            seed_mean = means.get(seed.identity, -1.0)
-            if self._beats(validation, means[identity], seed_mean, identity, seed.identity):
-                return kept
-        return None

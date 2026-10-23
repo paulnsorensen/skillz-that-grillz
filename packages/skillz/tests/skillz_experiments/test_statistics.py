@@ -179,19 +179,23 @@ def _declare(target: Path, **block: float) -> None:
     _ = path.write_text(json.dumps(document | {"statistics": block}))
 
 
-def test_a_contract_floor_is_frozen_and_the_gate_reports_its_reason(
+def test_a_contract_floor_is_frozen_and_the_incumbent_rule_reports_its_reason(
         tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _declare(target, min_gain=2.0)
     result = approved_run(target, out, factory=_Provider)
     assert read(out / "run.json")["statistics"] == Statistics(min_gain=2.0).data()
+    # The incumbent rule applies the frozen floor (gh-500): the challenger stays out, and the gate sees the seed.
+    comparisons = cast(list[dict[str, object]], cast(dict[str, object], result["search"])["comparisons"])
+    assert [(item["verdict"], item["delta"], item["reasons"]) for item in comparisons][:1] == [("inconclusive", 1.0, ["min-gain"])]
     gate = cast(dict[str, object], result["gate"])
-    assert (gate["verdict"], gate["delta"], gate["reasons"]) == ("inconclusive", 1.0, ["min-gain"])
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
     assert result["statistics"] == Statistics(min_gain=2.0).data()
     destination = tmp_path / "export"
     _ = export(out, destination)
     report = cast(dict[str, object], json.loads((destination / "report.json").read_text()))
-    assert cast(dict[str, object], report["gate"])["reasons"] == ["min-gain"]
+    shown = cast(list[dict[str, object]], cast(dict[str, object], report["search"])["comparisons"])
+    assert shown[0]["reasons"] == ["min-gain"]
     assert report["statistics"] == Statistics(min_gain=2.0).data()
 
 
