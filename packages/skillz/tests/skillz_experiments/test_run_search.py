@@ -1315,9 +1315,12 @@ def test_a_recorded_gate_diagnostic_reaches_the_feedback_on_the_fresh_and_the_re
     seen = _spy_feedback(monkeypatch)
     state.search_log.clear()
     _ = run(target, out, MODEL, live=True, factory=state.factory)
-    scored = [feedback for _, feedback in seen if "case_id" in feedback and "rejected" not in feedback]
-    live = [entry for entry in state.search_log if entry[1] in ("train", "validation")]
-    # More feedback than live calls: the resume served some feedback from recorded outcomes.
+    # GEPA reflects on train cases. A validation case gets the mean of its repeats, with no failure evidence.
+    train = {cast(str, case["id"]) for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+             if case["split"] == "train"}
+    scored = [feedback for _, feedback in seen if feedback.get("case_id") in train and "rejected" not in feedback]
+    live = [entry for entry in state.search_log if entry[1] == "train"]
+    # More train feedback than live train calls: the resume served some feedback from recorded outcomes.
     assert len(scored) > len(live)
     assert {feedback.get("gate_feedback") for feedback in scored} == {"assertion failed: total [redacted]"}
 

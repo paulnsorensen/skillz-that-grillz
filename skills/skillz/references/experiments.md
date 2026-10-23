@@ -994,6 +994,8 @@ When the markers alone would pass that limit, the later entries hold empty text 
 A judged outcome also adds `edit_hint`: the sorted editable files that share 4 words in a row with an unmet criterion text.
 With no match, `edit_hint` is `["unknown"]`. The hint is advice only, and every editable file stays editable.
 An outcome with a `gate_diagnostic` adds it as `gate_feedback`.
+A validation case with more than one scored repeat gets the repeat mean and the masked `request`, with no `unmet` or `gate_feedback`.
+GEPA reflects on train cases only.
 
 The contract hash covers the whole contract, `capture` included. The case hash covers every case, criteria included.
 
