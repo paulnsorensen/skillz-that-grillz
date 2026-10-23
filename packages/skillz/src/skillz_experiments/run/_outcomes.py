@@ -10,14 +10,25 @@ from typing import TypeVar, cast
 
 from skillz_experiments._budget import CallTimeout
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, CodedError
-from skillz_experiments.search import complete_means, is_reflection, is_search_validation, unit_score, validation_complete
+from skillz_experiments._cases import Case, CodedError, Criterion, case_criteria
+from skillz_experiments._redact import redact
+from skillz_experiments.search import complete_means, is_reflection, is_search_validation, unit_score, validation_complete, HarnessText
 
 # The search stops with `search-faulted` when at least this many search evaluations finished and more than half failed,
 # or when this many of the newest ones failed in a row. The values are defaults, not measured limits.
 FAULT_MIN_FINISHED = 4
 FAULT_STREAK = 5
 _FAULT_REASON = re.compile(r"\bfails: ([a-z][a-z-]*)")
+# A judge level below this is an unmet criterion. Level 4 is `fully met`.
+MET_LEVEL = 4
+# The feedback caps each criterion text and judge reason, and caps the sum of those fields over all unmet criteria.
+FIELD_LIMIT = 300
+FIELDS_LIMIT = 4_000
+TRUNCATED = "[truncated]"
+# A file is in `edit_hint` when it shares a run of this many normalized words with an unmet criterion text.
+HINT_WORDS = 4
+NO_HINT = "unknown"
+_EDGES = re.compile(r"^[\W_]+|[\W_]+$")
 
 
 def failed_outcome(case: Case, candidate: Candidate, error: Exception, *, arm: str = "search",
@@ -139,28 +150,97 @@ def is_unscored(record: Mapping[str, object]) -> bool:
                                                  for value in record.values())
 
 
-def feedback_for(result: dict[str, object], case: Case) -> tuple[float, dict[str, object]]:
-    """Return the GEPA score and feedback of one search outcome."""
+def feedback_for(result: dict[str, object], case: Case, harness: HarnessText,
+                 candidate: Candidate) -> tuple[float, dict[str, object]]:
+    """Return the GEPA score and feedback of one search outcome. The request has its harness text masked.
+
+    A judged outcome adds `unmet`, each criterion below level 4, and `edit_hint`, the editable files that its texts name.
+    An outcome with a `gate_diagnostic` adds it as `gate_feedback`.
+    """
+    request = harness.mask(case.request)
     if is_failed(result):
         # GEPA needs a number. The session ignores this 0.0 in every decision and drops the record from reflection feedback.
-        return 0.0, {"unscored": True, "request": case.request}
+        return 0.0, {"unscored": True, "request": request}
     score = unit_score(result["score"])
-    feedback: dict[str, object] = {"task_correct": score, "request": case.request, "case_id": case.identifier}
+    feedback: dict[str, object] = {"task_correct": score, "request": request, "case_id": case.identifier}
     if "scores" in result:
         feedback["grader_scores"] = result["scores"]
+    unmet = _unmet(result, case)
+    if unmet:
+        feedback["unmet"] = _bounded(unmet, harness)
+        feedback["edit_hint"] = _edit_hint([criterion.text for criterion, _level, _reason in unmet], candidate)
+    diagnostic = result.get("gate_diagnostic")
+    if isinstance(diagnostic, str):
+        feedback["gate_feedback"] = harness.mask(diagnostic)
     return score, feedback
 
 
-def repeat_feedback(results: Sequence[dict[str, object]], case: Case) -> tuple[float, dict[str, object]]:
+def _unmet(result: Mapping[str, object], case: Case) -> list[tuple[Criterion, int, str]]:
+    """Return each case criterion that the judge put below level 4, with its level and reason: `must` first, then by level."""
+    verdicts = result.get("criteria")
+    if not isinstance(verdicts, Mapping) or not verdicts:
+        return []
+    found: list[tuple[Criterion, int, str]] = []
+    for criterion in case_criteria(case.expected, case.identifier):
+        verdict = cast(Mapping[str, object], verdicts).get(criterion.id)
+        if not isinstance(verdict, Mapping):
+            continue
+        entry = cast(Mapping[str, object], verdict)
+        level, reason = entry.get("level"), entry.get("reason")
+        if type(level) is int and level < MET_LEVEL:
+            found.append((criterion, level, reason if isinstance(reason, str) else ""))
+    return sorted(found, key=lambda item: (not item[0].must, item[1]))
+
+
+def _bounded(unmet: Sequence[tuple[Criterion, int, str]], harness: HarnessText) -> list[dict[str, object]]:
+    """Return the unmet entries. Each keeps its id, must flag, and level.
+
+    Each text and reason is redacted, masked, and cut to `FIELD_LIMIT`. When the next entry would push the text and reason
+    fields, the markers of the later entries included, past `FIELDS_LIMIT`, it and every later entry get `[truncated]`.
+    """
+    entries: list[dict[str, object]] = []
+    used = 0
+    cut = False
+    for position, (criterion, level, reason) in enumerate(unmet):
+        text, why = (harness.mask(redact(value))[:FIELD_LIMIT] for value in (criterion.text, reason))
+        markers = 2 * len(TRUNCATED) * (len(unmet) - position - 1)
+        cut = cut or used + len(text) + len(why) + markers > FIELDS_LIMIT
+        if cut:
+            text = why = TRUNCATED
+        else:
+            used += len(text) + len(why)
+        entries.append({"id": criterion.id, "must": criterion.must, "level": level, "text": text, "reason": why})
+    return entries
+
+
+def _runs(text: str) -> set[tuple[str, ...]]:
+    """Return each run of `HINT_WORDS` words in `text`, lower-cased with edge punctuation stripped."""
+    words = [word for word in (_EDGES.sub("", raw) for raw in text.lower().split()) if word]
+    return {tuple(words[start:start + HINT_WORDS]) for start in range(len(words) - HINT_WORDS + 1)}
+
+
+def _edit_hint(texts: Sequence[str], candidate: Candidate) -> list[str]:
+    """Return the sorted editable files that share a word run with any of `texts`, else `["unknown"]`.
+
+    The hint is advice only. It never changes which files the proposer may edit.
+    """
+    wanted = set[tuple[str, ...]]().union(*map(_runs, texts))
+    named = sorted(name for name in candidate.editable if _runs(candidate.files.get(name, "")) & wanted)
+    return named or [NO_HINT]
+
+
+def repeat_feedback(results: Sequence[dict[str, object]], case: Case, harness: HarnessText,
+                    candidate: Candidate) -> tuple[float, dict[str, object]]:
     """Return the GEPA score and feedback of the repeats of one case: the mean of the scored repeats.
 
     One outcome keeps its own feedback. A case with no scored repeat takes the unscored path of a failed outcome.
+    The mean of repeats, a validation case, gets the masked request and no failure evidence: GEPA reflects on train cases.
     """
     scored = [unit_score(item["score"]) for item in results if not is_failed(item)]
     if len(results) == 1 or not scored:
-        return feedback_for(results[-1], case)
+        return feedback_for(results[-1], case, harness, candidate)
     mean = math.fsum(scored) / len(scored)
-    return mean, {"task_correct": mean, "request": case.request, "case_id": case.identifier}
+    return mean, {"task_correct": mean, "request": harness.mask(case.request), "case_id": case.identifier}
 
 def mean_tokens(counts: Sequence[int | None]) -> float | None:
     """Return the mean of `counts`, or None when it is empty, lacks a count, or overflows a float."""

@@ -213,12 +213,13 @@ class SearchPhase:
             raise ValueError("holdout must not enter optimization")
         candidate = self._admit(components)
         if not isinstance(candidate, Candidate):
-            return 0.0, {"task_correct": 0.0, "request": case.request, "case_id": case.identifier} | candidate
+            request = self._denylist.harness.mask(case.request)
+            return 0.0, {"task_correct": 0.0, "request": request, "case_id": case.identifier} | candidate
         with state.lock:
             self._identities[digest(components)] = candidate.identity
         results = [self._run(candidate, case, repeat) for repeat in repeat_indices(case.split)]
         Leaderboard(state).keep_if_best(candidate, case)
-        return repeat_feedback(results, case)
+        return repeat_feedback(results, case, self._denylist.harness, candidate)
 
     def _run(self, candidate: Candidate, case: Case, repeat: int | None) -> dict[str, object]:
         """Return the recorded outcome of one run, else score it live. A provider failure records a failed outcome."""

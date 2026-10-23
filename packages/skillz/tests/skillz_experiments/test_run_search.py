@@ -78,6 +78,8 @@ class Search:
         self.omit_hypothesis = False
         # When set, a proposal changes only this component and returns the parent text of every other one.
         self.only: str | None = None
+        # Fields that every train and validation outcome adds, such as a `gate_diagnostic`.
+        self.extra: dict[str, object] = {}
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -168,7 +170,8 @@ class Provider(FakeRunProvider):
         if state.score_of is not None:
             chosen = state.score_of(candidate.files["SKILL.md"], case.split)
             score = score if chosen is None else chosen
-        return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier}
+        extra = {} if holdout else state.extra
+        return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier} | extra
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -1276,6 +1279,46 @@ def test_a_proposal_that_adds_harness_text_is_rejected_and_counted_under_harness
     assert list(rejections) == ["harness-token"] and 0 < rejections["harness-token"] <= state.proposals
     assert any(feedback.get("rule") == "harness-token" and score == 0.0 for score, feedback in seen)
     assert cast(dict[str, object], read(out / "run.json")["search"])["leakage_rejections"] == rejections
+
+
+@pytest.mark.ac("gh-501:AC-2")
+def test_the_feedback_request_masks_harness_text_on_the_scored_and_the_rejected_path(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals,
+                                                       request_tail=" in output/plan.json. Do not run git or gh.",
+                                                       harness_phrases=("do not run git or gh",))
+    state.suffix = " " + ANSWER
+    seen = _spy_feedback(monkeypatch)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    rejected = [feedback for _, feedback in seen if feedback.get("reason") == "candidate-leakage-rejected"]
+    scored = [feedback for _, feedback in seen if "rejected" not in feedback]
+    assert rejected and scored
+    for feedback in rejected + scored:
+        request = cast(str, feedback["request"])
+        assert request.endswith(" in [harness]. [harness].")
+        assert "output/plan.json" not in request and "git or gh" not in request.lower()
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_recorded_gate_diagnostic_reaches_the_feedback_on_the_fresh_and_the_reuse_path(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.extra = {"gate_diagnostic": "assertion failed: total [redacted]"}
+    fault_at = _seed_pass(out) + 3
+    state.evaluate_fault = lambda number: (
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
+    with pytest.raises(EnvironmentDiffers):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    seen = _spy_feedback(monkeypatch)
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    scored = [feedback for _, feedback in seen if "case_id" in feedback and "rejected" not in feedback]
+    live = [entry for entry in state.search_log if entry[1] in ("train", "validation")]
+    # More feedback than live calls: the resume served some feedback from recorded outcomes.
+    assert len(scored) > len(live)
+    assert {feedback.get("gate_feedback") for feedback in scored} == {"assertion failed: total [redacted]"}
 
 
 def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
