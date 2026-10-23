@@ -18,6 +18,7 @@ from skillz_experiments.run._outcomes import (
     search_fault, stall_observations,
 )
 from skillz_experiments.run._record_fields import field, int_field
+from skillz_experiments.run._reflections import ReflectionLog
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import FOCUS_REASON, HYPOTHESIS, NOTES, Denylist, Edit, Progress, Signal, assess
 from skillz_experiments.search import accept as accept_proposal
@@ -63,6 +64,7 @@ class SearchPhase:
         self._denylist = Denylist.build(search_cases.values(), seed=state.seed, phrases=state.contract.harness_phrases)
         self._leak_rules: dict[str, str | None] = {}
         self._ended_proposal: str | None = None
+        self._reflection_log = ReflectionLog(state.out)
         # Recorded search outcomes that a resumed search reuses, one per earlier call, by candidate, split, case, and
         # repeat index. `recorded_for_reuse` fills it.
         self._reusable: dict[tuple[str, str, str, object], list[dict[str, object]]] = {}
@@ -362,6 +364,12 @@ class SearchPhase:
                 outcome["over_budget"] = True
             state.outcomes.append(outcome)
             state.checkpoint()
+            # The record comes after the checkpoint, so a crash between them leaves a gap, never a name that a resume reuses.
+            try:
+                self._reflection_log.record(len(self.reflections()), prompt, result.get("answer"))
+            except CodedError as error:
+                state.faults.latch(error)
+                raise
         if refusal is not None:
             raise refusal
         self._record_admission(outcome, proposal)

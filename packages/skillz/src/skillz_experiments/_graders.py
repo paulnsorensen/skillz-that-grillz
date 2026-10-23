@@ -50,6 +50,8 @@ CAPTURE_BYTES_LIMIT = 4_000_000
 CAPTURE_TOTAL_LIMIT = 16_000_000
 # The command grader keeps at most this many characters of its redacted stderr, from the end.
 DIAGNOSTIC_LIMIT = 1_000
+# Redaction time grows with the square of a run without whitespace, so it reads only this much of the stderr end.
+_DIAGNOSTIC_WINDOW = 4 * DIAGNOSTIC_LIMIT
 
 
 def _utf8(data: bytes) -> bool:
@@ -197,7 +199,8 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     require_sandbox(task)
     with _grading_workspace(case, files, "command", trace) as workspace:
         code, stdout, stderr = _run(task, workspace, argv)
-    return _command_score(code, stdout), redact(stderr)[-DIAGNOSTIC_LIMIT:] or f"the grader argv exits with code {code}"
+    tail = redact(stderr[-_DIAGNOSTIC_WINDOW:])[-DIAGNOSTIC_LIMIT:]
+    return _command_score(code, stdout), tail or f"the grader argv exits with code {code}"
 
 
 def _run(task: object, workspace: Path, argv: tuple[str, ...]) -> tuple[int, str, str]:

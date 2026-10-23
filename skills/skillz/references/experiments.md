@@ -90,6 +90,10 @@ A task or judge call that exceeds it ends as an `evaluation-failed` outcome with
 A reflection call that exceeds it records a reflection outcome with `status: timeout`, and the proposal ends with no candidate and no second reflection call.
 A reflection outcome with a status is no stall observation.
 When every feedback record is unscored, the run skips the reflection (`status: skipped`, `reason: no-scored-feedback`) and the proposal ends with no candidate.
+Each answered reflection call writes `RUN/reflections/<k>.json` (mode 0600) for audit: the redacted prompt and the redacted answer as JSON text.
+`k` is the count of reflection outcomes in the run, so a timed-out, failed, or skipped call leaves a gap, and a resume continues the count.
+A record holds at most 64 KiB. A cut text ends with `[truncated]`. The export leaves the records out.
+A record that already exists stops the run with `reflection-record-exists`. A write error stops it with `reflection-record-failed`.
 A call that the search deadline stops is a budget stop, not a timeout.
 The run record and the `summary` hold `calls_by_role` (counts that sum to `calls`) and `seconds_by_role` (wall seconds of `task`, `reflection`, `judge`, and `failed` calls).
 A record from before the roles exists puts its earlier calls under `unattributed`.

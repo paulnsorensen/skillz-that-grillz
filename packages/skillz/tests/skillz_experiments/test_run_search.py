@@ -21,6 +21,7 @@ from skillz_experiments.harness._codex import Codex
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
+from skillz_experiments._redact import redact
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments.search import overshoot
 from skillz_experiments.run import _outcomes, _session
@@ -1319,6 +1320,44 @@ def test_a_recorded_gate_diagnostic_reaches_the_feedback_on_the_fresh_and_the_re
     # More feedback than live calls: the resume served some feedback from recorded outcomes.
     assert len(scored) > len(live)
     assert {feedback.get("gate_feedback") for feedback in scored} == {"assertion failed: total [redacted]"}
+
+
+def _reflection_records(out: Path) -> dict[int, bytes]:
+    return dict(sorted((int(path.stem), path.read_bytes()) for path in (out / "reflections").glob("*.json")))
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_each_reflection_call_writes_a_private_redacted_record_without_holdout_text_and_a_resume_continues_the_numbers(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.suffix = " api_key=sk-live-REFLECTSECRET"
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    first = _reflection_records(out)
+    assert list(first) == [1]
+    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    records = _reflection_records(out)
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    reflections = [item for item in outcomes if item.get("split") == "reflection"]
+    # One record per answered call, named by its count of reflection outcomes; the resume adds names and keeps the first.
+    answered = [index + 1 for index, item in enumerate(reflections) if "usage" in item]
+    assert list(records) == answered and len(records) > 1 and records[1] == first[1]
+    cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+    held = [cast(str, case["request"]) for case in cases if case["split"] == "holdout"]
+    train = [cast(str, case["request"]) for case in cases if case["split"] == "train"]
+    assert held and any(request in data.decode() for request in train for data in records.values())
+    asked = {redact(prompt) for prompt in state.prompts}
+    for ordinal, data in records.items():
+        path = out / "reflections" / f"{ordinal}.json"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600 and len(data) <= 64 * 1024
+        record = cast(dict[str, object], json.loads(data))
+        assert record["ordinal"] == ordinal and record["prompt"] in asked
+        text = data.decode()
+        assert "REFLECTSECRET" not in text and not any(request in text for request in held)
+    # The secret did reach the prompts, so the check above sees redaction, not absence.
+    assert any("REFLECTSECRET" in prompt for prompt in state.prompts)
 
 
 def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
