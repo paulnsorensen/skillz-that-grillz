@@ -301,10 +301,12 @@ def test_the_leaderboard_history_and_stall_readers_take_completion_from_validati
     seed = [_row("seed", "v", 0.25, 0), _row("seed", "v", 0.25, 1)]
     outcomes = [*seed, _reflection("c"), _row("c", "v", 1.0, 0), _row("c", "v", 1.0, 1)]
     state = _leaderboard_state(outcomes)
-    readers: Callable[[], tuple[object, ...]] = lambda: (
-        Leaderboard(state)._means(["v"]),  # pyright: ignore[reportPrivateUsage]
-        attempts(outcomes, ("p", "seed"), ["v"], 2)[0]["validation_delta"],
-        _outcomes.stall_observations(outcomes, {"v"}, 2))
+
+    def readers() -> tuple[object, ...]:
+        return (
+            Leaderboard(state)._means(["v"]),  # pyright: ignore[reportPrivateUsage]
+            attempts(outcomes, ("p", "seed"), ["v"], 2)[0]["validation_delta"],
+            _outcomes.stall_observations(outcomes, {"v"}, 2))
     assert readers() == ({"seed": 0.25, "c": 1.0}, 0.75, [0.75])
     asked: list[str] = []
 
