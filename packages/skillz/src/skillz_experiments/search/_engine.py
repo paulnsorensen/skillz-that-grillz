@@ -69,6 +69,15 @@ def overshoot(validation: int) -> int:
     return 2 * REFLECTION_MINIBATCH + validation
 
 
+def search_allowance(metric: int, validation: int) -> int:
+    """Return the metric calls that GEPA can spend on proposals after the seed pass over the validation cases.
+
+    The headroom pass scores the seed on every train and validation case, and the search ceiling adds back only the
+    train outcomes. The room left is `metric` less the overshoot margin and the validation outcomes.
+    """
+    return metric - overshoot(validation) - validation
+
+
 def skip_limit(train: int) -> int:
     """Return the consecutive iterations without a new evaluation that end a search: two epochs of train minibatches.
 

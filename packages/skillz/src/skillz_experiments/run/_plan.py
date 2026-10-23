@@ -23,7 +23,7 @@ from skillz_experiments._contract import Contract
 from skillz_experiments.run._wedge_targets import TargetPlan, mcp_text, never_editable
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, overshoot
+from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, search_allowance
 
 PREFLIGHT_CALLS = 3
 
@@ -148,9 +148,12 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
         metric = max(metric, JOURNEY_SEARCH_CALLS // per_evaluation)
     while metric > 0 and not fits(metric):
         metric -= 1
-    if metric < overshoot(validation) + MINIMUM_SEARCH_MARGIN:
-        raise Stop("budget-unapproved", "too few calls are left for a search under the cap; "
-                   + "lower --repeats or the holdout size", {})
+    allowance = search_allowance(metric, validation)
+    if allowance < MINIMUM_SEARCH_MARGIN:
+        raise Stop("budget-unapproved", f"too few calls are left for a search under the cap: {metric} metric calls leave "
+                   + f"{allowance} after the seed pass over {validation} validation cases and the overshoot margin, "
+                   + f"and the search needs {MINIMUM_SEARCH_MARGIN}; lower --repeats or the holdout size, "
+                   + "or change --seed or the case set", {})
     sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
     sized, total = size(metric), sandbox_total(metric)
     return _Plan(metric_calls=metric, reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls=holdout_calls,
