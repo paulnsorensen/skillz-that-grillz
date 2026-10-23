@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 PACKAGE = Path(skillz_experiments.__file__).parent
 FIELDS = {"contract_hash", "skill", "adapter", "task_model", "judge_model", "claude_options", "edit",
-          "repeats", "statistics", "split_digest", "scoring_digest", "leakage_digest"}
+          "repeats", "statistics", "validation_policy", "split_digest", "scoring_digest", "leakage_digest"}
 CRITERIA = [{"id": "answer", "text": "THE answer SHALL meet the request."}]
 
 
@@ -72,7 +72,7 @@ def test_a_run_freezes_its_fingerprint_and_an_equal_run_compares_clean(
     _, second, _ = _judged_run(tmp_path / "b", "judge-a", make_target, approved_run)
     saved = cast(list[dict[str, object]], json.loads((out / "cases.json").read_text())["cases"])
     fields = _fields(first)
-    assert set(fields) == FIELDS and len(fields) == 12
+    assert set(fields) == FIELDS and len(fields) == 13
     assert _frozen(first)["fingerprint"] == digest(fields)
     assert fields["task_model"] == "task-model" and fields["judge_model"] == "judge-a"
     assert fields["adapter"] == "command"

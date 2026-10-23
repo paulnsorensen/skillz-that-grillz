@@ -31,6 +31,10 @@ PREFLIGHT_CALLS = 3
 SEARCH_CASE_FACTOR = 4
 
 
+VALIDATION_REPEATS = 1
+"""The runs of one search candidate on one validation case. `run.json` freezes it as `validation_policy.repeats`."""
+
+
 JOURNEY_SEARCH_CALLS = 460
 
 
@@ -99,7 +103,9 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     The search shrinks until both the call cap and the time cap hold, sandbox time included.
     `journey` is True when a scored case is a journey. The run then gets the journey ceiling in place of the standard cap.
     A journey run also sizes the search from `JOURNEY_SEARCH_CALLS` model calls, so the search holds as many metric calls
-    as that allowance buys at `per_evaluation`. A task-only run keeps `SEARCH_CASE_FACTOR` metric calls per searched case.
+    as that allowance buys at `per_evaluation`. A task-only run keeps `SEARCH_CASE_FACTOR` metric calls per searched run:
+    one run per train case and `VALIDATION_REPEATS` runs per validation case. The admission check, the search
+    allowance, and its overshoot margin count the same `VALIDATION_REPEATS` runs per validation case.
     `holdout_costs` lists the model calls of each holdout case. The default is `per_evaluation` for each of `holdout` cases.
     A retry costs the costliest holdout case, so the reserve covers one failed attempt of any case.
     The headroom pass scores the seed once on each train and validation case. Its validation scores stand in for the seed
@@ -143,12 +149,13 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
         raise Stop("budget-unapproved", "the preflight, the holdout gate, the replay, the headroom pass, and their sandbox "
                    + f"time alone need {bare.seconds + sandbox_total(0)} seconds; the cap is {max_seconds}"
                    + f"{seconds_cap_note(journey)}; lower --repeats, the holdout size, or --sandbox-seconds", {})
-    metric = SEARCH_CASE_FACTOR * (train + validation)
+    validation_runs = VALIDATION_REPEATS * validation
+    metric = SEARCH_CASE_FACTOR * (train + validation_runs)
     if journey:
         metric = max(metric, JOURNEY_SEARCH_CALLS // per_evaluation)
     while metric > 0 and not fits(metric):
         metric -= 1
-    allowance = search_allowance(metric, validation)
+    allowance = search_allowance(metric, validation_runs)
     if allowance < MINIMUM_SEARCH_MARGIN:
         raise Stop("budget-unapproved", f"too few calls are left for a search under the cap: {metric} metric calls leave "
                    + f"{allowance} after the seed pass over {validation} validation cases and the overshoot margin, "
@@ -165,12 +172,13 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
 def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions) -> _Plan:
     """Size the run from per-case call costs. `_prepare` and `_verify_budget` share this, so their estimates match.
 
-    The holdout reserve sums the holdout case costs. A search metric call costs the mean of the train and validation cases.
+    The holdout reserve sums the holdout case costs. A search metric call costs the mean over the searched runs:
+    each train case once and each validation case `VALIDATION_REPEATS` times.
     The headroom pass charges the train case costs only. GEPA pays the validation pass of the seed in its own calls.
     """
     split = {name: [case_calls(contract, case) for case in cases if case.split == name]
              for name in cast(tuple[str, ...], get_args(Split))}
-    searched = split["train"] + split["validation"]
+    searched = split["train"] + VALIDATION_REPEATS * split["validation"]
     per_evaluation = max(1, math.ceil(sum(searched) / len(searched))) if searched else 1
     return _plan(len(split["train"]), len(split["validation"]), len(split["holdout"]), per_evaluation, repeats,
                  _command_seconds(contract, cases, options), journey=any(case.journey is not None for case in cases),

@@ -240,7 +240,7 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
 def _core(result: dict[str, object]) -> dict[str, object]:
     """Return the search fields that the attempt record and the evaluation counts did not add. `test_search_faults.py` covers the counts."""
     search = cast(dict[str, object], result["search"])
-    assert set(search) - {"scored", "failed", "failed_by_reason"} == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped", "history"}
+    assert set(search) - {"scored", "failed", "failed_by_reason"} == {"reason", "stop_trigger", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped", "history"}
     return {key: search[key] for key in ("reason", "retained_seed", "leakage_rejections", "proposal_over_budget")}
 
 
@@ -1334,6 +1334,7 @@ def _search_spent(out: Path) -> int:
 
 
 @pytest.mark.ac("gh-240:AC-4")
+@pytest.mark.ac("gh-500:AC-7")
 def test_a_search_that_stalls_for_eight_proposals_stops_converged_stalled_and_still_runs_the_gate(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -1342,6 +1343,7 @@ def test_a_search_that_stalls_for_eight_proposals_stops_converged_stalled_and_st
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert state.proposals == 9 and _search_spent(out) < _allowance(out)
     assert cast(dict[str, object], result["search"])["reason"] == "converged-stalled"
+    assert cast(dict[str, object], read(out / "run.json")["search"])["stop_trigger"] == "stall"
     assert result["phase"] == "complete" and state.holdout_calls > 0
     assert "improved 1 " in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
@@ -1563,8 +1565,8 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
-    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped",
-                           "scored", "failed", "failed_by_reason", "history"}
+    assert set(search) == {"reason", "stop_trigger", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts",
+                           "text_dropped", "scored", "failed", "failed_by_reason", "history"}
     saved = cast(dict[str, object], read(out / "run.json")["search"])
     # The exported summary drops the proposer journal; run.json keeps it.
     assert set(saved) == set(search) | {"journal"} and {key: saved[key] for key in search if key != "attempts"} == {

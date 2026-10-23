@@ -227,6 +227,7 @@ def _deadline_search(tmp_path: Path, make_target: Maker, write_draft: Drafter, a
     return target, out, state
 
 
+@pytest.mark.ac("gh-500:AC-7")
 @pytest.mark.ac("gh-319:AC-4")
 def test_a_search_that_the_deadline_ends_early_reports_time_exhausted_with_seconds_by_role(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
@@ -245,11 +246,13 @@ def test_a_search_that_the_deadline_ends_early_reports_time_exhausted_with_secon
     result = run(target, out, MODEL, live=True, factory=factory)
     search = cast(dict[str, object], result["search"])
     assert search["reason"] == "time-exhausted"
+    assert cast(dict[str, object], read(out / "run.json")["search"])["stop_trigger"] == "search-deadline"
     assert set(cast(dict[str, float], search["seconds_by_role"])) == set(SEARCH_ROLES)
     assert result["phase"] == "complete"
 
 
 @pytest.mark.ac("gh-319:AC-4")
+@pytest.mark.ac("gh-500:AC-7")
 def test_a_call_budget_stop_is_not_reported_as_time_exhausted(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
@@ -257,3 +260,4 @@ def test_a_call_budget_stop_is_not_reported_as_time_exhausted(
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
     assert search["reason"] == "budget-exhausted-best-validated" and "seconds_by_role" not in search
+    assert cast(dict[str, object], read(out / "run.json")["search"])["stop_trigger"] == "call-cap"

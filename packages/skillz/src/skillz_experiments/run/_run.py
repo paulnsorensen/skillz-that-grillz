@@ -63,7 +63,7 @@ from skillz_experiments.run._resume import (
     statistics_flag,
     resolve_statistics,
 )
-from skillz_experiments.run._open import engine_hash
+from skillz_experiments.run._open import engine_hash, validation_policy
 from skillz_experiments.run._ports import HistoryStore, Ports
 from skillz_experiments.run._record_fields import text_field
 from skillz_experiments.run._session import Session
@@ -209,6 +209,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "seed_frozen": seed_frozen, "own_targets": owned,
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
         "estimate": shown, "engine_hash": engine_hash(), "statistics": resolved.data(),
+        "validation_policy": validation_policy(),
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
                    "reserve_seconds": budget.reserve_seconds, "approved": budget.approved,
                    **({"journey": True} if budget.journey else {})},

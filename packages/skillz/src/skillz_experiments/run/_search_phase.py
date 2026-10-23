@@ -12,6 +12,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments.evaluation import task_tokens
 from skillz_experiments.run._leaderboard import Leaderboard
+from skillz_experiments.run._plan import VALIDATION_REPEATS
 from skillz_experiments.run._outcomes import (
     case_ids, fault_reason, feedback_for, failed_outcome, is_unscored, mean_tokens,
     reflection_fault, search_fault, stall_observations,
@@ -104,10 +105,11 @@ class SearchPhase:
     def search_ceiling(self) -> int:
         """Return the GEPA call budget: the search allowance plus the seed outcomes that the headroom pass spent.
 
+        The seed outcomes are one per train case and `VALIDATION_REPEATS` per validation case.
         The last iteration can pass it by up to the overshoot margin. The plan admits a run with the same formula.
         """
         estimate = mapping(field(self._state.record, "estimate"))
-        validation = len(self._state.cases_for("validation"))
+        validation = VALIDATION_REPEATS * len(self._state.cases_for("validation"))
         spent = int_field(mapping(field(estimate, "headroom")), "outcomes") + validation
         return search_allowance(int_field(estimate, "metric_calls"), validation) + spent
 

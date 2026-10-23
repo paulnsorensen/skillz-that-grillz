@@ -18,6 +18,8 @@ Evaluate = Callable[[dict[str, str], object], tuple[float, dict[str, object]]]
 Propose = Callable[[dict[str, str], Mapping[str, Sequence[Mapping[str, object]]], list[str]], dict[str, str]]
 Cheaper = Callable[[dict[str, str], dict[str, str], Sequence[object]], bool]
 """Return whether the child (second) has known, lower mean task tokens than the parent (first) on the examples."""
+StopReason = Literal["metric-count", "call-share", "stall", "idle"]
+"""The stop condition that ended a search. `idle` is `skip_limit` iterations without a new evaluation."""
 
 
 class _Proposal(Protocol):
@@ -65,13 +67,17 @@ class _API(Protocol):
 
 
 def overshoot(validation: int) -> int:
-    """Return the most metric calls that the last GEPA iteration spends beyond `metric_calls`."""
+    """Return the most metric calls that the last GEPA iteration spends beyond `metric_calls`.
+
+    `validation` counts the validation runs of one candidate: the validation cases times the runs per case.
+    """
     return 2 * REFLECTION_MINIBATCH + validation
 
 
 def search_allowance(metric: int, validation: int) -> int:
     """Return the metric calls that GEPA can spend on proposals after the seed pass over the validation cases.
 
+    `validation` counts the validation runs of one candidate: the validation cases times the runs per case.
     The headroom pass scores the seed on every train and validation case, and the search ceiling adds back only the
     train outcomes. The room left is `metric` less the overshoot margin and the validation outcomes.
     """
@@ -89,17 +95,22 @@ def skip_limit(train: int) -> int:
 def search(seed: dict[str, str], edit: Edit, train: list[object], validation: list[object],
            evaluate: Evaluate, propose: Propose, *, metric_calls: int,
            workers: int = MAX_CONCURRENT_CALLS, stalled: Callable[[], bool] | None = None,
-           spent: Callable[[], bool] | None = None, cheaper: Cheaper | None = None) -> bool:
+           spent: Callable[[], bool] | None = None, cheaper: Cheaper | None = None,
+           validation_repeats: int = 1) -> StopReason:
     """Run one GEPA search over `seed`, which holds only the editable components.
 
-    `metric_calls` bounds the distinct candidate and case evaluations. GEPA scores the parent again on each minibatch,
-    and the caller serves that repeat from its record, so a repeat does not count. A result whose feedback holds
-    `rejected` makes no live call and does not count either. GEPA skips reflection when the parent scores perfectly on
+    `metric_calls` bounds the physical runs of the distinct candidate and case evaluations. A new train pair costs 1,
+    and a new validation pair costs `validation_repeats`, because the caller runs each validation case that many times.
+    GEPA scores the parent again on each minibatch, and the caller serves that repeat from its record, so a repeat
+    costs 0. A result whose feedback holds `rejected` makes no live call and costs 0 too. GEPA skips reflection when the parent scores perfectly on
     the minibatch. `skip_limit` consecutive iterations without a new evaluation end the search.
     `cheaper` is set while the token rule is on. Then GEPA reflects on a perfect minibatch too, and a child whose minibatch
     score sum equals its parent's enters the pool when `cheaper` returns true. Else a child must score a higher sum.
     GEPA calls `stalled` and `spent` before each iteration and stops when either returns true.
-    Return whether `stalled` stopped it. `spent` ends the search without that mark: the caller's live-call share is used up.
+    Return the first stop condition that held: `stall` when `stalled` returned true, `metric-count` when the runs reach
+    `metric_calls`, `idle` after `skip_limit` iterations without a new evaluation, and `call-share` when `spent`
+    returned true because the caller's live-call share is used up. GEPA ends only at a stop condition, so a GEPA that
+    returns without one reads as `metric-count`.
     """
     if edit not in get_args(Edit):
         raise ValueError("edit must be prose or prose+cli")
@@ -107,6 +118,8 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
         raise ValueError("search needs independent train and validation cases")
     if metric_calls < 1:
         raise ValueError("search needs at least one metric call")
+    if validation_repeats < 1:
+        raise ValueError("search needs at least one run per validation case")
     try:
         version = importlib.metadata.version("gepa")
     except importlib.metadata.PackageNotFoundError:
@@ -120,8 +133,11 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
     lock = threading.Lock()
     evaluated: set[tuple[tuple[tuple[str, str], ...], str]] = set()
     scored: set[tuple[tuple[tuple[str, str], ...], str]] = set()
+    validation_keys = {repr(example) for example in validation}
+    runs = 0
 
     def score(candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
+        nonlocal runs
         if set(candidate) != set(seed):
             raise ValueError("proposal components differ from the frozen set")
         key = (tuple(sorted(candidate.items())), repr(example))
@@ -130,23 +146,33 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
         result = evaluate(candidate, example)
         if "rejected" not in result[1]:
             with lock:
-                scored.add(key)
+                if key not in scored:
+                    scored.add(key)
+                    runs += validation_repeats if key[1] in validation_keys else 1
         return result
 
     faults: list[Exception] = []
-    stopped = False
+    reason: StopReason | None = None
     idle = 0
     seen = 0
 
     def stop(_state: object) -> bool:
-        nonlocal stopped, idle, seen
+        nonlocal reason, idle, seen
         with lock:
             # A skipped minibatch, a failed proposal, or a repeated candidate adds no new evaluation.
             idle = idle + 1 if len(evaluated) == seen else 0
             seen = len(evaluated)
-            ended = idle >= skip_limit(len(train)) or len(scored) >= metric_calls
-        stopped = stopped or (stalled is not None and stalled())
-        return stopped or ended or bool(faults) or (spent is not None and spent())
+            idled, counted = idle >= skip_limit(len(train)), runs >= metric_calls
+        if reason is None:
+            if stalled is not None and stalled():
+                reason = "stall"
+            elif counted:
+                reason = "metric-count"
+            elif idled:
+                reason = "idle"
+            elif spent is not None and spent():
+                reason = "call-share"
+        return reason is not None or bool(faults)
 
     # GEPA turns each proposer exception into a skipped proposal. The caller's session latch re-raises a coded fault.
     # A ValueError, coded or not, is a deliberate skip. Any other exception is a defect, so it ends the search below.
@@ -182,4 +208,4 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
         fault = faults[0]
         raise CodedError("proposer-faulted",
                          f"the proposer raised {type(fault).__name__}: {fault}; fix the cause in that error, then resume") from fault
-    return stopped
+    return reason or "metric-count"
