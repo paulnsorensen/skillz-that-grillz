@@ -34,7 +34,7 @@ from skillz_experiments._budget import (
     estimate,
 )
 from skillz_experiments.run import Stop, run
-from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, PREFLIGHT_CALLS
+from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, PREFLIGHT_CALLS, VALIDATION_REPEATS
 from skillz_experiments.run._plan import (
     _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
@@ -422,17 +422,19 @@ def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_
     cases = [_mixed_case(split, f"{split}-{n}", journey=n == 0 and split != "train")
              for split in ("train", "validation", "holdout") for n in range(6)]
     plan = size_plan(contract, cases, 1, ClaudeOptions())
-    searched = [task_cost] * 6 + [journey_cost] + [task_cost] * 5
+    # Each validation case counts once per repeat in the mean (gh-500).
+    searched = [task_cost] * 6 + VALIDATION_REPEATS * ([journey_cost] + [task_cost] * 5)
     mean = -(-sum(searched) // len(searched))
     holdout = [journey_cost] + [task_cost] * 5
     retry = 2 * HOLDOUT_RETRIES_PER_ARM * max(holdout)
     assert plan.retry_calls == retry and plan.holdout_calls == 2 * sum(holdout) + retry
     assert plan.sized.journey
     sandbox = command_seconds(contract, cases, ClaudeOptions())
-    at_maximum = plan_run(6, 6, 6, journey_cost, 1, sandbox, journey=True)
     at_mean = plan_run(6, 6, 6, mean, 1, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
     assert plan == at_mean and 1 < mean < journey_cost
-    assert plan.sized.calls < at_maximum.sized.calls and plan.holdout_calls < at_maximum.holdout_calls
+    # At the journey maximum, the two runs of each validation case leave no search room at all.
+    with pytest.raises(Stop, match="too few calls are left for a search"):
+        _ = plan_run(6, 6, 6, journey_cost, 1, sandbox, journey=True)
 
 
 def test_at_three_repeats_the_mean_cost_plan_fits_while_the_journey_maximum_plan_has_too_few_calls(

@@ -32,7 +32,6 @@ from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import Factory, HarnessName, Provider
 from skillz_experiments.run._stop import Stop, baseline_rejected, check_timeout, preflight_timeout
 from skillz_experiments.search import Edit
-from skillz_experiments.search import attempts as build_attempts
 from skillz_experiments.search import journal as build_journal
 from skillz_experiments.search import search as pareto_search
 
@@ -248,7 +247,7 @@ class Session:
             raise baseline_rejected(checked.reason)
 
     def headroom(self) -> None:
-        """Score the seed once on every train and validation case. Stop with `cases-too-easy` when a family is saturated."""
+        """Score the seed on every train case and on each validation repeat. Stop with `cases-too-easy` when a family is saturated."""
         run_headroom(self, self._searching)
 
     def search(self, earlier: Sequence[Mapping[str, object]] = ()) -> None:
@@ -333,7 +332,7 @@ class Session:
             "retained_seed": winner.identity == self.seed.identity,
             "leakage_rejections": rejections, **search_counts(scored),
             "proposal_over_budget": searching.over_budget(),
-            "attempts": build_attempts(self.outcomes, searching.seed_ref(), Leaderboard(self).validation_ids()),
+            "attempts": searching.attempts(),
             "text_dropped": searching.text_dropped(),
             "journal": build_journal(self.outcomes),
         }

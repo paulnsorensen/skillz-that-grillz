@@ -19,7 +19,7 @@ from skillz_experiments.harness._command import Command
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._export import summary
 from test_codex_retry import _fake  # pyright: ignore[reportPrivateUsage]
-from test_run_search import MODEL, Provider, Search, _start, _validation  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, Provider, Search, _start, _validation_runs  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
@@ -182,7 +182,7 @@ def test_failed_judge_and_reflection_calls_still_count_by_role(tmp_path: Path, m
 def test_a_run_records_calls_by_role_that_sum_to_calls_and_a_resume_keeps_them(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(Exception, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     stopped = read(out / "run.json")
@@ -199,7 +199,7 @@ def test_a_run_records_calls_by_role_that_sum_to_calls_and_a_resume_keeps_them(
 def test_a_record_from_before_the_roles_resumes_with_its_calls_unattributed(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(Exception, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
@@ -256,7 +256,7 @@ def test_a_search_that_the_deadline_ends_early_reports_time_exhausted_with_secon
 def test_a_call_budget_stop_is_not_reported_as_time_exhausted(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    state.exhaust_after_improved = len(_validation(out))
+    state.exhaust_after_improved = _validation_runs(out)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
     assert search["reason"] == "budget-exhausted-best-validated" and "seconds_by_role" not in search

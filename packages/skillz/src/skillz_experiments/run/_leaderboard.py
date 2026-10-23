@@ -11,7 +11,8 @@ from skillz_experiments.gate import close
 from skillz_experiments.run._outcomes import mean_tokens
 from skillz_experiments.run._record_fields import number_field, text_field
 from skillz_experiments.run._state import RunState
-from skillz_experiments.search import add_validation_scores, complete_means, is_search_validation
+from skillz_experiments.run._plan import VALIDATION_REPEATS
+from skillz_experiments.search import complete_means, is_search_validation
 
 
 @final
@@ -33,20 +34,21 @@ class Leaderboard:
         return self._state.seed.identity if kept is None else text_field(kept, "identity")
 
     def _means(self, validation: list[str]) -> dict[str, float]:
-        """Return the mean score of each search candidate that has a score on every validation case."""
-        return complete_means(add_validation_scores({}, self._state.outcomes), set(validation))
+        """Return the validation mean of each search candidate that completes every repeat of every validation case."""
+        return complete_means(self._state.outcomes, set(validation), VALIDATION_REPEATS)
 
     def _tokens(self, validation: list[str], identities: tuple[str, ...]) -> dict[str, float | None]:
         """Return the mean task tokens of each listed candidate that has an outcome on every validation case.
 
-        A candidate with a missing count on any case maps to None.
+        The newest outcome of each case and repeat counts. A candidate with a missing count on any of them maps to None.
         """
-        counts: dict[str, dict[str, int | None]] = {}
+        counts: dict[str, dict[tuple[str, object], int | None]] = {}
         for item in (item for item in self._state.outcomes if is_search_validation(item)):
             if item["search_candidate"] in identities:
-                counts.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = task_tokens(item)
-        return {identity: mean_tokens(list(by_case.values())) for identity, by_case in counts.items()
-                if set(by_case) == set(validation)}
+                key = (cast(str, item["case_id"]), item.get("repeat"))
+                counts.setdefault(cast(str, item["search_candidate"]), {})[key] = task_tokens(item)
+        return {identity: mean_tokens(list(by_run.values())) for identity, by_run in counts.items()
+                if {case for case, _ in by_run} == set(validation)}
 
     def _tied_cheaper(self, validation: list[str], challenger: str, incumbent: str) -> bool:
         """Return whether a token field is set and the challenger has known, lower mean validation task tokens."""

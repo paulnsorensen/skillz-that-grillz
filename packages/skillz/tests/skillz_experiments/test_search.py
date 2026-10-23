@@ -45,6 +45,7 @@ def test_search_runs_several_pareto_iterations_and_validates_only_gated_candidat
 
 
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
+@pytest.mark.ac("gh-500:AC-6")
 def test_search_passes_pareto_parent_selection_to_gepa(monkeypatch: pytest.MonkeyPatch) -> None:
     api = importlib.import_module("gepa.optimize_anything")
     seen: list[object] = []

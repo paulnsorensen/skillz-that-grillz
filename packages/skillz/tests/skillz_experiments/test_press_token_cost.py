@@ -468,9 +468,10 @@ def test_holdout_tokens_charge_only_the_uncached_input() -> None:
 
 
 def _validation(identity: str, score: float, tokens: list[object]) -> list[dict[str, object]]:
-    return [{"arm": "search", "split": "validation", "search_candidate": identity, "case_id": case_id,
+    """Return one outcome per repeat of each validation case."""
+    return [{"arm": "search", "split": "validation", "search_candidate": identity, "case_id": case_id, "repeat": repeat,
              "score": score, "usage": {"input_tokens": count, "cached_input_tokens": 0, "output_tokens": 0}}
-            for case_id, count in zip(("v1", "v2"), tokens, strict=True)]
+            for case_id, count in zip(("v1", "v2"), tokens, strict=True) for repeat in (0, 1)]
 
 
 def _keep(statistics: Statistics, *rounds: tuple[str, float, list[object]]) -> object:
@@ -543,9 +544,10 @@ def test_best_validated_without_a_kept_candidate_returns_the_seed() -> None:
 
 
 def _arrivals(identity: str, scores: list[tuple[str, float]], tokens: int) -> list[dict[str, object]]:
-    return [{"arm": "search", "split": "validation", "search_candidate": identity, "case_id": case_id,
+    """Return one outcome per repeat of each validation case."""
+    return [{"arm": "search", "split": "validation", "search_candidate": identity, "case_id": case_id, "repeat": repeat,
              "score": score, "usage": {"input_tokens": tokens, "cached_input_tokens": 0, "output_tokens": 0}}
-            for case_id, score in scores]
+            for case_id, score in scores for repeat in (0, 1)]
 
 
 def _tie_pick(seed_tokens: int, other_tokens: int, other_scores: list[tuple[str, float]],

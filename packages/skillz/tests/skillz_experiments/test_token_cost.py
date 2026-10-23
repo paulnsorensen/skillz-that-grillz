@@ -257,9 +257,13 @@ VALIDATION = ["v1", "v2"]
 
 
 def _outcomes(identity: str, score: float, tokens: int | None) -> list[dict[str, object]]:
+    """Return one outcome per repeat of each validation case."""
     usage = None if tokens is None else _usage(tokens, 0, 0)
     return [{"arm": "search", "split": "validation", "search_candidate": identity, "case_id": case_id,
-             "score": score, "usage": usage} for case_id in VALIDATION]
+             "repeat": repeat, "score": score, "usage": usage} for case_id in VALIDATION for repeat in (0, 1)]
+
+
+ROWS = 2 * len(VALIDATION)
 
 
 def _changed(files: dict[str, str]) -> SimpleNamespace:
@@ -299,9 +303,9 @@ def _holdout(arm: str, case_id: str, repeat: int, low: int) -> dict[str, object]
 
 def _kept_after(statistics: Statistics, first: int | None, second: int | None) -> object:
     outcomes = _outcomes("one", 0.5, first) + _outcomes("two", 0.5, second)
-    session = _session(statistics, outcomes[:2])
+    session = _session(statistics, outcomes[:ROWS])
     Leaderboard(session).keep_if_best(_candidate("one"), validation_case)
-    session.outcomes.extend(outcomes[2:])
+    session.outcomes.extend(outcomes[ROWS:])
     Leaderboard(session).keep_if_best(_candidate("two"), validation_case)
     return cast(dict[str, object], session.record["best_validated"])["identity"]
 
@@ -322,9 +326,9 @@ def test_keep_if_best_keeps_the_first_candidate_for_equal_costlier_or_unknown_to
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
 def test_a_better_mean_still_beats_a_cheaper_tie() -> None:
     outcomes = _outcomes("one", 0.5, 10) + _outcomes("two", 0.6, 9000)
-    session = _session(SAVE, outcomes[:2])
+    session = _session(SAVE, outcomes[:ROWS])
     Leaderboard(session).keep_if_best(_candidate("one"), validation_case)
-    session.outcomes.extend(outcomes[2:])
+    session.outcomes.extend(outcomes[ROWS:])
     Leaderboard(session).keep_if_best(_candidate("two"), validation_case)
     assert cast(dict[str, object], session.record["best_validated"])["identity"] == "two"
 

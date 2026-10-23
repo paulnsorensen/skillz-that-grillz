@@ -12,10 +12,10 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments.evaluation import task_tokens
 from skillz_experiments.run._leaderboard import Leaderboard
-from skillz_experiments.run._plan import VALIDATION_REPEATS
+from skillz_experiments.run._plan import VALIDATION_REPEATS, repeat_indices
 from skillz_experiments.run._outcomes import (
-    case_ids, fault_reason, feedback_for, failed_outcome, is_unscored, mean_tokens,
-    reflection_fault, search_fault, stall_observations,
+    case_ids, fault_reason, failed_outcome, is_unscored, mean_tokens, reflection_fault, repeat_feedback,
+    search_fault, stall_observations,
 )
 from skillz_experiments.run._record_fields import field, int_field
 from skillz_experiments.run._state import RunState
@@ -63,8 +63,9 @@ class SearchPhase:
         self._denylist = Denylist.build(search_cases.values(), seed=state.seed)
         self._leak_rules: dict[str, str | None] = {}
         self._ended_proposal: str | None = None
-        # Recorded search outcomes that a resumed search reuses, one per earlier call. `recorded_for_reuse` fills it.
-        self._reusable: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+        # Recorded search outcomes that a resumed search reuses, one per earlier call, by candidate, split, case, and
+        # repeat index. `recorded_for_reuse` fills it.
+        self._reusable: dict[tuple[str, str, str, object], list[dict[str, object]]] = {}
         # The built identity of each admitted component map, by its digest. `cheaper` reads it.
         self._identities: dict[str, str] = {}
         # The live search evaluations of the running search. Reused outcomes do not count.
@@ -86,7 +87,8 @@ class SearchPhase:
         return digest({name: seed.files[name] for name in seed.editable}), seed.identity
 
     def attempts(self) -> list[dict[str, object]]:
-        return build_attempts(self._state.outcomes, self.seed_ref(), Leaderboard(self._state).validation_ids())
+        return build_attempts(self._state.outcomes, self.seed_ref(), Leaderboard(self._state).validation_ids(),
+                              VALIDATION_REPEATS)
 
     def reflections(self) -> list[dict[str, object]]:
         """Return the recorded reflection calls, one per proposal."""
@@ -116,7 +118,8 @@ class SearchPhase:
     def _stall(self) -> Signal:
         """Return the stall signal that the recorded outcomes give. The caller holds the lock."""
         validation = {case.identifier for case in self._state.cases_for("validation")}
-        return assess(stall_observations(self._state.outcomes, validation), band=self._state.statistics.min_gain)
+        return assess(stall_observations(self._state.outcomes, validation, VALIDATION_REPEATS),
+                      band=self._state.statistics.min_gain)
 
     def stalled(self) -> bool:
         """Return whether the stall signal is at `stop`. GEPA calls this before each iteration."""
@@ -152,7 +155,8 @@ class SearchPhase:
             self.fault_base = len(self.search_outcomes())
             for item in self.search_outcomes():
                 if "search_candidate" in item and item.get("status") != "evaluation-failed":
-                    key = (cast(str, item["search_candidate"]), cast(str, item["split"]), cast(str, item["case_id"]))
+                    key = (cast(str, item["search_candidate"]), cast(str, item["split"]), cast(str, item["case_id"]),
+                           item.get("repeat"))
                     self._reusable.setdefault(key, []).append(item)
             return sum(len(queue) for queue in self._reusable.values())
 
@@ -186,21 +190,23 @@ class SearchPhase:
                 rejected["reason"] = error.code
             return rejected
 
-    def _reuse(self, candidate: Candidate, case: Case) -> dict[str, object] | None:
-        """Return a recorded outcome of `candidate` on `case`, or None.
+    def _reuse(self, candidate: Candidate, case: Case, repeat: int | None) -> dict[str, object] | None:
+        """Return a recorded outcome of `candidate` on `case` with the repeat index `repeat`, or None.
 
         Each outcome from before this search serves one evaluation, as GEPA asked for it then. After that, the newest
-        scored outcome of the pair in this run serves every repeat: GEPA scores the parent again on each minibatch.
+        scored outcome of the run in this search serves every repeat: GEPA scores the parent again on each minibatch.
         """
         with self._state.lock:
-            queue = self._reusable.get((candidate.identity, case.split, case.identifier))
+            queue = self._reusable.get((candidate.identity, case.split, case.identifier, repeat))
             if queue:
                 return queue.pop(0)
             return next((item for item in reversed(self.search_outcomes())
                          if item.get("search_candidate") == candidate.identity and item.get("split") == case.split
-                         and item.get("case_id") == case.identifier and item.get("status") != "evaluation-failed"), None)
+                         and item.get("case_id") == case.identifier and item.get("repeat") == repeat
+                         and item.get("status") != "evaluation-failed"), None)
 
     def evaluate_example(self, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
+        """Score one GEPA example. A validation case runs once per repeat index, and GEPA gets the mean of the scored repeats."""
         state = self._state
         case = self._search_cases.get(cast(str, example))
         if case is None:
@@ -210,24 +216,29 @@ class SearchPhase:
             return 0.0, {"task_correct": 0.0, "request": case.request, "case_id": case.identifier} | candidate
         with state.lock:
             self._identities[digest(components)] = candidate.identity
-        recorded = self._reuse(candidate, case)
+        results = [self._run(candidate, case, repeat) for repeat in repeat_indices(case.split)]
+        Leaderboard(state).keep_if_best(candidate, case)
+        return repeat_feedback(results, case)
+
+    def _run(self, candidate: Candidate, case: Case, repeat: int | None) -> dict[str, object]:
+        """Return the recorded outcome of one run, else score it live. A provider failure records a failed outcome."""
+        state = self._state
+        recorded = self._reuse(candidate, case, repeat)
         if recorded is not None:
-            Leaderboard(state).keep_if_best(candidate, case)
-            return feedback_for(recorded, case)
+            return recorded
         with state.lock:
             self._live += 1
         try:
-            result = state.evaluate_case(candidate, case, "search")
+            return state.evaluate_case(candidate, case, "search", repeat=repeat)
         except CodedError:
             raise
         except (OSError, ValueError, RuntimeError) as error:
-            result = failed_outcome(case, candidate, error)
+            result = failed_outcome(case, candidate, error, repeat=repeat)
             with state.lock:
                 state.outcomes.append(result)
                 state.checkpoint()
             self.stop_if_faulted()
-        Leaderboard(state).keep_if_best(candidate, case)
-        return feedback_for(result, case)
+            return result
 
     def cheaper(self, parent: dict[str, str], child: dict[str, str], examples: Sequence[object]) -> bool:
         """Return whether `child` has known, lower mean task tokens than `parent` on the train cases `examples`.

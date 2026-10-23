@@ -181,7 +181,8 @@ def open_session(out: Path, recorder: Recorder) -> Session:
 def score(session: Session, components: dict[str, str]) -> tuple[float, dict[str, object]]:
     cases = cast(dict[str, Case], getattr(session, "_search_cases"))
     method = cast(Callable[[dict[str, str], str], tuple[float, dict[str, object]]], getattr(session, "_evaluate_example"))
-    return method(components, next(iter(cases)))
+    # A train case runs once. A validation case would run once per repeat (gh-500).
+    return method(components, next(name for name, case in cases.items() if case.split == "train"))
 
 
 def evaluate(out: Path, recorder: Recorder, change: Callable[[dict[str, str]], None]) -> tuple[float, dict[str, object]]:

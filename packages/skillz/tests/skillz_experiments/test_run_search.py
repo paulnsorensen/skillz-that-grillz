@@ -25,7 +25,7 @@ from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhau
 from skillz_experiments.search import overshoot
 from skillz_experiments.run import _outcomes, _session
 from skillz_experiments.run import Stop, export, run
-from skillz_experiments.run._plan import PREFLIGHT_CALLS
+from skillz_experiments.run._plan import PREFLIGHT_CALLS, VALIDATION_REPEATS
 from typing_extensions import override
 from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
 from skillz_experiments.run._history_store import UNREADABLE, FileHistoryStore, store_path
@@ -231,7 +231,7 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    state.exhaust_after_improved = len(_validation(out))
+    state.exhaust_after_improved = _validation_runs(out)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert _core(result) == {
         "reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
@@ -253,9 +253,9 @@ LAST_PROPOSAL = "This may be the last proposal, so prefer one small, safe change
 
 
 def _seed_pass(out: Path) -> int:
-    """Return the evaluations of the headroom pass: one for each train and validation case."""
+    """Return the evaluations of the headroom pass: one for each train case and one per repeat of each validation case."""
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
-    return sum(case["split"] in ("train", "validation") for case in cases)
+    return sum({"train": 1, "validation": VALIDATION_REPEATS}.get(cast(str, case["split"]), 0) for case in cases)
 
 
 def _headroom(out: Path) -> int:
@@ -270,7 +270,7 @@ def _allowance(out: Path) -> int:
     The last iteration can pass it by up to that margin.
     """
     planned = cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
-    return planned + _headroom(out) - overshoot(len(_validation(out)))
+    return planned + _headroom(out) - overshoot(_validation_runs(out))
 
 
 @pytest.mark.ac("gh-239:AC-1")
@@ -324,7 +324,7 @@ def test_the_over_budget_count_survives_a_resume(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.edit_offset = 1
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     before = state.proposals
@@ -338,6 +338,11 @@ def test_the_over_budget_count_survives_a_resume(
 def _validation(out: Path) -> list[str]:
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
     return [str(case["id"]) for case in cases if case["split"] == "validation"]
+
+
+def _validation_runs(out: Path) -> int:
+    """Return the validation runs of one candidate: each validation case once per repeat."""
+    return VALIDATION_REPEATS * len(_validation(out))
 
 
 def test_one_failed_evaluation_scores_zero_and_does_not_abort_the_search(
@@ -438,7 +443,7 @@ def test_a_resumed_search_gets_the_metric_calls_that_the_record_left_plus_the_ou
     spent = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
                 for item in cast(list[dict[str, object]], record["outcomes"]))
     reusable = len(_search_pairs(record))
-    margin = overshoot(len(_validation(out)))
+    margin = overshoot(_validation_runs(out))
     state.search_log.clear()
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     # GEPA counts a reused outcome as a metric call, so the engine bound adds each reusable outcome to the share that the record left.
@@ -464,15 +469,23 @@ def test_a_run_without_an_interrupt_calls_the_model_once_for_each_recorded_searc
     assert Counter(state.search_log) == Counter(_search_pairs(read(out / "run.json")))
 
 
-def test_one_search_scores_each_candidate_case_and_split_once(
+@pytest.mark.ac("gh-500:AC-1")
+def test_one_search_scores_each_train_pair_once_and_each_validation_pair_once_per_repeat(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     """GEPA scores the parent again on each minibatch. The session serves the repeat from the recorded outcome."""
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    repeated = {pair: count for pair, count in Counter(state.search_log).items() if count > 1}
-    assert not repeated
+    expected = {"train": 1, "validation": VALIDATION_REPEATS}
+    assert {pair: count for pair, count in Counter(state.search_log).items() if count != expected[pair[1]]} == {}
     assert Counter(_search_pairs(read(out / "run.json"))) == Counter(state.search_log)
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    repeats: dict[tuple[str, str], list[object]] = {}
+    for item in outcomes:
+        if item.get("arm") == "search" and item.get("split") == "validation":
+            repeats.setdefault((cast(str, item["search_candidate"]), cast(str, item["case_id"])), []).append(item.get("repeat"))
+    # Each (candidate, case) holds its own outcome for repeat 0 and repeat 1, not one outcome served twice.
+    assert repeats and all(sorted(cast(list[int], found)) == [0, 1] for found in repeats.values())
 
 def test_a_resume_evaluates_a_recorded_failed_evaluation_again(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
@@ -515,7 +528,7 @@ def test_a_resume_after_a_validated_proposal_calls_no_validation_pair_that_the_r
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     recorded = _search_pairs(read(out / "run.json"))
@@ -532,14 +545,14 @@ def test_a_resume_with_recorded_outcomes_that_the_search_never_asks_for_again_ma
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"]) + _headroom(out)
-    margin = overshoot(len(_validation(out)))
     # A live model proposes new candidates on resume, so the outcomes of an old candidate are never asked for again.
-    ghosts = 3 * margin
+    # The ghost count stays the pre-gh-500 size, which leaves the resumed search some allowance.
+    ghosts = 3 * overshoot(len(_validation(out)))
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     outcomes.extend({"arm": "search", "split": "train", "case_id": f"ghost-{number}", "score": 0.0,
                      "search_candidate": "ghost"} for number in range(ghosts))
@@ -563,7 +576,8 @@ def test_a_resumed_identical_proposal_keeps_the_gain_of_the_candidate_that_the_i
     state.fixed_number = 1
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     record = read(out / "run.json")
-    observations = _outcomes.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)))
+    observations = _outcomes.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)),
+                                                VALIDATION_REPEATS)
     # The first window ends at the interrupt. The second window holds the same proposal, which now completes its validation.
     assert len(observations) >= 2 and observations[1] is not None and observations[1] > 0
 
@@ -573,7 +587,7 @@ def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     validation = _validation(out)
-    state.abort_after_improved = len(validation)
+    state.abort_after_improved = VALIDATION_REPEATS * len(validation)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
@@ -591,7 +605,7 @@ def test_a_resume_with_a_real_allowance_keeps_the_pre_abort_candidate_over_worse
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     state.score_of = lambda text, _split: 0.0 if "improved" in text and "improved 1 " not in text else None
@@ -667,7 +681,7 @@ def test_a_lasting_reflection_fault_on_the_last_iteration_still_stops_the_run(
     real = _session.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
 
     def tiny(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
-        return real(*args, **{**kwargs, "metric_calls": len(cast(list[object], args[3])) + 2})  # pyright: ignore[reportAny]
+        return real(*args, **{**kwargs, "metric_calls": VALIDATION_REPEATS * len(cast(list[object], args[3])) + 2})  # pyright: ignore[reportAny]
 
     monkeypatch.setattr(_session, "pareto_search", tiny)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)

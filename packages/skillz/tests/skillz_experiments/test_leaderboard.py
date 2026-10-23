@@ -19,8 +19,17 @@ TRAIN = ("t1", "t2")
 
 
 def _outcomes(identity: str, split: str, cases: tuple[str, ...], score: float) -> list[dict[str, object]]:
-    return [{"arm": "search", "split": split, "search_candidate": identity, "case_id": case_id, "score": score}
-            for case_id in cases]
+    """Return one outcome per train case, and one per repeat of each validation case."""
+    repeats: tuple[int | None, ...] = (0, 1) if split == "validation" else (None,)
+    rows: list[dict[str, object]] = []
+    for case_id in cases:
+        for repeat in repeats:
+            row: dict[str, object] = {"arm": "search", "split": split, "search_candidate": identity, "case_id": case_id,
+                                      "score": score}
+            if repeat is not None:
+                row["repeat"] = repeat
+            rows.append(row)
+    return rows
 
 
 def _cases_for(_split: str) -> list[SimpleNamespace]:

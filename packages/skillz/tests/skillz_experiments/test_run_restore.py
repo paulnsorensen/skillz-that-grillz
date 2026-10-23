@@ -924,12 +924,13 @@ def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reser
 
 
 def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:
-    plain = plan_run(20, 20, 6, 1, 3)
-    shrunk = [plan_run(20, 20, 6, 1, 3, seconds) for seconds in (30, 40, 60)]
+    # Each validation case runs twice (gh-500), so the plan admits 10 validation cases here, not 20.
+    plain = plan_run(20, 10, 6, 1, 3)
+    shrunk = [plan_run(20, 10, 6, 1, 3, seconds) for seconds in (30, 40, 60)]
     assert all(plan.sized.seconds <= APPROVED_SECONDS for plan in shrunk)
     assert shrunk[0].metric_calls < plain.metric_calls and shrunk[2].metric_calls < shrunk[0].metric_calls
     with pytest.raises(Stop, match="sandbox time alone need") as caught:
-        _ = plan_run(20, 20, 6, 1, 3, 600)
+        _ = plan_run(20, 10, 6, 1, 3, 600)
     assert caught.value.code == "budget-unapproved"
 
 
