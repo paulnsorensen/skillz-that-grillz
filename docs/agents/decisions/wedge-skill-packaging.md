@@ -93,6 +93,18 @@ _Source: PR #103, `packages/wedge/src/wedge/`, `packages/wedge/tests/wedge/test_
 
 _Source: `packages/wedge/src/wedge/` and `packages/wedge/tests/wedge/test_targets.py` · Updated: 2026-10-22_
 
+## Consumer CI guidance
+
+The action guide is the canonical consumer guide for merge-group validation and post-merge publication.[^17]
+The package guide lists the check command for each packaging mode and links to the action guide.
+Append-only release publication must preserve each commit's run, as ADR-004 requires.
+A complete distribution snapshot can replace pending work only when later runs cover missed source changes.
+This guidance changes no runtime behavior, workflow, or repository guard.
+
+_Source: consumer documentation · Updated: 2026-10-22_
+
+[^17]: `actions/wedge/README.md` § Workflows; `packages/wedge/README.md` § Merge queues and publication races.
+
 ## Teaching the packaging workflow
 
 `/skillz` teaches the offload and packaging workflow without expanding the runtime contract.[^12]
