@@ -419,3 +419,14 @@ def test_a_resumed_headroom_pass_scores_only_the_missing_seed_repeat(
     again = [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
              if item.get("search_candidate") == seed and item.get("case_id") == dropped["case_id"]]
     assert sorted(cast(int, item["repeat"]) for item in again) == [0, 1]
+
+
+@pytest.mark.ac("gh-500:AC-11")
+def test_a_challenger_scored_on_too_few_validation_cases_stays_out_by_the_gate_coverage_rule() -> None:
+    """Every repeat of the challenger fails on 3 of 5 cases. 2 of 5 is below `min_coverage` 0.6, as at the holdout gate."""
+    cases = (*CASES, "v4")
+    failed = [_row("c", case, 0.0, repeat, failed=True) for case in cases[2:] for repeat in (0, 1)]
+    state = _board([*_arm("seed", [0.5, 0.25], cases=cases), *_arm("c", [1.0, 0.75], cases=cases[:2]), *failed], cases=cases)
+    (comparison,) = _keep(state, "v4")
+    assert (comparison["verdict"], comparison["reasons"]) == ("inconclusive", ["low-coverage"])
+    assert Leaderboard(state).best_identity() == "seed"

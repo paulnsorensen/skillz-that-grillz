@@ -83,7 +83,8 @@ class Leaderboard:
     def _compare(self, incumbent: str, challenger: str, validation: list[str]) -> Verdict:
         """Return the gate verdict of `challenger` against `incumbent` on the scored validation repeats.
 
-        The tokens of a case pair the mean task tokens of the scored repeats of each arm.
+        The tokens of a case pair the mean task tokens of the scored repeats of each arm. The planned cases are the
+        validation cases, so the coverage rule of the gate runs when failed repeats leave cases unscored.
         """
         state = self._state
         runs = scored_runs(state.outcomes)
@@ -99,7 +100,8 @@ class Leaderboard:
         paired = holdout_deltas(scores(incumbent), scores(challenger))
         families = {case.identifier: case.family for case in state.cases_for("validation")}
         return verdict(paired.deltas, thresholds=state.statistics, families=families, se_floor=paired.se_floor,
-                       tokens={name: (tokens(incumbent, name), tokens(challenger, name)) for name in paired.deltas})
+                       tokens={name: (tokens(incumbent, name), tokens(challenger, name)) for name in paired.deltas},
+                       planned=len(validation))
 
     def best_validated(self) -> Candidate:
         """Return the incumbent: the `best_validated` candidate, else the seed."""
