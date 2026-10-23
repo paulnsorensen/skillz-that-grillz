@@ -317,6 +317,14 @@
         }
       },
       "additionalProperties": false
+    },
+    "harness_phrases": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "\\w[\\s\\S]*\\s[\\s\\S]*\\w"
+      },
+      "description": "Sandbox-only phrases of the eval requests, each of at least two words. A proposal that adds one is a leak."
     }
   },
   "additionalProperties": false

@@ -59,6 +59,9 @@ def main() -> None:
     visible = log.with_suffix(".visible") if log is not None else None
     observed = (visible.read_text() if mode == "leak-answer" and role == "reflection"
                 and visible is not None and visible.is_file() else "")
+    if mode == "leak-harness" and role == "reflection" and log is not None:
+        earlier = log.read_text().splitlines() if log.is_file() else []
+        observed = str(sum(1 for line in earlier if json.loads(line)["role"] == "reflection"))
     if request["operation"] == "infer" and "pause_dir" in settings:
         pause_dir = Path(settings["pause_dir"])
         pending = pause_dir / f"{os.getpid()}.{role}.pending"
