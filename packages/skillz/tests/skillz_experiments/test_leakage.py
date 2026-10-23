@@ -223,6 +223,13 @@ def test_a_request_path_that_no_seed_file_holds_is_a_harness_token_leak(split: s
     assert _harness("Write the plan to the plan file.", case) is None
 
 
+@pytest.mark.ac("gh-499:AC-1")
+def test_a_request_path_with_a_sharp_s_is_a_harness_token_leak() -> None:
+    case = _case(request="write the report to output/straße.txt and stop")
+    assert _harness("Write the report to output/straße.txt.", case) == Leak("harness-token", "SKILL.md")
+
+
+
 @pytest.mark.ac("gh-499:AC-2")
 def test_a_declared_phrase_leaks_after_case_whitespace_and_punctuation_are_normalized() -> None:
     phrases = ("do not run git or gh",)

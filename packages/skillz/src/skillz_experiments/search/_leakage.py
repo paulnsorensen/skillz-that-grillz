@@ -94,8 +94,8 @@ def _token(name: str, tail: str = r"[\w-]") -> re.Pattern[str]:
 
 
 def _harness_token(text: str) -> str:
-    """Normalize a harness token: case-folded, whitespace collapsed, surrounding punctuation stripped."""
-    return _SURROUNDING.sub("", " ".join(text.casefold().split()))
+    """Normalize a harness token: lower-cased, whitespace collapsed, surrounding punctuation stripped."""
+    return _SURROUNDING.sub("", " ".join(text.lower().split()))
 
 
 def _harness_patterns(token: str) -> tuple[re.Pattern[str], ...]:
