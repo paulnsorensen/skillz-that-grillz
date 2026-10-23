@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._budget import SEARCH_ROLES, BudgetExhausted, CallTimeout
+from skillz_experiments._budget import SEARCH_ROLES, Budget, BudgetExhausted, CallTimeout
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
@@ -25,6 +25,7 @@ from skillz_experiments.run._outcomes import is_failed, search_counts
 from skillz_experiments.run._record_fields import (
     PHASES, POST_GATE_PHASES, field, judge_flag, number_field, phase, record_outcomes, text_field,
 )
+from skillz_experiments.run._plan import VALIDATION_REPEATS
 from skillz_experiments.run._ports import PatchApplier
 from skillz_experiments.run._replay_phase import run_replay
 from skillz_experiments.run._search_phase import SearchPhase
@@ -43,6 +44,22 @@ def _differences(recorded: object, observed: object, name: str = "") -> list[str
         return [line for key in sorted(set(before) | set(after))
                 for line in _differences(before.get(key), after.get(key), f"{name}.{key}" if name else key)]
     return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
+
+
+# The `search.stop_trigger` of each engine stop reason. An idle search adds no new evaluation, so it stalled.
+_ENGINE_TRIGGERS: Mapping[str, str] = {"metric-count": "metric-count", "call-share": "call-share", "stall": "stall",
+                                      "idle": "stall"}
+
+
+def _budget_trigger(budget: Budget, timed_out: bool) -> str:
+    """Return the `search.stop_trigger` of a budget stop. The caller has given the reserved gate time back.
+
+    `timed_out` is whether the deadline had passed while the gate time was reserved. When the deadline is still
+    past without the reserve, the global deadline fired; else the search deadline did. Otherwise the call cap fired.
+    """
+    if not timed_out:
+        return "call-cap"
+    return "deadline" if budget.out_of_time() else "search-deadline"
 
 
 @final
@@ -244,6 +261,8 @@ class Session:
         searching = self._searching
         searching.earlier = tuple(earlier)
         reason = "search-share-spent-best-validated"
+        # The search limit that fired. A run with no allowance left spent its metric count before this session.
+        trigger = "metric-count"
         timed_out = False
         budget_stopped = False
         # The headroom pass runs under the gate time reserve, like the seed validation pass of GEPA did.
@@ -266,27 +285,32 @@ class Session:
             pass
         elif allowance >= 1 and searching.stalled():
             # A run that stalled before a resume skips GEPA, which scores the seed again before its first stop check.
-            reason = "converged-stalled"
+            reason, trigger = "converged-stalled", "stall"
         elif allowance >= 1:
             # Search and reflection calls leave the gate its estimated time. Preflight and the gate use all of it.
             self.budget.reserve_time(number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
-            # The engine bound counts distinct candidate and case evaluations, so it adds the reusable outcomes.
+            # The engine bound counts the runs of distinct candidate and case evaluations, so it adds the reusable outcomes.
             # A repeat in this run is free and does not count. The live evaluations alone end the search at the allowance.
             reusable = searching.recorded_for_reuse()
             try:
                 stopped = pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
                                         self._evaluate_example, self._propose, metric_calls=allowance + reusable,
                                         stalled=searching.stalled, spent=lambda: searching.share_spent(allowance),
-                                        cheaper=searching.cheaper if self.statistics.token_rule else None)
+                                        cheaper=searching.cheaper if self.statistics.token_rule else None,
+                                        validation_repeats=VALIDATION_REPEATS)
                 self.faults.raise_held()
-                reason = "converged-stalled" if stopped else "validation-mean"
+                reason = "converged-stalled" if stopped == "stall" else "validation-mean"
+                trigger = _ENGINE_TRIGGERS[stopped]
             except BudgetExhausted:
                 self.take_budget_stop()
+                budget_stopped = True
                 reason = "budget-exhausted-best-validated"
                 # Read before the `finally` gives the reserved time back: the search deadline, not the call cap, ended it.
                 timed_out = self.budget.out_of_time()
             finally:
                 self.budget.reserve_time(0.0)
+        if budget_stopped:
+            trigger = _budget_trigger(self.budget, timed_out)
         winner = self._best_validated(validation)
         if reason == "budget-exhausted-best-validated" and winner.identity == self.seed.identity:
             reason = "budget-exhausted-seed-retained"
@@ -305,6 +329,7 @@ class Session:
         base = cast(dict[str, object], recorded) if isinstance(recorded, dict) else {}
         self.record["search"] = base | {
             "reason": reason,
+            "stop_trigger": trigger,
             "retained_seed": winner.identity == self.seed.identity,
             "leakage_rejections": rejections, **search_counts(scored),
             "proposal_over_budget": searching.over_budget(),

@@ -1,0 +1,169 @@
+"""Repeated validation runs: the validation policy, its budget accounting, and the search stop trigger (gh-500)."""
+from __future__ import annotations
+
+import time
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+
+import pytest
+
+from skillz_experiments._budget import Budget
+from skillz_experiments._cases import CodedError
+from skillz_experiments._records import read, write
+from skillz_experiments.run import Stop, _plan, _search_phase, _session, export, run
+from skillz_experiments.run._open import validation_policy
+from skillz_experiments.run._search_phase import SearchPhase
+from skillz_experiments.search import search, search_allowance
+from test_run_search import MODEL, _start  # pyright: ignore[reportPrivateUsage]
+
+pytestmark = pytest.mark.usefixtures("host_login")
+
+Maker = Callable[..., Path]
+Drafter = Callable[..., list[str]]
+Approver = Callable[..., tuple[str, int]]
+
+
+@pytest.mark.ac("gh-500:AC-5")
+def test_the_plan_metric_and_its_admission_count_each_validation_repeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_plan, "VALIDATION_REPEATS", 2)
+    seen: list[tuple[int, int]] = []
+
+    def spy(metric: int, validation: int) -> int:
+        seen.append((metric, validation))
+        return search_allowance(metric, validation)
+
+    monkeypatch.setattr(_plan, "search_allowance", spy)
+    plan = _plan._plan(3, 2, 2, 1, 1)  # pyright: ignore[reportPrivateUsage]
+    assert plan.metric_calls == _plan.SEARCH_CASE_FACTOR * (3 + 2 * 2) == 28
+    # The admission check and the overshoot margin inside `search_allowance` see 2 runs for each of the 2 cases.
+    assert seen == [(28, 4)]
+
+
+@pytest.mark.ac("gh-500:AC-5")
+def test_the_search_ceiling_adds_back_every_seed_validation_repeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_search_phase, "VALIDATION_REPEATS", 2)
+    cases = [SimpleNamespace(identifier=f"v{index}") for index in range(3)]
+
+    def cases_for(split: str) -> list[SimpleNamespace]:
+        return cases if split == "validation" else []
+
+    state = SimpleNamespace(record={"estimate": {"metric_calls": 40, "headroom": {"outcomes": 5}}}, cases_for=cases_for)
+    ceiling = SearchPhase.search_ceiling(cast(SearchPhase, cast(object, SimpleNamespace(_state=state))))
+    # The allowance and its overshoot count 6 validation runs; the seed term adds the 5 train and 6 validation outcomes.
+    assert ceiling == search_allowance(40, 6) + 5 + 6 == 35
+
+
+def _no_gain(proposals: list[str]) -> tuple[Callable[[dict[str, str], object], tuple[float, dict[str, object]]],
+                                           Callable[[dict[str, str], Mapping[str, Sequence[Mapping[str, object]]], list[str]],
+                                                    dict[str, str]]]:
+    """Return a seed-only search: the seed scores 0.5 and every child scores 0, so no child is ever validated."""
+
+    def evaluate(candidate: dict[str, str], _example: object) -> tuple[float, dict[str, object]]:
+        return (0.5 if candidate["SKILL.md"] == "seed" else 0.0), {"task_correct": 0.0}
+
+    def propose(_candidate: dict[str, str], _feedback: Mapping[str, Sequence[Mapping[str, object]]],
+                components: list[str]) -> dict[str, str]:
+        proposals.append("called")
+        return {name: f"child {len(proposals)}" for name in components}
+
+    return evaluate, propose
+
+
+@pytest.mark.ac("gh-500:AC-5")
+@pytest.mark.ac("gh-500:AC-7")
+@pytest.mark.parametrize(("repeats", "expected"), [(1, 4), (2, 3)])
+def test_the_engine_debits_each_validation_repeat_and_nothing_for_a_reused_pair(repeats: int, expected: int) -> None:
+    """The seed validation pass debits `repeats` runs, each new train pair 1, and each parent repeat 0.
+
+    With 2 repeats: 2 (seed on v1) + 2 (seed on t1, t2) + 2 per child reach 10 after 3 proposals. A debited parent
+    repeat would stop after 2 proposals. One validation run per case reaches 10 only after 4 proposals.
+    """
+    proposals: list[str] = []
+    evaluate, propose = _no_gain(proposals)
+    assert search({"SKILL.md": "seed"}, "prose", ["t1", "t2"], ["v1"], evaluate, propose, metric_calls=10,
+                  validation_repeats=repeats) == "metric-count"
+    assert len(proposals) == expected
+
+
+@pytest.mark.ac("gh-500:AC-7")
+def test_the_engine_names_a_spent_call_share_as_the_stop() -> None:
+    proposals: list[str] = []
+    evaluate, propose = _no_gain(proposals)
+    assert search({"SKILL.md": "seed"}, "prose", ["t1", "t2"], ["v1"], evaluate, propose, metric_calls=100,
+                  spent=lambda: len(proposals) >= 2) == "call-share"
+    assert len(proposals) == 2
+
+
+@pytest.mark.ac("gh-500:AC-7")
+def test_a_budget_stop_names_the_call_cap_the_search_deadline_or_the_global_deadline() -> None:
+    live, expired = Budget(10, 60.0), Budget(10, 60.0, started=time.monotonic() - 120.0)
+    assert _session._budget_trigger(live, False) == "call-cap"  # pyright: ignore[reportPrivateUsage]
+    # The deadline passed while the gate time was reserved, and the global deadline is still ahead.
+    assert _session._budget_trigger(live, True) == "search-deadline"  # pyright: ignore[reportPrivateUsage]
+    assert _session._budget_trigger(expired, True) == "deadline"  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.ac("gh-500:AC-7")
+@pytest.mark.parametrize(("stopped", "trigger", "reason"), [("metric-count", "metric-count", "validation-mean"),
+                                                          ("call-share", "call-share", "validation-mean"),
+                                                          ("stall", "stall", "converged-stalled"),
+                                                          ("idle", "stall", "validation-mean")])
+def test_the_run_records_the_engine_stop_as_the_search_stop_trigger(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, monkeypatch: pytest.MonkeyPatch,
+        stopped: str, trigger: str, reason: str) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+
+    def engine(*_args: object, **_kwargs: object) -> str:
+        return stopped
+
+    monkeypatch.setattr(_session, "pareto_search", engine)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    recorded = cast(dict[str, object], read(out / "run.json")["search"])
+    assert (recorded["stop_trigger"], recorded["reason"]) == (trigger, reason)
+    assert result["phase"] == "complete"
+
+
+def _prepared(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> tuple[Path, Path, object]:
+    """Prepare a run without live calls. Return the target, the run directory, and the fake provider factory."""
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    with pytest.raises(Stop):
+        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls)
+    return target, out, state.factory
+
+
+@pytest.mark.ac("gh-500:AC-8")
+@pytest.mark.parametrize("policy", [{"repeats": 7}, None])
+def test_a_resume_with_another_or_no_validation_policy_stops_before_the_engine_hash_check(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        policy: dict[str, object] | None) -> None:
+    target, out, factory = _prepared(tmp_path, make_target, write_draft, approvals)
+    record = read(out / "run.json")
+    assert record["validation_policy"] == validation_policy() == {"repeats": _plan.VALIDATION_REPEATS}
+    if policy is None:
+        del record["validation_policy"]
+    else:
+        record["validation_policy"] = policy
+    # A changed engine hash would stop with the generic evaluator error; the policy stop comes first.
+    record["engine_hash"] = "0" * 64
+    write(out / "run.json", record)
+    with pytest.raises(CodedError) as stopped:
+        _ = run(target, out, MODEL, live=True, factory=cast(Callable[..., object], factory))  # pyright: ignore[reportArgumentType]
+    assert stopped.value.code == "validation-policy-differs"
+    assert ("no validation_policy" if policy is None else "{'repeats': 7}") in str(stopped.value)
+
+
+@pytest.mark.ac("gh-500:AC-8")
+def test_a_completed_run_without_a_validation_policy_still_summarises_and_exports(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    record = read(out / "run.json")
+    fields = cast(dict[str, dict[str, object]], record["compatibility"])["fields"]
+    assert fields["validation_policy"] == validation_policy()
+    del record["validation_policy"]
+    del fields["validation_policy"]
+    write(out / "run.json", record)
+    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    assert "export" in export(out, tmp_path / "export")

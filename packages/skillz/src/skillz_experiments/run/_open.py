@@ -13,7 +13,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, Split, digest, mapping
 from skillz_experiments._contract import Contract
 from skillz_experiments.harness import ClaudeOptions, Configuration
-from skillz_experiments.run._plan import plan_estimate, size_plan
+from skillz_experiments.run._plan import VALIDATION_REPEATS, plan_estimate, size_plan
 from skillz_experiments.run._record_fields import (
     POST_GATE_PHASES, count_map, field, int_field, number_field, phase, text_field,
 )
@@ -64,9 +64,28 @@ def freeze_identities(record: dict[str, object], seed: Candidate, model: str, co
             raise ValueError("judge differs from the frozen record; create a new run")
     if seed.identity != text_field(record, "seed_hash"):
         raise ValueError("seed differs from the frozen record")
+    _check_validation_policy(record)
     _ = record.setdefault("engine_hash", engine_hash())
     if record["engine_hash"] != engine_hash():
         raise ValueError("evaluator differs from the frozen record; create a new run")
+
+
+def validation_policy() -> dict[str, object]:
+    """Return the validation policy of this runner: the runs of one search candidate on one validation case."""
+    return {"repeats": VALIDATION_REPEATS}
+
+
+def _check_validation_policy(record: dict[str, object]) -> None:
+    """Stop a run whose frozen validation policy differs from this runner's, or that has none.
+
+    `_prepare` freezes the policy. The check runs before the engine-hash check, so the stop names the cause.
+    A completed run never opens a session, so a record from an older runner stays readable by `export`.
+    """
+    recorded = record.get("validation_policy")
+    if recorded != validation_policy():
+        found = "no validation_policy" if recorded is None else f"validation_policy {recorded!r}"
+        raise CodedError("validation-policy-differs", f"the run record froze {found}, and this runner uses "
+                         + f"{validation_policy()!r}; finish the run with the runner that prepared it, or create a new run")
 
 
 def freeze_compatibility(record: dict[str, object], cases: list[Case], contract: Contract,
@@ -88,6 +107,7 @@ def freeze_compatibility(record: dict[str, object], cases: list[Case], contract:
         "claude_options": task.options.data() if task else record.get("claude_options", {}),
         "edit": text_field(record, "edit"),
         "repeats": field(record, "repeats"), "statistics": field(record, "statistics"),
+        "validation_policy": field(record, "validation_policy"),
         "split_digest": digest(splits), "scoring_digest": scoring_digest(Path(__file__).parent.parent),
         "leakage_digest": leakage_digest(Path(__file__).parent.parent)}
     record["compatibility"] = {"fingerprint": digest(fields), "fields": fields}

@@ -38,7 +38,7 @@ def test_search_runs_several_pareto_iterations_and_validates_only_gated_candidat
         return {key: text for key in components}
 
     assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], ["val1", "val2"], evaluate, propose,
-                  metric_calls=80) is False
+                  metric_calls=80) != "stall"
     assert proposed[:4] == ["bad", "mid", "top", "late"]
     assert "bad" not in validated
     assert set(validated) >= {"v0", "mid", "top", "late"}
@@ -60,7 +60,7 @@ def test_search_passes_pareto_parent_selection_to_gepa(monkeypatch: pytest.Monke
                 components: list[str]) -> dict[str, str]:
         return {key: "x" for key in components}
 
-    assert search({"SKILL.md": "v0"}, "prose", ["t1"], ["val1"], evaluate, propose, metric_calls=4) is False
+    assert search({"SKILL.md": "v0"}, "prose", ["t1"], ["val1"], evaluate, propose, metric_calls=4) != "stall"
     assert len(seen) == 1
     engine = cast(object, getattr(seen[0], "engine"))
     assert cast(object, getattr(engine, "candidate_selection_strategy")) == "pareto"
@@ -81,7 +81,7 @@ def test_search_skips_a_minibatch_the_parent_already_scores_perfectly() -> None:
         evaluated.append(candidate["SKILL.md"])
         return 1.0, {}
 
-    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=12) is False
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=12) != "stall"
     assert proposed == []
     assert evaluated and set(evaluated) == {"v0"}
 
@@ -108,7 +108,7 @@ def _tied(answer: bool) -> tuple[list[str], list[tuple[str, str, list[object]]]]
         return answer
 
     assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=8,
-                  cheaper=cheaper) is False
+                  cheaper=cheaper) != "stall"
     return validated, asked
 
 
@@ -150,7 +150,7 @@ def test_without_the_token_rule_the_search_passes_gepa_the_strict_rule_and_the_p
 
     for cheaper in (None, always):
         assert search({"SKILL.md": "v0"}, "prose", ["t1"], ["val1"], evaluate, propose, metric_calls=4,
-                      cheaper=cheaper) is False
+                      cheaper=cheaper) != "stall"
     plain, token = (cast(object, getattr(config, "engine")) for config in seen)
     reflections = [cast(object, getattr(config, "reflection")) for config in seen]
     assert cast(object, getattr(plain, "acceptance_criterion")) == "strict_improvement"
@@ -209,17 +209,18 @@ def test_free_repeats_of_a_mostly_perfect_parent_do_not_end_the_search_before_it
     run = _Recorded({"t1": 1.0, "t2": 1.0, "t3": 0.8}, 0.7)
     validation: list[object] = ["val1", "val2", "val3"]
     assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], validation, run.evaluate, run.propose,
-                  metric_calls=43, stalled=run.stalled) is False
+                  metric_calls=43, stalled=run.stalled) != "stall"
     assert run.repeats > 0
     assert 43 <= len(run.scored) <= 43 + overshoot(len(validation))
     assert run.proposals >= 18
 
 
 @pytest.mark.ac("skillz-search-free-repeats:AC-2")
+@pytest.mark.ac("gh-500:AC-7")
 def test_a_search_with_only_perfect_minibatches_ends_after_the_skip_limit() -> None:
     run = _Recorded({"t1": 1.0, "t2": 1.0, "t3": 1.0}, 1.0)
     assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], ["val1", "val2", "val3"], run.evaluate,
-                  run.propose, metric_calls=10**6, stalled=run.stalled) is False
+                  run.propose, metric_calls=10**6, stalled=run.stalled) == "idle"
     assert run.proposals == 0
     # One check before the first iteration, 2 iterations that score the train cases, then the idle limit.
     assert run.checks == 1 + 2 + skip_limit(3) == 7
@@ -232,7 +233,7 @@ def test_rejected_proposals_do_not_use_the_search_share() -> None:
     run = _Recorded({"t1": 1.0, "t2": 1.0, "t3": 0.8}, 0.7, rejected=5)
     validation: list[object] = ["val1", "val2", "val3"]
     assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], validation, run.evaluate, run.propose,
-                  metric_calls=12, stalled=run.stalled) is False
+                  metric_calls=12, stalled=run.stalled) != "stall"
     assert run.proposals > 5
     assert 12 <= len(run.scored) <= 12 + overshoot(len(validation))
 
@@ -251,7 +252,7 @@ def test_search_offers_and_evaluates_exactly_the_seed_components(edit: Edit) -> 
         offered.update(components)
         return {key: "changed" for key in components}
 
-    assert search(seed, edit, ["t1", "t2"], ["v"], evaluate, propose, metric_calls=30) is False
+    assert search(seed, edit, ["t1", "t2"], ["v"], evaluate, propose, metric_calls=30) != "stall"
     assert offered == set(seed)
     assert evaluated and all(names == set(seed) for names in evaluated)
     assert MAX_CONCURRENT_CALLS == 2
@@ -268,7 +269,7 @@ def test_search_stops_before_the_next_iteration_when_stalled_returns_true(after:
         return {key: f"p{len(proposed)}" for key in components}
 
     assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], lambda _c, _e: (0.0, {}), propose,
-                  metric_calls=80, stalled=lambda: len(proposed) >= after) is True
+                  metric_calls=80, stalled=lambda: len(proposed) >= after) == "stall"
     assert len(proposed) == after
 
 
@@ -340,4 +341,4 @@ def test_search_keeps_a_proposer_value_error_as_a_skipped_proposal(error: ValueE
                 _components: list[str]) -> dict[str, str]:
         raise error
 
-    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=20) is False
+    assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2"], ["val1"], evaluate, propose, metric_calls=20) != "stall"
