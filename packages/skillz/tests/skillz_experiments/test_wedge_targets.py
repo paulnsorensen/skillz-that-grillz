@@ -169,12 +169,13 @@ def open_session(out: Path, recorder: Recorder) -> _session.Session:
 
 
 def evaluate(out: Path, recorder: Recorder, change: Callable[[dict[str, str]], None]) -> tuple[float, dict[str, object]]:
-    """Evaluate one search case on a candidate whose components `change` edits."""
+    """Evaluate one train case on a candidate whose components `change` edits. A train case runs once."""
     session = open_session(out, recorder)
     try:
         components = {name: session.seed.files[name] for name in session.seed.editable}
         change(components)
-        return session._evaluate_example(components, next(iter(session._search_cases)))
+        train = next(name for name, case in session._search_cases.items() if case.split == "train")
+        return session._evaluate_example(components, train)
     finally:
         session.provider.close()
 

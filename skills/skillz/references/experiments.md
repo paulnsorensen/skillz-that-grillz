@@ -13,16 +13,20 @@ It needs no source checkout or runtime package installation.
 ## Concepts
 
 - **Run**: one resumable `run` directory that holds the cases, one search, and one holdout gate.
-  Before the search, the run scores the seed once on every train and validation case.
+  Before the search, the run scores the seed once on every train case and twice on every validation case.
   It stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
   A run that sets `min_token_saving` records these scores and does not stop.
+  The search scores each candidate twice on each validation case, and GEPA gets the mean of the scored repeats.
+  A failed repeat still counts as run. A case with no scored repeat has no score.
+  `run.json` records `validation_policy: {"repeats": 2}`. A resume with another policy, or none, stops with `validation-policy-differs`.
+  `search.stop_trigger` names the limit that ended the search: `metric-count`, `call-share`, `stall`, `search-deadline`, `deadline`, or `call-cap`.
 - **Case draft**: the file `RUN/cases.draft.json` that you write from the skill, and from past sessions when analytics exists.
 - **Split**: the train, validation, or holdout group of a case. Code assigns it from a recorded seed.
 - **Approval**: the user's answer to one question. The runner binds each answer to a hash or to a call count.
 - **Budget**: the estimated calls and seconds. After approval, a run uses at most 200 calls and 7200 seconds.
   The search stops early enough to leave the holdout gate its estimated calls and time.
   The estimate has a `headroom` line: one seed score on each train case.
-  The headroom pass also scores the seed on each validation case. The search reuses that score, so it costs no new call.
+  The headroom pass also scores the seed twice on each validation case. The search reuses those scores, so they cost no new call.
 - **Gate verdict**: `promote`, `promote-cheaper`, `inconclusive`, or `reject`. It compares baseline and winner on the holdout cases.
 - **Export**: the write-only step that saves the winner as a private patch and a redacted report.
 
@@ -1023,8 +1027,8 @@ It uses the judge role unless the harness configuration sets it.
 It never sees `expected` or the rubric.
 
 A journey case costs `max_turns * 2 + 1` calls for each evaluation.
-The plan sizes the holdout gate from the sum of its case costs. It sizes each search call at the mean cost of the train and validation cases.
-The search of a journey run gets at least `460 // mean case cost` metric calls, so it can make about 8 proposals. A run with no journey case keeps 4 metric calls for each train or validation case. The plan still shrinks the search to fit the call and time ceilings.
+The plan sizes the holdout gate from the sum of its case costs. It sizes each search call at the mean cost of the search runs: each train case once and each validation case twice.
+The search of a journey run gets at least `460 // mean case cost` metric calls, so it can make about 8 proposals. A run with no journey case keeps 4 metric calls for each train case and 8 for each validation case. The plan still shrinks the search to fit the call and time ceilings.
 It sizes each holdout retry at the costliest holdout case.
 The reserve therefore covers one failed attempt of any case.
 The reserve also holds `replay_calls`: one pass of the winner over the holdout, recorded under the `replay` arm.

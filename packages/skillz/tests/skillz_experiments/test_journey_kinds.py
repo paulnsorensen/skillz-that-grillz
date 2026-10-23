@@ -91,7 +91,8 @@ def test_a_contract_with_two_journey_kinds_loads_and_a_run_scores_both(tmp_path:
     data, out = walk(tmp_path, target, [*journeys("journey-a", "a"), *journeys("journey-b", "b")], capsys)
     assert "| not scored |" not in str(data["question"])
     assert set(frozen(out, rules).values()) == {"journey-a", "journey-b"} and len(frozen(out, rules)) == 16
-    plan = size_plan(rules, load_cases(out / "cases.json", rules.grader_types()), 2, ClaudeOptions())
+    # One holdout repeat: at two, the holdout reserve and the two runs of each validation journey leave no search room.
+    plan = size_plan(rules, load_cases(out / "cases.json", rules.grader_types()), 1, ClaudeOptions())
     assert plan.sized.calls > 0
 
 

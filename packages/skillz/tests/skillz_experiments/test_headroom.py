@@ -14,7 +14,8 @@ from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read, write
 from skillz_experiments.harness import EnvironmentDiffers
 from skillz_experiments.run import Stop, _session, run
-from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, MINIMUM_SEARCH_MARGIN, _plan  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, MINIMUM_SEARCH_MARGIN, VALIDATION_REPEATS
+from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.search import overshoot, search_allowance
 
 from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
@@ -28,6 +29,12 @@ Approver = Callable[..., tuple[str, int]]
 
 def _cases(out: Path, *splits: str) -> list[dict[str, object]]:
     return [case for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"]) if case["split"] in splits]
+
+
+def _seed_runs(out: Path) -> list[tuple[str, str]]:
+    """Return the (split, case) of each seed run of the headroom pass: once per train case and once per validation repeat."""
+    return [(str(case["split"]), str(case["id"])) for case in _cases(out, "train", "validation")
+            for _ in range(VALIDATION_REPEATS if case["split"] == "validation" else 1)]
 
 
 def _record(out: Path) -> dict[str, object]:
@@ -72,6 +79,7 @@ def _grants(monkeypatch: pytest.MonkeyPatch, out: Path) -> list[tuple[int, bool]
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-1")
+@pytest.mark.ac("gh-500:AC-10")
 def test_the_headroom_pass_scores_the_seed_once_on_each_case_before_the_engine_and_gepa_adds_no_seed_call(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,11 +88,13 @@ def test_the_headroom_pass_scores_the_seed_once_on_each_case_before_the_engine_a
     result = _go(state, target, out, case_hash, calls)
     assert result["phase"] == "complete"
     seed = _seed_identity(state)
-    scored = [(seed, str(case["split"]), str(case["id"])) for case in _cases(out, "train", "validation")]
+    scored = [(seed, split, case) for split, case in _seed_runs(out)]
     log = state.search_log
-    # Each seed case has one call in all. GEPA scores the seed validation pass from the recorded outcomes.
+    # Each seed train case has one call and each validation case one call per repeat. GEPA scores the seed validation
+    # pass from the recorded outcomes.
     assert Counter(entry for entry in log if entry[0] == seed) == Counter(scored)
-    assert set(Counter(scored).values()) == {1}
+    assert {split: set(count for (_, name, _), count in Counter(scored).items() if name == split)
+            for split in ("train", "validation")} == {"train": {1}, "validation": {VALIDATION_REPEATS}}
     # The pass runs first: the engine starts after every seed call, with the headroom in the record.
     assert {entry[0] for entry in log[:len(scored)]} == {seed}
     assert len(grants) == 1 and grants[0][1]
@@ -93,7 +103,7 @@ def test_the_headroom_pass_scores_the_seed_once_on_each_case_before_the_engine_a
     # Without the reuse queue the grant drops by the recorded count and the engine scores the seed again as new work.
     estimate = cast(dict[str, Any], _record(out)["estimate"])  # pyright: ignore[reportExplicitAny]
     train, validation = len(_cases(out, "train")), len(_cases(out, "validation"))
-    assert grants[0][0] == estimate["metric_calls"] + train - overshoot(validation)
+    assert grants[0][0] == estimate["metric_calls"] + train - overshoot(VALIDATION_REPEATS * validation)
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-2")
@@ -135,7 +145,7 @@ def test_a_run_with_headroom_continues_to_the_search_with_the_planned_metric_cal
     validation = len(_cases(out, "validation"))
     # The ceiling adds the train outcomes only: the validation outcomes replace the seed pass inside `metric_calls`.
     assert train != validation
-    assert grants == [(planned["metric_calls"] + train - overshoot(validation), True)]
+    assert grants == [(planned["metric_calls"] + train - overshoot(VALIDATION_REPEATS * validation), True)]
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-4")
@@ -158,11 +168,11 @@ def test_a_run_with_min_token_saving_records_saturated_scores_and_does_not_stop(
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-5")
 def test_the_plan_charges_the_headroom_at_the_train_case_cost_on_its_own_line(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    plan = _plan(3, 5, 6, 2, 3, headroom_costs=[2, 4, 6])
-    without = _plan(3, 5, 6, 2, 3, headroom_costs=[])
+    plan = _plan(3, 2, 6, 2, 3, headroom_costs=[2, 4, 6])
+    without = _plan(3, 2, 6, 2, 3, headroom_costs=[])
     assert (plan.headroom_calls, plan.headroom_outcomes) == (12, 3)
     assert plan.sized.calls == without.sized.calls + 12
-    default = _plan(3, 5, 6, 2, 3)
+    default = _plan(3, 2, 6, 2, 3)
     assert (default.headroom_calls, default.headroom_outcomes) == (6, 3)
     assert default.sized.calls == without.sized.calls + 6
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
@@ -179,7 +189,7 @@ def test_the_plan_charges_the_headroom_at_the_train_case_cost_on_its_own_line(
 def test_a_resume_after_the_headroom_pass_scores_no_seed_case_again(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    fault_at = len(_cases(out, "train", "validation")) + 3
+    fault_at = len(_seed_runs(out)) + 3
     state.evaluate_fault = lambda number: (
         EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
     with pytest.raises(EnvironmentDiffers):
@@ -203,15 +213,15 @@ def test_a_resume_after_a_cut_headroom_pass_scores_only_the_cases_that_the_recor
         _ = _go(state, target, out, case_hash, calls)
     assert "headroom" not in _record(out)
     seed = _seed_identity(state)
-    held = {(str(item["split"]), str(item["case_id"])) for item in cast(list[dict[str, object]], _record(out)["outcomes"])
-            if item.get("search_candidate") == seed and item.get("status") != "evaluation-failed"}
+    held = Counter((str(item["split"]), str(item["case_id"])) for item in cast(list[dict[str, object]], _record(out)["outcomes"])
+                   if item.get("search_candidate") == seed and item.get("status") != "evaluation-failed")
     assert held
     state.search_log.clear()
     _ = run(target, out, MODEL, live=True, factory=state.factory)
-    again = {(split, case) for identity, split, case in state.search_log if identity == seed}
-    assert not again & held
-    scored = {(str(case["split"]), str(case["id"])) for case in _cases(out, "train", "validation")}
-    assert again | held == scored
+    again = Counter((split, case) for identity, split, case in state.search_log if identity == seed)
+    # The resume runs only the seed runs that the record lacks, so each case ends with its full run count:
+    # one train run, and one run per validation repeat.
+    assert held + again == Counter(_seed_runs(out))
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-12")
@@ -256,7 +266,7 @@ def test_a_resume_of_a_too_easy_run_that_died_before_it_recorded_the_failure_ret
 def test_a_resume_after_a_faulted_headroom_pass_does_not_count_the_stale_failures_again(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    total = len(_cases(out, "train", "validation"))
+    total = len(_seed_runs(out))
     state.evaluate_fault = lambda number: RuntimeError("provider outage") if number <= total else None
     with pytest.raises(CodedError) as caught:
         _ = _go(state, target, out, case_hash, calls)
@@ -311,8 +321,8 @@ def test_the_plan_stops_when_the_validation_pass_leaves_too_little_search_room()
 
 @pytest.mark.ac("gh-459:AC-2")
 def test_the_plan_admits_a_run_with_enough_search_room_after_the_validation_pass() -> None:
-    plan = _plan(33, 11, 8, 2, 1, 0, holdout_costs=[2] * 8, headroom_costs=[2] * 33)
-    assert search_allowance(plan.metric_calls, 11) >= MINIMUM_SEARCH_MARGIN
+    plan = _plan(33, 5, 8, 2, 1, 0, holdout_costs=[2] * 8, headroom_costs=[2] * 33)
+    assert search_allowance(plan.metric_calls, VALIDATION_REPEATS * 5) >= MINIMUM_SEARCH_MARGIN
 
 
 @pytest.mark.ac("gh-459:AC-3")
@@ -327,6 +337,7 @@ def test_every_admitted_plan_leaves_the_minimum_margin_at_runtime() -> None:
                     assert stop.code == "budget-unapproved"
                     continue
                 admitted += 1
-                ceiling = plan.metric_calls + plan.headroom_outcomes - overshoot(validation)
-                assert ceiling - (train + validation) >= MINIMUM_SEARCH_MARGIN
+                runs = VALIDATION_REPEATS * validation
+                ceiling = plan.metric_calls + plan.headroom_outcomes - overshoot(runs)
+                assert ceiling - (train + runs) >= MINIMUM_SEARCH_MARGIN
     assert admitted

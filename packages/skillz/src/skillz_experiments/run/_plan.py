@@ -31,8 +31,13 @@ PREFLIGHT_CALLS = 3
 SEARCH_CASE_FACTOR = 4
 
 
-VALIDATION_REPEATS = 1
+VALIDATION_REPEATS = 2
 """The runs of one search candidate on one validation case. `run.json` freezes it as `validation_policy.repeats`."""
+
+
+def repeat_indices(split: str) -> tuple[int | None, ...]:
+    """Return the repeat index of each search run of a case on `split`. A train case runs once, with no repeat index."""
+    return tuple(range(VALIDATION_REPEATS)) if split == "validation" else (None,)
 
 
 JOURNEY_SEARCH_CALLS = 460
@@ -108,7 +113,8 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     allowance, and its overshoot margin count the same `VALIDATION_REPEATS` runs per validation case.
     `holdout_costs` lists the model calls of each holdout case. The default is `per_evaluation` for each of `holdout` cases.
     A retry costs the costliest holdout case, so the reserve covers one failed attempt of any case.
-    The headroom pass scores the seed once on each train and validation case. Its validation scores stand in for the seed
+    The headroom pass scores the seed once on each train case and `VALIDATION_REPEATS` times on each validation case.
+    Its validation scores stand in for the seed
     validation pass that GEPA already pays inside `metric_calls`, so only the train cases add cost. `headroom_costs` lists
     the model calls of each train case; the default is `per_evaluation` for each of `train` cases. The sum is
     `headroom_calls`. It adds to `sized.calls`, so the approved total and the ceilings include it. The count of train

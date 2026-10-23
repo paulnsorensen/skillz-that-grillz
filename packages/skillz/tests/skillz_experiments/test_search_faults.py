@@ -49,10 +49,10 @@ def _rows(out: Path) -> list[dict[str, object]]:
 
 @pytest.mark.ac("gh-316:AC-1")
 def test_a_failed_validation_outcome_adds_no_score_to_the_means() -> None:
-    scores = add_validation_scores(
-        {}, [_ok("a", "v1", 1.0), _failed("a", "v2"), _failed("b", "v1"), _failed("b", "v2")])
+    rows = [_ok("a", "v1", 1.0), _failed("a", "v2"), _failed("b", "v1"), _failed("b", "v2")]
+    scores = add_validation_scores({}, rows)
     assert scores == {"a": {"v1": 1.0}}
-    assert complete_means(scores, {"v1", "v2"}) == {}
+    assert complete_means(rows, {"v1", "v2"}) == {}
 
 
 @pytest.mark.ac("gh-316:AC-1")
@@ -163,8 +163,13 @@ def test_a_kept_seed_with_scored_evidence_is_still_an_inconclusive_complete_run(
 
 @pytest.mark.ac("gh-316:AC-5")
 def test_a_candidate_with_no_scored_validation_outcome_is_not_selected_over_the_seed(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
     out, state, launch = _launch(tmp_path, make_target, write_draft, approvals, families=5)
+    # Each validation case runs twice, so the failed runs of one candidate make a majority. Lift the fault rule: this
+    # test checks the selection, and other tests check the fault rule.
+    monkeypatch.setattr(_outcomes, "FAULT_MIN_FINISHED", 10**6)
+    monkeypatch.setattr(_outcomes, "FAULT_STREAK", 10**6)
 
     def fault(number: int) -> Exception | None:
         identity, split, _case = state.search_log[number - 1]

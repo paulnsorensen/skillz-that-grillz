@@ -11,7 +11,7 @@ from typing import TypeVar, cast
 from skillz_experiments._budget import CallTimeout
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments.search import add_validation_scores, complete_means, is_reflection, unit_score
+from skillz_experiments.search import complete_means, is_reflection, is_search_validation, unit_score, validation_complete
 
 # The search stops with `search-faulted` when at least this many search evaluations finished and more than half failed,
 # or when this many of the newest ones failed in a row. The values are defaults, not measured limits.
@@ -151,6 +151,17 @@ def feedback_for(result: dict[str, object], case: Case) -> tuple[float, dict[str
     return score, feedback
 
 
+def repeat_feedback(results: Sequence[dict[str, object]], case: Case) -> tuple[float, dict[str, object]]:
+    """Return the GEPA score and feedback of the repeats of one case: the mean of the scored repeats.
+
+    One outcome keeps its own feedback. A case with no scored repeat takes the unscored path of a failed outcome.
+    """
+    scored = [unit_score(item["score"]) for item in results if not is_failed(item)]
+    if len(results) == 1 or not scored:
+        return feedback_for(results[-1], case)
+    mean = math.fsum(scored) / len(scored)
+    return mean, {"task_correct": mean, "request": case.request, "case_id": case.identifier}
+
 def mean_tokens(counts: Sequence[int | None]) -> float | None:
     """Return the mean of `counts`, or None when it is empty, lacks a count, or overflows a float."""
     known = [count for count in counts if count is not None]
@@ -162,50 +173,53 @@ def mean_tokens(counts: Sequence[int | None]) -> float | None:
         return None
 
 
-def stall_observations(outcomes: Sequence[Mapping[str, object]], validation: set[str]) -> list[float | None]:
+def stall_observations(outcomes: Sequence[Mapping[str, object]], validation: set[str],
+                       repeats: int = 1) -> list[float | None]:
     """Return one stall observation per recorded proposal, oldest first.
 
     The search outcomes after a reflection and before the next one belong to its `proposed` candidate. The observation
     is the rise of that candidate's validation mean over the best mean of every earlier candidate, the seed included.
+    A mean needs `validation_complete` with `repeats` runs per case, and a case scores the mean of its scored repeats.
     It is None when an evaluation of the candidate failed or the host build of the proposal failed. It is 0.0 when the
     proposal has no identity or its candidate does not complete the validation set.
     """
     marks = [index for index, item in enumerate(outcomes) if is_reflection(item)]
-    seen = add_validation_scores({}, outcomes[:marks[0]] if marks else [])
     observations: list[float | None] = []
     for start, end in zip(marks, [*marks[1:], len(outcomes)]):
-        best = max(complete_means(seen, validation).values(), default=0.0)
+        before = outcomes[:start]
+        best = max(complete_means(before, validation, repeats).values(), default=0.0)
         window = outcomes[start + 1:end]
         reflection = outcomes[start]
         proposed = reflection.get("proposed")
-        earlier = seen.get(proposed, {}) if isinstance(proposed, str) else {}
+        earlier = [item for item in before if is_search_validation(item) and not is_failed(item)
+                   and item["search_candidate"] == proposed]
         observations.append(None if reflection.get("status") is not None
-                            else _observation(window, proposed, validation, best, earlier))
-        _ = add_validation_scores(seen, window)
+                            else _observation(window, proposed, validation, best, earlier, repeats))
     return observations
 
 
 def _observation(window: Sequence[Mapping[str, object]], identity: object, validation: set[str],
-                 best: float, earlier: Mapping[str, float]) -> float | None:
+                 best: float, earlier: Sequence[Mapping[str, object]], repeats: int) -> float | None:
     """Return the observation of one proposal from the outcomes in its window.
 
     Only the evaluations of the proposed candidate count, up to the end of its validation set. GEPA can score the
     candidate again as the next parent before the next reflection. That later score does not change the observation.
-    `earlier` holds the validation scores of the candidate from before the window. A resume reuses those scores, so
-    the window does not repeat them.
+    `earlier` holds the scored validation outcomes of the candidate from before the window. A resume reuses those
+    outcomes, so the window does not repeat them.
     """
-    scores = dict(earlier)
+    if not isinstance(identity, str):
+        return 0.0
+    seen = list(earlier)
     for item in window:
-        if identity is None or set(scores) == validation:
+        if validation_complete(seen, identity, validation, repeats):
             break
         if item.get("search_candidate") != identity:
             continue
         if is_failed(item):
             return None
         if item.get("split") == "validation":
-            scores[cast(str, item["case_id"])] = unit_score(item["score"])
-    if set(scores) != validation:
-        return 0.0
-    return max(0.0, math.fsum(scores.values()) / len(scores) - best)
+            seen.append(item)
+    mean = complete_means(seen, validation, repeats).get(identity)
+    return 0.0 if mean is None else max(0.0, mean - best)
 
 

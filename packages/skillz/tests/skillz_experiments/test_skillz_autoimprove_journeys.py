@@ -17,7 +17,7 @@ from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._intake import HOLDOUT_MINIMUM, case_hash, freeze, load_draft, split_cases
 from skillz_experiments._seed import seed_cases
 from skillz_experiments.harness import ClaudeOptions
-from skillz_experiments.run._plan import JOURNEY_SEARCH_CALLS, SEARCH_CASE_FACTOR, size_plan
+from skillz_experiments.run._plan import JOURNEY_SEARCH_CALLS, SEARCH_CASE_FACTOR, VALIDATION_REPEATS, size_plan
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.search import REFLECTION_MINIBATCH, overshoot
 
@@ -83,9 +83,10 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (781, 51, 210, 48, 258)
+    # Each of the 6 validation journeys runs `VALIDATION_REPEATS` times per search candidate (gh-500).
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (924, 60, 210, 48, 258)
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
-    assert plan.sized.seconds == 24320
+    assert plan.sized.seconds == 28700
 
 
 SEED_EVALUATIONS = 9
@@ -99,7 +100,7 @@ def test_a_journey_plan_gives_the_search_room_for_eight_rejected_proposals(tmp_p
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     validation = sum(case.split == "validation" for case in cases)
-    allowance = plan.metric_calls - overshoot(validation) - SEED_EVALUATIONS
+    allowance = plan.metric_calls - overshoot(VALIDATION_REPEATS * validation) - SEED_EVALUATIONS
     assert allowance // (2 * REFLECTION_MINIBATCH) >= PROPOSALS
 
 
@@ -112,7 +113,7 @@ def test_a_journey_plan_sizes_the_search_from_the_460_call_allowance() -> None:
 
 def test_a_task_only_plan_keeps_the_fixed_search_factor() -> None:
     plan = _plan(3, 3, 6, 1, 2)
-    assert plan.metric_calls == SEARCH_CASE_FACTOR * 6 == 24
+    assert plan.metric_calls == SEARCH_CASE_FACTOR * (3 + VALIDATION_REPEATS * 3) == 36
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-13")
@@ -468,7 +469,7 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     assert {case.identifier: case.split for case in cases} == base
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (781, 51, 210, 48, 24320)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (924, 60, 210, 48, 28700)
 
 
 def ask_harness_cases(tmp_path: Path) -> list[dict[str, object]]:

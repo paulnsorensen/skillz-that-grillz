@@ -5,7 +5,7 @@ An attempt holds identities, digests, and case ids. It never holds request text,
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import cast
 
 SHOWN = 8
@@ -73,21 +73,61 @@ def is_search_validation(item: Mapping[str, object]) -> bool:
     return item.get("arm") == "search" and item.get("split") == "validation" and "search_candidate" in item
 
 
-def add_validation_scores(scores: Scores, items: Sequence[Mapping[str, object]]) -> Scores:
-    """Add each search validation score in `items` to `scores` by candidate and case, and return `scores`.
+def _repeat(item: Mapping[str, object]) -> int:
+    """Return the repeat index of a search validation outcome. An outcome without one is repeat 0."""
+    value = item.get("repeat")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
-    A later score for a case replaces the earlier one. An `evaluation-failed` outcome has no score and adds none.
+
+def validation_complete(outcomes: Sequence[Mapping[str, object]], candidate: str, cases: Collection[str],
+                        repeats: int) -> bool:
+    """Return whether `candidate` has an attempted outcome for each of `repeats` repeats of each validation case in `cases`.
+
+    A repeat is attempted when it has an outcome, scored or `evaluation-failed`. This is the one completion test of the
+    validation readers: the Leaderboard, the attempt history, and the stall signal.
     """
+    attempted = {(item["case_id"], _repeat(item)) for item in outcomes
+                 if is_search_validation(item) and item["search_candidate"] == candidate}
+    return all((case, index) in attempted for case in cases for index in range(repeats))
+
+
+def repeat_scores(items: Sequence[Mapping[str, object]]) -> dict[str, dict[str, dict[int, float]]]:
+    """Return the scored search validation scores in `items` by candidate, case, and repeat.
+
+    A later score for a repeat replaces the earlier one. An `evaluation-failed` outcome has no score and adds none.
+    """
+    found: dict[str, dict[str, dict[int, float]]] = {}
     for item in items:
         if is_search_validation(item) and item.get("status") != "evaluation-failed":
-            scores.setdefault(cast(str, item["search_candidate"]), {})[cast(str, item["case_id"])] = unit_score(item["score"])
+            by_case = found.setdefault(cast(str, item["search_candidate"]), {})
+            by_case.setdefault(cast(str, item["case_id"]), {})[_repeat(item)] = unit_score(item["score"])
+    return found
+
+
+def add_validation_scores(scores: Scores, items: Sequence[Mapping[str, object]]) -> Scores:
+    """Add the validation score of each candidate and case in `items` to `scores`, and return `scores`.
+
+    The score of a case is the mean of its scored repeats in `items`. It replaces an earlier score of the case.
+    A case whose repeats all failed has no score and adds none.
+    """
+    for identity, by_case in repeat_scores(items).items():
+        for case, by_repeat in by_case.items():
+            scores.setdefault(identity, {})[case] = math.fsum(by_repeat.values()) / len(by_repeat)
     return scores
 
 
-def complete_means(scores: Mapping[str, Mapping[str, float]], validation: set[str]) -> dict[str, float]:
-    """Return the mean score of each candidate that has a score on every validation case."""
-    return {identity: math.fsum(by_case.values()) / len(by_case) for identity, by_case in scores.items()
-            if set(by_case) == validation}
+def complete_means(outcomes: Sequence[Mapping[str, object]], validation: set[str], repeats: int = 1) -> dict[str, float]:
+    """Return the validation mean of each candidate that `validation_complete` passes and that has a score on every case.
+
+    The mean is over the cases of the mean of the scored repeats of each case.
+    """
+    rows: dict[str, list[Mapping[str, object]]] = {}
+    for item in outcomes:
+        if is_search_validation(item):
+            rows.setdefault(cast(str, item["search_candidate"]), []).append(item)
+    return {identity: math.fsum(by_case.values()) / len(by_case)
+            for identity, by_case in add_validation_scores({}, outcomes).items()
+            if set(by_case) == validation and validation_complete(rows[identity], identity, validation, repeats)}
 
 
 def _ids(value: object) -> list[str]:
@@ -99,10 +139,11 @@ def _text(value: object) -> str | None:
 
 
 def attempts(outcomes: Sequence[Mapping[str, object]], seed: tuple[str, str],
-             validation: Sequence[str]) -> list[dict[str, object]]:
+             validation: Sequence[str], repeats: int = 1) -> list[dict[str, object]]:
     """Return one attempt per recorded reflection, oldest first. `seed` is (digest of the seed component texts, seed identity).
 
-    `validation` holds the validation case ids. The validation change needs a newest score on every one of them for the child and the parent.
+    `validation` holds the validation case ids and `repeats` the runs per case. The validation change needs the child and
+    the parent to pass `validation_complete` and to have a score on every case: the mean of the scored repeats.
     An evaluation-failed outcome is skipped and unscored; the newest scored outcome of a (candidate, case) counts. This matches the session rule.
     A skipped or timed-out reflection row is no attempt.
     A case with no scored outcome leaves the mean unknown, so `validation_delta` is null.
@@ -116,7 +157,7 @@ def attempts(outcomes: Sequence[Mapping[str, object]], seed: tuple[str, str],
         key, proposed = _text(item.get("components_digest")), _text(item.get("proposed"))
         if key is not None and proposed is not None:
             _ = identities.setdefault(key, proposed)
-    train, means = _newest(outcomes, "train"), complete_means(add_validation_scores({}, outcomes), set(validation))
+    train, means = _newest(outcomes, "train"), complete_means(outcomes, set(validation), repeats)
     found: list[dict[str, object]] = []
     for index, item in enumerate(reflections, 1):
         key = _text(item.get("parent"))
