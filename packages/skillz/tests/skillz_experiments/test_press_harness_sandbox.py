@@ -673,7 +673,7 @@ def test_sandbox_flagLikeArgv_staysAfterTheImageAndNeverBecomesADockerFlag(
     _ = _gemini.respond(_request('sandbox', workspace, argv=[first, 'second']), bin_dir=directory)
     flags = cast(list[str], _logged(directory / 'docker.log')[0])
     image = flags.index(_gemini.IMAGE)
-    seconds = str(_gemini.TIMEOUTS['sandbox'] + _gemini.CONTAINER_GRACE)
+    seconds = str(_gemini.CONTAINER_SECONDS)
     assert flags[image + 1:image + 5] == ['-s', 'KILL', seconds, '/usr/bin/env']
     assert flags[image + 5 + len(_gemini.CONTAINER_ENV):] == [first, 'second']
     assert flags[:image].count('--entrypoint') == 1 and flags[flags.index('--entrypoint') + 1] == '/usr/bin/timeout'
