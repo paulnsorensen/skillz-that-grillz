@@ -13,8 +13,8 @@ from typing import Literal, cast
 
 from skillz_experiments._cases import CRITERION_ID, CRITERION_TEXT_LIMIT, JOURNEY_EXPECTED_FIELDS
 from skillz_experiments._contract import (
-    ARGV_GRADERS, CONTRACT_FIELDS, GRADER_FIELDS, GRADERS, HELPER_FIELDS, RUBRIC_GRADERS, SCHEMA_KEY, SKILL_PATTERN,
-    SURFACE_FIELDS, TOOL_PATTERN,
+    ARGV_GRADERS, CONTRACT_FIELDS, GRADER_FIELDS, GRADERS, HARNESS_PHRASE_PATTERN, HELPER_FIELDS, RUBRIC_GRADERS, SCHEMA_KEY,
+    SKILL_PATTERN, SURFACE_FIELDS, TOOL_PATTERN,
 )
 from skillz_experiments._evals_format import EVAL_FIELDS, EVAL_KINDS, FIXTURES, JOURNEY_KEYS, JOURNEY_REQUIRED, SOURCES
 from skillz_experiments._intake import DRAFT_FIELDS, DRAFT_REQUIRED
@@ -220,6 +220,9 @@ def contract() -> Json:
             "editable": {"type": "array", "items": _relative_path()},
             "surface": _surface(),
             "statistics": _statistics(),
+            "harness_phrases": {"type": "array", "items": {"type": "string", "pattern": HARNESS_PHRASE_PATTERN},
+                                "description": "Sandbox-only phrases of the eval requests, each of at least two words. "
+                                + "A proposal that adds one is a leak."},
         }, (SCHEMA_KEY, *CONTRACT_FIELDS)),
         "additionalProperties": False,
     })

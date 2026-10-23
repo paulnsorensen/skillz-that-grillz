@@ -1164,9 +1164,16 @@ FIXTURE = "ledger-fixture.md"
 
 
 def _leak_start(tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
-                seed_extra: str = "") -> tuple[Path, Path, Search, str, int]:
-    """Start a run whose first case holds a long request, a long expected answer, and a named fixture."""
+                seed_extra: str = "", request_tail: str = "", harness_phrases: tuple[str, ...] = (),
+                ) -> tuple[Path, Path, Search, str, int]:
+    """Start a run whose first case holds a long request, a long expected answer, and a named fixture.
+
+    `request_tail` ends every request, and `harness_phrases` go into the contract.
+    """
     target, out = make_target(tmp_path), tmp_path / "run"
+    if harness_phrases:
+        contract = target / "evals/autoimprove.json"
+        _ = contract.write_text(json.dumps(json.loads(contract.read_text()) | {"harness_phrases": list(harness_phrases)}))
     if seed_extra:
         with (target / "SKILL.md").open("a", encoding="utf-8") as handle:
             _ = handle.write("\n" + seed_extra + "\n")
@@ -1174,7 +1181,7 @@ def _leak_start(tmp_path: Path, make_target: Callable[..., Path], approvals: Cal
     for family in range(5):
         for index in range(2):
             name = f"t{family}-{index}"
-            cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"please {SPAN} payment {name} today",
+            cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"please {SPAN} payment {name} today{request_tail}",
                           "files": {FIXTURE: "hello\n"}, "expected": {"answer": ANSWER}, "source": "skill"})
     out.mkdir(mode=0o700, parents=True)
     _ = (out / "cases.draft.json").write_text(json.dumps(cases), encoding="utf-8")
@@ -1238,6 +1245,23 @@ def test_a_proposal_that_adds_a_runner_term_to_a_wedge_free_target_is_rejected(
     assert state.proposals > 0 and state.improved_calls == 0
     assert list(rejections) == ["runner-term"] and 0 < rejections["runner-term"] <= state.proposals
     assert any(feedback.get("rule") == "runner-term" and score == 0.0 for score, feedback in seen)
+
+
+@pytest.mark.ac("gh-499:AC-5")
+@pytest.mark.parametrize("suffix", [" Write the plan to output/plan.json.", " Do not run git or gh."])
+def test_a_proposal_that_adds_harness_text_is_rejected_and_counted_under_harness_token(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
+        monkeypatch: pytest.MonkeyPatch, suffix: str) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals, request_tail=" in output/plan.json",
+                                                       harness_phrases=("do not run git or gh",))
+    state.suffix = suffix
+    seen = _spy_feedback(monkeypatch)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    rejections = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
+    assert state.proposals > 0 and state.improved_calls == 0
+    assert list(rejections) == ["harness-token"] and 0 < rejections["harness-token"] <= state.proposals
+    assert any(feedback.get("rule") == "harness-token" and score == 0.0 for score, feedback in seen)
+    assert cast(dict[str, object], read(out / "run.json")["search"])["leakage_rejections"] == rejections
 
 
 def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(

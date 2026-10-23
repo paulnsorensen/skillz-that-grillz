@@ -366,3 +366,29 @@ def test_contract_ties_the_kind_named_journey_to_the_journey_grader() -> None:
     with pytest.raises(CodedError, match="takes the journey grader") as caught:
         _ = parse(surface_contract(kinds={"journey": {"grader": "judge", "rubric": "r"}}), "skill")
     assert caught.value.code == "contract-kinds"
+
+
+PHRASE_CONTRACT: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": "demo", "invocation": "/demo",
+                                     "kinds": {"task": {"grader": "judge", "rubric": "Grade the answer."}}}
+
+
+@pytest.mark.ac("gh-499:AC-6")
+def test_an_empty_or_omitted_harness_phrases_list_keeps_the_contract_hash() -> None:
+    # The data that `Contract.data()` gave before `harness_phrases` existed.
+    before: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": "demo", "invocation": "/demo",
+                                 "kinds": {"task": {"grader": "judge", "rubric": "Grade the answer."}}, "editable": []}
+    omitted = parse(dict(PHRASE_CONTRACT), "skill")
+    empty = parse(PHRASE_CONTRACT | {"harness_phrases": list[str]()}, "skill")
+    assert omitted.identity == empty.identity == digest(before)
+    declared = parse(PHRASE_CONTRACT | {"harness_phrases": ["do not run git or gh"]}, "skill")
+    assert declared.harness_phrases == ("do not run git or gh",)
+    assert declared.identity != omitted.identity
+    assert parse(declared.data(), "skill") == declared
+
+
+@pytest.mark.ac("gh-499:AC-6")
+@pytest.mark.parametrize("phrases", [["dry"], ["dry run", "- run"], ["  output.  "], "do not run git", [7]])
+def test_a_one_word_or_malformed_harness_phrase_fails_contract_loading_with_a_coded_error(phrases: object) -> None:
+    with pytest.raises(CodedError) as caught:
+        _ = parse(PHRASE_CONTRACT | {"harness_phrases": phrases}, "skill")
+    assert caught.value.code == "contract-harness-phrases"

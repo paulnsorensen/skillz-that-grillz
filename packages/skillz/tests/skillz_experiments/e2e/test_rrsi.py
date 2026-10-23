@@ -8,8 +8,8 @@ from typing import cast
 
 import pytest
 
-from support import (BUNDLE, CLI, CRITERIA, call_cli, carries_answer, command_adapter, make_scenario, read_cases, read_events,
-                     read_record, run_scenario)
+from support import (BUNDLE, CLI, CRITERIA, call_cli, carries_answer, command_adapter, export_and_apply, make_scenario,
+                     read_cases, read_events, read_record, run_scenario)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
@@ -97,6 +97,26 @@ def test_leak_predicate_trips_on_the_json_escaped_answer() -> None:
     assert carries_answer("answer-text\n", escaped)
     assert carries_answer("answer-text\n", "answer-text")
     assert not carries_answer("answer-text\n", json.dumps({"prompt": "clean"}))
+
+
+@pytest.mark.ac("gh-499:AC-5")
+def test_proposals_that_copy_harness_text_are_rejected_and_the_winner_holds_none(tmp_path: Path) -> None:
+    scenario = make_scenario(tmp_path)
+    for case in scenario.draft:
+        case["request"] = "Transform fixture.md according to this skill. Write the plan to output/plan.json."
+    contract = scenario.target / "evals/autoimprove.json"
+    _ = contract.write_text(json.dumps(json.loads(contract.read_text()) | {"harness_phrases": ["do not run git or gh"]}))
+    result = run_scenario(scenario, tmp_path, mode="leak-harness")
+    search = cast(dict[str, object], result["search"])
+    assert search["leakage_rejections"] == {"harness-token": 2}
+    assert search["retained_seed"] is False
+    record = read_record(scenario.out)
+    assert cast(dict[str, object], record["search"])["leakage_rejections"] == {"harness-token": 2}
+    winner = cast(dict[str, str], record["winner"])["SKILL.md"]
+    assert "Uppercase fixture.md." in winner
+    applied = export_and_apply(scenario, tmp_path)
+    for text in (winner, (applied / "SKILL.md").read_text()):
+        assert "output/plan.json" not in text and "do not run git or gh" not in text.lower()
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
