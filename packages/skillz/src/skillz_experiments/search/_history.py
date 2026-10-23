@@ -91,16 +91,16 @@ def validation_complete(outcomes: Sequence[Mapping[str, object]], candidate: str
     return all((case, index) in attempted for case in cases for index in range(repeats))
 
 
-def repeat_scores(items: Sequence[Mapping[str, object]]) -> dict[str, dict[str, dict[int, float]]]:
-    """Return the scored search validation scores in `items` by candidate, case, and repeat.
+def scored_runs(items: Sequence[Mapping[str, object]]) -> dict[str, dict[str, dict[int, Mapping[str, object]]]]:
+    """Return the scored search validation outcomes in `items` by candidate, case, and repeat.
 
-    A later score for a repeat replaces the earlier one. An `evaluation-failed` outcome has no score and adds none.
+    A later outcome of a repeat replaces the earlier one. An `evaluation-failed` outcome has no score and adds none.
     """
-    found: dict[str, dict[str, dict[int, float]]] = {}
+    found: dict[str, dict[str, dict[int, Mapping[str, object]]]] = {}
     for item in items:
         if is_search_validation(item) and item.get("status") != "evaluation-failed":
             by_case = found.setdefault(cast(str, item["search_candidate"]), {})
-            by_case.setdefault(cast(str, item["case_id"]), {})[_repeat(item)] = unit_score(item["score"])
+            by_case.setdefault(cast(str, item["case_id"]), {})[_repeat(item)] = item
     return found
 
 
@@ -110,9 +110,9 @@ def add_validation_scores(scores: Scores, items: Sequence[Mapping[str, object]])
     The score of a case is the mean of its scored repeats in `items`. It replaces an earlier score of the case.
     A case whose repeats all failed has no score and adds none.
     """
-    for identity, by_case in repeat_scores(items).items():
+    for identity, by_case in scored_runs(items).items():
         for case, by_repeat in by_case.items():
-            scores.setdefault(identity, {})[case] = math.fsum(by_repeat.values()) / len(by_repeat)
+            scores.setdefault(identity, {})[case] = math.fsum(unit_score(item["score"]) for item in by_repeat.values()) / len(by_repeat)
     return scores
 
 

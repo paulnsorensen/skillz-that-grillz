@@ -208,8 +208,8 @@ class Session:
                  components: list[str]) -> dict[str, str]:
         return self._searching.propose(candidate, feedback, components)
 
-    def _best_validated(self, validation: list[str]) -> Candidate:
-        return Leaderboard(self).best_validated(validation)
+    def _best_validated(self) -> Candidate:
+        return Leaderboard(self).best_validated()
 
     def take_budget_stop(self) -> None:
         """Clear a latched budget stop so the gate can run. Re-raise any other latched fault."""
@@ -310,7 +310,7 @@ class Session:
                 self.budget.reserve_time(0.0)
         if budget_stopped:
             trigger = _budget_trigger(self.budget, timed_out)
-        winner = self._best_validated(validation)
+        winner = self._best_validated()
         if reason == "budget-exhausted-best-validated" and winner.identity == self.seed.identity:
             reason = "budget-exhausted-seed-retained"
         scored = searching.search_outcomes()

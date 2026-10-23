@@ -199,15 +199,18 @@ def test_a_frozen_floor_beats_a_later_contract_edit(
     assert read(out / "run.json")["statistics"] == Statistics(min_gain=0.5).data()
 
 
-def test_a_tampered_frozen_floor_is_the_one_the_gate_uses(
+def test_a_tampered_frozen_floor_is_the_one_the_incumbent_rule_and_the_gate_use(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _prepare_only(target, out, write_draft, approvals)
     _tamper(out, Statistics(min_gain=5.0).data())
     result = run(target, out, MODEL, live=True, factory=_Provider)
+    # The incumbent rule applies the frozen floor too (gh-500), so the seed stays the winner and the gate sees no change.
+    comparisons = cast(list[dict[str, object]], cast(dict[str, object], result["search"])["comparisons"])
+    assert comparisons and all((item["verdict"], item["reasons"]) == ("inconclusive", ["min-gain"]) for item in comparisons)
     gate = cast(dict[str, object], result["gate"])
-    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["min-gain"])
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
 
 
 @pytest.mark.parametrize("shape", [

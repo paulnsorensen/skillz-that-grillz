@@ -1,7 +1,8 @@
-"""Repeated validation runs: the validation policy, its budget accounting, and the search stop trigger (gh-500)."""
+"""Repeated validation runs and the 2-SE incumbent rule: policy, budget, stop trigger, readers, and Leaderboard (gh-500)."""
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 import time
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -15,8 +16,8 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._records import read, write
-from skillz_experiments.gate import DEFAULT_STATISTICS
-from skillz_experiments.run import Stop, _outcomes, _plan, _search_phase, _session, export, run
+from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics
+from skillz_experiments.run import Stop, _leaderboard, _outcomes, _plan, _search_phase, _session, export, run
 from skillz_experiments.run._export import criteria_flags
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._open import validation_policy
@@ -283,29 +284,56 @@ def test_a_failed_repeat_counts_as_attempted_and_a_case_scores_its_scored_repeat
     assert not validation_complete(one[:3], "c", {"v1", "v2"}, 2)
 
 
-def _leaderboard_state(outcomes: list[dict[str, object]]) -> RunState:
-    seed = Candidate({"SKILL.md": "x"}, ("SKILL.md",))
-    cases = [SimpleNamespace(identifier="v")]
+CASES = ("v0", "v1", "v2", "v3")
+SEED = SimpleNamespace(identity="seed", editable=("SKILL.md",), files={"SKILL.md": "seed"})
+CHALLENGER_FILES = {"SKILL.md": "challenger"}
+CHALLENGER = SimpleNamespace(identity="c", editable=("SKILL.md",), files=CHALLENGER_FILES)
+
+
+def _board(outcomes: list[dict[str, object]], statistics: Statistics = DEFAULT_STATISTICS,
+           cases: Sequence[str] = CASES) -> RunState:
+    """Return a run state for the Leaderboard: the seed incumbent, two families of validation cases, and `outcomes`."""
+    found = [SimpleNamespace(identifier=name, family=f"f{index // 2}", split="validation") for index, name in enumerate(cases)]
 
     def cases_for(split: str) -> list[SimpleNamespace]:
-        return cases if split == "validation" else []
+        return found if split == "validation" else []
 
-    state = SimpleNamespace(lock=threading.RLock(), statistics=DEFAULT_STATISTICS, outcomes=outcomes, record={},
-                            seed=seed, checkpoint=lambda: None, cases_for=cases_for)
+    state = SimpleNamespace(lock=threading.RLock(), statistics=statistics, outcomes=outcomes, record={},
+                            seed=SEED, checkpoint=lambda: None, cases_for=cases_for)
     return cast(RunState, cast(object, state))
+
+
+def _keep(state: RunState, case: str = "v0") -> list[dict[str, object]]:
+    """Offer the challenger to the Leaderboard after its run on `case`. Return `search.comparisons`."""
+    Leaderboard(state).keep_if_best(cast(Candidate, cast(object, CHALLENGER)),
+                                    cast(Case, cast(object, SimpleNamespace(split="validation", identifier=case))))
+    return cast(list[dict[str, object]], cast(dict[str, object], state.record.get("search", {})).get("comparisons", []))
+
+
+def _arm(identity: str, scores: Sequence[float], tokens: Sequence[int] | None = None,
+         cases: Sequence[str] = CASES) -> list[dict[str, object]]:
+    """Return one outcome per repeat of each case: the repeat scores `scores`, and the task tokens of each case."""
+    rows: list[dict[str, object]] = []
+    for index, case in enumerate(cases):
+        for repeat, score in enumerate(scores):
+            row = _row(identity, case, score, repeat)
+            if tokens is not None:
+                row["usage"] = {"input_tokens": tokens[index], "cached_input_tokens": 0, "output_tokens": 0}
+            rows.append(row)
+    return rows
 
 
 @pytest.mark.ac("gh-500:AC-11")
 def test_the_leaderboard_history_and_stall_readers_take_completion_from_validation_complete(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    seed = [_row("seed", "v", 0.25, 0), _row("seed", "v", 0.25, 1)]
-    outcomes = [*seed, _reflection("c"), _row("c", "v", 1.0, 0), _row("c", "v", 1.0, 1)]
-    state = _leaderboard_state(outcomes)
-    readers: Callable[[], tuple[object, ...]] = lambda: (
-        Leaderboard(state)._means(["v"]),  # pyright: ignore[reportPrivateUsage]
-        attempts(outcomes, ("p", "seed"), ["v"], 2)[0]["validation_delta"],
-        _outcomes.stall_observations(outcomes, {"v"}, 2))
-    assert readers() == ({"seed": 0.25, "c": 1.0}, 0.75, [0.75])
+    outcomes = [*_arm("seed", [0.25, 0.25], cases=["v"]), _reflection("c"), *_arm("c", [1.0, 1.0], cases=["v"])]
+
+    def readers() -> tuple[object, ...]:
+        return (len(_keep(_board(outcomes, cases=["v"]), "v")),
+                attempts(outcomes, ("p", "seed"), ["v"], 2)[0]["validation_delta"],
+                _outcomes.stall_observations(outcomes, {"v"}, 2))
+
+    assert readers() == (1, 0.75, [0.75])
     asked: list[str] = []
 
     def never(found: Sequence[Mapping[str, object]], candidate: str, cases: object, repeats: int) -> bool:
@@ -313,11 +341,62 @@ def test_the_leaderboard_history_and_stall_readers_take_completion_from_validati
         asked.append(candidate)
         return False
 
-    monkeypatch.setattr(_history, "validation_complete", never)
-    monkeypatch.setattr(_outcomes, "validation_complete", never)
+    for module in (_history, _outcomes, _leaderboard):
+        monkeypatch.setattr(module, "validation_complete", never)
     # With the one completion test saying no, no reader finds a complete candidate.
-    assert readers() == ({}, None, [0.0])
+    assert readers() == (0, None, [0.0])
     assert set(asked) == {"seed", "c"}
+
+
+@pytest.mark.ac("gh-500:AC-2")
+def test_a_challenger_inside_the_two_se_band_leaves_the_seed_incumbent_and_logs_an_inconclusive_comparison() -> None:
+    state = _board([*_arm("seed", [1.0, 0.5]), *_arm("c", [0.9, 1.0])])
+    (comparison,) = _keep(state)
+    assert comparison == {"challenger": "c", "incumbent": "seed", "verdict": "inconclusive", "delta": pytest.approx(0.2),
+                          "se": pytest.approx(0.1275, abs=5e-5), "reasons": []}
+    assert "best_validated" not in state.record and Leaderboard(state).best_identity() == "seed"
+    # The pair is compared once.
+    assert len(_keep(state, "v1")) == 1
+
+
+@pytest.mark.ac("gh-500:AC-3")
+@pytest.mark.parametrize(("min_gain", "winner", "result"), [(0.0, "c", "promote"), (0.6, "seed", "inconclusive")])
+def test_a_challenger_past_the_two_se_band_becomes_the_incumbent_unless_it_misses_min_gain(
+        min_gain: float, winner: str, result: str) -> None:
+    state = _board([*_arm("seed", [0.5, 0.25]), *_arm("c", [1.0, 0.75])], replace(DEFAULT_STATISTICS, min_gain=min_gain))
+    (comparison,) = _keep(state)
+    assert (comparison["verdict"], comparison["delta"], comparison["se"]) == (
+        result, pytest.approx(0.5), pytest.approx(0.0884, abs=5e-5))
+    assert comparison["reasons"] == ([] if min_gain == 0.0 else ["min-gain"])
+    assert Leaderboard(state).best_identity() == winner
+    if winner == "c":
+        kept = cast(dict[str, object], state.record["best_validated"])
+        assert kept["comparison"] == comparison and kept["files"] == CHALLENGER_FILES
+
+
+@pytest.mark.ac("gh-500:AC-4")
+@pytest.mark.parametrize(("rule", "winner", "result"), [(True, "c", "promote-cheaper"), (False, "seed", "inconclusive")])
+def test_an_equal_challenger_with_fewer_tokens_becomes_the_incumbent_only_under_the_token_rule(
+        rule: bool, winner: str, result: str) -> None:
+    statistics = replace(DEFAULT_STATISTICS, min_token_saving=0.1, max_quality_loss=0.3) if rule else DEFAULT_STATISTICS
+    outcomes = [*_arm("seed", [1.0, 0.75], [1000] * 4), *_arm("c", [1.0, 0.75], [600, 620, 580, 600])]
+    state = _board(outcomes, statistics)
+    (comparison,) = _keep(state)
+    assert (comparison["verdict"], comparison["delta"], comparison["se"]) == (
+        result, pytest.approx(0.0, abs=1e-12), pytest.approx(0.0884, abs=5e-5))
+    assert Leaderboard(state).best_identity() == winner
+
+
+@pytest.mark.ac("gh-500:AC-12")
+def test_an_incomplete_challenger_gets_no_comparison_until_its_last_repeat_runs() -> None:
+    outcomes = [*_arm("seed", [0.5, 0.25]), *_arm("c", [1.0, 0.75], cases=CASES[:3])]
+    state = _board(outcomes)
+    assert _keep(state, "v2") == [] and Leaderboard(state).best_identity() == "seed"
+    outcomes.append(_row("c", "v3", 1.0, 0))
+    assert _keep(state, "v3") == []
+    outcomes.append(_row("c", "v3", 0.75, 1))
+    (comparison,) = _keep(state, "v3")
+    assert comparison["verdict"] == "promote" and Leaderboard(state).best_identity() == "c"
 
 
 @pytest.mark.ac("gh-500:AC-10")
