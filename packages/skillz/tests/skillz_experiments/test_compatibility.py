@@ -202,3 +202,13 @@ def test_only_an_edit_to_the_leakage_check_changes_the_leakage_digest(copied: Pa
     path = copied / module
     _ = path.write_text(path.read_text() + "\n# changed\n")
     assert (leakage_digest(copied) != before) == (module == "search/_leakage.py")
+
+
+# `leakage_digest` of the release before the `harness-token` rule (commit 56baea1c).
+PREVIOUS_LEAKAGE_DIGEST = "e9edc411a505c6a6975c9accf8418b61057bce2acd4f9c3bc4e783f696e51305"
+
+
+@pytest.mark.ac("gh-499:AC-5")
+def test_the_harness_token_rule_starts_a_new_leakage_cohort() -> None:
+    assert "harness-token" in (PACKAGE / "search/_leakage.py").read_text()
+    assert leakage_digest(PACKAGE) != PREVIOUS_LEAKAGE_DIGEST

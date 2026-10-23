@@ -22,7 +22,12 @@ SKILL_PATTERN = r"[a-z0-9][a-z0-9-]{0,63}"
 TOOL_PATTERN = r"[A-Za-z][A-Za-z0-9_]{0,127}"
 _SKILL = re.compile(SKILL_PATTERN)
 _TOOL = re.compile(TOOL_PATTERN)
-CONTRACT_FIELDS = ("schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface", "statistics")
+# Two words: a word character, then whitespace, then a word character. The JSON schema takes the same pattern, and its `\w`
+# is ASCII, so the parser matches ASCII too.
+HARNESS_PHRASE_PATTERN = r"\w[\s\S]*\s[\s\S]*\w"
+_HARNESS_PHRASE = re.compile(HARNESS_PHRASE_PATTERN, re.ASCII)
+CONTRACT_FIELDS = ("schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface", "statistics",
+                   "harness_phrases")
 GRADER_FIELDS = ("grader", "argv", "gate", "rubric", "capture")
 HELPER_FIELDS = ("path", "input", "fixtures")
 SURFACE_FIELDS = ("tools", "mcp_config", "agents", "companions")
@@ -86,6 +91,8 @@ class Contract:
     source: str = "skill"
     surface: Surface | None = None
     statistics: Mapping[str, object] | None = None
+    # Sandbox-only phrases of the eval requests. A proposal that adds one is a leak.
+    harness_phrases: tuple[str, ...] = ()
 
     def in_companion(self, name: str) -> bool:
         """Return True when `name` is a companion directory or a file under one."""
@@ -147,6 +154,8 @@ class Contract:
             document["surface"] = self.surface.data()
         if self.statistics:
             document["statistics"] = dict(self.statistics)
+        if self.harness_phrases:
+            document["harness_phrases"] = list(self.harness_phrases)
         return document
 
     @property
@@ -244,6 +253,16 @@ def _statistics(value: object) -> dict[str, object]:
         raise CodedError("contract-statistics-invalid", f"contract {error}") from None
 
 
+def _harness_phrases(value: object) -> tuple[str, ...]:
+    """Return the declared harness phrases. Each phrase needs at least two words, so a common word never becomes a leak."""
+    if not isinstance(value, list):
+        raise CodedError("contract-harness-phrases", "contract harness_phrases must be a list of phrases")
+    phrases = cast(list[object], value)
+    if not all(isinstance(phrase, str) and _HARNESS_PHRASE.search(phrase) for phrase in phrases):
+        raise CodedError("contract-harness-phrases", "each contract harness_phrases entry must be text of at least two words")
+    return tuple(cast(list[str], phrases))
+
+
 def _surface_error(message: str) -> CodedError:
     return CodedError("contract-surface", f"contract surface {message}")
 
@@ -320,9 +339,10 @@ def parse(value: object, source: str) -> Contract:
     helper = _helper(item["helper"]) if "helper" in item else None
     surface = _surface(item["surface"]) if "surface" in item else None
     thresholds = _statistics(item["statistics"]) if "statistics" in item else None
+    phrases = _harness_phrases(item["harness_phrases"]) if "harness_phrases" in item else ()
     contract = Contract(skill, string(item.get("invocation"), "contract invocation"),
                         {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source, surface,
-                        thresholds)
+                        thresholds, phrases)
     for kind, grader in contract.kinds.items():
         if kind == "journey" and grader.type != "journey":
             raise CodedError("contract-kinds", "the kind named journey takes the journey grader; "
