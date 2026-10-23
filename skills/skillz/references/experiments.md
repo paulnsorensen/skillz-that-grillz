@@ -405,6 +405,8 @@ A coded fault still stops the run. A resume runs each failed repeat again, and t
 Only `evaluation-failed` and a final check timeout (`rejection_kind: "timeout"`) leave a repeat unscored. A final check timeout also stops the run with `baseline-check-timeout` or `winner-check-timeout`, and a resume scores the repeat again. Any other rejected candidate, a capture failure, and a grader zero score 0.
 The gate drops a case with no scored repeat on an arm. `n_shared` is the number of cases that remain.
 A winner equal to the baseline scores no case, so its `n_shared` is 0. That `inconclusive` verdict with `winner-equals-baseline` is legitimate when the search scored its evaluations.
+A retained seed still scores its baseline arm on the holdout, within the replay reserve, and scores no winner arm. The gate record then holds `baseline_scores`, the mean baseline score of each scored holdout case by case id. The scores do not change the verdict.
+When the calls or the time left after the replay reserve do not cover the baseline pass, the gate scores no more cases and records `baseline_skipped: "budget-short"`. It keeps any `baseline_scores` that a resume restored. When a budget or deadline stop leaves the baseline pass partly unscored, it keeps the `baseline_scores` that exist and records `baseline_skipped: "budget-short"` too. When every baseline repeat faults or ends in a check timeout, it records `baseline_skipped: "faulted"`. None of these cases stops the run.
 
 A failed search evaluation is unscored too.
 It adds no score to a validation mean, no stall observation, and no reflection feedback.
@@ -427,6 +429,7 @@ When coverage is below `min_coverage`, the verdict is `inconclusive` with reason
 The family rule still runs after it, and a family breach still forces `reject`. A `min_coverage` of 0 turns the rule off.
 A provider fault that leaves holdout cases unscored lowers coverage, so it cannot become a promote or a reject.
 A winner equal to the baseline skips the coverage rule. Its `n_shared` is 0, but its only reason is `winner-equals-baseline`.
+For that run, the `holdout-coverage` runner check counts only the baseline slots. It is `unknown` when `baseline_skipped` is set, or when each missing slot ends in a failed evaluation or a check timeout.
 
 The floors apply only to a result that would promote. That result needs `delta >= min_gain` and `delta > 2·SE + min_lower_bound`.
 When the SE is 0, the second test uses 2·SE = 0.
