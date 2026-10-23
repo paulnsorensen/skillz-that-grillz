@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import errno
 import json
+import math
 import os
 import re
 import secrets
@@ -28,6 +29,7 @@ from typing import Literal, NoReturn, cast
 from skillz_experiments._cases import loads_untrusted, mapping
 from skillz_experiments._protocol import OPERATIONS, USAGE_KEYS, VERSION, argv_strings
 from skillz_experiments._redact import redact
+from skillz_experiments._runtime import SANDBOX_SECONDS, TERM_GRACE_SECONDS
 from skillz_experiments.harness import command_profile, seatbelt_environment
 from skillz_experiments.wrapper._seatbelt import profile as seatbelt_profile
 
@@ -41,6 +43,9 @@ SEATBELT_PROFILE = "skillz"
 PROFILE_FILE = f"sandbox-macos-{SEATBELT_PROFILE}.sb"
 TIMEOUTS = {"sandbox": 300, "discover": 60, "infer": 900}
 CONTAINER_GRACE = 10
+# The runner ends a sandbox call after `SANDBOX_SECONDS`, then waits `TERM_GRACE_SECONDS` before its SIGKILL.
+# The container ends itself `CONTAINER_GRACE` seconds after that, because a SIGKILL skips the wrapper stopper.
+CONTAINER_SECONDS = math.ceil(SANDBOX_SECONDS + TERM_GRACE_SECONDS) + CONTAINER_GRACE
 STOP_BUDGET = 6
 DRAIN_GRACE = 2
 DOTENV = "." + "env"
@@ -115,13 +120,15 @@ def _interrupted(signum: int, _frame: FrameType | None) -> NoReturn:
 
 
 def _abandon(process: subprocess.Popen[str], stop: Callable[[], str] | None) -> str:
-    """Kill the process group, ask the container runtime to stop the container that the group started, then drain.
+    """Kill the child, ask the container runtime to stop the container that the child started, then drain.
 
+    The child stays in the wrapper process group, so the runner's group kill reaches it. This function kills the child
+    only, because a group kill would also kill the wrapper.
     The drain waits at most `DRAIN_GRACE` seconds, because a descendant that left the group can hold the pipes open.
     Return a note when the cleanup may have left a container running. The note also goes to stderr.
     """
     try:
-        os.killpg(process.pid, signal.SIGKILL)
+        process.kill()
     except (ProcessLookupError, PermissionError):
         pass
     note = stop() if stop is not None else ""
@@ -139,12 +146,12 @@ def _abandon(process: subprocess.Popen[str], stop: Callable[[], str] | None) -> 
 
 def _run(command: list[str], workspace: Path, env: dict[str, str], *, timeout: float, stdin: str | None = None,
          stop: Callable[[], str] | None = None) -> subprocess.CompletedProcess[str]:
-    """Run one command with a deadline. A timeout, SIGTERM, or interrupt kills the group and calls `stop`."""
+    """Run one command with a deadline. A timeout, SIGTERM, or interrupt kills the child and calls `stop`."""
     try:
         previous = signal.signal(signal.SIGTERM, _interrupted)
     except ValueError:
         previous = None
-    process = subprocess.Popen(command, cwd=workspace, env=env, text=True, errors="replace", start_new_session=True,
+    process = subprocess.Popen(command, cwd=workspace, env=env, text=True, errors="replace",
                                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
@@ -274,7 +281,7 @@ def _sandbox(request: dict[str, object], workspace: Path, runtime: str | None, i
                   "--security-opt", "no-new-privileges", *LIMITS, *flags, *user,
                   "--mount", f"type=bind,source={root},target={root}",
                   "--mount", f"type=bind,source={agents},target={agents},readonly", "-w", str(root),
-                  "--entrypoint", "/usr/bin/timeout", image, "-s", "KILL", str(TIMEOUTS["sandbox"] + CONTAINER_GRACE),
+                  "--entrypoint", "/usr/bin/timeout", image, "-s", "KILL", str(CONTAINER_SECONDS),
                   "/usr/bin/env", *CONTAINER_ENV, *command]
         stop = _stopper(executable, env, "kill", name)
     result = _run(launch, root, env, timeout=TIMEOUTS["sandbox"], stop=stop)

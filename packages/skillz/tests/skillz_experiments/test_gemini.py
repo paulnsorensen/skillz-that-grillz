@@ -18,6 +18,7 @@ from skillz_experiments.harness import Configuration, command_profile
 from skillz_experiments.wrapper import _gemini
 from skillz_experiments.wrapper._gemini import respond
 from skillz_experiments._budget import Budget
+from skillz_experiments._runtime import SANDBOX_SECONDS, TERM_GRACE_SECONDS
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MAIN = "import sys; from skillz_experiments._cli import main; sys.exit(main())"
@@ -382,8 +383,18 @@ def test_the_sandbox_container_has_its_own_time_limit(tmp_path: Path) -> None:
     flags = docker_calls(directory)[0]
     start = flags.index("--entrypoint")
     assert flags[start + 1] == "/usr/bin/timeout"
-    assert flags[start + 3:start + 6] == ["-s", "KILL", str(_gemini.TIMEOUTS["sandbox"] + _gemini.CONTAINER_GRACE)]
+    assert flags[start + 3:start + 6] == ["-s", "KILL", str(_gemini.CONTAINER_SECONDS)]
     assert flags[start + 6] == "/usr/bin/env"
+
+
+@pytest.mark.ac("gh-364:AC-3")
+def test_the_container_ends_itself_soon_after_the_runner_kills_the_wrapper(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    _ = respond(request("sandbox", workspace(tmp_path), argv=["true"]), bin_dir=directory)
+    flags = docker_calls(directory)[0]
+    limit = int(flags[flags.index("KILL") + 1])
+    runner_kill = SANDBOX_SECONDS + TERM_GRACE_SECONDS
+    assert runner_kill < limit <= runner_kill + _gemini.CONTAINER_GRACE
 
 
 def test_infer_selects_google_login_and_keeps_the_docker_context(tmp_path: Path, user_home: Path) -> None:
@@ -684,6 +695,56 @@ def test_a_timeout_stops_the_container_and_bounds_the_drain_when_a_descendant_le
             with contextlib.suppress(ProcessLookupError):
                 os.kill(int(pid_file.read_text()), signal.SIGKILL)
     assert elapsed < 10 and stopped and stopped[0] - started < 1 + _gemini.DRAIN_GRACE / 2
+
+
+WRAPPER = ("import sys\n"
+           "from pathlib import Path\n"
+           "from skillz_experiments.wrapper import _gemini\n"
+           "_gemini._run([sys.executable, '-c', "
+           "'import os, sys, time; open(sys.argv[1], \"w\").write(str(os.getpid())); time.sleep(60)', sys.argv[1]],\n"
+           "             Path(sys.argv[2]), {'PATH': '/usr/bin:/bin'}, timeout=60)\n")
+
+
+def running(pid: int) -> bool:
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
+@pytest.mark.ac("gh-364:AC-1")
+def test_a_sigkill_of_the_wrapper_group_leaves_no_sandbox_child(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    wrapper = subprocess.Popen([sys.executable, "-c", WRAPPER, str(pid_file), str(tmp_path)], start_new_session=True)
+    child = 0
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not (pid_file.exists() and pid_file.read_text()):
+            time.sleep(0.05)
+        child = int(pid_file.read_text())
+        assert running(child)
+        os.killpg(wrapper.pid, signal.SIGKILL)
+        _ = wrapper.wait()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and running(child):
+            time.sleep(0.05)
+        assert not running(child)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(wrapper.pid, signal.SIGKILL)
+        if child:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child, signal.SIGKILL)
+
+
+@pytest.mark.ac("gh-364:AC-2")
+def test_a_timeout_kills_the_child_and_leaves_the_wrapper_running(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    script = "import os, time; open(%r, 'w').write(str(os.getpid())); time.sleep(60)" % str(pid_file)
+    stopped: list[bool] = []
+    with pytest.raises(RuntimeError, match="timed out after 1 s"):
+        _ = _gemini._run([sys.executable, "-c", script], tmp_path, {"PATH": "/usr/bin:/bin"}, timeout=1,  # pyright: ignore[reportPrivateUsage]
+                         stop=lambda: stopped.append(True) or "")
+    assert stopped and not running(int(pid_file.read_text()))
+
 
 
 def discover_request(root: Path) -> str:
