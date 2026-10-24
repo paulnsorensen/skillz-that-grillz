@@ -11,7 +11,6 @@ import json
 import shutil
 import subprocess
 import threading
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable
 
@@ -19,6 +18,7 @@ import fromargs
 import pytest
 
 import wedge._build as wedge_build
+import wedge._layer_cache as layer_cache
 from wedge._build import build_many
 from wedge._cli import build_cmd, check_cmd, lock_cmd
 from wedge._fanout import fan_out
@@ -144,13 +144,16 @@ def test_skills_over_one_project_share_one_site_directory(
     consumer = copy_consumer(tmp_path / "consumer")
     _ = _second_skill(consumer)
     populated: list[Path] = []
-    original = wedge_build.populate_site_layer
+    original = layer_cache.cached_layer
 
-    def counting(project: Path, groups: Sequence[str], dest: Path) -> wedge_build.SiteLayer:
-        populated.append(dest)
-        return original(project, groups, dest)
+    def counting(key: str, populate: Callable[[Path], None]) -> tuple[Path, dict[str, str]]:
+        def counted(dest: Path) -> None:
+            populated.append(dest)
+            populate(dest)
 
-    monkeypatch.setattr(wedge_build, "populate_site_layer", counting)
+        return original(key, counted)
+
+    monkeypatch.setattr(wedge_build, "cached_layer", counting)
 
     outcomes = build_many([consumer / SKILLS / "hello", consumer / SKILLS / "goodbye"], tmp_path / "dist")
 
@@ -166,10 +169,10 @@ def test_a_site_that_cannot_be_populated_fails_each_skill_that_shares_it(
     consumer = copy_consumer(tmp_path / "consumer")
     _ = _second_skill(consumer)
 
-    def failing(_project: Path, _groups: Sequence[str], _dest: Path) -> wedge_build.SiteLayer:
+    def failing(_key: str, _populate: Callable[[Path], None]) -> tuple[Path, dict[str, str]]:
         raise subprocess.CalledProcessError(1, ["uv", "pip", "install"], stderr="index unreachable\n")
 
-    monkeypatch.setattr(wedge_build, "populate_site_layer", failing)
+    monkeypatch.setattr(wedge_build, "cached_layer", failing)
 
     outcomes = build_many([consumer / SKILLS / "hello", consumer / SKILLS / "goodbye"], tmp_path / "dist")
 
