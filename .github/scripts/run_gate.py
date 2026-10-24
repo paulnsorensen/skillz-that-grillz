@@ -170,6 +170,7 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("ac-trace", root + ["python", ".github/scripts/check_ac_trace.py"]),
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
+        ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
         ("agent-session-analytics-pytest", analytics + ["pytest", "packages/agent-session-analytics/tests", "-q", "-n", str(test_workers),
                                                 "--dist", "worksteal", "--basetemp", str(cache_root / "a"),
                                                 "-o", f"cache_dir={cache_root / 'ac'}"]),

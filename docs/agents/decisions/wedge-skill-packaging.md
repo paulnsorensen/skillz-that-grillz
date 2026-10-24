@@ -93,6 +93,17 @@ _Source: PR #103, `packages/wedge/src/wedge/`, `packages/wedge/tests/wedge/test_
 
 _Source: `packages/wedge/src/wedge/` and `packages/wedge/tests/wedge/test_targets.py` · Updated: 2026-10-22_
 
+### ADR-012: This repository publishes its direct archives on a `dist` branch  [status: accepted]
+
+- **Context:** Mergify's merge queue tests each pull request on top of the pull requests ahead of it. When two queued pull requests change source that a `skills/skillz` archive includes, the later pull request carries an archive built against `main` only. `wedge bundle --check` then fails, and the queue removes the pull request. No queue can add a rebuild commit. Git cannot merge the binary archives either (#344).
+- **Decision:** `main` holds source only. The `publish dist` workflow runs on each push to `main`, on each manual run, and every hour. It checks out the `main` tip, runs `wedge bundle skills/skillz`, and runs each archive with `--help`. `.github/scripts/publish_dist.py` then appends one commit to `dist`: the full `main` tree plus the built archives, with a `Source-Commit: <sha>` trailer.[^18] The publisher fast-forwards `dist` without force. It refuses a source that is not on `main` or that does not descend from the last published source. An older source is a no-op. One `publish-dist` concurrency group runs one publish at a time, and the remaining run publishes the newest tip, so a replaced pending run loses no source change (Consumer CI guidance). `dist` is the default branch, so `npx skills add` and a bare clone get built archives. A `pull_request_target` workflow moves each pull request that targets `dist` to `main` and never checks out its code.
+- **Alternatives:** A rebuild bot that pushes to each open pull request. Rejected: it needs a GitHub App token, and GitHub's server-side update still stops on the binary conflict. A post-merge rebuild commit on `main`. Rejected: it needs a ruleset bypass actor, and `main` is stale between the merge and the rebuild. The legacy lock and launcher. Rejected: a lock also changes in every pull request that touches shared source, and a first run needs the network. The model follows the easy-cheese `dist` design.
+- **Consequences:** `dist` holds the full tree, because GitHub runs scheduled workflows, Dependabot, and Scorecard against the default branch. Each Dependabot block sets `target-branch: main`, and Scorecard has no `push: main` trigger. The `main-protection` and `copilot-auto-review` rulesets name `refs/heads/main`, not `~DEFAULT_BRANCH`. A `dist` ruleset blocks deletion and non-fast-forward pushes, with no pull-request rule, so `GITHUB_TOKEN` can append. `dist` grows by one archive set (about 15 MB) for each publish that changes an archive. A release tag on a `main` commit has no archives, so `gh skill install` at that tag gets none.
+
+_Source: `.github/workflows/publish-dist.yml`, `.github/scripts/publish_dist.py`, and `.github/workflows/retarget-dist-prs.yml` · Updated: 2026-10-24_
+
+[^18]: `.github/scripts/publish_dist.py`; `.github/scripts/test_publish_dist.py`
+
 ## Consumer CI guidance
 
 The action guide is the canonical consumer guide for merge-group validation and post-merge publication.[^17]
