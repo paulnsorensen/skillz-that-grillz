@@ -68,6 +68,22 @@ def ignored_files(root: Path) -> set[str]:
     return {name for name in run.stdout.decode("utf-8", errors="replace").split("\0") if name}
 
 
+def _built_archives(root: Path) -> set[str]:
+    """Return the `scripts/<name>.pyz` path of each target that `root/wedge.toml` declares.
+
+    A built archive is build output, so git can ignore it, but the skill runs it, so capture keeps it.
+    A missing or invalid `wedge.toml` gives an empty set.
+    """
+    if not (root / "wedge.toml").is_file():
+        return set()
+    # A lazy import: `wedge` loads fromargs, and the wrapper slice imports this module without a CLI framework.
+    from wedge import ConfigError, bundle_path, load_targets
+    try:
+        return {bundle_path(Path(), config.name).as_posix() for config in load_targets(root)}
+    except (ConfigError, OSError):
+        return set()
+
+
 def _metadata(posix: str) -> bool:
     """Return True for VCS and host metadata and for bytecode caches. Capture skips them."""
     parts = posix.split("/")
@@ -116,11 +132,13 @@ class Candidate:
                 exclude: tuple[str, ...] = ()) -> Candidate:
         """Read the skill files under `root`. Skip git-ignored files, VCS metadata, bytecode caches, `evals/`, and `exclude`.
 
+        A git-ignored archive of a declared wedge target is not skipped: the skill runs it.
+
         A file that is binary, is not UTF-8, or exceeds `TEXT_FILE_LIMIT` becomes frozen bytes.
         """
         if root.is_symlink():
             raise ValueError("candidate must not contain symlinks")
-        ignored = ignored_files(root)
+        ignored = ignored_files(root) - _built_archives(root)
         files: dict[str, str] = {}
         frozen: dict[str, bytes] = {}
         for path in sorted(root.rglob("*")):
