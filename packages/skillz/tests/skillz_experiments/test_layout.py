@@ -14,13 +14,21 @@ import skillz_experiments
 
 PACKAGE = Path(skillz_experiments.__file__).parent
 PREFIX = "skillz_experiments"
-SLICES = ("run", "search", "gate", "harness", "wrapper", "evaluation")
 LEAF_SLICES = ("search", "gate")
 FORBIDDEN_FROM_LEAVES = ("run", "harness")
 REMOVED_FLAT_FILES = ("_workflow.py", "_search.py", "_gate.py", "_harness.py", "_claude.py", "_evaluator.py")
 DECISIONS = Path(__file__).resolve().parents[4] / "docs" / "agents" / "decisions"
 # An ADR id is `<decision file stem>:ADR-NNN`, because each file in `docs/agents/decisions/` numbers its own records.
 ADR_011 = "skillz-autoimprove:ADR-011"
+# Each slice of the package, with the decision that adds it. A new, removed, or renamed slice needs an ADR (AGENTS.md).
+SLICES: dict[str, str] = {
+    "run": ADR_011,
+    "search": ADR_011,
+    "gate": ADR_011,
+    "harness": ADR_011,
+    "wrapper": "harness-module-interface:ADR-002",
+    "evaluation": ADR_011,
+}
 # Each module at the package root, with the decision that keeps it there. A new flat module goes into a slice (ADR-011).
 ROOT_MODULES: dict[str, str] = {
     "__init__": ADR_011,
@@ -258,13 +266,50 @@ def _decision_ids() -> set[str]:
             for line in path.read_text().splitlines() if (match := re.match(r"### (ADR-\d+)\b", line))}
 
 
-def test_each_frozen_set_entry_cites_a_recorded_decision() -> None:
-    cited = {f"{label}[{name!r}]": adr for label, frozen in (("ROOT_MODULES", ROOT_MODULES), ("KERNEL", KERNEL))
-             for name, adr in frozen.items()}
+def _uncited(frozen_sets: dict[str, dict[str, str]]) -> list[str]:
+    """Return each `<set>[<name>] = <adr>` entry whose ADR id has no recorded decision."""
     known = _decision_ids()
-    unknown = sorted(f"{entry} = {adr!r}" for entry, adr in cited.items() if adr not in known)
+    return sorted(f"{label}[{name!r}] = {adr!r}" for label, frozen in frozen_sets.items()
+                  for name, adr in frozen.items() if adr not in known)
+
+
+@pytest.mark.ac("gh-494:AC-2")
+def test_each_frozen_set_entry_cites_a_recorded_decision() -> None:
+    unknown = _uncited({"SLICES": SLICES, "ROOT_MODULES": ROOT_MODULES, "KERNEL": KERNEL})
     assert unknown == [], (f"{unknown}: cite `<file stem>:ADR-NNN` for a `### ADR-NNN` heading "
                            "in docs/agents/decisions/<file stem>.md, or write that ADR")
+
+
+@pytest.mark.ac("gh-494:AC-2")
+def test_an_unknown_adr_id_on_a_slice_is_caught() -> None:
+    probe = {"SLICES": {"run": ADR_011, "extra": "skillz-autoimprove:ADR-999"}}
+    assert _uncited(probe) == ["SLICES['extra'] = 'skillz-autoimprove:ADR-999'"]
+
+
+def _slice_drift(declared: dict[str, str], package: Path) -> tuple[list[str], list[str]]:
+    """Return the subpackages on disk that `declared` lacks, then the declared slices that are not on disk."""
+    on_disk = {path.name for path in package.iterdir() if path.is_dir() and any(path.rglob("*.py"))}
+    return sorted(on_disk - declared.keys()), sorted(declared.keys() - on_disk)
+
+
+@pytest.mark.ac("gh-494:AC-1")
+def test_the_declared_slices_are_the_subpackages_on_disk() -> None:
+    added, removed = _slice_drift(SLICES, PACKAGE)
+    assert added == [], (f"new slices {added}: write or amend an ADR for each new slice (AGENTS.md: an ADR when a PR "
+                         "adds, removes, or renames a slice), then add it to SLICES in test_layout.py with that ADR id")
+    assert removed == [], (f"slices {removed} are gone: write or amend an ADR for the removed or renamed slice "
+                           "(AGENTS.md), then remove their SLICES entries in test_layout.py")
+
+
+@pytest.mark.ac("gh-494:AC-1")
+def test_a_subpackage_without_a_slices_entry_is_caught(tmp_path: Path) -> None:
+    for name in ("run", "extra", "namespace"):
+        (tmp_path / name).mkdir()
+    _ = (tmp_path / "run" / "__init__.py").write_text("")
+    _ = (tmp_path / "extra" / "__init__.py").write_text("")
+    _ = (tmp_path / "namespace" / "module.py").write_text("")
+    (tmp_path / "__pycache__").mkdir()
+    assert _slice_drift({"run": ADR_011, "gone": ADR_011}, tmp_path) == (["extra", "namespace"], ["gone"])
 
 
 def _root_imports_from_slices() -> dict[str, set[str]]:
