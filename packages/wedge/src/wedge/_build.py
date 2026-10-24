@@ -4,13 +4,16 @@ The flow has three steps. ``populate_site_layer`` resolves and guards the
 project's third-party closure and installs it into a layer directory; this
 is the only step that needs the network. ``stage_sources`` copies the
 configured local ``include`` trees and the skill's CLI source into a staged
-tree. ``build_from_layer`` copies the layer and the staged tree into a fresh
-site directory, strips volatile install metadata, and shivs the result with a
+tree. ``build_from_layer`` lays the layer and the staged tree out in a fresh
+site directory, without volatile install metadata, and shivs the result with a
 fixed shebang and ``SOURCE_DATE_EPOCH``. The same key always gives the same
 uncompressed contents, so the content digest (``wedge._digest``) matches on
 every host even when two zlib builds compress those contents differently.
-Third-party wheels download fresh on every build (``--no-cache``), so a
-modified uv cache cannot change the contents. The digest names the asset.
+Third-party wheels never come from the uv cache (``--no-cache``), so a
+modified uv cache cannot change the contents. ``build`` and ``build_many``
+reuse a layer from wedge's own cache (``wedge._layer_cache``) only after each
+file matches the manifest that the fresh install recorded. The digest names
+the asset.
 """
 
 from __future__ import annotations
@@ -23,8 +26,9 @@ import shutil
 import stat
 import subprocess
 import sys
+import sysconfig
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -42,9 +46,14 @@ from wedge._key import (
     resolve_paths,
     selected_files,
 )
+from wedge._layer_cache import cached_layer
 from wedge._resolve import export_requirements, resolve_closure
 
 _VOLATILE_INSTALL_FILES = {"RECORD", "INSTALLER", "REQUESTED", "direct_url.json"}
+# --no-cache: see _install_third_party. These flags join the layer cache key.
+_INSTALL_FLAGS = ("--no-cache", "--require-hashes", "--no-deps")
+# Bump when _install_third_party or _strip_volatile changes what a layer holds, so no cached layer from older rules is reused.
+_LAYER_RECIPE = 1
 # Installed console scripts live in a top-level `bin`. Keep that name free of first-party sources.
 _RESERVED_TOP_LEVEL = {"bin"}
 _IMPORTABLE_SUFFIXES = {".py", ".so", ".pyd"}
@@ -115,6 +124,41 @@ def _closure_requirements(project: Path, groups: Sequence[str]) -> tuple[str, bo
     closure = resolve_closure(project, requirements)
     guard_closure(closure)
     return requirements, bool(closure)
+
+
+def _cached_site_layer(project: Path, groups: Sequence[str]) -> tuple[SiteLayer, Mapping[str, str]]:
+    """Return the layer of ``project`` and ``groups`` from wedge's layer cache, and its manifest; install on a miss.
+
+    The guard runs on every call. The cache key holds every locked requirement
+    line with its hashes, and the cache hashes each file of a reused layer
+    against the manifest of its fresh install, so a reused layer holds the
+    same files as a fresh install. The build checks its archive against the
+    manifest too, because the layer can change after the cache checked it.
+    """
+    project = Path(project).resolve()
+    requirements, installs = _closure_requirements(project, groups)
+
+    def populate(dest: Path) -> None:
+        if installs:
+            _install_third_party(requirements, dest)
+        _strip_volatile(dest)
+
+    path, expected = cached_layer(_layer_cache_key(requirements), populate)
+    return SiteLayer(path, site_layer_key(project, groups), _sorted_groups(groups), project), expected
+
+
+def _layer_cache_key(requirements: str) -> str:
+    """A sha256 over what a layer holds: the requirement lines and hashes, the target, uv, and wedge's populate rules."""
+    lines = [line.strip() for line in requirements.splitlines()]
+    document = {
+        "format_version": FORMAT_VERSION,
+        "populate": [_LAYER_RECIPE, list(_INSTALL_FLAGS), sorted(_VOLATILE_INSTALL_FILES)],
+        "target_python": TARGET_PYTHON,
+        "platform": sysconfig.get_platform(),
+        "uv": subprocess.run(["uv", "--version"], capture_output=True, text=True, check=True).stdout.strip(),
+        "requirements": [line for line in lines if line and not line.startswith("#")],
+    }
+    return hashlib.sha256(json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -302,56 +346,128 @@ def stage_sources(paths: BuildPaths, dest: Path, overlay: Path | None = None, *,
 
 
 def build_from_layer(layer: SiteLayer, sources_tree: Path, target: WedgeConfig, out_dir: Path) -> Path:
-    """Shiv ``target`` from a copy of ``layer`` plus ``sources_tree``, with no network.
+    """Shiv ``target`` from ``layer`` plus ``sources_tree``, with no network.
 
     The layer key must match the current ``uv.lock`` and the target's groups.
-    The build copies both into a fresh tree, so the layer stays unchanged. A
-    first-party path that collides with an installed one is an error. The
-    output is byte-identical to ``build`` for the same inputs. Returns
+    The build never writes to the layer. A first-party path that collides
+    with an installed one is an error. The output is byte-identical to
+    ``build`` for the same inputs. Returns
     ``<out_dir>/<name>-<content_sha256[:12]>.pyz``.
     """
     return _build_from_layer(layer, sources_tree, target, out_dir)[1]
 
 
-def _build_from_layer(layer: SiteLayer, sources_tree: Path, target: WedgeConfig, out_dir: Path) -> tuple[str, Path]:
+def _build_from_layer(
+    layer: SiteLayer,
+    sources_tree: Path,
+    target: WedgeConfig,
+    out_dir: Path,
+    expected: Mapping[str, str] | None = None,
+) -> tuple[str, Path]:
     if layer.key != site_layer_key(layer.project, target.groups):
         raise ValueError(
             f"uv.lock or groups {target.groups} of target {target.name!r} do not match the layer {layer.groups}"
         )
     out_dir = _ensure_out_dir(out_dir)
     installed = frozenset(child.name for child in layer.path.iterdir())
+    first_party: set[str] = set()
     with tempfile.TemporaryDirectory(prefix="wedge-site-") as tmp:
         site_dir = Path(tmp) / "site"
-        _ = shutil.copytree(layer.path, site_dir, symlinks=True)
-        _strip_volatile(site_dir)
+        linked = _view_layer(layer.path, site_dir)
         for entry in sorted(Path(sources_tree).iterdir()):
             if entry.is_symlink():
                 raise ValueError(f"build source must not be a symlink: {entry}")
             _check_free(site_dir, entry, installed)
+            first_party.add(entry.name)
             destination = site_dir / entry.name
             if entry.is_dir():
                 _copy_tree(entry, destination)
             else:
                 _ = shutil.copy2(entry, destination, follow_symlinks=False)
-        _reject_links(site_dir)
-        return _shiv_into(site_dir, target.name, target.entry, out_dir)
+        _reject_links(site_dir, linked)
+        check = None if expected is None else (expected, frozenset(first_party))
+        return _shiv_into(site_dir, target.name, target.entry, out_dir, check)
 
 
-def _build_prepared(prepared: _Prepared, layer: SiteLayer, stage_dir: Path, out_dir: Path) -> BuildResult:
+def _view_layer(layer: Path, site_dir: Path) -> frozenset[str]:
+    """Fill the new ``site_dir`` with the layer's entries; return the names that are links into the layer.
+
+    A top-level entry that holds only regular files and directories, and no
+    volatile file, becomes a symlink to the layer entry. shiv follows such a
+    link, so the archive gets the same paths and bytes as from a copy, and a
+    build does not create and delete one file per installed file. Any other
+    entry is copied and stripped as before, so ``_reject_links`` still sees
+    a symlink or a special file that sits in the layer.
+    """
+    layer = layer.absolute()
+    site_dir.mkdir()
+    linked: set[str] = set()
+    for child in sorted(layer.iterdir()):
+        destination = site_dir / child.name
+        if _readable_in_place(child):
+            destination.symlink_to(child, target_is_directory=child.is_dir())
+            linked.add(child.name)
+        elif child.is_dir() and not child.is_symlink():
+            _ = shutil.copytree(child, destination, symlinks=True)
+        else:
+            _ = shutil.copy2(child, destination, follow_symlinks=False)
+    _strip_volatile(site_dir)
+    return frozenset(linked)
+
+
+def _readable_in_place(entry: Path) -> bool:
+    """Whether the build can read the top-level layer ``entry`` through a link, with nothing to strip or reject."""
+    mode = entry.lstat().st_mode
+    if entry.name == "bin" or _is_volatile(entry, stat.S_ISDIR(mode), top_level=True):
+        return False
+    if stat.S_ISREG(mode):
+        return True
+    if not stat.S_ISDIR(mode):
+        return False
+    for directory, directories, files in os.walk(entry):
+        for name in (*directories, *files):
+            path = Path(directory) / name
+            mode = path.lstat().st_mode
+            if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)) or _is_volatile(path, stat.S_ISDIR(mode)):
+                return False
+    return True
+
+
+def _build_prepared(
+    prepared: _Prepared,
+    layer: SiteLayer,
+    stage_dir: Path,
+    out_dir: Path,
+    expected: Mapping[str, str] | None = None,
+) -> BuildResult:
     """Stage one target's sources and shiv them over ``layer`` into ``out_dir``."""
     if layer.project != prepared.paths.project:
         raise ValueError(f"site layer project {layer.project} is not the target's project {prepared.paths.project}")
     sources = stage_sources(prepared.paths, stage_dir)
-    digest, out_path = _build_from_layer(layer, sources, prepared.config, out_dir)
+    digest, out_path = _build_from_layer(layer, sources, prepared.config, out_dir, expected)
     return BuildResult(prepared.config.name, prepared.key, digest, out_path)
 
 
-def _shiv_into(site_dir: Path, name: str, entry: str, out_dir: Path) -> tuple[str, Path]:
+def _shiv_into(
+    site_dir: Path,
+    name: str,
+    entry: str,
+    out_dir: Path,
+    check: tuple[Mapping[str, str], frozenset[str]] | None = None,
+) -> tuple[str, Path]:
+    """Shiv ``site_dir`` and place the archive in ``out_dir``.
+
+    With ``check``, a layer manifest and the first-party top-level names, every
+    other ``site-packages`` member must match the manifest, file for file.
+    Otherwise nothing lands in ``out_dir``.
+    """
     validate_name(name)
     with tempfile.TemporaryDirectory(prefix="wedge-build-") as tmp:
         built = Path(tmp) / f"{name}.pyz"
         _shiv(site_dir, entry, built)
         _canonicalize_archive(built)
+        if check is not None:
+            _check_layer_members(built, *check)
         digest = content_sha256(built)
         out_path = out_dir / f"{name}-{digest[:12]}.pyz"
         # A temp file in out_dir plus an atomic replace never writes through a
@@ -368,13 +484,31 @@ def _shiv_into(site_dir: Path, name: str, entry: str, out_dir: Path) -> tuple[st
     return digest, out_path
 
 
+def _check_layer_members(archive: Path, expected: Mapping[str, str], first_party: frozenset[str]) -> None:
+    """Raise ``ValueError`` when the archive's third-party files differ from the layer manifest ``expected``.
+
+    Every ``site-packages`` member outside the ``first_party`` top-level names
+    is third-party; ``_check_free`` keeps the two name sets apart.
+    """
+    files = {path: digest for path, digest in expected.items() if digest != "dir"}
+    found: dict[str, str] = {}
+    with ZipFile(archive) as zf:
+        for info in zf.infolist():
+            name = info.filename.removeprefix("site-packages/")
+            if name != info.filename and not info.is_dir() and name.split("/", 1)[0] not in first_party:
+                found[name] = hashlib.sha256(zf.read(info)).hexdigest()
+    if found != files:
+        changed = sorted(set(found) ^ set(files) | {p for p in found.keys() & files.keys() if found[p] != files[p]})
+        raise ValueError(f"the cached site layer changed during the build ({', '.join(changed[:3])}); build again")
+
+
 def build(skill_dir: Path, out_dir: Path) -> BuildResult:
     """Build ``<out_dir>/<name>-<content_sha256[:12]>.pyz``; returns its key and digest."""
     out_dir = _ensure_out_dir(out_dir)
     prepared = _prepare(skill_dir)
-    with tempfile.TemporaryDirectory(prefix="wedge-site-") as tmp:
-        layer = populate_site_layer(prepared.paths.project, prepared.config.groups, Path(tmp) / "layer")
-        return _build_prepared(prepared, layer, Path(tmp) / "stage", out_dir)
+    layer, expected = _cached_site_layer(prepared.paths.project, prepared.config.groups)
+    with tempfile.TemporaryDirectory(prefix="wedge-stage-") as tmp:
+        return _build_prepared(prepared, layer, Path(tmp) / "stage", out_dir, expected)
 
 
 def build_many(
@@ -382,12 +516,12 @@ def build_many(
 ) -> list[Outcome[Path, BuildResult]]:
     """Build every target of every skill into ``out_dir``, ``jobs`` at a time.
 
-    Targets with the same project and groups share one site layer, so a
-    repository of many skills over one package downloads its closure once.
-    Each target then stages its own sources and builds from the layer. Returns
-    one outcome per target in input order (a skill with ``[[target]]`` tables
-    yields several); a failure while populating a layer fails every target
-    that shares it.
+    Targets with the same project and groups share one site layer, from
+    wedge's layer cache, so a repository of many skills over one package
+    downloads its closure at most once. Each target then stages its own sources
+    and builds from the layer. Returns one outcome per target in input order
+    (a skill with ``[[target]]`` tables yields several); a failure while
+    populating a layer fails every target that shares it.
     """
     out_dir = _ensure_out_dir(out_dir)
     prepared = fan_out(list(skill_dirs), _prepare_all, jobs=jobs)
@@ -399,18 +533,17 @@ def build_many(
     valid = [target for target in every if target.config.name not in duplicates]
     layer_ids = list(dict.fromkeys(p.layer_id for p in valid))
 
-    with tempfile.TemporaryDirectory(prefix="wedge-site-") as tmp:
+    populated = fan_out(layer_ids, lambda layer_id: _cached_site_layer(layer_id[0], layer_id[1]), jobs=jobs)
+    layers = {o.item: o.value for o in populated if o.value is not None}
+    site_errors = {o.item: o.error for o in populated if o.error is not None}
+    ready = [p for p in valid if p.layer_id in layers]
+    with tempfile.TemporaryDirectory(prefix="wedge-stage-") as tmp:
         root = Path(tmp)
-        layer_dirs = {layer_id: root / f"layer-{index}" for index, layer_id in enumerate(layer_ids)}
-        populated = fan_out(
-            layer_ids, lambda layer_id: populate_site_layer(layer_id[0], layer_id[1], layer_dirs[layer_id]), jobs=jobs
-        )
-        layers = {o.item: o.value for o in populated if o.value is not None}
-        site_errors = {o.item: o.error for o in populated if o.error is not None}
-        ready = [p for p in valid if p.layer_id in layers]
         stage_dirs = {id(p): root / f"stage-{index}" for index, p in enumerate(ready)}
         shivved = fan_out(
-            ready, lambda p: _build_prepared(p, layers[p.layer_id], stage_dirs[id(p)], out_dir), jobs=jobs
+            ready,
+            lambda p: _build_prepared(p, layers[p.layer_id][0], stage_dirs[id(p)], out_dir, layers[p.layer_id][1]),
+            jobs=jobs,
         )
         built = {(p.skill_dir, p.config.name): o for p, o in zip(ready, shivved)}
 
@@ -431,6 +564,7 @@ def build_many(
                 outcomes.append(Outcome(path, value=result.value, error=result.error))
     return outcomes
 
+
 def _install_third_party(requirements: str, site_dir: Path) -> None:
     # --no-cache: uv checks a wheel's hash only when it downloads it, and it
     # hardlinks cached unpacked wheels into every install. An edit to any
@@ -445,9 +579,7 @@ def _install_third_party(requirements: str, site_dir: Path) -> None:
                 "uv",
                 "pip",
                 "install",
-                "--no-cache",
-                "--require-hashes",
-                "--no-deps",
+                *_INSTALL_FLAGS,
                 "--target",
                 str(site_dir),
                 "--python-version",
@@ -521,15 +653,18 @@ def _copy_source(source: Path, site_dir: Path, selectors: tuple[str, ...] = ()) 
         _ = shutil.copy2(selected, target, follow_symlinks=False)
 
 
-def _reject_links(root: Path) -> None:
-    """Reject any symlink or special file in the build tree, just before shiv reads it."""
+def _reject_links(root: Path, linked: frozenset[str] = _NO_NAMES) -> None:
+    """Reject any symlink or special file in the build tree, just before shiv reads it.
+
+    A top-level name in ``linked`` is a link that ``_view_layer`` made and checked; it is allowed.
+    """
     for directory, directories, files in os.walk(root):
         for name in (*directories, *files):
             path = Path(directory) / name
             mode = path.lstat().st_mode
-            if stat.S_ISLNK(mode):
+            if stat.S_ISLNK(mode) and not (name in linked and Path(directory) == root):
                 raise ValueError(f"build tree must not contain symlink: {path}")
-            if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+            if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode) or stat.S_ISLNK(mode)):
                 raise ValueError(f"build tree must hold only regular files and directories: {path}")
 
 
@@ -541,17 +676,27 @@ def _ensure_out_dir(out_dir: Path) -> Path:
     return out_dir.resolve()
 
 
+def _is_volatile(path: Path, is_dir: bool, *, top_level: bool = False) -> bool:
+    """Whether ``_strip_volatile`` removes ``path``: bytecode, or install metadata inside a ``.dist-info`` directory."""
+    if is_dir:
+        return path.name == "__pycache__"
+    return path.suffix == ".pyc" or (
+        not top_level and path.name in _VOLATILE_INSTALL_FILES and path.parent.name.endswith(".dist-info")
+    )
+
+
 def _strip_volatile(site_dir: Path) -> None:
     # Installed console scripts embed the builder's absolute Python path.
     shutil.rmtree(site_dir / "bin", ignore_errors=True)
-    for path in sorted(site_dir.rglob("*"), reverse=True):
-        if path.is_dir():
-            if path.name == "__pycache__":
-                shutil.rmtree(path, ignore_errors=True)
-        elif path.suffix == ".pyc" or (
-            path.name in _VOLATILE_INSTALL_FILES and path.parent.name.endswith(".dist-info")
-        ):
-            path.unlink()
+    # os.walk does not follow a link, so a strip never deletes through a link into the layer.
+    for directory, directories, files in os.walk(site_dir):
+        here = Path(directory)
+        for name in [name for name in directories if _is_volatile(here / name, True)]:
+            directories.remove(name)
+            shutil.rmtree(here / name, ignore_errors=True)
+        for name in files:
+            if _is_volatile(here / name, False):
+                (here / name).unlink()
 
 
 def _shiv(site_dir: Path, entry: str, out_path: Path) -> None:
