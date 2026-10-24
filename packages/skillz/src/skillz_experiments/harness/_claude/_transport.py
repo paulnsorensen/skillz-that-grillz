@@ -57,7 +57,7 @@ from skillz_experiments.harness._claude._login import (
     check_ancestors,
     login_failed,
     preflight_leak,
-    user_memory,
+    keychain_environment,
     ClaudeLogin,
     login_credential_kind,
 )
@@ -72,6 +72,7 @@ from skillz_experiments.harness._claude._sandbox import (
 )
 from skillz_experiments.harness._claude._journey import Exit, NO_INIT, TurnRunner
 from skillz_experiments.harness._claude._late import LateBuiltins
+from skillz_experiments.harness._claude._memory import UserMemory
 from skillz_experiments.harness._claude._preflight import Preflight, probe_sandbox
 from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings
 
@@ -162,7 +163,15 @@ class ClaudeCode:
             self._stage(workspace)
             return self._list(workspace, frozenset())[0]
 
+        def memory_start(workspace: Path, text: str, timeout: float) -> subprocess.CompletedProcess[str]:
+            self._stage(workspace)
+            settings_path = workspace.parent / "memory-settings.json"
+            _ = settings_path.write_text(json.dumps(self._floor(workspace, ())))
+            return process(self._base(settings_path), cwd=workspace, timeout=timeout,
+                           environment=self._environment(workspace), input_text=text)
+
         self.late = LateBuiltins(builtin_listing)
+        self.memory = UserMemory(self.config_dir, budget, memory_start)
         self._unix_sockets: bool | None = None
 
     @property
@@ -200,6 +209,8 @@ class ClaudeCode:
 
     def _environment(self, workspace: Path) -> dict[str, str]:
         environment = _executable_environment(self.executable) | {"HOME": str(workspace / "home"), "TMPDIR": str(workspace / "tmp")}
+        if sys.platform == "darwin":
+            return environment | keychain_environment()
         return environment | {"CLAUDE_CONFIG_DIR": str(self.config_dir)}
 
     def _stage(self, workspace: Path, candidate: Candidate | None = None) -> None:
@@ -372,11 +383,8 @@ class ClaudeCode:
         return workspace, sealed, token
 
     def _check_memory(self) -> None:
-        """On macOS, stop before any call when user memory in the real config directory would load."""
-        memory = user_memory(self.config_dir) if sys.platform == "darwin" else []
-        if memory:
-            raise preflight_leak(f"user memory {', '.join(memory)} in the real config directory {self.config_dir} "
-                                  + "would load; move it out for the run")
+        """On macOS, stop before any call when user memory in the real config directory loads."""
+        self.memory.check()
 
     def check_helper_sandbox(self) -> None:
         """Run the free helper checks: user memory and the helper sandbox probe. Neither makes a model call."""

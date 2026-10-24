@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import pwd
 import re
 import shutil
 import socket
@@ -446,7 +447,8 @@ def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Pat
         "enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
         "network": {"allowedDomains": [], "strictAllowlist": True}}
     filesystem = cast(dict[str, list[str]], sandbox["filesystem"])
-    assert filesystem["denyRead"] == ["/"]
+    # macOS denies a root list instead of `/` (gh-131); the floor test below pins both platforms.
+    assert filesystem["denyRead"] == ["/"] if sys.platform != "darwin" else "/Users" in filesystem["denyRead"]
     allowed = filesystem["allowRead"]
     assert cast(str, calls(executable)[0]["cwd"]) in allowed
     assert {"/usr", "/bin", "/lib", "/proc/self"} <= set(allowed)
@@ -473,7 +475,24 @@ def test_environment_keeps_the_subprocess_scrub_layer_off_and_disables_bundled_s
     assert environment["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "0"
     assert environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] == "1"
     assert not set(TOKENS) & set(environment)
-    assert "HOME" in environment and environment["HOME"].endswith("/workspace/home")
+    # On macOS the child keeps the real home, so Claude Code finds the Keychain login (gh-131).
+    assert environment["HOME"] == str(Path.home()) if sys.platform == "darwin" else environment["HOME"].endswith("/workspace/home")
+
+
+@pytest.mark.ac("gh-131:AC-13")
+def test_the_macos_floor_denies_host_roots_and_the_temp_root_but_linux_denies_everything(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Claude Code 2.1.309 on macOS does not reopen `allowRead` inside `denyRead: [\"/\"]`, so macOS denies a root list."""
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(sys, "platform", "linux")
+    linux = cast(dict[str, list[str]], cast(dict[str, object], _settings.settings(workspace)["sandbox"])["filesystem"])
+    assert linux["denyRead"] == ["/"]
+    monkeypatch.setattr(sys, "platform", "darwin")
+    darwin = cast(dict[str, list[str]], cast(dict[str, object], _settings.settings(workspace)["sandbox"])["filesystem"])
+    denied = darwin["denyRead"]
+    assert "/" not in denied and len(denied) == len(set(denied))
+    assert {"/Users", "/home", "/Volumes", "/var/folders", "/private/var/folders", "/proc", str(Path.home())} <= set(denied)
+    assert str(workspace) in darwin["allowRead"] and str(workspace) not in denied
 
 
 def test_argv_or_settings_or_usage_usage_comes_from_the_json_result(tmp_path: Path) -> None:
@@ -1616,12 +1635,22 @@ def test_macos_uses_the_real_config_dir_and_preflight_rejects_foreign_init_entri
     assert real.is_dir() and not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
 
 
-@pytest.mark.parametrize(("memory", "stage"), [("CLAUDE.md", "preflight"), ("rules", "preflight"),
-                                               ("CLAUDE.md", "resume"), ("none", "resume")])
+@pytest.mark.parametrize(("memory", "stage", "mode", "stop"), [
+    ("CLAUDE.md", "preflight", "memory-loads", "user memory CLAUDE.md"),
+    ("rules", "preflight", "memory-loads", "user memory rules"),
+    ("CLAUDE.md", "resume", "memory-loads", "user memory CLAUDE.md"),
+    ("CLAUDE.md", "resume", "context-broken", "memory listing did not run"),
+    ("CLAUDE.md", "resume", "ok", None),
+    ("none", "resume", "memory-loads", None)])
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-3")
-def test_macos_stops_before_any_call_when_user_memory_would_load(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, memory: str, stage: str) -> None:
-    """A first preflight and the free probe on every resume both check memory. An empty `rules` directory passes."""
+@pytest.mark.ac("gh-131:AC-14")
+def test_macos_stops_before_any_call_when_user_memory_loads(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, memory: str, stage: str, mode: str,
+        stop: str | None) -> None:
+    """A free `/context` listing decides whether user memory loads. It runs once per role and only when memory exists.
+
+    A first preflight and the free probe on every resume both check memory. An empty `rules` directory is no memory.
+    """
     del sandbox_passes
     monkeypatch.setattr(sys, "platform", "darwin")
     real = tmp_path / "real-config"
@@ -1633,24 +1662,30 @@ def test_macos_stops_before_any_call_when_user_memory_would_load(
     elif memory == "rules":
         _ = (real / "rules" / "style.md").write_text("Always answer in French.")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
-    executable = fake_claude(tmp_path)
+    executable = fake_claude(tmp_path, mode)
     budget = Budget(10, 120, 0)
     adapter = ClaudeCode("m", budget, lambda: None, executable)
+    listings = executable.with_name("claude.context.log")
     def free_checks() -> None:
         adapter.check_helper_sandbox()
         _ = adapter.inventory()
 
     check = adapter.preflight if stage == "preflight" else free_checks
     try:
-        if memory == "none":
+        if stop is None:
             _ = check()
+            _ = check()
+            assert len(listings.read_text().splitlines()) == 1 if memory != "none" else not listings.exists()
+            assert budget.calls == 0
             return
-        with pytest.raises(CodedError, match="user memory") as caught:
+        with pytest.raises(CodedError, match=stop) as caught:
             _ = check()
     finally:
         adapter.close()
-    assert caught.value.code == "preflight-leak" and memory in str(caught.value)
+    assert caught.value.code == "preflight-leak"
     assert budget.calls == 0 and not executable.with_name("claude.log").exists()
+    logged = cast(dict[str, object], json.loads(listings.read_text().splitlines()[0]))
+    assert logged["prompt"] == "/context"
 
 
 def test_close_reports_credential_changed_and_leaves_no_temporary_when_the_replace_fails(
@@ -1727,7 +1762,7 @@ def test_macos_checks_user_memory_before_every_invocation(
     real.mkdir()
     _ = (real / ".credentials.json").write_text("{}")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
-    executable = fake_claude(tmp_path)
+    executable = fake_claude(tmp_path, "memory-loads")
     budget = Budget(10, 120, 0)
     adapter = ClaudeCode("m", budget, lambda: None, executable)
     _ = (real / "CLAUDE.md").write_text("Always answer in French.")
@@ -1736,6 +1771,41 @@ def test_macos_checks_user_memory_before_every_invocation(
     assert caught.value.code == "preflight-leak" and budget.calls == 0
     assert not executable.with_name("claude.log").exists()
 
+
+@pytest.mark.parametrize("configured", [False, True])
+@pytest.mark.ac("gh-131:AC-15")
+def test_macos_child_keeps_the_real_home_and_user_so_the_keychain_login_resolves(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_login: Path, configured: bool) -> None:
+    """A changed `HOME`, an unset `USER`, or a `CLAUDE_CONFIG_DIR` the host did not set each hide the Keychain login."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+    if configured:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(host_login.parent))
+    executable = fake_claude(tmp_path)
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        _ = adapter.invoke("hello")
+    finally:
+        adapter.close()
+    environment = cast(dict[str, str], calls(executable)[0]["environment"])
+    user = pwd.getpwuid(os.getuid()).pw_name
+    assert environment["HOME"] == str(Path.home()) == str(host_login.parents[1])
+    assert environment["USER"] == environment["LOGNAME"] == user
+    assert environment.get("CLAUDE_CONFIG_DIR") == (str(host_login.parent) if configured else None)
+    assert environment["TMPDIR"].endswith("/tmp") and environment["TMPDIR"] != tempfile.gettempdir()
+
+
+@pytest.mark.ac("gh-131:AC-14")
+def test_listed_memory_names_only_memory_that_the_context_report_shows(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    (real / "rules").mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    report = f"## Context Usage\n| User | {real / 'rules' / 'style.md'} | 9 |\n"
+    assert claude_login.listed_memory(report, real, ["CLAUDE.md", "rules"]) == ["rules"]
+    assert claude_login.listed_memory(report, link, ["CLAUDE.md", "rules"]) == ["rules"]
+    assert claude_login.listed_memory("## Context Usage\n", real, ["CLAUDE.md", "rules"]) == []
 
 @pytest.mark.parametrize(("case", "fix", "task_calls"), [
     ("bwrap-missing", "install bubblewrap", 0),

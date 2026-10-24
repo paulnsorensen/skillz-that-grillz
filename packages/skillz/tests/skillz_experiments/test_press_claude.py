@@ -106,7 +106,9 @@ def assert_floor(call: dict[str, object]) -> None:
     assert "--strict-mcp-config" in argv
     settings = cast(dict[str, dict[str, object]], json.loads(cast(str, call["settings"])))
     assert {key: settings["sandbox"][key] for key in FLOOR} == FLOOR
-    assert cast(dict[str, dict[str, object]], settings["sandbox"])["filesystem"]["denyRead"] == ["/"]
+    denied = cast(dict[str, dict[str, list[str]]], settings["sandbox"])["filesystem"]["denyRead"]
+    # macOS denies a root list instead of `/` (gh-131).
+    assert denied == ["/"] if sys.platform != "darwin" else {"/Users", "/var/folders"} <= set(denied)
 
 
 @pytest.mark.parametrize("schema", [None, {"type": "object"}])
@@ -165,10 +167,12 @@ def test_the_claude_child_environment_holds_only_the_allowed_names(
     environment = cast(dict[str, str], calls(executable)[0]["environment"])
     # On macOS, the OS adds `__CF_USER_TEXT_ENCODING` to every process.
     # The Xcode `python3` shim that runs the fake adds the build-path names.
-    host: set[str] = {"__CF_USER_TEXT_ENCODING", "SDKROOT", "CPATH", "LIBRARY_PATH", "MANPATH"} if sys.platform == "darwin" else set()
+    # The macOS child keeps the real home and user name, so Claude Code finds the Keychain login (gh-131).
+    host: set[str] = ({"__CF_USER_TEXT_ENCODING", "SDKROOT", "CPATH", "LIBRARY_PATH", "MANPATH", "USER", "LOGNAME"}
+                      if sys.platform == "darwin" else set())
     assert set(environment) - {"LC_CTYPE"} - host <= {"PATH", "HOME", "TMPDIR", "LANG", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
                                                       "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS", "CLAUDE_CONFIG_DIR"}
-    assert environment["HOME"] != str(Path.home())
+    assert (environment["HOME"] == str(Path.home())) == (sys.platform == "darwin")
 
 
 def test_claude_role_rejects_a_shell_string_a_second_argument_and_an_unknown_field(tmp_path: Path) -> None:

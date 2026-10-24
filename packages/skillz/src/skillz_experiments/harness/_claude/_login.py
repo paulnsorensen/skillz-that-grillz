@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import pwd
 import shutil
 import stat
 import sys
@@ -193,6 +194,24 @@ class ClaudeLogin:
             raise CodedError("credential-changed", f"the Claude login file {path} changed during the run; "
                              + "the Claude login link moved, or the runner could not restore a refreshed login. "
                              + "Log in again with `claude`, then start a new run")
+
+
+def keychain_environment() -> dict[str, str]:
+    """Return the environment parts that let a macOS Claude Code child find the Keychain login (#131).
+
+    Claude Code keys the Keychain entry to the config directory and looks it up for the login user. A changed `HOME`,
+    an explicit `CLAUDE_CONFIG_DIR` that the user did not set, or a missing `USER` each hide the login. So the child
+    gets the real home and user name, and `CLAUDE_CONFIG_DIR` only when the host sets it.
+    """
+    user = pwd.getpwuid(os.getuid()).pw_name
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    return {"HOME": str(Path.home()), "USER": user, "LOGNAME": user} | ({} if configured is None else {"CLAUDE_CONFIG_DIR": configured})
+
+
+def listed_memory(listing: str, config_dir: Path, found: list[str]) -> list[str]:
+    """Return the entries of `found` that the `/context` text `listing` shows as loaded, by path in `config_dir`."""
+    roots = {name: {str(config_dir / name), str((config_dir / name).resolve())} for name in found}
+    return [name for name in found if any(root in listing for root in roots[name])]
 
 
 def user_memory(config_dir: Path) -> list[str]:

@@ -24,14 +24,21 @@ RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/se
 MACOS_READ = ("/System", "/Library")
 
 
+MACOS_DENY_READ = ("/Volumes", "/private/var/folders", "/var/folders")
+"""The macOS roots that Bash may not read, besides the host roots. Claude Code 2.1.309 on macOS does not reopen a
+narrower `allowRead` inside `denyRead: ["/"]`, and its own temp files then fail (#131). So macOS denies a root list."""
+
+
 def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
              unix_sockets: bool = False) -> dict[str, object]:
     """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
 
-    Sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
-    workspace and the runtime roots. The Read tool follows permission rules, not the sandbox, so a deny
-    rule covers the host roots, `/proc`, and the run directory `out` for that tool. Nothing else confines that
-    tool, so the live preflight proves it: the Read tool must fail to read a file outside the workspace. Commands cannot write
+    On Linux, sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
+    workspace and the runtime roots. On macOS, they cannot read the host roots, the user temp roots, the temporary
+    directory, the home directory, or the run directory, and the workspace allow reopens its own path. Other system
+    paths stay readable. The Read tool follows permission rules, not the sandbox, so a deny rule covers the host
+    roots, `/proc`, and the run directory `out` for that tool. Nothing else confines that tool, so the live preflight
+    proves it: the Read tool must fail to read a file outside the workspace. Commands cannot write
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
     Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
     `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter, which cannot start where the host blocks
@@ -47,7 +54,7 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
     protected = [f"{root}/{name}" for root in unique([str(workspace), str(workspace.resolve())]) for name in (".agents", ".claude")]
     floor: dict[str, object] = {
         "sandbox": {"enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False, "network": network,
-                    "filesystem": {"denyRead": ["/"], "denyWrite": protected,
+                    "filesystem": {"denyRead": _deny_read([*hidden, *temporary]), "denyWrite": protected,
                                    "allowRead": unique([str(workspace), str(workspace.resolve()), *runtime])}},
         "disableBundledSkills": True, "disableAllHooks": True,
         "permissions": {"allow": ["Skill", "Bash"],
@@ -56,6 +63,16 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
     if overrides:
         floor["skillOverrides"] = {name: "off" for name in sorted(overrides)}
     return floor
+
+
+def _deny_read(hidden: list[str]) -> list[str]:
+    """Return the `denyRead` list of the sandbox floor: `/` on Linux, and a root list on macOS.
+
+    On macOS, `hidden` holds the temporary directory too, so a `TMPDIR` outside `/var/folders` stays denied.
+    """
+    if sys.platform != "darwin":
+        return ["/"]
+    return unique([*PERMISSION_DENY_ROOTS, *MACOS_DENY_READ, str(Path.home()), *hidden])
 
 
 @dataclass(frozen=True)

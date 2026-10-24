@@ -7,7 +7,7 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
 
 ## Records
 
-### ADR-001: Reuse the existing Claude login and fail closed without a sandbox  [status: superseded in part by skillz-autoimprove ADR-006]
+### ADR-001: Reuse the existing Claude login and fail closed without a sandbox  [status: superseded in part by skillz-autoimprove ADR-006; amended 2026-10-23 for gh-131]
 
 - **Context:** The Claude transport isolates `HOME` and forwards only token variables, so a Linux user must set a token. The Codex transport already links `auth.json`. Prototype pc-2 showed that `CLAUDE_CONFIG_DIR` with a symlinked `.credentials.json` logs in with no key. The prototype host could not run the Claude Bash sandbox because of the AppArmor user-namespace restriction and a missing `socat`.
 - **Decision:** On Linux, set `CLAUDE_CONFIG_DIR` to a temporary directory outside the workspace that holds only a symlink to `.credentials.json`. On macOS, use the real config directory with `--restricted`, which ignores user settings files. The preflight stops a run before any model call when `CLAUDE.md` or a `rules` directory with `.md` files exists there. The live preflight stops a run when user skills, plugins, agents, or MCP servers load. Forward no token variable.
@@ -19,6 +19,12 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
   Stop with `sandbox-unavailable` and a fix hint when the Bash sandbox cannot start.
 - **Alternatives:** A token from `claude setup-token`. A copied credential file. An exported Keychain item on macOS. A weaker nested sandbox. A model-visible memory canary on macOS. A close that never writes the real login and stops the run when the link is replaced.
 - **Consequences:** No key setup on Linux. This record amends ADR-004 in `skillz-autoimprove.md`, which rejected copied OAuth credentials. The copy-back writes the user's login file, but only with a refreshed login file. Concurrent roles can each refresh the login in the shared directory, and the last write wins. A macOS user with a global `CLAUDE.md` must move it out for a run. macOS behavior needs a test on a real Mac.
+- **Amendment 2026-10-23 (issue #131):** A live macOS run found three faults. Each one stops every macOS run before any useful call.
+  - Claude Code keys the Keychain login to the config directory and the login user. An explicit `CLAUDE_CONFIG_DIR`, a changed `HOME`, or an unset `USER` hides the login, and the run stops with `login-missing`. The macOS child now keeps the real `HOME`, gets `USER` and `LOGNAME` from the password database, and gets `CLAUDE_CONFIG_DIR` only when the host sets it. The workspace `HOME` stays on Linux.
+  - `--setting-sources project` already keeps the user `CLAUDE.md` and `rules` out (checked with `/context` on Claude Code 2.1.309). The static stop made every user with a global `CLAUDE.md` move it. When memory exists, the runner now runs `claude -p /context` once per role in each process. It is a local command, so it makes no model call. The run stops with `preflight-leak` when the listing names the memory or does not run.
+  - The sandbox floor `denyRead: ["/"]` breaks on macOS: see the skillz-autoimprove ADR-004 amendment of the same date.
+  - Alternatives: a `claude setup-token` token, and a copied Keychain item. Both need user setup or put a secret in a file, so they are rejected.
+  - Consequence: no user setup on macOS. The child can read the real `~/.claude.json`. `--strict-mcp-config` and the live inventory still stop user MCP servers, skills, plugins, and agents. Account connectors of a claude.ai login can still load; this gap is open.
 
 ### ADR-002: Gate on a separate holdout with a clustered paired delta above 2*SE  [status: accepted]
 

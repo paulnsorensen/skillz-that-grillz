@@ -3,7 +3,8 @@
 
 The mode comes from a sidecar file named `<script>.mode`. Each call appends its argv, working
 directory, settings, standard input, environment, and the entries of its `CLAUDE_CONFIG_DIR` to `<script>.log`.
-An `initialize` control request (the free skill inventory) logs to `<script>.inventory.log` instead.
+An `initialize` control request (the free skill inventory) logs to `<script>.inventory.log` instead,
+and a `/context` prompt (the free memory listing) logs to `<script>.context.log`.
 Like Claude Code 2.1.29x, it lists its own commands and built-in plugins even when bundled skills are off.
 """
 from __future__ import annotations
@@ -255,6 +256,22 @@ def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: 
     return 0
 
 
+def context_listing(mode: str) -> int:
+    """Answer the free `/context` listing with no model turn.
+
+    `memory-loads` lists the user memory of the config directory as loaded; `context-broken` sends no report.
+    """
+    if mode == "context-broken":
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": "Unknown skill: context", "usage": USAGE})
+        return 0
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    memory = [config / "CLAUDE.md", *sorted((config / "rules").glob("*.md"))] if mode == "memory-loads" else []
+    rows = "".join(f"| User | {path} | 9 |\n" for path in memory if path.is_file())
+    report = f"## Context Usage\n\n### Memory Files\n\n| Type | Path | Tokens |\n|------|------|--------|\n{rows}"
+    emit({"type": "result", "subtype": "success", "is_error": False, "result": report, "usage": USAGE})
+    return 0
+
+
 def config_entries() -> dict[str, str]:
     """List the config directory: each symlink maps to its target, and each other entry to `file`."""
     directory = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/nonexistent"))
@@ -345,7 +362,9 @@ def main() -> int:
     for line in prompt.split("\nCAPTURE FILES:\n", 1)[1].splitlines() if "\nCAPTURE FILES:\n" in prompt else []:
         captured[line] = Path(line).read_bytes().hex() if Path(line).is_file() else None
     listing = "--input-format" in argv
-    with script.with_name(script.name + (".inventory.log" if listing else ".log")).open("a") as log:
+    context = not listing and prompt.strip() == "/context"
+    suffix = ".inventory.log" if listing else ".context.log" if context else ".log"
+    with script.with_name(script.name + suffix).open("a") as log:
         _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,
                                   "environment": dict(os.environ), "config_entries": config_entries(),
                                   "captured": captured, "staged": staged_modes(),
@@ -359,6 +378,8 @@ def main() -> int:
     config = cast(dict[str, object], json.loads(settings or "{}"))
     if listing:
         return inventory(mode, config)
+    if context:
+        return context_listing(mode)
     if mode == "no-init-auth":
         print("Invalid API key - Please run /login", file=sys.stderr)
         return 1
