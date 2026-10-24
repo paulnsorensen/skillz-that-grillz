@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import final
+from typing import cast, final
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import write_bytes
@@ -16,6 +16,19 @@ REFLECTIONS = "reflections"
 # The largest serialized record, in bytes, markers included.
 RECORD_LIMIT = 64 * 1024
 TRUNCATED = "[truncated]"
+
+
+def _redacted(value: object) -> object:
+    """Redact each string, key and value, inside `value`. Other non-JSON objects pass through `str` first."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {redact(str(key)): _redacted(item) for key, item in cast(dict[object, object], value).items()}
+    if isinstance(value, list | tuple):
+        return [_redacted(item) for item in cast(list[object] | tuple[object, ...], value)]
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    return redact(str(value))
 
 
 def _encoded(record: dict[str, object]) -> bytes:
@@ -46,9 +59,10 @@ class ReflectionLog:
         Raise `reflection-record-exists` when the file is already there, and `reflection-record-failed` on a write error.
         """
         path = self._directory / f"{ordinal}.json"
-        # Redact each whole text first: a cut before redaction can drop the closing quote of a credential value.
-        answer_text = json.dumps(answer, sort_keys=True, default=str)
-        data = _fitted(ordinal, redact(prompt), redact(answer_text))
+        # Redact every string first: a cut before redaction can drop the closing quote of a credential value, and
+        # JSON encoding adds backslashes that hide an escaped quote.
+        answer_text = json.dumps(_redacted(answer), sort_keys=True, default=str)
+        data = _fitted(ordinal, redact(prompt), answer_text)
         try:
             if self._directory.is_symlink():
                 raise OSError(f"{self._directory} is a symlink")

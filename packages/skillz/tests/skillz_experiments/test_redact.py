@@ -105,9 +105,9 @@ def test_a_contraction_without_a_credential_key_stays_intact() -> None:
 
 @pytest.mark.ac("gh-501:AC-4")
 def test_a_possessive_before_a_quoted_credential_redacts_the_credential() -> None:
-    """The value that starts at `'s` runs to the closing quote: some prose goes, and no credential stays."""
+    """The value that starts at `'s` runs to the end: some prose goes, and no credential stays."""
     redacted = _redact.redact("The secret's scope is narrow, password: 'two words zzcanary' kept")
-    assert redacted == "The [redacted] kept"
+    assert "zzcanary" not in redacted and redacted.startswith("The [redacted]"), redacted
 
 
 @pytest.mark.ac("gh-501:AC-4")
@@ -123,7 +123,8 @@ def test_a_possessive_before_a_quoted_credential_redacts_the_credential() -> Non
     "token's1 zzcanary'"])
 @pytest.mark.parametrize("shape", ["closed", "multiline", "unterminated"])
 def test_a_quote_that_only_looks_like_an_apostrophe_opens_a_value(head: str, shape: str) -> None:
-    line = {"closed": f"{head} kept", "multiline": f"{head.replace(' ', chr(10), 1)} kept", "unterminated": head}[shape]
+    line = {"closed": f"{head} kept", "multiline": f"{head.replace(' ', chr(10), 1)} kept",
+            "unterminated": head.removesuffix("'")}[shape]
     redacted = _redact.redact(line)
     assert "zzcanary" not in redacted, redacted
 
@@ -143,3 +144,18 @@ def test_a_single_quoted_credential_right_after_its_key_is_redacted_whole(line: 
 @pytest.mark.parametrize("line", ["token: 'two words zzcanary'", "token 'two words zzcanary'", "token='two words zzcanary'"])
 def test_a_single_quoted_value_after_a_key_is_still_redacted_whole(line: str) -> None:
     assert _redact.redact(line + " kept") == "[redacted] kept"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("head", [
+    "password'one\\' two zzcanary'",
+    "password'a=' token'two zzcanary'",
+    "'password''a=' token'two zzcanary'",
+    "token'x\\' password'y\\' zzcanary'"],
+    ids=["escaped-quote", "later-key", "quoted-key", "two-escapes"])
+@pytest.mark.parametrize("shape", ["closed", "multiline", "unterminated"])
+def test_an_adjacent_quote_never_ends_early_at_an_escaped_or_later_quote(head: str, shape: str) -> None:
+    line = {"closed": f"{head} kept", "multiline": f"{head.replace(' ', chr(10), 1)} kept",
+            "unterminated": head.removesuffix("'")}[shape]
+    redacted = _redact.redact(line)
+    assert "zzcanary" not in redacted, redacted

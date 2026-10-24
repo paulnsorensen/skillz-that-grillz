@@ -37,8 +37,22 @@ def test_a_credential_whose_closing_quote_lies_past_64_kib_is_redacted_before_th
     assert "ZZCANARY" not in data.decode()
     record = cast(dict[str, object], json.loads(data))
     assert record["ordinal"] == 7 and cast(str, record["prompt"]).startswith("Improve. [redacted] end")
-    assert record["answer"] == '{"@hypothesis": null, "SKILL.md": [redacted] done"}'
+    assert record["answer"] == '{"@hypothesis": null, "SKILL.md": "[redacted] done"}'
     assert sorted(item.name for item in (tmp_path / "reflections").iterdir()) == ["7.json"]
+
+
+ESCAPED = 'password=\\"first zzcanary last\\" kept'
+
+
+@pytest.mark.ac("gh-501:AC-6")
+@pytest.mark.parametrize("answer", [{"SKILL.md": ESCAPED}, {ESCAPED: 1}, ["ok", (ESCAPED,)]], ids=["value", "key", "nested"])
+def test_an_escaped_multiword_credential_in_the_answer_leaves_no_canary(tmp_path: Path, answer: object) -> None:
+    ReflectionLog(tmp_path).record(2, "prompt", answer)
+    path = tmp_path / "reflections" / "2.json"
+    assert "zzcanary" not in path.read_text()
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    json.loads(path.read_bytes())
+
 
 @pytest.mark.ac("gh-501:AC-6")
 def test_a_short_record_holds_the_redacted_prompt_and_answer_whole(tmp_path: Path) -> None:
