@@ -565,6 +565,42 @@ def test_an_out_directory_open_to_other_users_is_refused_before_any_call(
     assert state.evaluated == [] and not (out / "run.json").exists()
 
 
+@pytest.mark.ac("gh-493:AC-1")
+@pytest.mark.ac("gh-493:AC-4")
+def test_an_out_directory_inside_the_target_is_refused_at_start_before_any_call(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
+    target, state = make_target(tmp_path), State()
+    out = target / "run"
+    _ = write_draft(out)
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "out-inside-target" and "mktemp -d" in str(caught.value)
+    assert state.evaluated == [] and not (out / "run.json").exists()
+
+
+@pytest.mark.ac("gh-493:AC-2")
+@pytest.mark.ac("gh-493:AC-4")
+def test_a_run_directory_moved_inside_the_target_is_refused_on_resume_before_any_call(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    prepared = _prepared(tmp_path, target, write_draft, approvals)
+    out = target / "run"
+    _ = shutil.move(prepared, out)
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "out-inside-target" and "mktemp -d" in str(caught.value)
+    assert state.evaluated == []
+    assert read(out / "run.json")["phase"] == "prepared"
+
+
+@pytest.mark.ac("gh-493:AC-3")
+def test_a_sibling_out_directory_outside_the_target_passes_the_guard(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    assert not out.is_relative_to(target) and (out / "run.json").exists()
+
+
 def test_a_symlinked_out_directory_is_refused(tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
     target, state = make_target(tmp_path), State()
     real = tmp_path / "real"

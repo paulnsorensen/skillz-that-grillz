@@ -384,7 +384,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                          + "configuration")
     statistics_given = _check_statistics_flags(statistics)
     if is_inside(out, target):
-        raise ValueError("--out must be outside the target skill directory")
+        raise CodedError("out-inside-target", f"{out} is inside the target skill directory; "
+                         + "use a private directory outside the skill from `mktemp -d`")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
     require_private(out)
     path = out / "run.json"
