@@ -102,7 +102,11 @@ def _echo(work: Path) -> tuple[Path, list[dict[str, object]]]:
 
     def case(name: str) -> dict[str, object]:
         request = f"Echo the text `{name}`."
-        return {"kind": "task", "request": request, "files": {"fixture.md": f"{name}\n"}, "expected": {"request": request}}
+        criteria = [{"id": "verbatim", "text": f"THE skill SHALL return `{name}` unchanged, in its original letter order.",
+                     "must": True},
+                    {"id": "json", "text": "THE skill SHALL reply with one JSON value."}]
+        return {"kind": "task", "request": request, "files": {"fixture.md": f"{name}\n"},
+                "expected": {"request": request, "criteria": criteria}}
     return target, _cases(case)
 
 
@@ -168,6 +172,10 @@ def _hybrid_mixed(work: Path, harness: str, model: str) -> Setup:
     document["statistics"] = {"min_gain": 0, "min_lower_bound": 0, "family_budget": 0.2, "family_budgets": {"f2": 0.3},
                               "min_coverage": 0.5}
     _ = contract.write_text(json.dumps(document), encoding="utf-8")
+    for case in draft:
+        expected = cast(dict[str, object], case["expected"])
+        expected["criteria"] = [{"id": "exact-copy", "must": True, "from": "expected_output",
+                                 "text": f"THE skill SHALL write `{expected['text']}` to `result.txt` with no change of case."}]
     config: dict[str, object] = {"schema_version": 1, "adapter": "codex", "roles": {"judge": _command_role(work)}}
     path = work / "harness.json"
     _ = path.write_text(json.dumps(config), encoding="utf-8")
@@ -204,7 +212,9 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
 
     def case(name: str) -> dict[str, object]:
         return {"kind": "journey", "request": "Echo what I tell you.", "brief": f"Say `{name}` once, then stop.",
-                "max_turns": 2, "files": {"fixture.md": f"{name}\n"}, "expected": {"must": [name]}}
+                "max_turns": 2, "files": {"fixture.md": f"{name}\n"},
+                "expected": {"must": [name], "criteria": [{"id": "says-text", "from": "must:0", "must": True,
+                                                         "text": f"THE agent SHALL say `{name}` once."}]}}
     return Setup(target, _cases(case), _builtin(harness), ("--harness", harness, "--edit", "prose"),
                  expect=None if harness == "claude" else "journey-unsupported")
 
@@ -226,14 +236,14 @@ def _fromargs_benefit(work: Path, harness: str, model: str) -> Setup:
 
 
 SCENARIOS: dict[str, Scenario] = {
-    "basic": Scenario(_basic, 97),
-    "command-harness": Scenario(_command_harness, 97, bridge=True),
-    "command-grader": Scenario(_command_grader, 53),
-    "hybrid-mixed": Scenario(_hybrid_mixed, 97, bridge=True),
-    "prose-cli": Scenario(_prose_cli, 53),
-    "journey": Scenario(_journey, 229),
-    "resume": Scenario(_basic, 97, resume=True),
-    "fromargs-benefit": Scenario(_fromargs_benefit, 122, author=author, check=check_cli),
+    "basic": Scenario(_basic, 130),
+    "command-harness": Scenario(_command_harness, 130, bridge=True),
+    "command-grader": Scenario(_command_grader, 71),
+    "hybrid-mixed": Scenario(_hybrid_mixed, 130, bridge=True),
+    "prose-cli": Scenario(_prose_cli, 71),
+    "journey": Scenario(_journey, 601),
+    "resume": Scenario(_basic, 130, resume=True),
+    "fromargs-benefit": Scenario(_fromargs_benefit, 167, author=author, check=check_cli),
 }
 """Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it)."""
 NAMES = (*SCENARIOS, "analytics")
@@ -386,6 +396,22 @@ def _revision() -> str:
     return found.stdout.strip()
 
 
+def _dry_verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
+    """Return whether a dry record passes, and the reason.
+
+    A dry run passes when it stops with the code that the scenario expects, or when it reaches the budget question
+    with an estimate at most the cap. An earlier stop, or an estimate over the cap, fails, so that a live run does not.
+    """
+    code, expect, estimate = entry.get("code"), entry.get("expect"), entry.get("estimate")
+    if expect is not None and code == expect:
+        return True, f"the run stopped with the expected code {expect}"
+    if entry.get("verdict") != "dry":
+        return False, f"the dry run stopped at stage {entry.get('stage')} with code {code} before the budget question"
+    if not isinstance(estimate, int) or estimate > scenario.cap:
+        return False, f"the run needs {estimate} calls; the stated cap is {scenario.cap}"
+    return True, f"the estimate of {estimate} calls is at most the cap of {scenario.cap}"
+
+
 def _verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
     """Return whether a run record passes, and the reason.
 
@@ -446,7 +472,11 @@ def test_a_live_scenario_completes_and_exports_or_stops_with_a_code(name: str, t
         RECORDS.parent.mkdir(exist_ok=True)
         with RECORDS.open("a", encoding="utf-8") as stream:
             _ = stream.write(json.dumps(entry) + "\n")
-    if scenario is None or entry["verdict"] == "dry":
+    if scenario is None:
+        return
+    if dry:
+        passed, reason = _dry_verdict(entry, scenario)
+        assert passed, f"{reason}: {entry}"
         return
     spent = [value for value in (entry.get("preflight_calls"), entry.get("calls")) if isinstance(value, int)]
     assert sum(spent) <= scenario.cap + PREFLIGHT_CALLS, entry
@@ -552,3 +582,16 @@ def test_the_fromargs_benefit_scenario_fails_a_record_that_the_shared_rule_passe
     assert _verdict(record, BASIC)[0], "the shared rule passes a coded stop and a completed run"
     passed, reason = _verdict(record, SCENARIOS["fromargs-benefit"])
     assert not passed and ("cli=None" in reason or "cases-too-easy" in reason), reason
+
+
+@pytest.mark.parametrize(("entry", "passes", "phrase"), [
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 130}, True, "at most the cap"),
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 131}, False, "the stated cap is 130"),
+    ({"verdict": "stopped", "stage": "cases", "expect": None, "code": "case-criteria-missing"}, False,
+     "stage cases with code case-criteria-missing"),
+    ({"verdict": "stopped", "stage": "cases", "expect": "journey-unsupported", "code": "journey-unsupported"}, True,
+     "expected code")])
+def test_a_dry_run_passes_only_at_the_budget_question_within_the_cap(entry: dict[str, object], passes: bool,
+                                                                     phrase: str) -> None:
+    passed, reason = _dry_verdict(entry, BASIC)
+    assert passed is passes and phrase in reason, reason
