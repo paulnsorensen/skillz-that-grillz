@@ -24,6 +24,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 MAIN = "import sys; from skillz_experiments._cli import main; sys.exit(main())"
 SCHEMA: dict[str, object] = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"],
                              "additionalProperties": False}
+pytestmark = pytest.mark.usefixtures("runner_tempdir")  # each `workspace(tmp_path)` is below the temporary directory
 
 
 def no_dirs() -> list[Path]:
@@ -320,11 +321,16 @@ def test_missing_macos_runtime_names_seatbelt(tmp_path: Path, monkeypatch: pytes
         _ = respond(request("sandbox", workspace(tmp_path), argv=["true"]))
 
 
+# A hanging fake must start and log its arguments before the deadline. A fresh Python script can take more than 1 s to
+# start under parallel test load on macOS; the wrapper then kills it before it logs.
+HANG_SECONDS = 5
+
+
 def test_a_sandbox_timeout_kills_the_named_container(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     directory = fake_bin(tmp_path)
     _ = (directory / "docker.mode").write_text("hang")
-    monkeypatch.setitem(_gemini.TIMEOUTS, "sandbox", 1)
-    with pytest.raises(RuntimeError, match="timed out after 1 s"):
+    monkeypatch.setitem(_gemini.TIMEOUTS, "sandbox", HANG_SECONDS)
+    with pytest.raises(RuntimeError, match=f"timed out after {HANG_SECONDS} s"):
         _ = respond(request("sandbox", workspace(tmp_path), argv=["true"]), bin_dir=directory)
     run, kill = docker_calls(directory)
     assert kill == ["kill", run[run.index("--name") + 1]]
@@ -333,8 +339,8 @@ def test_a_sandbox_timeout_kills_the_named_container(tmp_path: Path, monkeypatch
 def test_an_infer_timeout_kills_the_labeled_container(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     directory = fake_bin(tmp_path)
     _ = (directory / "gemini.mode").write_text("hang")
-    monkeypatch.setitem(_gemini.TIMEOUTS, "infer", 1)
-    with pytest.raises(RuntimeError, match="timed out after 1 s"):
+    monkeypatch.setitem(_gemini.TIMEOUTS, "infer", HANG_SECONDS)
+    with pytest.raises(RuntimeError, match=f"timed out after {HANG_SECONDS} s"):
         _ = infer(directory, workspace(tmp_path))
     listing, kill = docker_calls(directory)
     label = cast(dict[str, str], logged(directory / "gemini.log")[0]["env"])["SANDBOX_FLAGS"].split()[-1]

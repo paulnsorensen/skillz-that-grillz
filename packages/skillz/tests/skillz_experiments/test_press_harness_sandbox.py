@@ -608,9 +608,9 @@ def _logged(path: Path) -> list[object]:
 
 
 @pytest.fixture
-def workspace(tmp_path: Path) -> Path:
+def workspace(runner_tempdir: Path) -> Path:
     '''A runner-shaped workspace: `<temporary>/skillz-x/workspace` that already holds `.agents`.'''
-    path = tmp_path / 'skillz-x/workspace'
+    path = runner_tempdir / 'skillz-x/workspace'
     (path / '.agents').mkdir(parents=True)
     return path
 

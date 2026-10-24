@@ -100,6 +100,18 @@ def umask_022() -> Iterator[None]:
 
 
 @pytest.fixture
+def runner_tempdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Make `tmp_path` the temporary directory of this process and of its child processes, and return it.
+
+    The runner makes each workspace below `tempfile.gettempdir()`, and the Gemini dotenv guard refuses other workspaces.
+    `--basetemp` can put `tmp_path` outside `TMPDIR`: the gate uses `/tmp`, but macOS sets `TMPDIR` below `/var/folders`.
+    """
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    return tmp_path
+
+
+@pytest.fixture
 def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Give each test a fake host login and a private temp dir, so no test touches the real `~/.claude`.
 
