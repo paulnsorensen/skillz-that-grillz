@@ -46,6 +46,7 @@ The contract question under `No contract` is outside these three. Ask it only wh
 
 Set the installed skill path. Run the commands from any directory.
 Put `--out` outside the target skill directory.
+A `--out` directory inside the target skill stops with `out-inside-target` before any model call, at run start and on resume.
 Make it a private directory with `mktemp -d`. The run refuses a directory that other users can enter.
 
 ```sh
@@ -239,6 +240,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-family-unknown` | A `family_budgets` name matches no family in the case draft. The stop comes after the draft loads. | Fix the family name in the contract, or add the family to the draft. |
 | `run-schema-old` | The run directory comes from an older runner, or its recorded `statistics` lacks fields that a newer runner added. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
+| `out-inside-target` | The `--out` run directory is inside the `--target` skill directory. The stop comes before any model call, at run start and on resume. | Use a private directory outside the skill from `mktemp -d`. |
 | `export-engine-unverified` | An earlier engine build ran the completed run, and its replay recorded no `patch_digest` that equals the rebuilt patch. Export writes nothing. | Start a new run directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
 
