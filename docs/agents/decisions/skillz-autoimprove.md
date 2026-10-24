@@ -41,7 +41,8 @@ That ADR supersedes the records about those commands and arms in this file. Thes
 #### Claude live network verification
 
 The live preflight checks direct loopback TCP and the proxy HTTP path against a runner-owned listener.
-The build uses a stub transport. A live macOS run exercised these checks on 2026-10-23 (see below).
+The build uses a stub transport. A live macOS run passed the preflight on 2026-10-23 (see below).
+Only stub tests cover the missing-output and malformed-output stops.
 The single preflight call asks Claude to run three exact Bash commands.
 One command opens a TCP connection to the listener. Two `curl` commands send an HTTP request to `127.0.0.1` and to `localhost`, with `--noproxy ''` so that the sandbox proxy carries them.
 The runner judges the listener. A client that sends the probe token, or resets its connection, fails the preflight with the code `network-isolation-failed`.

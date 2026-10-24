@@ -29,15 +29,15 @@ MACOS_DENY_READ = ("/Volumes", "/private/var/folders", "/var/folders")
 narrower `allowRead` inside `denyRead: ["/"]`, and its own temp files then fail (#131). So macOS denies a root list."""
 
 
-def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
+def settings(workspace: Path, out: Path | None = None, *, config: Path | None = None, overrides: Collection[str] = (),
              unix_sockets: bool = False) -> dict[str, object]:
     """Return the sandbox floor. A missing sandbox stops the run, and no command leaves the sandbox.
 
     On Linux, sandboxed commands cannot read the host from `/`. The narrower allow wins, so they read only the
     workspace and the runtime roots. On macOS, they cannot read the host roots, the user temp roots, the temporary
-    directory, the home directory, or the run directory, and the workspace allow reopens its own path. Other system
-    paths stay readable. The Read tool follows permission rules, not the sandbox, so a deny rule covers the host
-    roots, `/proc`, and the run directory `out` for that tool. Nothing else confines that tool, so the live preflight
+    directory, the home directory, the run directory, or the Claude config directory `config`, and the workspace allow
+    reopens its own path. Other system paths stay readable. The Read tool follows permission rules, not the sandbox,
+    so a deny rule covers the host roots, `/proc`, the run directory `out`, and `config` for that tool. Nothing else confines that tool, so the live preflight
     proves it: the Read tool must fail to read a file outside the workspace. Commands cannot write
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
     Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
@@ -47,7 +47,7 @@ def settings(workspace: Path, out: Path | None = None, *, overrides: Collection[
     """
     runtime = [*RUNTIME_READ, *(MACOS_READ if sys.platform == "darwin" else ())]
     temporary = unique([tempfile.gettempdir(), str(Path(tempfile.gettempdir()).resolve())])
-    hidden = ["/proc", *([] if out is None else [str(out), str(out.resolve())])]
+    hidden = ["/proc", *(str(form) for path in (out, config) if path is not None for form in (path, path.resolve()))]
     network: dict[str, object] = {"allowedDomains": [], "strictAllowlist": True}
     if unix_sockets:
         network["allowAllUnixSockets"] = True

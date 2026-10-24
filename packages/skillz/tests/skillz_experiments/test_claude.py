@@ -492,12 +492,14 @@ def test_the_macos_floor_denies_host_roots_and_the_temp_root_but_linux_denies_ev
     temporary.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(temporary))
     out = tmp_path / "out"
-    filesystem = cast(dict[str, object], _settings.settings(workspace, out)["sandbox"])["filesystem"]
-    darwin = cast(dict[str, list[str]], filesystem)
+    config = tmp_path / "custom-config"
+    floor = _settings.settings(workspace, out, config=config)
+    darwin = cast(dict[str, list[str]], cast(dict[str, object], floor["sandbox"])["filesystem"])
     denied = darwin["denyRead"]
     assert "/" not in denied and len(denied) == len(set(denied))
     assert {"/Users", "/home", "/Volumes", "/var/folders", "/private/var/folders", "/proc", str(Path.home())} <= set(denied)
-    assert {str(temporary), str(temporary.resolve()), str(out)} <= set(denied)
+    assert {str(temporary), str(temporary.resolve()), str(out), str(config)} <= set(denied)
+    assert f"Read(/{config}/**)" in cast(dict[str, list[str]], floor["permissions"])["deny"]
     assert str(workspace) in darwin["allowRead"] and str(workspace) not in denied
 
 
@@ -681,9 +683,9 @@ def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(
         original_settings = _settings.settings
         original_environment = ClaudeCode._environment  # pyright: ignore[reportPrivateUsage]
 
-        def without_setting(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                            unix_sockets: bool = False) -> dict[str, object]:
-            return {key: value for key, value in original_settings(workspace, out, overrides=overrides,
+        def without_setting(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                            overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+            return {key: value for key, value in original_settings(workspace, out, config=config, overrides=overrides,
                                                                    unix_sockets=unix_sockets).items()
                     if key != "disableBundledSkills"}
 
@@ -836,9 +838,9 @@ def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path
     before = session.environment_key()
     original = _settings.settings
 
-    def open_network(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                     unix_sockets: bool = False) -> dict[str, object]:
-        changed = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
+    def open_network(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                     overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+        changed = original(workspace, out, config=config, overrides=overrides, unix_sockets=unix_sockets)
         changed["sandbox"] = cast(dict[str, object], changed["sandbox"]) | {
             "network": {"allowedDomains": ["example.com"], "strictAllowlist": True}}
         return changed
@@ -1293,9 +1295,9 @@ def test_preflight_fails_when_the_workspace_allow_is_missing(
     del sandbox_passes
     original = _settings.settings
 
-    def without_allow(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                      unix_sockets: bool = False) -> dict[str, object]:
-        document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
+    def without_allow(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                      overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+        document = original(workspace, out, config=config, overrides=overrides, unix_sockets=unix_sockets)
         cast(dict[str, dict[str, object]], document["sandbox"])["filesystem"]["allowRead"] = []
         return document
     monkeypatch.setattr(_transport, "settings", without_allow)
@@ -1666,7 +1668,8 @@ def test_macos_stops_before_any_call_when_user_memory_loads(
     if memory == "CLAUDE.md":
         _ = (real / "CLAUDE.md").write_text("Always answer in French.")
     elif memory == "rules":
-        _ = (real / "rules" / "style.md").write_text("Always answer in French.")
+        (real / "rules" / "team").mkdir()
+        _ = (real / "rules" / "team" / "style.md").write_text("Always answer in French.")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
     executable = fake_claude(tmp_path, mode)
     budget = Budget(10, 120, 0)
@@ -1804,6 +1807,10 @@ def test_macos_child_keeps_the_real_home_and_user_so_the_keychain_login_resolves
     assert environment["HOME"] == str(Path.home()) == str(host_login.parents[1])
     assert environment["USER"] == environment["LOGNAME"] == user
     assert environment.get("CLAUDE_CONFIG_DIR") == (str(host_login.parent) if configured else None)
+    floor = cast(dict[str, dict[str, object]], json.loads(cast(str, calls(executable)[0]["settings"])))
+    config = str(host_login.parent) if configured else str(Path.home() / ".claude")
+    assert config in cast(dict[str, list[str]], floor["sandbox"]["filesystem"])["denyRead"]
+    assert f"Read(/{config}/**)" in cast(list[str], floor["permissions"]["deny"])
     assert environment["TMPDIR"].endswith("/tmp") and environment["TMPDIR"] != tempfile.gettempdir()
 
 

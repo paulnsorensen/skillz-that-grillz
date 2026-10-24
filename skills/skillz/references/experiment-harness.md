@@ -101,7 +101,8 @@ The `run.json` adapter label is `config` for `--harness-config` and `command` fo
 The `claude` role runs `claude -p --setting-sources project` with `--tools Bash,Read,Skill`.
 It also passes `--strict-mcp-config`, `--no-session-persistence`, and a generated settings file.
 The settings enable the sandbox floor and disable bundled skills.
-They deny host reads from `/`. They allow only the workspace and the runtime roots that commands need.
+On Linux, they deny host reads from `/` and allow only the workspace and the runtime roots that commands need.
+On macOS, they deny a list of host roots instead, and other system paths stay readable (see the macOS section below).
 They deny Bash writes to `.agents` and `.claude` in the workspace, so a task cannot change the candidate or plant project settings.
 The runner places only the staged candidate under the workspace skill directory.
 The runner does not use `--restricted`. On Claude Code 2.1.289 and later, `--restricted` drops project skills, so the candidate never loads.

@@ -200,7 +200,7 @@ class ClaudeCode:
         return self._unix_sockets
 
     def _floor(self, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
-        floor = settings(workspace, self.out, overrides=overrides, unix_sockets=self.unix_sockets())
+        floor = settings(workspace, self.out, config=self.config_dir, overrides=overrides, unix_sockets=self.unix_sockets())
         if self.declared.servers:
             permissions = cast(dict[str, object], floor["permissions"])
             floor["permissions"] = permissions | {"allow": [*cast(list[str], permissions["allow"]),

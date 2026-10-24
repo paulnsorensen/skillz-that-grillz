@@ -494,9 +494,9 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     elif change == "settings":
         original = _settings.settings
 
-        def weaker(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                   unix_sockets: bool = False) -> dict[str, object]:
-            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
+        def weaker(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                   overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+            document = original(workspace, out, config=config, overrides=overrides, unix_sockets=unix_sockets)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
         monkeypatch.setattr(_transport, "settings", weaker)

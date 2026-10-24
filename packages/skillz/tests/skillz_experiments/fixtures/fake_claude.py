@@ -265,7 +265,7 @@ def context_listing(mode: str) -> int:
         emit({"type": "result", "subtype": "success", "is_error": False, "result": "Unknown skill: context", "usage": USAGE})
         return 0
     config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
-    memory = [config / "CLAUDE.md", *sorted((config / "rules").glob("*.md"))] if mode == "memory-loads" else []
+    memory = [config / "CLAUDE.md", *sorted((config / "rules").rglob("*.md"))] if mode == "memory-loads" else []
     rows = "".join(f"| User | {path} | 9 |\n" for path in memory if path.is_file())
     report = f"## Context Usage\n\n### Memory Files\n\n| Type | Path | Tokens |\n|------|------|--------|\n{rows}"
     emit({"type": "result", "subtype": "success", "is_error": False, "result": report, "usage": USAGE})
