@@ -199,3 +199,87 @@ def test_an_unescaped_quoted_value_still_stops_at_its_close() -> None:
                                                ("SKILL.md", False), ("@hypothesis", False)])
 def test_is_credential_key_names_the_keys_whose_whole_value_goes(key: str, expected: bool) -> None:
     assert _redact.is_credential_key(key) is expected
+
+
+DOTTED_AND_ESCAPED_KEYS = [
+    r'password.md=\"one two zzcanary\" kept',
+    r'my.secret.json=\"one two zzcanary\" kept',
+    'password.md="one two zzcanary" kept',
+    'token.txt: "one two zzcanary" kept',
+    '{"password.md": "one two zzcanary"} kept',
+    "'api_key.v2': 'one two zzcanary' kept"]
+
+
+@pytest.mark.ac("gh-512:AC-1")
+@pytest.mark.parametrize("line", DOTTED_AND_ESCAPED_KEYS)
+def test_a_dotted_or_file_like_credential_key_redacts_its_whole_quoted_value(line: str) -> None:
+    redacted = _redact.redact(line)
+    assert "zzcanary" not in redacted and "two" not in redacted, redacted
+
+
+@pytest.mark.ac("gh-512:AC-2")
+@pytest.mark.parametrize("key", ["password", "api_key", "password.md", "my.secret.json"])
+@pytest.mark.parametrize("layers", [2, 3, 4])
+@pytest.mark.parametrize("shape", [
+    '{"%s": "one two zzcanary"} kept',
+    '"%s": "one two zzcanary" kept',
+    '%s="one two zzcanary" kept',
+    '"%s"="one two zzcanary" kept'])
+def test_a_quoted_credential_key_at_two_or_more_escape_layers_redacts_its_value(key: str, layers: int, shape: str) -> None:
+    text = shape % key
+    for _ in range(layers):
+        text = json.dumps(text)[1:-1]
+    redacted = _redact.redact(text)
+    assert "zzcanary" not in redacted and "two" not in redacted, redacted
+
+
+APOSTROPHES = ["'", "’", "‘"]
+
+
+@pytest.mark.ac("gh-512:AC-3")
+@pytest.mark.parametrize("mark", APOSTROPHES)
+@pytest.mark.parametrize("key", ["password", "token", "api_key", "secret"])
+@pytest.mark.parametrize("shape", [
+    "{key}{q} one two zzcanary",
+    "{key}{q}one two zzcanary{q} kept",
+    "{key}: {q}one two zzcanary{q} kept",
+    "{key}={q}one two zzcanary",
+    "{key}{q}one\ntwo zzcanary"])
+def test_a_unicode_apostrophe_after_a_credential_key_redacts_like_an_ascii_quote(mark: str, key: str, shape: str) -> None:
+    redacted = _redact.redact(shape.format(key=key, q=mark))
+    assert "zzcanary" not in redacted and "two" not in redacted, redacted
+
+
+@pytest.mark.ac("gh-512:AC-3")
+def test_a_unicode_possessive_keeps_the_prose_like_an_ascii_one() -> None:
+    sentence = "The token’s scope is narrow. Keep this explanation."
+    assert _redact.redact(sentence) == _redact.redact(sentence.replace("’", "'"))
+    assert _redact.redact(sentence).endswith(". Keep this explanation.")
+
+
+ADVERSARIAL_UNIT = [
+    "password.md=\\\"a ",
+    "password’ a ",
+    "\\\\\\\"my.secret.json\\\\\\\": ",
+    "password." + "a." * 8 + " ",
+    "token’s 'a' "]
+
+
+@pytest.mark.ac("gh-512:AC-4")
+@pytest.mark.parametrize("unit", ADVERSARIAL_UNIT)
+def test_redact_stays_linear_on_200_kb_of_dotted_escaped_and_unicode_keys(unit: str) -> None:
+    """Doubling a 100 KB input must not multiply the CPU time by more than 3, and 200 KB must finish well inside 15 s."""
+    small = unit * (100_000 // len(unit))
+    large = unit * (200_000 // len(unit))
+
+    def best_seconds(text: str) -> float:
+        best = float("inf")
+        for _ in range(3):
+            begin = time.process_time()
+            _ = _redact.redact(text)
+            best = min(best, time.process_time() - begin)
+        return best
+
+    fast, slow = best_seconds(small), best_seconds(large)
+    assert slow < DEADLINE_SECONDS, f"200 KB took {slow:.1f}s"
+    assert slow <= 3 * max(fast, 0.01), f"doubling the input multiplied the cost by {slow / max(fast, 0.01):.1f}"

@@ -23,18 +23,22 @@ _SIMPLE_WORDS = re.compile(r"key|token|secret|password|auth", re.IGNORECASE)
 # a value that runs to the end of the input. A single quote that directly follows a credential key is handled by
 # `redact`: `_Quotes` decides if it is a prose apostrophe or the start of a value.
 _ESCAPED = (r'''\\(?P<q>["'])(?:[^\\]++|\\{2,}+|\\(?!(?P=q))|\\(?P=q)(?![,}\]]|\Z))*+(?:\\(?P=q)|\Z)''')
+_APOSTROPHES = "'’‘"
 _QUOTED = (r'"(?:[^"\\]++|\\.)*+(?:"|\\?\Z)|'
-           + r"(?<=[\s:=])'(?:[^'\\]++|\\.)*+(?:'|\\?\Z)|"
+           + r"(?<=[\s:=])[" + _APOSTROPHES + r"](?:[^" + _APOSTROPHES + r"\\]++|\\.)*+(?:[" + _APOSTROPHES
+           + r"]|\\?\Z)|"
            + _ESCAPED + r'''|\\{2,}+["'][\s\S]*+''')
 _VALUE = r"(?:(?:basic|bearer)\s++)?(?:" + _QUOTED + r"|\S+)"
 # A credential word that ends a word, with its value: `password: "..."`, `my_api_key abc`.
 _KEYWORD_HEAD = r"(?<![\w-])(?:\w+-)*(?:\w+_)?(?:" + _KEYWORDS + r")s?(?!\w)"
 _KEYWORD_START = re.compile(_KEYWORD_HEAD + r"(?=\s*+\S)", _FLAGS)
-_KEYWORD_SPAN = re.compile(_KEYWORD_HEAD + r"\s*+[:=]?\s*+" + _VALUE, _FLAGS)
+# A dotted or file-like key, such as `password.md="..."`, is one key only when a `:` or `=` follows it.
+_KEY_SUFFIX = r"(?:(?:\.[\w-]++)++(?=\s*+[:=]))?"
+_KEYWORD_SPAN = re.compile(_KEYWORD_HEAD + _KEY_SUFFIX + r"\s*+[:=]?\s*+" + _VALUE, _FLAGS)
 # A credential-named key inside a longer or quoted name, with its value: `{"refreshToken": "..."`.
 _RUN = re.compile(r"[^\s:=]+")
 _DELIMITER = re.compile(r"\s*+[:=]")
-_TRAILING_WORD = re.compile(r"[\w-]*+")
+_TRAILING_WORD = re.compile(r"[\w.-]*+")
 _PAIR_TAIL = re.compile(r"\s*+[:=]\s*+" + _VALUE, _FLAGS)
 _SK = re.compile(r"\bsk-\S+", re.IGNORECASE)
 _BEARER = re.compile(r"\bbearer\s++\S+", re.IGNORECASE)
@@ -88,7 +92,7 @@ class _Pairs:
         delimiter = _DELIMITER.match(text, end)
         if delimiter is None or delimiter.end() >= len(text):
             return None
-        key_end = end - 1 if text[end - 1] in "\"'" else end
+        key_end = end - 1 if text[end - 1] in '"' + _APOSTROPHES else end
         while key_end > start and text[key_end - 1] == "\\":
             key_end -= 1
         word = _TRAILING_WORD.match(text[start:key_end][::-1])
@@ -141,7 +145,7 @@ def redact(text: str) -> str:
     text = text.strip()
     spaces = [hit.start() for hit in _SPACE.finditer(text)]
     length = len(text)
-    last_quote = text.rfind("'")
+    last_quote = max(text.rfind(mark) for mark in _APOSTROPHES)
     pairs = _Pairs(text)
     finders: tuple[Callable[[str, int], int | None], ...] = (
         _find_url, _find_with(_KEYWORD_START), pairs.find, _find_with(_SIMPLE_WORDS), _find_with(_SK),
@@ -171,7 +175,7 @@ def redact(text: str) -> str:
     def span_end(kind: int, anchor: int) -> int:
         if kind == _KEYWORD:
             head = _KEYWORD_START.match(text, anchor)
-            if head is not None and text.startswith("'", head.end()):
+            if head is not None and head.end() < length and text[head.end()] in _APOSTROPHES:
                 return quote_end(head.group(), head.end())
         if kind in (_URL, _SIMPLE):
             return token_bounds(kind, anchor)[1]
