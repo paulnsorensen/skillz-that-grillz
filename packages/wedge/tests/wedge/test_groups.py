@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Callable
 
@@ -40,20 +40,27 @@ def test_build_many_exports_each_skills_groups_and_splits_sites(
         export_calls.append(tuple(groups))
         return ""
 
-    def _fake_populate(project: Path, groups: Sequence[str], dest: Path) -> wedge_build.SiteLayer:
+    def _fake_layer(
+        project: Path, groups: Sequence[str]
+    ) -> tuple[wedge_build.SiteLayer, Mapping[str, str]]:
         populated_groups.append(tuple(groups))
         _ = _fake_export(project, groups)
+        dest = tmp_path / f"layer-{len(populated_groups)}"
         dest.mkdir()
-        return wedge_build.SiteLayer(dest, "fake", tuple(sorted(set(groups))), project)
+        return wedge_build.SiteLayer(dest, "fake", tuple(sorted(set(groups))), project), {}
 
     def _fake_build(
-        _layer: wedge_build.SiteLayer, _sources: Path, target: WedgeConfig, out_dir: Path
+        _layer: wedge_build.SiteLayer,
+        _sources: Path,
+        target: WedgeConfig,
+        out_dir: Path,
+        _expected: Mapping[str, str] | None = None,
     ) -> tuple[str, Path]:
         out_path = out_dir / f"{target.name}.pyz"
         _ = out_path.write_bytes(b"fake")
         return "deadbeef", out_path
 
-    monkeypatch.setattr(wedge_build, "populate_site_layer", _fake_populate)
+    monkeypatch.setattr(wedge_build, "_cached_site_layer", _fake_layer)
     monkeypatch.setattr(wedge_build, "_build_from_layer", _fake_build)
 
     outcomes = wedge_build.build_many([skill_a, skill_b], tmp_path / "out")

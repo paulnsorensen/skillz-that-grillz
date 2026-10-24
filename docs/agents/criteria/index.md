@@ -89,5 +89,6 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
 - [skillz-pragmatic-autoimprove](./skillz-pragmatic-autoimprove.md) — skillz-pragmatic-autoimprove: pragmatic autoimprove
 - [skillz-wedge-first-class](./skillz-wedge-first-class.md) — skillz-wedge-first-class: wedge first-class in autoimprove
+- [wedge-site-layer-cache](./wedge-site-layer-cache.md) — wedge-site-layer-cache: reuse a verified site layer instead of a fresh install on every build
 - [wedge-skill-packaging](./wedge-skill-packaging.md) — wedge-skill-packaging: wedge skill packaging
 <!-- HALLOUMINATE:INDEX-END -->
