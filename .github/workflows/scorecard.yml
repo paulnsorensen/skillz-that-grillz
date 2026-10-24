@@ -1,4 +1,6 @@
-# OpenSSF Scorecard — runs on push to main and weekly.
+# OpenSSF Scorecard — runs weekly and on branch protection changes.
+# Scorecard publishes results only from the default branch (`dist`), so a
+# `push: main` trigger would fail; CI pushes to dist start no workflow run.
 # Publishes results to scorecard.dev (badge data) and uploads SARIF
 # to the repo's Code scanning view.
 # See: https://github.com/ossf/scorecard-action
@@ -8,8 +10,6 @@ on:
   branch_protection_rule:
   schedule:
     - cron: "26 4 * * 1"
-  push:
-    branches: [main]
 
 permissions: read-all
 
