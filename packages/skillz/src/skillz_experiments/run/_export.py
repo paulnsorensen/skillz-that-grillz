@@ -255,14 +255,14 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     """Write the winner as a private patch and a redacted report. Never apply it.
 
     The patch comes from the builder that the replay uses. A patch that differs from the replayed one is refused.
+    A run from an earlier engine build exports only when its replay recorded the digest of the rebuilt patch.
+    Else it stops with `export-engine-unverified`.
     Export writes only a patch that changes a file. A winner whose files equal the seed gets `patches: []` and the
     reason `winner-equals-baseline`, so no empty patch reads as a change.
     """
     record = open_record(out / "run.json")
     if record.get("phase") != "complete":
         raise ValueError("export requires a completed run")
-    if record.get("engine_hash") != engine_hash():
-        raise ValueError("evaluator differs from the frozen record; create a new run")
     if "judge" in record:
         judge_model = text_field(record, "judge_model" if "judge_model" in record else "model")
         if record["judge"] != judge_identity(judge_model):
@@ -272,6 +272,8 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     patch = build_patch(field(record, "seed"), field(record, "winner"), Path(text_field(record, "target_root")))
     replayed = record.get("replay")
     recorded = mapping(cast(dict[str, object], replayed)).get("patch_digest") if isinstance(replayed, dict) else None
+    if record.get("engine_hash") != engine_hash() and recorded != patch.digest:
+        raise CodedError("export-engine-unverified", "evaluator differs from the frozen record; create a new run")
     if recorded is not None and recorded != patch.digest:
         raise ValueError("export differs from the replayed patch; create a new run")
     written = {name: text for name, text in patch.files.items() if text}

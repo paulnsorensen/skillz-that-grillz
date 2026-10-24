@@ -239,6 +239,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-family-unknown` | A `family_budgets` name matches no family in the case draft. The stop comes after the draft loads. | Fix the family name in the contract, or add the family to the draft. |
 | `run-schema-old` | The run directory comes from an older runner, or its recorded `statistics` lacks fields that a newer runner added. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
+| `export-engine-unverified` | An earlier engine build ran the completed run, and its replay recorded no `patch_digest` that equals the rebuilt patch. Export writes nothing. | Start a new run directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
 
 Two close codes are warnings, not stops. They never arrive on stderr as `code`:
@@ -840,6 +841,8 @@ The gate keeps the unspent replay reserve for the replay.
 
 Run `export` only after the run reports the phase `complete`.
 Export refuses a patch whose digest differs from the replayed `patch_digest`. It writes nothing in that case.
+A run from an earlier engine build exports when its replay `patch_digest` equals the rebuilt patch digest.
+When the replay recorded no digest or another digest, export stops with `export-engine-unverified`.
 A completed run without a replay gives the `export` claim `inconclusive` with the reason `replay-missing`.
 
 ```sh
