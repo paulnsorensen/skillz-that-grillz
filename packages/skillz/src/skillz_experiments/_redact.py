@@ -16,13 +16,11 @@ _FLAGS = re.IGNORECASE | re.DOTALL
 _KEYWORDS = r"api[-_ ]?key|key|token|secret|password|passwd|authorization|auth|cookie"
 _SIMPLE_WORDS = re.compile(r"key|token|secret|password|auth", re.IGNORECASE)
 # A quoted value keeps all of its words, across lines: a JSON string, a single-quoted string, or a JSON-escaped
-# `\"...\"` string. A quote with no closing quote runs to the end of the input. A single quote after whitespace or a
-# separator always opens a value. An adjacent single quote opens a value too, unless it is an apostrophe: `'s`, `'t`,
-# `'re`, `'ve`, `'ll`, `'d` or `'m` that ends a word (`token's`, `don't`), or the quote after a plural (`tokens' scope`).
-# So `password'first zzcanary'` is a value. A credential that starts like an apostrophe, or that follows a key ending
-# in `s` and a space, stays prose: the one input where the rule favours the sentence.
+# `\"...\"` string. A quote with no closing quote runs to the end of the input. This pattern covers a single quote
+# after whitespace or a separator, which always opens a value. A single quote that directly follows a credential key
+# is handled by `redact`: `_Quotes` decides if it is a prose apostrophe or the start of a value.
 _QUOTED = (r'"(?:[^"\\]++|\\.)*+(?:"|\\?\Z)|'
-           + r"(?:(?<=[\s:=])|(?!'(?:s|t|re|ve|ll|d|m)\b|(?<=s)'\s))'(?:[^'\\]++|\\.)*+(?:'|\\?\Z)|"
+           + r"(?<=[\s:=])'(?:[^'\\]++|\\.)*+(?:'|\\?\Z)|"
            + r'\\"[\s\S]*?(?:\\"|\Z)')
 _VALUE = r"(?:(?:basic|bearer)\s++)?(?:" + _QUOTED + r"|\S+)"
 # A credential word that ends a word, with its value: `password: "..."`, `my_api_key abc`.
@@ -139,6 +137,9 @@ def redact(text: str) -> str:
     text = text.strip()
     spaces = [hit.start() for hit in _SPACE.finditer(text)]
     length = len(text)
+    quotes = [index for index, char in enumerate(text) if char == "'"]
+    last_quote = quotes[-1] if quotes else -1
+    next_quote = 0
     pairs = _Pairs(text)
     finders: tuple[Callable[[str, int], int | None], ...] = (
         _find_url, _find_with(_KEYWORD_START), pairs.find, _find_with(_SIMPLE_WORDS), _find_with(_SK),
@@ -154,7 +155,32 @@ def redact(text: str) -> str:
         after = before + 1 if before < len(spaces) and spaces[before] == anchor else before
         return (spaces[before - 1] + 1 if before else 0), (spaces[after] if after < len(spaces) else length)
 
+    def quote_end(key: str, opening: int) -> int:
+        """The end of what a single quote that directly follows `key` covers.
+
+        A lowercase key, `'s` and the last quote in the text make a prose apostrophe, so only `'s` is covered.
+        Otherwise the quote opens a value that ends at the first later quote that does not look like an opening one.
+        """
+        nonlocal next_quote
+        after = opening + 2
+        if (opening == last_quote and key.isascii() and key.isalpha() and key.islower()
+                and text.startswith("s", opening + 1) and (after >= length or text[after].isspace())):
+            return after
+        while next_quote < len(quotes) and quotes[next_quote] <= opening:
+            next_quote += 1
+        while next_quote < len(quotes):
+            closing = quotes[next_quote]
+            next_quote += 1
+            before = text[closing - 1]
+            if not (before.isspace() or before in ":="):
+                return closing + 1
+        return length
+
     def span_end(kind: int, anchor: int) -> int:
+        if kind == _KEYWORD:
+            head = _KEYWORD_START.match(text, anchor)
+            if head is not None and text.startswith("'", head.end()):
+                return quote_end(head.group(), head.end())
         if kind in (_URL, _SIMPLE):
             return token_bounds(kind, anchor)[1]
         tail = _PAIR_TAIL.match(text, pairs.hit_end) if kind == _PAIR else _SPANS[kind].match(text, anchor)

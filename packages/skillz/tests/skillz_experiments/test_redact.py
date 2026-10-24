@@ -59,8 +59,9 @@ def test_an_unterminated_quote_after_a_credential_key_redacts_through_the_end(li
 
 
 @pytest.mark.ac("gh-501:AC-4")
-@pytest.mark.parametrize("unit", ['password"x"', "password: x ", "a_key=v ", '{"refreshToken": "x"} '],
-                         ids=["adjacent-quotes", "spaced-pairs", "keys", "json"])
+@pytest.mark.parametrize("unit", ['password"x"', "password: x ", "a_key=v ", '{"refreshToken": "x"} ', "secret's ",
+                                  "secret's 'a' "],
+                         ids=["adjacent-quotes", "spaced-pairs", "keys", "json", "possessives", "possessives-then-quotes"])
 def test_the_cost_of_many_credentials_grows_linearly_with_the_length(unit: str) -> None:
     """Each sample runs for at least 100 ms of CPU time, and the two sizes alternate, so noise hits both alike."""
     texts = {count: unit * count + "cookie=Z" for count in (3000, 6000)}
@@ -84,20 +85,47 @@ def test_the_cost_of_many_credentials_grows_linearly_with_the_length(unit: str) 
 @pytest.mark.parametrize("sentence", [
     "The token's scope is narrow. Keep this explanation.",
     "The secret's rotation is monthly. Keep this explanation.",
-    "The password's length is eight. Keep this explanation.",
-    "We don't log it. Keep this explanation.",
-    "The tokens' scope is narrow. Keep this explanation."])
-def test_a_possessive_or_contraction_does_not_hide_the_rest_of_the_prose(sentence: str) -> None:
-    """Over-redaction wins where prose and a credential look alike: `secrets' two words` after a plural key stays
-    prose, and a credential that starts with `'s ` or `'t ` after its key stays prose."""
-    assert _redact.redact(sentence).endswith(". Keep this explanation.")
+    "The password's length is eight. Keep this explanation."])
+def test_a_lowercase_possessive_with_no_later_quote_keeps_the_prose(sentence: str) -> None:
+    redacted = _redact.redact(sentence)
+    assert redacted.startswith("The [redacted] ") and redacted.endswith(". Keep this explanation."), redacted
 
 
 @pytest.mark.ac("gh-501:AC-4")
-def test_a_possessive_before_a_quoted_credential_keeps_the_prose_and_redacts_the_credential() -> None:
+def test_the_possessive_keeps_the_exact_prose_after_it() -> None:
+    assert _redact.redact("The token's scope is narrow. Keep this explanation.") == (
+        "The [redacted] scope is narrow. Keep this explanation.")
+    assert _redact.redact("secret's") == "[redacted]"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_contraction_without_a_credential_key_stays_intact() -> None:
+    assert _redact.redact("We don't log it. Keep this explanation.") == "We don't log it. Keep this explanation."
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_possessive_before_a_quoted_credential_redacts_the_credential() -> None:
+    """The value that starts at `'s` runs to the closing quote: some prose goes, and no credential stays."""
     redacted = _redact.redact("The secret's scope is narrow, password: 'two words zzcanary' kept")
-    assert "zzcanary" not in redacted and "two words" not in redacted, redacted
-    assert redacted.endswith(" kept") and "scope is narrow" in redacted, redacted
+    assert redacted == "The [redacted] kept"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("head", [
+    "password't zzcanary'",
+    "token'd- zzcanary'",
+    "api_key'S zzcanary'",
+    "tokens' zzcanary'",
+    "PASSWORD's zzcanary'",
+    "token'S zzcanary'",
+    "Token's zzcanary'",
+    "my-token's zzcanary'",
+    "token's1 zzcanary'"])
+@pytest.mark.parametrize("shape", ["closed", "multiline", "unterminated"])
+def test_a_quote_that_only_looks_like_an_apostrophe_opens_a_value(head: str, shape: str) -> None:
+    line = {"closed": f"{head} kept", "multiline": f"{head.replace(' ', chr(10), 1)} kept", "unterminated": head}[shape]
+    redacted = _redact.redact(line)
+    assert "zzcanary" not in redacted, redacted
 
 
 @pytest.mark.ac("gh-501:AC-4")
