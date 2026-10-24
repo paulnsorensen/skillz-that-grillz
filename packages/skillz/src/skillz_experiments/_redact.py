@@ -17,11 +17,15 @@ _KEYWORDS = r"api[-_ ]?key|key|token|secret|password|passwd|authorization|auth|c
 _SIMPLE_WORDS = re.compile(r"key|token|secret|password|auth", re.IGNORECASE)
 # A quoted value keeps all of its words, across lines: a JSON string, a single-quoted string, or a JSON-escaped
 # `\"...\"` string. A quote with no closing quote runs to the end of the input. This pattern covers a single quote
-# after whitespace or a separator, which always opens a value. A single quote that directly follows a credential key
-# is handled by `redact`: `_Quotes` decides if it is a prose apostrophe or the start of a value.
+# after whitespace or a separator, which always opens a value. A quote after one backslash opens an escaped value.
+# Only a backslash-quote that ends the input or precedes `,`, `}` or `]` closes it, and a longer run of backslashes
+# never closes it, so a stray `\"` inside the value does not end it early. A quote after two or more backslashes opens
+# a value that runs to the end of the input. A single quote that directly follows a credential key is handled by
+# `redact`: `_Quotes` decides if it is a prose apostrophe or the start of a value.
+_ESCAPED = (r'''\\(?P<q>["'])(?:[^\\]++|\\{2,}+|\\(?!(?P=q))|\\(?P=q)(?![,}\]]|\Z))*+(?:\\(?P=q)|\Z)''')
 _QUOTED = (r'"(?:[^"\\]++|\\.)*+(?:"|\\?\Z)|'
            + r"(?<=[\s:=])'(?:[^'\\]++|\\.)*+(?:'|\\?\Z)|"
-           + r'\\"[\s\S]*?(?:\\"|\Z)')
+           + _ESCAPED + r'''|\\{2,}+["'][\s\S]*+''')
 _VALUE = r"(?:(?:basic|bearer)\s++)?(?:" + _QUOTED + r"|\S+)"
 # A credential word that ends a word, with its value: `password: "..."`, `my_api_key abc`.
 _KEYWORD_HEAD = r"(?<![\w-])(?:\w+-)*(?:\w+_)?(?:" + _KEYWORDS + r")s?(?!\w)"
@@ -199,11 +203,16 @@ def redact(text: str) -> str:
     return "".join(pieces)
 
 
+def is_credential_key(text: str) -> bool:
+    """True when `text`, as a mapping key, names a credential, so the whole value under it must go."""
+    return _CREDENTIAL_KEY.search(text) is not None
+
+
 def _redacted(value: object) -> object:
     if isinstance(value, str):
         return redact(value)
     if isinstance(value, Mapping):
-        return {str(key): "[redacted]" if _CREDENTIAL_KEY.search(str(key)) else _redacted(item)
+        return {str(key): "[redacted]" if is_credential_key(str(key)) else _redacted(item)
                 for key, item in cast(Mapping[object, object], value).items()}
     if isinstance(value, list | tuple):
         return [_redacted(item) for item in cast(list[object], value)]

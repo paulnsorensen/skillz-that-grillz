@@ -10,7 +10,7 @@ from typing import cast, final
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import write_bytes
-from skillz_experiments._redact import redact
+from skillz_experiments._redact import is_credential_key, redact
 
 REFLECTIONS = "reflections"
 # The largest serialized record, in bytes, markers included.
@@ -18,17 +18,36 @@ RECORD_LIMIT = 64 * 1024
 TRUNCATED = "[truncated]"
 
 
+def _key_text(key: object) -> str:
+    return key.decode("utf-8", errors="replace") if isinstance(key, bytes | bytearray) else str(key)
+
+
 def _redacted(value: object) -> object:
-    """Redact each string, key and value, inside `value`. Other non-JSON objects pass through `str` first."""
+    """Redact each string, key and value, inside `value`.
+
+    The whole value under a credential-named key becomes `[redacted]`. Bytes decode as UTF-8, and any other leaf that
+    JSON cannot hold becomes `[redacted]`. Keys that collide after redaction get a `#2`, `#3` suffix.
+    """
     if isinstance(value, str):
         return redact(value)
+    if isinstance(value, bytes | bytearray):
+        return redact(bytes(value).decode("utf-8", errors="replace"))
     if isinstance(value, dict):
-        return {redact(str(key)): _redacted(item) for key, item in cast(dict[object, object], value).items()}
+        result: dict[str, object] = {}
+        for key, item in cast(dict[object, object], value).items():
+            text = _key_text(key)
+            name = redact(text)
+            unique, count = name, 1
+            while unique in result:
+                count += 1
+                unique = f"{name}#{count}"
+            result[unique] = "[redacted]" if is_credential_key(text) else _redacted(item)
+        return result
     if isinstance(value, list | tuple):
         return [_redacted(item) for item in cast(list[object] | tuple[object, ...], value)]
     if value is None or isinstance(value, bool | int | float):
         return value
-    return redact(str(value))
+    return "[redacted]"
 
 
 def _encoded(record: dict[str, object]) -> bytes:

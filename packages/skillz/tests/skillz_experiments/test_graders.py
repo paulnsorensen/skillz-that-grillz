@@ -660,3 +660,12 @@ def test_journey_case_on_a_transport_without_conversant_raises_journey_unsupport
     with pytest.raises(CodedError) as caught:
         _ = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     assert caught.value.code == "journey-unsupported"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_an_escaped_quote_credential_in_gate_stderr_is_redacted_from_the_diagnostic(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = r'password=\"one\\\" two zzcanary\" kept'
+    case, candidate = case_and_candidate(tmp_path, "gate", contract(f"import sys;sys.stderr.write({secret!r});raise SystemExit(1)"))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert "zzcanary" not in json.dumps(result) and "two" not in cast(str, result["gate_diagnostic"])
