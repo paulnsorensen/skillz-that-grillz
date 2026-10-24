@@ -62,16 +62,21 @@ def test_an_unterminated_quote_after_a_credential_key_redacts_through_the_end(li
 @pytest.mark.parametrize("unit", ['password"x"', "password: x ", "a_key=v ", '{"refreshToken": "x"} '],
                          ids=["adjacent-quotes", "spaced-pairs", "keys", "json"])
 def test_the_cost_of_many_credentials_grows_linearly_with_the_length(unit: str) -> None:
-    def best_cpu_seconds(count: int) -> float:
-        text = unit * count + "cookie=Z"
-        best = float("inf")
-        for _ in range(3):
-            begin = time.process_time()
-            _ = _redact.redact(text)
-            best = min(best, time.process_time() - begin)
-        return best
+    """Each sample runs for at least 100 ms of CPU time, and the two sizes alternate, so noise hits both alike."""
+    texts = {count: unit * count + "cookie=Z" for count in (3000, 6000)}
 
-    small, large = best_cpu_seconds(3000), best_cpu_seconds(6000)
+    def per_run_seconds(text: str) -> float:
+        runs, begin = 0, time.process_time()
+        while runs == 0 or time.process_time() - begin < 0.1:
+            _ = _redact.redact(text)
+            runs += 1
+        return (time.process_time() - begin) / runs
+
+    best = dict.fromkeys(texts, float("inf"))
+    for _ in range(3):
+        for count, text in texts.items():
+            best[count] = min(best[count], per_run_seconds(text))
+    small, large = best[3000], best[6000]
     assert large <= 3 * small, f"doubling the input multiplied the cost by {large / small:.1f}"
 
 
@@ -80,9 +85,30 @@ def test_the_cost_of_many_credentials_grows_linearly_with_the_length(unit: str) 
     "The token's scope is narrow. Keep this explanation.",
     "The secret's rotation is monthly. Keep this explanation.",
     "The password's length is eight. Keep this explanation.",
-    "We don't log it. Keep this explanation."])
+    "We don't log it. Keep this explanation.",
+    "The tokens' scope is narrow. Keep this explanation."])
 def test_a_possessive_or_contraction_does_not_hide_the_rest_of_the_prose(sentence: str) -> None:
+    """Over-redaction wins where prose and a credential look alike: `secrets' two words` after a plural key stays
+    prose, and a credential that starts with `'s ` or `'t ` after its key stays prose."""
     assert _redact.redact(sentence).endswith(". Keep this explanation.")
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_possessive_before_a_quoted_credential_keeps_the_prose_and_redacts_the_credential() -> None:
+    redacted = _redact.redact("The secret's scope is narrow, password: 'two words zzcanary' kept")
+    assert "zzcanary" not in redacted and "two words" not in redacted, redacted
+    assert redacted.endswith(" kept") and "scope is narrow" in redacted, redacted
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("line", [
+    "password'first zzcanary last' kept",
+    "password'first\nzzcanary last' kept",
+    "password'first zzcanary last"],
+    ids=["closed", "multiline", "unterminated"])
+def test_a_single_quoted_credential_right_after_its_key_is_redacted_whole(line: str) -> None:
+    redacted = _redact.redact(line)
+    assert "zzcanary" not in redacted and "first" not in redacted and "last" not in redacted, redacted
 
 
 @pytest.mark.ac("gh-501:AC-4")
