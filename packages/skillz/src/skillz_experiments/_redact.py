@@ -137,9 +137,7 @@ def redact(text: str) -> str:
     text = text.strip()
     spaces = [hit.start() for hit in _SPACE.finditer(text)]
     length = len(text)
-    quotes = [index for index, char in enumerate(text) if char == "'"]
-    last_quote = quotes[-1] if quotes else -1
-    next_quote = 0
+    last_quote = text.rfind("'")
     pairs = _Pairs(text)
     finders: tuple[Callable[[str, int], int | None], ...] = (
         _find_url, _find_with(_KEYWORD_START), pairs.find, _find_with(_SIMPLE_WORDS), _find_with(_SK),
@@ -159,23 +157,13 @@ def redact(text: str) -> str:
         """The end of what a single quote that directly follows `key` covers.
 
         A lowercase key, `'s` and the last quote in the text make a prose apostrophe, so only `'s` is covered.
-        Otherwise the quote opens a value that ends at the first later quote that does not look like an opening one.
+        Any other quote opens a value that runs to the end of the input.
         """
-        nonlocal next_quote
         after = opening + 2
         if (opening == last_quote and key.isascii() and key.isalpha() and key.islower()
                 and text.startswith("s", opening + 1) and (after >= length or text[after].isspace())):
             return after
-        while next_quote < len(quotes) and quotes[next_quote] <= opening:
-            next_quote += 1
-        while next_quote < len(quotes):
-            closing = quotes[next_quote]
-            next_quote += 1
-            before = text[closing - 1]
-            if not (before.isspace() or before in ":="):
-                return closing + 1
         return length
-
     def span_end(kind: int, anchor: int) -> int:
         if kind == _KEYWORD:
             head = _KEYWORD_START.match(text, anchor)
