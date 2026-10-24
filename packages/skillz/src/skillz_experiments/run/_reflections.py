@@ -46,10 +46,9 @@ class ReflectionLog:
         Raise `reflection-record-exists` when the file is already there, and `reflection-record-failed` on a write error.
         """
         path = self._directory / f"{ordinal}.json"
-        # A record keeps at most `RECORD_LIMIT` characters of each text, and redaction time grows with the square of a run
-        # without whitespace, so only that head is redacted.
+        # Redact each whole text first: a cut before redaction can drop the closing quote of a credential value.
         answer_text = json.dumps(answer, sort_keys=True, default=str)
-        data = _fitted(ordinal, redact(prompt[:RECORD_LIMIT]), redact(answer_text[:RECORD_LIMIT]))
+        data = _fitted(ordinal, redact(prompt), redact(answer_text))
         try:
             if self._directory.is_symlink():
                 raise OSError(f"{self._directory} is a symlink")

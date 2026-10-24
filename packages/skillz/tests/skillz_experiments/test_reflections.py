@@ -26,6 +26,21 @@ def test_a_long_record_is_cut_to_64_kib_with_markers_and_stays_private(tmp_path:
 
 
 @pytest.mark.ac("gh-501:AC-6")
+def test_a_credential_whose_closing_quote_lies_past_64_kib_is_redacted_before_the_record_is_cut(tmp_path: Path) -> None:
+    prompt = "Improve. password=\"ZZCANARYP " + "word " * 20_000 + "\" end"
+    answer = {"SKILL.md": "token: 'ZZCANARYA " + "w " * 40_000 + "' done", "@hypothesis": None}
+    assert len(prompt) > RECORD_LIMIT and len(json.dumps(answer)) > RECORD_LIMIT
+    ReflectionLog(tmp_path).record(7, prompt, answer)
+    path = tmp_path / "reflections" / "7.json"
+    data = path.read_bytes()
+    assert len(data) <= RECORD_LIMIT and stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert "ZZCANARY" not in data.decode()
+    record = cast(dict[str, object], json.loads(data))
+    assert record["ordinal"] == 7 and cast(str, record["prompt"]).startswith("Improve. [redacted] end")
+    assert record["answer"] == '{"@hypothesis": null, "SKILL.md": [redacted] done"}'
+    assert sorted(item.name for item in (tmp_path / "reflections").iterdir()) == ["7.json"]
+
+@pytest.mark.ac("gh-501:AC-6")
 def test_a_short_record_holds_the_redacted_prompt_and_answer_whole(tmp_path: Path) -> None:
     ReflectionLog(tmp_path).record(1, "Improve SKILL.md. token=abc123", {"SKILL.md": "new text", "@hypothesis": None})
     record = cast(dict[str, object], json.loads((tmp_path / "reflections" / "1.json").read_text()))

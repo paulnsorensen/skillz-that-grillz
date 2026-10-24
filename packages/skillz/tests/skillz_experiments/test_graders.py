@@ -17,13 +17,15 @@ from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._records import read, write
 from skillz_experiments.run._outcomes import feedback_for
-from skillz_experiments.search import HarnessText
+from skillz_experiments.search import HarnessText, Progress
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._roles import Role
 from skillz_experiments._budget import Budget
 from fake_provider import FakeProvider
 
 RUBRIC = "RUBRIC_SENTINEL: rate how readable the rewrite is."
+INVALID_STDOUT = "grader stdout lacks a JSON object with a numeric score from 0 to 1"
 GATE_SCRIPT = {
     "pass": 'import json;print(json.dumps({"score": 1}))',
     "fail": 'import json;print(json.dumps({"score": 1}));raise SystemExit(1)',
@@ -305,16 +307,68 @@ def test_a_failed_command_gate_records_its_redacted_stderr_tail_and_both_feedbac
         assert gate == diagnostic and "GATESECRET" not in gate and len(gate) <= 1000
 
 
+SPLIT_SECRETS = {
+    "quoted": 'password="alpha ZZCANARYQ beta" user',
+    "multiline": 'password="line one\nZZCANARYM line three" user',
+    "bearer": "Authorization: Bearer ZZCANARYB user"}
+START = Progress(spent=0, planned=100, proposal=1)
+
+
 @pytest.mark.ac("gh-501:AC-4")
-def test_a_secret_that_the_stderr_window_splits_never_reaches_the_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    secret = "password=HUNTER2QQZZ"
-    # The 4,000-character window starts 3 characters into the secret. Redaction then shrinks the rest below 1,000.
-    rest = (" " + ("token=" + "a" * 90 + " ") * 50)[:4000 - (len(secret) - 3)]
+@pytest.mark.parametrize("kind", ["rewrite", "gate"], ids=["hybrid", "command"])
+@pytest.mark.parametrize("name", sorted(SPLIT_SECRETS))
+def test_a_secret_that_crosses_the_old_stderr_window_never_reaches_the_diagnostic_the_feedback_or_the_prompt(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, name: str) -> None:
+    secret = SPLIT_SECRETS[name]
+    cut = secret.index("ZZCANARY") - 4
+    # The old 4,000-character window began inside the secret. Redaction then shrank the rest below 1,000.
+    rest = (" " + ("token=" + "a" * 90 + " ") * 50)[:4000 - (len(secret) - cut)]
     script = f"import sys;sys.stderr.write({('pad ' + secret + rest)!r});raise SystemExit(1)"
-    case, candidate = case_and_candidate(tmp_path, "gate", contract(script))
+    case, candidate = case_and_candidate(tmp_path, kind, contract(script))
     result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     diagnostic = cast(str, result["gate_diagnostic"])
-    assert len(diagnostic) < 1000 and diagnostic.startswith("[redacted]") and "QQZZ" not in diagnostic
+    assert "ZZCANARY" not in diagnostic and len(diagnostic) <= 1000 and diagnostic.startswith("pad ")
+    write(tmp_path / "run.json", {"outcome": result})
+    recorded = cast(dict[str, object], read(tmp_path / "run.json")["outcome"])
+    for outcome in (result, recorded):
+        feedback = feedback_for(outcome, case, HarnessText(), candidate)[1]
+        gate = cast(str, feedback["gate_feedback"])
+        assert "ZZCANARY" not in gate and len(gate) <= 1000
+        prompt, _ = reflection_request("prose", {"SKILL.md": "x"}, {"SKILL.md": [feedback]}, ["SKILL.md"], progress=START)
+        assert "ZZCANARY" not in prompt and gate in prompt
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize(("script", "score", "diagnostic"), [
+    ("print('not json')", 0.0, INVALID_STDOUT),
+    ("print('{\"other\": 1}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": true}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": 2}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": -0.5}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": \"1\"}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": 0}')", 0.0, "the grader argv exits with code 0"),
+    ("print('{\"score\": 0.25}')", 0.25, "the grader argv exits with code 0"),
+    ("print('{\"score\": 1}')", 1.0, None)],
+    ids=["malformed", "missing", "boolean", "above-range", "below-range", "text", "valid-zero", "valid-fraction", "valid-one"])
+def test_a_command_gate_that_exits_zero_with_an_invalid_score_says_so_and_a_valid_score_does_not(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, score: float, diagnostic: str | None) -> None:
+    case, candidate = case_and_candidate(tmp_path, "gate", contract(script))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert result["score"] == score and result.get("gate_diagnostic") == diagnostic
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_nonzero_exit_keeps_the_exit_code_diagnostic_even_when_stdout_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case, candidate = case_and_candidate(tmp_path, "gate", contract("print('not json');raise SystemExit(3)"))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert result["score"] == 0.0 and result["gate_diagnostic"] == "the grader argv exits with code 3"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_invalid_stdout_with_stderr_keeps_the_redacted_stderr_as_the_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case, candidate = case_and_candidate(tmp_path, "gate", contract("import sys;sys.stderr.write('boom api_key=sk-live-ABCDEF');print('not json')"))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert result["gate_diagnostic"] == "boom [redacted]"
 
 
 @pytest.mark.ac("gh-501:AC-4")

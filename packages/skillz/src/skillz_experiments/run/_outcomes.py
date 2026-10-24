@@ -193,16 +193,20 @@ def _unmet(result: Mapping[str, object], case: Case) -> list[tuple[Criterion, in
     return sorted(found, key=lambda item: (not item[0].must, item[1]))
 
 
+def _cut(value: str, harness: HarnessText) -> str:
+    """Redact the whole of `value`, mask it, and cut it to `FIELD_LIMIT` characters, the `[truncated]` marker included."""
+    clean = harness.mask(redact(value))
+    return clean if len(clean) <= FIELD_LIMIT else clean[:FIELD_LIMIT - len(TRUNCATED)] + TRUNCATED
+
+
 def _bounded(unmet: Sequence[tuple[Criterion, int, str]], harness: HarnessText) -> list[dict[str, object]]:
     """Return the unmet entries. Each keeps its id, must flag, and level.
 
-    Each text and reason is redacted, masked, and cut to `FIELD_LIMIT`. The first entries keep their fields while all the
-    fields, the markers of the cut entries included, stay within `FIELDS_LIMIT`. Each later entry gets `[truncated]` in both
-    fields, or an empty text when even the markers alone pass the limit.
+    Each text and reason is redacted whole, then masked, then cut to `FIELD_LIMIT` with `[truncated]` at the cut. The first
+    entries keep their fields while all the fields, the markers of the cut entries included, stay within `FIELDS_LIMIT`.
+    Each later entry gets `[truncated]` in both fields, or an empty text when even the markers alone pass the limit.
     """
-    # Redaction time grows with the square of a run without whitespace, so it reads only a window of each text.
-    fields = [tuple(harness.mask(redact(value[:4 * FIELD_LIMIT]))[:FIELD_LIMIT] for value in (criterion.text, reason))
-              for criterion, _level, reason in unmet]
+    fields = [tuple(_cut(value, harness) for value in (criterion.text, reason)) for criterion, _level, reason in unmet]
     marker = TRUNCATED if 2 * len(TRUNCATED) * len(fields) <= FIELDS_LIMIT else ""
     kept = len(fields)
     while sum(len(text) + len(why) for text, why in fields[:kept]) + 2 * len(marker) * (len(fields) - kept) > FIELDS_LIMIT:

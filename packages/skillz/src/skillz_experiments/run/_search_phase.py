@@ -364,12 +364,14 @@ class SearchPhase:
                 outcome["over_budget"] = True
             state.outcomes.append(outcome)
             state.checkpoint()
-            # The record comes after the checkpoint, so a crash between them leaves a gap, never a name that a resume reuses.
-            try:
-                self._reflection_log.record(len(self.reflections()), prompt, result.get("answer"))
-            except CodedError as error:
-                state.faults.latch(error)
-                raise
+            ordinal = len(self.reflections())
+        # The record comes after the checkpoint, so a crash between them leaves a gap, never a name that a resume reuses.
+        # It is written outside the lock: redaction and the file write must not hold up the other search threads.
+        try:
+            self._reflection_log.record(ordinal, prompt, result.get("answer"))
+        except CodedError as error:
+            state.faults.latch(error)
+            raise
         if refusal is not None:
             raise refusal
         self._record_admission(outcome, proposal)

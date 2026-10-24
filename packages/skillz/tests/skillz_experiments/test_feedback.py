@@ -98,6 +98,37 @@ def test_thirty_long_unmet_criteria_keep_every_id_and_cap_the_text_and_reason_fi
     cut = [field for field in fields if len(field) < 300]
     assert cut and set(cut) == {TRUNCATED}
     kept = [entry for entry in unmet if entry["text"] != TRUNCATED]
-    assert kept and all(len(cast(str, entry["text"])) == len(cast(str, entry["reason"])) == 300 for entry in kept)
+    assert kept and all(len(cast(str, entry[key])) == 300 for entry in kept for key in ("text", "reason"))
+    # A shortened kept field ends with the marker and keeps the head of the original.
+    assert all(entry["text"] == "THE summary SHALL " + "x" * (300 - len(TRUNCATED) - 18) + TRUNCATED for entry in kept)
+    assert all(entry["reason"] == "y" * (300 - len(TRUNCATED)) + TRUNCATED for entry in kept)
     # Only later entries are cut.
     assert unmet[:len(kept)] == kept
+
+
+@pytest.mark.ac("gh-501:AC-5")
+def test_a_kept_field_at_or_under_300_characters_is_unchanged_and_one_over_gets_the_marker(tmp_path: Path) -> None:
+    exact = "THE summary SHALL " + "e" * 282
+    over = "THE summary SHALL " + "o" * 283
+    assert (len(exact), len(over)) == (300, 301)
+    case = _case(tmp_path, [{"id": "exact", "text": exact}, {"id": "over", "text": over}])
+    levels = {"exact": (1, "r" * 300), "over": (2, "short reason")}
+    unmet = {cast(str, entry["id"]): entry for entry in cast(
+        list[dict[str, object]], _feedback(case, levels, Candidate({"SKILL.md": "x"}, ("SKILL.md",)))["unmet"])}
+    assert unmet["exact"]["text"] == exact and unmet["exact"]["reason"] == "r" * 300
+    assert unmet["over"]["text"] == over[:300 - len(TRUNCATED)] + TRUNCATED and len(cast(str, unmet["over"]["text"])) == 300
+    assert unmet["over"]["reason"] == "short reason"
+
+
+@pytest.mark.ac("gh-501:AC-5")
+def test_a_credential_whose_closing_quote_lies_past_the_field_limit_is_redacted_before_the_cut(tmp_path: Path) -> None:
+    # A criterion text holds at most 1,000 characters, so only the reason can pass the old 1,200-character window.
+    short = 'password="ZZCANARYT ' + "word " * 150 + '" tail'
+    long = 'password="ZZCANARYR ' + "word " * 400 + '" tail'
+    assert 300 < len(short) < 1000 < 1200 < len(long)
+    case = _case(tmp_path, [{"id": "quoted", "text": "THE summary SHALL hide " + short}])
+    feedback = _feedback(case, {"quoted": (1, "reason " + long)}, Candidate({"SKILL.md": "x"}, ("SKILL.md",)))
+    unmet = cast(list[dict[str, object]], feedback["unmet"])
+    assert "ZZCANARY" not in json.dumps(feedback)
+    assert unmet[0]["text"] == "THE summary SHALL hide [redacted] tail"
+    assert unmet[0]["reason"] == "reason [redacted] tail"

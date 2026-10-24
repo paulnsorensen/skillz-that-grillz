@@ -31,6 +31,10 @@ from typing_extensions import override
 from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
 from skillz_experiments.run._history_store import UNREADABLE, FileHistoryStore, store_path
 from skillz_experiments.run._ports import Ports
+from skillz_experiments.run._reflections import ReflectionLog
+from skillz_experiments.run._search_phase import SearchPhase
+from skillz_experiments.run._state import RunState
+from skillz_experiments.search import Edit
 from fake_provider import PASSED, FakeRunProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -1368,6 +1372,76 @@ def test_each_reflection_call_writes_a_private_redacted_record_without_holdout_t
     # The secret did reach the prompts, so the check above sees redaction, not absence.
     assert any("REFLECTSECRET" in prompt for prompt in state.prompts)
 
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_the_reflection_record_is_prepared_while_another_thread_holds_the_session_lock(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    locks: list[threading.RLock] = []
+    original_init = SearchPhase.__init__
+    original_record = ReflectionLog.record
+
+    def capture(self: SearchPhase, run_state: RunState, *, edit: Edit, search_cases: Mapping[str, Case],
+                built: Callable[[Candidate], Candidate]) -> None:
+        locks.append(run_state.lock)
+        original_init(self, run_state, edit=edit, search_cases=search_cases, built=built)
+
+    ordinals: list[int] = []
+    acquired: list[bool] = []
+
+    def paused_record(self: ReflectionLog, ordinal: int, prompt: str, answer: object) -> None:
+        ordinals.append(ordinal)
+        entered = threading.Event()
+        outcome: list[bool] = []
+
+        def other() -> None:
+            lock = locks[-1]
+            got = lock.acquire(timeout=3)
+            outcome.append(got)
+            if got:
+                lock.release()
+            entered.set()
+
+        thread = threading.Thread(target=other)
+        thread.start()
+        # The log preparation stays paused until the other thread has tried to take the lock.
+        _ = entered.wait(10)
+        thread.join()
+        acquired.append(bool(outcome and outcome[0]))
+        original_record(self, ordinal, prompt, answer)
+
+    monkeypatch.setattr(SearchPhase, "__init__", capture)
+    monkeypatch.setattr(ReflectionLog, "record", paused_record)
+    monkeypatch.setattr(ReflectionLog, "record", paused_record)
+    assert run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
+               factory=state.factory)["phase"] == "complete"
+    assert len(acquired) > 1 and all(acquired)
+    assert len(set(ordinals)) == len(ordinals) and ordinals == sorted(ordinals)
+    assert list(_reflection_records(out)) == ordinals
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_a_reflection_record_write_error_still_ends_the_run_and_a_resume_never_reuses_its_number(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+
+    def failing_record(self: ReflectionLog, ordinal: int, prompt: str, answer: object) -> None:
+        del self, prompt, answer
+        raise CodedError("reflection-record-failed", f"cannot write record {ordinal}")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(ReflectionLog, "record", failing_record)
+        with pytest.raises(CodedError) as caught:
+            _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert caught.value.code == "reflection-record-failed"
+    # The outcome was checkpointed before the record, so the failed call still counts.
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    assert [item for item in outcomes if item.get("split") == "reflection" and "usage" in item]
+    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    records = _reflection_records(out)
+    assert records and 1 not in records
 
 def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:

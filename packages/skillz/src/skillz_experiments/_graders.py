@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import stat
 import tempfile
 import unicodedata
@@ -51,8 +50,7 @@ CAPTURE_BYTES_LIMIT = 4_000_000
 CAPTURE_TOTAL_LIMIT = 16_000_000
 # The command grader keeps at most this many characters of its redacted stderr, from the end.
 DIAGNOSTIC_LIMIT = 1_000
-# Redaction time grows with the square of a run without whitespace, so it reads only this much of the stderr end.
-_DIAGNOSTIC_WINDOW = 4 * DIAGNOSTIC_LIMIT
+_INVALID_STDOUT = "grader stdout lacks a JSON object with a numeric score from 0 to 1"
 
 
 def _utf8(data: bytes) -> bool:
@@ -200,12 +198,11 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     require_sandbox(task)
     with _grading_workspace(case, files, "command", trace) as workspace:
         code, stdout, stderr = _run(task, workspace, argv)
-    window = stderr[-_DIAGNOSTIC_WINDOW:]
-    if len(stderr) > _DIAGNOSTIC_WINDOW:
-        # The cut can split a `key=value` word, and its rest would not match a redaction pattern, so the word goes.
-        window = re.sub(r"^\S+", "", window)
-    tail = redact(window)[-DIAGNOSTIC_LIMIT:]
-    return _command_score(code, stdout), tail or f"the grader argv exits with code {code}"
+    tail = redact(stderr)[-DIAGNOSTIC_LIMIT:]
+    score, valid = _command_score(code, stdout)
+    if tail:
+        return score, tail
+    return score, f"the grader argv exits with code {code}" if valid else _INVALID_STDOUT
 
 
 def _run(task: object, workspace: Path, argv: tuple[str, ...]) -> tuple[int, str, str]:
@@ -273,16 +270,17 @@ def _captured(root: Path) -> dict[str, bytes]:
     return found
 
 
-def _command_score(code: int, stdout: str) -> float:
+def _command_score(code: int, stdout: str) -> tuple[float, bool]:
+    """The score and whether stdout held a valid one. A non-zero exit code is not an invalid stdout."""
     if code != 0:
-        return 0.0
+        return 0.0, True
     try:
         score = mapping(loads_untrusted(stdout)).get("score")
     except ValueError:
-        return 0.0
+        return 0.0, False
     if type(score) not in (int, float) or not 0 <= cast(float, score) <= 1:
-        return 0.0
-    return float(cast(float, score))
+        return 0.0, False
+    return float(cast(float, score)), True
 
 
 def judge(transport: object, grader: Grader, case: Case, answer: object, files: dict[str, str] | None,
