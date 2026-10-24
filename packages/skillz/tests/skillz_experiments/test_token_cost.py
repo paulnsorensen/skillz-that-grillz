@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import statistics
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -129,6 +130,18 @@ def test_promote_cheaper_needs_both_the_share_and_two_token_se() -> None:
     assert result.token_delta == pytest.approx(-0.25) and result.verdict == "inconclusive"
     exact = _tokens(*[(100, 75)] * 4)  # SE 0, saving exactly the share
     assert verdict(BAND, thresholds=Statistics(min_token_saving=0.25, max_quality_loss=10.0), tokens=exact).verdict == "promote-cheaper"
+
+
+@pytest.mark.ac("gh-529:AC-1")
+def test_a_fixed_case_does_not_widen_the_loss_se_so_a_cheaper_winner_with_no_loss_promotes_cheaper() -> None:
+    deltas = _deltas(*[0.0] * 8, 0.5)  # the live-run shape: no case loses, one case is fixed, the mean is inside 2 SE
+    tokens = _tokens(*[(100, 50)] * 9)
+    strict = Statistics(min_token_saving=0.3, max_quality_loss=0.0)
+    result = verdict(deltas, thresholds=strict, tokens=tokens, se_floor=0.0)
+    assert (result.verdict, result.reasons) == ("promote-cheaper", ())
+    assert 0 < result.delta < 2 * result.se
+    losing = _deltas(*[0.0] * 7, -0.5, 0.5)  # mean 0, but one case loses 0.5
+    assert verdict(losing, thresholds=strict, tokens=_tokens(*[(100, 50)] * 9)).verdict == "inconclusive"
 
 
 def test_equal_token_changes_use_the_shared_value_and_a_flat_change_is_not_cheaper() -> None:
@@ -668,8 +681,9 @@ def test_a_completed_run_checks_the_token_flags_against_the_frozen_values(
 
 def test_the_quality_loss_margin_gates_promote_cheaper_at_the_boundary() -> None:
     cheap = _tokens(*[(100, 50)] * 4)
-    se = verdict(BAND, tokens=cheap).se
-    edge = 2 * se  # BAND has delta 0, so delta - 2*se is exactly -edge
+    se = statistics.stdev([min(value, 0.0) for value in BAND.values()]) / math.sqrt(len(BAND))  # the loss SE
+    assert se < verdict(BAND, tokens=cheap).se
+    edge = 2 * se  # BAND has delta 0, so delta - 2*se_loss is exactly -edge
     at = verdict(BAND, thresholds=Statistics(min_token_saving=0.2, max_quality_loss=edge), tokens=cheap)
     assert at.verdict == "promote-cheaper"
     above = verdict(BAND, thresholds=Statistics(min_token_saving=0.2, max_quality_loss=edge * 1.01), tokens=cheap)

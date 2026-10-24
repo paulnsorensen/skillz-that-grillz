@@ -281,6 +281,7 @@ def scored_kinds(contract: Contract, requested: Sequence[str] = ()) -> tuple[str
         if kind not in contract.kinds:
             raise CodedError("contract-kinds", f"--kind {kind} names no declared kind; "
                              + f"the contract declares {', '.join(sorted(contract.kinds))}")
+        # Audit grading is internal and deferred: it will ship with activation grading for trigger and near-miss cases (`_intake.py`).
         if contract.kinds[kind].type == "audit":
             raise CodedError("contract-audit-unsupported", f"the scored kind {kind!r} uses the audit grader; "
                              + "run does not support audit-graded kinds yet")

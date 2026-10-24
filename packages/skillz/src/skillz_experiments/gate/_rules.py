@@ -115,6 +115,11 @@ def _reaches(value: float, limit: float) -> bool:
     return value >= limit or close(value, limit)
 
 
+def _loss_se(values: Sequence[float], se_floor: float) -> float:
+    """Return the SE of the case losses (`min(delta, 0)`), never below `se_floor`."""
+    return max(statistics.stdev([min(value, 0.0) for value in values]) / math.sqrt(len(values)), se_floor)
+
+
 def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statistics = DEFAULT_STATISTICS,
             families: Mapping[str, str] | None = None,
             tokens: Mapping[str, tuple[float | None, float | None]] | None = None,
@@ -135,8 +140,10 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     a score `promote` whose mean token change exceeds `max_token_increase_per_gain * delta` becomes `reject`
     with reason `token-cost`;
     a score `inconclusive` (the delta is inside the band, from -2*se to 2*se) becomes `promote-cheaper` when
-    `min_token_saving` is set, the delta is at least 0, `delta - 2*se` is at least `-max_quality_loss`, the tokens
-    drop by more than twice the token SE, and the drop is at least `min_token_saving`. A None `max_quality_loss`
+    `min_token_saving` is set, the delta is at least 0, `delta - 2*se_loss` is at least `-max_quality_loss`, the tokens
+    drop by more than twice the token SE, and the drop is at least `min_token_saving`. `se_loss` is the SE of the
+    case losses alone, `max(stdev(min(delta_i, 0)) / sqrt(n), se_floor)`, so a case that the candidate fixes does not
+    widen it. A None `max_quality_loss`
     turns `promote-cheaper` off. The floors do not gate `promote-cheaper`.
     Unknown usage turns a `promote` into `inconclusive` with reason `unknown-usage`. It adds the same reason to
     a band result when `min_token_saving` is set. An active token rule with no `tokens` is unknown usage.
@@ -209,7 +216,7 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
             if token_delta is None or token_se is None:
                 reasons.append("unknown-usage")
             elif (thresholds.max_quality_loss is not None and delta >= 0
-                  and _reaches(delta - 2 * se, -thresholds.max_quality_loss)
+                  and _reaches(delta - 2 * _loss_se(values, se_floor), -thresholds.max_quality_loss)
                   and _exceeds(-token_delta, 2 * token_se) and _reaches(-token_delta, saving)):
                 name = "promote-cheaper"
     if breached:

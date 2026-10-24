@@ -96,7 +96,6 @@ class Candidate:
     files: dict[str, str]
     editable: tuple[str, ...]
     contract: Contract | None = None
-    script: str | None = None
     frozen: dict[str, bytes] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -170,7 +169,7 @@ class Candidate:
         # The new-target component has its own named size check.
         if any(len(text) > TEXT_FILE_LIMIT for name, text in components.items() if name != NEW_CLI):
             raise ValueError("proposal exceeds component size limit")
-        child = Candidate(self.files | components, self.editable, self.contract, self.script, self.frozen)
+        child = Candidate(self.files | components, self.editable, self.contract, self.frozen)
         child.__dict__["frozen_digests"] = self.frozen_digests
         return child
 
@@ -270,8 +269,3 @@ def snapshot_outputs(workspace: Path) -> dict[str, str]:
             break
         files["/".join(parts)] = text
     return files
-
-
-def helper_script(candidate: Candidate, rules: Contract) -> str | None:
-    """Return the helper path that earns credit: the candidate's own script, else the contract's."""
-    return candidate.script or (rules.helper.path if rules.helper is not None else None)

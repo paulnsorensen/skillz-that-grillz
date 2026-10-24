@@ -39,13 +39,14 @@ TOKENS = {"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}
 CRITERIA = [{"id": "readable", "text": "THE rewrite SHALL be readable."}]
 
 
-def contract(script: str = GATE_SCRIPT["pass"], flags: tuple[str, ...] = ("-I",)) -> Contract:
+def contract(script: str = GATE_SCRIPT["pass"], flags: tuple[str, ...] = ("-I",), helper: dict[str, object] | None = None) -> Contract:
     argv = [sys.executable, *flags, "-c", script]
     return parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
                   "kinds": {"echo": {"grader": "exact-json"},
                             "gate": {"grader": "command", "argv": argv},
                             "style": {"grader": "judge", "rubric": RUBRIC},
-                            "rewrite": {"grader": "hybrid", "argv": argv, "rubric": RUBRIC}}}, "skill")
+                            "rewrite": {"grader": "hybrid", "argv": argv, "rubric": RUBRIC}},
+                  **({"helper": helper} if helper else {})}, "skill")
 
 
 class FakeTask(FakeProvider):
@@ -409,17 +410,17 @@ class ScriptTask(FakeTask):
 
 
 @pytest.mark.parametrize(("command", "executed"), [
-    ("python3 -I .agents/skills/echo-skill/scripts/x.py", True),
-    ("python3 .agents/skills/echo-skill/scripts/x.py", False),
-    ("python3 -I .agents/skills/echo-skill/scripts/x.py input.txt", False)])
+    ("python3 -I .agents/skills/echo-skill/scripts/x.py input.txt", True),
+    ("python3 -I .agents/skills/echo-skill/scripts/x.py", False)])
 def test_wedge_script_prompt_requires_isolated_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                        command: str, executed: bool) -> None:
-    rules = contract()
+    rules = contract(helper={"path": "scripts/x.py", "input": "input.txt",
+                             "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]})
     task = ScriptTask(command)
     case, seed = case_and_candidate(tmp_path, "echo", rules)
-    candidate = Candidate(seed.files | {"scripts/x.py": "print(1)\n"}, seed.editable, rules, script="scripts/x.py")
+    candidate = Candidate(seed.files | {"scripts/x.py": "print(1)\n"}, seed.editable, rules)
     result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
-    assert "python3 -I .agents/skills/echo-skill/scripts/x.py" in task.prompts[0]
+    assert "python3 -I .agents/skills/echo-skill/scripts/x.py input.txt" in task.prompts[0]
     assert result["loaded"] is True and result["helper_executed"] is executed
 
 

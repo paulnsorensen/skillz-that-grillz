@@ -87,6 +87,20 @@ def _fall_back_to_prose(target: Path, skeleton: Candidate, contract: Contract,
     return wedge, Candidate(files, tuple(editable_files(files, contract, "prose", frozen.keys(), wedge)), contract, frozen=frozen)
 
 
+def _seed_or_prose(target: Path, skeleton: Candidate, contract: Contract, edit: Edit | None, mode: Edit, wedge: TargetPlan,
+                   files: dict[str, str], frozen: dict[str, bytes]) -> tuple[Edit, TargetPlan, Candidate, bool]:
+    """Build the seed candidate. Without an explicit `--edit`, a missing helper falls back to `prose`.
+
+    The last item is true when the run fell back to `prose`.
+    """
+    try:
+        return mode, wedge, Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen), False
+    except CodedError as error:
+        if edit is not None or error.code != "helper-missing":
+            raise
+        return ("prose", *_fall_back_to_prose(target, skeleton, contract, error), True)
+
+
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit | None, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
              options: ClaudeOptions, configuration: Configuration | None = None,
@@ -167,13 +181,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     wedge = plan_targets(target, skeleton.files, contract, mode)
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
-    try:
-        seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
-    except CodedError as error:
-        if edit is not None or error.code != "helper-missing":
-            raise
-        mode = "prose"
-        wedge, seed_candidate = _fall_back_to_prose(target, skeleton, contract, error)
+    mode, wedge, seed_candidate, _ = _seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
     plan = size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
     shown = plan_estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
@@ -187,13 +195,9 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if offered and wedge.capable is None:
         files = skeleton.files | wedge.sources
         frozen = skeleton.frozen | wedge.frozen
-        try:
-            seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
-        except CodedError as error:
-            if edit is not None or error.code != "helper-missing":
-                raise
-            mode, layers = "prose", {}
-            wedge, seed_candidate = _fall_back_to_prose(target, skeleton, contract, error)
+        mode, wedge, seed_candidate, fell_back = _seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
+        if fell_back:
+            layers = {}
     seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
@@ -384,7 +388,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                          + "configuration")
     statistics_given = _check_statistics_flags(statistics)
     if is_inside(out, target):
-        raise ValueError("--out must be outside the target skill directory")
+        raise CodedError("out-inside-target", f"{out} is inside the target skill directory; "
+                         + "use a private directory outside the skill from `mktemp -d`")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
     require_private(out)
     path = out / "run.json"

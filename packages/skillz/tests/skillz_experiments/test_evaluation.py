@@ -162,19 +162,6 @@ def test_a_malformed_helper_fixture_is_rejected(fixture: dict[str, object]) -> N
     with pytest.raises(ValueError):
         _ = _parse_fixture(fixture)
 
-def test_wedge_script_runs_isolated() -> None:
-    from types import SimpleNamespace
-    from typing import cast
-
-    from skillz_experiments._candidate import Candidate
-    from skillz_experiments._cases import Case
-    from skillz_experiments._contract import resolve
-    from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
-
-    candidate = Candidate({"SKILL.md": "s", "scripts/offload.py": "print(1)"}, ("SKILL.md",), None, "scripts/offload.py")
-    prompt = _prompt(resolve(None), candidate, "", cast(Case, cast(object, SimpleNamespace(request="task", journey=None))))
-    assert "python3 -I .agents/skills/skillz/scripts/offload.py" in prompt
-
 
 def test_deeply_nested_answer_scores_zero_instead_of_stopping_the_run() -> None:
     assert grade("[" * 200_000, [], loaded=True, helper_executed=True) == 0.0
