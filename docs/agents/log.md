@@ -119,3 +119,4 @@
 
 - 2026-10-22 · c1182c6ea19c3c0d · merged · decisions/wedge-skill-packaging.md · Record consumer merge-group validation and separate publication policies. All three frozen probes return the decision page at rank 1; corpus reconciliation remains pending.
 
+- 2026-10-24 · wedge-site-layer-cache · updated · decisions/wedge-skill-packaging.md · ADR-003 and ADR-011 amendments: `build` reuses a manifest-verified site layer from wedge's own cache, and `build_from_layer` links clean layer entries instead of copying them
