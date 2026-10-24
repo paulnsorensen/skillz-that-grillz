@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Protocol, cast, runtime_checkable
 
 from skillz_experiments import _audit, _graders
-from skillz_experiments._candidate import Candidate, helper_script
+from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping, string
 from skillz_experiments._contract import Contract, resolve
 from skillz_experiments.evaluation._scoring import executed, grade, usage, witnessed_events
@@ -79,13 +79,11 @@ def _simulator(transport: _Responder, case: Case, holdout: bool,
     return simulate
 
 
-def _prompt(rules: Contract, candidate: Candidate, instruction: str, case: Case) -> str:
+def _prompt(rules: Contract, instruction: str, case: Case) -> str:
     """Build the candidate prompt. It never holds `expected` or a grader rubric."""
     root = f".agents/skills/{rules.skill}"
     steps = f"cat {root}/SKILL.md; then read {root}/EXPERIMENT_MARKER"
-    if case.journey is None and candidate.script is not None:
-        steps += f"; then python3 -I {root}/{candidate.script}" + (f" {rules.helper.input}" if rules.helper else "")
-    elif case.journey is None and rules.helper is not None:
+    if case.journey is None and rules.helper is not None:
         steps += f"; then python3 -I {root}/{rules.helper.path} {rules.helper.input}"
     invocation = rules.invocation.replace("{skill}", rules.skill).replace("{path}", root)
     return (invocation + "\nRun separate simple commands, without shell operators: " + steps + ". " + instruction
@@ -121,7 +119,7 @@ def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate
         _graders.require_viewer(task, judge_transport)
     if rules.judged(case.kind):
         task.budget.check(rules.calls(case.kind, case.journey.max_turns if case.journey is not None else 1), holdout=holdout)
-    prompt = _prompt(rules, candidate, instruction, case)
+    prompt = _prompt(rules, instruction, case)
     spent: list[dict[str, object]] = []
     journey: dict[str, object] | None = None
     if case.journey is not None:
@@ -196,10 +194,9 @@ def _activation(result: dict[str, object], candidate: Candidate, rules: Contract
         raise ValueError("events must be a list")
     events = cast(list[dict[str, object]], events)
     loaded = answer.get("load_marker") == candidate.identity and executed(events, "SKILL.md", workspace, skill=rules.skill)
-    script = None if journey else helper_script(candidate, rules)
+    script = None if journey or rules.helper is None else rules.helper.path
     credited = events if ledger is None else witnessed_events(events, cast(list[dict[str, object]], ledger))
     helper = script is None or executed(credited, script, workspace, skill=rules.skill,
-                                        isolated=candidate.script is not None,
                                         input_path=rules.helper.input if rules.helper is not None else None)
     if ledger is not None and script is not None:
         result["helper_witnessed"] = helper
@@ -208,6 +205,10 @@ def _activation(result: dict[str, object], candidate: Candidate, rules: Contract
 
 def _evaluate_audit(judge_transport: _Responder, case: Case, result: dict[str, object],
                     answer: dict[str, object], *, holdout: bool) -> dict[str, object]:
+    """Score an audit case. Audit grading is internal and deferred.
+
+    The public `run` rejects audit-graded kinds. Activation grading for trigger and near-miss cases (`_intake.py`) will enable audit grading.
+    """
     result["evidence_valid"] = False
     try:
         findings = _audit.report(answer.get("result_json"), case.files)

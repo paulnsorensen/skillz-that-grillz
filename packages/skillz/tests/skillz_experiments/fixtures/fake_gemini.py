@@ -53,11 +53,11 @@ if mode in {"witness-real", "witness-forged"}:
     answer = json.dumps({"load_marker": (skill / "EXPERIMENT_MARKER").read_text(), "result_json": '{"echo": "hello"}'})
     code = 0
     if mode == "witness-real":
-        code = subprocess.run([sys.executable, "-I", helper], capture_output=True).returncode
+        code = subprocess.run([sys.executable, "-I", helper, "input.txt"], capture_output=True).returncode
     witness = [
         {"type": "tool_use", "tool_name": "read_file", "tool_id": "w1", "parameters": {"file_path": f".agents/skills/{skill.name}/SKILL.md"}},
         {"type": "tool_result", "tool_id": "w1", "status": "success", "output": "body"},
-        {"type": "tool_use", "tool_name": "run_shell_command", "tool_id": "w2", "parameters": {"command": f"python3 -I {helper}"}},
+        {"type": "tool_use", "tool_name": "run_shell_command", "tool_id": "w2", "parameters": {"command": f"python3 -I {helper} input.txt"}},
         {"type": "tool_result", "tool_id": "w2", "status": "success", "output": f"Exit Code: {code}"},
     ]
 half = len(answer) // 2

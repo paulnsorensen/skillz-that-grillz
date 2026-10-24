@@ -960,7 +960,7 @@ Each kind in `kinds` names one grader:
 - `command`: runs `argv` in an isolated workspace. The case fixtures sit at the workspace root. Candidate outputs sit under `output/`. The command never sees `expected` or the rubric.
 - `hybrid`: runs the `command` gate first. A failed gate scores 0, skips the judge, and records `scores.judge` as null.
 - `journey`: scores a multi-turn conversation. See "Journeys".
-- `audit`: scores findings against reviewed labels in `expected`. The `run` command does not support audit-graded kinds yet, and stops with `contract-audit-unsupported`.
+- `audit`: scores findings against reviewed labels in `expected`. Audit grading is internal and deferred. The `run` command does not support audit-graded kinds yet, and stops with `contract-audit-unsupported`.
 
 A `command` or `hybrid` grader needs a `gate` or a nonempty `argv`, not both.
 A `gate` is a relative path to a `.py` file under `evals/`, for example `evals/gates/check.py`.
