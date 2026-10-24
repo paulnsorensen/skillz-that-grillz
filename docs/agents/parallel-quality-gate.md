@@ -42,7 +42,7 @@ Set `GATE_EATMYDATA=0` to keep fsync.
 The preparation steps and the standalone package modes always keep fsync, because `uv sync` writes the shared environment.
 Tests that replace `os.fsync` still see their replacement.
 
-`GATE_HOST_SLOTS` sets how many gates on one host run their lanes at the same time.
+`GATE_HOST_SLOTS` sets how many gates of one user on a host run their lanes at the same time.
 The default is 2, and `0` removes the limit.
 A gate takes a slot after preparation and holds it until its lanes finish.
 Each slot is a `flock` lock on `$XDG_RUNTIME_DIR/skillz-gate/slot-<n>.lock`, or on `~/.cache/skillz-gate/slot-<n>.lock` when that variable is unset.

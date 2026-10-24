@@ -66,7 +66,7 @@ Set `GATE_JOBS` to bound concurrent checks and `TEST_WORKERS` to bound each pyte
 Both settings default to 4.
 Set `GATE_SKIP` to a comma list of lane names to skip those lanes; an unknown name fails before any work.
 On a shared host, the pytest lanes run under `eatmydata` when it is on PATH; set `GATE_EATMYDATA=0` to keep fsync.
-Set `GATE_HOST_SLOTS` to limit how many gates on one host run their lanes at the same time (default 2, `0` for no limit).
+Set `GATE_HOST_SLOTS` to limit how many gates of one user on a host run their lanes at the same time (default 2, `0` for no limit).
 
 Run `just build` and verify 0 failures before opening a PR.
 
