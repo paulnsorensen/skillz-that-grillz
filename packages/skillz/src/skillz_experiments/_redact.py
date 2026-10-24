@@ -16,9 +16,13 @@ _FLAGS = re.IGNORECASE | re.DOTALL
 _KEYWORDS = r"api[-_ ]?key|key|token|secret|password|passwd|authorization|auth|cookie"
 _SIMPLE_WORDS = re.compile(r"key|token|secret|password|auth", re.IGNORECASE)
 # A quoted value keeps all of its words, across lines: a JSON string, a single-quoted string, or a JSON-escaped
-# `\"...\"` string. A quote with no closing quote runs to the end of the input. A single quote opens a value only after
-# whitespace or a separator, so the apostrophe in `token's` or `don't` stays prose.
-_QUOTED = (r'"(?:[^"\\]++|\\.)*+(?:"|\\?\Z)|' + r"(?<=[\s:=])'(?:[^'\\]++|\\.)*+(?:'|\\?\Z)|"
+# `\"...\"` string. A quote with no closing quote runs to the end of the input. A single quote after whitespace or a
+# separator always opens a value. An adjacent single quote opens a value too, unless it is an apostrophe: `'s`, `'t`,
+# `'re`, `'ve`, `'ll`, `'d` or `'m` that ends a word (`token's`, `don't`), or the quote after a plural (`tokens' scope`).
+# So `password'first zzcanary'` is a value. A credential that starts like an apostrophe, or that follows a key ending
+# in `s` and a space, stays prose: the one input where the rule favours the sentence.
+_QUOTED = (r'"(?:[^"\\]++|\\.)*+(?:"|\\?\Z)|'
+           + r"(?:(?<=[\s:=])|(?!'(?:s|t|re|ve|ll|d|m)\b|(?<=s)'\s))'(?:[^'\\]++|\\.)*+(?:'|\\?\Z)|"
            + r'\\"[\s\S]*?(?:\\"|\Z)')
 _VALUE = r"(?:(?:basic|bearer)\s++)?(?:" + _QUOTED + r"|\S+)"
 # A credential word that ends a word, with its value: `password: "..."`, `my_api_key abc`.
