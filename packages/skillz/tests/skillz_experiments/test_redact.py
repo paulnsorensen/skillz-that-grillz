@@ -159,3 +159,31 @@ def test_an_adjacent_quote_never_ends_early_at_an_escaped_or_later_quote(head: s
             "unterminated": head.removesuffix("'")}[shape]
     redacted = _redact.redact(line)
     assert "zzcanary" not in redacted, redacted
+
+
+ESCAPED_OPENINGS = [
+    r'password=\"one\\\" two zzcanary\" kept',
+    r'password=\\"one two zzcanary\\" kept',
+    r"password=\'one two zzcanary\' kept",
+    r"token: \\'one two zzcanary\\' kept",
+    r'{\"secret\": \"one \\\" two zzcanary\"}',
+]
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("line", ESCAPED_OPENINGS)
+def test_an_escaped_quote_opening_a_credential_value_redacts_through_the_end(line: str) -> None:
+    redacted = _redact.redact(line)
+    assert "zzcanary" not in redacted and "two" not in redacted, redacted
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_an_unescaped_quoted_value_still_stops_at_its_close() -> None:
+    assert _redact.redact('password="one two" kept') == "[redacted] kept"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize(("key", "expected"), [("password.md", True), ("api_key", True), ("Authorization", True),
+                                               ("SKILL.md", False), ("@hypothesis", False)])
+def test_is_credential_key_names_the_keys_whose_whole_value_goes(key: str, expected: bool) -> None:
+    assert _redact.is_credential_key(key) is expected

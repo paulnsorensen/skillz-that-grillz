@@ -132,3 +132,11 @@ def test_a_credential_whose_closing_quote_lies_past_the_field_limit_is_redacted_
     assert "ZZCANARY" not in json.dumps(feedback)
     assert unmet[0]["text"] == "THE summary SHALL hide [redacted] tail"
     assert unmet[0]["reason"] == "reason [redacted] tail"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_an_escaped_quote_credential_in_a_criterion_text_and_reason_is_redacted(tmp_path: Path) -> None:
+    secret = r'password=\"one\\\" two zzcanary\" kept'
+    case = _case(tmp_path, [{"id": "escaped", "text": "THE summary SHALL hide " + secret}])
+    feedback = _feedback(case, {"escaped": (1, "reason " + secret)}, Candidate({"SKILL.md": "x"}, ("SKILL.md",)))
+    assert "zzcanary" not in json.dumps(feedback) and "two" not in json.dumps(feedback)

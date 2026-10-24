@@ -79,3 +79,43 @@ def test_a_symlinked_log_directory_fails_with_a_coded_error(tmp_path: Path) -> N
     with pytest.raises(CodedError) as caught:
         ReflectionLog(tmp_path).record(1, "prompt", None)
     assert caught.value.code == "reflection-record-failed" and not list((tmp_path / "elsewhere").iterdir())
+
+
+def _answer_of(tmp_path: Path, answer: object, ordinal: int = 9) -> tuple[str, dict[str, object]]:
+    ReflectionLog(tmp_path).record(ordinal, "prompt", answer)
+    text = (tmp_path / "reflections" / f"{ordinal}.json").read_text()
+    return text, cast(dict[str, object], json.loads(cast(str, json.loads(text)["answer"])))
+
+
+@pytest.mark.ac("gh-501:AC-6")
+@pytest.mark.parametrize("answer", [
+    {"password": "zzcanary"}, {"password": 424242}, {"password": 4242.5}, {"password": b"zzcanary"},
+    {"password": {"inner": ["zzcanary", 424242]}}, {"password": ["zzcanary"]}, {"password.md": "zzcanary"},
+    {"api_key": object()}, {b"password": "zzcanary"}],
+    ids=["str", "int", "float", "bytes", "nested-dict", "list", "component-key", "object", "bytes-key"])
+def test_the_whole_value_under_a_credential_key_is_redacted(tmp_path: Path, answer: object) -> None:
+    text, parsed = _answer_of(tmp_path, answer)
+    assert "zzcanary" not in text and "424242" not in text and "4242.5" not in text
+    assert list(parsed.values()) == ["[redacted]"]
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_bytes_decode_and_unsupported_leaves_fail_closed(tmp_path: Path) -> None:
+    _, parsed = _answer_of(tmp_path, {"a": b"token=zzcanary kept", "b": bytearray(b"x"), "c": object(), "d": 7, "e": 1.5,
+                                      "f": [None, True], b"g": "h"})
+    assert parsed == {"a": "[redacted] kept", "b": "x", "c": "[redacted]", "d": 7, "e": 1.5, "f": [None, True],
+                      "g": "h"}
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_keys_that_collide_after_redaction_keep_every_entry(tmp_path: Path) -> None:
+    _, parsed = _answer_of(tmp_path, {"https://a.example": 1, "https://b.example": 2, "https://c.example": 3, "x": 4})
+    assert parsed == {"[redacted]": 1, "[redacted]#2": 2, "[redacted]#3": 3, "x": 4}
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_an_escaped_double_quote_credential_in_the_prompt_leaves_no_canary(tmp_path: Path) -> None:
+    prompt = r'Improve SKILL.md. password=\"one\\\" two zzcanary\" kept'
+    ReflectionLog(tmp_path).record(4, prompt, None)
+    text = (tmp_path / "reflections" / "4.json").read_text()
+    assert "zzcanary" not in text and "two" not in text
