@@ -30,7 +30,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 <!-- HALLOUMINATE:INDEX-START -->
 - [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
 - [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
-- [gh-131](./gh-131.md) — gh-131: the network preflight probes name lookup and a non-loopback address
+- [gh-131](./gh-131.md) — gh-131: the network preflight probes and the macOS live path
 - [gh-223](./gh-223.md) — gh-223: skillz_experiments module layout and borrow waves
 - [gh-235](./gh-235.md) — gh-235: freeze a run compatibility fingerprint (W2.4)
 - [gh-236](./gh-236.md) — gh-236: deterministic proposal leakage check (W3.1)
@@ -89,5 +89,6 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
 - [skillz-pragmatic-autoimprove](./skillz-pragmatic-autoimprove.md) — skillz-pragmatic-autoimprove: pragmatic autoimprove
 - [skillz-wedge-first-class](./skillz-wedge-first-class.md) — skillz-wedge-first-class: wedge first-class in autoimprove
+- [wedge-site-layer-cache](./wedge-site-layer-cache.md) — wedge-site-layer-cache: reuse a verified site layer instead of a fresh install on every build
 - [wedge-skill-packaging](./wedge-skill-packaging.md) — wedge-skill-packaging: wedge skill packaging
 <!-- HALLOUMINATE:INDEX-END -->

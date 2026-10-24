@@ -1,0 +1,135 @@
+# Slice map for the slice guard (.github/scripts/check_slices.py) and the depth ratchet (check_depth.py).
+# A human owns this file. An agent may draft a change; a human approves it in review.
+# Schema: sliced-bread-guard slices.toml (paulnsorensen/sliced-bread-architecture#69), Python backend.
+version = 1
+
+[policy]
+language = "python"
+unmapped_files = "error"
+suppressions = "human-only"
+# Tests are outside the roots: AGENTS.md lets a test import slice internals.
+roots = [
+  "packages/agent-session-analytics/src",
+  "packages/fromargs/src",
+  "packages/skillz/src",
+  "packages/wedge/src",
+]
+
+# Workspace packages. Each package is a slice whose crust is its `__init__.py`.
+
+[[slice]]
+name = "fromargs"
+paths = ["packages/fromargs/src/fromargs"]
+crust = ["packages/fromargs/src/fromargs/__init__.py"]
+shape = "thin-facade"
+may_depend_on = []
+
+[[slice]]
+name = "wedge"
+paths = ["packages/wedge/src/wedge"]
+crust = ["packages/wedge/src/wedge/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["fromargs"]
+requires = ["fromargs"]
+
+[[slice]]
+name = "agent-session-analytics"
+paths = ["packages/agent-session-analytics/src/agent_session_analytics"]
+crust = ["packages/agent-session-analytics/src/agent_session_analytics/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["fromargs"]
+requires = ["fromargs"]
+
+[[slice]]
+name = "skillz-inspect"
+paths = ["packages/skillz/src/skillz_inspect"]
+crust = ["packages/skillz/src/skillz_inspect/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["fromargs"]
+requires = ["fromargs"]
+
+# The slices of skillz_experiments (docs/agents/decisions/skillz-autoimprove.md ADR-011).
+
+[[slice]]
+name = "run"
+paths = ["packages/skillz/src/skillz_experiments/run"]
+crust = ["packages/skillz/src/skillz_experiments/run/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["evaluation", "gate", "harness", "search", "skillz-core", "wedge"]
+requires = ["gate", "harness", "search"]
+
+[[slice]]
+name = "search"
+paths = ["packages/skillz/src/skillz_experiments/search"]
+crust = ["packages/skillz/src/skillz_experiments/search/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["skillz-core"]
+
+[[slice]]
+name = "gate"
+paths = ["packages/skillz/src/skillz_experiments/gate"]
+crust = ["packages/skillz/src/skillz_experiments/gate/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["skillz-core"]
+
+[[slice]]
+name = "harness"
+paths = ["packages/skillz/src/skillz_experiments/harness"]
+crust = ["packages/skillz/src/skillz_experiments/harness/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["evaluation", "skillz-core"]
+requires = ["evaluation"]
+
+[[slice]]
+name = "wrapper"
+paths = ["packages/skillz/src/skillz_experiments/wrapper"]
+crust = ["packages/skillz/src/skillz_experiments/wrapper/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["fromargs", "harness", "skillz-core"]
+requires = ["harness"]
+
+[[slice]]
+name = "evaluation"
+paths = ["packages/skillz/src/skillz_experiments/evaluation"]
+crust = ["packages/skillz/src/skillz_experiments/evaluation/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["skillz-core"]
+
+# The skillz_experiments root modules. `skillz-core` holds the KERNEL modules of test_layout.py
+# plus the root modules that they import; `skillz-app` holds the CLI modules that import the slices.
+
+[[spine]]
+name = "skillz-core"
+paths = [
+  "packages/skillz/src/skillz_experiments/_audit.py",
+  "packages/skillz/src/skillz_experiments/_budget.py",
+  "packages/skillz/src/skillz_experiments/_candidate.py",
+  "packages/skillz/src/skillz_experiments/_cases.py",
+  "packages/skillz/src/skillz_experiments/_contract.py",
+  "packages/skillz/src/skillz_experiments/_evals_format.py",
+  "packages/skillz/src/skillz_experiments/_frontmatter.py",
+  "packages/skillz/src/skillz_experiments/_gate_files.py",
+  "packages/skillz/src/skillz_experiments/_graders.py",
+  "packages/skillz/src/skillz_experiments/_intake.py",
+  "packages/skillz/src/skillz_experiments/_new_cli.py",
+  "packages/skillz/src/skillz_experiments/_protocol.py",
+  "packages/skillz/src/skillz_experiments/_records.py",
+  "packages/skillz/src/skillz_experiments/_redact.py",
+  "packages/skillz/src/skillz_experiments/_runtime.py",
+  "packages/skillz/src/skillz_experiments/_seed.py",
+]
+may_depend_on = ["gate", "wedge"]
+
+[[spine]]
+name = "skillz-app"
+paths = [
+  "packages/skillz/src/skillz_experiments/__init__.py",
+  "packages/skillz/src/skillz_experiments/__main__.py",
+  "packages/skillz/src/skillz_experiments/_cli.py",
+  "packages/skillz/src/skillz_experiments/_facts.py",
+  "packages/skillz/src/skillz_experiments/_journey_gate.py",
+  "packages/skillz/src/skillz_experiments/_scaffold.py",
+  "packages/skillz/src/skillz_experiments/_schemas.py",
+  "packages/skillz/src/skillz_experiments/_validate.py",
+]
+may_depend_on = ["fromargs", "gate", "harness", "run", "search", "skillz-core", "wrapper"]

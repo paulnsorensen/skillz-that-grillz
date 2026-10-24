@@ -101,7 +101,8 @@ The `run.json` adapter label is `config` for `--harness-config` and `command` fo
 The `claude` role runs `claude -p --setting-sources project` with `--tools Bash,Read,Skill`.
 It also passes `--strict-mcp-config`, `--no-session-persistence`, and a generated settings file.
 The settings enable the sandbox floor and disable bundled skills.
-They deny host reads from `/`. They allow only the workspace and the runtime roots that commands need.
+On Linux, they deny host reads from `/` and allow only the workspace and the runtime roots that commands need.
+On macOS, they deny a list of host roots instead, and other system paths stay readable (see the macOS section below).
 They deny Bash writes to `.agents` and `.claude` in the workspace, so a task cannot change the candidate or plant project settings.
 The runner places only the staged candidate under the workspace skill directory.
 The runner does not use `--restricted`. On Claude Code 2.1.289 and later, `--restricted` drops project skills, so the candidate never loads.
@@ -134,10 +135,17 @@ The runner never copies a refreshed login file over a real file that also change
 A run that completes records the warning code as `close_warning` in the summary.
 A run that fails records the code as `close_failure` in `run.json` and in a note on the error.
 On macOS, the login lives in the Keychain, so there is no file to link.
-The runner sets `CLAUDE_CONFIG_DIR` to your real config directory.
-`--setting-sources project` makes Claude Code ignore the user settings files and user skills in that directory.
-The directory can still expose your own memory, account skills, agents, or MCP servers.
-Before any model call, the preflight stops with the code `preflight-leak` when `CLAUDE.md` or a `rules` directory with `.md` files exists there.
+The runner uses your real config directory. You do not need a token or an API key.
+Claude Code finds the Keychain login only for the real home, the login user, and the config directory that you use.
+So the macOS child keeps your `HOME`, gets `USER` and `LOGNAME`, and gets `CLAUDE_CONFIG_DIR` only when you set it.
+`--setting-sources project` makes Claude Code ignore the user settings files, user skills, and user memory in that directory.
+The directory can still expose account skills, agents, or MCP servers.
+When `CLAUDE.md` or a `rules` directory with `.md` files exists there, the runner runs `claude -p /context` once per role in each process.
+That local command makes no model call. It lists the memory files that load.
+The run stops with the code `preflight-leak` when the list names your memory, or when the command does not run.
+A `User` memory row stops the run even when its path does not match, so a changed path format cannot pass.
+Memory that appears during the run gets its listing before the next model call.
+You do not need to move your `CLAUDE.md`.
 The live preflight also stops with `preflight-leak` when the init event lists a user skill, plugin, agent, or MCP server.
 The live preflight also asks the Read tool to read a sealed file outside the workspace.
 The run stops with `preflight-leak` when the Read tool returns that file, or when the model never calls the Read tool.
@@ -221,14 +229,21 @@ The environment hash includes this setting, so a resume on a host with the other
 The preflight evidence records `unix_socket_filter` as `on` or `off`.
 The runner sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0` in the Claude child environment. On Claude Code 2.1.301, the value `1` replaced the sandbox file and socket rules on a host that blocks the nested user namespace. Bash then read host files and reached a host pathname Unix socket. The child environment holds no credential variable. The live preflight stays the detector if a later Claude Code version changes this.
 A failure in the live preflight can cost its one call, but it never reaches a task call.
-The macOS path is unverified live. Verify it before you authorize private data.
-On the live Bash path, the network probes cover direct loopback TCP and the proxy HTTP path. They also cover a direct name lookup and a direct non-loopback TCP connection. They do not prove full network isolation. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
-Manual macOS checklist:
+On the live Bash path, the network probes cover direct loopback TCP and the proxy HTTP path. They also cover a direct name lookup and a direct non-loopback TCP connection. They do not prove full network isolation.
 
-1. On a macOS host with `sandbox-exec`, run the full live preflight with a real model.
-2. Confirm that the helper sandbox probe and the live network probe both pass.
+### macOS live check
+
+On macOS, the Bash sandbox denies reads of a root list, not of `/`.
+Claude Code 2.1.309 does not reopen the workspace inside `denyRead: ["/"]` on macOS, and its own temp files then fail.
+The list holds the host roots (`/Users`, `/home`, and the others), `/Volumes`, `/var/folders`, `/private/var/folders`, your home directory, and the run paths.
+Bash can still read other system paths, such as `/etc` and `/private/tmp`. Linux denies `/` and is stricter.
+The last recorded pass: macOS 26.5.1, Claude Code 2.1.309, `claude-sonnet-4-6`, 2026-10-23.
+The full live preflight passed for all three roles, with `network: denied`, and the helper sandbox probe passed.
+Run this check again after a Claude Code or macOS upgrade:
+
+1. Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --preflight-only --model MODEL`. It makes one live call per role.
+2. Confirm that each role shows `isolation: passed` and `network: denied`, and that the command exits 0.
 3. Record the macOS version and the Claude Code version in the ADR.
-4. Remove the "unverified" lines only after a recorded pass.
 
 ## The Claude converse loop
 

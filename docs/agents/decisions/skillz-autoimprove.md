@@ -32,7 +32,7 @@ That ADR supersedes the records about those commands and arms in this file. Thes
 - **Consequences:** A helper schema bump regenerates the `HELPER_FIXTURES` outputs in `packages/skillz/src/skillz_experiments/_evaluation.py`, `skills/skillz/evals/autoimprove.json`, and the `skills/skillz/references/experiments.md` example.
 - **Amendment 2026-10-10:** The inspector is now the fromargs package `packages/skillz/src/skillz_inspect`, built as `inspect-skill.pyz`, at schema 4.
 
-### ADR-004: Run the Claude Code adapter in --restricted mode  [status: superseded in part by ADR-006; amended by skillz-pragmatic-autoimprove ADR-001]
+### ADR-004: Run the Claude Code adapter in --restricted mode  [status: superseded in part by ADR-006; amended by skillz-pragmatic-autoimprove ADR-001; amended 2026-10-23 for gh-131]
 - **Context:** The Codex adapter isolates discovery, filesystem, and network. Claude Code documents `--restricted` for eval harnesses; `--bare` needs an API key.
 - **Decision:** `claude --restricted -p` with `--tools Bash,Read,Skill`, `--strict-mcp-config`, and a sandbox with `failIfUnavailable`, no unsandboxed commands, and an empty strict allowlist. A live preflight proves auth and that only the candidate skill loads, or stops the run.
 - **Alternatives:** `--bare` with an API key. A temporary config dir with copied OAuth credentials. The generic command protocol only.
@@ -41,7 +41,8 @@ That ADR supersedes the records about those commands and arms in this file. Thes
 #### Claude live network verification
 
 The live preflight checks direct loopback TCP and the proxy HTTP path against a runner-owned listener.
-No live model run has exercised these checks yet. The build uses a stub transport only.
+The build uses a stub transport. A live macOS run passed the preflight on 2026-10-23 (see below).
+Only stub tests cover the missing-output and malformed-output stops.
 The single preflight call asks Claude to run three exact Bash commands.
 One command opens a TCP connection to the listener. Two `curl` commands send an HTTP request to `127.0.0.1` and to `localhost`, with `--noproxy ''` so that the sandbox proxy carries them.
 The runner judges the listener. A client that sends the probe token, or resets its connection, fails the preflight with the code `network-isolation-failed`.
@@ -51,8 +52,11 @@ The recorded pass keeps the network result. The reuse key includes the network p
 A changed probe version or network setting changes the key. The stage then stops with `environment-differs`, and the user starts a new run.
 The native sandbox probe remains a separate, free check.
 Domain and proxy policy beyond these probes stays unverified. Amendment 2026-10-13 adds a direct name lookup and a non-loopback TCP probe; the probe key is `loopback-dns-nonloopback-v3`.
-The macOS path stays unverified live. A passed preflight does not prove macOS isolation.
 The manual macOS checklist is in `skills/skillz/references/experiment-harness.md`.
+- **Amendment 2026-10-23 (issue #131):** On Claude Code 2.1.309 on macOS, a narrower `allowRead` does not reopen a path inside `denyRead: ["/"]`. The workspace under `/var/folders` stays unreadable. Under `/Users`, Claude Code's own temp files and its Bash output capture fail. So the read probe had no positive control, and every macOS preflight failed.
+  - Decision: on macOS, `denyRead` lists roots: the host roots (`/home`, `/root`, `/Users`, `/mnt`, `/media`, `/opt`, `/srv`, `/workspaces`, `/data`), `/Volumes`, `/var/folders`, `/private/var/folders`, the home directory, `/proc`, and the run paths. `allowRead` keeps the workspace. Linux keeps `denyRead: ["/"]`.
+  - Consequence: on macOS, Bash can read system paths outside that list, such as `/etc`, `/private/tmp`, and `/Library`. The Linux floor is stricter. The live read probe stays the detector. Issue #176 tracks the Read tool, which has the same gap on both systems.
+  - Live record: macOS 26.5.1, Claude Code 2.1.309, model `claude-sonnet-4-6`. `self-test --preflight-only` passed for the task, reflection, and judge roles with 3 live calls. Each role reported `isolation: passed`, `network: denied`, and `unix_socket_filter: on`. The free helper sandbox probe and the skill inventory passed. The user `~/.claude/CLAUDE.md` stayed in place.
 
 ### ADR-005: Make the wedge arm a hand-written stdlib script  [status: superseded by skillz-pragmatic-autoimprove ADR-003; amended 2026-10-10 for wedge first-class; amended 2026-10-13 for gh-302; amended 2026-10-18 for gh-302 runner-term]
 - **Context:** The user states that a wedge is a deterministic offload made by hand, and that Python is assumed installed. A real `/wedge` build needs `uv` and network access.
