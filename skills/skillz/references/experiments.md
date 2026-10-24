@@ -45,7 +45,7 @@ The contract question under `No contract` is outside these three. Ask it only wh
 ## Procedure
 
 Set the installed skill path. Run the commands from any directory.
-Put `--out` outside the target skill directory.
+Put `--out` outside the target skill directory. A run or resume with `--out` inside it stops with `out-inside-target`.
 Make it a private directory with `mktemp -d`. The run refuses a directory that other users can enter.
 
 ```sh
@@ -201,6 +201,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `harness-changed` | The harness executable, script, or role file differs from the frozen record, or a resume drops `--harness-config` or `--command`. | Restore the frozen harness and pass the same options, or start a new run directory. |
 | `budget-exhausted` | The call budget or the deadline ran out. | Start a new run directory. |
 | `out-unsafe` | `--out` is a symlink, is owned by another user, is open to other users, or holds a symlinked `run.lock`. | Use a private directory from `mktemp -d`. |
+| `out-inside-target` | `--out` is the target skill directory or a directory inside it. The run stops before any model call. | Use a private directory from `mktemp -d`. |
 | `harness-missing` | The built-in `claude` or `codex` executable is not on `PATH`. A fresh run reports it in `host-not-ready` before case approval. A resume stops with this code. | Install the CLI or put it on `PATH`, then run again. |
 | `run-config-differs` | A resume uses a different `--model`, `--judge-model`, `--harness`, `--edit`, `--repeats`, `--seed`, `--effort`, `--sandbox-read`, `--sandbox-seconds`, `--min-gain`, `--min-lower-bound`, `--family-budget`, `--max-token-increase-per-gain`, `--min-token-saving`, `--min-coverage`, `--max-quality-loss`, or target skill directory than the recorded run. A completed run checks each threshold flag that you pass in the same way. The message names the field. | Run again with the recorded value, or start a new `--out`. |
 | `hidden-file` | The target skill holds a hidden file or directory. The stop comes after case approval. | Remove the hidden file, then run again. |

@@ -576,6 +576,39 @@ def test_a_symlinked_out_directory_is_refused(tmp_path: Path, make_target: Maker
     assert caught.value.code == "out-unsafe"
 
 
+@pytest.mark.ac("gh-493:AC-1")
+def test_an_out_directory_inside_the_target_stops_before_any_call(tmp_path: Path, make_target: Maker) -> None:
+    target, state = make_target(tmp_path), State()
+    out = target / "runs"
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "out-inside-target" and "mktemp -d" in str(caught.value)
+    assert state.evaluated == [] and state.preflights == [] and not out.exists()
+
+
+@pytest.mark.ac("gh-493:AC-2")
+def test_a_resume_from_an_out_directory_moved_inside_the_target_stops_before_any_call(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    out = Path(shutil.move(_prepared(tmp_path, target, write_draft, approvals), target / "run"))
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "out-inside-target"
+    assert state.evaluated == [] and state.preflights == []
+
+
+@pytest.mark.ac("gh-493:AC-3")
+def test_an_out_directory_beside_the_target_passes_the_inside_check(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    sibling = target.parent / f"{target.name}-runs"
+    _ = write_draft(sibling)
+    case_hash, calls = approvals(target, sibling)
+    with pytest.raises(Stop) as caught:
+        _ = run(target, sibling, MODEL, approve_cases=case_hash, approve_budget=calls)
+    assert caught.value.code == "live-required"
+
+
 def test_a_symlinked_run_lock_is_refused_and_its_target_stays_intact(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, state = make_target(tmp_path), State()
