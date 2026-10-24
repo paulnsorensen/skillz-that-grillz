@@ -1,14 +1,18 @@
 """The reflection audit log: one private, redacted, bounded record per reflection call (gh-501)."""
 from __future__ import annotations
 
+import itertools
 import json
 import stat
+import time
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from skillz_experiments._cases import CodedError
+from skillz_experiments.search import Progress
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments.run._reflections import RECORD_LIMIT, TRUNCATED, ReflectionLog
 
 
@@ -119,3 +123,38 @@ def test_an_escaped_double_quote_credential_in_the_prompt_leaves_no_canary(tmp_p
     ReflectionLog(tmp_path).record(4, prompt, None)
     text = (tmp_path / "reflections" / "4.json").read_text()
     assert "zzcanary" not in text and "two" not in text
+
+
+@pytest.mark.ac("gh-501:AC-6")
+@pytest.mark.parametrize("layers", [0, 1, 2])
+@pytest.mark.parametrize("key", ["password", "token", "api_key", "secret", "authorization"])
+def test_an_escaped_credential_in_a_component_leaves_no_canary_in_the_logged_request(tmp_path: Path, key: str, layers: int) -> None:
+    text = json.dumps({key: "zzcanary", "user": "kept"})
+    for _ in range(layers):
+        text = json.dumps(text)[1:-1]
+    prompt, _ = reflection_request("prose", {"SKILL.md": text}, {}, ["SKILL.md"], progress=Progress(spent=0, planned=100, proposal=1))
+    assert "zzcanary" in prompt
+    ReflectionLog(tmp_path).record(5, prompt, None)
+    assert "zzcanary" not in (tmp_path / "reflections" / "5.json").read_text()
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_the_cost_of_colliding_keys_grows_linearly_with_their_number(tmp_path: Path) -> None:
+    """Each sample runs for at least 100 ms of CPU time, and the two sizes alternate, so noise hits both alike."""
+    values = {count: {f"https://{index}.example": index for index in range(count)} for count in (2000, 4000)}
+    calls = itertools.count()
+
+    def per_run_seconds(value: dict[str, int]) -> float:
+        runs, begin = 0, time.process_time()
+        while runs == 0 or time.process_time() - begin < 0.1:
+            run_dir = tmp_path / str(next(calls))
+            run_dir.mkdir()
+            ReflectionLog(run_dir).record(1, "p", value)
+            runs += 1
+        return (time.process_time() - begin) / runs
+
+    best = dict.fromkeys(values, float("inf"))
+    for _ in range(3):
+        for count, value in values.items():
+            best[count] = min(best[count], per_run_seconds(value))
+    assert best[4000] <= 3 * best[2000], f"doubling the keys multiplied the cost by {best[4000] / best[2000]:.1f}"

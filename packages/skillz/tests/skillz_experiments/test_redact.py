@@ -1,5 +1,6 @@
 """The shared redactor stays linear on hostile input and covers multiline and unterminated quotes."""
 
+import json
 import subprocess
 import sys
 import time
@@ -47,6 +48,17 @@ def test_a_quoted_credential_value_that_spans_lines_is_redacted_whole(line: str)
     redacted = _redact.redact(line)
     assert "zzcanary" not in redacted and "first" not in redacted and "one" not in redacted, redacted
     assert "kept" in redacted
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("key", ["password", "token", "api_key", "secret", "authorization"])
+@pytest.mark.parametrize("layers", [0, 1, 2, 3])
+def test_a_credential_in_json_text_that_is_encoded_again_is_redacted(key: str, layers: int) -> None:
+    text = json.dumps({key: "zzcanary", "user": "kept"})
+    for _ in range(layers):
+        text = json.dumps(text)[1:-1]
+    redacted = _redact.redact(json.dumps({"SKILL.md": text}))
+    assert "zzcanary" not in redacted, redacted
 
 
 @pytest.mark.ac("gh-501:AC-4")
