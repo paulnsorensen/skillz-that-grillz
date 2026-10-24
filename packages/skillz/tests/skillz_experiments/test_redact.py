@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -55,3 +56,36 @@ def test_a_quoted_credential_value_that_spans_lines_is_redacted_whole(line: str)
     'before password="unterminated zzcanary'])
 def test_an_unterminated_quote_after_a_credential_key_redacts_through_the_end(line: str) -> None:
     assert "zzcanary" not in _redact.redact(line)
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("unit", ['password"x"', "password: x ", "a_key=v ", '{"refreshToken": "x"} '],
+                         ids=["adjacent-quotes", "spaced-pairs", "keys", "json"])
+def test_the_cost_of_many_credentials_grows_linearly_with_the_length(unit: str) -> None:
+    def best_cpu_seconds(count: int) -> float:
+        text = unit * count + "cookie=Z"
+        best = float("inf")
+        for _ in range(3):
+            begin = time.process_time()
+            _ = _redact.redact(text)
+            best = min(best, time.process_time() - begin)
+        return best
+
+    small, large = best_cpu_seconds(3000), best_cpu_seconds(6000)
+    assert large <= 3 * small, f"doubling the input multiplied the cost by {large / small:.1f}"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("sentence", [
+    "The token's scope is narrow. Keep this explanation.",
+    "The secret's rotation is monthly. Keep this explanation.",
+    "The password's length is eight. Keep this explanation.",
+    "We don't log it. Keep this explanation."])
+def test_a_possessive_or_contraction_does_not_hide_the_rest_of_the_prose(sentence: str) -> None:
+    assert _redact.redact(sentence).endswith(". Keep this explanation.")
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("line", ["token: 'two words zzcanary'", "token 'two words zzcanary'", "token='two words zzcanary'"])
+def test_a_single_quoted_value_after_a_key_is_still_redacted_whole(line: str) -> None:
+    assert _redact.redact(line + " kept") == "[redacted] kept"
