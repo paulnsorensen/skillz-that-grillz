@@ -12,18 +12,19 @@ SKILLZ_LIVE=1 SKILLZ_LIVE_DRY=1 just live-smoke codex gpt-6-luna all
 Each run scenario runs `self-test --preflight-only`, then one `run` of a fixture skill with 12 fixed cases and `--repeats 1`, then `export`.
 Each fixture seed carries one fixable flaw, so the search can beat it. A completed run must show scored holdout cases.
 With `SKILLZ_LIVE_DRY=1`, each run scenario stops at its budget question, records the estimate, and makes no model call.
+A dry run fails when it stops before the budget question with a code that the scenario does not expect, or when its estimate is over the cap.
 `SCENARIO` is `basic` (the default), `all`, or a comma list of these names:
 
 | Scenario | What it runs | Run cap |
 | --- | --- | --- |
-| `basic` | Built-in harness, no contract, default judge | 97 |
-| `command-harness` | `--harness command` through a test-only bridge to `codex exec` | 97 |
-| `command-grader` | Contract with a `command` grader, and one `source: session` case | 53 |
-| `hybrid-mixed` | `--harness-config` with a Codex task role and a command judge role, a `hybrid` grader, contract `statistics`, and `--min-gain` | 97 |
-| `prose-cli` | `--edit prose+cli` with a helper script and an `exact-json` grader | 53 |
-| `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 229 |
-| `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 97 |
-| `fromargs-benefit` | `/skillz autoimprove` drafts the cases in `claude -p`, then a `--edit prose+cli` run of the `semver-next` fixture, which applies nine version rules by hand. See below | 103 |
+| `basic` | Built-in harness, no contract, default judge | 130 |
+| `command-harness` | `--harness command` through a test-only bridge to `codex exec` | 130 |
+| `command-grader` | Contract with a `command` grader, and one `source: session` case | 71 |
+| `hybrid-mixed` | `--harness-config` with a Codex task role and a command judge role, a `hybrid` grader, contract `statistics`, and `--min-gain` | 130 |
+| `prose-cli` | `--edit prose+cli` with a helper script and an `exact-json` grader | 71 |
+| `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 601 |
+| `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 130 |
+| `fromargs-benefit` | `/skillz autoimprove` drafts the cases in `claude -p`, then a `--edit prose+cli` run of the `semver-next` fixture, which applies nine version rules by hand. See below | 167 |
 | `analytics` | The bundled `agent-session-analytics.pyz`: a forced ingest of the real session logs into a private database, then every query of the three Usage packs | no model call |
 
 A run approves its estimate only when the estimate is at most its cap. The preflight gets at most 3 more calls.
