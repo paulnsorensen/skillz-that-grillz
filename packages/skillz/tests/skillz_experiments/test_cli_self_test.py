@@ -94,7 +94,7 @@ def test_the_output_without_a_selector_keeps_its_keys(capsys: pytest.CaptureFixt
                              "true_promotions_effect_10", "power_effect_10", "true_promotions_effect_20",
                              "power_effect_20", "true_promotions_effect_30", "power_effect_30",
                              "cheaper_loss_5_margin_0", "cheaper_loss_5_margin_2", "cheaper_loss_5_margin_5",
-                             "cheaper_loss_0_margin_5"]
+                             "cheaper_loss_0_margin_5", "cheaper_loss_0_margin_5_fixed_1"]
 
 
 def test_the_metric_selector_needs_simulate(capsys: pytest.CaptureFixture[str]) -> None:

@@ -30,7 +30,8 @@ Metric = Literal[
     "false_promotions_2se", "false_promotions_one_holdout", "rate_2se", "rate_one_holdout",
     "true_promotions_effect_10", "true_promotions_effect_20", "true_promotions_effect_30",
     "power_effect_10", "power_effect_20", "power_effect_30",
-    "cheaper_loss_5_margin_0", "cheaper_loss_5_margin_2", "cheaper_loss_5_margin_5", "cheaper_loss_0_margin_5"]
+    "cheaper_loss_5_margin_0", "cheaper_loss_5_margin_2", "cheaper_loss_5_margin_5", "cheaper_loss_0_margin_5",
+    "cheaper_loss_0_margin_5_fixed_1"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
 
 
@@ -234,14 +235,15 @@ def _simulation_report() -> dict[str, object]:
         label = round(effect * 100)
         report[f"true_promotions_effect_{label}"] = power.promotions
         report[f"power_effect_{label}"] = power.rate
-    for loss, margin in CHEAPER_SCENARIOS:
-        report[_cheaper_key(loss, margin)] = simulate_cheaper(loss, margin).rate
+    for loss, margin, fixed in CHEAPER_SCENARIOS:
+        report[_cheaper_key(loss, margin, fixed)] = simulate_cheaper(loss, margin, fixed=fixed).rate
     return report
 
 
-def _cheaper_key(loss: float, margin: float) -> str:
-    """Name a `promote-cheaper` rate by its true loss and margin in hundredths of a score."""
-    return f"cheaper_loss_{round(loss * 100)}_margin_{round(margin * 100)}"
+def _cheaper_key(loss: float, margin: float, fixed: int) -> str:
+    """Name a `promote-cheaper` rate by its true loss and margin in hundredths of a score, and its fixed cases."""
+    key = f"cheaper_loss_{round(loss * 100)}_margin_{round(margin * 100)}"
+    return f"{key}_fixed_{fixed}" if fixed else key
 
 
 def _simulation_figure(metric: Metric) -> int | float:
@@ -252,9 +254,9 @@ def _simulation_figure(metric: Metric) -> int | float:
             return simulate_power(effect).promotions
         if metric == f"power_effect_{label}":
             return simulate_power(effect).rate
-    for loss, margin in CHEAPER_SCENARIOS:
-        if metric == _cheaper_key(loss, margin):
-            return simulate_cheaper(loss, margin).rate
+    for loss, margin, fixed in CHEAPER_SCENARIOS:
+        if metric == _cheaper_key(loss, margin, fixed):
+            return simulate_cheaper(loss, margin, fixed=fixed).rate
     return cast(int | float, getattr(simulate_gate(), metric))
 
 

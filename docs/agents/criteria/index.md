@@ -84,6 +84,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-412](./gh-412.md) — gh-412: wedge check reports a key failure as a per-skill issue
 - [gh-413](./gh-413.md) — gh-413: the wedge publish policy runs against a release store, not the gh CLI
 - [gh-419](./gh-419.md) — gh-419: the Gemini dotenv guard stays inside the temporary directory and keeps existing files
+- [gh-529](./gh-529.md) — gh-529: promote-cheaper uses the SE of the losses, and a cheaper tie is not a stall
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [skillz-autoimprove-claims](./skillz-autoimprove-claims.md) — skillz-autoimprove-claims: validate the three autoimprove claims separately
 - [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria

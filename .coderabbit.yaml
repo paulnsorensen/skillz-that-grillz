@@ -15,6 +15,9 @@ reviews:
         Read the contract model and the reference docs before you claim the
         meaning of a contract field. Check which fixture a test uses before
         you generalize its behavior to other contracts.
+    - path: "packages/*/src/**/__init__.py"
+      instructions: >-
+        A crust re-exports. Flag logic here.
   tools:
     # just build runs these linters in CI.
     markdownlint:
