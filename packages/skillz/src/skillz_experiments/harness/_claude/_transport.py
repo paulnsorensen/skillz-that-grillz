@@ -200,7 +200,10 @@ class ClaudeCode:
         return self._unix_sockets
 
     def _floor(self, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
-        floor = settings(workspace, self.out, config=self.config_dir, overrides=overrides, unix_sockets=self.unix_sockets())
+        # Linux uses a fresh temp config directory that `denyRead: ["/"]` and the config-prefix rule already cover;
+        # its random path would change the environment key on every run.
+        config = self.config_dir if sys.platform == "darwin" else None
+        floor = settings(workspace, self.out, config=config, overrides=overrides, unix_sockets=self.unix_sockets())
         if self.declared.servers:
             permissions = cast(dict[str, object], floor["permissions"])
             floor["permissions"] = permissions | {"allow": [*cast(list[str], permissions["allow"]),
