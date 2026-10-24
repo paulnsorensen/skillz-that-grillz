@@ -63,3 +63,12 @@ of truth for repo-local skills (tooling for work on this repository only).
     adds a `ROOT_MODULES` or `KERNEL` entry, adds a cross-package import edge or an `ALLOWED` entry,
     or adds a second public seam to a slice. A move into an existing slice needs no ADR.
   - Do not add methods to `Session` or `ClaudeCode`. Add a collaborator in the slice.
+  - `slices.toml` maps every `packages/*/src` file to one slice or spine node. A human owns it.
+    `.github/scripts/check_slices.py` (the slice guard) enforces it; `sbguard-baseline.json` only shrinks.
+    A new module must go into a mapped path, or a human adds the path to `slices.toml`.
+  - `.github/scripts/check_depth.py` (the depth ratchet) caps six depth keys per slice in `depth-ratchet.json` (block mode).
+    When `check` reports `improved`, run `check_depth.py tighten` in the same change.
+    When it reports `regressed`, move the logic behind the crust, or ask the human owner to raise the cap.
+  - Never edit `slices.toml`, `sbguard-baseline.json`, or `depth-ratchet.json` to make a check pass.
+    Do not pass `--accept-denominator-gains`; that decision belongs to the human owner.
+    See `docs/agents/decisions/architecture-gates.md`.
