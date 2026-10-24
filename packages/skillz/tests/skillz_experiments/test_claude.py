@@ -21,7 +21,7 @@ import pytest
 
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
-from skillz_experiments.harness._claude import _constants, _events, _late, _options, _preflight, _sandbox, _settings, _transport
+from skillz_experiments.harness._claude import _constants, _events, _late, _memory, _options, _preflight, _sandbox, _settings, _transport
 from skillz_experiments.harness._claude._preflight import probe_sandbox
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
@@ -488,10 +488,16 @@ def test_the_macos_floor_denies_host_roots_and_the_temp_root_but_linux_denies_ev
     linux = cast(dict[str, list[str]], cast(dict[str, object], _settings.settings(workspace)["sandbox"])["filesystem"])
     assert linux["denyRead"] == ["/"]
     monkeypatch.setattr(sys, "platform", "darwin")
-    darwin = cast(dict[str, list[str]], cast(dict[str, object], _settings.settings(workspace)["sandbox"])["filesystem"])
+    temporary = tmp_path / "host-tmp"
+    temporary.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temporary))
+    out = tmp_path / "out"
+    filesystem = cast(dict[str, object], _settings.settings(workspace, out)["sandbox"])["filesystem"]
+    darwin = cast(dict[str, list[str]], filesystem)
     denied = darwin["denyRead"]
     assert "/" not in denied and len(denied) == len(set(denied))
     assert {"/Users", "/home", "/Volumes", "/var/folders", "/private/var/folders", "/proc", str(Path.home())} <= set(denied)
+    assert {str(temporary), str(temporary.resolve()), str(out)} <= set(denied)
     assert str(workspace) in darwin["allowRead"] and str(workspace) not in denied
 
 
@@ -1765,11 +1771,16 @@ def test_macos_checks_user_memory_before_every_invocation(
     executable = fake_claude(tmp_path, "memory-loads")
     budget = Budget(10, 120, 0)
     adapter = ClaudeCode("m", budget, lambda: None, executable)
-    _ = (real / "CLAUDE.md").write_text("Always answer in French.")
-    with pytest.raises(CodedError, match="user memory CLAUDE.md in the real config directory") as caught:
+    try:
         _ = adapter.invoke("hello")
-    assert caught.value.code == "preflight-leak" and budget.calls == 0
-    assert not executable.with_name("claude.log").exists()
+        assert budget.calls == 1 and not executable.with_name("claude.context.log").exists()
+        _ = (real / "CLAUDE.md").write_text("Always answer in French.")
+        with pytest.raises(CodedError, match="user memory CLAUDE.md in the real config directory") as caught:
+            _ = adapter.invoke("hello")
+    finally:
+        adapter.close()
+    assert caught.value.code == "preflight-leak" and budget.calls == 1
+    assert len(calls(executable)) == 1
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -1806,6 +1817,47 @@ def test_listed_memory_names_only_memory_that_the_context_report_shows(tmp_path:
     assert claude_login.listed_memory(report, real, ["CLAUDE.md", "rules"]) == ["rules"]
     assert claude_login.listed_memory(report, link, ["CLAUDE.md", "rules"]) == ["rules"]
     assert claude_login.listed_memory("## Context Usage\n", real, ["CLAUDE.md", "rules"]) == []
+    home = Path.home() / ".claude"
+    tilde = "## Context Usage\n| User | ~/.claude/CLAUDE.md | 9 |\n"
+    assert claude_login.listed_memory(tilde, home, ["CLAUDE.md", "rules"]) == ["CLAUDE.md"]
+    moved = "## Context Usage\n| User | /elsewhere/CLAUDE.md | 9 |\n| Project | /w/CLAUDE.md | 9 |\n"
+    assert claude_login.listed_memory(moved, real, ["CLAUDE.md", "rules"]) == ["CLAUDE.md", "rules"]
+    project = "## Context Usage\n| Project | /w/CLAUDE.md | 9 |\n"
+    assert claude_login.listed_memory(project, real, ["CLAUDE.md"]) == []
+
+
+@pytest.mark.parametrize(("outcome", "seconds", "code"), [
+    ("auth", 120, "login-missing"),
+    ("timeout", 120, "preflight-leak"),
+    ("timeout", 30, None)])
+@pytest.mark.ac("gh-131:AC-14")
+def test_a_failed_context_listing_names_the_login_or_the_timeout(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, seconds: float, code: str | None) -> None:
+    """A login fault stops as `login-missing`, a listing past its 60 s window as `preflight-leak`, and a short budget
+    as the budget stop itself."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    config = tmp_path / "config"
+    config.mkdir()
+    _ = (config / "CLAUDE.md").write_text("Always answer in French.")
+    timeouts: list[float] = []
+
+    def start(workspace: Path, text: str, timeout: float) -> subprocess.CompletedProcess[str]:
+        del workspace
+        timeouts.append(timeout)
+        assert text == "/context"
+        if outcome == "timeout":
+            raise BudgetExhausted("timed out")
+        return subprocess.CompletedProcess(["claude"], 1, "", "Invalid API key · Please run /login")
+
+    memory = _memory.UserMemory(config, Budget(10, seconds, 0), start)
+    if code is None:
+        with pytest.raises(BudgetExhausted):
+            memory.check()
+    else:
+        with pytest.raises(CodedError) as caught:
+            memory.check()
+        assert caught.value.code == code
+    assert len(timeouts) == 1 and timeouts[0] <= min(60, seconds)
 
 @pytest.mark.parametrize(("case", "fix", "task_calls"), [
     ("bwrap-missing", "install bubblewrap", 0),

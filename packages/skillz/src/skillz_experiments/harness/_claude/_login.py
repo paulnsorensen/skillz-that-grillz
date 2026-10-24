@@ -209,9 +209,22 @@ def keychain_environment() -> dict[str, str]:
 
 
 def listed_memory(listing: str, config_dir: Path, found: list[str]) -> list[str]:
-    """Return the entries of `found` that the `/context` text `listing` shows as loaded, by path in `config_dir`."""
-    roots = {name: {str(config_dir / name), str((config_dir / name).resolve())} for name in found}
-    return [name for name in found if any(root in listing for root in roots[name])]
+    """Return the entries of `found` that the `/context` text `listing` shows as loaded.
+
+    A path in `config_dir` names an entry: the given, resolved, or `~/` form. A `User` row that names no entry names
+    all of them, so a changed path format stops the run instead of passing it.
+    """
+    roots = {name: _path_forms(config_dir / name) for name in found}
+    named = [name for name in found if any(root in listing for root in roots[name])]
+    user_row = any(line.replace(" ", "").startswith("|User|") for line in listing.splitlines())
+    return named or (found if user_row else [])
+
+
+def _path_forms(path: Path) -> set[str]:
+    """Return the given and resolved forms of `path`, and their `~/` forms when they lie in the home directory."""
+    forms = {str(path), str(path.resolve())}
+    home = str(Path.home())
+    return forms | {"~" + form[len(home):] for form in forms if form.startswith(home + "/")}
 
 
 def user_memory(config_dir: Path) -> list[str]:

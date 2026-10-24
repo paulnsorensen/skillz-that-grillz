@@ -15,8 +15,8 @@ from skillz_experiments.harness._claude._login import listed_memory, login_faile
 
 
 CONTEXT_REQUEST = "/context"
-CONTEXT_HEADER = "## Context Usage"
 """`/context` is a local command: Claude Code answers it with no model call. Its report lists each loaded memory file."""
+CONTEXT_HEADER = "## Context Usage"
 CONTEXT_SECONDS = 60
 
 
@@ -40,15 +40,20 @@ class UserMemory:
         self._checked = False
 
     def check(self) -> None:
-        """On macOS, stop before any model call when user memory loads. A pass holds for the rest of the process."""
+        """On macOS, stop before any model call when user memory loads.
+
+        A passing listing holds for the rest of the process. Until one runs, each call scans the config directory again,
+        so memory that appears during the run still gets its listing.
+        """
         if sys.platform != "darwin" or self._checked:
             return
         found = user_memory(self._config_dir)
-        if found:
-            loaded = listed_memory(self._listing(), self._config_dir, found)
-            if loaded:
-                raise preflight_leak(f"user memory {', '.join(loaded)} in the real config directory {self._config_dir} "
-                                      + "loads; move it out for the run")
+        if not found:
+            return
+        loaded = listed_memory(self._listing(), self._config_dir, found)
+        if loaded:
+            raise preflight_leak(f"user memory {', '.join(loaded)} in the real config directory {self._config_dir} "
+                                 + "loads; move it out for the run")
         self._checked = True
 
     def _listing(self) -> str:

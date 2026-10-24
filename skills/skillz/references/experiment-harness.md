@@ -142,6 +142,8 @@ The directory can still expose account skills, agents, or MCP servers.
 When `CLAUDE.md` or a `rules` directory with `.md` files exists there, the runner runs `claude -p /context` once per role in each process.
 That local command makes no model call. It lists the memory files that load.
 The run stops with the code `preflight-leak` when the list names your memory, or when the command does not run.
+A `User` memory row stops the run even when its path does not match, so a changed path format cannot pass.
+Memory that appears during the run gets its listing before the next model call.
 You do not need to move your `CLAUDE.md`.
 The live preflight also stops with `preflight-leak` when the init event lists a user skill, plugin, agent, or MCP server.
 The live preflight also asks the Read tool to read a sealed file outside the workspace.
