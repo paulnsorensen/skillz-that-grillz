@@ -18,6 +18,7 @@ SLICES = ("run", "search", "gate", "harness", "wrapper", "evaluation")
 LEAF_SLICES = ("search", "gate")
 FORBIDDEN_FROM_LEAVES = ("run", "harness")
 REMOVED_FLAT_FILES = ("_workflow.py", "_search.py", "_gate.py", "_harness.py", "_claude.py", "_evaluator.py")
+TESTS = Path(__file__).resolve().parent
 DECISIONS = Path(__file__).resolve().parents[4] / "docs" / "agents" / "decisions"
 # An ADR id is `<decision file stem>:ADR-NNN`, because each file in `docs/agents/decisions/` numbers its own records.
 ADR_011 = "skillz-autoimprove:ADR-011"
@@ -164,6 +165,28 @@ def test_modules_outside_a_slice_import_it_only_through_its_facade() -> None:
     assert broken == []
 
 
+# The private-chain hits in test files, as `<file> reaches <slice>.<attr>`. Shrink-only: a stale entry fails the test.
+# Each `__all__` read pins a facade's public export list; it is a dunder, not a private submodule.
+TEST_PRIVATE_CHAINS = frozenset({
+    "test_module_interface.py reaches evaluation.__all__",
+    "test_module_interface.py reaches harness.__all__",
+    "test_module_interface.py reaches wrapper.__all__",
+})
+
+
+def _private_chains_under(root: Path) -> set[str]:
+    """Return `<file> reaches <slice>.<attr>` for each private chain in a `.py` file below `root`, which is outside every slice."""
+    return {f"{path.relative_to(root).as_posix()} reaches {name}" for path in sorted(root.rglob("*.py"))
+            for name in _private_chains(ast.parse(path.read_text()), None)}
+
+
+def test_test_files_reach_no_slice_private_through_a_facade() -> None:
+    found = _private_chains_under(TESTS)
+    added, stale = sorted(found - TEST_PRIVATE_CHAINS), sorted(TEST_PRIVATE_CHAINS - found)
+    assert added == [], f"{added}: import the name from the slice facade, not through a private attribute chain"
+    assert stale == [], f"{stale} no longer match: remove them from TEST_PRIVATE_CHAINS in test_layout.py"
+
+
 @pytest.mark.ac("gh-223:AC-4")
 def test_an_attribute_chain_into_a_private_submodule_is_caught() -> None:
     tree = ast.parse("from skillz_experiments import harness\nharness._nono.x\nharness.Facade\n")
@@ -183,6 +206,14 @@ def test_a_full_attribute_chain_into_a_private_submodule_is_caught() -> None:
     tree = ast.parse("import skillz_experiments.harness\nskillz_experiments.harness._nono.x\nskillz_experiments.harness.Facade\n")
     assert _private_chains(tree, "run") == ["harness._nono"]
     assert _private_chains(tree, "harness") == []
+
+
+def test_a_test_file_with_a_private_chain_is_caught(tmp_path: Path) -> None:
+    probe = tmp_path / "nested" / "test_probe.py"
+    probe.parent.mkdir()
+    _ = probe.write_text("from skillz_experiments import harness\nharness._nono.x\nharness.Facade\n")
+    _ = (tmp_path / "test_clean.py").write_text("import skillz_experiments.harness as h\nh.Facade\n")
+    assert _private_chains_under(tmp_path) == {"nested/test_probe.py reaches harness._nono"}
 
 
 def test_the_cli_names_no_gemini_and_imports_only_the_wrapper_barrel() -> None:
