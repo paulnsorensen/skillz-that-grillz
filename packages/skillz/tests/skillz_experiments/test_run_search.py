@@ -244,7 +244,8 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
 def _core(result: dict[str, object]) -> dict[str, object]:
     """Return the search fields that the attempt record and the evaluation counts did not add. `test_search_faults.py` covers the counts."""
     search = cast(dict[str, object], result["search"])
-    assert set(search) - {"scored", "failed", "failed_by_reason"} == {"reason", "stop_trigger", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped", "history"}
+    # A search that compared a challenger with the incumbent also holds `comparisons` (gh-500).
+    assert set(search) - {"scored", "failed", "failed_by_reason", "comparisons"} == {"reason", "stop_trigger", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped", "history"}
     return {key: search[key] for key in ("reason", "retained_seed", "leakage_rejections", "proposal_over_budget")}
 
 
@@ -628,7 +629,9 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
     state.score_of = lambda text, split: (0.1 if split == "validation" else 0.9) if "improved" in text else 0.5
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
-    assert "best_validated" in record
+    # The seed stays the incumbent: each comparison rejects the challenger, so no `best_validated` is written.
+    comparisons = cast(list[dict[str, object]], cast(dict[str, object], record["search"])["comparisons"])
+    assert "best_validated" not in record and comparisons and {item["verdict"] for item in comparisons} == {"reject"}
     assert _core(result) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "reason" not in cast(dict[str, object], record["gate"])
 
@@ -639,8 +642,11 @@ def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.score_of = lambda text, split: (0.5 if split == "validation" else 0.9) if "improved" in text else 0.5
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    kept = cast(dict[str, object], read(out / "run.json")["best_validated"])
-    assert kept["mean"] == pytest.approx(0.5)
+    record = read(out / "run.json")
+    # A tie is inside the 2-SE band, so the seed stays the incumbent.
+    comparisons = cast(list[dict[str, object]], cast(dict[str, object], record["search"])["comparisons"])
+    assert "best_validated" not in record and comparisons
+    assert {(item["verdict"], item["delta"]) for item in comparisons} == {("inconclusive", 0.0)}
     assert _core(result) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
 
 
@@ -739,7 +745,7 @@ def test_the_run_record_stays_small_across_many_proposals(
     _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     kept = cast(dict[str, object], record["best_validated"])
-    assert "candidates" not in record and set(kept) == {"identity", "mean", "files"}
+    assert "candidates" not in record and set(kept) == {"identity", "mean", "files", "comparison"}
     assert state.proposals >= 2
     text = (out / "run.json").read_text()
     stored = {number for number in range(1, state.proposals + 1) if f"improved {number} " in text}
@@ -1665,7 +1671,7 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
     assert set(search) == {"reason", "stop_trigger", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts",
-                           "text_dropped", "scored", "failed", "failed_by_reason", "history"}
+                           "text_dropped", "scored", "failed", "failed_by_reason", "history", "comparisons"}
     saved = cast(dict[str, object], read(out / "run.json")["search"])
     # The exported summary drops the proposer journal; run.json keeps it.
     assert set(saved) == set(search) | {"journal"} and {key: saved[key] for key in search if key != "attempts"} == {

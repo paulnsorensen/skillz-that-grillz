@@ -479,17 +479,22 @@ The score rule, the floors, and the family rule compare exactly. ADR-002 and the
 
 A family breach still turns any verdict, including `promote-cheaper`, into `reject`.
 A `promote-cheaper` winner is advisory. Export it and report it, but do not apply it as you would a `promote` winner. The user decides whether to apply it.
-With a token field set, the winner choice breaks a validation-mean tie in favor of fewer mean task tokens. This holds for the best candidate and for the seed.
-A candidate with unknown task tokens, or equal task tokens, keeps the usual winner. In a tie, that is the incumbent.
-The reflection prompt then also says: "Prefer fewer tokens when correctness is equal."
+The winner choice uses the same rule as the gate. See [Incumbent](#incumbent).
+With a token field set, the reflection prompt also says: "Prefer fewer tokens when correctness is equal."
 The search then also reflects on a train minibatch that the parent scores perfectly.
 A child can tie the minibatch score sum of its parent.
 Such a child enters the candidate pool only when its mean task tokens on that minibatch are known and lower.
 Without a token field, the search skips a perfect minibatch, and a child must score a higher sum.
 
-The winner choice treats two validation means as equal when they differ by a relative 1e-9 or an absolute 1e-12.
-This holds in every run, with or without a token field.
-Without a token field, the seed wins a tie.
+### Incumbent
+
+The search keeps one incumbent: the seed, until a challenger passes the gate rule against it.
+When a challenger and the incumbent both complete every validation repeat, the runner compares them once.
+The comparison pairs the scored repeats per case, as the gate does.
+It applies the same verdict rules: the 2-SE rule, the floors, the family rule, and the token rule.
+The challenger becomes the incumbent only on `promote` or `promote-cheaper`. Ties and noise keep the incumbent.
+Each comparison joins `search.comparisons` as `{challenger, incumbent, verdict, delta, se, reasons}`. `best_validated` holds the incumbent files and its winning comparison.
+A run whose floors or token rule block a challenger keeps the seed, so its gate reports `winner-equals-baseline`.
 
 ### Reasons and reporting
 
@@ -677,7 +682,8 @@ The prompt text lives in `search/_proposer.py`. A change to it starts a new run.
 
 Every reflection prompt states an edit budget and a run-status block after its instructions.
 The progress `p` is the search calls spent over the search allowance, clamped to 0 through 1.
-The allowance is `estimate.metric_calls` less the overshoot margin of the last search iteration. It is the GEPA call budget. The last iteration can pass it by up to the overshoot margin.
+The allowance is `estimate.metric_calls` plus the headroom train outcomes, less the overshoot margin of the last search iteration. It is the GEPA call budget.
+The margin counts each validation case once per repeat. The last iteration can pass the allowance by up to that margin.
 The budget is `floor(1 + 5 * 0.5 * (1 + cos(pi * p)))`. It falls from 6 edits at `p = 0` to 1 edit at `p = 1`.
 An edit is one block of consecutive changed lines, found with `difflib.SequenceMatcher` over the lines of one component.
 The count adds the blocks of all changed components.
@@ -708,8 +714,8 @@ The runner rebuilds the attempts from the recorded outcomes. A resume keeps them
 The runner does not support a run that started before this record.
 
 The reflection prompt lists the newest 8 attempts, newest first, within 4000 characters.
-It also lists the protect set: the train case ids on which the best candidate by validation mean scores 1.0.
-The seed is the best candidate when it has the highest validation mean, including when no candidate is validated. The set holds at most 30 ids.
+It also lists the protect set: the train case ids on which the incumbent scores 1.0.
+The seed is the incumbent until a challenger replaces it. The set holds at most 30 ids.
 The prompt tells the proposer not to re-introduce a change that broke a case.
 It also tells the proposer not to copy a shown case id into a component or into `@hypothesis`.
 

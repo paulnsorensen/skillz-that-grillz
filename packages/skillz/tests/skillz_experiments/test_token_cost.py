@@ -251,7 +251,7 @@ def test_task_tokens_are_unknown_when_a_count_or_the_usage_is_missing() -> None:
     assert task_tokens({"usage": _usage(10, 0, 5), "task_usage": None}) is None
 
 
-# --- selection tie-break ---------------------------------------------------------------------------------
+# --- incumbent rule: the gate rule on the validation repeats (gh-500) ---------------------------------------
 
 VALIDATION = ["v1", "v2"]
 
@@ -263,24 +263,19 @@ def _outcomes(identity: str, score: float, tokens: int | None) -> list[dict[str,
              "repeat": repeat, "score": score, "usage": usage} for case_id in VALIDATION for repeat in (0, 1)]
 
 
-ROWS = 2 * len(VALIDATION)
-
-
 def _changed(files: dict[str, str]) -> SimpleNamespace:
     return SimpleNamespace(identity="changed", files=files)
 
 
 def _cases_for(_split: str) -> list[SimpleNamespace]:
-    return [SimpleNamespace(identifier=item) for item in VALIDATION]
+    return [SimpleNamespace(identifier=item, family="f") for item in VALIDATION]
 
 
-def _session(statistics: Statistics, outcomes: list[dict[str, object]], kept: dict[str, object] | None = None,
-             ) -> Session:
-    """Return a `_Session` with only the attributes that the tie-break reads."""
+def _session(statistics: Statistics, outcomes: list[dict[str, object]]) -> Session:
+    """Return a `_Session` with only the attributes that the Leaderboard reads."""
     session = object.__new__(Session)
     attributes: dict[str, object] = {
-        "lock": threading.RLock(), "statistics": statistics, "outcomes": outcomes,
-        "record": {} if kept is None else {"best_validated": kept},
+        "lock": threading.RLock(), "statistics": statistics, "outcomes": outcomes, "record": {},
         "seed": SimpleNamespace(identity="seed", editable=("a",), changed=_changed),
         "cases_for": _cases_for,
         "checkpoint": lambda: None}
@@ -301,59 +296,31 @@ def _holdout(arm: str, case_id: str, repeat: int, low: int) -> dict[str, object]
             "task_usage": _usage(low, 0, 0)}
 
 
-def _kept_after(statistics: Statistics, first: int | None, second: int | None) -> object:
-    outcomes = _outcomes("one", 0.5, first) + _outcomes("two", 0.5, second)
-    session = _session(statistics, outcomes[:ROWS])
-    Leaderboard(session).keep_if_best(_candidate("one"), validation_case)
-    session.outcomes.extend(outcomes[ROWS:])
-    Leaderboard(session).keep_if_best(_candidate("two"), validation_case)
-    return cast(dict[str, object], session.record["best_validated"])["identity"]
-
-
-def test_keep_if_best_breaks_a_mean_tie_toward_fewer_tokens_only_while_a_token_field_is_set() -> None:
-    assert _kept_after(SAVE, 100, 60) == "two"
-    assert _kept_after(CAP, 100, 60) == "two"
-    assert _kept_after(DEFAULT_STATISTICS, 100, 60) == "one"  # today: the first candidate wins
-
-
-def test_keep_if_best_keeps_the_first_candidate_for_equal_costlier_or_unknown_tokens() -> None:
-    assert _kept_after(SAVE, 100, 100) == "one"
-    assert _kept_after(SAVE, 60, 100) == "one"
-    assert _kept_after(SAVE, None, 60) == "one"
-    assert _kept_after(SAVE, 100, None) == "one"
-
-
-@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
-def test_a_better_mean_still_beats_a_cheaper_tie() -> None:
-    outcomes = _outcomes("one", 0.5, 10) + _outcomes("two", 0.6, 9000)
-    session = _session(SAVE, outcomes[:ROWS])
-    Leaderboard(session).keep_if_best(_candidate("one"), validation_case)
-    session.outcomes.extend(outcomes[ROWS:])
-    Leaderboard(session).keep_if_best(_candidate("two"), validation_case)
-    assert cast(dict[str, object], session.record["best_validated"])["identity"] == "two"
-
-
 def _winner(statistics: Statistics, seed_tokens: int | None, other_tokens: int | None, other_score: float = 0.5) -> object:
-    outcomes = _outcomes("seed", 0.5, seed_tokens) + _outcomes("other", other_score, other_tokens)
-    kept: dict[str, object] = {"identity": "other", "mean": other_score, "files": {"a": "other"}}
-    session = _session(statistics, outcomes, kept)
-    return session._best_validated(VALIDATION).identity  # pyright: ignore[reportPrivateUsage] -- unit test of the private picker
+    """Offer `other` to the Leaderboard against the seed, which scores 0.5. Return the identity of the winner."""
+    session = _session(statistics, _outcomes("seed", 0.5, seed_tokens) + _outcomes("other", other_score, other_tokens))
+    Leaderboard(session).keep_if_best(_candidate("other"), validation_case)
+    return session._best_validated().identity  # pyright: ignore[reportPrivateUsage] -- unit test of the private picker
 
 
-def test_best_validated_breaks_a_mean_tie_toward_fewer_tokens_only_while_a_token_field_is_set() -> None:
+def test_an_equal_challenger_with_fewer_tokens_replaces_the_seed_only_under_min_token_saving() -> None:
     assert _winner(SAVE, 100, 60) == "changed"
-    assert _winner(CAP, 100, 60) == "changed"
-    assert _winner(DEFAULT_STATISTICS, 100, 60) == "seed"  # today: the seed wins
+    # A token cap alone does not turn on `promote-cheaper`, so an equal-score challenger stays out.
+    assert _winner(CAP, 100, 60) == "seed"
+    assert _winner(DEFAULT_STATISTICS, 100, 60) == "seed"
 
 
-def test_best_validated_keeps_the_seed_for_equal_costlier_or_unknown_tokens() -> None:
+def test_equal_costlier_or_unknown_tokens_and_a_lower_score_keep_the_seed() -> None:
     assert _winner(SAVE, 100, 100) == "seed"
     assert _winner(SAVE, 60, 100) == "seed"
     assert _winner(SAVE, None, 60) == "seed"
     assert _winner(SAVE, 100, None) == "seed"
     assert _winner(SAVE, 100, 60, other_score=0.4) == "seed"
-    assert _winner(SAVE, 9000, 60, other_score=0.6) == "changed"
 
+
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-7")
+def test_a_better_mean_still_beats_a_cheaper_tie() -> None:
+    assert _winner(SAVE, 10, 9000, other_score=0.6) == "changed"
 
 # --- reflection text -------------------------------------------------------------------------------------
 
@@ -478,6 +445,8 @@ class _Priced(FakeRunProvider):
     """A fake provider. The `improved` candidate scores `GAIN` on every case and uses `IMPROVED` task tokens.
 
     `HOLDOUT_GAIN`, when set, replaces `GAIN` on the holdout. Every other candidate scores `BASE_SCORE`.
+    `KNOWN` is false for a provider that reports no usage. `HOLDOUT_KNOWN`, when set, replaces it on the holdout.
+    The holdout knobs let a candidate pass the incumbent rule on validation and still meet a gate rule on the holdout.
     """
 
     GAIN: float = 1.0
@@ -488,6 +457,7 @@ class _Priced(FakeRunProvider):
     JUDGE: int = 0
     CACHED: int = 0
     KNOWN: bool = True
+    HOLDOUT_KNOWN: bool | None = None
     prompts: list[str] = []
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
@@ -500,7 +470,7 @@ class _Priced(FakeRunProvider):
         gain = self.HOLDOUT_GAIN if holdout and self.HOLDOUT_GAIN is not None else self.GAIN
         result: dict[str, object] = {"score": gain if improved else self.BASE_SCORE, "candidate_hash": candidate.identity,
                                      "case_hash": case.identifier}
-        if self.KNOWN:
+        if self.HOLDOUT_KNOWN if holdout and self.HOLDOUT_KNOWN is not None else self.KNOWN:
             low = self.IMPROVED if improved else self.BASE
             task = _usage(low + self.CACHED, self.CACHED, 0)  # `input_tokens` includes the cached input
             result.update({"usage": _usage(low + self.CACHED + self.JUDGE, self.CACHED, 0),
@@ -536,11 +506,12 @@ def _gate(result: dict[str, object]) -> dict[str, object]:
 def test_a_costly_winner_is_rejected_for_token_cost_and_summary_and_export_show_the_change(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
-    provider = _priced(IMPROVED=300)  # +200% tokens for a gain of 1.0
+    # +50% tokens: inside the cap for the validation gain of 1.0, over it for the holdout gain of 0.3.
+    provider = _priced(IMPROVED=150, HOLDOUT_GAIN=0.3)
     result = _finish(tmp_path, make_target, write_draft, approvals, provider, {"max_token_increase_per_gain": 1.0})
     gate = _gate(result)
     assert (gate["verdict"], gate["reasons"]) == ("reject", ["token-cost"])
-    assert gate["token_delta"] == pytest.approx(2.0) and gate["token_se"] == 0.0
+    assert gate["token_delta"] == pytest.approx(0.5) and gate["token_se"] == 0.0
     _ = export(tmp_path / "run", tmp_path / "export")
     report = cast(dict[str, object], json.loads((tmp_path / "export" / "report.json").read_text()))
     assert report["gate"] == gate
@@ -582,10 +553,25 @@ def test_judge_usage_and_cached_input_do_not_change_the_token_change(
 def test_missing_usage_turns_a_promote_into_unknown_usage(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
-    gate = _gate(_finish(tmp_path, make_target, write_draft, approvals, _priced(KNOWN=False),
+    # The validation runs report usage, so the incumbent rule promotes; the holdout runs report none.
+    gate = _gate(_finish(tmp_path, make_target, write_draft, approvals, _priced(HOLDOUT_KNOWN=False),
                          {"max_token_increase_per_gain": 1.0}))
     assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["unknown-usage"])
     assert (gate["token_delta"], gate["token_se"]) == (None, None)
+
+
+def test_the_incumbent_rule_keeps_a_costly_or_unmetered_challenger_out(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    """The incumbent rule is the gate rule (gh-500): a challenger that the gate would refuse stays out of the winner."""
+    flags = {"max_token_increase_per_gain": 1.0}
+    for name, provider, expected in (("costly", _priced(IMPROVED=300), ("reject", ["token-cost"])),
+                                     ("unmetered", _priced(KNOWN=False), ("inconclusive", ["unknown-usage"]))):
+        result = _finish(tmp_path, make_target, write_draft, approvals, provider, flags, name)
+        comparisons = cast(list[dict[str, object]], cast(dict[str, object], result["search"])["comparisons"])
+        assert comparisons and {(item["verdict"], tuple(cast(list[str], item["reasons"]))) for item in comparisons} == {
+            (expected[0], tuple(expected[1]))}
+        assert (_gate(result)["verdict"], _gate(result)["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
 
 
 def test_a_cheaper_winner_without_a_holdout_gain_promotes_cheaper_only_with_min_token_saving(
