@@ -20,7 +20,7 @@ from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics
 from skillz_experiments.run import Stop, _leaderboard, _outcomes, _plan, _search_phase, _session, export, run
 from skillz_experiments.run._export import criteria_flags
 from skillz_experiments.run._leaderboard import Leaderboard
-from skillz_experiments.run._open import validation_policy
+from skillz_experiments.run._open import engine_hash, validation_policy
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import _history, add_validation_scores, attempts, complete_means, search, search_allowance
@@ -164,6 +164,7 @@ def test_a_resume_with_another_or_no_validation_policy_stops_before_the_engine_h
 
 
 @pytest.mark.ac("gh-500:AC-8")
+@pytest.mark.ac("gh-508:AC-3")
 def test_a_completed_run_without_a_validation_policy_still_summarises_and_exports(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
@@ -171,6 +172,9 @@ def test_a_completed_run_without_a_validation_policy_still_summarises_and_export
     record = read(out / "run.json")
     fields = cast(dict[str, dict[str, object]], record["compatibility"])["fields"]
     assert fields["validation_policy"] == validation_policy()
+    # A pre-change run comes from an earlier engine build, so its engine hash differs from the current one.
+    assert record["engine_hash"] == engine_hash()
+    record["engine_hash"] = "0" * 64
     del record["validation_policy"]
     del fields["validation_policy"]
     write(out / "run.json", record)
