@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import cast
 SHAPES = frozenset({"thin-facade", "framework-bound", "service"})
 SUPPRESSIBLE = frozenset({"SB-01", "SB-02", "SB-03", "SB-04", "SB-06"})
 MAP_FILE = "slices.toml"
+SOURCE_TREES = "packages/*/src"  # every workspace source tree; `[policy] roots` must list each one
 
 
 class MapError(Exception):
@@ -135,6 +137,10 @@ def parse(text: str, root: Path) -> SliceMap:
         if policy[field] != expected:
             raise MapError(f"[policy] {field} must be {expected!r}")
     roots = _paths(policy["roots"], "[policy] roots", root)
+    unlisted = sorted({tree.relative_to(root).as_posix() for tree in root.glob(SOURCE_TREES) if tree.is_dir()}
+                      - set(roots))
+    if unlisted:
+        raise MapError(f"[policy] roots must list every {SOURCE_TREES} tree; missing {unlisted}")
     ignore = _texts(policy.get("ignore", []), "[policy] ignore")
     nodes: list[Node] = []
     for kind in ("slice", "spine"):
@@ -194,19 +200,32 @@ class Graph:
 
 
 def _inventory(root: Path, slice_map: SliceMap) -> tuple[dict[str, str], list[str]]:
+    """Return the module name of each `.py` file under the roots, and each symlinked directory or `.py` file.
+
+    The walk does not follow a symlink, so a symlinked directory is reported, not skipped.
+    """
     files: dict[str, str] = {}
     symlinks: list[str] = []
     for base in slice_map.roots:
-        for path in sorted((root / base).rglob("*.py")):
-            relative = path.relative_to(root).as_posix()
-            if any(fnmatch.fnmatchcase(relative, pattern) for pattern in slice_map.ignore):
-                continue
-            if any(parent.is_symlink() for parent in (path, *path.relative_to(root).parents) if parent != Path(".")):
-                symlinks.append(relative)
-                continue
-            parts = path.relative_to(root / base).with_suffix("").parts
-            files[relative] = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
-    return files, symlinks
+        top = root / base
+        if any((root / part).is_symlink() for part in (Path(base), *Path(base).parents) if part != Path(".")):
+            symlinks.append(base)
+            continue
+        for directory, dirnames, filenames in os.walk(top):
+            dirnames.sort()
+            for name in sorted(dirnames + filenames):
+                path = Path(directory) / name
+                relative = path.relative_to(root).as_posix()
+                if any(fnmatch.fnmatchcase(relative, pattern) for pattern in slice_map.ignore):
+                    continue
+                if path.is_symlink():
+                    if name in dirnames or name.endswith(".py"):
+                        symlinks.append(relative)
+                    continue
+                if name in filenames and name.endswith(".py"):
+                    parts = path.relative_to(top).with_suffix("").parts
+                    files[relative] = ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+    return files, sorted(symlinks)
 
 
 def dotted(node: ast.expr) -> str | None:

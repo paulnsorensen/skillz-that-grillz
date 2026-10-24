@@ -115,24 +115,37 @@ def module_init(tree: ast.Module) -> int:
     return count
 
 
+def _literal_names(value: ast.expr | None) -> list[str] | None:
+    if not isinstance(value, (ast.List, ast.Tuple)):
+        return None
+    names = [item.value for item in value.elts if isinstance(item, ast.Constant) and isinstance(item.value, str)]
+    return sorted(set(names)) if len(names) == len(value.elts) else None
+
+
 def _all(tree: ast.Module) -> list[str] | None:
-    """Return the names of a literal `__all__`, or None when the module has no `__all__` or a computed one."""
+    """Return the names of a literal `__all__`, or None when the module never names `__all__`.
+
+    Raise MapError when `__all__` is computed, or when another statement reads or changes it (`+=`, `.extend`).
+    """
+    references = [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "__all__"]
+    if not references:
+        return None
     for statement in tree.body:
-        if (isinstance(statement, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "__all__"
-                                                      for target in statement.targets)):
-            if not isinstance(statement.value, (ast.List, ast.Tuple)) or not all(
-                    isinstance(item, ast.Constant) and isinstance(item.value, str) for item in statement.value.elts):
-                return None
-            return sorted({str(item.value) for item in statement.value.elts if isinstance(item, ast.Constant)})
-    return None
+        if isinstance(statement, ast.Assign):
+            targets, value = list[ast.expr](statement.targets), statement.value
+        elif isinstance(statement, ast.AnnAssign):
+            targets, value = [statement.target], statement.value
+        else:
+            continue
+        if len(references) == 1 and references[0] in targets and (names := _literal_names(value)) is not None:
+            return names
+    raise MapError("a crust `__all__` must be one literal list or tuple of strings that no other statement uses")
 
 
 def exports(tree: ast.Module) -> list[str]:
     """Return the export slots of one crust module: `__all__` when it is a literal, else its public top-level names."""
     if (listed := _all(tree)) is not None:
         return listed
-    if any(isinstance(node, ast.Name) and node.id == "__all__" for node in ast.walk(tree)):
-        raise MapError("a crust `__all__` must be a literal list or tuple of strings")
     names: set[str] = set()
     for statement in tree.body:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

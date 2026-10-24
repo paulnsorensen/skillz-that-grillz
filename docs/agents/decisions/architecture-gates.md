@@ -16,7 +16,7 @@ They are Python ports of two prototypes in paulnsorensen/sliced-bread-architectu
 
 - **Context:** `[policy] roots` decides the SB-04 inventory. AGENTS.md lets a test import slice internals.
 - **Decision:** The roots are the four `packages/*/src` trees. Each workspace package is a slice with its `__init__.py` as the crust. The six `skillz_experiments` slices are slices. The `skillz_experiments` root modules are two spine nodes: `skillz-core` (the `KERNEL` modules of `test_layout.py` plus the root modules that they import) and `skillz-app` (the CLI modules that import the slices). Tests are outside the roots, so SB-05 has no Python counterpart.
-- **Consequences:** A new root module fails SB-04 until a human maps it in `slices.toml`. The guard overlaps `test_layout.py` and `check_architecture.py`; those checks stay, and the overlap is intentional. The adoption baseline `sbguard-baseline.json` is empty, because the tree had no violation.
+- **Consequences:** A new root module fails SB-04 until a human maps it in `slices.toml`. A new `packages/*/src` tree that `[policy] roots` does not list is an input error (exit 2). The inventory walk does not follow symlinks, so a symlinked directory or `.py` file under a root fails SB-04. The guard overlaps `test_layout.py` and `check_architecture.py`; those checks stay, and the overlap is intentional. The adoption baseline `sbguard-baseline.json` is empty, because the tree had no violation.
 
 ### ADR-003: The depth ratchet runs in `block` mode  [status: accepted]
 
@@ -27,7 +27,7 @@ They are Python ports of two prototypes in paulnsorensen/sliced-bread-architectu
 ### ADR-004: Python metric definitions differ from the TypeScript definitions  [status: accepted]
 
 - **Context:** The upstream metrics depend on TypeScript syntax and on a dead-code reachability graph.
-- **Decision:** A logical statement is an `ast.stmt` inside a function body, without nested `def` or `class` lines and docstrings; a lambda counts 1. Complexity adds `if`, ternary, loops, `except`, non-wildcard `case` and its guard, each extra boolean operand, each comprehension `for` and `if`, and each parameter default. M09 counts the names of a literal `__all__`, else the public top-level names. M12 counts imports and attribute uses through the crust module from files in other nodes. Dead internal code stays in the denominators, because the Vulture lane removes dead code.
+- **Decision:** A logical statement is an `ast.stmt` inside a function body, without nested `def` or `class` lines and docstrings; a lambda counts 1. Complexity adds `if`, ternary, loops, `except`, non-wildcard `case` and its guard, each extra boolean operand, each comprehension `for` and `if`, and each parameter default. M09 counts the names of a literal `__all__` (an `Assign` or `AnnAssign`), else the public top-level names. A crust that computes `__all__`, or that names it in any other statement (such as `+=` or `.extend`), is an input error. M12 counts imports and attribute uses through the crust module from files in other nodes. Dead internal code stays in the denominators, because the Vulture lane removes dead code.
 - **Consequences:** Measurement version 1 holds these definitions. A definition change increments `MEASUREMENT_VERSION`, and `check` then refuses the old baseline until a human re-baselines.
 
 ### ADR-005: SB-07 reads the baseline at the base commit  [status: accepted]

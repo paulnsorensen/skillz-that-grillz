@@ -89,8 +89,11 @@ class MetricTest(unittest.TestCase):
         self.assertEqual(depth.exports(ast.parse("from a import b, _c\n__all__ = ('b', 'b')\n")), ["b"])
         self.assertEqual(depth.exports(ast.parse("from a import b, _c\nX = 1\n_Y = 2\ndef f(): pass\n")),
                          ["X", "b", "f"])
-        with self.assertRaises(slice_map.MapError):
-            _ = depth.exports(ast.parse("__all__ = names()\n"))
+        self.assertEqual(depth.exports(ast.parse("__all__: list[str] = ['b']\n")), ["b"])
+        for source in ("__all__ = names()\n", "__all__ = ['b']\n__all__ += ['c']\n",
+                       "__all__ = ['b']\n__all__.extend(['c'])\n"):
+            with self.subTest(source=source), self.assertRaises(slice_map.MapError):
+                _ = depth.exports(ast.parse(source))
 
 
 def _git(root: Path, *args: str) -> None:

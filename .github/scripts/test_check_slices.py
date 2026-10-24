@@ -153,6 +153,21 @@ class GuardTest(unittest.TestCase):
         _ = self.assert_fails(f"SB-04 unmapped source file: {SRC}/_extra.py -> unmapped",
                               f"SB-04 unmapped source file: {SRC}/pricing/_link.py -> symlink")
 
+    def test_sb04_a_symlinked_directory_fails(self) -> None:  # The test cwd is not the fixture root.
+        self.adopt()
+        os.symlink(self.root / SRC / "pricing", self.root / SRC / "orders/_mirror")
+        _ = self.assert_fails(f"SB-04 unmapped source file: {SRC}/orders/_mirror -> symlink")
+        self.assertNotIn(f"{SRC}/orders/_mirror/_tiers.py", self.run_guard("check", "--base", "HEAD")[1])
+        (self.root / SRC / "orders/_mirror").unlink()
+        self.assert_passes()
+
+    def test_a_source_tree_outside_the_roots_is_an_input_error(self) -> None:
+        self.adopt()
+        self.write("packages/other/src/other/__init__.py", "")
+        code, out = self.run_guard("check", "--base", "HEAD")
+        self.assertEqual(code, 2, out)
+        self.assertIn("missing ['packages/other/src']", out)
+
     def test_sb06_a_missing_required_edge_fails(self) -> None:
         self.adopt()
         self.write(f"{SRC}/orders/_place.py", "def place():\n    return 1\n")
