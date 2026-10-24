@@ -25,12 +25,19 @@ class _Adapter:
         raise CodedError(self.code, f"close says {self.code}")
 
 
-def _configuration(adapter: _Adapter) -> type:
+def _configuration(adapter: _Adapter, chosen: list[str] | None = None) -> type:
+    picks: list[str] = [] if chosen is None else chosen
+
     @final
     class Configuration:
         @classmethod
         def load(cls, path: Path | None, model: str) -> Configuration:
-            del path, model
+            picks.append(f"load {path} {model}")
+            return cls()
+
+        @classmethod
+        def single(cls, adapter_name: str, model: str) -> Configuration:
+            picks.append(f"single {adapter_name} {model}")
             return cls()
 
         def create(self, *args: object) -> _Adapter:
@@ -54,6 +61,18 @@ def test_a_terminal_code_from_close_still_fails_the_preflight(monkeypatch: pytes
     with pytest.raises(_cli._Reported):  # pyright: ignore[reportPrivateUsage]
         _ = _cli.self_test(model="m", preflight_only=True)
     assert adapter.closed == 1
+
+
+@pytest.mark.ac("gh-131:AC-16")
+def test_preflight_only_runs_claude_unless_a_harness_config_names_the_roles(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    chosen: list[str] = []
+    monkeypatch.setattr(_cli, "Configuration", _configuration(_Adapter("credential-refreshed"), chosen))
+    config = tmp_path / "harness.json"
+    _ = _cli.self_test(model="m", preflight_only=True)
+    _ = _cli.self_test(model="m", preflight_only=True, harness_config=config)
+    assert chosen == ["single claude m", f"load {config} m"]
+
 
 @pytest.mark.parametrize("metric", ["false_promotions_2se", "false_promotions_one_holdout"])
 def test_the_metric_selector_prints_only_that_count(capsys: pytest.CaptureFixture[str], metric: str) -> None:

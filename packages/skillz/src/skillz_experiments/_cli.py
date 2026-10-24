@@ -265,6 +265,7 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
     """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates and power (--simulate).
 
     With --simulate, --metric NAME prints only that number, so `ratchet.py measure` can read it.
+    With --preflight-only and no --harness-config, every role runs on Claude Code, as `run` does.
     """
     if preflight_only == simulate:
         raise ValueError("choose exactly one of --preflight-only or --simulate")
@@ -275,7 +276,8 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
     if model is None:
         raise ValueError("--preflight-only requires --model")
     with _coded():
-        configuration = Configuration.load(harness_config, model)
+        configuration = (Configuration.load(harness_config, model) if harness_config is not None
+                         else Configuration.single("claude", model))
         adapter = configuration.create(model, Budget(max_invocations, max_seconds, reserve=0), lambda: None)
         warning: str | None = None
         try:
