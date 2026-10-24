@@ -112,17 +112,21 @@ def test_every_numeric_report_key_but_the_fixed_ones_is_a_metric_selector() -> N
     assert selectors <= set(printed)
 
 
-@pytest.mark.parametrize("loss, margin, rate", [
-    (0.05, 0.0, 0.0005),
-    (0.05, 0.02, 0.0035),
-    (0.05, 0.05, 0.016),
-    (0.0, 0.05, 0.0285),
-    (0.05, 1.0, 0.346),  # a margin far above the loss shows what an unbounded promote-cheaper rule would do
+@pytest.mark.parametrize("loss, margin, fixed, rate", [
+    (0.05, 0.0, 0, 0.006),
+    (0.05, 0.02, 0, 0.009),
+    pytest.param(0.05, 0.05, 0, 0.024, marks=pytest.mark.ac("gh-529:AC-2")),
+    (0.10, 0.05, 0, 0.010),
+    (0.0, 0.05, 0, 0.0465),
+    (0.0, 0.05, 1, 0.0995),  # a candidate that fixes one case outright and loses none
+    (0.05, 1.0, 0, 0.346),  # a margin far above the loss shows what an unbounded promote-cheaper rule would do
 ])
-def test_a_cheaper_promotion_rate_is_pinned_per_loss_and_margin(loss: float, margin: float, rate: float) -> None:
-    result = simulate_cheaper(loss, margin)
-    assert (result.loss, result.margin, result.trials, result.cases) == (loss, margin, 2000, 10)
+def test_a_cheaper_promotion_rate_is_pinned_per_loss_and_margin(loss: float, margin: float, fixed: int, rate: float) -> None:
+    result = simulate_cheaper(loss, margin, fixed=fixed)
+    assert (result.loss, result.margin, result.trials, result.cases, result.fixed) == (loss, margin, 2000, 10, fixed)
     assert result.rate == rate == result.promotions / result.trials
+    if loss == 0.05 and margin == 0.05:
+        assert result.rate < 0.06
 
 
 def test_a_cheaper_simulation_is_deterministic_and_its_rate_matches_the_count() -> None:
@@ -136,8 +140,9 @@ def test_a_cheaper_simulation_is_deterministic_and_its_rate_matches_the_count() 
     ({"cases": 1}, "at least 2 cases"),
     ({"loss": -0.01}, "loss and a margin"),
     ({"margin": -0.01}, "loss and a margin"),
+    ({"fixed": 11}, "fixed cases"),
 ])
-def test_a_cheaper_simulation_refuses_a_bad_shape_or_a_negative_loss_or_margin(
+def test_a_cheaper_simulation_refuses_a_bad_shape_or_a_negative_loss_or_margin_or_too_many_fixed_cases(
         kwargs: dict[str, float], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         _ = simulate_cheaper(**cast(dict[str, int], kwargs))
@@ -145,3 +150,5 @@ def test_a_cheaper_simulation_refuses_a_bad_shape_or_a_negative_loss_or_margin(
 
 def test_the_cheaper_selector_returns_the_simulated_rate() -> None:
     assert _cli.self_test(simulate=True, metric="cheaper_loss_5_margin_5") == simulate_cheaper(0.05, 0.05).rate
+    assert (_cli.self_test(simulate=True, metric="cheaper_loss_0_margin_5_fixed_1")
+            == simulate_cheaper(0.0, 0.05, fixed=1).rate)

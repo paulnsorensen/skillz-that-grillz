@@ -431,7 +431,7 @@ A move is resolved when the absolute mean delta of the case exceeds `max(2·sqrt
 A resolved positive move is `fixed`, a resolved negative move is `broke`, and the rest are `unresolved`. Case ids are hashes, so no case text enters the record.
 
 - `promote`: the mean delta exceeds 2·SE and passes the floors. When the SE is 0, every case delta must be positive.
-- `promote-cheaper`: the mean delta is from 0 to 2·SE, and `delta - 2·SE` is at least `-max_quality_loss`. The task tokens drop by more than 2·`token_se` and by at least `min_token_saving`. See "The token rule".
+- `promote-cheaper`: the mean delta is from 0 to 2·SE, and `delta - 2·SE_loss` is at least `-max_quality_loss`. The task tokens drop by more than 2·`token_se` and by at least `min_token_saving`. See "The token rule".
 - `reject`: the mean delta falls below -2·SE.
 - `inconclusive`: any other result, or fewer than two holdout cases, or a winner equal to the baseline.
 
@@ -472,7 +472,7 @@ The score rule, the floors, and the family rule compare exactly. ADR-002 and the
 - `token-cost`: a `promote` becomes `reject` when `token_delta` exceeds `max_token_increase_per_gain * delta`. The reason is `token-cost`.
 - `promote-cheaper`: this needs `min_token_saving` and `max_quality_loss`. The score result must be `inconclusive` with a mean delta from 0 to 2·SE.
   A mean delta below 0 never promotes cheaper. A result that a floor turned into `inconclusive` is outside the band.
-  `delta - 2·SE` must be at least `-max_quality_loss`. A `null` `max_quality_loss` turns the verdict off.
+  `delta - 2·SE_loss` must be at least `-max_quality_loss`. `SE_loss` is the SE of `min(delta, 0)` over the cases, never below the SE floor, so a case that the candidate fixes does not widen it. A `null` `max_quality_loss` turns the verdict off.
   `-token_delta` must exceed 2·`token_se` and must be at least `min_token_saving`.
   The floors do not apply, because the verdict claims no gain.
 - `unknown-usage`: a holdout outcome has unknown task tokens, or a case has a baseline mean of 0.
@@ -527,13 +527,13 @@ The `export` claim is `inconclusive` with the reason `replay-missing` when a com
 `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --simulate` prints the false-promotion counts and rates of the gate. It makes no model call.
 The keys `false_promotions_2se` and `false_promotions_one_holdout` are integer counts; each rate is its count divided by `trials`.
 The counts cover `promote` only.
-The `cheaper_loss_<loss>_margin_<margin>` keys are `promote-cheaper` rates. Each key names the true loss per case and the `max_quality_loss` margin, in hundredths of a score.
+The `cheaper_loss_<loss>_margin_<margin>` keys are `promote-cheaper` rates. Each key names the true loss per case and the `max_quality_loss` margin, in hundredths of a score. The `_fixed_1` key is the rate for a winner that loses nothing and solves one case outright.
 In each, the selected winner costs half the task tokens and `min_token_saving` is 0.3. The seed, the 2000 trials, and the 10 cases match `rate_2se`.
-With a true loss of 0.05, the rates are 0.0005, 0.0035, and 0.016 at margins 0, 0.02, and 0.05. All three are below the 0.06 target of `promote`.
+With a true loss of 0.05, the rates are 0.006, 0.009, and 0.024 at margins 0, 0.02, and 0.05. All three are below the 0.06 target of `promote`.
 Without the margin check, the same winner got `promote-cheaper` in 0.346 of the trials.
-`cheaper_loss_0_margin_5` is 0.0285. That winner has no true loss, and the verdict still fires.
+`cheaper_loss_0_margin_5` is 0.0465. That winner has no true loss, and the verdict still fires. `cheaper_loss_0_margin_5_fixed_1` is 0.0995.
 `--simulate --metric NAME` prints only that one number, with no JSON. It computes only the figure that it names, so a selector costs well under the full report. Without `--metric`, the output keeps its earlier keys. The power keys follow them, and the `cheaper_loss_*` keys come last.
-The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, `rate_one_holdout`, the four `cheaper_loss_*` names, and the power names below.
+The names are `false_promotions_2se`, `false_promotions_one_holdout`, `rate_2se`, `rate_one_holdout`, the five `cheaper_loss_*` names, and the power names below.
 Each metric in `packages/skillz/ratchets.json` names its own selector in its `command`, so `ratchet.py measure -- <command>` reads one deterministic number.
 The `skillz-pytest` job fails when a metric in that file passes its threshold. It checks every metric in the file.
 The one-holdout count is a reference ratchet. It models the select-and-gate rule of skill-creator, not the production gate. Its threshold is 1623.
@@ -907,7 +907,7 @@ The object accepts these fields:
 - `max_token_increase_per_gain`: the largest token change that one unit of score gain can buy. The default is `null`, which turns this check off.
 - `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off. A run with this field set records the headroom scores. It does not stop with `cases-too-easy`, because a cheaper winner expects solved cases.
 - `min_coverage`: the least share of planned holdout cases that must be scored on both arms, from 0 to 1. The default is 0.6. Below it the verdict is `inconclusive` with reason `low-coverage`. 0 turns the rule off.
-- `max_quality_loss`: the largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. The verdict needs `delta - 2·SE >= -max_quality_loss`. The default is `null`, which turns `promote-cheaper` off.
+- `max_quality_loss`: the largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. The verdict needs `delta - 2·SE_loss >= -max_quality_loss`. The default is `null`, which turns `promote-cheaper` off.
 
 Each number is finite and at least 0. `family_budget`, `max_token_increase_per_gain`, `min_token_saving`, and `max_quality_loss` may also be `null`.
 `min_token_saving` must also be above 0 and below 1. `min_coverage` must also be at most 1. A bool, a string, a negative number, or an unknown field stops the run with `contract-statistics-invalid`.
