@@ -21,6 +21,13 @@ class FakeGh(TypedDict):
     repo: str
 
 
+@pytest.fixture(autouse=True)
+def private_layer_cache(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Give each test its own wedge cache, so no test reads or writes the user's cache or another test's."""
+    cache = tmp_path_factory.mktemp("wedge-cache")
+    monkeypatch.setenv("WEDGE_CACHE", str(cache))
+    return cache
+
 @pytest.fixture
 def repo_root() -> Path:
     """The checkout this test session runs from."""

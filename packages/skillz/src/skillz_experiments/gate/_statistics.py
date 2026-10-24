@@ -57,8 +57,9 @@ class Statistics:
 
     Every field except `min_token_saving` and `max_quality_loss` only tightens `promote`. Those two fields set only
     `promote-cheaper`, and a larger `max_quality_loss` loosens it. That verdict claims no gain. It needs the delta
-    to be at least 0 and `delta - 2*se` to be at least `-max_quality_loss`, so `max_quality_loss` bounds the
-    plausible quality loss. While `max_quality_loss` is None, `promote-cheaper` is off.
+    to be at least 0 and `delta - 2*se_loss` to be at least `-max_quality_loss`, so `max_quality_loss` bounds the
+    plausible quality loss. `se_loss` is the SE of the case losses, `min(d_i, 0)`, with the SE floor.
+    While `max_quality_loss` is None, `promote-cheaper` is off.
     The SE multiplier stays 2. `min_gain` and `min_lower_bound` are floors of at least 0.
     A field with `flag` metadata also has a CLI flag. A field with `nullable` metadata may be None, which
     turns its rule off. A field with `map` metadata holds a name-to-number map and is contract-only.

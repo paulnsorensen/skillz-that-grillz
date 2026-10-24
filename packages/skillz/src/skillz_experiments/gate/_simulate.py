@@ -187,8 +187,8 @@ def _check_shape(name: str, trials: int, cases: int, repeats: int) -> None:
 CHEAPER_LOSS = 0.05
 CHEAPER_TOKEN_RATIO = 0.5
 CHEAPER_MIN_SAVING = 0.3
-CHEAPER_SCENARIOS = ((0.05, 0.0), (0.05, 0.02), (0.05, 0.05), (0.0, 0.05))
-"""The (true loss, `max_quality_loss` margin) pairs that `self-test --simulate` reports."""
+CHEAPER_SCENARIOS = ((0.05, 0.0, 0), (0.05, 0.02, 0), (0.05, 0.05, 0), (0.0, 0.05, 0), (0.0, 0.05, 1))
+"""The (true loss, `max_quality_loss` margin, fixed cases) triples that `self-test --simulate` reports."""
 
 
 @dataclass(frozen=True)
@@ -205,6 +205,7 @@ class Cheaper:
     cases: int
     promotions: int
     rate: float
+    fixed: int = 0
 
 
 def simulate_cheaper(
@@ -215,8 +216,12 @@ def simulate_cheaper(
     cases: int = 10,
     repeats: int = 3,
     candidates: int = 5,
+    fixed: int = 0,
 ) -> Cheaper:
     """Estimate how often the gate returns `promote-cheaper` for a winner that truly loses `loss` per case.
+
+    `fixed` is the number of leading holdout cases that the winner solves outright: the baseline chance is 0.5 and the
+    winner chance is 1.0 there.
 
     Each trial selects the best of `candidates` on a validation set, as `simulate` does, but every candidate chance
     sits `loss` below the baseline chance before the per-case spread. The holdout uses the production deltas, the
@@ -227,14 +232,17 @@ def simulate_cheaper(
         raise ValueError("simulate_cheaper needs at least 2 candidates")
     if not (loss >= 0 and margin >= 0):
         raise ValueError("simulate_cheaper needs a loss and a margin of at least 0")
+    if not 0 <= fixed <= cases:
+        raise ValueError("simulate_cheaper needs fixed cases between 0 and the case count")
     rng = random.Random(seed)
     thresholds = Statistics(min_token_saving=CHEAPER_MIN_SAVING, max_quality_loss=margin)
     promotions = 0
     for _ in range(trials):
         base, chosen = _selected(rng, cases, repeats, candidates, loss)
+        base[:fixed], chosen[:fixed] = [0.5] * fixed, [1.0] * fixed
         paired = holdout_deltas({f"{index:06d}": case for index, case in enumerate(_draws(rng, base, repeats))},
                                 {f"{index:06d}": case for index, case in enumerate(_draws(rng, chosen, repeats))})
         tokens = {case_id: (100.0, 100.0 * CHEAPER_TOKEN_RATIO) for case_id in paired.deltas}
         result = verdict(paired.deltas, thresholds=thresholds, tokens=tokens, se_floor=paired.se_floor, planned=cases)
         promotions += result.verdict == "promote-cheaper"
-    return Cheaper(loss, margin, trials, cases, promotions, promotions / trials)
+    return Cheaper(loss, margin, trials, cases, promotions, promotions / trials, fixed)

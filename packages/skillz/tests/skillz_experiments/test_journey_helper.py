@@ -29,11 +29,11 @@ def _loaded_only() -> dict[str, object]:
 def test_a_journey_case_is_not_rejected_for_a_helper_that_did_not_run() -> None:
     _, loaded, helper = _activation(_loaded_only(), CANDIDATE, RULES, journey=True)
     assert loaded and helper
-    assert "run.py" not in _prompt(RULES, CANDIDATE, "", _case(True))
+    assert "run.py" not in _prompt(RULES, "", _case(True))
 
 
 @pytest.mark.ac("gh-385:AC-2")
 def test_a_task_case_is_still_rejected_for_a_helper_that_did_not_run() -> None:
     _, loaded, helper = _activation(_loaded_only(), CANDIDATE, RULES)
     assert loaded and not helper
-    assert "python3 -I .agents/skills/echo/run.py input.md" in _prompt(RULES, CANDIDATE, "", _case(False))
+    assert "python3 -I .agents/skills/echo/run.py input.md" in _prompt(RULES, "", _case(False))
