@@ -34,12 +34,14 @@ def _redacted(value: object) -> object:
         return redact(bytes(value).decode("utf-8", errors="replace"))
     if isinstance(value, dict):
         result: dict[str, object] = {}
+        next_suffix: dict[str, int] = {}
         for key, item in cast(dict[object, object], value).items():
             text = _key_text(key)
             name = redact(text)
-            unique, count = name, 1
+            unique = name
             while unique in result:
-                count += 1
+                count = next_suffix.get(name, 1) + 1
+                next_suffix[name] = count
                 unique = f"{name}#{count}"
             result[unique] = "[redacted]" if is_credential_key(text) else _redacted(item)
         return result

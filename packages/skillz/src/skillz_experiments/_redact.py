@@ -89,7 +89,7 @@ class _Pairs:
         if delimiter is None or delimiter.end() >= len(text):
             return None
         key_end = end - 1 if text[end - 1] in "\"'" else end
-        if key_end > start and text[key_end - 1] == "\\":
+        while key_end > start and text[key_end - 1] == "\\":
             key_end -= 1
         word = _TRAILING_WORD.match(text[start:key_end][::-1])
         word_start = key_end - (0 if word is None else word.end())
