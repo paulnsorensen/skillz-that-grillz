@@ -9,6 +9,7 @@ from skillz_experiments.search import Progress, assess
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import notes as accept_notes
 from skillz_experiments.search import request as reflection_request
+from skillz_experiments.search._proposer import EVIDENCE_RULE
 
 STE = ("Write every proposed Markdown component in ASD-STE100 Simplified Technical English: "
        "active voice, present tense, one instruction per sentence, at most 20 words per procedural sentence, "
@@ -273,3 +274,19 @@ def test_notes_follow_the_hypothesis_rules_with_their_own_limit_and_codes() -> N
     texts, _, hypothesis, _ = accept_proposal({"SKILL.md": "x", "@hypothesis": "h", "@notes": "n"}, ["SKILL.md"], {"SKILL.md": "t"})
     assert texts == {"SKILL.md": "x"} and hypothesis == "h"
     assert not is_skill_file("@notes")
+
+
+@pytest.mark.ac("gh-501:AC-7")
+def test_the_prompt_shows_the_unmet_criteria_then_the_hint_then_the_gate_output_and_keeps_every_file_editable() -> None:
+    record = {"gate_feedback": "GATE_TEXT", "edit_hint": ["HINT_FILE.md"], "case_id": "t1",
+              "unmet": [{"id": "UNMET_ID", "must": True, "level": 2, "text": "t", "reason": "r"}], "task_correct": 0.0}
+    prompt, _ = reflection_request("prose", {"SKILL.md": "t"}, {"SKILL.md": [record]}, ["SKILL.md"], progress=START)
+    head, data = prompt.split("\n", 1)
+    assert data.index("case_id") < data.index("UNMET_ID") < data.index("HINT_FILE.md") < data.index("GATE_TEXT")
+    assert "The hint can be wrong. Every editable component stays editable." in head
+    assert head.index("unmet") < head.index("edit_hint") < head.index("gate_feedback")
+    assert data.index('"task_correct"') < data.index('"unmet"')
+    for sentence in EVIDENCE_RULE.split(". "):
+        assert len(sentence.split()) <= 20, sentence
+    plain, _ = reflection_request("prose", {"SKILL.md": "t"}, {"SKILL.md": [{"task_correct": 0.0}]}, ["SKILL.md"], progress=START)
+    assert "edit_hint" not in plain

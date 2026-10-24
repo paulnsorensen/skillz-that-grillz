@@ -19,6 +19,7 @@ from skillz_experiments._contract import Grader
 from skillz_experiments._graders import judge
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, _export, _patch, _replay_phase, _session, export, run, summary
+from skillz_experiments.run._open import engine_hash
 from skillz_experiments.run._patch import Patch
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run._ports import Ports
@@ -96,6 +97,42 @@ def test_export_and_replay_share_one_patch_builder_and_export_refuses_another_di
     with pytest.raises(ValueError, match="export differs from the replayed patch; create a new run"):
         _ = export(out, other)
     assert not other.exists()
+
+
+# A digest that no engine build produces: it stands for the engine hash of an earlier build.
+EARLIER_ENGINE = "0" * 64
+
+
+@pytest.mark.ac("gh-508:AC-1")
+def test_a_completed_run_from_an_earlier_engine_exports_when_its_replay_digest_matches(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+    built = _patch.build_patch(record["seed"], record["winner"], target)
+    assert built.files and _replay_of(record)["patch_digest"] == built.digest
+    assert record["engine_hash"] == engine_hash() != EARLIER_ENGINE
+    write(out / "run.json", record | {"engine_hash": EARLIER_ENGINE})
+    destination = tmp_path / "exported"
+    assert export(out, destination)["patches"] == list(built.files)
+    assert (destination / "candidate.patch").read_text() == built.skill
+    assert (destination / "report.json").is_file()
+
+
+@pytest.mark.ac("gh-508:AC-2")
+@pytest.mark.parametrize("replay", ["no-replay", "no-digest", "other-digest"])
+def test_a_completed_run_from_an_earlier_engine_without_a_matching_replay_digest_is_refused_with_a_code(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, replay: str) -> None:
+    _target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+    if replay == "no-replay":
+        del record["replay"]
+    else:
+        record["replay"] = {**_replay_of(record), "patch_digest": None if replay == "no-digest" else "1" * 64}
+    write(out / "run.json", record | {"engine_hash": EARLIER_ENGINE})
+    destination = tmp_path / "refused"
+    with pytest.raises(CodedError) as refused:
+        _ = export(out, destination)
+    assert refused.value.code == "export-engine-unverified"
+    assert str(refused.value) == "evaluator differs from the frozen record; create a new run"
+    assert not destination.exists()
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-2")

@@ -19,7 +19,7 @@ from skillz_experiments.run._outcomes import stall_observations
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import (
-    add_validation_scores, is_reflection, is_search_validation, search, unit_score, validation_complete,
+    Denylist, add_validation_scores, is_reflection, is_search_validation, search, unit_score, validation_complete,
 )
 from test_validation_repeats import CASES, SEED, _arm, _board, _row
 
@@ -73,7 +73,7 @@ def _phase(state: FakeState, candidate: Candidate) -> SearchPhase:
     phase = object.__new__(SearchPhase)
     vars(phase).update(_state=cast(RunState, cast(object, state)),
                        _search_cases={case.identifier: case for case in state.found},
-                       _reusable={}, _identities={}, _live=0, _admit=admit)
+                       _reusable={}, _identities={}, _live=0, _admit=admit, _denylist=Denylist.build([]))
     return phase
 
 

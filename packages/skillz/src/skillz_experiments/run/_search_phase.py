@@ -18,6 +18,7 @@ from skillz_experiments.run._outcomes import (
     search_fault, stall_observations,
 )
 from skillz_experiments.run._record_fields import field, int_field
+from skillz_experiments.run._reflections import ReflectionLog
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import FOCUS_REASON, HYPOTHESIS, NOTES, Denylist, Edit, Progress, Signal, assess
 from skillz_experiments.search import accept as accept_proposal
@@ -63,6 +64,7 @@ class SearchPhase:
         self._denylist = Denylist.build(search_cases.values(), seed=state.seed, phrases=state.contract.harness_phrases)
         self._leak_rules: dict[str, str | None] = {}
         self._ended_proposal: str | None = None
+        self._reflection_log = ReflectionLog(state.out)
         # Recorded search outcomes that a resumed search reuses, one per earlier call, by candidate, split, case, and
         # repeat index. `recorded_for_reuse` fills it.
         self._reusable: dict[tuple[str, str, str, object], list[dict[str, object]]] = {}
@@ -213,12 +215,13 @@ class SearchPhase:
             raise ValueError("holdout must not enter optimization")
         candidate = self._admit(components)
         if not isinstance(candidate, Candidate):
-            return 0.0, {"task_correct": 0.0, "request": case.request, "case_id": case.identifier} | candidate
+            request = self._denylist.harness.mask(case.request)
+            return 0.0, {"task_correct": 0.0, "request": request, "case_id": case.identifier} | candidate
         with state.lock:
             self._identities[digest(components)] = candidate.identity
         results = [self._run(candidate, case, repeat) for repeat in repeat_indices(case.split)]
         Leaderboard(state).keep_if_best(candidate, case)
-        return repeat_feedback(results, case)
+        return repeat_feedback(results, case, self._denylist.harness, candidate)
 
     def _run(self, candidate: Candidate, case: Case, repeat: int | None) -> dict[str, object]:
         """Return the recorded outcome of one run, else score it live. A provider failure records a failed outcome."""
@@ -361,6 +364,14 @@ class SearchPhase:
                 outcome["over_budget"] = True
             state.outcomes.append(outcome)
             state.checkpoint()
+            ordinal = len(self.reflections())
+        # The record comes after the checkpoint, so a crash between them leaves a gap, never a name that a resume reuses.
+        # It is written outside the lock: redaction and the file write must not hold up the other search threads.
+        try:
+            self._reflection_log.record(ordinal, prompt, result.get("answer"))
+        except CodedError as error:
+            state.faults.latch(error)
+            raise
         if refusal is not None:
             raise refusal
         self._record_admission(outcome, proposal)

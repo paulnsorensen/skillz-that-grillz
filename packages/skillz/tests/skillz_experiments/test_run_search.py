@@ -21,6 +21,7 @@ from skillz_experiments.harness._codex import Codex
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
+from skillz_experiments._redact import redact
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments.search import overshoot
 from skillz_experiments.run import _outcomes, _session
@@ -30,6 +31,10 @@ from typing_extensions import override
 from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
 from skillz_experiments.run._history_store import UNREADABLE, FileHistoryStore, store_path
 from skillz_experiments.run._ports import Ports
+from skillz_experiments.run._reflections import ReflectionLog
+from skillz_experiments.run._search_phase import SearchPhase
+from skillz_experiments.run._state import RunState
+from skillz_experiments.search import Edit
 from fake_provider import PASSED, FakeRunProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -78,6 +83,8 @@ class Search:
         self.omit_hypothesis = False
         # When set, a proposal changes only this component and returns the parent text of every other one.
         self.only: str | None = None
+        # Fields that every train and validation outcome adds, such as a `gate_diagnostic`.
+        self.extra: dict[str, object] = {}
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
@@ -168,7 +175,8 @@ class Provider(FakeRunProvider):
         if state.score_of is not None:
             chosen = state.score_of(candidate.files["SKILL.md"], case.split)
             score = score if chosen is None else chosen
-        return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier}
+        extra = {} if holdout else state.extra
+        return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier} | extra
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -1283,6 +1291,157 @@ def test_a_proposal_that_adds_harness_text_is_rejected_and_counted_under_harness
     assert any(feedback.get("rule") == "harness-token" and score == 0.0 for score, feedback in seen)
     assert cast(dict[str, object], read(out / "run.json")["search"])["leakage_rejections"] == rejections
 
+
+@pytest.mark.ac("gh-501:AC-2")
+def test_the_feedback_request_masks_harness_text_on_the_scored_and_the_rejected_path(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals,
+                                                       request_tail=" in output/plan.json. Do not run git or gh.",
+                                                       harness_phrases=("do not run git or gh",))
+    state.suffix = " " + ANSWER
+    seen = _spy_feedback(monkeypatch)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    rejected = [feedback for _, feedback in seen if feedback.get("reason") == "candidate-leakage-rejected"]
+    scored = [feedback for _, feedback in seen if "rejected" not in feedback]
+    assert rejected and scored
+    for feedback in rejected + scored:
+        request = cast(str, feedback["request"])
+        assert request.endswith(" in [harness]. [harness].")
+        assert "output/plan.json" not in request and "git or gh" not in request.lower()
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_recorded_gate_diagnostic_reaches_the_feedback_on_the_fresh_and_the_reuse_path(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.extra = {"gate_diagnostic": "assertion failed: total [redacted]"}
+    fault_at = _seed_pass(out) + 3
+    state.evaluate_fault = lambda number: (
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
+    with pytest.raises(EnvironmentDiffers):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    seen = _spy_feedback(monkeypatch)
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    # GEPA reflects on train cases. A validation case gets the mean of its repeats, with no failure evidence.
+    train = {cast(str, case["id"]) for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+             if case["split"] == "train"}
+    scored = [feedback for _, feedback in seen if feedback.get("case_id") in train and "rejected" not in feedback]
+    live = [entry for entry in state.search_log if entry[1] == "train"]
+    # More train feedback than live train calls: the resume served some feedback from recorded outcomes.
+    assert len(scored) > len(live)
+    assert {feedback.get("gate_feedback") for feedback in scored} == {"assertion failed: total [redacted]"}
+
+
+def _reflection_records(out: Path) -> dict[int, bytes]:
+    return dict(sorted((int(path.stem), path.read_bytes()) for path in (out / "reflections").glob("*.json")))
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_each_reflection_call_writes_a_private_redacted_record_without_holdout_text_and_a_resume_continues_the_numbers(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.suffix = " api_key=sk-live-REFLECTSECRET"
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    first = _reflection_records(out)
+    assert list(first) == [1]
+    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    records = _reflection_records(out)
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    reflections = [item for item in outcomes if item.get("split") == "reflection"]
+    # One record per answered call, named by its count of reflection outcomes; the resume adds names and keeps the first.
+    answered = [index + 1 for index, item in enumerate(reflections) if "usage" in item]
+    assert list(records) == answered and len(records) > 1 and records[1] == first[1]
+    cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+    held = [cast(str, case["request"]) for case in cases if case["split"] == "holdout"]
+    train = [cast(str, case["request"]) for case in cases if case["split"] == "train"]
+    assert held and any(request in data.decode() for request in train for data in records.values())
+    asked = {redact(prompt) for prompt in state.prompts}
+    for ordinal, data in records.items():
+        path = out / "reflections" / f"{ordinal}.json"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600 and len(data) <= 64 * 1024
+        record = cast(dict[str, object], json.loads(data))
+        assert record["ordinal"] == ordinal and record["prompt"] in asked
+        text = data.decode()
+        assert "REFLECTSECRET" not in text and not any(request in text for request in held)
+    # The secret did reach the prompts, so the check above sees redaction, not absence.
+    assert any("REFLECTSECRET" in prompt for prompt in state.prompts)
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_the_reflection_record_is_prepared_while_another_thread_holds_the_session_lock(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    locks: list[threading.RLock] = []
+    original_init = SearchPhase.__init__
+    original_record = ReflectionLog.record
+
+    def capture(self: SearchPhase, run_state: RunState, *, edit: Edit, search_cases: Mapping[str, Case],
+                built: Callable[[Candidate], Candidate]) -> None:
+        locks.append(run_state.lock)
+        original_init(self, run_state, edit=edit, search_cases=search_cases, built=built)
+
+    ordinals: list[int] = []
+    acquired: list[bool] = []
+
+    def paused_record(self: ReflectionLog, ordinal: int, prompt: str, answer: object) -> None:
+        ordinals.append(ordinal)
+        entered = threading.Event()
+        outcome: list[bool] = []
+
+        def other() -> None:
+            lock = locks[-1]
+            got = lock.acquire(timeout=3)
+            outcome.append(got)
+            if got:
+                lock.release()
+            entered.set()
+
+        thread = threading.Thread(target=other)
+        thread.start()
+        # The log preparation stays paused until the other thread has tried to take the lock.
+        _ = entered.wait(10)
+        thread.join()
+        acquired.append(bool(outcome and outcome[0]))
+        original_record(self, ordinal, prompt, answer)
+
+    monkeypatch.setattr(SearchPhase, "__init__", capture)
+    monkeypatch.setattr(ReflectionLog, "record", paused_record)
+    monkeypatch.setattr(ReflectionLog, "record", paused_record)
+    assert run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
+               factory=state.factory)["phase"] == "complete"
+    assert len(acquired) > 1 and all(acquired)
+    assert len(set(ordinals)) == len(ordinals) and ordinals == sorted(ordinals)
+    assert list(_reflection_records(out)) == ordinals
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_a_reflection_record_write_error_still_ends_the_run_and_a_resume_never_reuses_its_number(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+
+    def failing_record(self: ReflectionLog, ordinal: int, prompt: str, answer: object) -> None:
+        del self, prompt, answer
+        raise CodedError("reflection-record-failed", f"cannot write record {ordinal}")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(ReflectionLog, "record", failing_record)
+        with pytest.raises(CodedError) as caught:
+            _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert caught.value.code == "reflection-record-failed"
+    # The outcome was checkpointed before the record, so the failed call still counts.
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    assert [item for item in outcomes if item.get("split") == "reflection" and "usage" in item]
+    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    records = _reflection_records(out)
+    assert records and 1 not in records
 
 def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:

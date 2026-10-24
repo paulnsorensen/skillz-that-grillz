@@ -90,6 +90,10 @@ A task or judge call that exceeds it ends as an `evaluation-failed` outcome with
 A reflection call that exceeds it records a reflection outcome with `status: timeout`, and the proposal ends with no candidate and no second reflection call.
 A reflection outcome with a status is no stall observation.
 When every feedback record is unscored, the run skips the reflection (`status: skipped`, `reason: no-scored-feedback`) and the proposal ends with no candidate.
+Each answered reflection call writes `RUN/reflections/<k>.json` (mode 0600) for audit: the redacted prompt and the redacted answer as JSON text.
+`k` is the count of reflection outcomes in the run, so a timed-out, failed, or skipped call leaves a gap, and a resume continues the count.
+A record holds at most 64 KiB. A cut text ends with `[truncated]`. The export leaves the records out.
+A record that already exists stops the run with `reflection-record-exists`. A write error stops it with `reflection-record-failed`.
 A call that the search deadline stops is a budget stop, not a timeout.
 The run record and the `summary` hold `calls_by_role` (counts that sum to `calls`) and `seconds_by_role` (wall seconds of `task`, `reflection`, `judge`, and `failed` calls).
 A record from before the roles exists puts its earlier calls under `unattributed`.
@@ -235,6 +239,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `contract-family-unknown` | A `family_budgets` name matches no family in the case draft. The stop comes after the draft loads. | Fix the family name in the contract, or add the family to the draft. |
 | `run-schema-old` | The run directory comes from an older runner, or its recorded `statistics` lacks fields that a newer runner added. | Start a new run directory. |
 | `export-into-target` | The export destination is inside the target skill directory. | Choose a destination outside the target skill directory. |
+| `export-engine-unverified` | An earlier engine build ran the completed run, and its replay recorded no `patch_digest` that equals the rebuilt patch. Export writes nothing. | Start a new run directory. |
 | `command-removed` | The command is `dataset`, `baseline`, `search`, or `evaluate`. | Use `run`, then `export`. |
 
 Two close codes are warnings, not stops. They never arrive on stderr as `code`:
@@ -836,6 +841,8 @@ The gate keeps the unspent replay reserve for the replay.
 
 Run `export` only after the run reports the phase `complete`.
 Export refuses a patch whose digest differs from the replayed `patch_digest`. It writes nothing in that case.
+A run from an earlier engine build exports when its replay `patch_digest` equals the rebuilt patch digest.
+When the replay recorded no digest or another digest, export stops with `export-engine-unverified`.
 A completed run without a replay gives the `export` claim `inconclusive` with the reason `replay-missing`.
 
 ```sh
@@ -976,12 +983,28 @@ A `judge` or `hybrid` grader can also declare these fields:
   Each file has a limit of 4,000,000 bytes, and all files together have a limit of 16,000,000 bytes.
   The judge workspace gets the files under `capture/`. The judge prompt lists their absolute paths, and the judge opens them with the Read tool.
   A non-zero exit, no files, a symlink, or a file that breaks a rule scores 0 with status `capture-failed` and skips the judge.
-  The record then holds `capture_failure`. After a successful capture, the record holds `capture_files`.
+  The record then holds `capture_failure`, and `gate_diagnostic` holds its redacted text. After a successful capture, the record holds `capture_files`.
   Only the `claude` harness supports `capture`. Other harnesses stop with `contract-capture-unsupported`.
   The capture runs in the OS sandbox of the task role, so `--sandbox-read` and `--sandbox-seconds` apply.
   On macOS the sandbox blocks all network access, loopback included, so a capture that starts a local server needs Linux.
 A judge answer that leaves out a criterion `id` or adds one scores 0 with status `evaluation-failed`.
 A contract that declares `pillars` stops with `contract-pillars-removed`. Move each pillar into case criteria.
+
+A command score below 1 records `gate_diagnostic` on the outcome: the last 1,000 characters of the redacted grader stderr.
+An empty stderr gives the exit code instead. A grader that reaches the sandbox time limit says so.
+The export leaves `gate_diagnostic` out. This field changes the scoring digest, so earlier runs are a different cohort.
+
+Each scored search outcome gives GEPA a feedback record with `task_correct`, `request`, `case_id`, and `grader_scores`.
+The `request` holds `[harness]` in place of each harness token. The `unmet` texts and reasons and `gate_feedback` hold it too.
+A judged outcome adds `unmet`: each criterion below level 4, with `id`, `must`, `level`, `text`, and the judge `reason`.
+The list puts `must` criteria first, then the lowest level first. Each `text` and `reason` is redacted and holds at most 300 characters.
+When the `text` and `reason` fields would pass 4,000 characters in total, the later entries hold `[truncated]` in both fields.
+When the markers alone would pass that limit, the later entries hold empty text instead. Every entry keeps its `id`, `must`, and `level`.
+A judged outcome also adds `edit_hint`: the sorted editable files that share 4 words in a row with an unmet criterion text.
+With no match, `edit_hint` is `["unknown"]`. The hint is advice only, and every editable file stays editable.
+An outcome with a `gate_diagnostic` adds it as `gate_feedback`.
+A validation case with more than one scored repeat gets the repeat mean and the masked `request`, with no `unmet` or `gate_feedback`.
+GEPA reflects on train cases only.
 
 The contract hash covers the whole contract, `capture` included. The case hash covers every case, criteria included.
 
@@ -1103,7 +1126,7 @@ A proposal leaks when the text that it adds to a component, compared with the se
 Text that the seed already holds never fires a rule.
 A leaking proposal scores 0 and makes no task or judge call. It records no outcome.
 GEPA still counts each rejected evaluation against its metric-call allowance. A proposer that keeps leaking can end the search early with approved calls left.
-Its feedback has `reason` and `rejected` set to `candidate-leakage-rejected`, plus the `rule` and the existing `request`.
+Its feedback has `reason` and `rejected` set to `candidate-leakage-rejected`, plus the `rule` and the masked `request`.
 The feedback holds no expected text.
 `summary` and `report.json` carry `search.leakage_rejections`: the count of distinct rejected proposals per rule.
 The runner saves the digests of rejected proposals per rule in `run.json` at each checkpoint, never case text.

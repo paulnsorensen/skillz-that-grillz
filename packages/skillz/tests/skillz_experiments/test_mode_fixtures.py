@@ -111,7 +111,7 @@ def live(case: Case, written: Mapping[str, str | None]) -> Tree:
 
 
 def grade(path: Path, case: Case, written: Tree) -> float:
-    return _graders.command(Sandbox(), _rules(path).kinds[case.kind].argv, case, live(case, written))
+    return _graders.command(Sandbox(), _rules(path).kinds[case.kind].argv, case, live(case, written))[0]
 
 
 def _script(path: Path, kind: str) -> str:
