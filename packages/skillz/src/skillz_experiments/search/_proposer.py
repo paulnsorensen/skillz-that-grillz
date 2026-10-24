@@ -46,6 +46,13 @@ MAX_NOTES = 500
 NOTES_TOO_LONG = "notes-too-long"
 NOTES_NOT_TEXT = "notes-not-text"
 
+# The failure evidence of a feedback record, in the order that the prompt shows it, after every other key.
+EVIDENCE = ("unmet", "edit_hint", "gate_feedback")
+EVIDENCE_RULE = ("A feedback record can end with unmet, the criteria that the judge did not fully meet. "
+                 "Then edit_hint names the files that probably need the change. "
+                 "Then gate_feedback holds the end of the failed gate output. "
+                 "The hint can be wrong. Every editable component stays editable.")
+
 MAX_EDITS = 6
 MIN_EDITS = 1
 LAST_PROPOSAL_FROM = 0.85
@@ -123,8 +130,17 @@ def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequen
     head += " Add an " + NOTES + " text of at most " + str(MAX_NOTES) + " characters that you want to read in later proposals, or null. "
     sections = (render(history, protect), render_rejected(memory), render_earlier(earlier), render_notes(journal))
     head += " ".join(part for part in sections if part)
+    shown = {name: [_evidence_last(record) for record in records] for name, records in feedback.items()}
+    if any(key in record for records in shown.values() for record in records for key in EVIDENCE):
+        head += " " + EVIDENCE_RULE
     head += " " + progress.status()
-    return head + "\n" + json.dumps({"candidate": candidate, "feedback": feedback}, default=str), schema
+    return head + "\n" + json.dumps({"candidate": candidate, "feedback": shown}, default=str), schema
+
+
+def _evidence_last(record: Mapping[str, object]) -> dict[str, object]:
+    """Return `record` with its `EVIDENCE` keys moved to the end, in `EVIDENCE` order."""
+    return ({key: value for key, value in record.items() if key not in EVIDENCE}
+            | {key: record[key] for key in EVIDENCE if key in record})
 
 
 def edit_count(before: Mapping[str, str], after: Mapping[str, str]) -> int:

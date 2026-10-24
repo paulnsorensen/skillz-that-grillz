@@ -248,8 +248,9 @@ class _Grading:
 def test_the_command_and_capture_graders_treat_a_sandbox_timeout_as_exit_124(tmp_path: Path) -> None:
     case = _cases(tmp_path, _contract())[0]
     argv = ("/usr/bin/python3", "grade.py")
-    scores = [_graders.command(_Grading(timeout), argv, case, {}) for timeout in (True, False)]
+    scores = [_graders.command(_Grading(timeout), argv, case, {})[0] for timeout in (True, False)]
     assert scores == [0.0, 0.0]
+    assert _graders.command(_Grading(True), argv, case, {})[1] == "the grader argv reached the sandbox time limit"
     failures: list[str] = []
     for timeout in (True, False):
         with pytest.raises(_graders.CaptureFailed) as caught:

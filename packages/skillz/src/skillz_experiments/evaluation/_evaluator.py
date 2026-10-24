@@ -13,6 +13,7 @@ from skillz_experiments._contract import Contract, resolve
 from skillz_experiments.evaluation._scoring import executed, grade, usage, witnessed_events
 from skillz_experiments._budget import Budget
 from skillz_experiments._protocol import LEDGER_KEY
+from skillz_experiments._redact import redact
 from skillz_experiments.evaluation._memo import Checker, CheckMemo
 
 
@@ -231,6 +232,7 @@ def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contr
     """Score a command, judge, hybrid, or journey kind. A failed hybrid or journey gate or a failed capture skips the judge.
 
     A journey gate also sees the raw events in `trace/events.jsonl`, and its judge also sees the brief and the transcript.
+    A command score below 1 and a failed capture record their redacted failure text as `gate_diagnostic`.
     """
     grader = rules.grader(case.kind)
     scores: dict[str, object] = {}
@@ -240,8 +242,10 @@ def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contr
         return result
     if grader.type in ("command", "hybrid", "journey"):
         trace = cast(list[dict[str, object]], journey["trace"]) if journey is not None else None
-        command = _graders.command(task, grader.argv, case, files, trace)
+        command, diagnostic = _graders.command(task, grader.argv, case, files, trace)
         scores["command"] = result["score"] = command
+        if command < 1:
+            result["gate_diagnostic"] = diagnostic
         if grader.type in ("hybrid", "journey") and command <= 0:
             scores["judge"] = None
             result["status"] = "gate-failed"
@@ -253,7 +257,8 @@ def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contr
                 attachments = _graders.capture(task, grader.capture, case, files)
             except _graders.CaptureFailed as error:
                 scores["judge"] = None
-                result.update({"score": 0.0, "status": "capture-failed", "capture_failure": str(error)})
+                result.update({"score": 0.0, "status": "capture-failed", "capture_failure": str(error),
+                               "gate_diagnostic": redact(str(error))[-_graders.DIAGNOSTIC_LIMIT:]})
                 return result
             result["capture_files"] = sorted(attachments)
         score, verdicts, judge = _graders.judge(judge_transport, grader, case, answer.get("result_json"), files,

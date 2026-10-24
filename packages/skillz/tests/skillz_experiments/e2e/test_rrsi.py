@@ -56,7 +56,7 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
     assert len(shown) == 2 and len({item["case_id"] for item in shown}) == 2 and {item["case_id"] for item in shown} <= train
     assert [{key: value for key, value in item.items() if key != "case_id"} for item in shown] == [
         {"task_correct": 0.0, "request": "Transform fixture.md according to this skill.",
-         "grader_scores": {"command": 0.0}}
+         "grader_scores": {"command": 0.0}, "gate_feedback": "the grader argv exits with code 0"}
     ] * 2
     estimate = cast(dict[str, object], record["estimate"])
     headroom = cast(dict[str, int], estimate["headroom"])
