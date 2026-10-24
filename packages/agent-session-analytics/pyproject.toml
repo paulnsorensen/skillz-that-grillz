@@ -1,6 +1,6 @@
 [project]
 name = "agent-session-analytics"
-version = "0.1.0"
+version = "0.2.0"
 description = "Ingest coding-agent session logs into DuckDB and query them read-only."
 readme = "README.md"
 requires-python = ">=3.11"
