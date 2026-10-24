@@ -43,6 +43,9 @@ of truth for repo-local skills (tooling for work on this repository only).
 - Repo-local skills (for work on this repo only) live in `.agents/skills/<name>/`,
   with a relative symlink in `.claude/skills/`. Set `metadata.internal: true`
   so `npx skills add` does not publish them. Keep them out of the README table.
+- `skills/*/scripts/*.pyz` archives are build output, and Git ignores them. `just build` writes them before the tests run.
+  The `publish dist` workflow appends `main` plus the archives to `dist`, the default branch
+  (`docs/agents/decisions/wedge-skill-packaging.md` ADR-012). Branch from `main`, never from `dist`.
 - Use `/skillz-self-update` to refresh cross-harness research and maintain the published `/skillz` skill. Do not use `/skillz self-update`.
 - A ticket's PR adds `docs/agents/criteria/gh-<n>.md` (its Acceptance list, one row per criterion) and marks each test
   `@pytest.mark.ac("gh-<n>:AC-<m>")`. `just build` fails on an untested `test` criterion or an unknown marker;

@@ -58,6 +58,8 @@ npx skills@latest add paulnsorensen/skillz-that-grillz --skill skillz
 
 Add `--global` to install user-wide, so the skill is available in every repo.
 Without it, the skill installs into the current repo under `.agents/skills/`.
+The installer reads the default branch, `dist`. CI writes `dist` after each merge to `main`:
+it holds the `main` tree plus the built `scripts/*.pyz` archives. `main` holds source only.
 The former `/wedge` skill is now `/skillz wedge`.
 `/skillz` is user-only, so "wedge this" no longer invokes it on its own. Type `/skillz wedge <path>`.
 
