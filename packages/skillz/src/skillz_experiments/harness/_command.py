@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import ClassVar, cast, final
 
-from skillz_experiments._candidate import Candidate, helper_script, make_workspace, snapshot_outputs, stage_task
+from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, loads_untrusted, mapping
 from skillz_experiments._contract import resolve
 from skillz_experiments.evaluation import CheckResult, answer_schema, helper_failure, usage
@@ -264,7 +264,7 @@ class Command:
             if candidate is not None:
                 skill = {"skill_name": candidate.skill, "skill_path": str(workspace / ".agents/skills" / candidate.skill)}
                 rules = resolve(candidate.contract)
-                helper = helper_script(candidate, rules)
+                helper = rules.helper.path if rules.helper is not None else None
                 if helper is not None:
                     witness = stage_witness(workspace, candidate.skill, helper)
             self.budget.claim(holdout=holdout, role=self.role)
