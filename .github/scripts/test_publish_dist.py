@@ -199,14 +199,6 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", text)
         self.assertIn("schedule:", text)
 
-    def test_publish_pushes_with_a_token_that_can_write_workflow_files(self) -> None:
-        """dist holds .github/workflows/, and GitHub rejects a GITHUB_TOKEN push that changes those files."""
-        text = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("token: ${{ secrets.DIST_PUSH_TOKEN }}", text)
-        self.assertIn("persist-credentials: true", text)
-        self.assertNotIn("contents: write", text)
-        self.assertLess(text.index("Require the dist push token"), text.index("uses: actions/checkout"))
-
     def test_retarget_never_checks_out_pull_request_code(self) -> None:
         text = RETARGET.read_text(encoding="utf-8")
         self.assertIn("pull_request_target:", text)

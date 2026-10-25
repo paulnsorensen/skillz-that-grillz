@@ -29,29 +29,15 @@ jobs:
   publish:
     name: publish dist branch
     runs-on: ubuntu-latest
-    # The push uses DIST_PUSH_TOKEN, not GITHUB_TOKEN. dist holds the full main
-    # tree, and GitHub rejects a GITHUB_TOKEN push that adds or changes a file
-    # under .github/workflows/. The token needs contents and workflows write.
     permissions:
-      contents: read
+      contents: write
     steps:
-      - name: Require the dist push token
-        env:
-          DIST_PUSH_TOKEN: ${{ secrets.DIST_PUSH_TOKEN }}
-        run: |
-          if [ -z "$DIST_PUSH_TOKEN" ]; then
-            echo "::error::Set the DIST_PUSH_TOKEN secret: a token with contents and workflows write on this repository."
-            exit 1
-          fi
-
       # A schedule or manual run starts on the default branch; always build main.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.DIST_PUSH_TOKEN }}
-          persist-credentials: true
 
       - name: Compare dist with main
         id: plan
