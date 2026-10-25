@@ -24,6 +24,7 @@ from the description alone.
 
 ## Checklist
 
+- [ ] Base branch is `main`, not `dist`
 - [ ] Conventional Commits PR title (`feat:`, `fix:`, `chore:`, `docs:`, ...)
 - [ ] Tests added or updated (or N/A)
 - [ ] Documentation updated (or N/A)
