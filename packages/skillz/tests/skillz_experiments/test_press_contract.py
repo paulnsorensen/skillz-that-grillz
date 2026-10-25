@@ -242,6 +242,21 @@ def test_capture_skips_nested_ignored_directories_with_undecodable_files(tmp_pat
     assert set(candidate.files) == {"SKILL.md"}
 
 
+def test_capture_keeps_an_ignored_built_archive_of_a_declared_target(tmp_path: Path) -> None:
+    """Main ignores built archives (ADR-012), but the skill runs them, so capture freezes them."""
+    target = echo_skill(tmp_path)
+    git_repo(target, "scripts/*.pyz\n")
+    _ = (target / "wedge.toml").write_text('name = "note"\nentry = "note:main"\nsource = "note.py"\nrepo = "o/n"\n')
+    _ = (target / "note.py").write_text("def main() -> None: ...\n")
+    _ = (target / "pyproject.toml").write_text('[project]\nname = "p"\nversion = "0"\n')
+    _ = (target / "uv.lock").write_text("version = 1\n")
+    (target / "scripts").mkdir()
+    _ = (target / "scripts/note.pyz").write_bytes(b"PK\x03\x04\x00")
+    _ = (target / "scripts/stray.pyz").write_bytes(b"PK\x03\x04\x00")
+    candidate = Candidate.capture(target, ["SKILL.md"])
+    assert set(candidate.frozen) == {"scripts/note.pyz"}
+
+
 def test_capture_skips_an_ignored_directory_that_holds_a_symlink_loop(tmp_path: Path) -> None:
     target = echo_skill(tmp_path)
     git_repo(target, "cache/\n")

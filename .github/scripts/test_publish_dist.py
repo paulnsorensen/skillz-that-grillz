@@ -211,5 +211,12 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("github.event.changes.base != null", text)
 
 
+class MainTreeTest(unittest.TestCase):
+    def test_main_tracks_no_archives(self) -> None:
+        """Archives live only on dist; a branch cut from dist must not merge them back into main."""
+        tracked = _git(ROOT, "ls-files", "--", publish_dist.ARCHIVES)
+        self.assertEqual(tracked, "", "main must not track archives; branch from main, not dist, and drop: " + tracked)
+
+
 if __name__ == "__main__":
     _ = unittest.main()

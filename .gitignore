@@ -13,6 +13,9 @@ __pycache__/
 .cheese/
 .context/
 
+# Skill archives: build output. `just build` writes them; CI publishes them on dist (ADR-012).
+skills/*/scripts/*.pyz
+
 # Skill-creator iteration workspaces (eval runs, benchmarks, viewer HTML)
 skills/*-workspace/
 
