@@ -70,9 +70,11 @@ The drafting session is outside the run cap. The record holds its `author_turns`
 
 ## changelog-proof
 
-This scenario is the live proof of #324: the autoimprove journey must promote a real quality fix and ship a correct suggested CLI, on Claude and on Codex.
+This scenario is the live proof of #324. The autoimprove journey must promote a real quality fix and ship a correct suggested CLI.
+It must do so on Claude and on Codex.
 `MODEL` sets the task role: `sonnet` on `claude`, `gpt-6-luna` on `codex`.
 `SKILLZ_LIVE_STRONG_MODEL` sets the drafting agent, the reflection role, and the judge role. The default is `opus` on `claude` and `gpt-6-astra` on `codex`.
+The override applies to every role on every harness of the run, so set it only for a run on one harness.
 
 ```sh
 SKILLZ_LIVE=1 just live-smoke claude sonnet changelog-proof
@@ -80,19 +82,23 @@ SKILLZ_LIVE=1 just live-smoke codex gpt-6-luna changelog-proof
 ```
 
 1. The test builds `changelog-entry` in a fresh git repository: a uv project with a lock, a vendored fromargs, and one wedge target, `change-check`. The run therefore offers `@new-cli`.
+   `SKILL.md` does not name `change-check.pyz`, so that target stays frozen. A CLI must come from `@new-cli`.
    The skill writes one changelog entry from `change.json`. Rule 1 of its `references/format.md` is wrong: it puts the ticket id at the end, in parentheses.
    The seed `SKILL.md` says that no helper writes the entry yet.
-   The contract grades the `task` kind with `hybrid` and declares no helper. Its command check, `changelog_check.py`, scores 0 when an entry breaks a rule.
-   Its one stderr line names the rule and the line, and the proposer reads it as `gate_feedback`. The check never repeats the summary or the scope.
-2. The journey stage runs `/skillz autoimprove` (`$skillz` on Codex) until the case approval question.
-   On `claude`, it runs in `claude -p` with project settings only. On `codex`, it runs in `codex exec` with a private `HOME` and `CODEX_HOME`, a copy of the skill under `.agents/skills`, and only `auth.json` linked from the host.
-   The Codex session may write only the run directory and its private home, and it has network access, because the runner can populate the uv site layer of the fixture.
+   The contract grades the `task` kind with `hybrid` and declares no helper. Its command check, `changelog_check.py`, scores 1 only for the oracle entry.
+   On a wrong entry, its one stderr line names the first broken rule and the line. The proposer reads it as `gate_feedback`. The check never repeats the summary or the scope.
+2. Stage 1, the author stage, runs `/skillz autoimprove` (`$skillz` on Codex) until the case approval question. A failure stops the test at stage `author`.
+   On `claude`, it runs in `claude -p` with project settings only.
+   On `codex`, it runs in `codex exec` with a private `HOME`, a copy of the skill under `.agents/skills`, and an allowlisted environment.
+   Its `CODEX_HOME` is outside every writable root and holds only a link to the host `auth.json`.
+   The Codex session may write only its driver directory, the run directory, and its private home. `/tmp` and `$TMPDIR` are not writable.
+   It has network access, because the runner can populate the uv site layer of the fixture.
    The prompt states the requirement as a user would: entries start with the ticket id in square brackets. A request never states it.
-   The draft needs 6 families of 3 task cases, 2 ticketed cases in each family, and the oracle entry of `changelog_check.entry_for` as each `expected.entry`.
+   The draft check needs 6 families of 3 task cases and 2 ticketed cases in each family. Each `expected.entry` must equal `changelog_check.entry_for`.
 3. Stage 2 runs the shared path with the agent's draft: preflight, `run --edit prose+cli --repeats 1`, and `export`. No token rule applies, so only a quality gain promotes.
 4. The test applies the patch to a copy, rebuilds the new target, and runs it on every drafted case with the command from the winner `SKILL.md`. The same check scores each entry.
 
 The test passes only when `claims.apply` is true and `cli` is `ok`.
 The record holds the claims, the gate delta and SE, the patch files, and whether the patch changed `references/format.md`.
 The runner keeps `edit_hint` only in the proposer feedback, so the record cannot show it.
-With `SKILLZ_LIVE_DRY=1`, the journey stage is skipped, and the run uses the 18-case reference draft.
+With `SKILLZ_LIVE_DRY=1`, the test skips Stage 1 and uses the 18-case reference draft.

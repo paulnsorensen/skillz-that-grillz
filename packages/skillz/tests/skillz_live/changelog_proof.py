@@ -2,9 +2,9 @@
 
 The fixture skill `changelog-entry` writes one changelog entry from a `change.json`. Rule 1 of its
 `references/format.md` is wrong: it puts the ticket id at the end of the entry, and the check wants it first.
-The journey stage runs `/skillz autoimprove` in `claude -p` or in `codex exec` until the agent writes the case draft.
+Stage 1, the author stage, runs `/skillz autoimprove` in `claude -p` or `codex exec`. The agent stops at the draft.
 The author prompt states the requirement as a user would. The case requests never state it.
-The hybrid grader runs `changelog_check.py`: a broken rule scores 0 with a message that names the rule and the line.
+The hybrid grader runs `changelog_check.py`. A wrong entry scores 0 with a message that names the rule and the line.
 `check` then rebuilds the exported CLI and scores its entry for every drafted case with the same check.
 The scenario passes only when `claims.apply` is true and `cli` is `ok`.
 """
@@ -17,14 +17,14 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 from collections import Counter
 from pathlib import Path
 from typing import cast
 
 from changelog_check import LABELS, change_problem, entry_for, verdict
-from fromargs_benefit import (AUTHOR_SECONDS, SKILLZ, build_project, build_winner, claude_author, invocations,
-                              read_draft)
+from fromargs_benefit import (AUTHOR_RUN, AUTHOR_SECONDS, SKILLZ, build_project, build_winner, claude_author,
+                              invocations, read_draft, run_guide_command, strong_model)
+from skillz_experiments.harness._codex import host_home
 
 HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "fixtures/changelog-entry"
@@ -50,9 +50,8 @@ MIN_FAMILIES = 6
 MIN_DECIDED = 2
 """Each family needs at least this many cases with a ticket, which the planted rule decides."""
 REQUEST = "Write the changelog entry for the change in change.json."
-RULE_WORDS = re.compile(r"\[|bracket|prefix|ticket|parenthes|first|start|begin", re.IGNORECASE)
+RULE_WORDS = re.compile(r"\[|\b(?:brackets?|prefix(?:ed|es)?|tickets?|parenthes[a-z]*)\b", re.IGNORECASE)
 """A request that holds one of these words can state the enforced rule, so the draft check refuses it."""
-STRONG = {"claude": "opus", "codex": "gpt-6-astra"}
 SIGIL = {"claude": "/", "codex": "$"}
 """Claude Code calls a skill as `/name`. Codex calls it as `$name`."""
 PROMPT = """{sigil}skillz autoimprove {target}
@@ -73,11 +72,6 @@ Each `expected` holds `entry`, the one correct entry line, and `criteria` that c
 Stop at the case approval question. Do not approve the cases or the budget, and do not start the search.
 """
 CODEX_HOME_FILES = ("auth.json",)
-
-
-def strong_model(harness: str) -> str:
-    """Return the model of the drafting agent, the reflection role, and the judge role on `harness`."""
-    return os.environ.get("SKILLZ_LIVE_STRONG_MODEL") or STRONG[harness]
 
 
 def build(work: Path) -> Path:
@@ -114,7 +108,7 @@ def _criteria(entry: str) -> list[dict[str, object]]:
 
 
 def reference_draft() -> list[dict[str, object]]:
-    """Return an 18-case draft in 6 families with oracle entries. A dry run uses it in place of the journey draft."""
+    """Return an 18-case draft in 6 families with oracle entries. A dry run uses it in place of the author draft."""
     draft: list[dict[str, object]] = []
     for family in FAMILIES:
         for index in range(CASES_PER_FAMILY):
@@ -181,11 +175,11 @@ def check_draft(draft: object) -> list[str]:
 
 def author(target: Path, work: Path, harness: str,
            task_model: str) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
-    """Run the /skillz autoimprove journey on `harness` until the agent writes the case draft.
+    """Run the author stage on `harness` until the agent writes the case draft.
 
     Return the draft and record fields. Both harnesses get the same prompt and the same draft check.
     """
-    out = work / "author-run"
+    out = work / AUTHOR_RUN
     prompt = PROMPT.format(sigil=SIGIL[harness], target=target, harness=harness, task_model=task_model, out=out,
                            cases=len(FAMILIES) * CASES_PER_FAMILY, families=len(FAMILIES),
                            per_family=CASES_PER_FAMILY, decided=MIN_DECIDED, request=REQUEST)
@@ -197,17 +191,22 @@ def author(target: Path, work: Path, harness: str,
 def codex_argv(driver: Path, out: Path, home: Path, model: str) -> list[str]:
     """Return the `codex exec` argv of the author session.
 
-    The session ignores the user config and rules. It may write only the run directory and its private home, and it
-    has network access, because the runner can populate the uv site layer of the fixture.
+    The session ignores the user config and rules. It may write only the driver directory, the run directory,
+    and its private home. `/tmp` and `$TMPDIR` are not writable. It has network access for the uv site layer.
     """
     return ["codex", "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "--json", "--skip-git-repo-check",
-            "--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true", "-C", str(driver),
+            "--sandbox", "workspace-write", "-c", "sandbox_workspace_write.network_access=true",
+            "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
+            "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true", "-C", str(driver),
             "--add-dir", str(out), "--add-dir", str(home), "--model", model, "-"]
 
 
 def _codex_events(stdout: str) -> tuple[str, dict[str, object] | None]:
-    """Return the last agent message and the last token usage of the `codex exec --json` event lines."""
-    said, usage = "", None
+    """Return what the agent said last and the last token usage of the `codex exec --json` event lines.
+
+    An `error` or `turn.failed` event gives its message when the agent wrote no message.
+    """
+    said, failure, usage = "", "", None
     for line in stdout.splitlines():
         try:
             event = cast(object, json.loads(line))
@@ -216,33 +215,38 @@ def _codex_events(stdout: str) -> tuple[str, dict[str, object] | None]:
         if not isinstance(event, dict):
             continue
         fields = cast(dict[str, object], event)
-        item = fields.get("item")
-        if fields.get("type") == "item.completed" and isinstance(item, dict):
+        item, kind = fields.get("item"), fields.get("type")
+        if kind == "item.completed" and isinstance(item, dict):
             entry = cast(dict[str, object], item)
             if entry.get("type") == "agent_message":
                 said = str(entry.get("text", ""))
-        if fields.get("type") == "turn.completed" and isinstance(fields.get("usage"), dict):
+        if kind == "turn.completed" and isinstance(fields.get("usage"), dict):
             usage = cast(dict[str, object], fields["usage"])
-    return said, usage
+        error = fields.get("error")
+        if kind == "error":
+            failure = str(fields.get("message", ""))
+        elif kind == "turn.failed" and isinstance(error, dict):
+            failure = str(cast(dict[str, object], error).get("message", ""))
+    return said or failure, usage
 
 
 def codex_author(target: Path, work: Path, prompt: str,
                  model: str) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
     """Run `prompt` in `codex exec` with a copy of the `skillz` skill under `.agents/skills`.
 
-    A private `HOME` and `CODEX_HOME` keep the user's skills, config, and rules out of the session. Only `auth.json`
-    links to the host Codex home. Codex reports no turn count, so `author_turns` is None.
+    A private `HOME` keeps the user's skills out of the session. The session gets only an allowlisted environment.
+    `CODEX_HOME` sits outside every writable root and holds only a link to the host `auth.json`.
+    Codex reports no turn count, so `author_turns` is None.
     """
-    driver, out, home = work / "author", work / "author-run", work / "author-home"
+    driver, out, home, codex_home = work / "author", work / AUTHOR_RUN, work / "author-home", work / "codex-home"
     _ = shutil.copytree(SKILLZ, driver / ".agents/skills/skillz", ignore=shutil.ignore_patterns("__pycache__"))
     out.mkdir(mode=0o700)
-    codex_home = home / ".codex"
-    codex_home.mkdir(parents=True)
-    host = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    (home / "tmp").mkdir(parents=True)
+    codex_home.mkdir()
     for name in CODEX_HOME_FILES:
-        (codex_home / name).symlink_to(host / name)
-    environment = {key: value for key, value in os.environ.items() if not key.startswith("CODEX_")} | {
-        "HOME": str(home), "CODEX_HOME": str(codex_home), "UV_CACHE_DIR": str(home / ".cache/uv")}
+        (codex_home / name).symlink_to(host_home() / name)
+    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "HOME": str(home),
+                   "TMPDIR": str(home / "tmp"), "CODEX_HOME": str(codex_home), "UV_CACHE_DIR": str(home / ".cache/uv")}
     try:
         result = subprocess.run(codex_argv(driver, out, home, model), input=prompt, cwd=driver, env=environment,
                                 capture_output=True, text=True, timeout=AUTHOR_SECONDS, check=False)
@@ -256,22 +260,26 @@ def codex_author(target: Path, work: Path, prompt: str,
 
 
 def patch_files(patch: Path) -> list[str]:
-    """Return the paths that a git patch changes, in patch order."""
+    """Return the paths that a unified patch changes, in patch order.
+
+    The runner writes skill-file diffs with plain `--- a/X` and `+++ b/X` headers and no `diff --git` line.
+    A deleted file has `+++ /dev/null`, so its path comes from the `--- a/` header.
+    """
     text = patch.read_text(encoding="utf-8") if patch.is_file() else ""
-    return cast(list[str], re.findall(r"^diff --git a/(\S+) b/", text, re.MULTILINE))
+    pairs = cast(list[tuple[str, str]], re.findall(r"^--- (\S+)[^\n]*\n\+\+\+ (\S+)", text, re.MULTILINE))
+    return [new.removeprefix("b/") if new != "/dev/null" else old.removeprefix("a/") for old, new in pairs]
 
 
 def check(target: Path, work: Path, draft: list[dict[str, object]]) -> dict[str, object]:
-    """Copy the claims and the gate numbers of `export/report.json`, then rebuild and check the exported CLI.
+    """Copy the claims of `export/report.json` and the changed paths, then rebuild and check the exported CLI.
 
     The runner keeps `edit_hint` only in the proposer feedback, so the record names whether the patch changed
     `references/format.md` in its place.
     """
     report = cast(dict[str, object], json.loads((work / "export/report.json").read_text(encoding="utf-8")))
-    gate = cast(dict[str, object], report.get("gate")) if isinstance(report.get("gate"), dict) else {}
     changed = patch_files(work / "export/candidate.patch")
-    fields: dict[str, object] = {"claims": report.get("claims"), "delta": gate.get("delta"), "se": gate.get("se"),
-                                 "patch_files": changed, "format_md_changed": "references/format.md" in changed}
+    fields: dict[str, object] = {"claims": report.get("claims"), "patch_files": changed,
+                                 "format_md_changed": "references/format.md" in changed}
     built = build_winner(target, work)
     if isinstance(built, dict):
         return fields | built
@@ -282,27 +290,20 @@ def check(target: Path, work: Path, draft: list[dict[str, object]]) -> dict[str,
 
 
 def _entry(argv: list[str], archive: Path, name: str, files: dict[str, str], workspace: Path) -> str | None:
-    """Run one guide command in a workspace with the case files. Return the entry that it writes or prints."""
-    workspace.mkdir(parents=True)
-    for path, text in files.items():
-        _ = (workspace / path).write_text(text, encoding="utf-8")
-    command = [str(archive) if part.endswith(f"scripts/{name}.pyz") else part for part in argv]
-    if command[0] in ("python", "python3"):
-        command[0] = sys.executable
-    elif command[0] == str(archive):
-        command.insert(0, sys.executable)
-    try:
-        result = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode:
+    """Run one guide command on one case. Return the entry that it writes to `entry.md` or prints.
+
+    A printed entry is a JSON object with `entry`, or text that starts with `- `. Other output, such as help text, gives
+    None, so a command that only prints help never counts as the CLI.
+    """
+    result = run_guide_command(argv, archive, name, files, workspace)
+    if result is None or result.returncode:
         return None
     if (workspace / "entry.md").is_file():
         return (workspace / "entry.md").read_text(encoding="utf-8")
     try:
         printed = cast(object, json.loads(result.stdout))
     except ValueError:
-        return result.stdout or None
+        return result.stdout if result.stdout.startswith("- ") else None
     if isinstance(printed, dict) and isinstance(cast(dict[str, object], printed).get("entry"), str):
         return str(cast(dict[str, object], printed)["entry"]).rstrip("\n") + "\n"
     return None

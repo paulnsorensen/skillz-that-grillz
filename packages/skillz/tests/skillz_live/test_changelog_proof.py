@@ -17,14 +17,15 @@ from typing import cast
 import pytest
 
 import changelog_proof
-from changelog_check import entry_for, verdict
-from changelog_proof import (CONTRACT, FIXTURE, PYPROJECT, WEDGE_TOML, check_draft, codex_argv, match_entries,
-                             patch_files, proof_verdict, reference_draft)
+from changelog_check import RULES, entry_for, verdict
+from changelog_proof import (CONTRACT, FIXTURE, NAME, PYPROJECT, WEDGE_TOML, check, check_draft, codex_argv,
+                             match_entries, patch_files, proof_verdict, reference_draft)
 from skillz_experiments import _graders
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import parse
 from skillz_experiments.run._outcomes import feedback_for
+from skillz_experiments.run._patch import _patch_lines, _patch_text  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.search import HarnessText
 
 HERE = Path(__file__).resolve().parent
@@ -61,8 +62,11 @@ def _grade(change: dict[str, object], entry: str | None, tmp_path: Path) -> tupl
 def test_the_fixture_has_the_gap_note_one_planted_rule_and_a_hybrid_contract_with_no_helper() -> None:
     guide = (FIXTURE / "SKILL.md.fixture").read_text(encoding="utf-8")
     assert "No helper writes the entry yet" in guide and "references/format.md" in guide
+    # SKILL.md must not name the seed CLI, so the search cannot edit it in place of adding `@new-cli`.
+    assert "change-check" not in guide
     rules = (FIXTURE / "references/format.md.fixture").read_text(encoding="utf-8")
-    assert re.findall(r"^(\d)\. \*\*", rules, re.MULTILINE) == ["1", "2", "3", "4", "5", "6"]
+    headings = cast(list[str], re.findall(r"^\d\. \*\*(.+?)\.\*\*", rules, re.MULTILINE))
+    assert [heading.lower() for heading in headings] == list(RULES.values()), headings
     contract = parse(CONTRACT, "test")
     assert contract.grader("task").type == "hybrid" and contract.helper is None
     assert 'include = ["lib/fromargs"]' in WEDGE_TOML and "cyclopts" in PYPROJECT
@@ -88,11 +92,21 @@ def test_an_entry_that_follows_the_planted_rule_scores_0_with_one_message_that_n
     score, message = _grade(EXAMPLE, _planted(EXAMPLE) + "\n", tmp_path)
     assert score == 0 and message.count("\n") == 1, message
     assert message.startswith("entry.md:1: rule 1 (ticket id):"), message
+    assert cast(str, verdict(EXAMPLE, "\n")).startswith("entry.md:1: rule 6")
+    assert cast(str, verdict(EXAMPLE, entry_for(EXAMPLE) + "\nextra\n")).startswith("entry.md:2: rule 6")
+
+
+TRICKY: list[dict[str, object]] = [
+    {"ticket": None, "type": "feat", "scope": None, "summary": "add HTTP-2 support", "breaking": False},
+    {"ticket": None, "type": "fix", "scope": "io", "summary": "handle UTF-8 names", "breaking": False},
+    {"ticket": "ABC-1", "type": "docs", "scope": None, "summary": "document BREAKING changes", "breaking": False},
+    {"ticket": "ABC-2", "type": "feat", "scope": None, "summary": "remove v1 **BREAKING**", "breaking": True}]
+"""Valid changes whose summaries hold an id-like word or the breaking marker."""
 
 
 @pytest.mark.ac("autoimprove-live-proof:AC-3")
-def test_every_oracle_entry_of_the_reference_draft_scores_1(tmp_path: Path) -> None:
-    for index, change in enumerate(_changes()):
+def test_every_oracle_entry_of_the_reference_draft_and_of_tricky_summaries_scores_1(tmp_path: Path) -> None:
+    for index, change in enumerate([*_changes(), *TRICKY]):
         score, message = _grade(change, entry_for(change) + "\n", tmp_path / str(index))
         assert score == 1 and not message, (change, message)
 
@@ -165,7 +179,8 @@ def test_the_proposer_feedback_of_a_planted_rule_failure_carries_the_check_messa
     score, diagnostic = _graders.command(_Sandboxed(), argv, case, {"entry.md": _planted(EXAMPLE) + "\n"})
     assert score == 0
     result: dict[str, object] = {"score": 0.0, "scores": {"command": 0.0, "judge": None}, "gate_diagnostic": diagnostic}
-    _, feedback = feedback_for(result, case, HarnessText(), Candidate({"SKILL.md": "x"}, ("SKILL.md",)))
+    harness = HarnessText.build([], phrases=[f"${NAME}", "output/entry.md"])
+    _, feedback = feedback_for(result, case, harness, Candidate({"SKILL.md": "x"}, ("SKILL.md",)))
     assert "entry.md:1: rule 1 (ticket id)" in cast(str, feedback["gate_feedback"]), feedback
 
 
@@ -208,13 +223,23 @@ def test_the_draft_check_refuses_too_few_full_families_and_a_family_with_one_tic
     assert check_draft({"cases": []}) == ["the draft is not a list of case objects"]
 
 
+@pytest.mark.ac("autoimprove-live-proof:AC-7")
+def test_the_draft_check_accepts_ordinary_request_words_and_tricky_summaries() -> None:
+    draft = reference_draft()
+    draft[0]["request"] = "Read change.json first, then restart the log and begin its changelog entry."
+    entry = entry_for(TRICKY[0])
+    draft[15] |= {"files": {"change.json": json.dumps(TRICKY[0])},
+                  "expected": {"entry": entry, "criteria": [{"id": "entry", "text": entry}]}}
+    assert check_draft(draft) == []
+
+
 FAKE_AGENT = """#!{python}
 import json, os, pathlib, sys
 prompt = sys.stdin.read()
 argv = sys.argv[1:]
 out = pathlib.Path(argv[-1] if argv[0] == "-p" else argv[argv.index("--add-dir") + 1])
 log = {{"argv": argv, "prompt": prompt, "home": os.environ.get("HOME"), "codex_home": os.environ.get("CODEX_HOME"),
-       "skills": sorted(str(path) for path in pathlib.Path.cwd().glob("*/skills/*"))}}
+       "env": sorted(os.environ), "skills": sorted(str(path) for path in pathlib.Path.cwd().glob("*/skills/*"))}}
 (out / "agent.json").write_text(json.dumps(log))
 (out / "cases.draft.json").write_text(pathlib.Path({draft!r}).read_text())
 if argv[0] == "-p":
@@ -223,6 +248,24 @@ else:
     print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": "done"}}}}))
     print(json.dumps({{"type": "turn.completed", "usage": {{"input_tokens": 9}}}}))
 """
+
+
+def _fake_agents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, draft: list[dict[str, object]]) -> Path:
+    """Put fake `claude` and `codex` agents on PATH that write `draft`. Return the host Codex home."""
+    path = tmp_path / "draft.json"
+    _ = path.write_text(json.dumps(draft), encoding="utf-8")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("claude", "codex"):
+        _ = (bin_dir / name).write_text(FAKE_AGENT.format(python=sys.executable, draft=str(path)), encoding="utf-8")
+        (bin_dir / name).chmod(0o755)
+    host = tmp_path / "host-codex"
+    host.mkdir()
+    _ = (host / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CODEX_HOME", str(host))
+    (tmp_path / "work").mkdir()
+    return host
 
 
 def _target(tmp_path: Path) -> Path:
@@ -237,61 +280,47 @@ def _target(tmp_path: Path) -> Path:
 
 @pytest.mark.ac("autoimprove-live-proof:AC-8")
 @pytest.mark.parametrize("harness", ["claude", "codex"])
-def test_each_harness_runs_the_journey_in_its_own_agent_with_the_skillz_skill_and_the_same_prompt(
+def test_each_harness_runs_the_author_stage_in_its_own_agent_with_the_skillz_skill_and_the_same_prompt(
         harness: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    draft = tmp_path / "draft.json"
-    _ = draft.write_text(json.dumps(reference_draft()), encoding="utf-8")
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    for name in ("claude", "codex"):
-        _ = (bin_dir / name).write_text(FAKE_AGENT.format(python=sys.executable, draft=str(draft)), encoding="utf-8")
-        (bin_dir / name).chmod(0o755)
-    host = tmp_path / "host-codex"
-    host.mkdir()
-    _ = (host / "auth.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv("CODEX_HOME", str(host))
+    host = _fake_agents(tmp_path, monkeypatch, reference_draft())
     work = tmp_path / "work"
-    work.mkdir()
     authored, fields = changelog_proof.author(_target(tmp_path), work, harness, "task-model")
     assert authored == reference_draft(), fields
     assert fields["author_harness"] == harness and fields["author_exit"] == 0 and fields["draft_cases"] == 18, fields
     assert fields["author_turns"] == (7 if harness == "claude" else None), fields
-    log = cast(dict[str, str], json.loads((work / "author-run/agent.json").read_text(encoding="utf-8")))
+    log = cast(dict[str, object], json.loads((work / "author-run/agent.json").read_text(encoding="utf-8")))
+    prompt = cast(str, log["prompt"])
     sigil = "/" if harness == "claude" else "$"
-    assert log["prompt"].startswith(f"{sigil}skillz autoimprove "), log["prompt"]
-    assert f"Use the {harness} harness. The task model is task-model." in log["prompt"]
-    assert "Our changelog entries start with the ticket id in square brackets" in log["prompt"]
+    assert prompt.startswith(f"{sigil}skillz autoimprove "), prompt
+    assert f"Use the {harness} harness. The task model is task-model." in prompt
+    assert "Our changelog entries start with the ticket id in square brackets" in prompt
     skills_dir = ".claude" if harness == "claude" else ".agents"
     assert log["skills"] == [str(work / "author" / skills_dir / "skills/skillz")], log
     if harness == "codex":
-        assert log["home"] == str(work / "author-home") and log["codex_home"] == str(work / "author-home/.codex")
-        assert (work / "author-home/.codex/auth.json").resolve() == host / "auth.json"
-        assert sorted(path.name for path in (work / "author-home/.codex").iterdir()) == ["auth.json"]
+        assert log["home"] == str(work / "author-home") and log["codex_home"] == str(work / "codex-home")
+        assert log["env"] == ["CODEX_HOME", "HOME", "LANG", "PATH", "TMPDIR", "UV_CACHE_DIR"], log
+        assert (work / "codex-home/auth.json").resolve() == host / "auth.json"
+        assert sorted(path.name for path in (work / "codex-home").iterdir()) == ["auth.json"]
 
 
 @pytest.mark.ac("autoimprove-live-proof:AC-8")
-def test_a_wrong_codex_draft_stops_the_author_stage_with_the_shared_draft_check(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    draft = tmp_path / "draft.json"
-    _ = draft.write_text(json.dumps(reference_draft()[:3]), encoding="utf-8")
-    (tmp_path / "bin").mkdir()
-    _ = (tmp_path / "bin/codex").write_text(FAKE_AGENT.format(python=sys.executable, draft=str(draft)), encoding="utf-8")
-    (tmp_path / "bin/codex").chmod(0o755)
-    (tmp_path / "host").mkdir()
-    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "host"))
-    (tmp_path / "work").mkdir()
-    authored, fields = changelog_proof.author(_target(tmp_path), tmp_path / "work", "codex", "m")
+@pytest.mark.parametrize("harness", ["claude", "codex"])
+def test_a_wrong_draft_stops_the_author_stage_with_the_shared_draft_check(
+        harness: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _ = _fake_agents(tmp_path, monkeypatch, reference_draft()[:3])
+    authored, fields = changelog_proof.author(_target(tmp_path), tmp_path / "work", harness, "m")
     assert authored is None and fields["code"] == "draft-wrong" and "families hold 3" in str(fields["error"]), fields
 
 
 @pytest.mark.ac("autoimprove-live-proof:AC-8")
-def test_the_codex_author_session_may_write_only_the_run_directory_and_its_home() -> None:
+def test_the_codex_author_session_may_write_only_its_own_directories() -> None:
     argv = codex_argv(Path("/d"), Path("/o"), Path("/h"), "gpt-6-astra")
     assert argv[:2] == ["codex", "exec"] and argv[-1] == "-"
     for flag in ("--ignore-user-config", "--ignore-rules", "--ephemeral", "--json", "--skip-git-repo-check"):
         assert flag in argv
+    configs = [argv[index + 1] for index, part in enumerate(argv) if part == "-c"]
+    assert {"sandbox_workspace_write.exclude_slash_tmp=true", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+            "sandbox_workspace_write.network_access=true"} == set(configs), configs
     assert argv[argv.index("--sandbox") + 1] == "workspace-write" and argv[argv.index("-C") + 1] == "/d"
     assert [argv[index + 1] for index, part in enumerate(argv) if part == "--add-dir"] == ["/o", "/h"]
     assert argv[argv.index("--model") + 1] == "gpt-6-astra"
@@ -330,12 +359,10 @@ def test_the_cli_check_names_each_case_that_breaks_a_rule(tmp_path: Path) -> Non
     assert "no-ticket-0" not in cast(list[str], fields["cli_mismatches"]), fields
     assert "rule 1 (ticket id)" in cast(list[str], fields["cli_faults"])[0], fields
     draft = reference_draft()
-    ticket = _changes()[4]["ticket"]
     one = _archive(tmp_path / "one", "change = json.loads(Path(sys.argv[1]).read_text())\n"
-                   + f"print(entry_for(change) + ('.' if change['ticket'] == {ticket!r} else ''))\n")
-    wrong = [str(draft[4]["id"])]
+                   + f"print(entry_for(change) + ('.' if change == {_changes()[4]!r} else ''))\n")
     fields = match_entries(GUIDE, one, "changelog-format", draft, tmp_path / "one-cases")
-    assert wrong and fields["cli"] == "mismatch" and fields["cli_mismatches"] == sorted(wrong), fields
+    assert fields["cli"] == "mismatch" and fields["cli_mismatches"] == [draft[4]["id"]], fields
 
 
 @pytest.mark.ac("autoimprove-live-proof:AC-13")
@@ -347,12 +374,39 @@ def test_the_cli_check_reports_no_invocation_when_no_guide_command_gives_an_entr
     assert match_entries(placeholder, good, "changelog-format", reference_draft(), tmp_path / "b")["cli"] == "no-invocation"
 
 
-def test_patch_files_lists_each_changed_path(tmp_path: Path) -> None:
+@pytest.mark.ac("autoimprove-live-proof:AC-13")
+def test_the_cli_check_skips_a_help_command_listed_before_the_real_one(tmp_path: Path) -> None:
+    body = "if sys.argv[1] == '--help':\n    print('usage: changelog-format FILE')\n    sys.exit(0)\n" + WRITES
+    guide = ("Run `python3 scripts/changelog-format.pyz --help` for usage.\n"
+             + "Run `python3 scripts/changelog-format.pyz change.json`.\n")
+    fields = match_entries(guide, _archive(tmp_path, body), "changelog-format", reference_draft(), tmp_path / "cases")
+    assert fields["cli"] == "ok" and fields["cli_command"] == "python3 scripts/changelog-format.pyz change.json", fields
+
+
+def _runner_patch() -> str:
+    """Return a patch in the runner's own skill-file format: a change, an added file, and a deleted file."""
+    lines = [*_patch_lines("references/format.md", "1. old\n", "1. new\n", git=False),
+             *_patch_lines("src/changelog_format/__init__.py", None, "def main():\n    pass\n", git=False),
+             *_patch_lines("notes.md", "gone\n", None, git=False)]
+    return _patch_text(lines)
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-10")
+def test_patch_files_lists_each_path_of_a_runner_patch(tmp_path: Path) -> None:
     patch = tmp_path / "candidate.patch"
-    _ = patch.write_text("diff --git a/references/format.md b/references/format.md\n--- a\n+++ b\n"
-                         + "diff --git a/src/changelog_format/__init__.py b/src/changelog_format/__init__.py\n", encoding="utf-8")
-    assert patch_files(patch) == ["references/format.md", "src/changelog_format/__init__.py"]
+    _ = patch.write_text(_runner_patch(), encoding="utf-8")
+    assert patch_files(patch) == ["references/format.md", "src/changelog_format/__init__.py", "notes.md"]
     assert patch_files(tmp_path / "absent.patch") == []
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-10")
+def test_the_scenario_check_records_the_claims_and_whether_the_patch_changed_format_md(tmp_path: Path) -> None:
+    (tmp_path / "export").mkdir()
+    _ = (tmp_path / "export/candidate.patch").write_text(_runner_patch(), encoding="utf-8")
+    _ = (tmp_path / "export/report.json").write_text(json.dumps({"claims": CLAIMS}), encoding="utf-8")
+    fields = check(tmp_path / "target", tmp_path, reference_draft())
+    assert fields["claims"] == CLAIMS and fields["format_md_changed"] is True and fields["cli"] == "missing", fields
+    assert "src/changelog_format/__init__.py" in cast(list[str], fields["patch_files"]), fields
 
 
 CLAIMS: dict[str, object] = {

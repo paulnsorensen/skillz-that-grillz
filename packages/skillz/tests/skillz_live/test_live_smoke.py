@@ -238,14 +238,14 @@ def _fromargs_benefit(work: Path, harness: str, model: str) -> Setup:
     the run with `cases-too-easy`.
     """
     del model
-    path, config = _stronger(work, harness, strong_model())
+    path, config = _stronger(work, harness, strong_model(harness))
     return Setup(build_target(work), reference_draft(), config, ("--harness-config", str(path)),
                  ("--edit", "prose+cli", *TOKEN_RULE))
 
 
 def _fromargs_author(target: Path, work: Path, harness: str,
                      model: str) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
-    """The `fromargs-benefit` journey stage runs in `claude -p` on every harness."""
+    """The `fromargs-benefit` author stage runs in `claude -p` on every harness."""
     del harness
     return author(target, work, model)
 
@@ -256,7 +256,7 @@ def _changelog_proof(work: Path, harness: str, model: str) -> Setup:
     No token rule applies, so only a quality gain promotes.
     """
     del model
-    path, config = _stronger(work, harness, changelog_proof.strong_model(harness))
+    path, config = _stronger(work, harness, strong_model(harness))
     return Setup(changelog_proof.build(work), changelog_proof.reference_draft(), config,
                  ("--harness-config", str(path)), ("--edit", "prose+cli"))
 
@@ -377,8 +377,8 @@ def _run(scenario: Scenario, harness: str, model: str, work: Path, capsys: pytes
         return fields | _stopped("export", error)
     gate = cast(dict[str, object], result.get("gate")) if isinstance(result.get("gate"), dict) else {}
     fields |= {"verdict": gate.get("verdict"), "stage": "complete", "phase": result.get("phase"),
-               "gate_reasons": gate.get("reasons"), "holdout_scored": gate.get("n_shared"),
-               "patch": str(work / "export/candidate.patch")}
+               "gate_reasons": gate.get("reasons"), "holdout_scored": gate.get("n_shared"), "delta": gate.get("delta"),
+               "se": gate.get("se"), "patch": str(work / "export/candidate.patch")}
     return fields | ({} if scenario.check is None else scenario.check(setup.target, work, draft))
 
 
@@ -632,3 +632,9 @@ def test_the_changelog_proof_scenario_fails_a_completed_run_that_the_shared_rule
     assert _verdict(record, BASIC)[0], "the shared rule passes a completed run with a patch and a scored holdout"
     passed, reason = _verdict(record, SCENARIOS["changelog-proof"])
     assert not passed and "claims.apply is None" in reason and "cli=None" in reason, reason
+
+
+def test_every_scenario_with_a_record_check_has_its_own_pass_rule() -> None:
+    """A scenario with `check` and no `verdict` passes by the shared rule, even when `check` records a failed CLI."""
+    unpaired = [name for name, scenario in SCENARIOS.items() if scenario.check is not None and scenario.verdict is None]
+    assert unpaired == [], unpaired

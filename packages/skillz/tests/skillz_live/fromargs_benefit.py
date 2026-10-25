@@ -75,12 +75,18 @@ FIXES = ("fix: handle empty body", "fix(parser): keep trailing newline", "perf: 
 FOOTER_DECOYS = ("breaking change: lower case", "  BREAKING CHANGE: indented", "BREAKING CHANGE:no space")
 
 
-def strong_model() -> str:
-    """Return the model of the drafting agent, the reflection role, and the judge role.
+STRONG = {"claude": "opus", "codex": "gpt-6-astra"}
+"""The default strong model of each harness. A sonnet reflector made only prose edits and never tried `@new-cli`."""
+AUTHOR_RUN = "author-run"
+"""The run directory of the author stage under the scenario work directory. The prompt and the driver both use it."""
 
-    The default is opus: a sonnet reflector made only prose edits and never tried `@new-cli`.
+
+def strong_model(harness: str = "claude") -> str:
+    """Return the model of the drafting agent, the reflection role, and the judge role on `harness`.
+
+    `SKILLZ_LIVE_STRONG_MODEL` replaces the default for every role on every harness of the run.
     """
-    return os.environ.get("SKILLZ_LIVE_STRONG_MODEL") or "opus"
+    return os.environ.get("SKILLZ_LIVE_STRONG_MODEL") or STRONG[harness]
 
 
 def _checked(argv: list[str], cwd: Path | None = None) -> str:
@@ -222,7 +228,7 @@ def target_edits(target: Path) -> str:
 
 def author(target: Path, work: Path, task_model: str) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
     """Run `/skillz autoimprove` in `claude -p` until it writes the case draft. Return the draft and record fields."""
-    out = work / "author-run"
+    out = work / AUTHOR_RUN
     prompt = PROMPT.format(target=target, task_model=task_model, out=out, min_commits=MIN_COMMITS,
                            cases=DRAFT_FAMILIES * CASES_PER_FAMILY, families=DRAFT_FAMILIES, per_family=CASES_PER_FAMILY)
     return claude_author(target, work, prompt, strong_model(), check_draft)
@@ -230,12 +236,12 @@ def author(target: Path, work: Path, task_model: str) -> tuple[list[dict[str, ob
 
 def claude_author(target: Path, work: Path, prompt: str, model: str,
                   check: Callable[[object], list[str]]) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
-    """Run `prompt` in `claude -p` with the `skillz` skill until the agent writes `work/author-run/cases.draft.json`.
+    """Run `prompt` in `claude -p` with the `skillz` skill until the agent writes `work/AUTHOR_RUN/cases.draft.json`.
 
     The agent loads only the project settings and no MCP server, so the user's hooks and plugins stay out of the run.
     Return the draft that `check` passes, and record fields. A missing or wrong draft returns None and a `code`.
     """
-    driver, out = work / "author", work / "author-run"
+    driver, out = work / "author", work / AUTHOR_RUN
     (driver / ".claude/skills").mkdir(parents=True)
     (driver / ".claude/skills/skillz").symlink_to(SKILLZ, target_is_directory=True)
     out.mkdir(mode=0o700)
@@ -301,7 +307,13 @@ def invocations(guide: str, name: str) -> list[list[str]]:
     return found
 
 
-def _answer(argv: list[str], archive: Path, name: str, files: dict[str, str], workspace: Path) -> dict[str, object] | None:
+def run_guide_command(argv: list[str], archive: Path, name: str, files: dict[str, str],
+                      workspace: Path) -> subprocess.CompletedProcess[str] | None:
+    """Run one guide command on the built `archive` in a fresh workspace that holds the case `files`.
+
+    The command gets a minimal environment, so a model-written CLI cannot read the host environment.
+    Return None when the command cannot start or runs over 60 seconds.
+    """
     workspace.mkdir(parents=True)
     for path, text in files.items():
         _ = (workspace / path).write_text(text, encoding="utf-8")
@@ -310,10 +322,19 @@ def _answer(argv: list[str], archive: Path, name: str, files: dict[str, str], wo
         command[0] = sys.executable
     elif command[0] == str(archive):
         command.insert(0, sys.executable)
+    environment = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C.UTF-8", "HOME": str(workspace)}
     try:
-        result = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=60, check=False)
-        value = cast(object, json.loads(result.stdout))
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return subprocess.run(command, cwd=workspace, env=environment, capture_output=True, text=True, timeout=60,
+                              check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _answer(argv: list[str], archive: Path, name: str, files: dict[str, str], workspace: Path) -> dict[str, object] | None:
+    result = run_guide_command(argv, archive, name, files, workspace)
+    try:
+        value = cast(object, json.loads(result.stdout)) if result is not None else None
+    except ValueError:
         return None
     return cast(dict[str, object], value) if isinstance(value, dict) else None
 

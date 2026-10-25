@@ -1,7 +1,7 @@
 """The command check of the `changelog-proof` scenario, and the oracle entry that it enforces.
 
-The hybrid grader runs this file as `python3 -I -c <source>` in a workspace that holds the case file `change.json` at
-the root and the task output under `output/`. It prints `{"score": 1}` when `output/entry.md` keeps every format rule.
+The hybrid grader runs this file as `python3 -I -c <source>`. Its workspace holds the case file `change.json` at the root
+and the task output under `output/`. The check prints `{"score": 1}` only when `output/entry.md` holds the oracle entry.
 Otherwise it prints `{"score": 0}` and writes one linter-style message to stderr. The message names the rule and the line.
 It never repeats the summary or the scope, so it holds no long part of the expected entry.
 The file uses only the standard library, because the grader runs it with no site packages.
@@ -67,16 +67,22 @@ def _fault(number: int, line: int, detail: str) -> str:
 
 
 def verdict(change: dict[str, object], text: str | None) -> str | None:
-    """Return the message of the first broken rule of the entry `text`, or None when the entry keeps every rule."""
+    """Return None when `text` is the oracle entry and one newline. Otherwise return the message of the first broken rule.
+
+    The score depends only on equality with `entry_for`. The rule walk only picks the message.
+    """
+    if text == entry_for(change) + "\n":
+        return None
     if text is None:
         return _fault(6, 1, "the skill wrote no output/entry.md")
     lines = text.split("\n")
     if len(lines) != 2 or lines[1] or not lines[0].strip():
-        return _fault(6, min(len(lines), 2), "entry.md holds exactly one nonblank line and one trailing newline")
+        number = 1 if len(lines) == 1 or not lines[0].strip() else 2
+        return _fault(6, number, "entry.md holds exactly one nonblank line and one trailing newline")
     line, prefix = lines[0], _prefix(change)
     if change.get("ticket") and not line.startswith(prefix):
         return _fault(1, 1, f'the entry starts with "{prefix}": the ticket id in square brackets comes first')
-    if not change.get("ticket") and (not line.startswith(prefix) or TICKET.search(line)):
+    if not change.get("ticket") and (not line.startswith(prefix) or line.startswith("- [")):
         return _fault(1, 1, 'a change with no ticket gives an entry that starts with "- " and holds no ticket id')
     rest, label = line[len(prefix):], LABELS[str(change["type"])]
     if not re.match(re.escape(label) + "[ :]", rest):
@@ -85,12 +91,10 @@ def verdict(change: dict[str, object], text: str | None) -> str | None:
         return _fault(3, 1, 'the scope follows the label as "in <scope>", then a colon and a space; no scope gives no "in"')
     body = rest[len(_head(change)):]
     breaking = bool(change.get("breaking"))
-    if body.endswith(BREAKING) != breaking or body.count("BREAKING") > int(breaking):
+    if body.endswith(BREAKING) != breaking:
         want = f'end with "{BREAKING.strip()}"' if breaking else "hold no breaking marker"
         return _fault(5, 1, f"this entry must {want}")
-    if (body.removesuffix(BREAKING) if breaking else body) != _summary(change):
-        return _fault(4, 1, "the summary is the change.json summary with its first letter in upper case and no trailing period")
-    return None
+    return _fault(4, 1, "the summary is the change.json summary with its first letter in upper case and no trailing period")
 
 
 def main() -> None:

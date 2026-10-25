@@ -21,12 +21,4 @@ Then return one JSON object as the answer, and nothing else: `{"entry": "<the en
 
 ## Helper
 
-`scripts/change-check.pyz` checks that `change.json` holds these keys with valid values:
-
-```sh
-python3 .agents/skills/changelog-entry/scripts/change-check.pyz change.json
-```
-
-It prints `{"ok": true}`, or an error with exit code 3.
-
 No helper writes the entry yet. Apply the rules of `references/format.md` by hand to every change.
