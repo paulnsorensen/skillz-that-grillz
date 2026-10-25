@@ -23,6 +23,7 @@ from typing import cast
 
 import pytest
 
+import changelog_proof
 from fromargs_benefit import TOKEN_RULE, author, build_target, check_cli, cli_verdict, reference_draft, strong_model
 from skillz_experiments._cli import main
 from skillz_experiments._records import read
@@ -62,16 +63,17 @@ class Setup:
 class Scenario:
     """One run scenario. `cap` is the largest run estimate that it approves. `bridge` needs Codex for the command bridge.
 
-    `author` writes the case draft with a live agent in place of `Setup.draft`; a dry run keeps `Setup.draft`. `check`
-    adds record fields after the export, and a scenario with `check` passes only by `cli_verdict`.
+    `author` writes the case draft with a live agent on the scenario harness in place of `Setup.draft`; a dry run keeps
+    `Setup.draft`. `check` adds record fields after the export. A scenario with `verdict` passes only by that rule.
     """
 
     build: Callable[[Path, str, str], Setup]
     cap: int
     bridge: bool = False
     resume: bool = False
-    author: Callable[[Path, Path, str], tuple[list[dict[str, object]] | None, dict[str, object]]] | None = None
+    author: Callable[[Path, Path, str, str], tuple[list[dict[str, object]] | None, dict[str, object]]] | None = None
     check: Callable[[Path, Path, list[dict[str, object]]], dict[str, object]] | None = None
+    verdict: Callable[[dict[str, object]], tuple[bool, str]] | None = None
 
 
 def _cases(case: Callable[[str], dict[str, object]]) -> list[dict[str, object]]:
@@ -219,6 +221,16 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
                  expect=None if harness == "claude" else "journey-unsupported")
 
 
+def _stronger(work: Path, harness: str, model: str) -> tuple[Path, dict[str, object]]:
+    """Write a harness config whose reflection and judge roles run `model`. Return its path and its content."""
+    stronger = {"model": model}
+    config: dict[str, object] = {"schema_version": 1, "adapter": harness,
+                                 "roles": {"reflection": stronger, "judge": stronger}}
+    path = work / "harness.json"
+    _ = path.write_text(json.dumps(config), encoding="utf-8")
+    return path, config
+
+
 def _fromargs_benefit(work: Path, harness: str, model: str) -> Setup:
     """Search a skill that applies version rules by hand. The task role runs `model`; reflection and judge run stronger.
 
@@ -226,13 +238,27 @@ def _fromargs_benefit(work: Path, harness: str, model: str) -> Setup:
     the run with `cases-too-easy`.
     """
     del model
-    stronger = {"model": strong_model()}
-    config: dict[str, object] = {"schema_version": 1, "adapter": harness,
-                                 "roles": {"reflection": stronger, "judge": stronger}}
-    path = work / "harness.json"
-    _ = path.write_text(json.dumps(config), encoding="utf-8")
+    path, config = _stronger(work, harness, strong_model())
     return Setup(build_target(work), reference_draft(), config, ("--harness-config", str(path)),
                  ("--edit", "prose+cli", *TOKEN_RULE))
+
+
+def _fromargs_author(target: Path, work: Path, harness: str,
+                     model: str) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
+    """The `fromargs-benefit` journey stage runs in `claude -p` on every harness."""
+    del harness
+    return author(target, work, model)
+
+
+def _changelog_proof(work: Path, harness: str, model: str) -> Setup:
+    """Search a skill with one wrong format rule. The task role runs `model`; reflection and judge run stronger.
+
+    No token rule applies, so only a quality gain promotes.
+    """
+    del model
+    path, config = _stronger(work, harness, changelog_proof.strong_model(harness))
+    return Setup(changelog_proof.build(work), changelog_proof.reference_draft(), config,
+                 ("--harness-config", str(path)), ("--edit", "prose+cli"))
 
 
 SCENARIOS: dict[str, Scenario] = {
@@ -243,7 +269,10 @@ SCENARIOS: dict[str, Scenario] = {
     "prose-cli": Scenario(_prose_cli, 71),
     "journey": Scenario(_journey, 601),
     "resume": Scenario(_basic, 130, resume=True),
-    "fromargs-benefit": Scenario(_fromargs_benefit, 167, author=author, check=check_cli),
+    "fromargs-benefit": Scenario(_fromargs_benefit, 167, author=_fromargs_author, check=check_cli,
+                                 verdict=cli_verdict),
+    "changelog-proof": Scenario(_changelog_proof, 199, author=changelog_proof.author, check=changelog_proof.check,
+                                verdict=changelog_proof.proof_verdict),
 }
 """Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it)."""
 NAMES = (*SCENARIOS, "analytics")
@@ -312,7 +341,7 @@ def _run(scenario: Scenario, harness: str, model: str, work: Path, capsys: pytes
         fields["preflight_calls"] = preflight.get("live_calls")
     draft = setup.draft
     if scenario.author is not None and not dry:
-        authored, notes = scenario.author(setup.target, work, model)
+        authored, notes = scenario.author(setup.target, work, harness, model)
         fields |= notes
         if authored is None:
             return fields | _stopped("author", notes)
@@ -428,8 +457,8 @@ def _verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
         return code == expect, f"{stop}; the scenario expects {expect}"
     if stage == "preflight":
         return False, f"{stop}; the scenario does not expect a preflight stop, so the run made no task call"
-    if scenario.check is not None:
-        return cli_verdict(entry)
+    if scenario.verdict is not None:
+        return scenario.verdict(entry)
     if scenario.resume and interrupted and (entry["interrupted_exit"] == 0 or entry.get("interrupted_phase") == "complete"):
         return False, (f"the run was not interrupted: the first process exited {entry['interrupted_exit']} "
                        f"in phase {entry.get('interrupted_phase')}")
@@ -595,3 +624,11 @@ def test_a_dry_run_passes_only_at_the_budget_question_within_the_cap(entry: dict
                                                                      phrase: str) -> None:
     passed, reason = _dry_verdict(entry, BASIC)
     assert passed is passes and phrase in reason, reason
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-9")
+def test_the_changelog_proof_scenario_fails_a_completed_run_that_the_shared_rule_passes(tmp_path: Path) -> None:
+    record = _complete(tmp_path, 6) | {"verdict": "promote-cheaper"}
+    assert _verdict(record, BASIC)[0], "the shared rule passes a completed run with a patch and a scored holdout"
+    passed, reason = _verdict(record, SCENARIOS["changelog-proof"])
+    assert not passed and "claims.apply is None" in reason and "cli=None" in reason, reason

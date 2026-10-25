@@ -25,6 +25,7 @@ A dry run fails when it stops before the budget question with a code that the sc
 | `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 601 |
 | `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 130 |
 | `fromargs-benefit` | `/skillz autoimprove` drafts the cases in `claude -p`, then a `--edit prose+cli` run of the `semver-next` fixture, which applies nine version rules by hand. See below | 167 |
+| `changelog-proof` | The `/skillz autoimprove` journey in `claude -p` or `codex exec`, then a `--edit prose+cli` run of the `changelog-entry` fixture, which has one wrong format rule. See below | 199 |
 | `analytics` | The bundled `agent-session-analytics.pyz`: a forced ingest of the real session logs into a private database, then every query of the three Usage packs | no model call |
 
 A run approves its estimate only when the estimate is at most its cap. The preflight gets at most 3 more calls.
@@ -66,3 +67,32 @@ The test passes only when the run completes and the exported fromargs CLI matche
 A coded stop fails this scenario. The record keeps the gate verdict, but the verdict does not decide the result.
 With `SKILLZ_LIVE_DRY=1`, stage 1 is skipped, and the run uses the 24-case reference draft from the oracle.
 The drafting session is outside the run cap. The record holds its `author_turns` and `author_cost_usd`.
+
+## changelog-proof
+
+This scenario is the live proof of #324: the autoimprove journey must promote a real quality fix and ship a correct suggested CLI, on Claude and on Codex.
+`MODEL` sets the task role: `sonnet` on `claude`, `gpt-6-luna` on `codex`.
+`SKILLZ_LIVE_STRONG_MODEL` sets the drafting agent, the reflection role, and the judge role. The default is `opus` on `claude` and `gpt-6-astra` on `codex`.
+
+```sh
+SKILLZ_LIVE=1 just live-smoke claude sonnet changelog-proof
+SKILLZ_LIVE=1 just live-smoke codex gpt-6-luna changelog-proof
+```
+
+1. The test builds `changelog-entry` in a fresh git repository: a uv project with a lock, a vendored fromargs, and one wedge target, `change-check`. The run therefore offers `@new-cli`.
+   The skill writes one changelog entry from `change.json`. Rule 1 of its `references/format.md` is wrong: it puts the ticket id at the end, in parentheses.
+   The seed `SKILL.md` says that no helper writes the entry yet.
+   The contract grades the `task` kind with `hybrid` and declares no helper. Its command check, `changelog_check.py`, scores 0 when an entry breaks a rule.
+   Its one stderr line names the rule and the line, and the proposer reads it as `gate_feedback`. The check never repeats the summary or the scope.
+2. The journey stage runs `/skillz autoimprove` (`$skillz` on Codex) until the case approval question.
+   On `claude`, it runs in `claude -p` with project settings only. On `codex`, it runs in `codex exec` with a private `HOME` and `CODEX_HOME`, a copy of the skill under `.agents/skills`, and only `auth.json` linked from the host.
+   The Codex session may write only the run directory and its private home, and it has network access, because the runner can populate the uv site layer of the fixture.
+   The prompt states the requirement as a user would: entries start with the ticket id in square brackets. A request never states it.
+   The draft needs 6 families of 3 task cases, 2 ticketed cases in each family, and the oracle entry of `changelog_check.entry_for` as each `expected.entry`.
+3. Stage 2 runs the shared path with the agent's draft: preflight, `run --edit prose+cli --repeats 1`, and `export`. No token rule applies, so only a quality gain promotes.
+4. The test applies the patch to a copy, rebuilds the new target, and runs it on every drafted case with the command from the winner `SKILL.md`. The same check scores each entry.
+
+The test passes only when `claims.apply` is true and `cli` is `ok`.
+The record holds the claims, the gate delta and SE, the patch files, and whether the patch changed `references/format.md`.
+The runner keeps `edit_hint` only in the proposer feedback, so the record cannot show it.
+With `SKILLZ_LIVE_DRY=1`, the journey stage is skipped, and the run uses the 18-case reference draft.

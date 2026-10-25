@@ -15,6 +15,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -102,24 +103,35 @@ def build_target(work: Path) -> Path:
     The skill is its own uv project with a lock, a vendored fromargs include, and a built `version-parse.pyz`.
     This step needs `uv`, `git`, and the network for the lock. It makes no model call.
     """
+    return build_project(work, FIXTURE, CONTRACT, PYPROJECT, WEDGE_TOML, "version-parse")
+
+
+def build_project(work: Path, fixture: Path, contract: dict[str, object], pyproject: str, wedge_toml: str,
+                  seed_target: str) -> Path:
+    """Write the fixture skill `contract["skill"]` into a fresh git repository and return the skill directory.
+
+    Each `*.fixture` file loses that suffix. The skill gets the vendored fromargs include, the contract, a lock, and
+    the built `scripts/<seed_target>.pyz`.
+    """
     repo = work / "repo"
-    skill = repo / NAME
+    skill = repo / str(contract["skill"])
     junk = shutil.ignore_patterns("__pycache__")
-    _ = shutil.copytree(FIXTURE, skill, ignore=junk)
-    _ = (skill / "SKILL.md.fixture").rename(skill / "SKILL.md")
+    _ = shutil.copytree(fixture, skill, ignore=junk)
+    for path in sorted(skill.rglob("*.fixture")):
+        _ = path.rename(path.with_suffix(""))
     _ = shutil.copytree(FROMARGS, skill / "lib/fromargs", ignore=junk)
-    _ = (skill / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
-    _ = (skill / "wedge.toml").write_text(WEDGE_TOML, encoding="utf-8")
+    _ = (skill / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    _ = (skill / "wedge.toml").write_text(wedge_toml, encoding="utf-8")
     (skill / "evals").mkdir()
-    _ = (skill / "evals/autoimprove.json").write_text(json.dumps(CONTRACT, indent=2) + "\n", encoding="utf-8")
+    _ = (skill / "evals/autoimprove.json").write_text(json.dumps(contract, indent=2) + "\n", encoding="utf-8")
     _ = _checked(["uv", "lock", "--project", str(skill)])
     built = build_wedge(skill, work / "seed-build")
     (skill / "scripts").mkdir()
-    _ = shutil.copy2(built["version-parse"]["path"], skill / "scripts/version-parse.pyz")
+    _ = shutil.copy2(built[seed_target]["path"], skill / f"scripts/{seed_target}.pyz")
     _ = _checked(["git", "init", "-q", str(repo)])
     _ = _checked(["git", "-C", str(repo), "add", "-A"])
     _ = _checked(["git", "-C", str(repo), "-c", "user.name=live-smoke", "-c", "user.email=live-smoke@invalid",
-                  "commit", "-qm", "semver-next fixture"])
+                  "commit", "-qm", f"{contract['skill']} fixture"])
     return skill
 
 
@@ -209,38 +221,51 @@ def target_edits(target: Path) -> str:
 
 
 def author(target: Path, work: Path, task_model: str) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
-    """Run `/skillz autoimprove` in `claude -p` until it writes the case draft. Return the draft and record fields.
+    """Run `/skillz autoimprove` in `claude -p` until it writes the case draft. Return the draft and record fields."""
+    out = work / "author-run"
+    prompt = PROMPT.format(target=target, task_model=task_model, out=out, min_commits=MIN_COMMITS,
+                           cases=DRAFT_FAMILIES * CASES_PER_FAMILY, families=DRAFT_FAMILIES, per_family=CASES_PER_FAMILY)
+    return claude_author(target, work, prompt, strong_model(), check_draft)
+
+
+def claude_author(target: Path, work: Path, prompt: str, model: str,
+                  check: Callable[[object], list[str]]) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
+    """Run `prompt` in `claude -p` with the `skillz` skill until the agent writes `work/author-run/cases.draft.json`.
 
     The agent loads only the project settings and no MCP server, so the user's hooks and plugins stay out of the run.
-    A missing or wrong draft returns None and fields with a `code`.
+    Return the draft that `check` passes, and record fields. A missing or wrong draft returns None and a `code`.
     """
     driver, out = work / "author", work / "author-run"
     (driver / ".claude/skills").mkdir(parents=True)
     (driver / ".claude/skills/skillz").symlink_to(SKILLZ, target_is_directory=True)
     out.mkdir(mode=0o700)
-    argv = ["claude", "-p", "--model", strong_model(), "--output-format", "json", "--setting-sources", "project",
+    argv = ["claude", "-p", "--model", model, "--output-format", "json", "--setting-sources", "project",
             "--strict-mcp-config", "--permission-mode", "acceptEdits", "--allowedTools", ",".join(AUTHOR_TOOLS),
             "--add-dir", str(target), str(out)]
     environment = {key: value for key, value in os.environ.items() if not key.startswith("CLAUDE_CODE_")
                    and key != "CLAUDECODE"}
-    prompt = PROMPT.format(target=target, task_model=task_model, out=out, min_commits=MIN_COMMITS,
-                           cases=DRAFT_FAMILIES * CASES_PER_FAMILY, families=DRAFT_FAMILIES, per_family=CASES_PER_FAMILY)
     try:
         result = subprocess.run(argv, input=prompt, cwd=driver, env=environment, capture_output=True, text=True,
                                 timeout=AUTHOR_SECONDS, check=False)
     except subprocess.TimeoutExpired:
-        return None, {"code": "author-timeout", "error": f"claude -p ran over {AUTHOR_SECONDS} seconds"}
+        return None, {"author_harness": "claude", "code": "author-timeout",
+                      "error": f"claude -p ran over {AUTHOR_SECONDS} seconds"}
     reply = cast(dict[str, object], json.loads(result.stdout)) if result.stdout.strip().startswith("{") else {}
-    fields: dict[str, object] = {"author_model": strong_model(), "author_exit": result.returncode,
+    fields: dict[str, object] = {"author_harness": "claude", "author_model": model, "author_exit": result.returncode,
                                  "author_turns": reply.get("num_turns"), "author_cost_usd": reply.get("total_cost_usd")}
+    return read_draft(target, out, fields, str(reply.get("result") or result.stderr), check)
+
+
+def read_draft(target: Path, out: Path, fields: dict[str, object], said: str,
+               check: Callable[[object], list[str]]) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
+    """Read `out/cases.draft.json` after an author session. Refuse a missing draft, an edited target, or a wrong draft."""
     try:
         draft = cast(object, json.loads((out / "cases.draft.json").read_text(encoding="utf-8")))
     except (OSError, ValueError) as error:
-        tail = str(reply.get("result") or result.stderr)[-300:]
-        return None, fields | {"code": "draft-missing", "error": f"{error!r}; the agent said: {tail}"}
+        return None, fields | {"code": "draft-missing", "error": f"{error!r}; the agent said: {said[-300:]}"}
     if dirty := target_edits(target):
         return None, fields | {"code": "author-edited-target", "error": dirty[:300]}
-    problems = check_draft(draft)
+    problems = check(draft)
     fields["draft_cases"] = len(cast(list[object], draft)) if isinstance(draft, list) else None
     if problems:
         return None, fields | {"code": "draft-wrong", "error": "; ".join(problems)[:300], "draft_problems": problems}
@@ -299,6 +324,19 @@ def check_cli(target: Path, work: Path, draft: list[dict[str, object]]) -> dict[
     The command comes from the winner `SKILL.md`. Return record fields: `cli` is `ok` only when the CLI answers every
     task case as the oracle does.
     """
+    built = build_winner(target, work)
+    if isinstance(built, dict):
+        return built
+    name, archive, winner = built
+    tasks = [case for case in draft if case.get("kind") == "task"]
+    return match_cli((winner / "SKILL.md").read_text(encoding="utf-8"), archive, name, tasks, work / "cli-cases")
+
+
+def build_winner(target: Path, work: Path) -> tuple[str, Path, Path] | dict[str, object]:
+    """Apply `work/export/candidate.patch` to a copy of `target` and build the new CLI of `export/report.json`.
+
+    Return the CLI name, its archive, and the winner directory. Return `cli` record fields when no new CLI builds.
+    """
     report = cast(dict[str, object], json.loads((work / "export/report.json").read_text(encoding="utf-8")))
     new_cli = report.get("new_cli")
     if not isinstance(new_cli, dict):
@@ -312,8 +350,7 @@ def check_cli(target: Path, work: Path, draft: list[dict[str, object]]) -> dict[
         archive = Path(build_wedge(winner, work / "winner-build")[name]["path"])
     except (RuntimeError, KeyError, ValueError) as error:
         return {"cli": "build-failed", "cli_target": name, "cli_error": repr(error)[:300]}
-    tasks = [case for case in draft if case.get("kind") == "task"]
-    return match_cli((winner / "SKILL.md").read_text(encoding="utf-8"), archive, name, tasks, work / "cli-cases")
+    return name, archive, winner
 
 
 def match_cli(guide: str, archive: Path, name: str, tasks: list[dict[str, object]], work: Path) -> dict[str, object]:
