@@ -1,0 +1,120 @@
+# Parallel quality gate
+
+The quality gate uses bounded parallel check lanes and pytest workers.
+Local verification remains incomplete on this shared Mac.
+CI supplies Linux verification when this branch has a pull request.[^1]
+Do not treat this implementation as a measured speed improvement.[^2]
+
+## Commands
+
+`just build` runs format fixes before checks.
+`just ci` runs the same checks without format fixes.
+`just test` runs test lanes.
+`just test-fromargs [python]` keeps the optional Python version argument.[^3]
+
+## Execution order
+
+The scheduler completes markdown and YAML format steps first.
+It then synchronizes all workspace packages, development groups, and extras once.
+The packages share the root `.venv` and `uv.lock`.
+Concurrent uv readers use `--no-sync` after that preparation.
+With the default `GATE_JOBS` value, the first four lanes are the skillz-e2e, wedge, skillz, and fromargs pytest lanes.
+The smaller test lanes start as these lanes finish.
+Each failed lane prints its captured diagnostics.
+The scheduler returns nonzero if any lane fails.[^4]
+
+## Worker limits
+
+`GATE_JOBS` sets the maximum concurrent check lanes.
+`TEST_WORKERS` sets the worker count for each pytest suite.
+Both settings default to four and require positive integers.
+These limits are separate.
+The four first pytest lanes can each start four workers at the same time.[^5]
+
+## Shared-host limits
+
+When `eatmydata` is on PATH, the five pytest lanes run under it.
+`eatmydata` makes fsync a no-op for the lane process tree.
+The skillz run records fsync each file and its directory, so concurrent gates cause a flush storm on one SSD.
+These lanes write only below the gate temporary root, so a lost flush loses no persistent state.
+The output marks each wrapped lane as `→ <lane> (eatmydata)`.
+Set `GATE_EATMYDATA=0` to keep fsync.
+The preparation steps and the standalone package modes always keep fsync, because `uv sync` writes the shared environment.
+Tests that replace `os.fsync` still see their replacement.
+
+`GATE_HOST_SLOTS` sets how many gates of one user on a host run their lanes at the same time.
+The default is 2, and `0` removes the limit.
+A gate takes a slot after preparation and holds it until its lanes finish.
+Each slot is a `flock` lock on `$XDG_RUNTIME_DIR/skillz-gate/slot-<n>.lock`, or on `~/.cache/skillz-gate/slot-<n>.lock` when that variable is unset.
+A gate that waits prints `… waiting for a host gate slot`.
+The kernel releases the lock when the gate process exits, also after `SIGKILL`.
+On CI, each job has its own runner, so a slot is always free.
+
+## CI lane split
+
+`GATE_SKIP` holds a comma list of lane names that the scheduler skips.
+An unknown name fails before any work.
+The CI `gate (just ci)` job skips `skillz-e2e-pytest` and `skillz-pytest`.
+Six parallel `skillz shard (<n>/6)` jobs run those two lanes through `just test-skillz`.
+The required `skillz tests` check passes only when every shard passes.
+Before the split, these lanes set the full wait on all 12 sampled pull-request runs.
+The median full wait was 560.5 seconds.[^10]
+Local `just build` and `just ci` leave `GATE_SKIP` unset and run every lane.
+
+`GATE_SHARD=<index>/<count>` applies only to `run_gate.py skillz`; another mode or a malformed value exits 2.
+It loads the `.github/scripts/pytest_shard.py` plugin into each skillz lane.
+The plugin keeps each test whose collection position modulo `count` equals `index - 1`.
+The plugin runs after the conftest hooks, so the marker checks still see every collected test.
+One unsharded `skillz tests` job took 478 to 509 seconds on four runs.
+The 4-vCPU runner was CPU-bound: a tmpfs on `/tmp` saved about 3 percent.
+With four shards, the shards took 87 to 157 seconds and the full wait was 164 seconds.
+Six shards aim to keep each shard under the gate job's 115 seconds on that run.
+
+## Resource ownership
+
+The scheduler creates a unique short directory under `/tmp`.
+Each pytest suite receives a separate base directory and cache.
+Short bases avoid the Mac Unix-socket path limit after xdist adds worker directories.
+The scheduler stops owned process groups before it deletes the temporary root on interruption.[^6]
+
+## Dependencies and artifact keys
+
+pytest-xdist remains a development dependency in both workspace packages.
+Runtime dependency declarations remain unchanged.
+The root lock records the changed development dependencies.
+The cheese-cave example key changes because its key includes the root lock.
+Its bundled content digest remains unchanged.[^7]
+
+## Verification limits
+
+The repeated timing benchmark is cancelled during its warmup.
+It supplies no completed sample or green baseline.
+After rebase onto `43a9dbe`, the local wedge pytest lane reports 22 failed, 2864 passed, and 47 skipped.
+All other gate lanes pass.
+The socket-path failure passes after the short-base correction.
+The remaining failures have no completed local baseline comparison.
+Do not label them pre-existing or weaken runtime guards to hide them.[^2]
+
+### Process termination observation
+
+The first changed-tree Linux CI run reports one failure, 2914 passed, and 18 skipped in wedge pytest.
+The process-group test observes descendant state `R` immediately after termination instead of expected state `Z`.[^8]
+The approved test correction polls for up to two seconds with a monotonic deadline.
+It retains disappeared-process success, the final zombie-state assertion, and the unchanged 0.5-second runtime timeout.
+A still-live descendant fails after the observation deadline.[^9]
+
+## References
+
+[^1]: .github/workflows/validate.yml:3-6,38-82. The workflow runs on pull requests or pushes to main.
+[^2]: .context/parallelism/run-plan.md; .context/parallelism/gate-failures.md:43-55. These local evidence files are gitignored.
+[^3]: justfile:1-34.
+[^4]: .github/scripts/run_gate.py:110-161; pyproject.toml:17-24.
+[^5]: .github/scripts/run_gate.py:164-172; CONTRIBUTING.md:60-65.
+[^6]: .github/scripts/run_gate.py:89-107,196-217; .github/scripts/test_run_gate.py:82-127.
+[^7]: packages/wedge/pyproject.toml:37-38; packages/fromargs/pyproject.toml:28-29; uv.lock; packages/wedge/src/wedge/_key.py:134-152; packages/wedge/examples/skills/cheese-cave/scripts/cheese-cave.wedge.json.
+
+[^8]: [Linux CI run 38102417849](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/38102417849); .context/parallelism/linux-ci-failure.log. The local log is gitignored.
+[^9]: packages/skillz/tests/skillz_experiments/test_runtime.py:14-32; .context/parallelism/implementation-contract.md:55-64. The user approves the test-only correction and CI rerun.
+[^10]: validate.yml pull-request runs 39095534699 to 39102429986, initial attempts; .cheese/ci-optimize/validate-pr/BEFORE.json. The local evidence file is gitignored.
+
+_Source: Approved parallel-build contract, workspace rebase, local verification, and Linux CI finding · Updated: 2026-10-10 · Supersedes: immediate descendant-state observation_

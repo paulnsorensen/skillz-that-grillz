@@ -1,0 +1,84 @@
+[project]
+name = "skillz-experiment-bundle"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = ["fromargs>=0.2.0,<0.3"]
+
+[dependency-groups]
+dev = [
+    "basedpyright==1.40.2",
+    "jsonschema>=4.26.0",
+    "pytest>=8",
+    "pyyaml==6.0.3",
+    "types-PyYAML==6.0.12.20260906",
+    "typing-extensions==4.16.0",
+    "vulture==2.16",
+]
+experiments = ["gepa==0.1.4"]
+# Keep this pin inside packages/skillz/pyproject.toml's tenacity range; the skillz-experiment bundle carries it.
+retry = ["tenacity==9.2.1"]
+# skills/skillz/wedge.toml bundles the wedge CLI. Keep this pin equal to packages/wedge/pyproject.toml:
+# shiv writes its version into every archive it builds.
+wedge = ["shiv==1.0.8"]
+
+[tool.uv]
+package = false
+
+# One workspace and one uv.lock: the published packages live under packages/.
+# The consumer example is a standalone project with its own lock.
+[tool.uv.workspace]
+members = ["packages/*"]
+exclude = ["packages/wedge/examples/consumer"]
+
+[tool.uv.sources]
+fromargs = { workspace = true }
+
+[tool.basedpyright]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+include = ["packages", "skills"]
+exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache",
+  # Byte-for-byte legacy gate source (gh-367): its bytes fix a content hash, so it stays untyped.
+  "packages/skillz/tests/skillz_experiments/fixtures/evals/gates"]
+extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/agent-session-analytics/src", "packages/fromargs/src", "packages/fromargs/examples"]
+typeCheckingMode = "recommended"
+failOnWarnings = true
+
+[[tool.basedpyright.executionEnvironments]]
+root = "packages/fromargs"
+extraPaths = ["packages/fromargs/src", "packages/fromargs/examples"]
+
+[[tool.basedpyright.executionEnvironments]]
+root = "packages/skillz/tests/skillz_experiments/fixtures/mode/evals/gates"
+extraPaths = ["packages/skillz/tests/skillz_experiments/fixtures/mode/evals/gates/mode"]
+# Each mode gate runs as a script from its own directory, so it imports its sibling helpers by bare name.
+reportImplicitRelativeImport = false
+
+[[tool.basedpyright.executionEnvironments]]
+root = "packages/skillz/tests/skillz_experiments"
+extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/agent-session-analytics/src", "packages/fromargs/src", "packages/fromargs/examples"]
+# The test files share helper modules (`fake_provider`) from their own directory; it has no package marker.
+reportImplicitRelativeImport = false
+
+[[tool.basedpyright.executionEnvironments]]
+root = "packages/skillz/tests/skillz_live"
+extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/fromargs/src"]
+# The live tests share `fromargs_benefit` and `semver_oracle` from their own directory; it has no package marker.
+reportImplicitRelativeImport = false
+
+[[tool.basedpyright.executionEnvironments]]
+root = "skills/skillz/evals/gates"
+# Each gate runs as a script from its own directory, so it imports its sibling helpers by bare name.
+reportImplicitRelativeImport = false
+
+[tool.vulture]
+paths = [".github/scripts", "packages", "skills"]
+exclude = ["*/.venv/*", "*/__pycache__/*", "*/.pytest_cache/*"]
+min_confidence = 60
+ignore_decorators = [
+  "@app.command", "@app.default", "@crate.command", "@group.command", "@nested.command",
+  "@nested.default", "@wheels.command", "@target.command",
+  "@pytest.fixture", "@override",
+]
+ignore_names = ["pytestmark", "pytest_collection_modifyitems"]

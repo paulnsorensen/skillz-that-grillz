@@ -1,0 +1,11 @@
+import json, pathlib
+calls = []
+for line in pathlib.Path('trace/events.jsonl').read_text().splitlines():
+    event = json.loads(line)
+    content = (event.get('message') or {}).get('content')
+    for block in content if isinstance(content, list) else []:
+        if event.get('type') == 'assistant' and block.get('type') == 'tool_use':
+            calls.append(block)
+server = any(str(c.get('name', '')).startswith('mcp__') for c in calls)
+companion = any(c.get('name') == 'Skill' and c.get('input', {}).get('skill') == 'helper-skill' for c in calls)
+print(json.dumps({'score': 1 if server and companion else 0}))

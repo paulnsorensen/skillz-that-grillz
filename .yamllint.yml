@@ -1,0 +1,20 @@
+extends: default
+
+# Untracked dev-tool artifacts — present locally, never in a CI checkout.
+# Listing them here keeps local `just ci` consistent with CI.
+ignore: |
+  .serena/
+  .cheese/
+  .context/
+  .venv/
+
+rules:
+  line-length:
+    max: 200
+    level: warning
+  document-start: disable
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable

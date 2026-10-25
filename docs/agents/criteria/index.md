@@ -1,0 +1,95 @@
+# criteria
+
+Acceptance criteria that tests trace to. The gate `.github/scripts/check_ac_trace.py` runs in `just build` and `just ci`.
+
+## Format
+
+One file per source, named `<source>.md`. A source is a durable spec slug (`skillz-wedge-first-class`) or a ticket (`gh-<issue number>`). The file holds one H1, one `Source:` line, and one table:
+
+```markdown
+| id | kind | criterion | verified by |
+| --- | --- | --- | --- |
+| AC-1 | test | WHEN ... THE SYSTEM SHALL ... |  |
+| AC-2 | process | WHEN ... THE SYSTEM SHALL ... | pre-gate: PR #1 review |
+```
+
+- `id` keeps the original criterion id (`AC-3`, `AC-W1`). It is unique in its file.
+- `kind` is `test` or `process`.
+- A `test` row needs at least one test marked `@pytest.mark.ac("<source>:<id>")`.
+- A `process` row names its evidence in `verified by` and needs no marked test. A criterion of a source that merged before the gate, with no marked test, is `process` with `pre-gate: PR #<n> review`.
+- The `Source:` line holds the spec slug, the issue URL, or `reconstructed from <where>` when the spec text is absent from the repository.
+
+## Markers
+
+A marker argument is `<source>:<id>`. A bare id such as `AC-3` fails pytest collection in skillz, wedge, and fromargs. The gate scans `packages/{skillz,wedge,fromargs}/tests` and `.github/scripts/test_*.py` with `ast`. It counts a decorator, a module or class `pytestmark`, and `pytest.param(marks=...)`.
+
+The gate fails on a `test` row with no marked test, a marker for an unknown source or id, a `process` row without `verified by`, a kind other than `test` or `process`, a non-literal marker argument, a duplicate id, and a malformed table.
+
+A ticket's pull request adds `gh-<n>.md` and its markers together. The decision record is `docs/agents/decisions/ac-traceability.md`.
+
+<!-- HALLOUMINATE:INDEX-START -->
+- [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
+- [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
+- [gh-131](./gh-131.md) — gh-131: the network preflight probes and the macOS live path
+- [gh-223](./gh-223.md) — gh-223: skillz_experiments module layout and borrow waves
+- [gh-235](./gh-235.md) — gh-235: freeze a run compatibility fingerprint (W2.4)
+- [gh-236](./gh-236.md) — gh-236: deterministic proposal leakage check (W3.1)
+- [gh-238](./gh-238.md) — gh-238: move the reflection prompt into search/_proposer.py (W4.1)
+- [gh-239](./gh-239.md) — gh-239: annealed edit budget and run-status block in the reflection prompt (W4.2)
+- [gh-240](./gh-240.md) — gh-240: detect search stalls and stop GEPA through stop_callbacks (W4.3)
+- [gh-241](./gh-241.md) — gh-241: record per-proposal attempts and show broke/fixed history to the proposer (W4.4)
+- [gh-242](./gh-242.md) — gh-242: show rejected approaches and proposer notes in the reflection prompt (W4.5)
+- [gh-243](./gh-243.md) — gh-243: keep private cross-run attempt history for compatible runs (W4.6)
+- [gh-244](./gh-244.md) — gh-244: steer a stalled search toward the least-tested editable component (W4.7)
+- [gh-247](./gh-247.md) — gh-247: move the evaluator into evaluation/ and memoize check_candidate per candidate (W5.3)
+- [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
+- [gh-279](./gh-279.md) — gh-279: reuse recorded search outcomes on resume
+- [gh-285](./gh-285.md) — gh-285: isolate the temp root of the journey sandbox tests
+- [gh-287](./gh-287.md) — gh-287: retry a contract check that fails by sandbox timeout
+- [gh-290](./gh-290.md) — gh-290: the settings floor and the approval block in the preflight
+- [gh-291](./gh-291.md) — gh-291: keep the preflight event transcript when the preflight fails
+- [gh-292](./gh-292.md) — gh-292: seeded trigger and near-miss cases default family to the case id
+- [gh-293](./gh-293.md) — gh-293: read block-scalar descriptions in full in the facts audit
+- [gh-294](./gh-294.md) — gh-294: --edit prose with non-Markdown editable names stops with editable-needs-cli
+- [gh-295](./gh-295.md) — gh-295: the doctor checks the run's claude executable, and a nonzero inventory exit stops with host-not-ready
+- [gh-296](./gh-296.md) — gh-296: the cases-missing stop writes the seed to a file and shows only counts
+- [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
+- [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
+- [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
+- [gh-311](./gh-311.md) — gh-311: assert where the journey press test creates its workspace
+- [gh-312](./gh-312.md) — gh-312: a contract check returns one typed result, and checks of different candidates run at the same time
+- [gh-316](./gh-316.md) — gh-316: a run that is mostly provider faults stops with a code and scores no fault as zero
+- [gh-318](./gh-318.md) — gh-318: the Codex adapter retries a rate limit and keeps diagnostic text
+- [gh-319](./gh-319.md) — gh-319: one model call cannot use the whole search window, and calls reconcile with outcomes
+- [gh-332](./gh-332.md) — gh-332: the doctor detail of a missing host tool says that the tool is missing
+- [gh-336](./gh-336.md) — gh-336: export writes no empty patch when the winner equals the baseline
+- [gh-366](./gh-366.md) — gh-366: explicit eval kinds and one evals.json validator
+- [gh-388](./gh-388.md) — gh-388: the skillz body exceeds its 5k-token budget
+- [gh-390](./gh-390.md) — gh-390: a task case stays unscored in a journey-only run
+- [gh-391](./gh-391.md) — gh-391: skillz imports the wedge API from the wedge package, not from private modules
+- [gh-392](./gh-392.md) — gh-392: the journey gate accepts only a runner budget stop as a budget question
+- [gh-394](./gh-394.md) — gh-394: omp and pi context_tokens counts cache tokens
+- [gh-395](./gh-395.md) — gh-395: a macOS sandboxed command forges a sandbox setup failure through stderr
+- [gh-396](./gh-396.md) — gh-396: split the live preflight and the converse loop out of ClaudeCode
+- [gh-397](./gh-397.md) — gh-397: tool_use and tool_result pairing is written once
+- [gh-398](./gh-398.md) — gh-398: Close the run provider port
+- [gh-399](./gh-399.md) — gh-399: the run slice reaches git and the history store through ports
+- [gh-401](./gh-401.md) — gh-401: the search stops on an uncoded proposer exception
+- [gh-403](./gh-403.md) — gh-403: links inside code fences and code spans are not local link targets
+- [gh-404](./gh-404.md) — gh-404: an input below a symlink loop stays inside the inspect error contract
+- [gh-406](./gh-406.md) — gh-406: wedge strips install metadata only inside *.dist-info
+- [gh-407](./gh-407.md) — gh-407: the codex adapter builds the row envelope once
+- [gh-409](./gh-409.md) — gh-409: the skillz package content id covers file paths and fails closed
+- [gh-411](./gh-411.md) — gh-411: fromargs bounds its traceback files in a per-user directory
+- [gh-412](./gh-412.md) — gh-412: wedge check reports a key failure as a per-skill issue
+- [gh-413](./gh-413.md) — gh-413: the wedge publish policy runs against a release store, not the gh CLI
+- [gh-419](./gh-419.md) — gh-419: the Gemini dotenv guard stays inside the temporary directory and keeps existing files
+- [gh-529](./gh-529.md) — gh-529: promote-cheaper uses the SE of the losses, and a cheaper tie is not a stall
+- [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
+- [skillz-autoimprove-claims](./skillz-autoimprove-claims.md) — skillz-autoimprove-claims: validate the three autoimprove claims separately
+- [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
+- [skillz-pragmatic-autoimprove](./skillz-pragmatic-autoimprove.md) — skillz-pragmatic-autoimprove: pragmatic autoimprove
+- [skillz-wedge-first-class](./skillz-wedge-first-class.md) — skillz-wedge-first-class: wedge first-class in autoimprove
+- [wedge-site-layer-cache](./wedge-site-layer-cache.md) — wedge-site-layer-cache: reuse a verified site layer instead of a fresh install on every build
+- [wedge-skill-packaging](./wedge-skill-packaging.md) — wedge-skill-packaging: wedge skill packaging
+<!-- HALLOUMINATE:INDEX-END -->

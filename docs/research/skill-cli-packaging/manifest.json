@@ -1,0 +1,94 @@
+{
+  "slug": "agent-skill-cli-packaging",
+  "invocation": "sidechain",
+  "budget": {
+    "search": 2,
+    "extract": 10,
+    "spawn": 0
+  },
+  "extensions": [],
+  "calls": [
+    {
+      "kind": "search",
+      "provider": "native-web",
+      "tool": "web.run.search_query",
+      "query": "site.agentskills.io scripts deterministic progressive disclosure relative paths",
+      "filters": {},
+      "status": "ok"
+    },
+    {
+      "kind": "search",
+      "provider": "native-web",
+      "tool": "web.run.search_query",
+      "query": "site.clig.dev JSON stdout stderr non interactive",
+      "filters": {},
+      "status": "ok"
+    },
+    {
+      "kind": "extract",
+      "provider": "native-web",
+      "tool": "web.run.open",
+      "url": "https://agentskills.io/specification",
+      "url_digest": "f36ae4007ec3a8cffaebbd586523686380b188fc4aa93d3c708af94e25420357",
+      "file": "raw/01-specification.md",
+      "fetched": "2026-09-28",
+      "status": "ok",
+      "inspection": "body inspected"
+    },
+    {
+      "kind": "extract",
+      "provider": "native-web",
+      "tool": "web.run.open",
+      "url": "https://agentskills.io/skill-creation/using-scripts",
+      "url_digest": "072dae8aa5fb753dba1503a28ab6313db13372855143467a2711998f30a6fbd5",
+      "file": "raw/02-using-scripts.md",
+      "fetched": "2026-09-28",
+      "status": "ok",
+      "inspection": "body inspected"
+    },
+    {
+      "kind": "extract",
+      "provider": "native-web",
+      "tool": "web.run.open",
+      "url": "https://clig.dev/",
+      "url_digest": "458d9788c68df625275694f18c68db102ab8c0509e067784f177ff2b1f5282f1",
+      "file": "raw/04-clig-partial.md",
+      "fetched": "2026-09-28",
+      "status": "ok",
+      "inspection": "header retrieved; no claim based on this source"
+    },
+    {
+      "kind": "extract",
+      "provider": "native-web",
+      "tool": "web.run.open",
+      "url": "https://www.anthropic.com/engineering/writing-tools-for-agents",
+      "url_digest": "1399aec680791f782180f8a776e7df2a1df1397560aaefb199b2f5acdeedb3d1",
+      "file": "raw/05-tools-partial.md",
+      "fetched": "2026-09-28",
+      "status": "ok",
+      "inspection": "header retrieved; no claim based on this source"
+    },
+    {
+      "kind": "extract",
+      "provider": "native-web",
+      "tool": "web.run.open",
+      "url": "https://docs.python.org/3.12/library/zipapp.html",
+      "url_digest": "a06f7825eb64dcb7efbb6c9d684eaec81aa399f3890f95d3d5ef481aaa8624f4",
+      "file": "raw/06-zipapp-partial.md",
+      "fetched": "2026-09-28",
+      "status": "ok",
+      "inspection": "header retrieved; no claim based on this source"
+    },
+    {
+      "kind": "extract",
+      "provider": "native-web",
+      "tool": "web.run.open",
+      "url": "https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills",
+      "url_digest": "2e50ab69ebea3b2c9412dd48bc4f7b1e0f238a0054a9dc30e3077848c2809267",
+      "file": "raw/03-anthropic.md",
+      "fetched": "2026-09-28",
+      "status": "ok"
+    }
+  ],
+  "layout_deviation": "Parent explicitly requested docs/research/skill-cli-packaging. research-layout rejects the three-word slug and resolves valid agent-skill-cli-packaging outside writable roots."
+}

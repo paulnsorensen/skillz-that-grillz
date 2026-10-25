@@ -1,0 +1,94 @@
+# Contributing to skillz-that-grillz
+
+Thanks for your interest. Contributions of all sizes are welcome — a
+typo fix is just as useful as a feature. This document describes how
+to get from "I want to help" to "my change is merged".
+
+## Filing issues
+
+- Search [open issues](https://github.com/paulnsorensen/skillz-that-grillz/issues)
+  before opening a new one.
+- Use the bug-report or feature-request template.
+- For security vulnerabilities, do **not** open a public issue — see
+  [`SECURITY.md`](./SECURITY.md).
+
+## Setting up locally
+
+```sh
+git clone https://github.com/paulnsorensen/skillz-that-grillz.git
+cd skillz-that-grillz
+just build   # runs all formatters, linters, validators, and test suites
+```
+
+`just build` runs formatters, root basedpyright, Vulture, validators, and test suites.
+It installs locked Python tooling into the root `.venv` through `uv run`.
+Install the other tools listed in `justfile` before running the gate.
+Install [`just`](https://github.com/casey/just) first if you don't have it (`brew install just` / `cargo install just`).
+
+## Adding a skill
+
+Published skills live under `skills/<name>/`. Repo-local skills (tooling for
+work on this repository only) live under `.agents/skills/<name>/`, mirrored at
+`.claude/skills/<name>/` via a symlink. The authoring contract — frontmatter
+keys, description-writing guidance, and the validation rules CI enforces — is
+in
+[`.github/instructions/skills.instructions.md`](.github/instructions/skills.instructions.md).
+Read it before opening a skill PR.
+
+The essentials:
+
+- One directory per skill: `skills/<name>/SKILL.md` or
+  `.agents/skills/<name>/SKILL.md` (plus optional `references/`, `scripts/`,
+  `assets/`).
+- `SKILL.md` needs YAML frontmatter with at least `name` and `description`, and
+  **`name` must match the parent directory name** — the validator fails
+  otherwise.
+- Add a published skill to the [`## Skills` table in `README.md`](README.md#skills);
+  it is the single source of truth for the skill list.
+- Run `just build` until it reports 0 failures (this runs
+  `validate_skills.py`).
+
+## Running tests
+
+This project has one canonical quality gate:
+
+```sh
+just build   # autofix, then verify formats, Python types/dead code, and tests
+just ci      # the same gate with no autofixes — what CI runs
+```
+
+CI splits the skillz pytest lanes into six parallel `skillz shard` jobs (`GATE_SHARD=<n>/6 just test-skillz`).
+The `gate (just ci)` job sets `GATE_SKIP` to skip those lanes.
+The required `skillz tests` check passes when every shard passes, and local runs still include every lane.
+
+`just build` runs format fixes and prepares Python environments before parallel checks.
+Set `GATE_JOBS` to bound concurrent checks and `TEST_WORKERS` to bound each pytest suite.
+Both settings default to 4.
+Set `GATE_SKIP` to a comma list of lane names to skip those lanes; an unknown name fails before any work.
+On a shared host, the pytest lanes run under `eatmydata` when it is on PATH; set `GATE_EATMYDATA=0` to keep fsync.
+Set `GATE_HOST_SLOTS` to limit how many gates of one user on a host run their lanes at the same time (default 2, `0` for no limit).
+
+Run `just build` and verify 0 failures before opening a PR.
+
+## Submitting a pull request
+
+1. Fork the repo and create a topic branch from `main`.
+2. Make your change. Keep commits focused; one concern per commit is
+   easier to review than a kitchen-sink commit.
+3. Use [Conventional Commits](https://www.conventionalcommits.org)
+   for the PR title (e.g. `feat: add X`, `fix: handle Y`,
+   `docs: explain Z`). Squash-merge will use the PR title as the
+   commit subject.
+4. Fill out the PR template — the "why" matters more than the "what".
+5. Wait for CI to go green and address review feedback.
+
+## Code of Conduct
+
+Participation in this project is governed by the
+[Contributor Covenant](./CODE_OF_CONDUCT.md). By contributing you
+agree to abide by it.
+
+## Licensing
+
+By submitting a contribution you agree that it will be licensed under
+the same terms as the project itself (see [`LICENSE`](./LICENSE)).

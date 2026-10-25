@@ -1,0 +1,66 @@
+# Configures GitHub's automatically-generated release notes.
+#
+# Reference:
+#   https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+#
+# How it works:
+#   When a release is created with `--generate-notes` (CLI) or via the
+#   "Generate release notes" button, GitHub inspects the PRs merged
+#   between the previous release tag and the new one, then groups them
+#   into the categories below based on each PR's labels.
+#
+# Tips:
+#   - The "*" catch-all category should be last; it picks up every PR
+#     that didn't match an earlier bucket.
+#   - PRs from authors in `exclude.authors` (e.g. dependabot) and PRs
+#     with labels in `exclude.labels` are dropped entirely.
+#   - Add the labels to your repo (Settings → Labels) so contributors
+#     can apply them on PRs.
+
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - skip-changelog
+    authors:
+      - dependabot
+      - github-actions
+      - renovate
+
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking-change
+        - breaking
+
+    - title: Features
+      labels:
+        - enhancement
+        - feature
+
+    - title: Fixes
+      labels:
+        - bug
+        - bugfix
+        - fix
+
+    - title: Documentation
+      labels:
+        - documentation
+        - docs
+
+    - title: Dependencies
+      labels:
+        - dependencies
+
+    - title: Internal
+      labels:
+        - chore
+        - refactor
+        - ci
+        - build
+        - test
+
+    - title: Other changes
+      labels:
+        - "*"

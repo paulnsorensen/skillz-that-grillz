@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Unit tests for validate_evals.py.
+
+The script ships an embedded `--self-test` (30 fixtures) that thoroughly
+covers `validate_file`'s accept/reject contract. These tests cover the seam
+the self-test does NOT reach: `main()`'s tree scan, glob discovery, the
+empty / missing cases, the aggregate exit code, and — as a standing
+regression guard — that the eval files actually shipped in this repo pass.
+`just ci` runs `validate_evals.py` WITHOUT `--self-test`, so `main()` over
+the live tree is the real gate; before this file it had no unit coverage.
+"""
+from __future__ import annotations
+
+import io
+import json
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+from typing import cast
+
+import pytest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+from typing_extensions import override
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+import validate_evals  # noqa: E402
+
+REPO_ROOT = SCRIPT_DIR.parent.parent
+
+VALID_ENTRY: dict[str, object] = {"id": 0, "name": "a", "kind": "task", "prompt": "p", "expected_output": "e", "files": []}
+VALID_EVALS: dict[str, object] = {"skill_name": "foo", "evals": [VALID_ENTRY]}
+
+
+class ValidateEvalsMainTest(unittest.TestCase):
+    """Exercise main() — the path `just ci` runs, untouched by --self-test."""
+
+    # unittest assigns these in setUp before it calls each test.
+    _cwd: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+    tmpdir: Path  # pyright: ignore[reportUninitializedInstanceVariable]
+
+    @override
+    def setUp(self) -> None:
+        self._cwd = Path.cwd()
+        self.tmpdir = Path(tempfile.mkdtemp(prefix="validate-evals-"))
+        self.addCleanup(self._restore)
+        os.chdir(self.tmpdir)
+
+    def _restore(self) -> None:
+        os.chdir(self._cwd)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write_eval(self, skill: str, payload: object) -> None:
+        path = self.tmpdir / "skills" / skill / "evals" / "evals.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def _run(self) -> tuple[int, str, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = validate_evals.main()
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_valid_tree_passes(self) -> None:
+        self._write_eval("foo", VALID_EVALS)
+        rc, out, _ = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("validated 1", out)
+
+    def test_skills_dir_missing(self) -> None:
+        rc, _, err = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("skills/ directory not found", err)
+
+    def test_no_eval_files(self) -> None:
+        # An empty skills/ tree must fail loudly, not silently pass — otherwise
+        # a botched rename that orphans every evals.json reports green.
+        (self.tmpdir / "skills").mkdir()
+        rc, _, err = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("no skills/*/evals/evals.json files found", err)
+
+    def test_old_filename_not_discovered(self) -> None:
+        # The contract is one filename: evals.json. A file left at the old
+        # `eval_set.json` name must NOT be picked up — if it were, the rename
+        # would be a no-op and the dual-schema split would persist.
+        path = self.tmpdir / "skills" / "foo" / "evals" / "eval_set.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text(json.dumps(VALID_EVALS), encoding="utf-8")
+        rc, _, err = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("no skills/*/evals/evals.json files found", err)
+
+    def test_one_bad_file_fails_whole_run(self) -> None:
+        self._write_eval("good", VALID_EVALS)
+        self._write_eval("bad", {"skill_name": "bad", "evals": []})
+        rc, _, err = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("at least one entry", err)
+        self.assertIn("1 error", err)
+
+    @pytest.mark.ac("gh-369:AC-13")
+    def test_id_repeated_across_evals_and_journeys_fails(self) -> None:
+        self._write_eval("foo", VALID_EVALS)
+        shipped = cast(list[dict[str, object]], json.loads((REPO_ROOT / "skills" / "skillz" / "evals" / "journeys.json").read_text(encoding="utf-8")))
+        journey = shipped[0]
+        path = self.tmpdir / "skills" / "foo" / "evals" / "journeys.json"
+        _ = path.write_text(json.dumps([journey | {"id": "j1"}]), encoding="utf-8")
+        rc, _, _ = self._run()
+        self.assertEqual(rc, 0)
+        _ = path.write_text(json.dumps([journey | {"id": "a"}]), encoding="utf-8")
+        rc, _, err = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("duplicate case id 'a'", err)
+
+    def test_aggregates_across_files(self) -> None:
+        self._write_eval("good", VALID_EVALS)
+        self._write_eval("alsogood", {"skill_name": "x", "evals": [VALID_ENTRY]})
+        rc, out, _ = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("validated 2", out)
+
+
+class ShippedEvalsTest(unittest.TestCase):
+    """Regression guard: every eval file in THIS repo satisfies the contract."""
+
+    def test_shipped_eval_files_validate(self) -> None:
+        eval_files = sorted((REPO_ROOT / "skills").glob("*/evals/evals.json"))
+        if not eval_files:
+            # No skill ships evals now. The validator's own tests still run;
+            # this guard checks every evals.json that a skill adds later.
+            self.skipTest("no shipped evals.json files")
+        for ef in eval_files:
+            with self.subTest(file=str(ef.relative_to(REPO_ROOT))):
+                self.assertEqual(validate_evals.validate_file(ef), [])
+
+
+class InRepoStrictnessTest(unittest.TestCase):
+    """An in-repo evals.json needs an explicit kind and fixtures under evals/files/."""
+
+    def _validate(self, entry: dict[str, object], fixtures: tuple[str, ...] = ()) -> list[str]:
+        with tempfile.TemporaryDirectory(prefix="validate-evals-") as raw:
+            skill = Path(raw) / "skills" / "x"
+            for fixture in fixtures:
+                (skill / fixture).parent.mkdir(parents=True, exist_ok=True)
+                _ = (skill / fixture).write_text("f\n", encoding="utf-8")
+            path = skill / "evals" / "evals.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _ = path.write_text(json.dumps({"skill_name": "x", "evals": [entry]}), encoding="utf-8")
+            return validate_evals.validate_file(path)
+
+    @pytest.mark.ac("gh-366:AC-7")
+    def test_rejects_missing_kind_missing_fixture_and_outside_fixture(self) -> None:
+        no_kind = {key: value for key, value in VALID_ENTRY.items() if key != "kind"}
+        self.assertEqual(self._validate(VALID_ENTRY), [])
+        self.assertTrue(any("kind" in error for error in self._validate(no_kind)))
+        missing = VALID_ENTRY | {"files": ["evals/files/gone.md"]}
+        self.assertTrue(any("gone.md" in error for error in self._validate(missing)))
+        outside = VALID_ENTRY | {"files": ["evals/other.md"]}
+        self.assertTrue(any("evals/files/" in error for error in self._validate(outside, ("evals/other.md",))))
+        self.assertEqual(self._validate(VALID_ENTRY | {"files": ["evals/files/ok.md"]}, ("evals/files/ok.md",)), [])
+
+
+class SelfTestPassesTest(unittest.TestCase):
+    """The embedded --self-test fixtures must all pass (rc 0)."""
+
+    def test_self_test_green(self) -> None:
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = validate_evals.self_test()
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("self-test: 30/30 passed", out.getvalue())
+
+
+if __name__ == "__main__":
+    _ = unittest.main()

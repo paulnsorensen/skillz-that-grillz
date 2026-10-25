@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Workflow scratch (age/cure/press reports, planning notes)
+.cheese/
+.context/
+
+# Skill-creator iteration workspaces (eval runs, benchmarks, viewer HTML)
+skills/*-workspace/
+
+# Live smoke run records (just live-smoke)
+.live-smoke/
+
+# Serena MCP — machine-local; not tracked
+.serena/

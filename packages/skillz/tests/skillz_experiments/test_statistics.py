@@ -1,0 +1,359 @@
+"""Statistics thresholds: the gate floors, the contract block, and run-time resolution and freeze."""
+from __future__ import annotations
+
+import json
+import math
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast, final
+
+import pytest
+
+from skillz_experiments._candidate import Candidate
+from skillz_experiments._cases import Case, CodedError
+from skillz_experiments._cli import main
+from skillz_experiments._contract import _LEGACY_SKILLZ, parse  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments._intake import DRAFT_NAME, case_hash, load_draft, split_cases
+from skillz_experiments.gate._simulate import Simulation
+from skillz_experiments.gate import Statistics, simulate, verdict
+from skillz_experiments._records import read
+from skillz_experiments._budget import Budget
+from skillz_experiments.run import Stop, export, run
+from skillz_experiments.run._resume import resolve_statistics
+from fake_provider import FakeRunProvider
+
+MODEL = "local-test"
+LEGACY_IDENTITY = "f97f7476933403cbc6180cf3dc3cb54ca9d9eb63a7cf37bae92dd6aa9612b2e8"
+ContractDocument = dict[str, object]
+
+pytestmark = pytest.mark.usefixtures("host_login")
+
+
+# --- gate ------------------------------------------------------------------------------------------------
+
+def test_simulate_default_rates_are_pinned() -> None:
+    assert simulate() == Simulation(
+        trials=2000, cases=10, rate_2se=0.0195, rate_one_holdout=0.8115,
+        false_promotions_2se=39, false_promotions_one_holdout=1623)
+
+
+@pytest.mark.parametrize("values", [
+    [0.1, 0.2, 0.3], [-0.1, -0.2, -0.3], [-0.1, 0.1, 0.3], [3.0, 1.0], [-3.0, -1.0], [0.1, 0.1, 0.1],
+    [-0.1, -0.1], [0.0, 0.0, 0.0], [0.5], [], [math.nan, 1.0], [math.inf, 0.0, 0.0]])
+def test_default_thresholds_return_the_unchanged_verdict(values: list[float]) -> None:
+    plain, explicit = verdict(values), verdict(values, thresholds=Statistics())
+    assert plain.reasons == (() if all(math.isfinite(value) for value in values) else ("non-finite-delta",))
+    assert (explicit.verdict, explicit.cases, explicit.reasons) == (plain.verdict, plain.cases, plain.reasons)
+    assert str(explicit.delta) == str(plain.delta) and str(explicit.se) == str(plain.se)
+
+
+# Literal results of the gate before the thresholds change: the edge cases keep their verdict, delta, and SE.
+@pytest.mark.parametrize(("values", "name", "delta", "se", "cases"), [
+    ([0.1, 0.1, 0.1], "promote", 0.10000000000000002, 0.0, 3),
+    ([-0.1, -0.1], "reject", -0.1, 0.0, 2),
+    ([0.0, 0.0, 0.0], "inconclusive", 0.0, 0.0, 3),
+    ([0.5], "inconclusive", 0.5, 0.0, 1),
+    ([], "inconclusive", 0.0, 0.0, 0)])
+def test_the_gate_edge_cases_keep_their_pinned_result(
+        values: list[float], name: str, delta: float, se: float, cases: int) -> None:
+    result = verdict(values)
+    assert (result.verdict, result.delta, result.se, result.cases, result.reasons) == (name, delta, se, cases, ())
+
+
+@pytest.mark.parametrize("values", [[math.nan, 1.0], [math.inf, 0.0, 0.0]])
+def test_a_non_finite_delta_is_inconclusive_with_nan_delta_and_se(values: list[float]) -> None:
+    result = verdict(values)
+    assert result.verdict == "inconclusive" and result.cases == len(values)
+    assert math.isnan(result.delta) and math.isnan(result.se)
+
+
+# Deltas 1, 2, 3: mean 2.0, se 1/sqrt(3), so 2*se is about 1.1547.
+SPREAD = [1.0, 2.0, 3.0]
+
+
+def test_min_gain_equal_to_the_delta_still_promotes() -> None:
+    assert verdict(SPREAD, thresholds=Statistics(min_gain=2.0)).verdict == "promote"
+
+
+def test_min_gain_above_the_delta_turns_a_promotion_inconclusive() -> None:
+    result = verdict(SPREAD, thresholds=Statistics(min_gain=2.5))
+    assert (result.verdict, result.reasons) == ("inconclusive", ("min-gain",))
+    assert result.delta == 2.0 and result.cases == 3
+
+
+def test_lower_bound_needs_the_delta_to_exceed_two_se_plus_the_floor() -> None:
+    assert verdict(SPREAD, thresholds=Statistics(min_lower_bound=0.8)).verdict == "promote"
+    result = verdict(SPREAD, thresholds=Statistics(min_lower_bound=0.9))
+    assert (result.verdict, result.reasons) == ("inconclusive", ("min-lower-bound",))
+
+
+def test_both_floors_report_both_reasons_in_order() -> None:
+    result = verdict(SPREAD, thresholds=Statistics(min_gain=2.5, min_lower_bound=0.9))
+    assert (result.verdict, result.reasons) == ("inconclusive", ("min-gain", "min-lower-bound"))
+
+
+def test_the_floors_apply_to_a_zero_se_promotion_with_two_se_as_zero() -> None:
+    same = [0.5, 0.5, 0.5]
+    assert verdict(same, thresholds=Statistics(min_lower_bound=0.25)).verdict == "promote"
+    at_bound = verdict(same, thresholds=Statistics(min_lower_bound=0.5))
+    assert (at_bound.verdict, at_bound.reasons) == ("inconclusive", ("min-lower-bound",))
+    low = verdict(same, thresholds=Statistics(min_gain=0.75))
+    assert (low.verdict, low.reasons) == ("inconclusive", ("min-gain",))
+
+
+@pytest.mark.parametrize("values", [[-1.0, -2.0, -3.0], [-0.1, 0.1, 0.3], [0.5], [], [math.nan, 1.0]])
+def test_the_floors_never_change_a_verdict_that_is_not_a_promotion(values: list[float]) -> None:
+    tight = Statistics(min_gain=9.0, min_lower_bound=9.0)
+    plain, floored = verdict(values), verdict(values, thresholds=tight)
+    assert (floored.verdict, floored.cases, floored.reasons) == (plain.verdict, plain.cases, plain.reasons)
+    assert not {"min-gain", "min-lower-bound"} & set(floored.reasons)
+
+
+# --- contract --------------------------------------------------------------------------------------------
+
+def _document(**extra: object) -> ContractDocument:
+    return {"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
+            "kinds": {"echo": {"grader": "exact-json"}}, "editable": [], **extra}
+
+
+def test_a_contract_without_statistics_keeps_its_identity_hash() -> None:
+    assert _LEGACY_SKILLZ.identity == LEGACY_IDENTITY
+    contract = parse(_document(), "skill")
+    assert contract.statistics is None and "statistics" not in contract.data()
+    assert parse(contract.data(), "skill").identity == contract.identity
+
+
+def test_a_statistics_block_enters_the_identity_hash_and_round_trips() -> None:
+    plain = parse(_document(), "skill")
+    contract = parse(_document(statistics={"min_gain": 1, "min_lower_bound": 0.25}), "skill")
+    assert contract.statistics == {"min_gain": 1.0, "min_lower_bound": 0.25}
+    assert contract.data()["statistics"] == {"min_gain": 1.0, "min_lower_bound": 0.25}
+    assert contract.identity != plain.identity
+    assert parse(contract.data(), "skill").identity == contract.identity
+
+
+@pytest.mark.parametrize("block", [
+    {"family_budget": -0.1}, {"min_gain": 0.1, "surprise": 1}, {"min_gain": -0.1}, {"min_lower_bound": -1},
+    {"min_gain": "0.1"}, {"min_gain": True}, {"min_lower_bound": None}, {"min_gain": [0.1]},
+    {"min_gain": math.nan}, {"min_gain": math.inf}, [], "0.1", None])
+def test_an_invalid_statistics_block_fails_parse_with_a_code(block: object) -> None:
+    with pytest.raises(CodedError) as caught:
+        _ = parse(_document(statistics=block), "skill")
+    assert caught.value.code == "contract-statistics-invalid"
+
+
+# --- resolution, freeze, and resume ----------------------------------------------------------------------
+
+def test_resolution_takes_the_flag_then_the_contract_then_the_default() -> None:
+    contract = parse(_document(statistics={"min_gain": 0.4, "min_lower_bound": 0.2}), "skill")
+    assert resolve_statistics(contract, {}) == Statistics(min_gain=0.4, min_lower_bound=0.2)
+    assert resolve_statistics(contract, {"min_gain": 0.1}) == Statistics(min_gain=0.1, min_lower_bound=0.2)
+    assert resolve_statistics(contract, {"min_lower_bound": 0.0}) == Statistics(min_gain=0.4, min_lower_bound=0.0)
+    assert resolve_statistics(parse(_document(), "skill"), {}) == Statistics()
+    assert resolve_statistics(parse(_document(statistics={"min_gain": 0.4}), "skill"), {}) == Statistics(min_gain=0.4)
+
+
+@final
+class _Provider(FakeRunProvider):
+    """A fake provider. The seed scores 0 and a proposal that says `improved` scores 1."""
+
+    def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
+        super().__init__()
+
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del holdout, checks
+        return {"score": float("improved" in candidate.files["SKILL.md"]), "candidate_hash": candidate.identity,
+                "case_hash": case.identifier}
+
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        del prompt, candidate, case, holdout
+        assert schema is not None
+        return {"answer": {name: "improved" for name in cast(list[str], schema["required"])}}
+
+
+def _declare(target: Path, **block: float) -> None:
+    path = target / "evals/autoimprove.json"
+    document = cast(ContractDocument, json.loads(path.read_text()))
+    _ = path.write_text(json.dumps(document | {"statistics": block}))
+
+
+def test_a_contract_floor_is_frozen_and_the_incumbent_rule_reports_its_reason(
+        tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _declare(target, min_gain=2.0)
+    result = approved_run(target, out, factory=_Provider)
+    assert read(out / "run.json")["statistics"] == Statistics(min_gain=2.0).data()
+    # The incumbent rule applies the frozen floor (gh-500): the challenger stays out, and the gate sees the seed.
+    comparisons = cast(list[dict[str, object]], cast(dict[str, object], result["search"])["comparisons"])
+    assert [(item["verdict"], item["delta"], item["reasons"]) for item in comparisons][:1] == [("inconclusive", 1.0, ["min-gain"])]
+    gate = cast(dict[str, object], result["gate"])
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
+    assert result["statistics"] == Statistics(min_gain=2.0).data()
+    destination = tmp_path / "export"
+    _ = export(out, destination)
+    report = cast(dict[str, object], json.loads((destination / "report.json").read_text()))
+    shown = cast(list[dict[str, object]], cast(dict[str, object], report["search"])["comparisons"])
+    assert shown[0]["reasons"] == ["min-gain"]
+    assert report["statistics"] == Statistics(min_gain=2.0).data()
+
+
+def test_a_completed_run_with_a_different_statistics_flag_stops_with_run_config_differs(
+        tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _declare(target, min_gain=2.0)
+    assert approved_run(target, out, factory=_Provider)["phase"] == "complete"
+    with pytest.raises(CodedError) as changed:
+        _ = run(target, out, MODEL, statistics={"min_gain": 0.5})
+    assert changed.value.code == "run-config-differs" and "--min-gain" in str(changed.value)
+    assert run(target, out, MODEL, statistics={"min_gain": 2.0})["phase"] == "complete"
+    assert run(target, out, MODEL)["phase"] == "complete"
+
+
+def test_a_resume_with_a_different_min_coverage_stops_with_run_config_differs(
+        tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    assert approved_run(target, out, factory=_Provider)["phase"] == "complete"
+    with pytest.raises(CodedError) as changed:
+        _ = run(target, out, MODEL, statistics={"min_coverage": 0.9})
+    assert changed.value.code == "run-config-differs" and "--min-coverage" in str(changed.value)
+    assert run(target, out, MODEL, statistics={"min_coverage": 0.6})["phase"] == "complete"
+
+
+@pytest.mark.parametrize("bad", [-0.1, 1.5, True, "0.5", math.nan, math.inf])
+def test_min_coverage_accepts_only_a_number_from_0_to_1(bad: object) -> None:
+    with pytest.raises(ValueError, match="statistics min_coverage must be a number from 0 to 1"):
+        _ = Statistics.declared({"min_coverage": bad})
+    assert Statistics.declared({"min_coverage": 0}) == {"min_coverage": 0.0}
+    assert Statistics.declared({"min_coverage": 1}) == {"min_coverage": 1.0}
+
+
+def test_a_flag_below_the_contract_value_wins_when_the_approval_covers_it(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _declare(target, min_gain=2.0, min_lower_bound=0.5)
+    _ = write_draft(out)
+    flags = {"min_gain": 0.5, "min_lower_bound": 0.0}
+    approved, calls = approvals(target, out, statistics=flags)
+    result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=_Provider,
+                 statistics=flags)
+    assert read(out / "run.json")["statistics"] == Statistics(min_gain=0.5).data()
+    gate = cast(dict[str, object], result["gate"])
+    assert (gate["verdict"], gate["reasons"]) == ("promote", [])
+
+
+def test_a_live_call_whose_statistics_differ_from_the_approved_ones_stops_before_any_run(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _declare(target, min_gain=2.0)
+    _ = write_draft(out)
+    approved, calls = approvals(target, out)
+    with pytest.raises(Stop) as lowered:
+        _ = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=_Provider,
+                statistics={"min_gain": 0.0})
+    assert lowered.value.code == "cases-unapproved"
+    assert lowered.value.data["statistics"] == Statistics(min_gain=0.0).data()
+    assert lowered.value.data["case_hash"] != approved
+    assert not (out / "run.json").exists()
+
+
+def test_the_approval_hash_covers_every_statistics_field(
+        tmp_path: Path, write_draft: Callable[..., list[str]]) -> None:
+    _ = write_draft(tmp_path)
+    cases = split_cases(load_draft(tmp_path / DRAFT_NAME), 1, "task")
+    base = Statistics().data()
+    hashes = {case_hash(cases, 1, base)} | {case_hash(cases, 1, {**base, name: 0.5}) for name in Statistics.names()}
+    assert len(hashes) == 1 + len(Statistics.names()) and case_hash(cases, 1) not in hashes
+
+
+def test_a_resume_with_a_different_statistics_flag_stops_with_run_config_differs(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    approved, calls = approvals(target, out, statistics={"min_gain": 0.5})
+    with pytest.raises(Stop) as prepared:
+        _ = run(target, out, MODEL, approve_cases=approved, approve_budget=calls, statistics={"min_gain": 0.5})
+    assert prepared.value.code == "live-required"
+    with pytest.raises(CodedError) as gain:
+        _ = run(target, out, MODEL, statistics={"min_gain": 0.25})
+    with pytest.raises(CodedError) as bound:
+        _ = run(target, out, MODEL, statistics={"min_lower_bound": 0.1})
+    assert gain.value.code == bound.value.code == "run-config-differs"
+    assert "--min-gain" in str(gain.value) and "--min-lower-bound" in str(bound.value)
+    with pytest.raises(Stop) as same:
+        _ = run(target, out, MODEL, statistics={"min_gain": 0.5, "min_lower_bound": 0.0})
+    assert same.value.code == "live-required"
+    with pytest.raises(Stop) as none:
+        _ = run(target, out, MODEL)
+    assert none.value.code == "live-required"
+
+
+def test_approval_stops_echo_the_thresholds_and_a_dropped_flag_stops_at_the_case_approval(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    flagged = Statistics(min_gain=0.5).data()
+    with pytest.raises(Stop) as cases:
+        _ = run(target, out, MODEL, statistics={"min_gain": 0.5})
+    assert cases.value.code == "cases-unapproved" and cases.value.data["statistics"] == flagged
+    approved = cast(str, cases.value.data["case_hash"])
+    with pytest.raises(Stop) as budget:
+        _ = run(target, out, MODEL, approve_cases=approved, statistics={"min_gain": 0.5})
+    assert budget.value.code == "budget-unapproved" and budget.value.data["statistics"] == flagged
+    with pytest.raises(Stop) as dropped:
+        _ = run(target, out, MODEL, approve_cases=approved)
+    assert dropped.value.code == "cases-unapproved" and dropped.value.data["statistics"] == Statistics().data()
+    assert dropped.value.data["case_hash"] != approved
+
+
+@pytest.mark.parametrize("name", ["min_gain", "min_lower_bound"])
+@pytest.mark.parametrize("value", [-0.1, math.nan, math.inf])
+def test_run_refuses_an_invalid_statistics_flag(
+        tmp_path: Path, make_target: Callable[..., Path], name: str, value: float) -> None:
+    flag = "--" + name.replace("_", "-")
+    with pytest.raises(ValueError, match=f"{flag} must be a finite number of at least 0"):
+        _ = run(make_target(tmp_path), tmp_path / "run", MODEL, statistics={name: value})
+
+
+def test_the_cli_passes_the_statistics_flags_to_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake(*_arguments: object, **options: object) -> dict[str, object]:
+        seen.update(options)
+        return {}
+
+    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    base = ["run", "--target", str(tmp_path), "--out", str(tmp_path / "run"), "--model", MODEL]
+    assert main([*base, "--min-gain", "0.05", "--min-lower-bound", "0.02"]) == 0
+    assert seen["statistics"] == {"min_gain": 0.05, "min_lower_bound": 0.02}
+    assert main([*base, "--min-gain", "0.05"]) == 0
+    assert seen["statistics"] == {"min_gain": 0.05}
+    assert main(base) == 0
+    assert seen["statistics"] is None
+
+
+def test_a_negative_zero_or_int_flag_is_frozen_and_echoed_as_a_plain_float(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    given = {"min_gain": -0.0, "min_lower_bound": 1}
+    with pytest.raises(Stop) as cases:
+        _ = run(target, out, MODEL, statistics=given)
+    assert json.dumps(cases.value.data["statistics"]) == json.dumps(Statistics(min_lower_bound=1.0).data())
+    approved, calls = approvals(target, out, statistics=given)
+    with pytest.raises(Stop) as prepared:
+        _ = run(target, out, MODEL, approve_cases=approved, approve_budget=calls, statistics=given)
+    assert prepared.value.code == "live-required"
+    expected = json.dumps(Statistics(min_lower_bound=1.0).data(), sort_keys=True)
+    assert json.dumps(read(out / "run.json")["statistics"], sort_keys=True) == expected
+
+
+def test_run_refuses_an_unknown_statistics_flag_name_and_lists_the_allowed_flags(
+        tmp_path: Path, make_target: Callable[..., Path]) -> None:
+    with pytest.raises(ValueError, match="unknown statistics flag: min_gian; allowed: --min-gain, --min-lower-bound"):
+        _ = run(make_target(tmp_path), tmp_path / "run", MODEL, statistics={"min_gian": 0.5})

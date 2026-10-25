@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "evals/journeys.json",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "required": [
+      "id",
+      "family",
+      "kind",
+      "request",
+      "brief",
+      "expected",
+      "source"
+    ],
+    "properties": {
+      "brief": {
+        "type": "string",
+        "pattern": "\\S",
+        "description": "What the simulated user wants and knows."
+      },
+      "expected": {
+        "type": "object",
+        "properties": {
+          "must": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "uniqueItems": true,
+            "description": "each item is an observable that the transcript must show"
+          },
+          "must_not": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "uniqueItems": true,
+            "description": "each item is an observable that the transcript must not show"
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "uniqueItems": true,
+            "description": "the only questions that the agent may ask; an empty list means the agent asks nothing; when absent, any question is allowed"
+          },
+          "final_stop": {
+            "type": "string",
+            "pattern": "\\S",
+            "description": "the stop or state in which the conversation must end"
+          },
+          "criteria": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "text"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_.-]{1,64}$"
+                },
+                "text": {
+                  "type": "string",
+                  "pattern": "\\S",
+                  "maxLength": 1000,
+                  "description": "One EARS statement: at most one leading WHEN, WHILE, IF, or WHERE clause, then one THE <subject> SHALL <response>."
+                },
+                "must": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "A dealbreaker: level 1 or 2 scores the case 0."
+                },
+                "from": {
+                  "type": "string",
+                  "pattern": "\\S",
+                  "maxLength": 1000,
+                  "description": "The source item, such as assertion:2, must:0, questions, or final_stop."
+                }
+              }
+            },
+            "description": "the approved EARS statements that the judge grades, one level per criterion id"
+          }
+        },
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "must"
+            ],
+            "properties": {
+              "must": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "must_not"
+            ],
+            "properties": {
+              "must_not": {
+                "minItems": 1
+              }
+            }
+          }
+        ]
+      },
+      "family": {
+        "type": "string",
+        "pattern": "\\S",
+        "description": "Group of related cases. Defaults to the id."
+      },
+      "files": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "Inline files: path to text."
+      },
+      "id": {
+        "type": "string",
+        "pattern": "\\S",
+        "description": "Unique case id."
+      },
+      "kind": {
+        "type": "string",
+        "pattern": "\\S",
+        "not": {
+          "enum": [
+            "trigger",
+            "near-miss",
+            "task"
+          ]
+        },
+        "description": "A contract kind that uses the journey grader."
+      },
+      "max_turns": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 8
+      },
+      "request": {
+        "type": "string",
+        "pattern": "\\S",
+        "description": "The first user message."
+      },
+      "requirements": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "\\S"
+        },
+        "uniqueItems": true
+      },
+      "source": {
+        "enum": [
+          "skill",
+          "session"
+        ]
+      }
+    },
+    "additionalProperties": false
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "status": "approved",
+  "skill": "mold",
+  "invocation": "/mold",
+  "kinds": {
+    "journey": {
+      "grader": "journey",
+      "gate": "evals/gates/journey.py",
+      "rubric": "Pass only when the transcript shows every item in reference.must: the agent searched the docs server and loaded the helper skill before it wrote the mold."
+    }
+  },
+  "editable": [],
+  "surface": {
+    "tools": [
+      "mcp__docs__search"
+    ],
+    "mcp_config": "mcp/docs.json",
+    "companions": [
+      "skills/helper-skill"
+    ]
+  }
+}

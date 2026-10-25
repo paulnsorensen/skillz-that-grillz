@@ -1,0 +1,334 @@
+"""Per-proposal attempts, rebuilt from the recorded outcomes, and the history text of the reflection prompt.
+
+An attempt holds identities, digests, and case ids. It never holds request text, expected text, or component text.
+"""
+from __future__ import annotations
+
+import math
+from collections.abc import Collection, Mapping, Sequence
+from typing import cast
+
+SHOWN = 8
+LIMIT = 4000
+MAX_IDS = 10
+MAX_PROTECTED = 30
+MAX_REASON = 80
+
+INTRO = ("Attempt history, newest first. "
+         "Each attempt lists its hypothesis, the train cases it fixed, and the train cases it broke. ")
+RULES = ("Do not re-introduce a change that broke a case. "
+         "Do not copy a case id into any component or into @hypothesis. "
+         "The case-id check rejects a component that names one and drops such a hypothesis.")
+
+# Exploration (W4.7): the reason that an attempt records with its focus component.
+FOCUS_REASON = "under-tested"
+# Rejected memory (W4.5): the newest attempts that a deterministic reason rejected.
+SHOWN_REJECTED = 6
+NO_GAIN = "no-gain"
+# A host build failure says nothing about the idea, so its attempt is unknown, like an evaluation-failed outcome.
+UNKNOWN_REASONS = frozenset({"proposal-build-failed"})
+REJECTED_INTRO = ("Rejected approaches, newest first. "
+                  "Each one lists its hypothesis and the reason that the runner rejected it. ")
+DIFFERENT = "Propose a change that is structurally different from each rejected approach."
+
+# Proposer notes (W4.5): the proposer's own text, shown apart from the facts above.
+JOURNAL_LIMIT = 2000
+NOTES_INTRO = ("Your own notes from earlier proposals, newest first. "
+               "The runner does not check these notes: ")
+NOTE_SEPARATOR = " | "
+
+# Earlier runs (W4.6): attempts of compatible earlier runs, from the private history store. They feed the prompt only.
+EARLIER_INTRO = ("Attempts from earlier compatible runs, newest first. "
+                 "Run 1 is the newest earlier run. Its candidates are not part of this search. ")
+Scores = dict[str, dict[str, float]]
+
+
+def is_reflection(item: Mapping[str, object]) -> bool:
+    return item.get("arm") == "search" and item.get("split") == "reflection"
+
+
+def faulted_reflection(item: Mapping[str, object]) -> bool:
+    """Return whether a reflection row records a skipped, timed-out, or failed call, which proposes nothing."""
+    return item.get("status") in ("skipped", "timeout", "failed") and "proposed" not in item
+
+
+def unit_score(value: object) -> float:
+    """Clamp a provider score to 0..1. A NaN counts as 0."""
+    return min(1.0, max(0.0, float(cast(float, value))))
+
+
+def _newest(outcomes: Sequence[Mapping[str, object]], split: str) -> Scores:
+    """Return the newest score of each (candidate, case) on `split`. An evaluation-failed outcome is unscored."""
+    scores: Scores = {}
+    for item in outcomes:
+        candidate, case, score = item.get("search_candidate"), item.get("case_id"), item.get("score")
+        if item.get("arm") != "search" or item.get("split") != split or item.get("status") == "evaluation-failed":
+            continue
+        if isinstance(candidate, str) and isinstance(case, str) and isinstance(score, (int, float)) and not isinstance(score, bool):
+            scores.setdefault(candidate, {})[case] = float(score)
+    return scores
+
+
+def is_search_validation(item: Mapping[str, object]) -> bool:
+    return item.get("arm") == "search" and item.get("split") == "validation" and "search_candidate" in item
+
+
+def _repeat(item: Mapping[str, object]) -> int:
+    """Return the repeat index of a search validation outcome. An outcome without one is repeat 0."""
+    value = item.get("repeat")
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def validation_complete(outcomes: Sequence[Mapping[str, object]], candidate: str, cases: Collection[str],
+                        repeats: int) -> bool:
+    """Return whether `candidate` has an attempted outcome for each of `repeats` repeats of each validation case in `cases`.
+
+    A repeat is attempted when it has an outcome, scored or `evaluation-failed`. This is the one completion test of the
+    validation readers: the Leaderboard, the attempt history, and the stall signal.
+    """
+    attempted = {(item["case_id"], _repeat(item)) for item in outcomes
+                 if is_search_validation(item) and item["search_candidate"] == candidate}
+    return all((case, index) in attempted for case in cases for index in range(repeats))
+
+
+def scored_runs(items: Sequence[Mapping[str, object]]) -> dict[str, dict[str, dict[int, Mapping[str, object]]]]:
+    """Return the scored search validation outcomes in `items` by candidate, case, and repeat.
+
+    A later outcome of a repeat replaces the earlier one. An `evaluation-failed` outcome has no score and adds none.
+    """
+    found: dict[str, dict[str, dict[int, Mapping[str, object]]]] = {}
+    for item in items:
+        if is_search_validation(item) and item.get("status") != "evaluation-failed":
+            by_case = found.setdefault(cast(str, item["search_candidate"]), {})
+            by_case.setdefault(cast(str, item["case_id"]), {})[_repeat(item)] = item
+    return found
+
+
+def add_validation_scores(scores: Scores, items: Sequence[Mapping[str, object]]) -> Scores:
+    """Add the validation score of each candidate and case in `items` to `scores`, and return `scores`.
+
+    The score of a case is the mean of its scored repeats in `items`. It replaces an earlier score of the case.
+    A case whose repeats all failed has no score and adds none.
+    """
+    for identity, by_case in scored_runs(items).items():
+        for case, by_repeat in by_case.items():
+            scores.setdefault(identity, {})[case] = math.fsum(unit_score(item["score"]) for item in by_repeat.values()) / len(by_repeat)
+    return scores
+
+
+def complete_means(outcomes: Sequence[Mapping[str, object]], validation: set[str], repeats: int = 1) -> dict[str, float]:
+    """Return the validation mean of each candidate that `validation_complete` passes and that has a score on every case.
+
+    The mean is over the cases of the mean of the scored repeats of each case.
+    """
+    rows: dict[str, list[Mapping[str, object]]] = {}
+    for item in outcomes:
+        if is_search_validation(item):
+            rows.setdefault(cast(str, item["search_candidate"]), []).append(item)
+    return {identity: math.fsum(by_case.values()) / len(by_case)
+            for identity, by_case in add_validation_scores({}, outcomes).items()
+            if set(by_case) == validation and validation_complete(rows[identity], identity, validation, repeats)}
+
+
+def _ids(value: object) -> list[str]:
+    return [name for name in cast(list[object], value) if isinstance(name, str)] if isinstance(value, list) else []
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def attempts(outcomes: Sequence[Mapping[str, object]], seed: tuple[str, str],
+             validation: Sequence[str], repeats: int = 1) -> list[dict[str, object]]:
+    """Return one attempt per recorded reflection, oldest first. `seed` is (digest of the seed component texts, seed identity).
+
+    `validation` holds the validation case ids and `repeats` the runs per case. The validation change needs the child and
+    the parent to pass `validation_complete` and to have a score on every case: the mean of the scored repeats.
+    An evaluation-failed outcome is skipped and unscored; the newest scored outcome of a (candidate, case) counts. This matches the session rule.
+    A skipped or timed-out reflection row is no attempt.
+    A case with no scored outcome leaves the mean unknown, so `validation_delta` is null.
+
+    The parent digest of a reflection resolves to a candidate identity through the seed and the earlier proposals.
+    An unresolved parent, an unscored child, or a legacy outcome gives empty `fixed` and `broke` lists and a null `validation_delta`.
+    """
+    reflections = [item for item in outcomes if is_reflection(item) and not faulted_reflection(item)]
+    identities = {seed[0]: seed[1]}
+    for item in reflections:
+        key, proposed = _text(item.get("components_digest")), _text(item.get("proposed"))
+        if key is not None and proposed is not None:
+            _ = identities.setdefault(key, proposed)
+    train, means = _newest(outcomes, "train"), complete_means(outcomes, set(validation), repeats)
+    found: list[dict[str, object]] = []
+    for index, item in enumerate(reflections, 1):
+        key = _text(item.get("parent"))
+        parent = identities.get(key) if key is not None else None
+        child = _text(item.get("proposed"))
+        fixed: list[str] = []
+        broke: list[str] = []
+        delta: float | None = None
+        if parent is not None and child is not None:
+            for case in _ids(item.get("minibatch")):
+                before, after = train.get(parent, {}).get(case), train.get(child, {}).get(case)
+                if before is None or after is None:
+                    continue
+                if after > before:
+                    fixed.append(case)
+                elif after < before:
+                    broke.append(case)
+            was, now = means.get(parent), means.get(child)
+            delta = None if was is None or now is None else now - was
+        attempt: dict[str, object] = {
+            "index": index, "parent": parent, "candidate": child, "components": _text(item.get("components_digest")),
+            "hypothesis": _text(item.get("hypothesis")), "fixed": fixed, "broke": broke, "validation_delta": delta,
+            "accepted": child is not None, "rejected": _text(item.get("rejected")), "rejected_coded": item.get("rejected_coded") is True,
+            "changed": _ids(item.get("changed"))}
+        if isinstance(item.get("focus"), str):
+            attempt |= {"focus": item["focus"], "focus_reason": item.get("focus_reason")}
+        found.append(attempt)
+    return found
+
+
+def focus(history: Sequence[Mapping[str, object]], editable: Sequence[str]) -> str | None:
+    """Return the editable component that the fewest attempts in `history` changed. A tie goes to the lexically first name.
+
+    `history` is the cohort: this run's attempts and the attempts of compatible earlier runs. An attempt counts once for
+    every component in its `changed` list. A reserved `@` name, such as `@new-cli` or a wedge source, is never a focus.
+    Return None when fewer than two components qualify: one component is no choice, so the generic advice stays.
+    """
+    counts = {name: 0 for name in editable if not name.startswith("@")}
+    if len(counts) < 2:
+        return None
+    for attempt in history:
+        for name in set(_ids(attempt.get("changed"))):
+            if name in counts:
+                counts[name] += 1
+    return min(counts, key=lambda name: (counts[name], name))
+
+
+def rejected(history: Sequence[Mapping[str, object]], *, band: float) -> list[dict[str, object]]:
+    """Return the rejected memory: the newest `SHOWN_REJECTED` attempts with a deterministic reason, newest first.
+
+    A coded rejection keeps its code. An admitted attempt whose `validation_delta` is not above `band` has the reason `no-gain`.
+    An uncoded rejection, an attempt in `UNKNOWN_REASONS`, and an admitted attempt with an unknown delta stay out.
+    """
+    found: list[dict[str, object]] = []
+    for attempt in history:
+        reason, delta = _text(attempt.get("rejected")), attempt.get("validation_delta")
+        if reason is not None:
+            if attempt.get("rejected_coded") is not True or reason in UNKNOWN_REASONS:
+                continue
+        elif attempt.get("candidate") is not None and isinstance(delta, (int, float)) and not delta > band:
+            reason = NO_GAIN
+        else:
+            continue
+        found.append({"index": attempt.get("index"), "hypothesis": _text(attempt.get("hypothesis")), "reason": reason})
+    return found[::-1][:SHOWN_REJECTED]
+
+
+def journal(outcomes: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    """Return the proposer notes, oldest first. Each entry holds the attempt index and the kept notes text."""
+    reflections = [item for item in outcomes if is_reflection(item) and not faulted_reflection(item)]
+    return [{"index": index, "notes": notes} for index, item in enumerate(reflections, 1)
+            if (notes := _text(item.get("notes"))) is not None]
+
+
+def protected(outcomes: Sequence[Mapping[str, object]], identity: str) -> list[str]:
+    """Return the train case ids on which candidate `identity` has a full score, sorted."""
+    return sorted(case for case, score in _newest(outcomes, "train").get(identity, {}).items() if score >= 1.0)
+
+
+def _flat(name: str) -> str:
+    return " ".join(name.split())
+
+
+def _list(names: Sequence[str]) -> str:
+    if not names:
+        return "none"
+    return ", ".join(_flat(name) for name in names[:MAX_IDS]) + (f" and {len(names) - MAX_IDS} more" if len(names) > MAX_IDS else "")
+
+
+def _said(hypothesis: str | None) -> str:
+    return _flat(hypothesis) if hypothesis else "none"
+
+
+def _cut(reason: str) -> str:
+    return _flat(reason)[:MAX_REASON]
+
+
+def _line(attempt: Mapping[str, object], label: str | None = None) -> str:
+    hypothesis = _text(attempt.get("hypothesis"))
+    delta = attempt.get("validation_delta")
+    rejected = _text(attempt.get("rejected"))
+    if rejected is not None:
+        result = "rejected, " + _cut(rejected)
+    else:
+        result = "admitted" if attempt.get("candidate") is not None else "unknown"
+    change = f"{delta:+.3f}" if isinstance(delta, (int, float)) else "unknown"
+    return (f"{label or 'Attempt ' + str(attempt.get('index'))}: hypothesis {_said(hypothesis)}; "
+            f"fixed {_list(_ids(attempt.get('fixed')))}; broke {_list(_ids(attempt.get('broke')))}; "
+            f"validation change {change}; result {result}.")
+
+
+def render(history: Sequence[Mapping[str, object]], protect: Sequence[str] = ()) -> str:
+    """Return the one-line history section: the newest `SHOWN` attempts newest first, the protect set, and the rules.
+
+    The section stays within `LIMIT` characters. The oldest attempt drops first, then the protect ids.
+    """
+    lines = [_line(attempt) for attempt in reversed(history[-SHOWN:])]
+    keep = [_flat(name) for name in protect[:MAX_PROTECTED]]
+
+    omitted = f"{len(history)} earlier attempt{'' if len(history) == 1 else 's'} omitted for length." if history else "No attempt yet."
+
+    def compose() -> str:
+        parts = [INTRO + (" ".join(lines) if lines else omitted)]
+        if keep:
+            parts.append("Keep these train cases passing, because the current best passes them: " + ", ".join(keep) + ".")
+        return " ".join([*parts, RULES])
+
+    while len(compose()) > LIMIT and lines:
+        _ = lines.pop()
+    while len(compose()) > LIMIT and keep:
+        _ = keep.pop()
+    return compose()
+
+
+def render_rejected(memory: Sequence[Mapping[str, object]]) -> str:
+    """Return the rejected-memory section, or an empty text when no attempt qualifies."""
+    if not memory:
+        return ""
+    lines: list[str] = []
+    for item in memory:
+        said, reason = _said(_text(item.get("hypothesis"))), _cut(str(item.get("reason")))
+        lines.append(f"Attempt {item.get('index')}: hypothesis {said}; reason {reason}.")
+    return REJECTED_INTRO + " ".join(lines) + " " + DIFFERENT
+
+
+def render_notes(entries: Sequence[Mapping[str, object]]) -> str:
+    """Return the proposer-notes section, newest first, or an empty text when there is no note.
+
+    The shown notes stay within `JOURNAL_LIMIT` characters. The oldest note drops first.
+    """
+    shown: list[str] = []
+    size = 0
+    for item in reversed(entries):
+        text = f"Attempt {item.get('index')}: {_flat(str(item.get('notes')))}"
+        added = len(text) + (len(NOTE_SEPARATOR) if shown else 0)
+        if size + added > JOURNAL_LIMIT:
+            break
+        shown.append(text)
+        size += added
+    return NOTES_INTRO + NOTE_SEPARATOR.join(shown) if shown else ""
+
+
+def render_earlier(earlier: Sequence[Mapping[str, object]]) -> str:
+    """Return the earlier-run section: the newest `SHOWN` earlier attempts, newest first, within `LIMIT` characters.
+
+    `earlier` holds the attempts of compatible earlier runs, oldest first, each with its `run_id`. Run 1 is the newest run.
+    The section is empty when there is no earlier attempt.
+    """
+    runs = list(dict.fromkeys(str(item.get("run_id")) for item in reversed(earlier)))
+    lines = [_line(item, f"Run {runs.index(str(item.get('run_id'))) + 1} attempt {item.get('index')}")
+             for item in reversed(earlier[-SHOWN:])]
+    while lines and len(EARLIER_INTRO) + len(" ".join(lines)) > LIMIT:
+        _ = lines.pop()
+    return EARLIER_INTRO + " ".join(lines) if lines else ""

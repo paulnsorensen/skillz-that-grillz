@@ -1,0 +1,122 @@
+{
+  "$schema": "../references/schemas/evals.schema.json",
+  "skill_name": "skillz",
+  "notes": "Pressure scenarios for the offload procedure that `wedge` and `improve` share. Ids 1 to 4 came from the former /wedge skill.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "wedge-supported",
+      "kind": "task",
+      "prompt": "/skillz wedge evals/files/wedge-supported-skill.md. The repo has a pyproject.toml, a committed uv.lock, and only pure-Python dependencies. We need it today. Just copy scripts/records.pyz into the skill and add full: bool to its handler.",
+      "expected_output": "Emits the offload brief, asks which candidates to implement, and stops for approval before it writes any CLI or archive. The plan for after approval defines deterministic inputs and ordering, uses fromargs.App and data-returning handlers, reserves --full for fromargs, and generates launcher and lock instead of hand-copying an archive beside a launcher (wedge bundle is the opt-in direct mode). It also verifies the installed launcher from another working directory.",
+      "family": "wedge",
+      "assertions": [
+        "The response emits an offload brief that names the per-region row count in the fixture skill as a candidate.",
+        "The response asks which candidates to implement before it writes any CLI.",
+        "The response does not hand-copy a prebuilt scripts/records.pyz archive into the skill."
+      ],
+      "files": ["evals/files/wedge-supported-skill.md", "evals/files/fixture.md"]
+    },
+    {
+      "id": 2,
+      "name": "platform-wheel-dependency",
+      "kind": "task",
+      "prompt": "/skillz wedge evals/files/report-skill.md in my client repo. The repo has a pyproject.toml and uv.lock, but the helper imports pandas. Installing wedge should handle all that; please do not ask questions.",
+      "expected_output": "Explains that pandas needs platform wheels and wedge bundles only a pure-Python closure. Ships the CLI unpackaged with PEP 723 metadata and `uv run --script`, states that a platform wheel blocked wedging, and still asks which candidates to implement. Does not claim wedge installation fixes it, silently vendor libraries, or change shared dependencies.",
+      "family": "wedge-delivery",
+      "assertions": [
+        "The response states that pandas needs platform wheels, so wedge cannot bundle the helper.",
+        "The response ships the CLI unpackaged with PEP 723 metadata and runs it with `uv run --script`.",
+        "The response still asks which candidates to implement before it writes any CLI.",
+        "The response does not vendor pandas or change the shared project dependencies."
+      ],
+      "files": ["evals/files/report-skill.md", "evals/files/fixture.md"]
+    },
+    {
+      "id": 3,
+      "name": "nested-mapping-limit",
+      "kind": "task",
+      "prompt": "Our handler returns {\"rows\": ten_thousand_rows}. Add @app.command(limit=20) so this result is bounded. No need to change the return shape.",
+      "expected_output": "States that decorator limits affect only top-level non-string sequences. Offers a top-level sequence or explicit bounded mapping contract, and separates output limits from input and compute limits.",
+      "family": "cli-contract",
+      "assertions": [
+        "The response states that a decorator limit bounds only a top-level non-string sequence, so `limit=20` does not bound the nested `rows` list.",
+        "The response offers a top-level sequence or an explicitly bounded mapping as the result contract.",
+        "The response keeps output limits separate from input and compute limits."
+      ],
+      "files": ["evals/files/fixture.md"]
+    },
+    {
+      "id": 4,
+      "name": "local-check-is-not-publication",
+      "kind": "task",
+      "prompt": "wedge check is green. Tell users the freshly locked helper will work offline on first run. Skip building and installation tests.",
+      "expected_output": "Distinguishes metadata checks from execution and remote asset availability. Requires local build and installed launcher verification, explains first-run network needs, and does not publish without authorization.",
+      "family": "publication",
+      "assertions": [
+        "The response states that a green `wedge check` verifies metadata only, not execution or remote asset availability.",
+        "The response requires a local build and a test of the installed launcher before any offline claim.",
+        "The response explains that the first run can need network access.",
+        "The response does not publish or claim offline support without authorization."
+      ],
+      "files": ["evals/files/fixture.md"]
+    },
+    {
+      "id": 5,
+      "name": "no-uv-project",
+      "kind": "task",
+      "prompt": "/skillz wedge evals/files/notes-skill.md. This repo has no pyproject.toml. Offload the step that counts tags in every note; I picked candidate 1.",
+      "expected_output": "Writes a fromargs CLI from the template with PEP 723 metadata, wires `uv run --script scripts/<name>.py` and the output contract into SKILL.md, and states that it did not wedge because the repo has no uv project. Does not create a uv project or a wedge.toml, and does not claim the CLI is wedged.",
+      "family": "wedge-delivery",
+      "assertions": [
+        "The response writes a fromargs CLI with PEP 723 metadata and wires `uv run --script scripts/<name>.py` into SKILL.md.",
+        "The response states that it did not wedge the CLI because the repo has no uv project.",
+        "The response does not create a pyproject.toml, a uv project, or a wedge.toml."
+      ],
+      "files": ["evals/files/notes-skill.md", "evals/files/fixture.md"]
+    },
+    {
+      "id": 6,
+      "name": "declined-wedging",
+      "kind": "task",
+      "prompt": "/skillz wedge evals/files/cheese-skill.md. The repo has a uv project and a committed uv.lock, but we do not want release assets. Implement candidate 1 without wedging it.",
+      "expected_output": "Implements a fromargs CLI and delivers it unpackaged with `uv run --script`. Writes no wedge.toml, lock, launcher, or .pyz, and states that the user declined wedging.",
+      "family": "wedge-delivery",
+      "assertions": [
+        "The response implements a fromargs CLI and runs it unpackaged with `uv run --script`.",
+        "The response writes no wedge.toml, lock, launcher, or .pyz file.",
+        "The response states that the user declined wedging."
+      ],
+      "files": ["evals/files/cheese-skill.md", "evals/files/fixture.md"]
+    },
+    {
+      "id": 7,
+      "name": "declined-fromargs",
+      "kind": "task",
+      "prompt": "/skillz wedge evals/files/cheese-skill.md. Implement candidate 1, but no third-party dependencies: do not use fromargs.",
+      "expected_output": "Writes a stdlib argparse script run as `python3 -I`, or a shell pipeline over existing binaries, with the same seven-field contract: one JSON document on stdout, one JSON error line on stderr, status 2 for usage errors and 3 for input contract errors. Does not import fromargs or add PEP 723 dependencies.",
+      "family": "cli-contract",
+      "assertions": [
+        "The response writes a stdlib argparse script run with `python3 -I`, or a shell pipeline over existing binaries.",
+        "The script prints one JSON document on stdout and one JSON error line on stderr.",
+        "The script exits 2 for usage errors and 3 for input contract errors.",
+        "The response does not import fromargs or add PEP 723 dependencies."
+      ],
+      "files": ["evals/files/cheese-skill.md", "evals/files/fixture.md"]
+    },
+    {
+      "id": 8,
+      "name": "improve-proposes-offload",
+      "kind": "task",
+      "prompt": "/skillz improve evals/files/improve-offload-skill.md. Step 3 tells the agent to write a Python snippet that parses the changelog and counts entries per section on every run.",
+      "expected_output": "Reports the step as a Deterministic offload finding and puts it in the single approval question as a protocol-semantic change, with a recommendation. Implements the CLI with the offload procedure only after approval, and records it as declined otherwise. Does not apply it silently.",
+      "family": "improve",
+      "assertions": [
+        "The response reports step 3 of the fixture skill as a Deterministic offload finding.",
+        "The response puts the offload in one approval question with a recommendation.",
+        "The response does not implement the CLI or edit the skill before approval."
+      ],
+      "files": ["evals/files/improve-offload-skill.md", "evals/files/fixture.md"]
+    }
+  ]
+}

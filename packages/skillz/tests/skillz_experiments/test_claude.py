@@ -1,0 +1,2939 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import pwd
+import re
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from collections.abc import Callable, Collection, Iterator
+from pathlib import Path
+from typing import NoReturn, cast, final
+
+import pytest
+
+from skillz_experiments.harness import _codex
+from skillz_experiments.harness._claude import _login as claude_login
+from skillz_experiments.harness._claude._preflight import PROBE_PREAMBLE, probe_sandbox
+from skillz_experiments.harness._claude import _constants, _events, _late, _memory, _options, _preflight, _sandbox, _settings, _transport
+from skillz_experiments._candidate import Candidate, make_workspace
+from skillz_experiments.evaluation import CheckResult
+from skillz_experiments import _redact
+from skillz_experiments._cases import CodedError, digest, mapping
+from skillz_experiments.harness._claude import ClaudeCode, ClaudeOptions, NetworkIsolationFailed, resolve_read_roots
+from skillz_experiments.harness._claude._sandbox import sandbox_argv, sandbox_fix
+from skillz_experiments._contract import Surface, load_contract, parse
+from skillz_experiments.harness import Configuration, Harness
+from skillz_experiments.harness._transport import Transport
+from skillz_experiments._graders import Sandbox
+from skillz_experiments._budget import Budget, BudgetExhausted
+from skillz_experiments import _runtime
+from skillz_experiments.harness._seatbelt import command_profile
+
+FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
+ROOT = Path(__file__).parents[4]
+TOKENS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
+# Read at import, before any test patches `sys.platform`.
+LINUX_HOST = sys.platform == "linux"
+# Read at import, before `host_login` clears it for pytest roots under /tmp.
+PRODUCTION_SOCKET_DENY = _options.SOCKET_DENY
+
+
+def _bwrap_works() -> bool:
+    tool = shutil.which("bwrap")
+    if tool is None:
+        return False
+    probe = subprocess.run([tool, "--unshare-all", "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin",
+                            "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
+                            "/usr/bin/python3", "-c", "pass"], capture_output=True, check=False)
+    return probe.returncode == 0
+
+
+needs_bwrap = pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is unavailable")
+linux_only = pytest.mark.skipif(sys.platform == "darwin", reason="macOS uses the real config directory")
+darwin_only = pytest.mark.skipif(sys.platform != "darwin", reason="only macOS uses the real config directory")
+pytestmark = pytest.mark.usefixtures("host_login")
+
+
+@pytest.fixture
+def sandbox_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand in for the OS sandbox probe, which has its own tests, so the live-call steps run on any host."""
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        return 0, "isolation-ok\n", ""
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+
+
+def fake_claude(tmp_path: Path, mode: str = "ok") -> Path:
+    executable = tmp_path / "bin" / "claude"
+    executable.parent.mkdir()
+    _ = shutil.copyfile(FAKE, executable)
+    executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+    _ = executable.with_name("claude.mode").write_text(mode)
+    return executable
+
+
+def harness(tmp_path: Path, executable: Path, budget: Budget | None = None, out: Path | None = None) -> Harness:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [str(executable)]}))
+    return Configuration.load(config, "claude-test-model").create(
+        "claude-test-model", budget or Budget(10, 120, 0), lambda: None, out)
+
+
+def echo_candidate(tmp_path: Path) -> Candidate:
+    target = tmp_path / "echo-skill"
+    _ = shutil.copytree(ROOT / "packages/skillz/tests/skillz_experiments/fixtures/echo-skill", target)
+    _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
+    return Candidate.capture(target, ["SKILL.md"], load_contract(target))
+
+
+def calls(executable: Path) -> list[dict[str, object]]:
+    log = executable.with_name("claude.log")
+    return [cast(dict[str, object], json.loads(line)) for line in log.read_text().splitlines()]
+
+
+def test_a_failed_claude_call_books_its_seconds_under_failed(tmp_path: Path) -> None:
+    from skillz_experiments._budget import FAILED
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, fake_claude(tmp_path, "auth-fail"), budget)
+    try:
+        task = cast(ClaudeCode, session.transports["task"])
+        with pytest.raises(RuntimeError, match="Claude Code fails"):
+            _ = task.invoke("hello")
+    finally:
+        session.close()
+    assert budget.calls_by_role == {"task": 1} and set(budget.seconds_by_role) == {FAILED}
+
+
+def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_paths(tmp_path: Path) -> None:
+    from skillz_experiments._graders import CAPTURE_INSTRUCTION, Viewer, judge_schema
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    attachments = {"page.png": b"\x89PNG\r\n\x1a\nimage", "notes/page.txt": b"text"}
+    try:
+        judge = session.transports["judge"]
+        assert isinstance(judge, Viewer)
+        result = judge.view("score it" + CAPTURE_INSTRUCTION, attachments, schema=judge_schema(("answer",)))
+    finally:
+        session.close()
+    call = calls(executable)[0]
+    workspace = Path(cast(str, call["cwd"])).resolve()
+    captured = cast(dict[str, str | None], call["captured"])
+    assert captured == {str(workspace / "capture" / name): data.hex() for name, data in sorted(attachments.items())}
+    paths = "\n".join(str(workspace / "capture" / name) for name in sorted(attachments))
+    assert call["prompt"] == "score it" + CAPTURE_INSTRUCTION + "\nCAPTURE FILES:\n" + paths
+    assert "listed at the end of this prompt" in CAPTURE_INSTRUCTION
+    assert result["answer"] == {"criteria": {"answer": {"level": 3, "reason": "fake judge"}}}
+
+
+def test_partial_claude_usage_stays_unknown() -> None:
+    from skillz_experiments.harness._claude._events import token_events
+    from skillz_experiments.evaluation import usage
+
+    assert usage(token_events({"usage": {"input_tokens": 2}})) == {
+        "input_tokens": 2, "cached_input_tokens": 0, "output_tokens": None}
+    assert usage(token_events({"usage": {"input_tokens": 2, "output_tokens": 3,
+                                          "cache_read_input_tokens": "bad"}})) == {
+        "input_tokens": None, "cached_input_tokens": None, "output_tokens": 3}
+    assert usage(token_events({"usage": {"input_tokens": 2, "output_tokens": 3,
+                                          "cache_read_input_tokens": 5,
+                                          "cache_creation_input_tokens": 7}})) == {
+        "input_tokens": 14, "cached_input_tokens": 5, "output_tokens": 3}
+
+
+def test_argv_or_settings_or_usage_argv_reads_only_project_settings_and_is_tool_limited(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.transports["task"].invoke("hello")
+    finally:
+        session.close()
+    argv = cast(list[str], calls(executable)[0]["argv"])
+    assert argv[:3] == ["-p", "--setting-sources", "project"] and "--restricted" not in argv
+    assert argv[argv.index("--tools") + 1] == "Bash,Read,Skill"
+    assert "--strict-mcp-config" in argv
+    assert argv[argv.index("--model") + 1] == "claude-test-model"
+    assert "--settings" in argv
+    assert "--effort" not in argv
+
+
+def _claude_config(tmp_path: Path, executable: Path, **options: object) -> Configuration:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [str(executable)], **options}))
+    return Configuration.load(config, "claude-test-model")
+
+
+def test_a_claude_role_effort_reaches_every_call_and_the_fingerprint(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    configuration = _claude_config(tmp_path, executable, effort="xhigh")
+    session = configuration.create("claude-test-model", Budget(10, 120, 0), lambda: None)
+    try:
+        _ = session.transports["judge"].invoke("hello")
+        _ = session.transports["judge"].invoke("hello", schema={"type": "object", "properties": {}})
+    finally:
+        session.close()
+    model_calls = [cast(list[str], call["argv"]) for call in calls(executable) if "--model" in cast(list[str], call["argv"])]
+    assert len(model_calls) >= 2
+    assert all(argv[argv.index("--effort") + 1] == "xhigh" for argv in model_calls)
+    plain = _claude_config(tmp_path, executable)
+    assert configuration.roles["judge"].fingerprint() != plain.roles["judge"].fingerprint()
+
+
+def test_default_role_fingerprints_keep_the_pre_option_digest(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    role = _claude_config(tmp_path, executable).roles["judge"]
+    files = {str(executable.resolve()): (str(executable.resolve()), hashlib.sha256(executable.read_bytes()).hexdigest())}
+    base = {"adapter": role.adapter, "model": role.model, "command": role.command, "identity": role.identity, "files": files}
+    assert role.fingerprint() == digest(base)
+    assert _claude_config(tmp_path, executable, sandbox_seconds=20).roles["judge"].fingerprint() == digest(base)
+
+
+@pytest.mark.parametrize("options, message", [
+    ({"effort": "turbo"}, "effort must be one of"), ({"sandbox_read": ["relative/browsers"]}, "sandbox_read must be a list"),
+    ({"sandbox_read": "/usr"}, "sandbox_read must be a list"), ({"sandbox_seconds": 0}, "sandbox_seconds must be an integer"),
+    ({"sandbox_seconds": 601}, "sandbox_seconds must be an integer"), ({"sandbox_seconds": 2.5}, "sandbox_seconds must be an integer")])
+def test_invalid_claude_options_stop_the_configuration(tmp_path: Path, options: dict[str, object], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        _ = _claude_config(tmp_path, fake_claude(tmp_path), **options)
+
+
+def test_a_role_configuration_with_an_isolation_key_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(CodedError, match="is removed") as caught:
+        _ = _claude_config(tmp_path, fake_claude(tmp_path), isolation="claude")
+    assert caught.value.code == "isolation-removed"
+
+
+def test_claude_options_are_normalized_unique_and_sorted() -> None:
+    parsed = ClaudeOptions.parse({"sandbox_read": ["/b/../b/", "/z", "/a", "/a", "/b"]})
+    assert parsed.sandbox_read == ("/a", "/b", "/z")
+    assert ClaudeOptions.parse(parsed.data()) == parsed
+
+
+def test_claude_options_are_refused_for_another_adapter(tmp_path: Path) -> None:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "command", "identity": "w",
+                                      "command": [str(fake_claude(tmp_path))], "effort": "high"}))
+    with pytest.raises(ValueError, match="only to a claude role"):
+        _ = Configuration.load(config, "m")
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "codex", "effort": "high"}))
+    with pytest.raises(ValueError, match="Codex role accepts only adapter and model"):
+        _ = Configuration.load(config, "m")
+    with pytest.raises(ValueError, match="Codex role accepts only adapter and model"):
+        _ = Configuration.single("codex", "m", options=ClaudeOptions(effort="high"))
+
+
+def test_sandbox_read_roots_that_overlap_the_login_temp_home_or_run_directory_are_refused(
+        tmp_path: Path, host_login: Path) -> None:
+    out = tmp_path / "run"
+    (out / "inner").mkdir(parents=True)
+    (tmp_path / "scratch/other").mkdir()
+    overlapping = (host_login.parent, host_login.parents[1], Path.home(), Path("/"), tmp_path, tmp_path / "scratch/other",
+                   out / "inner")
+    for root in overlapping:
+        with pytest.raises(CodedError, match="overlaps the home, Claude config, temporary, or run directory") as caught:
+            _ = resolve_read_roots((str(root),), out)
+        assert caught.value.code == "sandbox-read-invalid"
+    with pytest.raises(CodedError, match="does not exist") as missing:
+        _ = resolve_read_roots((str(tmp_path / "missing"),), out)
+    assert missing.value.code == "sandbox-read-invalid"
+    quoted = tmp_path / 'we"ird'
+    quoted.mkdir()
+    with pytest.raises(CodedError, match="quote"):
+        _ = resolve_read_roots((str(quoted),), out)
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    assert resolve_read_roots((str(browsers),), out) == (str(browsers.resolve()),)
+    with pytest.raises(CodedError, match="overlaps"):
+        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path),
+                       options=ClaudeOptions(sandbox_read=(str(host_login.parent),)))
+
+
+def test_a_symlinked_sandbox_read_root_is_refused_with_its_resolved_path(tmp_path: Path) -> None:
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    (tmp_path / "alias").symlink_to(browsers)
+    with pytest.raises(CodedError, match="symlink") as caught:
+        _ = resolve_read_roots((str(tmp_path / "alias"),), None)
+    assert caught.value.code == "sandbox-read-invalid" and str(browsers.resolve()) in str(caught.value)
+
+
+def test_sandbox_read_roots_under_shared_socket_locations_are_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    assert PRODUCTION_SOCKET_DENY == ("/tmp", "/var/tmp", "/var/snap", "/var/lib")
+    monkeypatch.setattr(_options, "SOCKET_DENY", (str(tmp_path.parent),))  # `host_login` cleared it for roots under /tmp
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    with pytest.raises(CodedError, match="runtime or credential path") as caught:
+        _ = resolve_read_roots((str(browsers),), None)
+    assert caught.value.code == "sandbox-read-invalid"
+
+
+def test_a_sandbox_read_root_that_holds_a_socket_is_refused_without_following_links(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    holder = tmp_path / "h"
+    (holder / "inner").mkdir(parents=True)
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    # A relative address stays under the 104-byte AF_UNIX limit of the long macOS temp path.
+    monkeypatch.chdir(holder / "inner")
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind("s")
+        for root in (holder, holder / "inner"):
+            with pytest.raises(CodedError, match="socket entry") as caught:
+                _ = resolve_read_roots((str(root),), None)
+            assert caught.value.code == "sandbox-read-invalid"
+        (clean / "link").symlink_to(holder)
+        assert resolve_read_roots((str(clean),), None) == (str(clean.resolve()),)
+        file_root = clean / "file.txt"
+        _ = file_root.write_text("x")
+        assert resolve_read_roots((str(file_root),), None) == (str(file_root.resolve()),)
+
+
+def test_a_sandbox_read_root_that_holds_too_many_entries_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_options, "SOCKET_WALK_LIMIT", 2)
+    root = tmp_path / "many"
+    root.mkdir()
+    for name in "abc":
+        _ = (root / name).write_text("")
+    with pytest.raises(CodedError, match="too large to check") as caught:
+        _ = resolve_read_roots((str(root),), None)
+    assert caught.value.code == "sandbox-read-invalid"
+
+
+def test_a_sandbox_read_root_over_the_credentials_link_target_is_refused(tmp_path: Path, host_login: Path) -> None:
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    _ = (dotfiles / "creds.json").write_text("{}")
+    host_login.unlink()
+    host_login.symlink_to(dotfiles / "creds.json")
+    with pytest.raises(CodedError, match="overlaps the home, Claude config, temporary, or run directory") as caught:
+        _ = resolve_read_roots((str(dotfiles),), None)
+    assert caught.value.code == "sandbox-read-invalid"
+
+
+def test_sandbox_read_roots_over_shell_history_and_credential_stores_are_refused() -> None:
+    names = (".bashrc", ".zshrc", ".zshenv", ".profile", ".bash_profile", ".bash_history", ".zsh_history", ".git-credentials",
+             ".npmrc", ".pypirc", ".password-store", ".local/share/keyrings")
+    assert set(names) <= set(_options.HOME_DENY)
+    for name in names:
+        path = Path.home() / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text("x")
+        with pytest.raises(CodedError, match="runtime or credential path") as caught:
+            _ = resolve_read_roots((str(path),), None)
+        assert caught.value.code == "sandbox-read-invalid", name
+
+
+def test_sandbox_read_roots_that_expose_runtime_paths_or_credentials_are_refused(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = Path.home()
+    runtime = tmp_path / "xdg-runtime"
+    (runtime / "bus-dir").mkdir(parents=True)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    system = [Path(root) for root in _options.RUNTIME_DENY if Path(root).exists()]
+    assert Path("/proc") in system or not Path("/proc").exists()
+    credentials: list[Path] = []
+    for name in _options.HOME_DENY:
+        path = home / name
+        if name.endswith("json") or name == ".netrc":
+            _ = path.write_text("{}")
+        else:
+            (path / "inner").mkdir(parents=True)
+            credentials.append(path / "inner")
+        credentials.append(path)
+    for root in (*system, runtime, runtime / "bus-dir", *credentials):
+        # A symlinked path such as `/var/run` stops at the symlink rule before the deny list.
+        with pytest.raises(CodedError, match="runtime or credential path|symlink") as caught:
+            _ = resolve_read_roots((str(root),), None)
+        assert caught.value.code == "sandbox-read-invalid", root
+    playwright = home / ".cache/ms-playwright"
+    playwright.mkdir(parents=True)
+    assert resolve_read_roots((str(playwright),), None) == (str(playwright.resolve()),)
+
+
+@pytest.mark.ac("gh-287:AC-5")
+@pytest.mark.ac("gh-287:AC-7")
+def test_a_slow_sandbox_command_raises_sandbox_timeout_but_budget_exhaustion_still_raises(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+
+    def slow(command: list[str], **options: object) -> subprocess.CompletedProcess[str]:
+        del command
+        return _runtime.sandboxed(["/bin/sleep", "30"], cwd=tmp_path, limit=cast(float, options["limit"]),
+                                  budget=cast(Budget, options["budget"]), environment={"PATH": "/usr/bin:/bin"})
+
+    monkeypatch.setattr(_transport, "sandboxed", slow)
+    monkeypatch.setattr(shutil, "which", which)
+    workspace = make_workspace(tmp_path / "workspace")
+    roomy = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=1))
+    try:
+        with pytest.raises(_runtime.SandboxTimeout):
+            _ = roomy.sandbox(workspace, ["/usr/bin/true"])
+    finally:
+        roomy.close()
+    short = ClaudeCode("m", Budget(10, 2, 0), lambda: None, tmp_path / "bin/claude", options=ClaudeOptions(sandbox_seconds=5))
+    try:
+        with pytest.raises(BudgetExhausted):
+            _ = short.sandbox(workspace, ["/usr/bin/true"])
+    finally:
+        short.close()
+
+
+@pytest.mark.ac("gh-287:AC-5")
+def test_the_claude_sandbox_limit_is_the_configured_sandbox_seconds_and_the_probe_keeps_the_floor(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    limits: list[float] = []
+
+    def sandboxed(command: list[str], **options: object) -> subprocess.CompletedProcess[str]:
+        limits.append(cast(float, options["limit"]))
+        return subprocess.CompletedProcess(command, 0, "isolation-ok\n", "")
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+
+    monkeypatch.setattr(_transport, "sandboxed", sandboxed)
+    monkeypatch.setattr(shutil, "which", which)
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=5))
+    workspace = make_workspace(tmp_path / "workspace")
+    try:
+        _ = adapter.sandbox(workspace, ["/usr/bin/true"])
+        probe_sandbox(adapter, workspace, tmp_path / "sealed")
+        _ = adapter.sandbox(workspace, ["/usr/bin/true"])
+    finally:
+        adapter.close()
+    assert limits == [5, _runtime.SANDBOX_SECONDS, 5]
+
+
+@pytest.mark.ac("gh-287:AC-14")
+def test_a_sandbox_probe_timeout_fails_the_probe_like_exit_124(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        raise _runtime.SandboxTimeout("the sandbox run reached its 20 second limit")
+
+    def exit_124(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        return 124, "", ""
+
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    messages: list[str] = []
+    try:
+        for fake in (timeout, exit_124):
+            monkeypatch.setattr(ClaudeCode, "sandbox", fake)
+            with pytest.raises(CodedError) as caught:
+                probe_sandbox(adapter, make_workspace(tmp_path / fake.__name__), tmp_path / "sealed")
+            messages.append(f"{caught.value.code}: {caught.value}")
+    finally:
+        adapter.close()
+    assert messages[0] == messages[1] and "sandbox probe failed" in messages[0]
+
+
+def test_argv_or_settings_or_usage_settings_hold_the_sandbox_floor(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.transports["task"].invoke("hello")
+    finally:
+        session.close()
+    settings = cast(dict[str, dict[str, object]], json.loads(cast(str, calls(executable)[0]["settings"])))
+    sandbox = settings["sandbox"]
+    assert {key: sandbox[key] for key in ("enabled", "failIfUnavailable", "allowUnsandboxedCommands", "network")} == {
+        "enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
+        "network": {"allowedDomains": [], "strictAllowlist": True}}
+    filesystem = cast(dict[str, list[str]], sandbox["filesystem"])
+    # macOS denies a root list instead of `/` (gh-131); the floor test below pins both platforms.
+    assert filesystem["denyRead"] == ["/"] if sys.platform != "darwin" else "/Users" in filesystem["denyRead"]
+    allowed = filesystem["allowRead"]
+    assert cast(str, calls(executable)[0]["cwd"]) in allowed
+    assert {"/usr", "/bin", "/lib", "/proc/self"} <= set(allowed)
+    assert not {"/", "/home", "/tmp", "/var", "/opt", "/srv", "/workspaces", "/etc", str(Path.home())} & set(allowed)
+    assert "Read(//home/**)" in cast(list[str], settings["permissions"]["deny"])
+    assert settings["disableBundledSkills"] is True
+
+
+@pytest.mark.ac("gh-322:AC-1")
+@pytest.mark.ac("gh-323:AC-1")
+def test_environment_keeps_the_subprocess_scrub_layer_off_and_disables_bundled_skills(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "token-value")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "token-value")
+    monkeypatch.setenv("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.transports["task"].invoke("hello")
+    finally:
+        session.close()
+    environment = cast(dict[str, str], calls(executable)[0]["environment"])
+    assert environment["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "0"
+    assert environment["CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"] == "1"
+    assert not set(TOKENS) & set(environment)
+    # On macOS the child keeps the real home, so Claude Code finds the Keychain login (gh-131).
+    assert environment["HOME"] == str(Path.home()) if sys.platform == "darwin" else environment["HOME"].endswith("/workspace/home")
+
+
+@pytest.mark.ac("gh-131:AC-13")
+def test_the_macos_floor_denies_host_roots_and_the_temp_root_but_linux_denies_everything(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Claude Code 2.1.309 on macOS does not reopen `allowRead` inside `denyRead: [\"/\"]`, so macOS denies a root list."""
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(sys, "platform", "linux")
+    linux = cast(dict[str, list[str]], cast(dict[str, object], _settings.settings(workspace)["sandbox"])["filesystem"])
+    assert linux["denyRead"] == ["/"]
+    monkeypatch.setattr(sys, "platform", "darwin")
+    temporary = tmp_path / "host-tmp"
+    temporary.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temporary))
+    out = tmp_path / "out"
+    config = tmp_path / "custom-config"
+    floor = _settings.settings(workspace, out, config=config)
+    darwin = cast(dict[str, list[str]], cast(dict[str, object], floor["sandbox"])["filesystem"])
+    denied = darwin["denyRead"]
+    assert "/" not in denied and len(denied) == len(set(denied))
+    assert {"/Users", "/home", "/Volumes", "/var/folders", "/private/var/folders", "/proc", str(Path.home())} <= set(denied)
+    assert {str(temporary), str(temporary.resolve()), str(out), str(config)} <= set(denied)
+    assert f"Read(/{config}/**)" in cast(dict[str, list[str]], floor["permissions"])["deny"]
+    assert str(workspace) in darwin["allowRead"] and str(workspace) not in denied
+
+
+def test_argv_or_settings_or_usage_usage_comes_from_the_json_result(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        result = session.transports["task"].invoke("hello")
+    finally:
+        session.close()
+    assert result["usage"] == {"input_tokens": 35, "cached_input_tokens": 20, "output_tokens": 7}
+    assert result["answer"] == {"result_json": "{}", "load_marker": ""}
+
+
+@pytest.mark.parametrize(("mode", "reason", "code"), [
+    ("auth-fail", "authentication", "login-missing"),
+    ("foreign-skill", "foreign skill", "preflight-leak"),
+    ("spoofed-plugin", "foreign plugin", "preflight-leak"),
+])
+def test_preflight_stops_on_isolation_failure_without_fallback(
+        tmp_path: Path, mode: str, reason: str, code: str, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    session = harness(tmp_path, executable)
+    try:
+        with pytest.raises(CodedError, match="isolation") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert reason in str(caught.value)
+    assert caught.value.code == code
+    assert "no unsafe fallback" in str(caught.value)
+    logged = calls(executable)
+    assert len(logged) == 1
+    assert all("--restricted" not in cast(list[str], call["argv"]) for call in logged)
+
+
+def test_the_builtin_claude_agent_is_not_a_leak() -> None:
+    builtin: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["general-purpose", "claude"]}
+    foreign: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["claude", "my-agent"]}
+    assert _events.find_leak([builtin], []) is None
+    assert "my-agent" in str(_events.find_leak([foreign], []))
+
+
+@pytest.mark.parametrize("agent", ["Claude", "claude-reviewer", "claude ", ""])
+def test_only_the_exact_claude_agent_name_is_builtin(agent: str) -> None:
+    event: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["claude", agent]}
+    assert _events.find_leak([event], []) is not None
+
+
+def test_a_declared_agent_next_to_the_builtin_claude_agent_is_not_a_leak() -> None:
+    event: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["claude", "mine"]}
+    from skillz_experiments.harness._claude._settings import Declared
+
+    declared = Declared(agents=frozenset({"mine"}))
+    assert _events.find_leak([event], [], declared=declared) is None
+
+def test_preflight_passes_when_only_the_probe_skill_loads(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "linux")  # macOS reads the Keychain, which holds no login file to link
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    roles = cast(dict[str, dict[str, object]], evidence["roles"])
+    assert roles["task"]["isolation"] == "passed"
+    assert roles["task"]["credential"] == "subscription login"
+    assert roles["task"]["live_calls"] == 1
+
+
+def test_preflight_charges_and_reports_every_live_call(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    logged = len(calls(executable))
+    assert logged == len(session.transports) >= 2
+    assert budget.calls == logged
+    assert evidence["live_calls"] == logged
+
+
+@needs_bwrap
+def test_preflight_passes_through_the_real_sandbox(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    assert evidence["live_calls"] == len(session.transports)
+
+
+def test_preflight_runs_the_isolation_probe_through_the_sandbox(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[list[str]] = []
+
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, seconds
+        seen.append(argv)
+        return 1, "", ""
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        with pytest.raises(CodedError, match="isolation preflight fails.*no unsafe fallback") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    assert seen and "read isolation failed" in seen[0][-1]
+    assert not executable.with_name("claude.log").exists()
+
+
+def test_preflight_stops_when_a_host_file_is_readable(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, "read-host")
+    session = harness(tmp_path, executable)
+    try:
+        with pytest.raises(CodedError, match="read isolation.*no unsafe fallback") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert "cat " in prompt
+
+
+def test_preflight_asks_the_read_tool_for_the_sealed_file_and_passes_when_it_is_denied(
+        tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    assert re.search(r"read the file `[^`]+/sealed` with the Read tool, not Bash", cast(str, calls(executable)[0]["prompt"]))
+    assert budget.calls == len(calls(executable)) == evidence["live_calls"]
+
+
+def test_the_preflight_prompt_asks_for_the_read_tool_before_any_denial_and_says_a_denial_is_expected(
+        tmp_path: Path, sandbox_passes: None) -> None:
+    """A live opus judge skipped the Read step after `cat` was denied, as a bypass. The prompt must not invite that."""
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable, Budget(10, 120, 0))
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert prompt.startswith(PROBE_PREAMBLE) and "a denial is the expected and correct result" in prompt
+    read = re.search(r"read the file `([^`]+/sealed)` with the Read tool", prompt)
+    assert read is not None and read.start() < prompt.index(f"`cat {read[1]}`"), prompt
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("read-tool-escape", "the Read tool reached a path outside the workspace"),
+    ("read-tool-skipped", "read-tool probe has no evidence"),
+])
+@pytest.mark.ac("gh-396:AC-3")
+def test_preflight_stops_when_the_read_tool_leaves_the_workspace_or_is_not_probed(
+        tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        with pytest.raises(CodedError, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    assert budget.calls == len(calls(executable))
+
+
+def test_environment_key_changes_when_the_read_probe_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    before = session.environment_key()
+    monkeypatch.setattr(_transport, "READ_PROBE", "other")
+    assert session.environment_key() != before
+
+
+def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, "bundled-skill"))
+    try:
+        assert session.preflight()["live_calls"] == len(session.transports)
+        original_settings = _settings.settings
+        original_environment = ClaudeCode._environment  # pyright: ignore[reportPrivateUsage]
+
+        def without_setting(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                            overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+            return {key: value for key, value in original_settings(workspace, out, config=config, overrides=overrides,
+                                                                   unix_sockets=unix_sockets).items()
+                    if key != "disableBundledSkills"}
+
+        def without_variable(self: ClaudeCode, workspace: Path) -> dict[str, str]:
+            return {key: value for key, value in original_environment(self, workspace).items()
+                    if key != "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS"}
+        monkeypatch.setattr(_transport, "settings", without_setting)
+        monkeypatch.setattr(ClaudeCode, "_environment", without_variable)
+        with pytest.raises(CodedError, match="foreign skill.*code-review"):
+            _ = session.preflight()
+    finally:
+        session.close()
+
+
+def test_auth_failure_without_an_init_event_is_reported_as_authentication(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, "no-init-auth"))
+    try:
+        with pytest.raises(CodedError, match="authentication failed.*no unsafe fallback") as caught:
+            _ = session.preflight()
+        assert caught.value.code == "login-missing"
+        with pytest.raises(RuntimeError, match="authentication failed"):
+            _ = session.transports["task"].invoke("hello", Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",)))
+    finally:
+        session.close()
+
+
+def test_candidate_that_discovery_does_not_load_scores_zero_instead_of_aborting(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path, "missing-skill"))
+    candidate = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",))
+    try:
+        result = session.transports["task"].invoke("hello", candidate)
+    finally:
+        session.close()
+    assert result["answer"] == {"result_json": "", "load_marker": ""}
+    assert result["events"] == []
+
+
+def test_preflight_runs_a_network_attempt_through_bash_and_records_the_denial(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    assert "connect_ex(('127.0.0.1'," in cast(str, calls(executable)[0]["prompt"])
+    assert cast(dict[str, dict[str, object]], evidence["roles"])["task"]["network"] == "denied"
+
+
+@pytest.mark.parametrize("mode", ["net-open", "net-http-open", "net-lie-connect"])
+def test_preflight_fails_with_a_code_when_the_listener_receives_the_token(
+        tmp_path: Path, mode: str, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed.*no unsafe fallback") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+@pytest.mark.parametrize("mode", ["net-skipped", "net-garbled", "net-lie", "net-no-curl", "net-exit-134", "net-exit-2",
+                                  "net-exit-5", "net-exit-6", "net-exit-22"])
+def test_preflight_fails_closed_when_the_network_output_is_missing_malformed_or_not_from_the_command(
+        tmp_path: Path, mode: str, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network probe has no evidence.*no unsafe fallback") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+@pytest.mark.parametrize("code", [0, 28, 56])
+def test_preflight_passes_when_curl_exits_with_a_code_that_shows_an_attempt(
+        tmp_path: Path, code: int, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, f"net-exit-{code}"))
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    assert cast(dict[str, dict[str, object]], evidence["roles"])["task"]["network"] == "denied"
+
+
+def test_a_network_leak_keeps_its_code_when_the_run_then_fails(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    original = cast(Callable[..., object], getattr(_transport, "process"))
+
+    def run_then_time_out(*args: object, **kwargs: object) -> object:
+        result = original(*args, **kwargs)
+        if "--input-format" in cast(list[str], args[0]):
+            return result
+        raise TimeoutError("deadline")
+    monkeypatch.setattr(_transport, "process", run_then_time_out)
+    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+@pytest.mark.ac("gh-396:AC-3")
+def test_the_listener_check_wins_over_the_write_check_and_keeps_the_network_code(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+
+    def write_must_not_run(events: list[dict[str, object]], files: list[str], wrote: bool, controlled: bool) -> str:
+        del events, files, wrote, controlled
+        raise AssertionError("the listener check must stop the preflight before the write check")
+    monkeypatch.setattr(_preflight, "write_failure", write_must_not_run)
+    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+def test_preflight_sends_the_http_probe_through_the_proxy_for_loopback_names(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert prompt.count("/usr/bin/curl --noproxy '' ") == 2
+    assert "http://localhost:" in prompt and "http://127.0.0.1:" in prompt
+
+
+def test_environment_key_changes_when_the_network_probe_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    before = session.environment_key()
+    monkeypatch.setattr(_transport, "NETWORK_PROBE", "other")
+    assert session.environment_key() != before
+
+
+def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    before = session.environment_key()
+    original = _settings.settings
+
+    def open_network(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                     overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+        changed = original(workspace, out, config=config, overrides=overrides, unix_sockets=unix_sockets)
+        changed["sandbox"] = cast(dict[str, object], changed["sandbox"]) | {
+            "network": {"allowedDomains": ["example.com"], "strictAllowlist": True}}
+        return changed
+    monkeypatch.setattr(_transport, "settings", open_network)
+    assert session.environment_key() != before
+
+
+def test_invoke_with_a_candidate_stops_when_a_foreign_skill_loads(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path, "foreign-skill"))
+    candidate = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",))
+    try:
+        with pytest.raises(CodedError, match="isolation") as caught:
+            _ = session.transports["task"].invoke("hello", candidate)
+        assert caught.value.code == "isolation-failed"
+    finally:
+        session.close()
+
+
+def test_candidate_run_records_bash_commands_as_completed_executions(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    candidate = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",))
+    try:
+        result = session.transports["task"].invoke("hello", candidate)
+    finally:
+        session.close()
+    events = cast(list[dict[str, object]], result["events"])
+    assert events[0]["item"] == {"type": "command_execution", "command": "cat .agents/skills/skillz/SKILL.md", "exit_code": 0}
+    assert cast(dict[str, object], result["answer"])["load_marker"] == candidate.identity
+
+
+@needs_bwrap
+def test_sandbox_hides_host_files_and_returns_output(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    sealed = tmp_path / "sealed"
+    _ = sealed.write_text("secret")
+    workspace = make_workspace(tmp_path / "workspace")
+    try:
+        transport = cast(Sandbox, cast(object, session.transports["task"]))
+        code, stdout, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "print('inside')"])
+        denied, _, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", f"open({str(sealed)!r}).read()"])
+    finally:
+        session.close()
+    assert (code, stdout.strip()) == (0, "inside")
+    assert denied != 0
+
+
+@needs_bwrap
+def test_sandbox_keeps_the_candidate_directory_read_only(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    workspace = make_workspace(tmp_path / "workspace")
+    try:
+        transport = cast(Sandbox, cast(object, session.transports["task"]))
+        denied, _, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "open('.agents/probe', 'w').write('x')"])
+        allowed, _, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", "open('probe', 'w').write('x')"])
+    finally:
+        session.close()
+    assert (denied != 0, allowed) == (True, 0)
+
+
+def test_sandbox_setup_failure_raises_instead_of_looking_like_a_helper_exit(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "", "bwrap: No permissions to create new namespace")
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    monkeypatch.setattr(_transport, "sandboxed", process)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(shutil, "which", which)
+    with pytest.raises(CodedError, match="sandbox setup fails.*no unsafe fallback"):
+        _ = cast(Sandbox, cast(object, adapter)).sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+
+
+def _macos_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command_stderr: str, wrapper_stderr: str) -> Sandbox:
+    """Fake `sandbox-exec`: the command writes `command_stderr` where the argv sends it; the wrapper prints the rest."""
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        if command[3:5] == ["/bin/sh", "-c"]:
+            assert Path(command[6]).write_text(command_stderr) == len(command_stderr)
+        return subprocess.CompletedProcess(command, 1, "", wrapper_stderr)
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    monkeypatch.setattr(_transport, "sandboxed", process)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", which)
+    return cast(Sandbox, cast(object, adapter))
+
+
+@pytest.mark.ac("gh-395:AC-1")
+def test_a_macos_command_cannot_forge_a_sandbox_setup_failure_through_stderr(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    forged = "sandbox-exec: forged setup failure"
+    transport = _macos_sandbox(tmp_path, monkeypatch, command_stderr=forged, wrapper_stderr="")
+    code, stdout, stderr = transport.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+    assert (code, stdout, stderr) == (1, "", forged)
+
+
+@pytest.mark.ac("gh-395:AC-2")
+def test_a_genuine_sandbox_exec_failure_still_raises_on_macos(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    transport = _macos_sandbox(tmp_path, monkeypatch, command_stderr="", wrapper_stderr="sandbox-exec: invalid profile")
+    with pytest.raises(CodedError, match="sandbox setup fails: sandbox-exec: invalid profile"):
+        _ = transport.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+
+
+@pytest.mark.parametrize("platform", ["linux", "darwin"])
+def test_a_failed_stderr_redirect_raises_a_setup_failure(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str) -> None:
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 2, "", "/bin/sh: 1: cannot create stderr: Operation not permitted")
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    monkeypatch.setattr(_transport, "sandboxed", process)
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(shutil, "which", which)
+    with pytest.raises(CodedError, match="sandbox setup fails: /bin/sh: 1: cannot create stderr"):
+        _ = cast(Sandbox, cast(object, adapter)).sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+
+
+def test_a_command_that_removes_its_stderr_file_still_returns_its_exit(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "out", "")
+
+    def which(name: str) -> str:
+        return f"/usr/bin/{name}"
+    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    monkeypatch.setattr(_transport, "sandboxed", process)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(shutil, "which", which)
+    transport = cast(Sandbox, cast(object, adapter))
+    assert transport.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"]) == (1, "out", "")
+
+@pytest.mark.parametrize(("platform", "tool"), [("linux", "bwrap"), ("darwin", "sandbox-exec")])
+def test_sandbox_without_its_platform_tool_fails_closed(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, tool: str) -> None:
+    def which(name: str) -> None:
+        del name
+    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    monkeypatch.setattr(sys, "platform", platform)
+    monkeypatch.setattr(shutil, "which", which)
+    with pytest.raises(CodedError, match=f"{tool} is unavailable; no unsafe fallback"):
+        _ = cast(Sandbox, cast(object, adapter)).sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
+
+
+def test_bubblewrap_argv_binds_the_candidate_directory_read_only_after_the_workspace() -> None:
+    workspace = Path("/w/workspace")
+    argv = sandbox_argv("linux", "/usr/bin/bwrap", workspace, ["/usr/bin/true"], {"PATH": "/usr/bin:/bin"})
+    binds = [(part, argv[index + 1]) for index, part in enumerate(argv) if part in ("--bind", "--ro-bind")]
+    assert ("--bind", "/w/workspace") in binds
+    assert binds.index(("--ro-bind", "/w/workspace/.agents")) > binds.index(("--bind", "/w/workspace"))
+    assert "--unshare-all" in argv and argv[-1] == "/usr/bin/true"
+
+
+def test_bubblewrap_argv_mounts_each_read_root_read_only_at_its_own_path() -> None:
+    argv = sandbox_argv("linux", "/usr/bin/bwrap", Path("/w/workspace"), ["/usr/bin/true"], {}, ("/opt/pw-browsers",))
+    index = argv.index("/opt/pw-browsers")
+    assert argv[index - 1:index + 2] == ["--ro-bind", "/opt/pw-browsers", "/opt/pw-browsers"]
+    assert argv.count("/opt/pw-browsers") == 2 and "--unshare-all" in argv
+
+
+def test_seatbelt_profile_allows_reads_only_of_each_read_root() -> None:
+    lines = command_profile(Path("/w/workspace"), ("/opt/pw-browsers",)).splitlines()
+    assert '(allow file-read* (subpath "/opt/pw-browsers"))' in lines
+    assert not any("/opt/pw-browsers" in line for line in lines if "write" in line or "network" in line)
+
+
+@needs_bwrap
+def test_a_bubblewrap_command_reads_a_read_root_and_serves_itself_on_loopback(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The capture case: read a browser root, start a server inside the sandbox, and reach it on loopback."""
+    monkeypatch.setattr(sys, "platform", "linux")
+    browsers = tmp_path / "browsers"
+    browsers.mkdir()
+    _ = (browsers / "chrome").write_text("browser")
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path),
+                         options=ClaudeOptions(sandbox_read=(str(browsers),)))
+    script = ("import pathlib,socket\n"
+              f"root=pathlib.Path({str(browsers.resolve())!r})\n"
+              "assert (root/'chrome').read_text()=='browser'\n"
+              "try: (root/'written').write_text('x')\n"
+              "except OSError: pass\n"
+              "else: raise SystemExit('read root is writable')\n"
+              "server=socket.create_server(('127.0.0.1',0))\n"
+              "client=socket.create_connection(server.getsockname(),timeout=2)\n"
+              "peer=server.accept()[0];client.sendall(b'ping')\n"
+              "print(peer.recv(4).decode())\n")
+    try:
+        code, output, _ = adapter.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/python3", "-c", script])
+    finally:
+        adapter.close()
+    assert (code, output.strip()) == (0, "ping")
+    assert not (browsers / "written").exists()
+
+
+def test_seatbelt_profile_denies_network_host_reads_and_candidate_writes() -> None:
+    profile = command_profile(Path("/w/workspace"))
+    lines = profile.splitlines()
+    assert lines[:2] == ["(version 1)", "(deny default)"]
+    assert not any("network" in line and line.startswith("(allow") for line in lines)
+    assert '(allow file-write* (subpath "/w/workspace"))' in lines
+    assert lines.index('(deny file-write* (subpath "/w/workspace/.agents"))') > lines.index(
+        '(allow file-write* (subpath "/w/workspace"))')
+    assert '(allow file-read* (subpath "/w/workspace"))' in lines
+    reads = [line for line in lines if line.startswith("(allow file-read*")]
+    assert all("/Users" not in line and "/private/tmp" not in line and "/var/folders" not in line for line in reads)
+
+
+def test_seatbelt_profile_allows_the_root_directory_literal_but_not_its_subtree() -> None:
+    lines = command_profile(Path("/w/workspace")).splitlines()
+    assert '(allow file-read* (literal "/"))' in lines
+    assert not any(line.startswith("(allow file-read*") and '(subpath "/")' in line for line in lines)
+
+
+def test_seatbelt_argv_runs_the_command_with_a_clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", "/nonexistent-developer-dir")
+    workspace = Path("/w/workspace")
+    argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", workspace, ["/usr/bin/python3", "-c", "pass"],
+                        {"PATH": "/usr/bin:/bin", "HOME": "/w/workspace/home"})
+    assert argv[:3] == ["/usr/bin/sandbox-exec", "-p", command_profile(workspace)]
+    assert argv[3:] == ["/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "HOME=/w/workspace/home",
+                        "/usr/bin/python3", "-c", "pass"]
+
+
+def test_seatbelt_argv_pins_the_xcrun_shim_to_the_allowed_developer_dir(tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    argv = sandbox_argv("darwin", "/usr/bin/sandbox-exec", Path("/w/workspace"), ["/usr/bin/python3"], {"PATH": "/usr/bin"})
+    assert argv[4:7] == ["-i", "PATH=/usr/bin", f"DEVELOPER_DIR={tmp_path}"]
+
+
+def test_seatbelt_environment_pins_only_an_existing_developer_dir(tmp_path: Path,
+                                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments.harness import seatbelt_environment
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    assert seatbelt_environment() == [f"DEVELOPER_DIR={tmp_path}"]
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path / "missing"))
+    assert seatbelt_environment() == []
+
+
+def test_sandbox_fix_on_darwin_does_not_suggest_linux_packages(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", "darwin")
+    fix = sandbox_fix("sandbox probe failed")
+    assert "sandbox-exec" in fix
+    assert not any(word in fix for word in ("apt", "bwrap", "bubblewrap", "apparmor"))
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", "linux")
+    assert "bubblewrap" in sandbox_fix("sandbox probe failed")
+
+
+@pytest.mark.parametrize(("platform", "expected"), [("darwin", "sandbox-exec"), ("linux", "bubblewrap")])
+def test_doctor_sandbox_probe_row_fix_matches_the_platform(platform: str, expected: str,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    class Failing:
+        def check_helper_sandbox(self) -> None:
+            raise RuntimeError("sandbox probe failed")
+
+        def inventory(self) -> NoReturn:
+            raise RuntimeError("no inventory")
+
+    monkeypatch.setattr("skillz_experiments.harness._claude._sandbox.sys.platform", platform)
+    row = _transport._probe_checks(cast(ClaudeCode, cast(object, Failing())), True)[0]  # pyright: ignore[reportPrivateUsage]
+    fix = row.fix or ""
+    assert row.name == "sandbox-probe" and row.status == "fail"
+    assert expected in fix
+    assert ("bubblewrap" in fix) == (platform == "linux")
+
+
+def probe_assertion() -> str:
+    from skillz_experiments.harness._isolation import probe
+    script = probe(Path("/w"), Path("/s"), Path("/e"), 1)
+    return next(line for line in script.splitlines() if line.startswith("assert set(os.environ)"))
+
+
+@pytest.mark.parametrize(("platform", "accepted"), [("darwin", True), ("linux", False)])
+def test_probe_environment_assertion_accepts_xcrun_names_only_on_darwin(platform: str, accepted: bool,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    from skillz_experiments.harness._seatbelt import XCRUN_ENVIRONMENT
+    line = probe_assertion()
+    environment = {"PATH": "/usr/bin", **{name: "x" for name in XCRUN_ENVIRONMENT}}
+    monkeypatch.setattr(os, "environ", environment)
+    names = {"os": os, "sys": SimpleNamespace(platform=platform)}
+    if accepted:
+        exec(line, names)
+    else:
+        with pytest.raises(AssertionError):
+            exec(line, names)
+
+
+@pytest.mark.parametrize("platform", ["darwin", "linux"])
+def test_probe_environment_assertion_rejects_a_foreign_name(platform: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    monkeypatch.setattr(os, "environ", {"PATH": "/usr/bin", "SDKROOT": "/sdk", "ANTHROPIC_API_KEY": "secret"})
+    with pytest.raises(AssertionError):
+        exec(probe_assertion(), {"os": os, "sys": SimpleNamespace(platform=platform)})
+
+
+def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    adapter = session.transports["task"]
+    good = echo_candidate(tmp_path)
+    broken = Candidate({"SKILL.md": "---\nname: echo-skill\n---\n"}, ("SKILL.md",), contract=good.contract)
+    quoted = Candidate({"SKILL.md": '---\nname: "echo-skill"\ndescription: x\n---\n'}, ("SKILL.md",), contract=good.contract)
+    try:
+        assert adapter.check_candidate(good).passed
+        assert adapter.check_candidate(broken) == CheckResult(False, None, "fail")
+        assert adapter.check_candidate(quoted).passed
+    finally:
+        session.close()
+
+
+def test_nested_helper_fixture_runs_through_claude_adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    contract = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill",
+                      "invocation": "$echo-skill run", "kinds": {"echo": {"grader": "exact-json"}},
+                      "helper": {"path": "scripts/echo.py", "input": "fixtures/nested/input.md",
+                                 "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]}}, "skill")
+    candidate = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: echo\n---\n",
+                           "scripts/echo.py": "print(1)\n"}, ("SKILL.md", "scripts/echo.py"), contract)
+
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, seconds
+        assert argv[-1] == "fixtures/nested/input.md"
+        assert (workspace / argv[-1]).read_text() == "hi"
+        return 0, '{"ok": true}', ""
+
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    adapter = harness(tmp_path, fake_claude(tmp_path))
+    try:
+        assert adapter.transports["task"].check_candidate(candidate).passed
+    finally:
+        adapter.close()
+
+
+def _failing_helper_candidate() -> Candidate:
+    contract = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill",
+                      "invocation": "$echo-skill run", "kinds": {"echo": {"grader": "exact-json"}},
+                      "helper": {"path": "scripts/echo.py", "input": "input.md",
+                                 "fixtures": [{"input": "hi", "returncode": 3, "output": None,
+                                               "error": {"error": "echo: bad", "exit_code": 3}}]}}, "skill")
+    return Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: echo\n---\n",
+                      "scripts/echo.py": "print(1)\n"}, ("SKILL.md", "scripts/echo.py"), contract)
+
+
+@pytest.mark.ac("gh-312:AC-1")
+@pytest.mark.parametrize(("stderr", "accepted"), [('{"error": "echo: bad", "exit_code": 3}', True), ("", False),
+                                                  ('{"error": "echo: other", "exit_code": 3}', False)])
+def test_check_candidate_compares_the_helper_stderr_with_the_fixture_error(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stderr: str, accepted: bool) -> None:
+    def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        return 3, "", stderr
+
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    adapter = harness(tmp_path, fake_claude(tmp_path))
+    try:
+        result = adapter.transports["task"].check_candidate(_failing_helper_candidate())
+        assert result == (CheckResult(True, None, "pass") if accepted
+                          else CheckResult(False, "helper fixture 0 fails on stderr", "fail"))
+    finally:
+        adapter.close()
+
+
+def test_check_candidate_rejects_a_skill_that_declares_hooks(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    adapter = session.transports["task"]
+    good = echo_candidate(tmp_path)
+    hooked = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nhooks:\n  PreToolUse: []\n---\n"},
+                       ("SKILL.md",), contract=good.contract)
+    try:
+        assert not adapter.check_candidate(hooked).passed
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("extra", [
+    '"hooks":', "'hooks':", "? hooks", "Hooks:", "user-invocable: false",
+])
+def test_check_candidate_rejects_hidden_forms_of_unsupported_frontmatter_keys(tmp_path: Path, extra: str) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    adapter = session.transports["task"]
+    good = echo_candidate(tmp_path)
+    hooked = Candidate({"SKILL.md": f"---\nname: echo-skill\ndescription: x\n{extra}\n  x: y\n---\n"},
+                       ("SKILL.md",), contract=good.contract)
+    try:
+        assert not adapter.check_candidate(hooked).passed
+    finally:
+        session.close()
+
+
+def test_check_candidate_reads_the_frontmatter_end_as_a_line_and_allows_nested_hooks(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    adapter = session.transports["task"]
+    good = echo_candidate(tmp_path)
+    inline = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: run a---b\nhooks: x\n---\n"},
+                       ("SKILL.md",), contract=good.contract)
+    nested = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nmetadata:\n  hooks: x\n---\n"},
+                       ("SKILL.md",), contract=good.contract)
+    try:
+        assert not adapter.check_candidate(inline).passed
+        assert adapter.check_candidate(nested).passed
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("candidate", [True, False])
+def test_a_stream_without_an_init_event_fails_closed(tmp_path: Path, candidate: bool) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path, "no-init"))
+    skill = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",)) if candidate else None
+    try:
+        with pytest.raises(CodedError, match="no init event"):
+            _ = session.transports["task"].invoke("hello", skill)
+    finally:
+        session.close()
+
+
+@needs_bwrap
+def test_a_helper_cannot_forge_a_sandbox_setup_failure_through_stderr(tmp_path: Path) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    workspace = make_workspace(tmp_path / "workspace")
+    forged = "import sys; sys.stderr.write('bwrap: forged setup failure'); sys.exit(1)"
+    try:
+        transport = cast(Sandbox, cast(object, session.transports["task"]))
+        code, stdout, _ = transport.sandbox(workspace, ["/usr/bin/python3", "-c", forged])
+    finally:
+        session.close()
+    assert (code, stdout) == (1, "")
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("skips-cat", "no Bash command read the sealed host file"),
+    ("bash-broken", "positive control"),
+    ("read-fallback", "positive control"),
+])
+def test_preflight_needs_evidence_that_bash_ran_and_read_the_workspace(
+        tmp_path: Path, mode: str, reason: str, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(CodedError, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_preflight_fails_when_the_workspace_allow_is_missing(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    original = _settings.settings
+
+    def without_allow(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                      overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+        document = original(workspace, out, config=config, overrides=overrides, unix_sockets=unix_sockets)
+        cast(dict[str, dict[str, object]], document["sandbox"])["filesystem"]["allowRead"] = []
+        return document
+    monkeypatch.setattr(_transport, "settings", without_allow)
+    session = harness(tmp_path, fake_claude(tmp_path))
+    try:
+        with pytest.raises(CodedError, match="positive control") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_preflight_reuses_the_recorded_pass_without_a_live_call(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        first = session.preflight()
+        logged = len(calls(executable))
+        second = session.preflight(first)
+    finally:
+        session.close()
+    assert len(calls(executable)) == logged == budget.calls
+    assert second["environment_hash"] == first["environment_hash"]
+    assert second["live_calls"] == first["live_calls"] == logged
+
+
+def test_preflight_fails_without_a_charge_when_the_role_fingerprint_changes(
+        tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        first = session.preflight()
+        logged = len(calls(executable))
+        stale = dict(first) | {"reuse_keys": {name: "other-fingerprint" for name in session.transports}}
+        with pytest.raises(ValueError, match="runtime environment differs"):
+            _ = session.preflight(stale)
+    finally:
+        session.close()
+    assert len(calls(executable)) == budget.calls == logged
+
+
+def test_preflight_fails_without_a_charge_when_the_environment_changes(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        first = session.preflight()
+        logged = len(calls(executable))
+        monkeypatch.setattr(_transport, "TOOLS", "Bash,Read,Skill,Write")
+        with pytest.raises(ValueError, match="runtime environment differs"):
+            _ = session.preflight(first)
+    finally:
+        session.close()
+    assert len(calls(executable)) == budget.calls == logged
+
+
+def test_preflight_runs_the_free_sandbox_probe_when_it_reuses_a_pass(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runs: list[int] = []
+
+    def sandbox(self: object, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+        del self, workspace, argv, seconds
+        runs.append(1)
+        return (0, "isolation-ok\n", "") if len(runs) <= len(session.transports) else (1, "", "")
+    monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable, Budget(10, 120, 0))
+    try:
+        first = session.preflight()
+        logged = len(calls(executable))
+        with pytest.raises(CodedError, match="sandbox probe failed") as caught:
+            _ = session.preflight(first)
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    assert len(calls(executable)) == logged
+
+
+def test_settings_allow_only_the_minimal_device_nodes(tmp_path: Path) -> None:
+    filesystem = cast(dict[str, dict[str, list[str]]], _settings.settings(tmp_path)["sandbox"])["filesystem"]
+    allowed = set(filesystem["allowRead"])
+    assert {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"} <= allowed
+    assert not {"/dev", "/dev/tty"} & allowed
+
+
+def test_codex_event_stream_with_deeply_nested_json_is_an_invalid_stream_not_a_recursion_error() -> None:
+    with pytest.raises(RuntimeError, match="invalid Codex JSON event stream"):
+        _ = _codex._events("[" * 200_000)  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.usefixtures("umask_022")
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-1")
+def test_linux_environment_links_only_the_credential_and_forwards_no_token(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_login: Path) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    for name in TOKENS:
+        monkeypatch.setenv(name, "token-value")
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    config_dir = cast(ClaudeCode, session.transports["task"]).config_dir
+    try:
+        _ = session.transports["task"].invoke("hello")
+        assert stat.S_IMODE(config_dir.stat().st_mode) == 0o700
+    finally:
+        session.close()
+    call = calls(executable)[0]
+    environment = cast(dict[str, str], call["environment"])
+    workspace = Path(cast(str, call["cwd"]))
+    assert not set(TOKENS) & set(environment)
+    assert Path(environment["HOME"]) == workspace / "home"
+    assert Path(environment["CLAUDE_CONFIG_DIR"]) == config_dir
+    assert config_dir.parent == Path(tempfile.gettempdir()) and config_dir.name.startswith("skillz-claude-config-")
+    assert not config_dir.is_relative_to(workspace)
+    assert call["config_entries"] == {".credentials.json": str(host_login.resolve())}
+    settings = cast(dict[str, dict[str, list[str]]], json.loads(cast(str, call["settings"])))
+    assert f"Read(/{tempfile.gettempdir()}/skillz-claude-config-*/**)" in settings["permissions"]["deny"]
+
+
+@linux_only
+def test_the_login_comes_from_the_host_config_dir_when_it_is_set(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    other = tmp_path / "other-config"
+    other.mkdir()
+    _ = (other / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(other))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    try:
+        assert os.readlink(adapter.config_dir / ".credentials.json") == str((other / ".credentials.json").resolve())
+    finally:
+        adapter.close()
+
+
+@linux_only
+def test_a_missing_login_is_coded_with_a_fix_hint(tmp_path: Path, host_login: Path) -> None:
+    host_login.unlink()
+    with pytest.raises(CodedError, match="run `claude` once and log in") as caught:
+        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    assert caught.value.code == "login-missing"
+    assert not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
+
+
+@linux_only
+def test_close_deletes_the_config_dir(tmp_path: Path) -> None:
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    directory = adapter.config_dir
+    assert [path.name for path in directory.iterdir()] == [".credentials.json"]
+    adapter.close()
+    assert not directory.exists()
+    adapter.close()
+
+
+@darwin_only
+def test_macos_uses_the_host_config_dir_and_links_no_login(tmp_path: Path, host_login: Path) -> None:
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    try:
+        assert adapter.config_dir == host_login.parent
+        assert adapter.login.credential is None
+        assert not os.path.islink(host_login)
+        assert not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
+    finally:
+        adapter.close()
+
+
+@darwin_only
+def test_macos_takes_the_config_dir_from_the_environment_and_close_keeps_it(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    other = tmp_path / "other-config"
+    other.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(other))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    assert adapter.config_dir == other
+    adapter.close()
+    adapter.close()
+    assert other.is_dir()
+
+
+def _login(token: str = "a", **extra: str) -> str:
+    return json.dumps({"claudeAiOauth": {"accessToken": token, "refreshToken": f"r-{token}"}, **extra})
+
+
+@pytest.mark.parametrize(("change", "code"), [
+    ("regular-file", "credential-changed"), ("repointed", "credential-changed"), ("removed", "credential-changed"),
+    ("target-replaced", "credential-rotated"), ("target-replaced-by-a-logout", "credential-changed")])
+def test_close_reports_how_the_login_changed_and_deletes_the_config_dir(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch, change: str, code: str) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    original = host_login.read_text()
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    directory = adapter.config_dir
+    link = directory / ".credentials.json"
+    other = tmp_path / "other.json"
+    _ = other.write_text("{\"other\": true}" if change.endswith("logout") else _login("other"))
+    if change == "regular-file":
+        link.unlink()
+        _ = link.write_text("not json")
+    elif change == "repointed":
+        link.unlink()
+        link.symlink_to(other)
+    elif change == "removed":
+        link.unlink()
+    else:
+        os.replace(other, host_login)
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == code
+    if code == "credential-changed":
+        assert "Log in again" in str(caught.value)
+    assert not directory.exists()
+    if not change.startswith("target-replaced"):
+        assert host_login.read_text() == original
+
+
+def test_close_copies_a_refreshed_login_back_while_the_real_file_is_unchanged(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    directory = adapter.config_dir
+    link = directory / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(_login("refreshed"))
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == "credential-refreshed"
+    real = host_login.resolve()
+    assert real.read_text() == _login("refreshed") and stat.S_IMODE(real.stat().st_mode) == 0o600
+    assert not directory.exists() and not list(real.parent.glob(".*.skillz-*"))
+
+
+@pytest.mark.parametrize("refreshed", ["{\"token\": \"refreshed\"}", json.dumps({"claudeAiOauth": {"accessToken": "a"}}),
+                                       json.dumps({"claudeAiOauth": {"accessToken": "", "refreshToken": "r"}}),
+                                       _login("refreshed", extra="key"), "[]"])
+def test_close_refuses_a_refreshed_file_that_is_not_the_same_kind_of_login(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch, refreshed: str) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    link = adapter.config_dir / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(refreshed)
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == "credential-changed" and host_login.read_text() == _login()
+
+
+def test_close_never_overwrites_a_login_that_another_process_also_replaced(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    link = adapter.config_dir / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(_login("ours"))
+    newer = tmp_path / "newer.json"
+    _ = newer.write_text(_login("theirs"))
+    os.replace(newer, host_login.resolve())
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == "credential-changed"
+    assert host_login.resolve().read_text() == _login("theirs")
+
+
+def test_every_claude_role_of_a_harness_shares_one_config_dir_and_the_login_closes_once(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    session = harness(tmp_path, fake_claude(tmp_path))
+    transports = [cast(ClaudeCode, transport) for transport in session.transports.values()]
+    directories = {transport.config_dir for transport in transports}
+    assert len(directories) == 1 and len({transport.credential for transport in transports}) == 1
+    directory = next(iter(directories))
+    link = directory / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(_login("refreshed"))
+    with pytest.raises(CodedError) as caught:
+        session.close()
+    assert caught.value.code == "credential-refreshed"
+    assert host_login.resolve().read_text() == _login("refreshed") and not directory.exists()
+    session.close()
+
+
+@final
+class _FailingClose:
+    def __init__(self, error: Exception) -> None:
+        self.error: Exception = error
+
+    def close(self) -> None:
+        raise self.error
+
+
+@linux_only
+@pytest.mark.parametrize(("codes", "winner"), [
+    (["credential-refreshed", "credential-changed"], "credential-changed"),
+    (["credential-changed", "credential-rotated"], "credential-changed"),
+    (["credential-rotated", "other"], "other"),
+    (["other", "isolation-failed", "credential-refreshed"], "isolation-failed")])
+def test_harness_close_closes_every_transport_and_raises_the_most_severe_error(
+        tmp_path: Path, codes: list[str], winner: str) -> None:
+    session = harness(tmp_path, fake_claude(tmp_path))
+    directory = cast(ClaudeCode, session.transports["task"]).config_dir
+    session.transports = cast("dict[str, Transport]", {
+        f"role{index}": _FailingClose(CodedError(code, code)) for index, code in enumerate(codes)})
+    with pytest.raises(CodedError) as caught:
+        session.close()
+    assert caught.value.code == winner
+    assert not directory.exists()
+
+
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-3")
+def test_macos_uses_the_real_config_dir_and_preflight_rejects_foreign_init_entries(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    adapter = cast(ClaudeCode, session.transports["task"])
+    try:
+        assert adapter.config_dir == real and adapter.credential is None
+        evidence = session.preflight()
+        first = calls(executable)[0]
+        assert cast(dict[str, str], first["environment"])["CLAUDE_CONFIG_DIR"] == str(real)
+        assert first["config_entries"] == {".credentials.json": "file"}
+        assert evidence["live_calls"] == len(session.transports)
+        for mode, kind in [("foreign-skill", "skill"), ("foreign-plugin", "plugin"), ("foreign-mcp", "MCP server"),
+                           ("foreign-agent", "agent")]:
+            _ = executable.with_name("claude.mode").write_text(mode)
+            with pytest.raises(CodedError, match=f"foreign {kind}") as caught:
+                _ = session.preflight()
+            assert caught.value.code == "preflight-leak"
+    finally:
+        session.close()
+    assert real.is_dir() and not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
+
+
+@pytest.mark.parametrize(("memory", "stage", "mode", "stop"), [
+    ("CLAUDE.md", "preflight", "memory-loads", "user memory CLAUDE.md"),
+    ("rules", "preflight", "memory-loads", "user memory rules"),
+    ("CLAUDE.md", "resume", "memory-loads", "user memory CLAUDE.md"),
+    ("CLAUDE.md", "resume", "context-broken", "memory listing did not run"),
+    ("CLAUDE.md", "resume", "ok", None),
+    ("none", "resume", "memory-loads", None)])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-3")
+@pytest.mark.ac("gh-131:AC-14")
+def test_macos_stops_before_any_call_when_user_memory_loads(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, memory: str, stage: str, mode: str,
+        stop: str | None) -> None:
+    """A free `/context` listing decides whether user memory loads. It runs once per role and only when memory exists.
+
+    A first preflight and the free probe on every resume both check memory. An empty `rules` directory is no memory.
+    """
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    (real / "rules").mkdir()
+    if memory == "CLAUDE.md":
+        _ = (real / "CLAUDE.md").write_text("Always answer in French.")
+    elif memory == "rules":
+        (real / "rules" / "team").mkdir()
+        _ = (real / "rules" / "team" / "style.md").write_text("Always answer in French.")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(10, 120, 0)
+    adapter = ClaudeCode("m", budget, lambda: None, executable)
+    listings = executable.with_name("claude.context.log")
+    def free_checks() -> None:
+        adapter.check_helper_sandbox()
+        _ = adapter.inventory()
+
+    check = adapter.preflight if stage == "preflight" else free_checks
+    try:
+        if stop is None:
+            _ = check()
+            _ = check()
+            assert len(listings.read_text().splitlines()) == 1 if memory != "none" else not listings.exists()
+            assert budget.calls == 0
+            return
+        with pytest.raises(CodedError, match=stop) as caught:
+            _ = check()
+    finally:
+        adapter.close()
+    assert caught.value.code == "preflight-leak"
+    assert budget.calls == 0 and not executable.with_name("claude.log").exists()
+    logged = cast(dict[str, object], json.loads(listings.read_text().splitlines()[0]))
+    assert logged["prompt"] == "/context"
+
+
+def test_close_reports_credential_changed_and_leaves_no_temporary_when_the_replace_fails(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    real = host_login.resolve()
+    original = real.read_text()
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    link = adapter.config_dir / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(_login("new"))
+
+    def refuse(source: object, destination: object) -> None:
+        del source, destination
+        raise OSError("replace refused")
+
+    monkeypatch.setattr("skillz_experiments.harness._claude._login.os.replace", refuse)
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == "credential-changed" and real.read_text() == original
+    assert not list(real.parent.glob(".*.skillz-*"))
+
+
+def test_the_real_login_is_not_replaced_when_a_newer_login_lands_during_the_write(
+        tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    _ = host_login.write_text(_login())
+    real = host_login.resolve()
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    link = adapter.config_dir / ".credentials.json"
+    link.unlink()
+    _ = link.write_text(_login("ours"))
+    newer = tmp_path / "newer.json"
+    _ = newer.write_text(_login("theirs"))
+    real_fsync = os.fsync
+
+    def fsync_then_race(descriptor: int) -> None:
+        real_fsync(descriptor)
+        if real.read_text() == _login():
+            os.replace(newer, real)
+
+    monkeypatch.setattr("skillz_experiments.harness._claude._login.os.fsync", fsync_then_race)
+    with pytest.raises(CodedError) as caught:
+        adapter.close()
+    assert caught.value.code == "credential-changed" and real.read_text() == _login("theirs")
+    assert not list(real.parent.glob(".*.skillz-*"))
+
+
+def test_user_memory_counts_only_markdown_rules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rules = tmp_path / "rules"
+    rules.mkdir()
+    _ = (rules / ".DS_Store").write_text("x")
+    _ = (rules / "README.txt").write_text("x")
+    assert claude_login.user_memory(tmp_path) == []
+    _ = (rules / "style.md").write_text("x")
+    assert claude_login.user_memory(tmp_path) == ["rules"]
+
+    def unreadable(self: Path, pattern: str) -> list[Path]:
+        del self, pattern
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "rglob", unreadable)
+    with pytest.raises(CodedError, match="cannot be scanned") as caught:
+        _ = claude_login.user_memory(tmp_path)
+    assert caught.value.code == "preflight-leak"
+
+
+def test_macos_checks_user_memory_before_every_invocation(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_login: Path) -> None:
+    del host_login
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    executable = fake_claude(tmp_path, "memory-loads")
+    budget = Budget(10, 120, 0)
+    adapter = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        _ = adapter.invoke("hello")
+        assert budget.calls == 1 and not executable.with_name("claude.context.log").exists()
+        _ = (real / "CLAUDE.md").write_text("Always answer in French.")
+        with pytest.raises(CodedError, match="user memory CLAUDE.md in the real config directory") as caught:
+            _ = adapter.invoke("hello")
+    finally:
+        adapter.close()
+    assert caught.value.code == "preflight-leak" and budget.calls == 1
+    assert len(calls(executable)) == 1
+
+
+@pytest.mark.parametrize("configured", [False, True])
+@pytest.mark.ac("gh-131:AC-15")
+def test_macos_child_keeps_the_real_home_and_user_so_the_keychain_login_resolves(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, host_login: Path, configured: bool) -> None:
+    """A changed `HOME`, an unset `USER`, or a `CLAUDE_CONFIG_DIR` the host did not set each hide the Keychain login."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.delenv("USER", raising=False)
+    monkeypatch.delenv("LOGNAME", raising=False)
+    if configured:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(host_login.parent))
+    executable = fake_claude(tmp_path)
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        _ = adapter.invoke("hello")
+    finally:
+        adapter.close()
+    environment = cast(dict[str, str], calls(executable)[0]["environment"])
+    user = pwd.getpwuid(os.getuid()).pw_name
+    assert environment["HOME"] == str(Path.home()) == str(host_login.parents[1])
+    assert environment["USER"] == environment["LOGNAME"] == user
+    assert environment.get("CLAUDE_CONFIG_DIR") == (str(host_login.parent) if configured else None)
+    floor = cast(dict[str, dict[str, object]], json.loads(cast(str, calls(executable)[0]["settings"])))
+    config = str(host_login.parent) if configured else str(Path.home() / ".claude")
+    assert config in cast(dict[str, list[str]], floor["sandbox"]["filesystem"])["denyRead"]
+    assert f"Read(/{config}/**)" in cast(list[str], floor["permissions"]["deny"])
+    assert environment["TMPDIR"].endswith("/tmp") and environment["TMPDIR"] != tempfile.gettempdir()
+
+
+@pytest.mark.ac("gh-131:AC-14")
+def test_listed_memory_names_only_memory_that_the_context_report_shows(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    (real / "rules").mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    report = f"## Context Usage\n| User | {real / 'rules' / 'style.md'} | 9 |\n"
+    assert claude_login.listed_memory(report, real, ["CLAUDE.md", "rules"]) == ["rules"]
+    assert claude_login.listed_memory(report, link, ["CLAUDE.md", "rules"]) == ["rules"]
+    assert claude_login.listed_memory("## Context Usage\n", real, ["CLAUDE.md", "rules"]) == []
+    home = Path.home() / ".claude"
+    tilde = "## Context Usage\n| User | ~/.claude/CLAUDE.md | 9 |\n"
+    assert claude_login.listed_memory(tilde, home, ["CLAUDE.md", "rules"]) == ["CLAUDE.md"]
+    moved = "## Context Usage\n| User | /elsewhere/CLAUDE.md | 9 |\n| Project | /w/CLAUDE.md | 9 |\n"
+    assert claude_login.listed_memory(moved, real, ["CLAUDE.md", "rules"]) == ["CLAUDE.md", "rules"]
+    project = "## Context Usage\n| Project | /w/CLAUDE.md | 9 |\n"
+    assert claude_login.listed_memory(project, real, ["CLAUDE.md"]) == []
+
+
+@pytest.mark.parametrize(("outcome", "seconds", "code"), [
+    ("auth", 120, "login-missing"),
+    ("timeout", 120, "preflight-leak"),
+    ("timeout", 30, None)])
+@pytest.mark.ac("gh-131:AC-14")
+def test_a_failed_context_listing_names_the_login_or_the_timeout(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, seconds: float, code: str | None) -> None:
+    """A login fault stops as `login-missing`, a listing past its 60 s window as `preflight-leak`, and a short budget
+    as the budget stop itself."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    config = tmp_path / "config"
+    config.mkdir()
+    _ = (config / "CLAUDE.md").write_text("Always answer in French.")
+    timeouts: list[float] = []
+
+    def start(workspace: Path, text: str, timeout: float) -> subprocess.CompletedProcess[str]:
+        del workspace
+        timeouts.append(timeout)
+        assert text == "/context"
+        if outcome == "timeout":
+            raise BudgetExhausted("timed out")
+        return subprocess.CompletedProcess(["claude"], 1, "", "Invalid API key · Please run /login")
+
+    memory = _memory.UserMemory(config, Budget(10, seconds, 0), start)
+    if code is None:
+        with pytest.raises(BudgetExhausted):
+            memory.check()
+    else:
+        with pytest.raises(CodedError) as caught:
+            memory.check()
+        assert caught.value.code == code
+    assert len(timeouts) == 1 and timeouts[0] <= min(60, seconds)
+
+@pytest.mark.parametrize(("case", "fix", "task_calls"), [
+    ("bwrap-missing", "install bubblewrap", 0),
+    ("userns-restricted", "kernel.apparmor_restrict_unprivileged_userns=0", 0),
+    ("socat-missing", "install socat", 0),
+    ("live-sandbox-failure", "install bubblewrap", 1),
+])
+@pytest.mark.ac("skillz-pragmatic-autoimprove:AC-4")
+def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, fix: str, task_calls: int) -> None:
+    real_which = shutil.which
+    missing = {"bwrap-missing": "bwrap", "socat-missing": "socat"}.get(case)
+
+    def which(name: str) -> str | None:
+        return None if name == missing else real_which(name) or f"/usr/bin/{name}"
+
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "", "bwrap: setting up uid map: Permission denied")
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(shutil, "which", which)
+    if case == "socat-missing":
+        monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ("socat",))
+    if case == "userns-restricted":
+        monkeypatch.setattr(_transport, "sandboxed", process)
+    if case == "live-sandbox-failure":
+        def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
+            del self, workspace, argv, seconds
+            return 0, "isolation-ok\n", ""
+        monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
+    executable = fake_claude(tmp_path, "sandbox-unavailable" if case == "live-sandbox-failure" else "ok")
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "sandbox-unavailable"
+    assert fix in str(caught.value) and "no unsafe fallback" in str(caught.value)
+    assert budget.calls == task_calls == (len(calls(executable)) if task_calls else 0)
+
+
+def test_settings_deny_reading_proc_and_the_run_directory(tmp_path: Path) -> None:
+    out = tmp_path / "run"
+    out.mkdir()
+    deny = cast(dict[str, list[str]], _settings.settings(tmp_path / "workspace", out)["permissions"])["deny"]
+    assert {"Read(//proc/**)", f"Read(/{out}/**)", f"Read(/{out.resolve()}/**)"} <= set(deny)
+    assert f"Read(/{out}/**)" not in cast(dict[str, list[str]], _settings.settings(tmp_path / "workspace")["permissions"])["deny"]
+
+
+def test_environment_key_changes_with_the_run_directory(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    first = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, tmp_path / "a")
+    second = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, tmp_path / "b")
+    try:
+        assert first.environment_key() != second.environment_key()
+    finally:
+        first.close()
+        second.close()
+
+
+def test_environment_key_pins_the_documented_payload_with_the_fixed_isolation_entry(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    settings: dict[str, object] = {"sandbox": {"enabled": True}}
+    environment = {"PATH": "/bin", "CLAUDE_CONFIG_DIR": "/config", "LANG": "C.UTF-8"}
+    def floor(self: ClaudeCode, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
+        del self, workspace, overrides
+        return settings
+
+    def fixed_environment(self: ClaudeCode, workspace: Path) -> dict[str, str]:
+        del self, workspace
+        return environment
+
+    monkeypatch.setattr(ClaudeCode, "_floor", floor)
+    monkeypatch.setattr(ClaudeCode, "_environment", fixed_environment)
+    try:
+        key = adapter.environment_key()
+    finally:
+        adapter.close()
+    assert key == digest({"settings": settings, "environment": {"PATH": "/bin", "LANG": "C.UTF-8"}, "tools": _transport.TOOLS,
+                          "skill": _constants.PROBE_PREFIX, "platform": sys.platform, "network_probe": _transport.NETWORK_PROBE,
+                          "read_probe": _transport.READ_PROBE, "setting_sources": _transport.SETTING_SOURCES,
+                          "isolation": "claude"})
+
+
+def inventory_calls(executable: Path) -> list[dict[str, object]]:
+    log = executable.with_name("claude.inventory.log")
+    return [cast(dict[str, object], json.loads(line)) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def live_settings(executable: Path) -> dict[str, object]:
+    return cast(dict[str, object], json.loads(cast(str, calls(executable)[0]["settings"])))
+
+
+@pytest.fixture
+def short_tempdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Use a short temp root, so a preflight Unix socket path stays under the AF_UNIX length limit.
+
+    The socket probe also binds an abstract socket, which exists only on Linux, so the test skips elsewhere.
+    """
+    if not LINUX_HOST:
+        pytest.skip("abstract Unix sockets exist only on Linux")
+    directory = Path(tempfile.mkdtemp(prefix="skz", dir="/tmp"))
+    monkeypatch.setattr(tempfile, "tempdir", str(directory))
+    yield directory
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+def test_preflight_allows_claude_codes_own_commands_and_builtin_plugins(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    assert evidence["live_calls"] == len(session.transports)
+    assert "skillOverrides" not in live_settings(executable)
+    assert len(inventory_calls(executable)) == len(session.transports)
+
+
+def test_inventory_turns_off_an_account_skill_without_a_model_call(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, "account-skill")
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        inventory = transport.inventory()
+        assert budget.calls == 0 and calls_or_none(executable) is None
+        _ = transport.preflight()
+    finally:
+        transport.close()
+    assert inventory.foreign == {"anthropic-skills:pdf"} and {"design", "doctor"} <= inventory.builtin
+    assert live_settings(executable)["skillOverrides"] == {"anthropic-skills:pdf": "off"}
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-1")
+def test_preflight_accepts_a_builtin_skill_that_registers_after_the_first_listing(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, "late-builtin")
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        assert "design" not in transport.inventory().builtin
+        evidence = transport.preflight()
+        assert "design" in transport.inventory().builtin
+    finally:
+        transport.close()
+    assert evidence["live_calls"] == 1 and budget.calls == 1
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+@pytest.mark.parametrize("mode", ["late-plain", "late-absent"])
+def test_preflight_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path, sandbox_passes: None, mode: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="foreign skill in init event: \\['design'\\]") as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+def test_invoke_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "late-plain")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="skills in init event \\['design', 'echo-skill'\\]") as caught:
+            _ = transport.invoke("hello", echo_candidate(tmp_path))
+    finally:
+        transport.close()
+    assert caught.value.code == "isolation-failed"
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_invoke_accepts_a_late_builtin_skill_with_one_more_listing(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "late-builtin")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    candidate = echo_candidate(tmp_path)
+    try:
+        result = transport.invoke("hello", candidate)
+        _ = transport.invoke("again", candidate)
+    finally:
+        transport.close()
+    assert "answer" in result
+    assert len(inventory_calls(executable)) == 2
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_invoke_with_only_the_candidate_skill_lists_the_commands_once(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    candidate = echo_candidate(tmp_path)
+    try:
+        _ = transport.invoke("hello", candidate)
+        _ = transport.invoke("again", candidate)
+    finally:
+        transport.close()
+    assert len(inventory_calls(executable)) == 1
+
+
+@pytest.mark.ac("gh-448:AC-3")
+def test_two_threads_adopt_one_late_name_with_one_listing() -> None:
+    entered = threading.Barrier(2)
+    listings: list[int] = []
+
+    def listing(workspace: Path) -> frozenset[str]:
+        del workspace
+        listings.append(1)
+        time.sleep(0.2)
+        return frozenset({"design"})
+    late = _late.LateBuiltins(listing)
+    events: list[dict[str, object]] = [{"type": "system", "subtype": "init", "skills": ["design"]}]
+    results: list[_settings.Inventory] = []
+
+    def work() -> None:
+        _ = entered.wait(5)
+        results.append(late.adopt(events, [], _settings.Inventory(frozenset({"doctor"}), frozenset()), _settings.Declared()))
+    threads = [threading.Thread(target=work) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert len(listings) == 1
+    assert [result.builtin for result in results] == [frozenset({"doctor", "design"})] * 2
+
+
+@pytest.mark.ac("gh-448:AC-2")
+def test_preflight_reports_a_reached_listener_before_it_relists(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+
+    def relist_fails(self: object, *args: object, **kwargs: object) -> _settings.Inventory:
+        del self, args, kwargs
+        raise RuntimeError("relist failed")
+    monkeypatch.setattr(_late.LateBuiltins, "adopt", relist_fails)
+    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+def calls_or_none(executable: Path) -> list[dict[str, object]] | None:
+    return calls(executable) if executable.with_name("claude.log").exists() else None
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("plugin-skill", "skillOverrides cannot turn off \\['plug:tool'\\]"),
+    ("inventory-broken", "no valid command list"),
+])
+def test_preflight_stops_before_any_model_call_when_the_inventory_cannot_be_cleaned(
+        tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        with pytest.raises(CodedError, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    assert budget.calls == 0 and calls_or_none(executable) is None
+
+
+def test_invoke_never_turns_off_the_candidate_skill(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path, "account-skill")
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        _ = transport.invoke("hello", echo_candidate(tmp_path))
+    finally:
+        transport.close()
+    overrides = cast(dict[str, str], live_settings(executable)["skillOverrides"])
+    assert overrides == {"anthropic-skills:pdf": "off"} and "echo-skill" not in overrides
+
+
+def test_preflight_stops_on_a_plugin_that_does_not_ship_with_claude_code(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, "foreign-plugin"))
+    try:
+        with pytest.raises(CodedError, match="foreign plugin.*user-plugin") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_settings_deny_bash_writes_to_project_settings(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    sandbox = cast(dict[str, dict[str, list[str]]], _settings.settings(workspace)["sandbox"])
+    assert {f"{workspace}/.agents", f"{workspace}/.claude"} <= set(sandbox["filesystem"]["denyWrite"])
+    assert "allowAllUnixSockets" not in sandbox["network"]
+
+
+def test_blocked_nested_namespace_turns_off_the_socket_filter_and_probes_a_host_socket(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        evidence = transport.preflight()
+    finally:
+        transport.close()
+    network = cast(dict[str, dict[str, object]], live_settings(executable)["sandbox"])["network"]
+    assert network["allowAllUnixSockets"] is True and network["allowedDomains"] == []
+    assert "AF_UNIX" in cast(str, calls(executable)[0]["prompt"])
+    assert evidence["unix_socket_filter"] == "off"
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("unix-open", "reached a runner-owned host Unix socket"),
+    ("unix-skipped", "Unix-socket command output is missing"),
+])
+def test_socket_probe_failure_stops_the_preflight(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch,
+        mode: str, reason: str) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match=reason):
+            _ = transport.preflight()
+    finally:
+        transport.close()
+
+
+def test_environment_key_changes_when_the_socket_filter_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    executable = fake_claude(tmp_path)
+    allowed = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    blocked = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        before = allowed.environment_key()
+        monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
+        assert before != blocked.environment_key()
+    finally:
+        allowed.close()
+        blocked.close()
+
+
+@pytest.mark.parametrize("mode", ["builtin-echo", "account-echo"])
+def test_a_candidate_named_like_another_command_stops_before_the_call(tmp_path: Path, mode: str) -> None:
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    if mode == "account-echo":
+        transport._inventory = _settings.Inventory(frozenset(), frozenset({"echo-skill"}))  # pyright: ignore[reportPrivateUsage]
+    candidate = echo_candidate(tmp_path)
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = transport.invoke("hello", candidate)
+        with pytest.raises(CodedError) as seed:
+            _ = transport.check_candidate(candidate)
+    finally:
+        transport.close()
+    assert caught.value.code == seed.value.code == "candidate-name-taken" and budget.calls == 0
+    assert calls_or_none(executable) is None
+
+
+def test_a_taken_seed_name_stops_the_harness_before_any_live_call(tmp_path: Path) -> None:
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, fake_claude(tmp_path, "builtin-echo"), budget)
+    try:
+        with pytest.raises(CodedError) as caught:
+            session.check_name(echo_candidate(tmp_path))
+    finally:
+        session.close()
+    assert caught.value.code == "candidate-name-taken" and budget.calls == 0
+
+
+def stub_bwrap(directory: Path, stderr: str, code: int) -> Path:
+    """Put a `bwrap` stub in `directory` that counts its runs, writes `stderr`, and exits with `code`."""
+    directory.mkdir()
+    counter = directory / "runs"
+    stub = directory / "bwrap"
+    _ = stub.write_text(f"#!/bin/sh\necho x >> {counter}\nprintf '%s' '{stderr}' >&2\nexit {code}\n")
+    stub.chmod(0o755)
+    return counter
+
+
+@pytest.mark.parametrize(("stderr", "code", "blocked"), [
+    ("map", 1, True),
+    ("unshare", 1, True),
+    ("bwrap: setting up uid map: Permission denied", 1, False),
+    ("", 0, False),
+])
+def test_nested_namespace_probe_reads_only_the_probe_verdict_and_caches_it(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, real_nested_userns_probe: Callable[[], bool],
+        stderr: str, code: int, blocked: bool) -> None:
+    counter = stub_bwrap(tmp_path / "stub", stderr, code)
+    monkeypatch.setenv("PATH", str(counter.parent))
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert real_nested_userns_probe() is blocked
+    assert real_nested_userns_probe() is blocked
+    assert len(counter.read_text().splitlines()) == 1
+
+
+def test_every_role_asks_the_host_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                       real_nested_userns_probe: Callable[[], bool]) -> None:
+    del real_nested_userns_probe
+    counter = stub_bwrap(tmp_path / "stub", "map", 1)
+    monkeypatch.setenv("PATH", str(counter.parent))
+    monkeypatch.setattr(sys, "platform", "linux")
+    executable = fake_claude(tmp_path)
+    roles = [ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable) for _ in range(3)]
+    try:
+        assert [role.unix_sockets() for role in roles] == [True, True, True]
+    finally:
+        for role in roles:
+            role.close()
+    assert len(counter.read_text().splitlines()) == 1
+
+
+def test_the_inventory_runs_through_the_shared_process_runner(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original = cast(Callable[..., object], getattr(_transport, "process"))
+    seen: list[list[str]] = []
+
+    def recording(*args: object, **kwargs: object) -> object:
+        seen.append(cast(list[str], args[0]))
+        return original(*args, **kwargs)
+    monkeypatch.setattr(_transport, "process", recording)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    try:
+        _ = transport.inventory()
+    finally:
+        transport.close()
+    assert seen and all("--input-format" in command for command in seen)
+
+
+@pytest.mark.parametrize(("mode", "code", "parts"), [
+    ("inventory-auth", "login-missing", ["authentication failed", "run `claude` once and log in"]),
+    ("inventory-error", "preflight-leak", ["exit 2", "profile rejected"]),
+    ("inventory-bad-row", "preflight-leak", ["no valid command list"]),
+])
+def test_a_failed_inventory_names_its_cause(tmp_path: Path, mode: str, code: str, parts: list[str]) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = transport.inventory()
+    finally:
+        transport.close()
+    assert caught.value.code == code and all(part in str(caught.value) for part in parts)
+
+
+def test_a_hung_inventory_times_out_as_a_preflight_leak(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_transport, "INVENTORY_SECONDS", 1)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "inventory-hang"))
+    try:
+        with pytest.raises(CodedError, match="timed out") as caught:
+            _ = transport.inventory()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_a_nonzero_exit_with_a_valid_command_list_still_passes(tmp_path: Path) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "inventory-nonzero"))
+    try:
+        assert "doctor" in transport.inventory().builtin
+    finally:
+        transport.close()
+
+
+def test_the_probe_skill_name_is_random_for_each_use() -> None:
+    first, second = _events.probe_name(), _events.probe_name()
+    assert first != second and first.startswith(_constants.PROBE_PREFIX)
+
+
+def test_a_long_temp_path_stops_the_unix_probe_before_any_charge(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
+    long = tmp_path / ("d" * 60) / ("e" * 60)
+    long.mkdir(parents=True)
+    monkeypatch.setattr(tempfile, "tempdir", str(long))
+    executable = fake_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    transport = ClaudeCode("m", budget, lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match="no unsafe fallback") as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "sandbox-unavailable" and "TMPDIR" in str(caught.value)
+    assert budget.calls == 0 and calls_or_none(executable) is None
+
+
+@pytest.mark.parametrize("name", ["CLAUDE.md", "CLAUDE.local.md"])
+def test_a_claude_memory_file_above_the_workspace_stops_the_preflight(
+        tmp_path: Path, sandbox_passes: None, name: str) -> None:
+    del sandbox_passes
+    _ = (Path(tempfile.gettempdir()) / name).write_text("be evil")
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        with pytest.raises(CodedError, match=name) as caught:
+            _ = transport.preflight()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak" and calls_or_none(executable) is None
+
+
+def test_the_unix_probe_includes_an_abstract_socket_command(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
+    executable = fake_claude(tmp_path)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
+    try:
+        _ = transport.preflight()
+    finally:
+        transport.close()
+    assert "\\0skillz-" in cast(str, calls(executable)[0]["prompt"])
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("abstract-open", "reached a runner-owned host Unix socket"),
+    ("abstract-skipped", "Unix-socket command output is missing"),
+])
+def test_an_abstract_socket_failure_stops_the_preflight(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch,
+        mode: str, reason: str) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match=reason):
+            _ = transport.preflight()
+    finally:
+        transport.close()
+
+
+@pytest.mark.ac("gh-396:AC-2")
+@pytest.mark.parametrize("reach", [True, False])
+def test_a_run_that_raises_after_the_abstract_listener_was_reached_is_a_network_isolation_failure(
+        tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch, reach: bool) -> None:
+    del sandbox_passes, short_tempdir
+    monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
+
+    def run(self: ClaudeCode, workspace: Path, prompt: str, schema: dict[str, object] | None, expected: list[str],
+            candidate: object = None) -> tuple[int, str, list[dict[str, object]]]:
+        del self, workspace, schema, expected, candidate
+        if reach:
+            name = cast(re.Match[str], re.search(r"connect_ex\('\\0(skillz-[0-9a-f]+)'\)", prompt)).group(1)
+            token = cast(re.Match[str], re.search(r"c\.send\(b'([0-9a-f]+)'\)", prompt)).group(1)
+            with socket.socket(socket.AF_UNIX) as client:
+                client.connect("\0" + name)
+                _ = client.send(token.encode())
+        raise RuntimeError("claude crashed")
+    monkeypatch.setattr(ClaudeCode, "_run", run)
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    try:
+        if reach:
+            with pytest.raises(NetworkIsolationFailed, match="runner-owned listener accepted a connection"):
+                _ = transport.preflight()
+        else:
+            with pytest.raises(RuntimeError, match="claude crashed"):
+                _ = transport.preflight()
+    finally:
+        transport.close()
+
+
+def test_the_write_probe_also_targets_the_claude_skills_directory(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert "/.claude/skills/" in prompt and "/.agents/write-probe" in prompt
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("write-claude", "write isolation failed"),
+    ("write-skips-claude", "no failed Bash printf to .claude"),
+])
+@pytest.mark.ac("gh-396:AC-3")
+def test_a_claude_directory_write_failure_stops_the_preflight(
+        tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(CodedError, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+def test_the_sandbox_fix_names_no_removed_backend(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "linux")
+    session = harness(tmp_path, fake_claude(tmp_path, "sandbox-unavailable"))
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "sandbox-unavailable" and "nono" not in str(caught.value)
+
+
+SURFACE_SKILL = "---\nname: skillz\ndescription: x\n---\n"
+SURFACE_FILES = {
+    "SKILL.md": SURFACE_SKILL,
+    "mcp/docs.json": json.dumps({"mcpServers": {"docs": {"command": "docs-server"}}}),
+    "agents/reviewer.md": "---\nname: reviewer\ndescription: r\n---\n",
+    "skills/helper-skill/SKILL.md": "---\nname: helper-skill\ndescription: h\n---\n",
+    "skills/helper-skill/references/notes.md": "notes\n",
+}
+SURFACE = Surface(("WebFetch",), "mcp/docs.json", ("agents/reviewer.md",), ("skills/helper-skill",))
+
+
+def surface_harness(tmp_path: Path, executable: Path, surface: Surface | None, files: dict[str, str] | None = None,
+                    adapter: str = "claude") -> Harness:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": adapter, "command": [str(executable)]}))
+    return Configuration.load(config, "claude-test-model").create(
+        "claude-test-model", Budget(10, 120, 0), lambda: None, None, surface, SURFACE_FILES if files is None else files)
+
+
+def surface_candidate() -> Candidate:
+    return Candidate(dict(SURFACE_FILES), ("SKILL.md",))
+
+
+def surface_call(tmp_path: Path, surface: Surface | None) -> dict[str, object]:
+    tmp_path.mkdir(exist_ok=True)
+    executable = fake_claude(tmp_path)
+    session = surface_harness(tmp_path, executable, surface)
+    try:
+        _ = session.transports["task"].invoke("hello", surface_candidate())
+    finally:
+        session.close()
+    return calls(executable)[0]
+
+
+def test_contract_surface_tools_extend_the_tool_list_and_leave_it_alone_without_a_surface(tmp_path: Path) -> None:
+    argv = cast(list[str], surface_call(tmp_path, SURFACE)["argv"])
+    assert argv[argv.index("--tools") + 1] == "Bash,Read,Skill,WebFetch"
+    plain = cast(list[str], surface_call(tmp_path / "plain", None)["argv"])
+    assert plain[plain.index("--tools") + 1] == "Bash,Read,Skill"
+    assert "--mcp-config" not in plain and "--strict-mcp-config" in plain
+
+
+def test_contract_surface_mcp_config_is_passed_strictly_and_allowed(tmp_path: Path) -> None:
+    call = surface_call(tmp_path, SURFACE)
+    argv = cast(list[str], call["argv"])
+    assert "--strict-mcp-config" in argv
+    assert call["mcp_config"] == SURFACE_FILES["mcp/docs.json"]
+    assert Path(argv[argv.index("--mcp-config") + 1]).name == "mcp.json"
+    permissions = cast(dict[str, dict[str, list[str]]], json.loads(cast(str, call["settings"])))["permissions"]
+    assert "mcp__docs" in permissions["allow"]
+
+
+def test_contract_surface_agents_are_staged_under_the_project_agents_directory(tmp_path: Path) -> None:
+    staged = cast(dict[str, str], surface_call(tmp_path, SURFACE)["staged"])
+    assert ".claude/agents/reviewer.md" in staged
+    plain = cast(dict[str, str], surface_call(tmp_path / "plain", None)["staged"])
+    assert not any(name.startswith(".claude/agents") for name in plain)
+
+
+def test_contract_surface_companions_are_read_only_and_pass_the_init_check(tmp_path: Path) -> None:
+    call = surface_call(tmp_path, SURFACE)
+    staged = cast(dict[str, str], call["staged"])
+    assert staged[".claude/skills/helper-skill"] == "0o555"
+    assert staged[".claude/skills/helper-skill/references"] == "0o555"
+    assert staged[".claude/skills/helper-skill/SKILL.md"] == "0o444"
+    assert staged[".claude/skills/helper-skill/references/notes.md"] == "0o444"
+    assert not list(Path(tempfile.gettempdir()).glob("skillz-task-*"))
+
+
+def test_contract_surface_companions_stage_their_frozen_files_with_the_exec_bit_on_a_pyz(tmp_path: Path) -> None:
+    tmp_path.mkdir(exist_ok=True)
+    executable = fake_claude(tmp_path)
+    session = surface_harness(tmp_path, executable, SURFACE)
+    frozen = {"skills/helper-skill/scripts/tool.pyz": b"PK\x03\x04", "skills/helper-skill/data.bin": b"\xff\x00"}
+    try:
+        _ = session.transports["task"].invoke("hello", Candidate(dict(SURFACE_FILES), ("SKILL.md",), frozen=frozen))
+    finally:
+        session.close()
+    staged = cast(dict[str, str], calls(executable)[0]["staged"])
+    assert staged[".claude/skills/helper-skill/scripts/tool.pyz"] == "0o555"
+    assert staged[".claude/skills/helper-skill/data.bin"] == "0o444"
+    assert staged[".claude/skills/helper-skill/scripts"] == "0o555"
+
+
+def test_contract_surface_reuse_key_follows_the_surface(tmp_path: Path) -> None:
+    keys: list[str] = []
+    for index, surface in enumerate([None, SURFACE, Surface(("WebSearch",), SURFACE.mcp_config, SURFACE.agents,
+                                                          SURFACE.companions)]):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        session = surface_harness(directory, fake_claude(directory), surface)
+        try:
+            keys.append(cast(ClaudeCode, session.transports["task"]).environment_key())
+        finally:
+            session.close()
+    assert len(set(keys)) == 3
+
+
+@pytest.mark.parametrize("missing", ["mcp/docs.json", "agents/reviewer.md", "skills/helper-skill/SKILL.md"])
+def test_contract_surface_missing_file_stops_before_any_call(tmp_path: Path, missing: str) -> None:
+    executable = fake_claude(tmp_path)
+    files = {name: text for name, text in SURFACE_FILES.items() if name != missing}
+    with pytest.raises(CodedError, match="names files that the skill lacks") as caught:
+        _ = surface_harness(tmp_path, executable, SURFACE, files)
+    assert caught.value.code == "contract-surface-missing"
+    assert not executable.with_name("claude.log").exists()
+
+
+@pytest.mark.parametrize("agent", ["---\nname: other\ndescription: r\n---\n", "---\ndescription: r\n---\n",
+                                   "no frontmatter\n"], ids=["mismatch", "missing-name", "no-frontmatter"])
+def test_contract_surface_agent_name_must_equal_its_file_stem(tmp_path: Path, agent: str) -> None:
+    executable = fake_claude(tmp_path)
+    files = SURFACE_FILES | {"agents/reviewer.md": agent}
+    with pytest.raises(CodedError, match="frontmatter name equal to its file name") as caught:
+        _ = surface_harness(tmp_path, executable, SURFACE, files)
+    assert caught.value.code == "contract-surface"
+    assert not executable.with_name("claude.log").exists()
+
+
+def test_contract_surface_candidate_names_rechecked(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    session = surface_harness(tmp_path, executable, SURFACE)
+    drifted = Candidate(SURFACE_FILES | {"agents/reviewer.md": "---\nname: other\ndescription: r\n---\n"}, ("SKILL.md",))
+    try:
+        with pytest.raises(CodedError, match="frontmatter name equal to its file name") as caught:
+            _ = session.transports["task"].invoke("hello", drifted)
+        renamed = Candidate(SURFACE_FILES | {"mcp/docs.json": json.dumps({"mcpServers": {"evil": {"command": "x"}}})},
+                            ("SKILL.md",))
+        with pytest.raises(CodedError, match="different agents, servers, or companions") as swapped:
+            _ = session.transports["task"].invoke("hello", renamed)
+    finally:
+        session.close()
+    assert caught.value.code == "contract-surface" and swapped.value.code == "contract-surface"
+
+
+def test_contract_surface_candidate_mcp_config_text_is_fixed(tmp_path: Path) -> None:
+    executable = fake_claude(tmp_path)
+    session = surface_harness(tmp_path, executable, SURFACE)
+    config = SURFACE.mcp_config or ""
+    edited = Candidate(SURFACE_FILES | {config: SURFACE_FILES[config].rstrip() + "\n\n"}, ("SKILL.md",))
+    try:
+        with pytest.raises(CodedError, match="changes the MCP config") as caught:
+            _ = session.transports["task"].invoke("hello", edited)
+    finally:
+        session.close()
+    assert caught.value.code == "contract-surface"
+
+
+def test_contract_surface_unsupported_for_a_non_claude_task_role(tmp_path: Path) -> None:
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "codex"}))
+    with pytest.raises(CodedError, match="only the claude harness") as caught:
+        _ = Configuration.load(config, "m").create("m", Budget(10, 120, 0), lambda: None, None, SURFACE, SURFACE_FILES)
+    assert caught.value.code == "contract-surface-unsupported"
+
+
+@pytest.mark.parametrize("mode", ["surface-mcp", "surface-agent", "surface-skill"])
+def test_contract_surface_declared_server_agent_or_skill_passes_the_preflight(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, mode: str) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    surface = Surface((), "mcp/docs.json", ("agents/reviewer.md",), ("skills/helper-skill",))
+    executable = fake_claude(tmp_path, mode)
+    session = surface_harness(tmp_path, executable, surface)
+    try:
+        evidence = cast(ClaudeCode, session.transports["task"]).preflight()
+    finally:
+        session.close()
+    assert evidence["isolation"] == "passed"
+
+
+@pytest.mark.parametrize(("mode", "kind"), [("surface-mcp", "MCP server"), ("surface-agent", "agent"),
+                                            ("surface-skill", "skill"), ("foreign-mcp", "MCP server"),
+                                            ("foreign-agent", "agent")])
+def test_contract_surface_undeclared_name_stops_the_preflight(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, mode: str, kind: str) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(sys, "platform", "darwin")
+    real = tmp_path / "real-config"
+    real.mkdir()
+    _ = (real / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
+    executable = fake_claude(tmp_path, mode)
+    session = surface_harness(tmp_path, executable, Surface(("WebFetch",)))
+    try:
+        with pytest.raises(CodedError, match=f"foreign {kind}") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+@pytest.mark.ac("gh-295:AC-6")
+def test_a_nonzero_inventory_exit_with_no_control_response_is_host_not_ready(tmp_path: Path) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "inventory-crash"))
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = transport.inventory()
+    finally:
+        transport.close()
+    assert caught.value.code == "host-not-ready"
+    assert "exited 3" in str(caught.value) and "shim crashed" in str(caught.value)
+
+
+@pytest.mark.ac("gh-295:AC-6")
+@pytest.mark.parametrize("mode", ["inventory-error", "inventory-bad-row", "inventory-broken"])
+def test_a_real_leak_or_a_malformed_list_with_a_control_response_keeps_preflight_leak(tmp_path: Path, mode: str) -> None:
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = transport.inventory()
+    finally:
+        transport.close()
+    assert caught.value.code == "preflight-leak"
+
+
+@pytest.mark.ac("gh-290:AC-9")
+def test_the_settings_floor_keeps_the_sandbox_hard_and_allows_bash(tmp_path: Path) -> None:
+    floor = _settings.settings(tmp_path / "workspace")
+    sandbox = cast(dict[str, object], floor["sandbox"])
+    assert sandbox["failIfUnavailable"] is True and sandbox["allowUnsandboxedCommands"] is False
+    allow = cast(dict[str, list[str]], floor["permissions"])["allow"]
+    # The rule lets the probes reach the sandbox. On the live 2.1.296 host the Bash read probe and the pathname Unix
+    # socket probe leaked, and the preflight detected both and stopped with `network-isolation-failed`.
+    # See ADR-006 Amendment 2026-10-14.
+    assert allow == ["Skill", "Bash"]
+
+
+def _approval_events(command: str, content: str) -> list[dict[str, object]]:
+    return [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "b1", "name": "Bash",
+                                                           "input": {"command": command}}]}},
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b1", "is_error": True,
+                                                      "content": content}]}}]
+
+
+@pytest.mark.ac("gh-290:AC-10")
+def test_a_bash_approval_block_is_named_by_the_write_and_read_probes() -> None:
+    write = _approval_events("printf tok > /w/.agents/write-probe", "This command requires approval")
+    read = _approval_events("cat /sealed", "This command requires approval")
+    for message in (_events.write_failure(write, ["/w/.agents/write-probe"], False, False),
+                    _events.read_failure(read, "tok", "/sealed", "ctl", "/w/control.txt")):
+        assert message is not None and "approval block" in message and "no positive control" not in message
+    denied = _approval_events("printf tok > /w/.agents/write-probe", "denied")
+    assert "no positive control" in str(_events.write_failure(denied, ["/w/.agents/write-probe"], False, False))
+
+
+@pytest.mark.ac("gh-131:AC-12")
+def test_the_network_probe_key_moved_past_the_loopback_only_probe() -> None:
+    assert _transport.NETWORK_PROBE != "loopback-tcp-http-v2"
+
+
+@pytest.mark.ac("gh-131:AC-12")
+def test_preflight_sends_a_name_lookup_and_a_non_loopback_probe(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert f"/usr/bin/curl --noproxy '*' --max-time 5 -sS -o /dev/null http://{_sandbox.LOOKUP_NAME}/" in prompt
+    assert "connect_ex(('1.1.1.1',443))" in prompt
+
+
+@pytest.mark.ac("gh-131:AC-12")
+@pytest.mark.parametrize(("mode", "reason"), [("net-dns-open", "resolved a public name"),
+                                               ("net-external-open", "connected to a non-loopback address")])
+def test_a_successful_lookup_or_non_loopback_connection_fails_the_preflight(
+        tmp_path: Path, mode: str, reason: str, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    try:
+        with pytest.raises(NetworkIsolationFailed, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "network-isolation-failed"
+
+
+@pytest.mark.ac("gh-131:AC-12")
+def test_missing_lookup_or_non_loopback_output_fails_closed() -> None:
+    token = "a" * 32
+    direct, external, lookup, *proxied = _sandbox.network_commands(1234, token)
+
+    def events(*pairs: tuple[str, str]) -> list[dict[str, object]]:
+        result: list[dict[str, object]] = []
+        for index, (command, text) in enumerate(pairs):
+            result.append({"type": "assistant", "message": {"content": [
+                {"type": "tool_use", "id": f"c{index}", "name": "Bash", "input": {"command": command}}]}})
+            result.append({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": f"c{index}", "content": text}]}})
+        return result
+    complete = (direct, f"denied-{token}"), (external, f"denied-{token}"), (lookup, f"exit-6-{token}")
+    http = tuple((command, f"exit-7-{token}") for command in proxied)
+    assert _sandbox.network_failure(events(*complete, *http), 1234, token) is None
+    assert "non-loopback" in str(_sandbox.network_failure(events(complete[0], *http, complete[2]), 1234, token))
+    assert "name lookup" in str(_sandbox.network_failure(events(*complete[:2], *http), 1234, token))
+
+
+def _failed_preflight(tmp_path: Path, mode: str) -> tuple[CodedError, Path]:
+    out = tmp_path / "run"
+    out.mkdir(mode=0o700)
+    session = harness(tmp_path, fake_claude(tmp_path, mode), out=out)
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    return caught.value, out / "preflight.events.json"
+
+
+@pytest.mark.ac("gh-291:AC-1")
+@pytest.mark.ac("gh-291:AC-2")
+def test_a_failed_preflight_keeps_a_private_transcript_that_the_stop_names(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    error, transcript = _failed_preflight(tmp_path, "write-broken")
+    assert error.code == "preflight-leak" and "no positive control" in str(error)
+    assert str(transcript) in str(error)
+    assert stat.S_IMODE(transcript.stat().st_mode) == 0o600
+    document = cast(dict[str, object], json.loads(transcript.read_text(encoding="utf-8")))
+    assert document["role"] == "task" and "no positive control" in cast(str, document["failure"])
+    tools = cast(list[dict[str, object]], document["tools"])
+    writes = [tool for tool in tools if cast(str, mapping(tool["input"]).get("command", "")).startswith("printf ")]
+    assert len(writes) == 3 and all(tool["tool"] == "Bash" and tool["result"] == "denied" and tool["is_error"] is True
+                                    for tool in writes)
+    assert any(tool["tool"] == "Read" and tool["result"] for tool in tools)
+    assert all("result" in tool for tool in tools)
+
+
+@pytest.mark.ac("gh-291:AC-3")
+def test_the_preflight_writes_its_transcript_through_the_redaction_seam(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    _, transcript = _failed_preflight(tmp_path, "write-broken")
+    text = transcript.read_text(encoding="utf-8")
+    assert "://" not in text and "[redacted]" in text
+
+
+@pytest.mark.ac("gh-291:AC-1")
+def test_a_failed_transcript_write_keeps_the_original_stop(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    out = tmp_path / "run"
+    out.mkdir(mode=0o500)
+    session = harness(tmp_path, fake_claude(tmp_path, "write-broken"), out=out)
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+        out.chmod(0o700)
+    assert caught.value.code == "preflight-leak" and "no positive control" in str(caught.value)
+    assert "the preflight transcript could not be written" in str(caught.value)
+    assert not (out / "preflight.events.json").exists()
+
+
+@pytest.mark.ac("gh-291:AC-1")
+def test_a_leak_found_in_the_init_event_also_keeps_the_transcript(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    error, transcript = _failed_preflight(tmp_path, "foreign-skill")
+    assert error.code == "preflight-leak" and str(transcript) in str(error) and transcript.is_file()
+
+
+@pytest.mark.ac("gh-291:AC-4")
+def test_a_passed_preflight_keeps_no_transcript(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    out = tmp_path / "run"
+    out.mkdir(mode=0o700)
+    _ = (out / "preflight.events.json").write_text("{}", encoding="utf-8")  # left by an earlier failed preflight
+    session = harness(tmp_path, fake_claude(tmp_path), out=out)
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    assert not (out / "preflight.events.json").exists()
+
+
+@pytest.mark.ac("gh-291:AC-3")
+def test_the_transcript_redacts_credentials_through_the_shared_seam(tmp_path: Path) -> None:
+    secrets = ("sk-ant-oat01-secretvalue", "hunter2", "refresh-me-123")
+    events: list[dict[str, object]] = [
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "r1", "name": "Read", "input": {"file_path": "/home/u/.claude/.credentials.json"}},
+            {"type": "tool_use", "id": "b1", "name": "Bash", "input": {"command": "env | grep PASSWORD=hunter2"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "r1", "content": [
+                {"type": "text", "text": '{"accessToken": "sk-ant-oat01-secretvalue", "refreshToken": "refresh-me-123"}'}]},
+            {"type": "tool_result", "tool_use_id": "b1", "is_error": True, "content": "exit 1: more context"}]}}]
+    path = tmp_path / "transcript.json"
+    _redact.write_transcript(path, {"tools": _events.tool_transcript(events)})
+    text = path.read_text(encoding="utf-8")
+    assert not any(secret in text for secret in secrets)
+    tools = cast(list[dict[str, object]], json.loads(text)["tools"])
+    assert [tool["tool"] for tool in tools] == ["Read", "Bash"]
+    assert tools[1]["result"] == "exit 1: more context" and tools[1]["is_error"] is True
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # The Codex failure evidence uses the same seam, so it also drops a spaced JSON credential value.
+    excerpt = cast(str, _codex.failure_details(1, '{"refreshToken": "refresh-me-123"} more context', [])["stderr_excerpt"])
+    assert "refresh-me-123" not in excerpt and "more context" in excerpt
+
+
+@pytest.mark.ac("gh-291:AC-3")
+@pytest.mark.parametrize("line", [
+    '{"password": "correct horse battery staple", "user": "kept"}',
+    '{\\"password\\": \\"correct horse battery staple\\", \\"user\\": \\"kept\\"}',
+    'password: "correct horse battery staple" user: kept',
+    "secret='correct horse battery staple' user: kept"])
+def test_redaction_removes_every_word_of_a_quoted_credential_value(line: str) -> None:
+    redacted = _redact.redact(line)
+    assert not any(word in redacted for word in ("correct", "horse", "battery", "staple")), redacted
+    assert "kept" in redacted
+
+
+@pytest.mark.ac("gh-291:AC-2")
+def test_the_transcript_keeps_a_long_tool_result_in_full() -> None:
+    output = "line of output\n" * 1000
+    events: list[dict[str, object]] = [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "b1", "name": "Bash", "input": {}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "b1", "content": output}]}}]
+    assert _events.tool_transcript(events)[0]["result"] == output
+
+
+@pytest.mark.ac("gh-291:AC-3")
+@pytest.mark.parametrize(("line", "secret"), [
+    ('{"password":"ab,zzcd"}', "zzcd"),
+    ("--token=abc,zzdef", "zzdef"),
+    ('"clientSecret":"x\\"zzy"', "zzy")])
+def test_redaction_removes_a_credential_value_with_punctuation(line: str, secret: str) -> None:
+    assert secret not in _redact.redact(line)
+
+
+@pytest.mark.ac("gh-291:AC-3")
+def test_the_transcript_redacts_the_whole_value_of_a_credential_named_key(tmp_path: Path) -> None:
+    path = tmp_path / "transcript.json"
+    _redact.write_transcript(path, {"input": {"api_key": "abc123", "headers": {"Authorization": "xyz789"},
+                                              "command": "ls"}})
+    document = cast(dict[str, object], json.loads(path.read_text(encoding="utf-8")))
+    assert document == {"input": {"api_key": "[redacted]", "headers": {"Authorization": "[redacted]"}, "command": "ls"}}

@@ -1,0 +1,119 @@
+# ![Grilled cheese ASCII art with the skillz-that-grillz title](assets/skillz-that-grillz-logo.png)
+
+[![CI](https://img.shields.io/github/actions/workflow/status/paulnsorensen/skillz-that-grillz/validate.yml?branch=main&label=CI&style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/actions/workflows/validate.yml)
+[![License: MIT](https://img.shields.io/github/license/paulnsorensen/skillz-that-grillz?style=flat-square)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/paulnsorensen/skillz-that-grillz?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/releases/latest)
+[![skills.sh](https://skills.sh/b/paulnsorensen/skillz-that-grillz)](https://skills.sh/paulnsorensen/skillz-that-grillz)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-yellow?style=flat-square)](https://www.conventionalcommits.org)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square)](https://github.com/paulnsorensen/skillz-that-grillz/pulls)
+
+> _Skill-authoring and skill-packaging toolbelt: skillz, wedge, fromargs, and the wedge GitHub Action._
+
+This repository publishes one Agent Skill, `skillz`. It also hosts two Python
+libraries in a uv workspace under `packages/` — `wedge` (packages a skill CLI as a content-addressed
+`.pyz`) and `fromargs` (the CLI library wedge builds on) — plus the public
+[`actions/wedge`](actions/wedge/README.md) GitHub Action that runs `wedge` in
+a consumer repository.
+
+The companion repo [easy-cheese](https://github.com/paulnsorensen/easy-cheese)
+covers the design / implement / review workflow (mold, cook, press, age, cure)
+and local-to-review publication (`/plate`: staging, commits, pushes, and PR
+creation — single or stacked).
+
+## Skills
+
+| Skill path | Command | Purpose |
+| --- | --- | --- |
+| `skills/skillz/SKILL.md` | `/skillz` | Add, improve, audit, wedge, or autoimprove a skill. `improve` and `audit` also accept a sub-agent definition. The result runs predictably on Claude Code, Codex, OMP, and other Agent Skills hosts. It scores the target against a rubric of 13 core lenses plus an optional Usage lens. The core lenses include predictability, invocation, portability, information hierarchy, deterministic offload, tool scoping, and calibration. It tags every finding with severity × confidence. It ships the cross-harness frontmatter matrix, description playbook, anti-pattern catalog, and hooks catalog as references. `audit` and `improve` add a best-effort Usage lens through a bundled analytics engine. `improve` reuses a current audit from the same conversation or runs one. It then shows every finding, including proposed offloads, and asks which ones to apply before its first edit. `wedge` finds fixed computation that every run repeats, writes a behavior contract for each candidate, and implements the selected ones as fromargs CLIs. It wedges a CLI when the target supports it, and otherwise ships the CLI unpackaged with a stated reason. `autoimprove` (alias `experiment`) uses bundled GEPA and isolated harness execution to compare candidates on paired holdouts and export a private patch. |
+
+`skillz` uses a bundled, standard-library Python inspection helper and the bundled `skillz-experiment audit-facts` command during audits.
+It needs no MCP server or separate `session-analytics` skill. Its Usage
+lens uses Python 3, the `duckdb` CLI, readable local session logs, and a
+writable cache. The bundled engine keeps the existing
+`dotfiles/session-analytics` database path and one-hour cache. Without DuckDB,
+`skillz` offers a slower, sampled raw-log scan by read-only subagents. It runs
+only with user consent, may omit metrics, and does not replace the database
+results. The user can skip Usage.
+
+The optional `autoimprove` mode (alias `experiment`) needs Codex, Claude Code, or a configured trusted harness wrapper.
+It needs no source checkout.
+See [the autoimprove workflow](skills/skillz/references/experiments.md).
+
+`skillz wedge` ships the `wedge` CLI as a bundled `scripts/wedge.pyz`, so
+it needs no wedge checkout. To wedge a CLI, the target needs a uv project with a
+committed `uv.lock` that resolves fromargs, and the host needs uv on `PATH`.
+Dependencies must be pure-Python wheels without platform markers or path or URL
+requirements. Otherwise the CLI runs unpackaged through `uv run --script` with
+PEP 723 metadata. A host without uv gets a stdlib `argparse` CLI (`python3 -I`)
+or a shell pipeline instead. Installed helpers need Python 3.11+.
+Release publication through gh is optional and needs authorization.
+
+## Install
+
+Install the skill with the [skills.sh](https://skills.sh) installer:
+
+```sh
+npx skills@latest add paulnsorensen/skillz-that-grillz --skill skillz
+```
+
+Add `--global` to install user-wide, so the skill is available in every repo.
+Without it, the skill installs into the current repo under `.agents/skills/`.
+The former `/wedge` skill is now `/skillz wedge`.
+`/skillz` is user-only, so "wedge this" no longer invokes it on its own. Type `/skillz wedge <path>`.
+
+## Where the other skills went
+
+This repo used to publish more Agent Skills under `skills/`:
+
+- Repository setup and maintenance skills (`release`, `justfile`, `prek`,
+  `oss-hygiene`, `safe-settings`, `github-copilot-repo-instructions`) moved to
+  [git-gouda](https://github.com/paulnsorensen/git-gouda).
+- `gh`, `file-handler`, `github-copilot-personal-instructions`, and `respond`
+  are retired, not moved. Use the `gh` CLI directly for GitHub plumbing;
+  easy-cheese's `/plate` covers commit/push/PR creation and `/affinage`
+  covers PR review-comment triage.
+
+`.agents/skills/python-authoring/` remains: a repo-local skill (not
+published) that only applies to work on this repository, mirrored at
+`.claude/skills/python-authoring/` via a symlink.
+
+## wedge
+
+`wedge` (`packages/wedge/src/wedge/`) shivs a `fromargs` CLI into a skill as a
+content-addressed `.pyz`. See [`packages/wedge/README.md`](packages/wedge/README.md) for the CLI
+and [`docs/agents/decisions/wedge-skill-packaging.md`](docs/agents/decisions/wedge-skill-packaging.md)
+for the design decisions.
+
+## wedge GitHub Action
+
+[`actions/wedge`](actions/wedge/README.md) packages a pure-Python skill CLI
+as a content-addressed `.pyz` release asset in your own repository. Use it to
+check locks on pull requests and merge groups, then publish assets after a merge.
+See the [merge-queue setup](actions/wedge/README.md#check-pull-requests-and-merge-groups)
+and [easy-cheese example](packages/wedge/README.md#example-easy-cheese) for race prevention:
+
+```yaml
+- uses: paulnsorensen/skillz-that-grillz/actions/wedge@<full-commit-sha>
+  with:
+    command: publish # or: check
+    roots: skills
+```
+
+## fromargs
+
+`fromargs` (`packages/fromargs/`) is the CLI argument-parsing library `wedge`
+builds its CLI on. See [`packages/fromargs/README.md`](packages/fromargs/README.md).
+
+## Development
+
+```sh
+git clone https://github.com/paulnsorensen/skillz-that-grillz.git
+cd skillz-that-grillz
+just build   # runs all formatters, linters, and test suites
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full contribution guide.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

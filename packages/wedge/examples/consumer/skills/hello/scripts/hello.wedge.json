@@ -1,0 +1,9 @@
+{
+  "asset": "hello-c0c057cb457a.pyz",
+  "content_sha256": "c0c057cb457aa46af75455a36458cb8548a7108788c7d5812bd2cb52ed03677e",
+  "format": 8,
+  "key": "e46fc41e58f10f7ea5a70a837c6cacb088f0af7b36f9d892219fe8e8f65aa5e4",
+  "name": "hello",
+  "release": "wedge",
+  "repo": "example-owner/wedge-consumer"
+}

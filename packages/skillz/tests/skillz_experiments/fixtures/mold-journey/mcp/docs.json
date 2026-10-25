@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "docs": {
+      "command": "docs-server"
+    }
+  }
+}

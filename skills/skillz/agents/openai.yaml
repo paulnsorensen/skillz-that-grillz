@@ -1,0 +1,5 @@
+interface:
+  display_name: "skillz"
+  short_description: "Add, improve, audit, wedge, or autoimprove skills"
+policy:
+  allow_implicit_invocation: false

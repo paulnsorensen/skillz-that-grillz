@@ -1,0 +1,13 @@
+{
+  "default": true,
+
+  // Long lines are common in skill docs (URLs, tables, code spans);
+  // line-length is a style choice we leave to authors.
+  "MD013": false,
+
+  // Many shell/text fences are intentionally unlabelled in skill prose.
+  "MD040": false,
+
+  // Table column alignment is cosmetic; not enforced.
+  "MD060": false
+}

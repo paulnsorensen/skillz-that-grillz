@@ -1,0 +1,11 @@
+---
+name: todo-sort
+description: Sort a TODO list by its priority tags. Use for "sort my todos". Do NOT use for calendar planning.
+---
+
+# todo-sort
+
+1. Read `todo.txt`. Each line holds one item and one tag: `[p1]`, `[p2]`, or `[p3]`.
+2. Sort by tag, `[p1]` first. Keep the input order inside a tag.
+3. Put an item without a tag last.
+4. Return the sorted lines only.

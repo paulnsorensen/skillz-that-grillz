@@ -1,0 +1,235 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wedge-action:
+    # Run the public composite action the way a consumer does, including the
+    # consumer example that has its own pyproject.toml and uv.lock.
+    name: wedge action (check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check wedge locks
+        id: wedge
+        uses: ./actions/wedge
+        with:
+          command: check
+          roots: packages/wedge/examples/skills packages/wedge/examples/consumer/skills
+
+      - name: Verify action output
+        env:
+          RESULT: ${{ steps.wedge.outputs.result }}
+        run: |
+          set -euo pipefail
+          jq -e '.ok == true and (.checked | index("packages/wedge/examples/consumer/skills/hello"))' <<<"$RESULT"
+  gate:
+    name: gate (just ci)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The slice guard reads the baseline at HEAD^1 (the base tip in a PR merge commit) for SB-07.
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        # `just test` runs the workspace pytest suites through `uv run`.
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.32"
+
+      - name: Install just
+        # The gate uses `[script]` recipes, which require just >= 1.34 — newer
+        # than distro apt packages ship. install-action fetches this pinned release
+        # from its checksum manifest, with no GitHub releases-API lookup.
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+
+      - name: Install gate tooling
+        # `just ci` is the single source of truth — the same gate runs locally.
+        # Pin the tools it shells out to so CI matches a developer's machine:
+        #   npm: markdownlint-cli2
+        #   pip: yamllint
+        #   uv: pinned by the Install uv step; workspace pytest from the root uv.lock
+        #   release binary: yamlfmt (the gate's yaml-fmt step; no apt/npm/pip package)
+        #   release binary: duckdb CLI (the agent-session-analytics and analytics-pack tests)
+        run: |
+          set -euo pipefail
+          npm install -g markdownlint-cli2@0.22.1
+          pip install --no-cache-dir yamllint==1.35.1
+          curl -fsSL https://github.com/google/yamlfmt/releases/download/v0.21.0/yamlfmt_0.21.0_Linux_x86_64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin yamlfmt
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
+            -o /tmp/duckdb_cli.zip
+          sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
+
+      - name: Run gate (just ci)
+        env:
+          REQUIRE_DUCKDB: "1"
+          # The skillz tests job runs these lanes in parallel with this job.
+          GATE_SKIP: skillz-e2e-pytest,skillz-pytest
+        run: just ci
+
+  skillz-shard:
+    # The two skillz pytest lanes set the gate's wall time, so they run here
+    # in parallel. The gate job skips them through GATE_SKIP. One runner has
+    # 4 vCPUs and the lanes are CPU-bound, so each shard runs 1/6 of each lane.
+    # Six shards keep each shard under the gate job's time.
+    name: skillz shard (${{ matrix.shard }}/6)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.32"
+
+      - name: Install just
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+
+      - name: Install DuckDB CLI
+        # test_analytics_packs.py requires the DuckDB CLI when REQUIRE_DUCKDB is set.
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
+            -o /tmp/duckdb_cli.zip
+          sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
+
+      - name: Run skillz tests
+        env:
+          REQUIRE_DUCKDB: "1"
+          GATE_SHARD: ${{ matrix.shard }}/6
+        run: just test-skillz
+
+  skillz-tests:
+    # The main ruleset requires this check name. It passes only when every shard passes.
+    # A rerun of one matrix job can make the matrix result pass while another shard
+    # stays failed. The job list of the current run attempt holds a completed copy of
+    # each shard that did not run again, so the job fails when a shard in that list
+    # completed without success. The jobs API can show a shard that ended in this
+    # attempt as in_progress for minutes (run 39818883914), so the job does not wait
+    # for that status: the needs result already covers the shards of this attempt.
+    name: skillz tests
+    if: always()
+    needs: skillz-shard
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Check the skillz shards
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARDS: ${{ needs.skillz-shard.result }}
+        run: |
+          set -euo pipefail
+          echo "skillz shards: $SHARDS"
+          test "$SHARDS" = success
+          shards=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
+            | jq -s 'map({name, started_at, status, conclusion})')
+          jq -r '.[] | "\(.name): started \(.started_at), \(.status), \(.conclusion)"' <<<"$shards"
+          if ! jq -e 'length == 6 and all(.status != "completed" or .conclusion == "success")' <<<"$shards" >/dev/null; then
+            echo "::error::a skillz shard in run attempt $GITHUB_RUN_ATTEMPT is missing or completed without success"
+            exit 1
+          fi
+
+  fromargs-tests:
+    name: fromargs tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.32"
+
+      - name: Install just
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+
+      - name: Run fromargs tests
+        run: just test-fromargs ${{ matrix.python }}
+
+  agent-session-analytics-tests:
+    name: agent-session-analytics tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.11.32"
+
+      - name: Install just
+        uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: just@1.59.0
+          fallback: none
+
+      - name: Install DuckDB CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL https://github.com/duckdb/duckdb/releases/download/v1.5.5/duckdb_cli-linux-amd64.zip \
+            -o /tmp/duckdb_cli.zip
+          sudo unzip -o /tmp/duckdb_cli.zip -d /usr/local/bin
+
+      - name: Run agent-session-analytics tests
+        env:
+          REQUIRE_DUCKDB: "1"
+        run: just test-agent-session-analytics ${{ matrix.python }}
+
+  pr-title:
+    name: conventional commits pr title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

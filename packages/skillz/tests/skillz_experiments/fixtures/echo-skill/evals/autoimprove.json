@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "status": "approved",
+  "skill": "echo-skill",
+  "invocation": "$echo-skill run",
+  "kinds": {
+    "echo": {"grader": "exact-json"},
+    "rewrite": {"grader": "exact-json"}
+  },
+  "editable": []
+}

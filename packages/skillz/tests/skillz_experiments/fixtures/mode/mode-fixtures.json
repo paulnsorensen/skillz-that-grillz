@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "target": {
+    "schema_version": 1,
+    "status": "approved",
+    "skill": "skillz",
+    "invocation": "$skillz",
+    "kinds": {
+      "add": {
+        "grader": "command",
+        "gate": "evals/gates/mode/add.py"
+      },
+      "improve": {
+        "grader": "command",
+        "gate": "evals/gates/mode/improve.py"
+      },
+      "improve-propose": {
+        "grader": "command",
+        "gate": "evals/gates/mode/improve_propose.py"
+      },
+      "wedge-candidates": {
+        "grader": "command",
+        "gate": "evals/gates/mode/wedge_candidates.py"
+      },
+      "wedge-clean": {
+        "grader": "command",
+        "gate": "evals/gates/mode/wedge_clean.py"
+      },
+      "wedge-agent": {
+        "grader": "command",
+        "gate": "evals/gates/mode/wedge_agent.py"
+      },
+      "contract": {
+        "grader": "command",
+        "gate": "evals/gates/mode/contract.py"
+      }
+    },
+    "editable": []
+  },
+  "cases": [
+    {
+      "id": "mode-add",
+      "family": "mode-add",
+      "split": "train",
+      "kind": "add",
+      "request": "Run $skillz add release-notes: a user-only skill that drafts release notes from merged changes. Create or edit each file at its repository path. Ask no question.",
+      "files": {
+        "README.md": "# Fixture repository\n\n## Skills\n\n| Skill path | Command | Purpose |\n| --- | --- | --- |\n| `skills/existing/SKILL.md` | `/existing` | Keeps the fixture repository non-empty. |\n",
+        "skills/existing/SKILL.md": "---\nname: existing\ndescription: >-\n  Placeholder skill that makes the name collision check meaningful. Use when the fixture needs one skill.\n---\n\n# existing\n\n1. Do nothing.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "README.md",
+          "skills/release-notes/SKILL.md",
+          "skills/release-notes/agents/openai.yaml",
+          "skills/release-notes/evals/evals.json",
+          "skills/release-notes/evals/files/empty.md",
+          "skills/release-notes/evals/files/merged.md"
+        ],
+        "audit_facts_failures": [],
+        "long_sentences": []
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-contract",
+      "family": "mode-contract",
+      "split": "train",
+      "kind": "contract",
+      "request": "The user asks for a contract for skills/demo, and the skill has none. Follow the No contract path: choose judge-only grading and draft the contract. Write it to skills/demo/evals/autoimprove.json.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: Rewrite a note in plain words. Use when asked to \"rewrite\".\n---\n\n# demo\n\n1. Rewrite the note in plain words.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "skills/demo/evals/autoimprove.json"
+        ],
+        "status": "draft",
+        "runner_code": "contract-unapproved"
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-improve",
+      "family": "mode-improve",
+      "split": "validation",
+      "kind": "improve",
+      "request": "Run $skillz improve skills/demo/SKILL.md. Skip Usage. Edit each changed file in place at its repository path. Write the report to report.md. Put the approval question in one line that starts with 'Approval question:'. The user answers that question: apply every finding that you recommend applying.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count.\n\nMake sure that you always remember to carefully report the count of open items to the user in a single short sentence that names the file and then stop without doing any other work on the file or the list.\n",
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "report.md",
+          "skills/demo/SKILL.md",
+          "skills/demo/agents/openai.yaml"
+        ],
+        "audit_facts_failures": [],
+        "long_sentences": [],
+        "seeded_defects": [
+          "sidecar.exists",
+          "long-sentence"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-improve-usage",
+      "family": "mode-improve-usage",
+      "split": "train",
+      "kind": "improve-propose",
+      "request": "Run $skillz improve skills/demo/SKILL.md. The analytics ceremony already ran in this conversation, and usage-digest.md holds its pack digests. Write the findings table and the approval question to report.md. Put the approval question in one line that starts with 'Approval question:'. Then stop, because the user has not answered yet.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\nallowed-tools: Read, Bash, WebFetch\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count in one short sentence that names the file. Then stop.\n",
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "usage-digest.md": "# Usage pack digests: demo\n\nThe analytics ceremony ran earlier in this conversation. Window: the last 30 days.\n\n## Usage\n\n- demo: 42 invocations in 9 projects. The trend is flat.\n\n## Orchestration\n\n- Tool calls inside demo runs: Bash 42, Read 40, WebFetch 0.\n\n## Drift\n\n- Error rate: 2%, near the baseline. No new error signatures.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "report.md"
+        ],
+        "content_id": "c3d10395a931653f77c03d8badb03532f7ace4d7",
+        "audit": "fresh",
+        "usage_finding": "WebFetch"
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-improve-reuse",
+      "family": "mode-improve-reuse",
+      "split": "validation",
+      "kind": "improve-propose",
+      "request": "Earlier in this conversation, $skillz audit skills/demo/SKILL.md produced the report in audit.md. Run $skillz improve skills/demo/SKILL.md. Write the findings table and the approval question to report.md. Put the approval question in one line that starts with 'Approval question:'. Then stop, because the user has not answered yet.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\nallowed-tools: Read, Bash, WebFetch\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count in one short sentence that names the file. Then stop.\n",
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "audit.md": "## skillz audit: demo\n\n- Type: skill · Invocation: user-only · Tools: 3 allowed, 0 disallowed · Body: ~70 tok\n- Harnesses reached: Claude Code, Codex · Findings: 1 surfaced, 0 below the bar\n- Target: skills/demo/SKILL.md · Content id: c3d10395a931653f77c03d8badb03532f7ace4d7 · Usage: included\n\n| # | Severity | Confidence | Lens | Issue (line) | Fix | Recommendation | Decision |\n|---|---|---|---|---|---|---|---|\n| 1 | medium | <certain> | Usage | `allowed-tools` grants WebFetch, but 42 runs made 0 WebFetch calls (line 6) | remove WebFetch from `allowed-tools` | apply | |\n\nRun /skillz improve skills/demo/SKILL.md to apply. In this conversation, `improve` reuses this report while the content id matches.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "report.md"
+        ],
+        "content_id": "c3d10395a931653f77c03d8badb03532f7ace4d7",
+        "audit": "reused",
+        "usage_finding": "WebFetch"
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-improve-stale",
+      "family": "mode-improve-stale",
+      "split": "train",
+      "kind": "improve-propose",
+      "request": "Earlier in this conversation, $skillz audit skills/demo/SKILL.md produced the report in audit.md. The analytics ceremony also ran, and usage-digest.md holds its pack digests. Run $skillz improve skills/demo/SKILL.md. Write the findings table and the approval question to report.md. Put the approval question in one line that starts with 'Approval question:'. Then stop, because the user has not answered yet.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Count the open items in a task list. Use when the user asks to \"count tasks\", \"count open items\", \"how many tasks\", \"tally the list\", or \"open item total\". Do NOT use for editing tasks.\ndisable-model-invocation: true\nallowed-tools: Read, Bash, WebFetch\n---\n\n# demo\n\n1. Run `python3 scripts/count.py <file>` to count the open items in the task list file.\n2. Report the count in one short sentence that names the file. Then stop.\n",
+        "skills/demo/scripts/count.py": "import sys\nprint(sum(line.startswith('- [ ]') for line in open(sys.argv[1])))\n",
+        "skills/demo/agents/openai.yaml": "policy:\n  allow_implicit_invocation: false\n",
+        "audit.md": "## skillz audit: demo\n\n- Type: skill · Invocation: user-only · Tools: 3 allowed, 0 disallowed · Body: ~70 tok\n- Harnesses reached: Claude Code, Codex · Findings: 1 surfaced, 0 below the bar\n- Target: skills/demo/SKILL.md · Content id: 1cc32c435ef7c05aba475755cb45e54f403d119c · Usage: included\n\n| # | Severity | Confidence | Lens | Issue (line) | Fix | Recommendation | Decision |\n|---|---|---|---|---|---|---|---|\n| 1 | medium | <certain> | Usage | `allowed-tools` grants WebFetch, but 42 runs made 0 WebFetch calls (line 6) | remove WebFetch from `allowed-tools` | apply | |\n\nRun /skillz improve skills/demo/SKILL.md to apply. In this conversation, `improve` reuses this report while the content id matches.\n",
+        "usage-digest.md": "# Usage pack digests: demo\n\nThe analytics ceremony ran earlier in this conversation. Window: the last 30 days.\n\n## Usage\n\n- demo: 42 invocations in 9 projects. The trend is flat.\n\n## Orchestration\n\n- Tool calls inside demo runs: Bash 42, Read 40, WebFetch 0.\n\n## Drift\n\n- Error rate: 2%, near the baseline. No new error signatures.\n"
+      },
+      "expected": {
+        "kind": "tree-check",
+        "files": [
+          "report.md"
+        ],
+        "content_id": "c3d10395a931653f77c03d8badb03532f7ace4d7",
+        "stale_content_id": "1cc32c435ef7c05aba475755cb45e54f403d119c",
+        "audit": "fresh",
+        "usage_finding": "WebFetch"
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-wedge-candidates",
+      "family": "mode-wedge-candidates",
+      "split": "validation",
+      "kind": "wedge-candidates",
+      "request": "Run $skillz wedge skills/demo. Write the brief to brief.md. Write no other file.",
+      "files": {
+        "skills/demo/SKILL.md": "---\nname: demo\ndescription: >-\n  Summarize a task list. Use when the user asks to \"summarize tasks\", \"review the task list\", \"who owns what\", \"task summary\", or \"open items by owner\".\n---\n\n# demo\n\n1. Count the open items: read the file and tally every line that starts with `- [ ]`.\n2. Sort the tally by owner, then by item name.\n3. Decide with the user which owner needs follow-up.\n"
+      },
+      "expected": {
+        "kind": "json-report",
+        "candidates": 1,
+        "files": [
+          "brief.md"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-wedge-clean",
+      "family": "mode-wedge-clean",
+      "split": "holdout",
+      "kind": "wedge-clean",
+      "request": "Run $skillz wedge skills/advisor. Write the brief to brief.md. Write no other file.",
+      "files": {
+        "skills/advisor/SKILL.md": "---\nname: advisor\ndescription: >-\n  Recommend a rollout plan. Use when the user asks to \"plan the rollout\", \"advise on release order\", \"pick a strategy\", \"weigh the options\", or \"recommend a plan\".\n---\n\n# advisor\n\n1. Ask the user which risks matter most.\n2. Recommend one rollout plan and explain the trade-off.\n3. Let the user decide.\n"
+      },
+      "expected": {
+        "kind": "json-report",
+        "candidates": 0,
+        "phrase": "No offload candidates",
+        "files": [
+          "brief.md"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    },
+    {
+      "id": "mode-wedge-agent",
+      "family": "mode-wedge-agent",
+      "split": "holdout",
+      "kind": "wedge-agent",
+      "request": "Run $skillz wedge agents/reviewer.md. Write the result to brief.md. Write no other file.",
+      "files": {
+        "agents/reviewer.md": "---\nname: reviewer\ndescription: Review a diff and report findings.\ntools: Read, Grep\n---\n\nReview the diff and report each finding with a cited line.\n"
+      },
+      "expected": {
+        "kind": "json-report",
+        "candidates": 0,
+        "phrase": "changes only skills",
+        "files": [
+          "brief.md"
+        ]
+      },
+      "provenance": "repository-authored-fixture",
+      "visibility": "public",
+      "provider_approved": true
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+[project]
+name = "wedge-consumer-example"
+version = "0.0.0"
+description = "Example consumer layout for the wedge GitHub Action: a stdlib-only skill CLI."
+requires-python = ">=3.11"
+dependencies = []
