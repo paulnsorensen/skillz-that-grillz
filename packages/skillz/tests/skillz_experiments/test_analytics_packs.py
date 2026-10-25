@@ -280,7 +280,7 @@ def test_bundle_db_path_uses_the_xdg_cache_default_and_schema_ships_the_referenc
         )
         return cast(dict[str, str], json.loads(result.stdout))
 
-    expected = tmp_path / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
+    expected = tmp_path / "cache" / "agent-session-analytics" / "sessions.duckdb"
     assert run("db-path") == {"path": str(expected)}
     schema = run("schema")
     assert schema["reference"] == "canonical-schema.md"

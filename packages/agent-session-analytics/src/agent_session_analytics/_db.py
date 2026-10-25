@@ -36,8 +36,18 @@ def _xdg_cache_home() -> str:
     return os.path.abspath(os.path.expanduser("~/.cache"))
 
 
-DEFAULT_DB_DIR = os.path.join(_xdg_cache_home(), "dotfiles", "session-analytics")
-DB_PATH = configured_path("SESSIONS_DB", os.path.join(DEFAULT_DB_DIR, "sessions.duckdb"))
+def _default_db_path() -> str:
+    # The legacy `dotfiles/` cache keeps working when it is the only one that
+    # exists. Nothing moves, copies, or deletes it; another tool may share it.
+    cache = _xdg_cache_home()
+    path = os.path.join(cache, "agent-session-analytics", "sessions.duckdb")
+    legacy = os.path.join(cache, "dotfiles", "session-analytics", "sessions.duckdb")
+    if not os.path.exists(path) and os.path.exists(legacy):
+        return legacy
+    return path
+
+
+DB_PATH = configured_path("SESSIONS_DB", _default_db_path())
 DB_DIR = os.path.dirname(DB_PATH)
 DB_TMP_PATH = f"{DB_PATH}.tmp"
 # Derived from the database file name, not DB_DIR, so a SESSIONS_DB pointed

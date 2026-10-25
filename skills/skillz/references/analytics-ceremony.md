@@ -16,8 +16,10 @@ run read-only.
    `python3 <abs-skillz>/scripts/agent-session-analytics.pyz db-path`. The command
    prints `{"path": "<abs path>"}`. Use the `path` field as `<abs-database>`.
    `SESSIONS_DB` overrides it. Otherwise, an absolute `XDG_CACHE_HOME` selects
-   `<cache>/dotfiles/session-analytics/sessions.duckdb`; a relative or unset
-   value uses `~/.cache/dotfiles/session-analytics/sessions.duckdb`. A relative
+   `<cache>/agent-session-analytics/sessions.duckdb`; a relative or unset
+   value uses `~/.cache/agent-session-analytics/sessions.duckdb`. If that file is
+   absent and the legacy `<cache>/dotfiles/session-analytics/sessions.duckdb`
+   exists, the command prints the legacy path. A relative
    `SESSIONS_DB` resolves against the current directory. Ingest also writes the
    transient `<db>.tmp` and `<db>.stage`, and a persistent `<db>.lock`.
 3. Run `python3 <abs-skillz>/scripts/agent-session-analytics.pyz ingest` before

@@ -36,7 +36,7 @@ def eval_ingest(expr: str, env: dict[str, str], cwd: Path, *argv: str) -> str:
     return result.stdout.strip()
 
 
-DEFAULT = "home/.cache/dotfiles/session-analytics/sessions.duckdb"
+DEFAULT = "home/.cache/agent-session-analytics/sessions.duckdb"
 
 DB_PATH_CASES: dict[str, tuple[Callable[[Path], dict[str, str]], Callable[[Path], str]]] = {
     "sessions_db_absolute": (
@@ -53,7 +53,7 @@ DB_PATH_CASES: dict[str, tuple[Callable[[Path], dict[str, str]], Callable[[Path]
     ),
     "xdg_cache_absolute": (
         lambda root: {"XDG_CACHE_HOME": str(root / "cache")},
-        lambda root: str(root / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"),
+        lambda root: str(root / "cache" / "agent-session-analytics" / "sessions.duckdb"),
     ),
     "xdg_cache_relative_is_ignored": (
         lambda root: {"XDG_CACHE_HOME": "rel/c"},
@@ -90,6 +90,45 @@ def test_db_path_command_honours_sessions_db(sandbox: Sandbox) -> None:
     result = sandbox.run("db-path", extra_env={"SESSIONS_DB": str(override)})
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"path": str(override)}
+
+
+def _touch(path: Path) -> None:
+    path.parent.mkdir(parents=True)
+    _ = path.write_text("")
+
+
+def _db_path(sandbox: Sandbox, extra_env: dict[str, str] | None = None) -> str:
+    result = sandbox.run("db-path", extra_env=extra_env)
+    assert result.returncode == 0, result.stderr
+    return cast(str, json.loads(result.stdout)["path"])
+
+
+def test_default_is_the_new_path_when_nothing_exists(sandbox: Sandbox) -> None:
+    assert _db_path(sandbox) == str(sandbox.database)
+    assert "dotfiles" not in sandbox.database.parts
+
+
+def test_default_falls_back_to_the_legacy_path_when_only_it_exists(sandbox: Sandbox) -> None:
+    legacy = sandbox.root / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
+    _touch(legacy)
+    assert _db_path(sandbox) == str(legacy)
+    assert legacy.exists()
+    assert not sandbox.database.exists()
+
+
+def test_default_prefers_the_new_path_when_both_exist(sandbox: Sandbox) -> None:
+    legacy = sandbox.root / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
+    _touch(legacy)
+    _touch(sandbox.database)
+    assert _db_path(sandbox) == str(sandbox.database)
+    assert legacy.exists()
+
+
+def test_sessions_db_beats_an_existing_legacy_file(sandbox: Sandbox) -> None:
+    legacy = sandbox.root / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
+    _touch(legacy)
+    override = sandbox.root / "elsewhere.duckdb"
+    assert _db_path(sandbox, {"SESSIONS_DB": str(override)}) == str(override)
 
 
 NAMES = ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_HOME")

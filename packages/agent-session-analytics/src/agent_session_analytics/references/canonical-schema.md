@@ -4,8 +4,9 @@ Contents: [tool_uses](#tool_uses), [tool_results](#tool_results), [stop_events](
 
 The shape every harness adapter normalizes into and every analytics pack queries
 against. `agent-session-analytics ingest` loads one canonical row shape (the Claude envelope plus a
-`harness` tag) into `${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/session-analytics/sessions.duckdb` by default, then flattens it into
-the tables below. **Pack authors: write SQL against these tables; never reach
+`harness` tag) into `${XDG_CACHE_HOME:-$HOME/.cache}/agent-session-analytics/sessions.duckdb` by default, then flattens it into
+the tables below. If that file is absent, an existing legacy `dotfiles/session-analytics/` database is used.
+**Pack authors: write SQL against these tables; never reach
 into a harness's native format.**
 
 Every session-scoped table carries a `harness` column
