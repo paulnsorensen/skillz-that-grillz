@@ -45,9 +45,11 @@ def snapshot(root: Path) -> dict[str, tuple[int, int, str]]:
 
 
 def build_wedge(skill: Path, destination: Path) -> dict[str, dict[str, str]]:
+    """Run `wedge build`. Builds in one pytest worker share a verified site-layer cache below the base temp."""
     destination.mkdir()
+    env = os.environ | {"WEDGE_CACHE": str(destination.parent.parent / "wedge-cache")}
     result = subprocess.run([str(ROOT / ".venv/bin/wedge"), "build", str(skill), "--out", str(destination)],
-                            capture_output=True, text=True, check=False)
+                            capture_output=True, text=True, check=False, env=env)
     assert result.returncode == 0, result.stderr
     return cast(dict[str, dict[str, str]], json.loads(result.stdout))
 

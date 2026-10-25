@@ -21,8 +21,8 @@ import pytest
 
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
+from skillz_experiments.harness._claude._preflight import PROBE_PREAMBLE, probe_sandbox
 from skillz_experiments.harness._claude import _constants, _events, _late, _memory, _options, _preflight, _sandbox, _settings, _transport
-from skillz_experiments.harness._claude._preflight import probe_sandbox
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments import _redact
@@ -645,6 +645,22 @@ def test_preflight_asks_the_read_tool_for_the_sealed_file_and_passes_when_it_is_
         session.close()
     assert re.search(r"read the file `[^`]+/sealed` with the Read tool, not Bash", cast(str, calls(executable)[0]["prompt"]))
     assert budget.calls == len(calls(executable)) == evidence["live_calls"]
+
+
+def test_the_preflight_prompt_asks_for_the_read_tool_before_any_denial_and_says_a_denial_is_expected(
+        tmp_path: Path, sandbox_passes: None) -> None:
+    """A live opus judge skipped the Read step after `cat` was denied, as a bypass. The prompt must not invite that."""
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable, Budget(10, 120, 0))
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    assert prompt.startswith(PROBE_PREAMBLE) and "a denial is the expected and correct result" in prompt
+    read = re.search(r"read the file `([^`]+/sealed)` with the Read tool", prompt)
+    assert read is not None and read.start() < prompt.index(f"`cat {read[1]}`"), prompt
 
 
 @pytest.mark.parametrize(("mode", "reason"), [

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "measurement_version": 1,
+  "mode": "block",
+  "slices": {
+    "agent-session-analytics": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/732",
+      "M09.public_surface": 1,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/456",
+      "M12.unused_exports": 1
+    },
+    "evaluation": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/264",
+      "M09.public_surface": 9,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/167",
+      "M12.unused_exports": 0
+    },
+    "fromargs": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/336",
+      "M09.public_surface": 5,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/226",
+      "M12.unused_exports": 2
+    },
+    "gate": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/258",
+      "M09.public_surface": 15,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/210",
+      "M12.unused_exports": 4
+    },
+    "harness": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/1755",
+      "M09.public_surface": 17,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/1201",
+      "M12.unused_exports": 2
+    },
+    "run": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/2166",
+      "M09.public_surface": 9,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/1541",
+      "M12.unused_exports": 2
+    },
+    "search": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/359",
+      "M09.public_surface": 32,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/328",
+      "M12.unused_exports": 3
+    },
+    "skillz-inspect": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/118",
+      "M09.public_surface": 2,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/81",
+      "M12.unused_exports": 2
+    },
+    "wedge": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/1011",
+      "M09.public_surface": 17,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/603",
+      "M12.unused_exports": 1
+    },
+    "wrapper": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/262",
+      "M09.public_surface": 1,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/176",
+      "M12.unused_exports": 0
+    }
+  }
+}

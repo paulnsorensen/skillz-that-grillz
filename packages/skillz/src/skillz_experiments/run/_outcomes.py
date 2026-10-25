@@ -13,6 +13,8 @@ from skillz_experiments._graders import DIAGNOSTIC_LIMIT
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, Criterion, case_criteria
 from skillz_experiments._redact import redact
+from skillz_experiments.evaluation import task_tokens
+from skillz_experiments.gate import close
 from skillz_experiments.search import complete_means, is_reflection, is_search_validation, unit_score, validation_complete, HarnessText
 
 # The search stops with `search-faulted` when at least this many search evaluations finished and more than half failed,
@@ -258,7 +260,7 @@ def mean_tokens(counts: Sequence[int | None]) -> float | None:
 
 
 def stall_observations(outcomes: Sequence[Mapping[str, object]], validation: set[str],
-                       repeats: int = 1) -> list[float | None]:
+                       repeats: int = 1, *, cheaper: bool = False) -> list[float | None]:
     """Return one stall observation per recorded proposal, oldest first.
 
     The search outcomes after a reflection and before the next one belong to its `proposed` candidate. The observation
@@ -266,30 +268,37 @@ def stall_observations(outcomes: Sequence[Mapping[str, object]], validation: set
     A mean needs `validation_complete` with `repeats` runs per case, and a case scores the mean of its scored repeats.
     It is None when an evaluation of the candidate failed or the host build of the proposal failed. It is 0.0 when the
     proposal has no identity or its candidate does not complete the validation set.
+    `cheaper` is True when the run sets a token field. Then a proposal with a validation mean equal to the best earlier
+    mean and known mean validation task tokens below those of the cheapest best earlier candidate has the observation
+    `inf`, a rise above every band, so it counts as progress.
     """
     marks = [index for index, item in enumerate(outcomes) if is_reflection(item)]
     observations: list[float | None] = []
     for start, end in zip(marks, [*marks[1:], len(outcomes)]):
         before = outcomes[:start]
-        best = max(complete_means(before, validation, repeats).values(), default=0.0)
+        means = complete_means(before, validation, repeats)
+        best = max(means.values(), default=0.0)
+        rival = _cheapest_best(before, means, best) if cheaper else None
         window = outcomes[start + 1:end]
         reflection = outcomes[start]
         proposed = reflection.get("proposed")
         earlier = [item for item in before if is_search_validation(item) and not is_failed(item)
                    and item["search_candidate"] == proposed]
         observations.append(None if reflection.get("status") is not None
-                            else _observation(window, proposed, validation, best, earlier, repeats))
+                            else _observation(window, proposed, validation, best, earlier, repeats, rival))
     return observations
 
 
 def _observation(window: Sequence[Mapping[str, object]], identity: object, validation: set[str],
-                 best: float, earlier: Sequence[Mapping[str, object]], repeats: int) -> float | None:
+                 best: float, earlier: Sequence[Mapping[str, object]], repeats: int,
+                 rival: float | None = None) -> float | None:
     """Return the observation of one proposal from the outcomes in its window.
 
     Only the evaluations of the proposed candidate count, up to the end of its validation set. GEPA can score the
     candidate again as the next parent before the next reflection. That later score does not change the observation.
     `earlier` holds the scored validation outcomes of the candidate from before the window. A resume reuses those
     outcomes, so the window does not repeat them.
+    `rival` is the lowest known mean validation task tokens among the best earlier candidates, or None.
     """
     if not isinstance(identity, str):
         return 0.0
@@ -304,6 +313,23 @@ def _observation(window: Sequence[Mapping[str, object]], identity: object, valid
         if item.get("split") == "validation":
             seen.append(item)
     mean = complete_means(seen, validation, repeats).get(identity)
-    return 0.0 if mean is None else max(0.0, mean - best)
+    if mean is None:
+        return 0.0
+    own = _validation_tokens(seen, identity)
+    if rival is not None and own is not None and close(mean, best) and own < rival:
+        return math.inf
+    return max(0.0, mean - best)
+
+
+def _validation_tokens(outcomes: Sequence[Mapping[str, object]], identity: str) -> float | None:
+    """Return the mean task tokens of the scored validation outcomes of `identity`, or None when a count is unknown."""
+    return mean_tokens([task_tokens(item) for item in outcomes if is_search_validation(item) and not is_failed(item)
+                        and item["search_candidate"] == identity])
+
+
+def _cheapest_best(outcomes: Sequence[Mapping[str, object]], means: Mapping[str, float], best: float) -> float | None:
+    """Return the lowest known validation task tokens among the candidates whose mean equals `best`, or None."""
+    counts = [_validation_tokens(outcomes, identity) for identity, mean in means.items() if close(mean, best)]
+    return min((count for count in counts if count is not None), default=None)
 
 

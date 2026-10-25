@@ -1,14 +1,18 @@
 """Run the repository quality checks with bounded parallel jobs."""
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Generator
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, TextIO
 
 Job = tuple[str, list[str]]
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +27,11 @@ SHARD_VARIABLE = "GATE_SHARD"
 SKILLZ_LANES = ("skillz-e2e-pytest", "skillz-pytest")
 # The requirement that `test_generated_target.py` locks offline.
 OFFLINE_LOCK_DEPENDENCY = "cyclopts==5.2.0"
+# `0` keeps fsync in the pytest lanes; otherwise they run under `eatmydata` when it is on PATH.
+EATMYDATA_VARIABLE = "GATE_EATMYDATA"
+# The count of gates on one host that run their lanes at the same time; `0` removes the limit.
+HOST_SLOTS_VARIABLE = "GATE_HOST_SLOTS"
+DEFAULT_HOST_SLOTS = 2
 
 
 def _environment() -> dict[str, str]:
@@ -45,6 +54,71 @@ def parse_shard(value: str) -> tuple[int, int]:
     raise ValueError(f"{SHARD_VARIABLE} must be <index>/<count> with 1 <= index <= count: {value!r}")
 
 
+def fsync_wrapper() -> list[str]:
+    """Return the `eatmydata` prefix for the pytest lanes, or `[]` if it is off or missing.
+
+    The pytest lanes write only below the gate temporary root, so a lost flush loses nothing.
+    The wrapper makes fsync a no-op and so stops the flush storm of the run records.
+    Tests that replace `os.fsync` still see their replacement.
+    """
+    if os.environ.get(EATMYDATA_VARIABLE) == "0":
+        return []
+    path = shutil.which("eatmydata")
+    return [path] if path else []
+
+
+def _host_slots() -> int:
+    value = os.environ.get(HOST_SLOTS_VARIABLE, str(DEFAULT_HOST_SLOTS))
+    if not value.isdigit():
+        raise ValueError(f"{HOST_SLOTS_VARIABLE} must be a non-negative integer: {value!r}")
+    return int(value)
+
+
+def _lock_dir() -> Path:
+    """Return the per-user directory of the host slot files."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    base = Path(runtime) if runtime else Path.home() / ".cache"
+    return base / "skillz-gate"
+
+
+def try_slot(slots: int) -> TextIO | None:
+    """Lock one free slot file and return it open, or return `None` if every slot is busy.
+
+    The kernel releases a `flock` when the last descriptor closes, so a killed gate frees its slot.
+    """
+    directory = _lock_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    for index in range(slots):
+        handle = (directory / f"slot-{index}.lock").open("a")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            continue
+        return handle
+    return None
+
+
+@contextlib.contextmanager
+def host_slot(slots: int) -> Generator[None]:
+    """Hold one of `slots` host-wide gate slots; wait while all of them are busy."""
+    if slots == 0:
+        yield
+        return
+    handle = try_slot(slots)
+    if handle is None:
+        print(f"… waiting for a host gate slot ({slots} busy; {HOST_SLOTS_VARIABLE} sets the count)", flush=True)
+        while handle is None:
+            _check_cancelled()
+            time.sleep(0.2)
+            handle = try_slot(slots)
+        print("✓ host gate slot", flush=True)
+    try:
+        yield
+    finally:
+        handle.close()
+
+
 def _check_cancelled() -> None:
     if _cancelled:
         raise KeyboardInterrupt
@@ -52,7 +126,7 @@ def _check_cancelled() -> None:
 
 def _start(name: str, command: list[str]) -> bool:
     _check_cancelled()
-    print(f"→ {name}", flush=True)
+    print(f"→ {name}" + (" (eatmydata)" if Path(command[0]).name == "eatmydata" else ""), flush=True)
     output = tempfile.TemporaryFile()
     try:
         process = subprocess.Popen(
@@ -142,20 +216,22 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
     skillz = ["uv", "run", "--locked", "--no-sync", "--project", "packages/skillz"]
     fromargs = ["uv", "run", "--locked", "--no-sync", "--project", "packages/fromargs"]
     analytics = ["uv", "run", "--locked", "--no-sync", "--project", "packages/agent-session-analytics"]
+    # Only the `--no-sync` pytest lanes run without fsync; they write only below `cache_root`.
+    eat = fsync_wrapper()
     # The slow process-level e2e suite runs as its own job, in parallel with the skillz unit tests.
     skillz_e2e = "packages/skillz/tests/skillz_experiments/e2e"
     return [
-        ("skillz-e2e-pytest", skillz + ["pytest", skillz_e2e, "-q", "-n", str(test_workers),
+        ("skillz-e2e-pytest", eat + skillz + ["pytest", skillz_e2e, "-q", "-n", str(test_workers),
                                   "--dist", "worksteal", "--basetemp", str(cache_root / "e"),
                                   "-o", f"cache_dir={cache_root / 'ec'}"]),
-        ("wedge-pytest", wedge + ["pytest", "packages/wedge/tests", "-q", "-n", str(test_workers),
+        ("wedge-pytest", eat + wedge + ["pytest", "packages/wedge/tests", "-q", "-n", str(test_workers),
                             "--dist", "worksteal", "--basetemp", str(cache_root / "l"),
                             "-o", f"cache_dir={cache_root / 'lc'}"]),
-        ("skillz-pytest", skillz + ["pytest", "packages/skillz/tests", "--ignore", skillz_e2e,
+        ("skillz-pytest", eat + skillz + ["pytest", "packages/skillz/tests", "--ignore", skillz_e2e,
                               "-q", "-n", str(test_workers),
                               "--dist", "worksteal", "--basetemp", str(cache_root / "s"),
                               "-o", f"cache_dir={cache_root / 'sc'}"]),
-        ("fromargs-pytest", fromargs + ["pytest", "packages/fromargs/tests", "-q", "-n", str(test_workers),
+        ("fromargs-pytest", eat + fromargs + ["pytest", "packages/fromargs/tests", "-q", "-n", str(test_workers),
                                       "--dist", "worksteal", "--basetemp", str(cache_root / "f"),
                                       "-o", f"cache_dir={cache_root / 'fc'}"]),
         ("skill-validator-tests", root + ["python", ".github/scripts/test_validate_skills.py"]),
@@ -166,12 +242,16 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("reference-check", root + ["python", ".github/scripts/check_skillz_references.py"]),
         ("architecture-tests", root + ["python", ".github/scripts/test_check_architecture.py"]),
         ("architecture-check", root + ["python", ".github/scripts/check_architecture.py"]),
+        ("slice-guard-tests", root + ["python", ".github/scripts/test_check_slices.py"]),
+        ("slice-guard", root + ["python", ".github/scripts/check_slices.py", "check", "--strict"]),
+        ("depth-ratchet-tests", root + ["python", ".github/scripts/test_check_depth.py"]),
+        ("depth-ratchet", root + ["python", ".github/scripts/check_depth.py", "check"]),
         ("ac-trace-tests", root + ["python", ".github/scripts/test_check_ac_trace.py"]),
         ("ac-trace", root + ["python", ".github/scripts/check_ac_trace.py"]),
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
         ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
-        ("agent-session-analytics-pytest", analytics + ["pytest", "packages/agent-session-analytics/tests", "-q", "-n", str(test_workers),
+        ("agent-session-analytics-pytest", eat + analytics + ["pytest", "packages/agent-session-analytics/tests", "-q", "-n", str(test_workers),
                                                 "--dist", "worksteal", "--basetemp", str(cache_root / "a"),
                                                 "-o", f"cache_dir={cache_root / 'ac'}"]),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
@@ -225,7 +305,7 @@ def _prepare() -> bool:
         return run_step("index-cache", ["uv", "lock", "--project", str(project)])
 
 
-def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str]) -> int:
+def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str], slots: int) -> int:
     formatters = (
         [("markdown", ["just", "lint-md-fix"]), ("yaml-fmt", ["just", "lint-yaml-fmt-fix"])]
         if mode == "fix" else
@@ -237,7 +317,8 @@ def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: 
     if not _prepare():
         return 1
     jobs = _without(_test_jobs(test_workers, temp_root) + _check_jobs(), skip)
-    return 0 if run_jobs(jobs, workers) else 1
+    with host_slot(slots):
+        return 0 if run_jobs(jobs, workers) else 1
 
 
 def _workers(name: str) -> int:
@@ -265,6 +346,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         workers, test_workers = _workers("GATE_JOBS"), _workers("TEST_WORKERS")
+        slots = _host_slots()
         skip = _skipped()
         shard = os.environ.get(SHARD_VARIABLE, "")
         if shard and args[0] != "skillz":
@@ -291,7 +373,9 @@ def main(argv: list[str] | None = None) -> int:
                                 "-q", "-n", str(test_workers), "--dist", "worksteal",
                                 "--basetemp", str(temp_root / "f"),
                                 "-o", f"cache_dir={temp_root / 'fc'}"]
-                    return 0 if run_step(f"{package}-pytest", command) else 1
+                    # `uv run --locked` can sync the environment, so this lane keeps fsync.
+                    with host_slot(slots):
+                        return 0 if run_step(f"{package}-pytest", command) else 1
                 if args[0] in {"test", "skillz"}:
                     jobs = _test_jobs(test_workers, temp_root)
                     if args[0] == "skillz":
@@ -300,8 +384,9 @@ def main(argv: list[str] | None = None) -> int:
                     jobs = _without(jobs, skip)
                     if not _prepare():
                         return 1
-                    return 0 if run_jobs(jobs, workers) else 1
-                return run_gate(args[0], workers, test_workers, temp_root, skip)
+                    with host_slot(slots):
+                        return 0 if run_jobs(jobs, workers) else 1
+                return run_gate(args[0], workers, test_workers, temp_root, skip, slots)
             except KeyboardInterrupt:
                 _stop_children()
                 print("interrupted", file=sys.stderr)
