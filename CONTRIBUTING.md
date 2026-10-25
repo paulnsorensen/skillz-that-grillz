@@ -73,6 +73,10 @@ Run `just build` and verify 0 failures before opening a PR.
 ## Submitting a pull request
 
 1. Fork the repo and create a topic branch from `main`.
+   Open the PR against `main`, not the default branch. `dist` is the
+   default branch: CI publishes it, and it shares no history with
+   `main`. With the GitHub CLI, run `gh pr create --base main`. In the
+   web UI, set the base branch to `main`.
 2. Make your change. Keep commits focused; one concern per commit is
    easier to review than a kitchen-sink commit.
 3. Use [Conventional Commits](https://www.conventionalcommits.org)
