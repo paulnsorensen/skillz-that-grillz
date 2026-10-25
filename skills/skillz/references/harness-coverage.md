@@ -133,7 +133,7 @@ slashes).
 A directory whose own name contains a dash is ambiguous if every dash
 is a separator.
 So the adapter walks left-to-right. At each step it takes the longest prefix of remaining segments that exists on disk
-(`Users-paul-Dev-easy-cheese` → `/Users/paul/Dev/easy-cheese` when that path is
+(`Users-alex-src-app` → `/Users/alex/src/app` when that path is
 real). Unresolved tails fall back to a naive split. `gitBranch` is always null
 (not recorded).
 
