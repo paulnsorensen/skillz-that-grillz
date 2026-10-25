@@ -8,11 +8,13 @@ A `0.x` minor release can contain breaking changes.
 The `publish fromargs` workflow reads the section for the tagged version.
 It uses that section as the GitHub release notes.
 To release, move the `Unreleased` entries into a new version section with the date.
-Then set the same version in `lib/fromargs/pyproject.toml`.
-When the minor version changes, also bump the `fromargs` range in `pyproject.toml` and `lib/pyproject.toml`.
+Then set the same version in `packages/fromargs/pyproject.toml`.
+When the minor version changes, also bump the `fromargs` range in the root `pyproject.toml` and `packages/skillz/pyproject.toml`.
 Then relock, and push a `fromargs-v<version>` tag after the release commit merges.
 
 ## [Unreleased]
+
+## [0.2.1] - 2026-10-25
 
 ### Changed
 
@@ -87,6 +89,7 @@ Then relock, and push a `fromargs-v<version>` tag after the release commit merge
 - `--version` resolution for the calling distribution, not for `fromargs`.
 - Async handlers through `asyncio.run` when the effective backend is asyncio.
 
-[Unreleased]: https://github.com/paulnsorensen/skillz-that-grillz/compare/fromargs-v0.2.0...HEAD
+[Unreleased]: https://github.com/paulnsorensen/skillz-that-grillz/compare/fromargs-v0.2.1...HEAD
+[0.2.1]: https://github.com/paulnsorensen/skillz-that-grillz/compare/fromargs-v0.2.0...fromargs-v0.2.1
 [0.2.0]: https://github.com/paulnsorensen/skillz-that-grillz/compare/fromargs-v0.1.0...fromargs-v0.2.0
 [0.1.0]: https://github.com/paulnsorensen/skillz-that-grillz/releases/tag/fromargs-v0.1.0
