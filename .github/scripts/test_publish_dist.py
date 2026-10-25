@@ -205,6 +205,11 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("--base main", text)
         self.assertNotIn("actions/checkout", text)
 
+    def test_retarget_also_moves_a_pull_request_whose_base_changes_to_dist(self) -> None:
+        text = RETARGET.read_text(encoding="utf-8")
+        self.assertIn("types: [opened, reopened, edited]", text)
+        self.assertIn("github.event.changes.base != null", text)
+
 
 class MainTreeTest(unittest.TestCase):
     def test_main_tracks_no_archives(self) -> None:

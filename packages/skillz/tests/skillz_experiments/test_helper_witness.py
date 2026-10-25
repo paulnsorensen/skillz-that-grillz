@@ -29,11 +29,13 @@ INVOKED = f".agents/skills/{SKILL}/{HELPER}"
 
 def rules() -> Contract:
     return parse({"schema_version": 1, "status": "approved", "skill": SKILL, "invocation": f"${SKILL} run",
-                  "kinds": {"echo": {"grader": "exact-json"}, "style": {"grader": "judge", "rubric": "Rate it."}}}, "skill")
+                  "kinds": {"echo": {"grader": "exact-json"}, "style": {"grader": "judge", "rubric": "Rate it."}},
+                  "helper": {"path": HELPER, "input": "input.txt",
+                             "fixtures": [{"input": "hi", "returncode": 0, "output": {"echo": "hello"}}]}}, "skill")
 
 
 def candidate(source: str = HELPER_SOURCE) -> Candidate:
-    return Candidate({"SKILL.md": "seed", HELPER: source}, ("SKILL.md",), contract=rules(), script=HELPER)
+    return Candidate({"SKILL.md": "seed", HELPER: source}, ("SKILL.md",), contract=rules())
 
 
 def case(tmp_path: Path, kind: str = "echo") -> Case:

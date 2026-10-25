@@ -215,9 +215,8 @@ def test_evaluator_prompt_expands_placeholders_once_and_never_in_the_request() -
     from skillz_experiments._cases import Case
     from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
     rules = parse(BASE | {"invocation": "{skill} at {path} {skill}"}, "skill")
-    candidate = Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=rules)
     case = Case("one", "one", "train", "Use {skill} and {path}.", {}, {"echo": 1}, "t", True)
-    prompt = _prompt(rules, candidate, "Return JSON.", case)
+    prompt = _prompt(rules, "Return JSON.", case)
     first = prompt.splitlines()[0]
     assert first == "echo-skill at .agents/skills/echo-skill echo-skill"
     assert prompt.endswith("Use {skill} and {path}.")

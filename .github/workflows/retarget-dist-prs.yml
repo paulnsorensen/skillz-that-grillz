@@ -6,7 +6,8 @@ name: retarget dist prs
 # pull request code.
 on:
   pull_request_target:
-    types: [opened, reopened]
+    # `edited` covers a base change to dist. The job skips other edits.
+    types: [opened, reopened, edited]
     branches: [dist]
 
 permissions:
@@ -15,6 +16,7 @@ permissions:
 jobs:
   retarget:
     name: retarget to main
+    if: github.event.action != 'edited' || github.event.changes.base != null
     runs-on: ubuntu-latest
     steps:
       - name: Change the base to main

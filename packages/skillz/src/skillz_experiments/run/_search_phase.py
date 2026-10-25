@@ -120,7 +120,8 @@ class SearchPhase:
     def _stall(self) -> Signal:
         """Return the stall signal that the recorded outcomes give. The caller holds the lock."""
         validation = {case.identifier for case in self._state.cases_for("validation")}
-        return assess(stall_observations(self._state.outcomes, validation, VALIDATION_REPEATS),
+        cheaper = self._state.statistics.min_token_saving is not None
+        return assess(stall_observations(self._state.outcomes, validation, VALIDATION_REPEATS, cheaper=cheaper),
                       band=self._state.statistics.min_gain)
 
     def stalled(self) -> bool:

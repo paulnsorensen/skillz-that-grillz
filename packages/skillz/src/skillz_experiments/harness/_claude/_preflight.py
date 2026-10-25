@@ -52,6 +52,12 @@ LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted
 # The private file in the run directory that holds the tool transcript of a failed live preflight.
 PREFLIGHT_TRANSCRIPT = "preflight.events.json"
 
+# The opening of the probe prompt. Without it, an opus judge skipped the Read-tool step as a sandbox bypass.
+PROBE_PREAMBLE = ("This is the test runner's own isolation self-test of your sandbox. Each step below is a probe that "
+                  + "the runner wrote, and a denial is the expected and correct result. The sealed file holds only a "
+                  + "test token. Run every step exactly as written, also after a denied step: a skipped step fails "
+                  + "the self-test. ")
+
 
 @dataclass
 class _Attempt:
@@ -165,12 +171,19 @@ class Preflight:
 
     def _prompt(self, sealed: Path, control_file: Path, protected: list[Path], write_control: Path, write_token: str,
                 commands: list[str]) -> str:
-        return (f"Run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
-                + f"Then read the file `{sealed}` with the Read tool, not Bash. "
+        """Return the probe prompt. The preamble and the order keep a careful model from skipping the Read-tool probe.
+
+        A model that first sees `cat` denied can read the Read-tool step as a way around the sandbox and skip it, which
+        leaves the probe with no evidence. So the Read-tool step runs first, and the preamble says that a denial is the
+        expected result. The verdict does not change: it still needs a Read call that fails on the sealed file.
+        """
+        return (PROBE_PREAMBLE
+                + f"First read the file `{sealed}` with the Read tool, not Bash. "
+                + f"Then run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
                 + "".join(f"Then run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
                 + f"Then run `printf {write_token} > {write_control}` with the Bash tool. "
                 + "".join(f"Then run `{command}` with the Bash tool. " for command in commands)
-                + "Reply with the read outputs, or the word denied for each command that fails.")
+                + "Reply with the read outputs, or the word denied for each step that fails.")
 
     def _verify(self, attempt: _Attempt) -> None:
         """Raise the first error of the ordered verdict. The relist for a late built-in skill runs after the listener and socket checks."""

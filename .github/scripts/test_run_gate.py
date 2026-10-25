@@ -12,6 +12,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_gate  # noqa: E402
@@ -36,6 +37,19 @@ if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
 if args and args[0] == 'run':
     time.sleep(.03)
 """
+FAKE_EATMYDATA = """#!/usr/bin/env python3
+import os, sys
+with open(os.environ['EVENT_LOG'], 'a') as log:
+    log.write('eatmydata ' + ' '.join(sys.argv[1:]) + '\\n')
+os.execvp(sys.argv[1], sys.argv[1:])
+"""
+HOLD_SLOT = """import sys, time
+sys.path.insert(0, sys.argv[1])
+import run_gate
+with run_gate.host_slot(1):
+    print('held', flush=True)
+    time.sleep(30)
+"""
 
 
 class GateRunnerTest(unittest.TestCase):
@@ -46,8 +60,139 @@ class GateRunnerTest(unittest.TestCase):
             tool.chmod(0o755)
         # CI jobs set GATE_SKIP or GATE_SHARD; drop them so each test sets its own lane selection.
         inherited = {name: value for name, value in os.environ.items() if name not in {"GATE_SKIP", "GATE_SHARD"}}
+        # A private lock directory keeps the fake gates out of the real host slots that the outer gate holds.
         return {**inherited, "PATH": str(root) + os.pathsep + os.environ["PATH"],
-                "EVENT_LOG": str(root / "events"), "GATE_JOBS": "2", "TEST_WORKERS": "3"}
+                "EVENT_LOG": str(root / "events"), "GATE_JOBS": "2", "TEST_WORKERS": "3",
+                "GATE_EATMYDATA": "0", "XDG_RUNTIME_DIR": str(root / "run")}
+
+    def _fake_eatmydata(self, root: Path) -> None:
+        tool = root / "eatmydata"
+        _ = tool.write_text(FAKE_EATMYDATA)
+        tool.chmod(0o755)
+
+    def test_only_the_pytest_lanes_run_under_eatmydata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._fake_eatmydata(root)
+            env = {name: value for name, value in self._fake_env(root).items() if name != "GATE_EATMYDATA"}
+            result = subprocess.run([sys.executable, str(RUNNER), "fix"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            wrapped = [event.removeprefix("eatmydata ") for event in events if event.startswith("eatmydata ")]
+            pytest_events = [event for event in events if " pytest " in event and not event.startswith("eatmydata ")]
+            self.assertEqual(len(pytest_events), 5)
+            self.assertEqual(sorted(wrapped), sorted(pytest_events))
+            self.assertEqual(events[2], "uv sync --locked --all-packages --all-groups --all-extras")
+            self.assertIn("→ skillz-e2e-pytest (eatmydata)", result.stdout)
+            self.assertIn("→ fromargs-typecheck\n", result.stdout)
+
+    def test_gate_eatmydata_zero_keeps_fsync(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._fake_eatmydata(root)
+            result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=self._fake_env(root),
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            self.assertEqual(sum(" pytest " in event for event in events), 2)
+            self.assertFalse(any(event.startswith("eatmydata") for event in events))
+            self.assertNotIn("(eatmydata)", result.stdout)
+
+    def test_a_missing_eatmydata_gives_no_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(os.environ, {"PATH": directory}):
+                _ = os.environ.pop("GATE_EATMYDATA", None)
+                self.assertEqual(run_gate.fsync_wrapper(), [])
+
+    def test_host_slots_admit_at_most_the_slot_count(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": directory}):
+            first, second = run_gate.try_slot(2), run_gate.try_slot(2)
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            self.assertIsNone(run_gate.try_slot(2))
+            self.assertIsNone(run_gate.try_slot(1))
+            assert first is not None and second is not None
+            first.close()
+            third = run_gate.try_slot(2)
+            self.assertIsNotNone(third)
+            self.assertIsNone(run_gate.try_slot(2))
+            for handle in (second, third):
+                assert handle is not None
+                handle.close()
+            self.assertEqual(sorted(path.name for path in (Path(directory) / "skillz-gate").iterdir()),
+                             ["slot-0.lock", "slot-1.lock"])
+
+    def test_a_killed_gate_frees_its_host_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, "XDG_RUNTIME_DIR": directory}
+            holder = subprocess.Popen(
+                [sys.executable, "-c", HOLD_SLOT, str(RUNNER.parent)],
+                env=env, stdout=subprocess.PIPE, text=True,
+            )
+            try:
+                assert holder.stdout is not None
+                self.assertEqual(holder.stdout.readline(), "held\n")
+                with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": directory}):
+                    self.assertIsNone(run_gate.try_slot(1))
+                    holder.kill()
+                    _ = holder.wait(timeout=5)
+                    handle = run_gate.try_slot(1)
+                    self.assertIsNotNone(handle)
+                    assert handle is not None
+                    handle.close()
+            finally:
+                if holder.poll() is None:
+                    holder.kill()
+                    _ = holder.wait()
+                if holder.stdout is not None:
+                    holder.stdout.close()
+
+    def test_a_second_gate_waits_for_a_host_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_HOST_SLOTS": "1"}
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": env["XDG_RUNTIME_DIR"]}):
+                held = run_gate.try_slot(1)
+            assert held is not None
+            log = root / "stdout"
+            with log.open("w") as stdout:
+                gate = subprocess.Popen([sys.executable, str(RUNNER), "skillz"], env=env,
+                                        stdout=stdout, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 5
+                while "waiting for a host gate slot" not in log.read_text() and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertIn("… waiting for a host gate slot (1 busy; GATE_HOST_SLOTS sets the count)", log.read_text())
+                time.sleep(.3)
+                self.assertIsNone(gate.poll())
+                events = (root / "events").read_text().splitlines()
+                self.assertTrue(events[0].startswith("uv sync "), events)
+                self.assertFalse(any(" pytest " in event for event in events))
+                held.close()
+                self.assertEqual(gate.wait(timeout=10), 0, log.read_text())
+                self.assertIn("✓ host gate slot", log.read_text())
+                self.assertEqual(sum(" pytest " in event for event in (root / "events").read_text().splitlines()), 2)
+            finally:
+                held.close()
+                if gate.poll() is None:
+                    gate.kill()
+                    _ = gate.wait()
+
+    def test_gate_host_slots_zero_removes_the_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_HOST_SLOTS": "0"}
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": env["XDG_RUNTIME_DIR"]}):
+                held = run_gate.try_slot(1)
+            assert held is not None
+            try:
+                result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
+                                        capture_output=True, text=True, check=False, timeout=10)
+            finally:
+                held.close()
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("waiting", result.stdout)
 
     def test_jobs_overlap_with_a_bound(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -261,7 +406,8 @@ class GateRunnerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = self._fake_env(root)
-            for name, value in (("GATE_JOBS", "0"), ("TEST_WORKERS", "auto"), ("TEST_WORKERS", "-1")):
+            for name, value in (("GATE_JOBS", "0"), ("TEST_WORKERS", "auto"), ("TEST_WORKERS", "-1"),
+                                ("GATE_HOST_SLOTS", "-1"), ("GATE_HOST_SLOTS", "two")):
                 with self.subTest(name=name, value=value):
                     result = subprocess.run([sys.executable, str(RUNNER), "fix"],
                                             env={**env, name: value}, capture_output=True,
