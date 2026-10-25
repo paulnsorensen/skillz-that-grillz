@@ -27,7 +27,7 @@ class Sandbox:
 
     @property
     def database(self) -> Path:
-        return self.root / "cache" / "dotfiles" / "session-analytics" / "sessions.duckdb"
+        return self.root / "cache" / "agent-session-analytics" / "sessions.duckdb"
 
     def run(
         self, *args: str, extra_env: dict[str, str] | None = None

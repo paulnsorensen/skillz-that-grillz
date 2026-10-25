@@ -13,6 +13,10 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 
 ## [Unreleased]
 
+### Changed
+
+- The default database path is now `<cache>/agent-session-analytics/sessions.duckdb`, not `<cache>/dotfiles/session-analytics/sessions.duckdb`. If the new file does not exist and the legacy file exists, the package keeps using the legacy file. It never moves, copies, or deletes the legacy file. `SESSIONS_DB` still overrides both.
+
 ## [0.2.0] - 2026-10-24
 
 ### Changed
