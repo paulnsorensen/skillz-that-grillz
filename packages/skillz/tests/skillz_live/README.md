@@ -2,6 +2,7 @@
 
 The repository tests fake every model call.
 The `just live-smoke HARNESS MODEL [SCENARIO]` recipe runs the real stack from a source checkout: harness, sandbox, GEPA reflection, gate, and export.
+Main tracks no skill archive (ADR-012), so the recipe first builds the `skills/skillz/scripts/*.pyz` archives from source with `wedge bundle`.
 It runs only when `SKILLZ_LIVE=1` is set. `just build` and `just ci` never set it, and the gate removes it from each step.
 
 ```sh
