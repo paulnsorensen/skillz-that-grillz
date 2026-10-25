@@ -246,14 +246,16 @@ class GateRunnerTest(unittest.TestCase):
                 "just lint-md-fix", "just lint-yaml-fmt-fix",
                 "uv sync --locked --all-packages --all-groups --all-extras",
             ])
-            self.assertTrue(events[3].startswith("uv lock --project "), events[3])
-            readers = events[4:]
+            # Main tracks no archive (ADR-012), so the archives build before any test reads them.
+            self.assertEqual(events[3], "uv run --locked --no-sync --project packages/wedge wedge bundle skills/skillz")
+            self.assertTrue(events[4].startswith("uv lock --project "), events[4])
+            readers = events[5:]
             self.assertFalse(any(event.startswith("uv sync") for event in readers))
             self.assertTrue(any("packages/wedge/tests" in event for event in readers))
             self.assertTrue(any("packages/skillz/tests" in event for event in readers))
             self.assertTrue(any("packages/fromargs/tests" in event for event in readers))
             self.assertTrue(any("packages/agent-session-analytics/tests" in event for event in readers))
-            self.assertTrue(any("wedge bundle" in event for event in readers))
+            self.assertFalse(any("wedge bundle" in event for event in readers))
             self.assertTrue(all("--no-sync" in event for event in readers if event.startswith("uv run") and "--no-project" not in event))
             pytest_events = [event for event in readers if " pytest " in event]
             self.assertEqual(len(pytest_events), 5)
@@ -344,11 +346,13 @@ class GateRunnerTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             self.assertEqual(events[0], "uv sync --locked --all-packages --all-groups --all-extras")
-            self.assertTrue(events[1].startswith("uv lock --project "), events[1])
+            # Each CI shard builds the archives that its tests run (ADR-012).
+            self.assertEqual(events[1], "uv run --locked --no-sync --project packages/wedge wedge bundle skills/skillz")
+            self.assertTrue(events[2].startswith("uv lock --project "), events[2])
             e2e = "packages/skillz/tests/skillz_experiments/e2e"
-            self.assertEqual(len(events), 4)
-            self.assertTrue(any(f"pytest {e2e} " in event for event in events[2:]))
-            self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[2:]))
+            self.assertEqual(len(events), 5)
+            self.assertTrue(any(f"pytest {e2e} " in event for event in events[3:]))
+            self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[3:]))
 
     def test_skillz_shard_loads_the_plugin_into_both_skillz_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

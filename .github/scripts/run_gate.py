@@ -257,7 +257,6 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
         ("wedge-check", wedge + ["wedge", "check", "--root", "packages/wedge/examples/skills",
                               "--root", "packages/wedge/examples/consumer/skills"]),
-        ("wedge-bundle", wedge + ["wedge", "bundle", "skills/skillz", "--check"]),
     ]
 
 
@@ -289,13 +288,17 @@ def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
 
 
 def _prepare() -> bool:
-    """Sync the workspace, then warm the uv index cache for the offline e2e locks.
+    """Sync the workspace, build the skill archives, then warm the uv index cache for the offline e2e locks.
 
+    Main tracks no archive (ADR-012), and the skillz tests run the built archives, so the build runs before any reader.
     `uv sync` stores wheels but not registry index metadata. The e2e tests run `uv lock --offline`
     on a scratch project that pins `OFFLINE_LOCK_DEPENDENCY`. Without this metadata, that lock fails on a cold cache.
     One online lock of the same requirement stores it. Keep the pin equal to the pin in the e2e `_world` helpers.
     """
     if not run_step("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups", "--all-extras"]):
+        return False
+    if not run_step("wedge-bundle", ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge",
+                                     "wedge", "bundle", "skills/skillz"]):
         return False
     with tempfile.TemporaryDirectory() as scratch:
         project = Path(scratch)
