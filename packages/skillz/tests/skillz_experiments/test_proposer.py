@@ -49,7 +49,10 @@ CLI_HEAD = ("Improve the supplied skill text and helper script components. "
              "The module defines a top-level main, and the entry is <package>:main. "
              "The host builds the target to scripts/<name>.pyz. "
              "SKILL.md calls it with python3 scripts/<name>.pyz. "
-             "The host rejects a second target. ")
+             "The host rejects a second target. "
+             "A rule that code applies the same way to every input is a good fit for @new-cli. "
+             "Try @new-cli early. Do not wait until a prose fix fails. "
+             "A CLI can also cut the task tokens of each case. ")
 PROSE_CLI = CLI_HEAD + STE + STATUS
 
 
@@ -115,6 +118,35 @@ def test_the_budget_follows_the_cosine_schedule_rounded_down() -> None:
 @pytest.mark.ac("gh-239:AC-1")
 def test_a_plan_without_calls_counts_as_spent() -> None:
     assert Progress(spent=0, planned=0, proposal=1).budget() == 1
+
+
+@pytest.mark.ac("proposer-cli-early:AC-2")
+def test_the_budget_keeps_two_edits_while_new_cli_is_empty() -> None:
+    late = Progress(spent=100, planned=100, proposal=9, cli_open=True)
+    assert late.budget() == 2
+    budget = ("Make at most 2 edits across all components. An edit is one block of consecutive changed lines. "
+              + "A new @new-cli target and the SKILL.md line that calls it are 2 edits.")
+    assert budget in _status(late)
+    assert Progress(spent=0, planned=100, proposal=1, cli_open=True).budget() == 6
+    assert Progress(spent=100, planned=100, proposal=9).budget() == 1
+    assert "@new-cli" not in _status(Progress(spent=100, planned=100, proposal=9))
+
+
+@pytest.mark.ac("proposer-cli-early:AC-1")
+def test_only_a_run_that_offers_new_cli_tells_the_proposer_to_try_it_early() -> None:
+    early = "Try @new-cli early. Do not wait until a prose fix fails."
+    offered = ["SKILL.md", "@new-cli"]
+    assert early in reflection_request("prose+cli", dict.fromkeys(offered, ""), {}, offered, progress=START)[0]
+    assert early not in reflection_request("prose+cli", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)[0]
+    assert early not in reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)[0]
+
+
+@pytest.mark.ac("gh-537:AC-1")
+def test_a_token_rule_explains_the_token_fields_of_the_feedback() -> None:
+    fields = "A feedback record can hold task_tokens"
+    cheaper = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START, cheaper=True)[0]
+    assert "Prefer fewer tokens when correctness is equal. " + fields in cheaper
+    assert fields not in reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)[0]
 
 
 @pytest.mark.ac("gh-239:AC-4")

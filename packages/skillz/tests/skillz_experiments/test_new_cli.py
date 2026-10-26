@@ -802,3 +802,56 @@ def test_a_search_that_prefers_the_component_gates_with_the_built_target_and_exp
                              capture_output=True, text=True)
     assert checked.returncode == 0, checked.stderr
     assert "+++ b/src/hello_cli/__init__.py" in (destination / "candidate.patch").read_text()
+
+
+@final
+class _ProseOnly(FakeRunProvider):
+    """A provider that records each reflection prompt and answers with the seed text, so `@new-cli` stays empty."""
+
+    def __init__(self, seed: dict[str, str], budget: Budget, checkpoint: Callable[[], None], prompts: list[str]) -> None:
+        super().__init__()
+        self.seed, self.budget, self.checkpoint, self.prompts = seed, budget, checkpoint, prompts
+
+    @override
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
+        if self.budget.calls == 0:
+            for _ in range(_plan.PREFLIGHT_CALLS):
+                self.budget.claim()
+        return {"isolation": "test-provider"}
+
+    def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
+                 checks: object = None) -> dict[str, object]:
+        del checks
+        self.budget.claim(holdout=holdout)
+        self.checkpoint()
+        return {"score": 0.5, "candidate_hash": candidate.identity, "case_hash": case.identifier}
+
+    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
+               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
+        del candidate, case
+        assert schema is not None
+        self.budget.claim(holdout=holdout)
+        self.prompts.append(prompt)
+        names = [name for name in cast(list[str], schema["required"]) if name not in ("@hypothesis", "@notes")]
+        return {"answer": {name: self.seed.get(name, "") + ("\nMore." if name == "SKILL.md" else "") for name in names}
+                | {"@hypothesis": None, "@notes": None}}
+
+
+@pytest.mark.ac("proposer-cli-early:AC-1")
+@pytest.mark.ac("proposer-cli-early:AC-2")
+def test_each_reflection_prompt_of_a_run_with_an_empty_new_cli_offers_it_early_with_two_edits(
+        world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    out = prepared(world, tmp_path, write_draft, approvals)
+    seed, prompts = cast(dict[str, str], read(out / "run.json")["seed"]), list[str]()
+
+    def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> _ProseOnly:
+        return _ProseOnly(seed, budget, checkpoint, prompts)
+
+    _ = run(world.skill, out, MODEL, live=True, factory=factory)
+    heads = [prompt.split("\n", 1)[0] for prompt in prompts]
+    assert heads, "the search made no reflection call"
+    for head in heads:
+        assert "Try @new-cli early. Do not wait until a prose fix fails." in head
+        assert "A new @new-cli target and the SKILL.md line that calls it are 2 edits." in head
+        assert int(head.split("Make at most ", 1)[1].split(" ", 1)[0]) >= 2
