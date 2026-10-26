@@ -59,9 +59,15 @@ CLI_EDITS = 2
 """A new `@new-cli` target and the SKILL.md line that calls it take 2 edits. The budget keeps them while `@new-cli` is empty."""
 LAST_PROPOSAL_FROM = 0.85
 # Only a run that offers `@new-cli` sends this rule. A prose fix of a mechanical rule can pass, so the search tries code early.
+# The proposer cannot read the fromargs source, so the rule gives its API. A proposer with no API wrote no target.
 _CLI_EARLY = (f"A rule that code applies the same way to every input is a good fit for {NEW_CLI}. "
               + f"Try {NEW_CLI} early. Do not wait until a prose fix fails. "
-              + "A CLI can also cut the task tokens of each case. ")
+              + "A CLI can also cut the task tokens of each case. "
+              + "The fromargs source is not in this prompt. Use this summary of its API: "
+              + '`from fromargs import App`, `app = App("<name>")`, one handler under `@app.default`, '
+              + "and `main = app.main`. "
+              + "The handler takes typed parameters and returns JSON data. fromargs prints that data on stdout. "
+              + "A module that uses only the standard library is valid too. ")
 # Only a run with a token rule sends this rule. That run adds these keys to a feedback record when the counts are known.
 TOKEN_FIELDS_RULE = ("A feedback record can hold task_tokens, the mean uncached task tokens of the candidate on that case, "
                      + "and incumbent_task_tokens, the mean of the current best candidate on the same case.")

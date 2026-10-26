@@ -1,6 +1,11 @@
 """The proposer seam: the reflection request text is frozen per edit mode, and the answer check keeps its error."""
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from skillz_experiments._candidate import is_skill_file
@@ -52,8 +57,15 @@ CLI_HEAD = ("Improve the supplied skill text and helper script components. "
              "The host rejects a second target. "
              "A rule that code applies the same way to every input is a good fit for @new-cli. "
              "Try @new-cli early. Do not wait until a prose fix fails. "
-             "A CLI can also cut the task tokens of each case. ")
+             "A CLI can also cut the task tokens of each case. "
+             "The fromargs source is not in this prompt. Use this summary of its API: "
+             '`from fromargs import App`, `app = App("<name>")`, one handler under `@app.default`, '
+             "and `main = app.main`. "
+             "The handler takes typed parameters and returns JSON data. fromargs prints that data on stdout. "
+             "A module that uses only the standard library is valid too. ")
 PROSE_CLI = CLI_HEAD + STE + STATUS
+API_MODULE = '''import json\nfrom fromargs import App\napp = App("count-items")\n\n\n@app.default\ndef count(path: str) -> dict[str, int]:\n    """Count the items of a JSON list."""\n    with open(path, encoding="utf-8") as handle:\n        return {"count": len(json.load(handle))}\n\n\nmain = app.main\n'''
+"""A module written only from the fromargs API summary of the `@new-cli` prompt."""
 
 
 @pytest.mark.ac("gh-238:AC-1")
@@ -322,3 +334,18 @@ def test_the_prompt_shows_the_unmet_criteria_then_the_hint_then_the_gate_output_
         assert len(sentence.split()) <= 20, sentence
     plain, _ = reflection_request("prose", {"SKILL.md": "t"}, {"SKILL.md": [{"task_correct": 0.0}]}, ["SKILL.md"], progress=START)
     assert "edit_hint" not in plain
+
+
+@pytest.mark.ac("proposer-cli-early:AC-3")
+def test_a_module_written_from_the_prompt_api_summary_runs_with_fromargs(tmp_path: Path) -> None:
+    offered = ["SKILL.md", "@new-cli"]
+    head = reflection_request("prose+cli", dict.fromkeys(offered, ""), {}, offered, progress=START)[0]
+    for part in ("`from fromargs import App`", '`app = App("<name>")`', "`@app.default`", "`main = app.main`"):
+        assert part in head and part.strip("`").replace('"<name>"', '"count-items"') in API_MODULE
+    package = tmp_path / "count_items"
+    package.mkdir()
+    _ = (package / "__init__.py").write_text(API_MODULE, encoding="utf-8")
+    _ = (tmp_path / "items.json").write_text("[1, 2, 3]", encoding="utf-8")
+    run = subprocess.run([sys.executable, "-c", "import count_items; count_items.main()", "items.json"], cwd=tmp_path,
+                         capture_output=True, text=True, check=False, timeout=60)
+    assert run.returncode == 0 and json.loads(run.stdout) == {"count": 3}, (run.stdout, run.stderr)

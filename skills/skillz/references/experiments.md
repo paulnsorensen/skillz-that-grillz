@@ -622,6 +622,8 @@ The runner offers `@new-cli` only when all of these conditions hold:
 When one condition fails, the run has no `@new-cli` component.
 When the run offers `@new-cli`, the reflection prompt says that it fits a rule that code applies the same way to every input.
 The prompt says to try `@new-cli` early, and not to wait until a prose fix fails. A CLI can also cut the task tokens of each case.
+The proposer cannot read the fromargs source, so the prompt gives a summary of its API: `App`, `@app.default`, and `main = app.main`.
+It also says that a module that uses only the standard library is valid.
 When no editable target uses the no-group layer and `uv` or the layer population fails, the run drops the component and continues.
 The run records the reason as `new_cli_dropped` in the own-targets record.
 
