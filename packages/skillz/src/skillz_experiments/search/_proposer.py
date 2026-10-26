@@ -51,7 +51,9 @@ EVIDENCE = ("unmet", "edit_hint", "gate_feedback")
 EVIDENCE_RULE = ("A feedback record can end with unmet, the criteria that the judge did not fully meet. "
                  "Then edit_hint names the files that probably need the change. "
                  "Then gate_feedback holds the end of the failed gate output. "
-                 "The hint can be wrong. Every editable component stays editable.")
+                 "The edit_hint can be wrong. Every editable component stays editable. "
+                 "The gate is the independent check of the case. "
+                 "When a skill rule conflicts with gate_feedback, change the skill rule to match the gate.")
 
 MAX_EDITS = 6
 MIN_EDITS = 1

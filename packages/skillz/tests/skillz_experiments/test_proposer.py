@@ -321,13 +321,15 @@ def test_notes_follow_the_hypothesis_rules_with_their_own_limit_and_codes() -> N
 
 
 @pytest.mark.ac("gh-501:AC-7")
+@pytest.mark.ac("proposer-cli-early:AC-4")
 def test_the_prompt_shows_the_unmet_criteria_then_the_hint_then_the_gate_output_and_keeps_every_file_editable() -> None:
     record = {"gate_feedback": "GATE_TEXT", "edit_hint": ["HINT_FILE.md"], "case_id": "t1",
               "unmet": [{"id": "UNMET_ID", "must": True, "level": 2, "text": "t", "reason": "r"}], "task_correct": 0.0}
     prompt, _ = reflection_request("prose", {"SKILL.md": "t"}, {"SKILL.md": [record]}, ["SKILL.md"], progress=START)
     head, data = prompt.split("\n", 1)
     assert data.index("case_id") < data.index("UNMET_ID") < data.index("HINT_FILE.md") < data.index("GATE_TEXT")
-    assert "The hint can be wrong. Every editable component stays editable." in head
+    assert "The edit_hint can be wrong. Every editable component stays editable." in head
+    assert "When a skill rule conflicts with gate_feedback, change the skill rule to match the gate." in head
     assert head.index("unmet") < head.index("edit_hint") < head.index("gate_feedback")
     assert data.index('"task_correct"') < data.index('"unmet"')
     for sentence in EVIDENCE_RULE.split(". "):

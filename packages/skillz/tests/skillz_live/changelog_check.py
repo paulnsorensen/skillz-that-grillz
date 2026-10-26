@@ -111,7 +111,7 @@ def verdict(changes: list[dict[str, object]], text: str | None) -> str | None:
     if text == entries_for(changes):
         return None
     if text is None:
-        return _fault(6, 1, "the skill wrote no output/entries.md")
+        return _fault(6, 1, "the skill wrote no entries.md in its working directory")
     lines = text.split("\n")
     if text.endswith("\n"):
         _ = lines.pop()
