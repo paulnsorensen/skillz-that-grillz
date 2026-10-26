@@ -43,7 +43,7 @@ def change_problem(change: object) -> str | None:
 
 
 def _summary(change: dict[str, object]) -> str:
-    text = str(change["summary"]).strip().rstrip(".").rstrip()
+    text = str(change["summary"]).strip().rstrip(" .")
     return text[:1].upper() + text[1:]
 
 
@@ -99,7 +99,8 @@ def _entry_fault(change: dict[str, object], line: str, at: int) -> str:
     if body.endswith(BREAKING) != breaking:
         want = f'end with "{BREAKING.strip()}"' if breaking else "hold no breaking marker"
         return _fault(5, at, f"this entry must {want}")
-    return _fault(4, at, "the summary is the changes.json summary with its first letter in upper case and no trailing period")
+    return _fault(4, at, "the summary drops the spaces at its start and every space and period at its end, "
+                  + "then starts with an upper-case character")
 
 
 def verdict(changes: list[dict[str, object]], text: str | None) -> str | None:

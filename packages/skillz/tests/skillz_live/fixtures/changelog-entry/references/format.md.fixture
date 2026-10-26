@@ -10,7 +10,8 @@ Build it from the keys of the change with these rules.
    `feat` is `Added`, `fix` is `Fixed`, `perf` is `Improved`, `docs` is `Documented`, and `refactor` is `Changed`.
 3. **Scope.** When the change has a scope, write ` in <scope>` right after the label.
    Then write a colon and one space.
-4. **Summary.** Write the summary of the change with its first letter in upper case and no trailing period.
+4. **Summary.** Remove the spaces at the start of the summary of the change. Remove every space and period at its end.
+   Then write its first character in upper case. Keep the other characters as they are.
 5. **Breaking marker.** When `breaking` is `true`, write one space and `**BREAKING**` right after the summary.
    A change that is not breaking has no marker.
 6. **One line per change.** Each entry is one line.

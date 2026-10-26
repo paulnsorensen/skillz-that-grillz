@@ -134,6 +134,18 @@ def test_the_oracle_text_of_every_reference_case_and_of_tricky_summaries_scores_
         assert score == 1 and not message, (index, message)
 
 
+@pytest.mark.ac("autoimprove-live-proof:AC-1")
+@pytest.mark.parametrize(("summary", "written"), [
+    ("  preserve field order for export requests...  ", "Preserve field order for export requests"),
+    ("keep v2.1 support.", "Keep v2.1 support"), ("drop trailing . . ", "Drop trailing"),
+    ("Already done", "Already done"), ("2fa login.", "2fa login")])
+def test_rule_4_of_format_md_says_what_the_check_enforces(summary: str, written: str) -> None:
+    """Only rule 1 is planted wrong. Rule 4 must give the oracle summary when a reader applies its words literally."""
+    rules = (FIXTURE / "references/format.md.fixture").read_text(encoding="utf-8")
+    assert "Remove the spaces at the start" in rules and "Remove every space and period at its end" in rules
+    change: dict[str, object] = {"ticket": None, "type": "fix", "scope": None, "summary": summary, "breaking": False}
+    assert entry_for(change) == f"- Fixed: {written}"
+
 BROKEN: dict[str, tuple[Callable[[dict[str, object]], str], int]] = {
     "planted": (_planted_line, 1),
     "no-ticket": (lambda change: entry_for(change).replace(f"[{change['ticket']}] ", ""), 1),
