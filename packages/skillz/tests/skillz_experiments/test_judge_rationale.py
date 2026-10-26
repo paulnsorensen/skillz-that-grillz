@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from skillz_experiments._audit import CRITERIA_SCORING_POLICY, SCORING_POLICY, identity
+from skillz_experiments._cases import CodedError
 from skillz_experiments._contract import parse
+from skillz_experiments._intake import DRAFT_NAME, load_draft, split_cases
 from skillz_experiments._records import read, write
 from skillz_experiments.run import export
 from skillz_experiments.run._export import zero_cases
@@ -174,6 +176,50 @@ def test_a_holdout_rationale_never_reaches_a_proposer_prompt(judged: JudgedRun) 
     for case in holdout:
         assert all(f"rationale<{case}>" not in prompt for prompt in prompts)
 
+
+def _holdout_ids(judged: JudgedRun, split_seed: int) -> list[str]:
+    """Return the frozen holdout case ids. The judged fixture runs one plain task kind."""
+    cases = split_cases(load_draft(judged.out / DRAFT_NAME), split_seed, "task")
+    return sorted(case.identifier for case in cases if case.split == "holdout")
+
+
+def _holdout_marker(case: str) -> str:
+    return f"HOLDOUT-MARKER<{case}> quoted 'request-{case}-end'"
+
+
+@pytest.mark.ac("gh-301:AC-4")
+def test_a_resumed_run_keeps_recorded_holdout_rationales_out_of_every_proposer_prompt(judged: JudgedRun) -> None:
+    """Resume a prepared run that already records judged holdout rows of the seed, then search.
+
+    The history, the protected cases, the journal, and the reflection request all read the recorded outcomes.
+    """
+    with pytest.raises(CodedError) as stop:
+        _ = judged.start(live=False)
+    assert stop.value.code == "live-required"
+    path = judged.out / "run.json"
+    record = read(path)
+    assert record["phase"] == "prepared"
+    seed = str(record["seed_hash"])
+    holdout = _holdout_ids(judged, cast(int, record["split_seed"]))
+    assert holdout
+    record["outcomes"] = [
+        {"arm": arm, "split": "holdout", "case_id": case, "candidate_hash": seed, "search_candidate": seed,
+         "repeat": 0, "score": 0.0, "scores": {"judge": 0.0},
+         "criteria": {"answer": {"level": 1, "met": False, "reason": _holdout_marker(case)}}}
+        for case in holdout for arm in ("search", "baseline")]
+    write(path, record)
+    _mode(judged, "case-reason")
+    assert judged.start()["phase"] == "complete"
+    train = {str(item["case_id"]) for item in _judged_outcomes(judged.out) if item.get("split") in {"train", "validation"}}
+    assert train and not train & set(holdout)
+    prompts = _proposer_prompts(judged.log)
+    assert prompts
+    assert any(f"rationale<{case}>" in prompt for case in train for prompt in prompts)
+    for case in holdout:
+        for prompt in prompts:
+            assert "HOLDOUT-MARKER" not in prompt
+            assert f"request-{case}-end" not in prompt
+            assert f"rationale<{case}>" not in prompt
 
 
 def _judged_row(split: str, arm: str, reason: str) -> dict[str, object]:
