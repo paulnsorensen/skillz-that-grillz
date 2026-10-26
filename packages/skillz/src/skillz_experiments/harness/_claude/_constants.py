@@ -9,6 +9,9 @@ PROBE_PREFIX = "skillz-probe-"
 # The host file that the preflight asks the Read tool to read. Linux and macOS both have it, and it holds no secret.
 HOST_FILE = "/etc/hosts"
 
+# The workspace symlink to the sealed file. The sandbox and Read-tool probes must not follow it out of the workspace.
+LINK = "escape"
+
 AUTH_FAILED = "authentication failed"
 
 

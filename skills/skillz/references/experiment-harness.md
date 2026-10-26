@@ -150,10 +150,15 @@ The live preflight also stops with `preflight-leak` when the init event lists a 
 The settings set `permissions.blockReadsOutsideWorkingDirectories: true`, so the Read tool cannot read a file outside the workspace.
 This setting needs Claude Code 2.1.257 or later.
 The Read tool stays enabled, because the task reads the candidate skill and the workspace files with it.
-The live preflight asks the Read tool to read a sealed file outside the workspace, and then `/etc/hosts`.
-The run stops with `preflight-leak` when the Read tool returns either file.
-The run also stops when no Read call answers for the sealed file, or when no Read call for `/etc/hosts` is refused.
-The preflight evidence records the refused `/etc/hosts` read. The `--restricted` flag does not confine the Read tool, so only the setting and this probe do.
+The live preflight asks the Read tool for four paths.
+They are a sealed file outside the workspace, `/etc/hosts`, a workspace symlink to the sealed file, and a workspace control file.
+The run stops with `preflight-leak` when the Read tool returns the sealed file or `/etc/hosts`, directly or through the symlink.
+The run also stops when a Read call for the sealed file, `/etc/hosts`, or the symlink has no answer.
+The run also stops when the Read tool cannot return the control file.
+A host without `/etc/hosts` stops with `host-not-ready` before the model call.
+The preflight evidence records the refused `/etc/hosts` read.
+The `--restricted` flag does not confine the Read tool.
+The setting confines it, and this probe checks the setting on each new Claude Code version.
 Only the candidate skill, Claude Code's own commands and built-in plugins, and the built-in agents are allowed.
 
 When the live preflight call returns and a preflight check then fails, the runner keeps its transcript in `RUN/preflight.events.json` (mode 0600).

@@ -210,12 +210,13 @@ def inventory(mode: str, config: dict[str, object]) -> int:
 
 
 def read_tool_probe(prompt: str, mode: str, config: dict[str, object]) -> list[str]:
-    """Answer each preflight Read-tool step. Like Claude Code 2.1.257 or later, it refuses a path outside the working
-    directory only when the settings hold `permissions.blockReadsOutsideWorkingDirectories: true`.
+    """Answer each preflight Read-tool step. Like Claude Code 2.1.257 or later, it refuses a path that resolves outside the
+    working directory only when the settings hold `permissions.blockReadsOutsideWorkingDirectories: true`.
 
-    The live preflight decides real `claude -p` behavior. `read-tool-escape` returns the sealed file content.
-    `read-tool-host` returns the `/etc/hosts` content. `read-tool-skipped` never calls the Read tool.
-    `read-tool-host-skipped` never calls the Read tool on `/etc/hosts`.
+    The live preflight decides real `claude -p` behavior. `read-tool-escape` returns the content of every file outside
+    the workspace except the host file. `read-tool-host` returns the `/etc/hosts` content. `read-tool-link` follows the
+    workspace symlink to the sealed file. `read-tool-control-denied` refuses the workspace control file.
+    `read-tool-skipped` never calls the Read tool. `read-tool-host-skipped` never calls the Read tool on `/etc/hosts`.
     """
     if mode == "read-tool-skipped":
         return []
@@ -227,8 +228,10 @@ def read_tool_probe(prompt: str, mode: str, config: dict[str, object]) -> list[s
         host = path == "/etc/hosts"
         if host and mode == "read-tool-host-skipped":
             continue
-        escaped = (mode == "read-tool-escape" and not host) or (mode == "read-tool-host" and host)
-        allowed = not blocked or _inside(path, [str(Path.cwd()), str(Path.cwd().resolve())])
+        escaped = ((mode == "read-tool-escape" and not host) or (mode == "read-tool-host" and host)
+                   or (mode == "read-tool-link" and path.endswith("/escape")))
+        allowed = not blocked or _inside(str(Path(path).resolve()), [str(Path.cwd().resolve())])
+        allowed = allowed and not (mode == "read-tool-control-denied" and path.endswith("/control.txt"))
         text = Path(path).read_text() if escaped or allowed else "denied"
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"rt{index}", "name": "Read",
               "input": {"file_path": path}}]}})

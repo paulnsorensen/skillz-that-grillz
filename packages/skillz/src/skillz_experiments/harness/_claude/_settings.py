@@ -40,7 +40,8 @@ def settings(workspace: Path, out: Path | None = None, *, config: Path | None = 
     so a deny rule covers the host roots, `/proc`, the run directory `out`, and `config` for that tool. The
     `blockReadsOutsideWorkingDirectories` permission (Claude Code 2.1.257 or later) makes the file tools refuse every
     path outside the working directory, the workspace, in every permission mode (#176). The live preflight proves it:
-    the Read tool must fail to read the sealed file and `/etc/hosts`. Commands cannot write
+    the Read tool must fail to read the sealed file, `/etc/hosts`, and a workspace symlink to the sealed file, and
+    it must read a workspace control file. Commands cannot write
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
     Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
     `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter, which cannot start where the host blocks

@@ -262,19 +262,28 @@ def read_failure(events: list[dict[str, object]], sealed_token: str, sealed: str
     return None
 
 
-def read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed: Path, *, evidence: bool) -> str | None:
-    """Judge the Read-tool probe. The Read tool must fail on the sealed host file and on the host file `HOST_FILE`.
+def read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed: Path, link: Path, control_token: str,
+                      control_file: Path, *, evidence: bool) -> str | None:
+    """Judge the Read-tool probe. The Read tool must fail on the sealed host file, on the host file `HOST_FILE`, and on
+    the workspace symlink `link` to the sealed file. It must read the workspace file `control_file`.
 
-    A sealed-file result that holds the token fails. A host-file result without `is_error: true` fails closed, so a
-    result that returns content cannot pass. Without `evidence`, only these leaks fail. With it, a missing answer for
-    the sealed file or a missing refusal for the host file also fails.
+    A sealed-file or symlink result that holds the token fails. A host-file result without `is_error: true` fails
+    closed, so a result that returns content cannot pass. Without `evidence`, only these leaks fail. With it, a missing
+    answer for the sealed file or the symlink, a missing refusal for the host file, or a failed control read also fails.
+    The control read proves that the setting does not also block the workspace.
 
-    The `blockReadsOutsideWorkingDirectories` setting confines the Read tool; only this probe proves that it holds.
+    The `blockReadsOutsideWorkingDirectories` setting confines the Read tool, and this probe proves that it holds.
     """
-    answered = refused = False
+    answered = refused = linked = controlled = False
     for use, result in tool_pairs(events, "Read"):
         target = _input(use).get("file_path")
         if result is None or not isinstance(target, str):
+            continue
+        text = json.dumps(result)
+        if Path(target) == link:
+            if sealed_token in text:
+                return "read isolation failed: the Read tool followed a workspace symlink to a path outside the workspace"
+            linked = True
             continue
         path = Path(target).resolve()
         if path == Path(HOST_FILE).resolve():
@@ -282,13 +291,21 @@ def read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed
                 return f"read isolation failed: the Read tool read the host file {HOST_FILE}"
             refused = True
         elif path == sealed.resolve():
-            if sealed_token in json.dumps(result):
+            if sealed_token in text:
                 return "read isolation failed: the Read tool reached a path outside the workspace"
             answered = True
-    if evidence and not answered:
+        elif path == control_file.resolve():
+            controlled = controlled or (result.get("is_error") is not True and control_token in text)
+    if not evidence:
+        return None
+    if not answered:
         return "read-tool probe has no evidence: no Read tool call answered for the sealed host file"
-    if evidence and not refused:
+    if not refused:
         return f"read-tool probe has no evidence: no Read tool call was refused for the host file {HOST_FILE}"
+    if not linked:
+        return "read-tool probe has no evidence: no Read tool call answered for the workspace symlink to the sealed file"
+    if not controlled:
+        return "read-tool probe has no positive control: the Read tool cannot read a workspace file"
     return None
 
 

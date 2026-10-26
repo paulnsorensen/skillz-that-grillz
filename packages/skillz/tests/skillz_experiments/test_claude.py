@@ -719,7 +719,7 @@ def test_preflight_stops_when_the_read_tool_returns_the_host_file(tmp_path: Path
 @pytest.mark.ac("gh-176:AC-2")
 def test_preflight_stops_when_the_settings_lose_the_read_block(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The fake Claude honors the setting, as the live CLI does. Without it, the Read tool reaches the host."""
+    """The fake Claude honors the setting, as the live CLI does. Without it, the first Read step returns the sealed file."""
     del sandbox_passes
     original = _settings.settings
 
@@ -733,12 +733,11 @@ def test_preflight_stops_when_the_settings_lose_the_read_block(
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
-        with pytest.raises(CodedError, match="read isolation failed: the Read tool") as caught:
+        with pytest.raises(CodedError, match=": read isolation failed: the Read tool reached a path outside the workspace;") as caught:
             _ = session.preflight()
     finally:
         session.close()
     assert caught.value.code == "preflight-leak"
-
 
 @pytest.mark.ac("gh-176:AC-3")
 def test_preflight_asks_the_read_tool_for_the_host_file_and_needs_its_refusal(tmp_path: Path, sandbox_passes: None) -> None:
@@ -776,6 +775,11 @@ def test_preflight_evidence_records_the_refused_host_file_read(tmp_path: Path, s
     assert roles["task"]["read_tool"] == {"host_file": "/etc/hosts", "result": "refused"}
 
 
+def _verdict(events: list[dict[str, object]], sealed: Path, *, evidence: bool, token: str = "token-123") -> str | None:
+    return _events.read_tool_failure(events, token, sealed, sealed.parent / "workspace" / "escape", "control-token",
+                                     sealed.parent / "workspace" / "control.txt", evidence=evidence)
+
+
 def test_read_tool_verdict_fails_closed_on_a_host_file_result_without_an_error_flag(tmp_path: Path) -> None:
     sealed = tmp_path / "sealed"
     use: dict[str, object] = {"type": "assistant", "message": {"content": [
@@ -784,8 +788,8 @@ def test_read_tool_verdict_fails_closed_on_a_host_file_result_without_an_error_f
         {"type": "tool_result", "tool_use_id": "h", "content": ""}]}}
     refused: dict[str, object] = {"type": "user", "message": {"content": [
         {"type": "tool_result", "tool_use_id": "h", "is_error": True, "content": "denied"}]}}
-    assert "read the host file" in str(_events.read_tool_failure([use, silent], "t", sealed, evidence=False))
-    assert _events.read_tool_failure([use, refused], "t", sealed, evidence=False) is None
+    assert "read the host file" in str(_verdict([use, silent], sealed, evidence=False))
+    assert _verdict([use, refused], sealed, evidence=False) is None
 
 
 def _read_use(ident: str, path: str) -> dict[str, object]:
@@ -800,26 +804,26 @@ def _read_result(ident: str, content: str, **flags: object) -> dict[str, object]
 
 def test_read_tool_verdict_resolves_a_non_canonical_host_file_path(tmp_path: Path) -> None:
     events = [_read_use("h", "/etc/../etc/hosts"), _read_result("h", "127.0.0.1 localhost")]
-    assert "read the host file" in str(_events.read_tool_failure(events, "t", tmp_path / "sealed", evidence=False))
+    assert "read the host file" in str(_verdict(events, tmp_path / "sealed", evidence=False))
 
 
 def test_read_tool_verdict_fails_on_an_explicit_false_error_flag(tmp_path: Path) -> None:
     events = [_read_use("h", "/etc/hosts"), _read_result("h", "127.0.0.1 localhost", is_error=False)]
-    assert "read the host file" in str(_events.read_tool_failure(events, "t", tmp_path / "sealed", evidence=False))
+    assert "read the host file" in str(_verdict(events, tmp_path / "sealed", evidence=False))
 
 
 def test_read_tool_verdict_reports_a_sealed_leak_next_to_a_refused_host_read(tmp_path: Path) -> None:
     sealed = tmp_path / "sealed"
     events = [_read_use("h", "/etc/hosts"), _read_result("h", "denied", is_error=True),
               _read_use("s", str(sealed)), _read_result("s", "token-123")]
-    verdict = str(_events.read_tool_failure(events, "token-123", sealed, evidence=True))
+    verdict = str(_verdict(events, sealed, evidence=True, token="token-123"))
     assert "reached a path outside the workspace" in verdict
 
 
 def test_read_tool_verdict_does_not_count_a_host_read_without_a_result_as_refused(tmp_path: Path) -> None:
     sealed = tmp_path / "sealed"
     events = [_read_use("s", str(sealed)), _read_result("s", "no such file", is_error=True), _read_use("h", "/etc/hosts")]
-    verdict = str(_events.read_tool_failure(events, "token-123", sealed, evidence=True))
+    verdict = str(_verdict(events, sealed, evidence=True, token="token-123"))
     assert "no Read tool call was refused for the host file" in verdict
 
 
@@ -828,7 +832,76 @@ def test_read_tool_verdict_fails_when_a_later_host_read_returns_content_after_a_
     events = [_read_use("s", str(sealed)), _read_result("s", "no such file", is_error=True),
               _read_use("a", "/etc/hosts"), _read_result("a", "denied", is_error=True),
               _read_use("b", "/etc/hosts"), _read_result("b", "127.0.0.1 localhost")]
-    assert "read the host file" in str(_events.read_tool_failure(events, "token-123", sealed, evidence=True))
+    assert "read the host file" in str(_verdict(events, sealed, evidence=True, token="token-123"))
+
+
+def _probe_events(sealed: Path, link: str, control: str, **control_flags: object) -> list[dict[str, object]]:
+    workspace = sealed.parent / "workspace"
+    return [_read_use("s", str(sealed)), _read_result("s", "denied", is_error=True),
+            _read_use("h", "/etc/hosts"), _read_result("h", "denied", is_error=True),
+            _read_use("l", str(workspace / "escape")), _read_result("l", link, is_error=link == "denied"),
+            _read_use("c", str(workspace / "control.txt")), _read_result("c", control, **control_flags)]
+
+
+@pytest.mark.ac("gh-176:AC-7")
+def test_read_tool_verdict_needs_a_symlink_answer_and_fails_when_the_symlink_returns_the_sealed_file(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    assert _verdict(_probe_events(sealed, "denied", "1\tcontrol-token"), sealed, evidence=True, token="token-123") is None
+    followed = _probe_events(sealed, "1\ttoken-123", "1\tcontrol-token")
+    assert _verdict(followed, sealed, evidence=False, token="token-123") == (
+        "read isolation failed: the Read tool followed a workspace symlink to a path outside the workspace")
+    skipped = [event for event in _probe_events(sealed, "denied", "1\tcontrol-token") if "escape" not in json.dumps(event)]
+    assert _verdict(skipped, sealed, evidence=True, token="token-123") == (
+        "read-tool probe has no evidence: no Read tool call answered for the workspace symlink to the sealed file")
+
+
+@pytest.mark.ac("gh-176:AC-8")
+def test_read_tool_verdict_needs_a_control_read_that_returns_the_control_token(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    stop = "read-tool probe has no positive control: the Read tool cannot read a workspace file"
+    assert _verdict(_probe_events(sealed, "denied", "denied", is_error=True), sealed, evidence=True) == stop
+    assert _verdict(_probe_events(sealed, "denied", "1\tother"), sealed, evidence=True) == stop
+    assert _verdict(_probe_events(sealed, "denied", "control-token", is_error=True), sealed, evidence=True) == stop
+    assert _verdict(_probe_events(sealed, "denied", "denied", is_error=True), sealed, evidence=False) is None
+
+
+@pytest.mark.parametrize(("mode", "reason"), [
+    ("read-tool-link", ": read isolation failed: the Read tool followed a workspace symlink to a path outside the workspace;"),
+    ("read-tool-control-denied", ": read-tool probe has no positive control: the Read tool cannot read a workspace file;"),
+])
+@pytest.mark.ac("gh-176:AC-7")
+@pytest.mark.ac("gh-176:AC-8")
+def test_preflight_stops_when_the_read_tool_follows_the_symlink_or_cannot_read_the_workspace(
+        tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        with pytest.raises(CodedError, match=reason) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    link = prompt.index("/escape` with the Read tool, not Bash")
+    assert link < prompt.index("/control.txt` with the Read tool, not Bash") < prompt.index("`cat "), prompt
+
+
+@pytest.mark.ac("gh-176:AC-9")
+def test_preflight_stops_before_the_model_call_when_the_host_file_is_missing(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    del sandbox_passes
+    monkeypatch.setattr(_preflight, "HOST_FILE", str(tmp_path / "no-hosts"))
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, fake_claude(tmp_path), budget)
+    try:
+        with pytest.raises(CodedError, match="needs the host file .*/no-hosts") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "host-not-ready"
+    assert budget.calls == 0
 
 
 @pytest.mark.ac("gh-176:AC-5")

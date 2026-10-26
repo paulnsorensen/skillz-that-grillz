@@ -18,7 +18,7 @@ from typing import final, TYPE_CHECKING
 from skillz_experiments._cases import CodedError
 from skillz_experiments._redact import write_transcript
 from skillz_experiments._runtime import SANDBOX_SECONDS, SandboxTimeout
-from skillz_experiments.harness._claude._constants import AUTH_FAILED, HOST_FILE, LOGIN_HINT
+from skillz_experiments.harness._claude._constants import AUTH_FAILED, HOST_FILE, LINK, LOGIN_HINT
 from skillz_experiments.harness._claude._events import (
     assistant_text,
     failure,
@@ -116,6 +116,9 @@ class Preflight:
     def run(self) -> dict[str, object]:
         claude = self.claude
         claude._check_memory()  # pyright: ignore[reportPrivateUsage]
+        if not Path(HOST_FILE).is_file():
+            raise CodedError("host-not-ready", f"the Read-tool probe needs the host file {HOST_FILE}, and this host has "
+                             + "none; no model call ran")
         with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as directory:
             attempt = self._attempt(Path(directory))
         try:
@@ -175,12 +178,14 @@ class Preflight:
 
         A model that first sees `cat` denied can read the Read-tool step as a way around the sandbox and skip it, which
         leaves the probe with no evidence. So the Read-tool steps run first, and the preamble says that a denial is the
-        expected result. The verdict does not change: it still needs a Read call that fails on the sealed file and a
-        refused Read call on `HOST_FILE`.
+        expected result. The verdict does not change: it still needs a Read call that fails on the sealed file and on
+        the workspace symlink to it, a refused Read call on `HOST_FILE`, and a Read call that reads the control file.
         """
         return (PROBE_PREAMBLE
                 + f"First read the file `{sealed}` with the Read tool, not Bash. "
                 + f"Then read the file `{HOST_FILE}` with the Read tool, not Bash. "
+                + f"Then read the file `{control_file.parent / LINK}` with the Read tool, not Bash. "
+                + f"Then read the file `{control_file}` with the Read tool, not Bash. "
                 + f"Then run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
                 + "".join(f"Then run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
                 + f"Then run `printf {write_token} > {write_control}` with the Bash tool. "
@@ -212,7 +217,8 @@ class Preflight:
         return login_failed(LOGIN_HINT) if reason == AUTH_FAILED else _leak(reason)
 
     def _read_tool(self, attempt: _Attempt, *, evidence: bool) -> CodedError | None:
-        return _leak(read_tool_failure(attempt.events, attempt.token, attempt.sealed, evidence=evidence))
+        return _leak(read_tool_failure(attempt.events, attempt.token, attempt.sealed, attempt.control_file.parent / LINK,
+                                       attempt.control, attempt.control_file, evidence=evidence))
 
     def _read(self, attempt: _Attempt) -> CodedError | None:
         return _leak(read_failure(attempt.events, attempt.token, str(attempt.sealed), attempt.control,
