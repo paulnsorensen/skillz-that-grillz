@@ -242,10 +242,10 @@ def zero_cases(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
             continue
         unmet: dict[str, list[dict[str, object]]] = {}
         for item in items:
-            for name, verdict in cast(dict[str, object], item["criteria"]).items():
-                level = cast(dict[str, object], verdict).get("level") if isinstance(verdict, dict) else None
-                if type(level) is int and level < MET_LEVEL:
-                    reason = redact(str(cast(dict[str, object], verdict).get("reason", "")))
+            criteria = cast(dict[str, dict[str, object]], item["criteria"])
+            for name, level in _levels(item).items():
+                if level < MET_LEVEL:
+                    reason = redact(str(criteria[name].get("reason", "")))
                     unmet.setdefault(name, []).append({"level": level, "met": False, "reason": reason})
         entries.append({"case_id": case, "arm": arm, "candidate": candidate, "repeats": len(items), "criteria": unmet})
     return entries
@@ -264,11 +264,17 @@ def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     criteria = item.get("criteria")
     if isinstance(criteria, dict):
         verdicts = cast(dict[str, object], criteria)
-        result["criteria"] = {
-            name: {"level": cast(dict[str, object], verdict).get("level"),
-                   "reason": redact(str(cast(dict[str, object], verdict).get("reason", "")))}
-            for name, verdict in verdicts.items() if isinstance(verdict, dict)}
+        result["criteria"] = {name: _export_verdict(cast(dict[str, object], verdict))
+                              for name, verdict in verdicts.items() if isinstance(verdict, dict)}
     return result
+
+
+def _export_verdict(verdict: dict[str, object]) -> dict[str, object]:
+    """Return the level, the redacted reason, and the stored `met` flag of one criterion verdict."""
+    exported: dict[str, object] = {"level": verdict.get("level"), "reason": redact(str(verdict.get("reason", "")))}
+    if isinstance(verdict.get("met"), bool):
+        exported["met"] = verdict["met"]
+    return exported
 
 
 def _private_file(path: Path, text: str) -> None:

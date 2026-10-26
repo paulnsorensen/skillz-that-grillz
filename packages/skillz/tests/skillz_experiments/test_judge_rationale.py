@@ -13,6 +13,7 @@ from skillz_experiments._audit import CRITERIA_SCORING_POLICY, SCORING_POLICY, i
 from skillz_experiments._contract import parse
 from skillz_experiments._records import read, write
 from skillz_experiments.run import export
+from skillz_experiments.run._export import zero_cases
 from skillz_experiments.run._open import judge_kind
 from test_validation_repeats_press import FakeState, _candidate, _phase
 
@@ -69,7 +70,11 @@ def test_the_scoring_policy_label_differs_between_an_audit_and_a_rubric_contract
     rubric = parse(_contract({"task": {"grader": "judge", "rubric": "Grade the answer."}}), "skill")
     mixed = parse(_contract({"echo": {"grader": "exact-json"},
                              "task": {"grader": "hybrid", "argv": ["python3", "check.py"], "rubric": "Grade it."}}), "skill")
-    assert (judge_kind(audit), judge_kind(rubric), judge_kind(mixed)) == ("audit", "criteria", "criteria")
+    # `run` refuses to score an audit kind, so a contract with both kinds runs only the rubric judge.
+    both = parse(_contract({"review": {"grader": "audit"},
+                            "task": {"grader": "judge", "rubric": "Grade the answer."}}), "skill")
+    kinds = (judge_kind(audit), judge_kind(rubric), judge_kind(mixed), judge_kind(both))
+    assert kinds == ("audit", "criteria", "criteria", "criteria")
     audit_label = identity("judge-model", judge_kind(audit))["scoring_policy"]
     rubric_label = identity("judge-model", judge_kind(rubric))["scoring_policy"]
     assert audit_label == SCORING_POLICY
@@ -120,11 +125,40 @@ def test_export_lists_each_case_that_scores_zero_on_every_repeat_with_redacted_r
 def test_export_lists_no_zero_case_when_every_case_scores(judged: JudgedRun, tmp_path: Path) -> None:
     assert judged.start()["phase"] == "complete"
     _ = export(judged.out, tmp_path / "export")
-    assert read(tmp_path / "export" / "report.json")["zero_cases"] == []
+    report = read(tmp_path / "export" / "report.json")
+    assert report["zero_cases"] == []
+    exported = [item for item in cast(list[dict[str, object]], report["outcomes"]) if "criteria" in item]
+    assert exported
+    assert all(item["criteria"] == {"answer": {"level": 4, "reason": "fake judge", "met": True}} for item in exported)
 
 
-@pytest.mark.ac("gh-301:AC-4")
+def _verdict_row(score: object, levels: dict[str, object], arm: str = "search") -> dict[str, object]:
+    """Return one judged outcome of the child on `t0` with a reason `why<name>` for each criterion in `levels`."""
+    return {"arm": arm, "split": "train", "case_id": "t0", "search_candidate": CHILD.identity, "score": score,
+            "criteria": {name: {"level": level, "reason": f"why<{name}>"} for name, level in levels.items()}}
+
+
+@pytest.mark.ac("gh-301:AC-3")
+def test_a_zero_case_lists_only_unmet_criteria_with_a_valid_level() -> None:
+    outcomes = [_verdict_row(0, {"done": 4, "edge": 3, "bad": 0}), _verdict_row(0.0, {"done": 4, "edge": 1, "bad": "2"})]
+    [entry] = zero_cases(outcomes)
+    assert entry["repeats"] == 2
+    assert entry["criteria"] == {"edge": [{"level": 3, "met": False, "reason": "why<edge>"},
+                                          {"level": 1, "met": False, "reason": "why<edge>"}]}
+
+
+@pytest.mark.ac("gh-301:AC-3")
+@pytest.mark.parametrize("score", [False, None, 0.25])
+def test_a_case_with_a_nonzero_or_non_numeric_repeat_is_not_a_zero_case(score: object) -> None:
+    assert zero_cases([_verdict_row(0, {"edge": 1}), _verdict_row(score, {"edge": 1})]) == []
+
+
 def test_a_holdout_rationale_never_reaches_a_proposer_prompt(judged: JudgedRun) -> None:
+    """Smoke the full run: the search reasons reach the proposer, and no holdout reason does.
+
+    The run judges the holdout cases after the search ends, so this run cannot leak them.
+    `test_a_recorded_holdout_rationale_stays_out_of_the_search_feedback` pins the resume path that could.
+    """
     _mode(judged, "case-reason")
     assert judged.start()["phase"] == "complete"
     rows = _judged_outcomes(judged.out)
@@ -136,7 +170,6 @@ def test_a_holdout_rationale_never_reaches_a_proposer_prompt(judged: JudgedRun) 
         assert reason == f"rationale<{item['case_id']}>"
     prompts = _proposer_prompts(judged.log)
     assert prompts
-    # The search reasons reach the proposer, so the absence of the holdout reasons is not vacuous.
     assert any(f"rationale<{case}>" in prompt for case in search for prompt in prompts)
     for case in holdout:
         assert all(f"rationale<{case}>" not in prompt for prompt in prompts)

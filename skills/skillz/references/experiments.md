@@ -866,10 +866,10 @@ Export writes no empty patch file.
 `report.json` also holds `criteria_flags`, sorted by `criterion`, `reason`, `case_id`, and `arm`. Each entry has `criterion`, `reason`, and `case_id`.
 A `spread` entry also has `arm` and `levels`. It marks a criterion whose level spreads by 2 or more across repeats of one candidate on one arm and case.
 A `partly-met` entry also has `level_2` and `outcomes`. It marks a criterion with level 2 in at least half of the case outcomes, over all arms.
-`report.json` redacts the reasons of the outcome `criteria`.
-`report.json` also holds `zero_cases`: each case that scores 0 on every repeat of one candidate on one arm.
-An entry has `case_id`, `arm`, `candidate`, `repeats`, and `criteria`. The list is sorted by `case_id`, `arm`, and `candidate`.
-`criteria` maps each unmet criterion `id` to one verdict per unmet repeat: `level`, `met` (`false`), and the redacted `reason`.
+`report.json` redacts the reasons of the outcome `criteria`. Each outcome verdict also keeps its stored `met` flag.
+`report.json` also holds `zero_cases`: each judged case that scores 0 on every judged repeat of one candidate on one arm.
+An entry has `case_id`, `arm`, `candidate`, `repeats`, and `criteria`. Export sorts the list by `case_id`, `arm`, and `candidate`.
+`criteria` maps each unmet criterion `id` to one verdict per repeat with a level from 1 to 3: `level`, `met` (`false`), and the redacted `reason`.
 Read the `zero_cases` reasons to find a case that the skill never passes.
 Read `criteria_flags` before you draft the next cases. The criteria drafting reference that `SKILL.md` lists says how.
 When the winner files equal the seed files, export writes only `report.json`. Its result has `patches: []` and `reason: "winner-equals-baseline"`.
