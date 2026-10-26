@@ -50,6 +50,7 @@ mutate-fromargs:
 # SKILLZ_LIVE_DRY=1 stops each run at its budget question and makes no model call. The basic run uses at most 133 calls.
 # Each attempt appends one JSON line to .live-smoke/runs.jsonl (gitignored).
 # fromargs-benefit runs MODEL as the task role; SKILLZ_LIVE_STRONG_MODEL (default opus) drafts, reflects, and judges.
+# Main tracks no skill archive (ADR-012), so the recipe builds them from source before the tests.
 [script("bash")]
 live-smoke $harness $model $scenario="basic":
     set -euo pipefail
@@ -57,6 +58,7 @@ live-smoke $harness $model $scenario="basic":
         echo "error: live-smoke makes real model calls; set SKILLZ_LIVE=1 to run it" >&2
         exit 2
     fi
+    uv run --locked --project packages/wedge wedge bundle skills/skillz
     SKILLZ_LIVE_HARNESS="$harness" SKILLZ_LIVE_MODEL="$model" SKILLZ_LIVE_SCENARIO="$scenario" \
         uv run --locked --extra experiments --project packages/skillz \
         pytest packages/skillz/tests/skillz_live -m live -v -rs \

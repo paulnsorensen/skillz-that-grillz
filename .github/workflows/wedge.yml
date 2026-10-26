@@ -32,9 +32,11 @@ jobs:
       # `branch: main` refuses a commit that main does not contain, so a
       # workflow_dispatch from another ref cannot publish.
       - name: Publish wedge assets
-        # Skip when no skill under `roots: skills` is wedged yet, so this
-        # workflow stays green on a merge that only touches packages/**.
-        if: hashFiles('skills/*/wedge.toml') != ''
+        # Skip when no skill under `roots: skills` commits a legacy lock, so
+        # this workflow stays green on a merge that only touches packages/**.
+        # Direct-bundle skills (`[[target]]` tables) have no release asset;
+        # `publish-dist.yml` ships them (ADR-012).
+        if: hashFiles('skills/**/*.wedge.json') != ''
         uses: ./actions/wedge
         with:
           command: publish

@@ -13,6 +13,12 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-25
+
+### Changed
+
+- The default database path is now `<cache>/agent-session-analytics/sessions.duckdb`, not `<cache>/dotfiles/session-analytics/sessions.duckdb`. If the new file does not exist and the legacy file exists, the package keeps using the legacy file. It never moves, copies, or deletes the legacy file. `SESSIONS_DB` still overrides both.
+
 ## [0.2.0] - 2026-10-24
 
 ### Changed
@@ -61,6 +67,7 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 
 - The canned `query.sh` reports. Callers write their own SQL with `sql`.
 
-[Unreleased]: https://github.com/paulnsorensen/skillz-that-grillz/compare/agent-session-analytics-v0.2.0...HEAD
+[Unreleased]: https://github.com/paulnsorensen/skillz-that-grillz/compare/agent-session-analytics-v0.2.1...HEAD
+[0.2.1]: https://github.com/paulnsorensen/skillz-that-grillz/compare/agent-session-analytics-v0.2.0...agent-session-analytics-v0.2.1
 [0.2.0]: https://github.com/paulnsorensen/skillz-that-grillz/compare/agent-session-analytics-v0.1.0...agent-session-analytics-v0.2.0
 [0.1.0]: https://github.com/paulnsorensen/skillz-that-grillz/releases/tag/agent-session-analytics-v0.1.0

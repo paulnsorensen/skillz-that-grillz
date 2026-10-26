@@ -267,19 +267,19 @@ ADVERSARIAL_UNIT = [
 
 @pytest.mark.ac("gh-512:AC-4")
 @pytest.mark.parametrize("unit", ADVERSARIAL_UNIT)
-def test_redact_stays_linear_on_200_kb_of_dotted_escaped_and_unicode_keys(unit: str) -> None:
-    """Doubling a 100 KB input must not multiply the CPU time by more than 3, and 200 KB must finish well inside 15 s."""
-    small = unit * (100_000 // len(unit))
-    large = unit * (200_000 // len(unit))
+def test_redact_stays_linear_on_dotted_escaped_and_unicode_keys(unit: str) -> None:
+    """Quadrupling a 400 KB input must not multiply the CPU time by more than 8 (linear is 4, quadratic is 16)."""
+    small = unit * (400_000 // len(unit))
+    large = unit * (1_600_000 // len(unit))
 
     def best_seconds(text: str) -> float:
         best = float("inf")
-        for _ in range(3):
+        for _ in range(5):
             begin = time.process_time()
             _ = _redact.redact(text)
             best = min(best, time.process_time() - begin)
         return best
 
     fast, slow = best_seconds(small), best_seconds(large)
-    assert slow < DEADLINE_SECONDS, f"200 KB took {slow:.1f}s"
-    assert slow <= 3 * max(fast, 0.01), f"doubling the input multiplied the cost by {slow / max(fast, 0.01):.1f}"
+    assert slow < DEADLINE_SECONDS, f"1.6 MB took {slow:.1f}s"
+    assert slow <= 8 * max(fast, 0.01), f"quadrupling the input multiplied the cost by {slow / max(fast, 0.01):.1f}"
