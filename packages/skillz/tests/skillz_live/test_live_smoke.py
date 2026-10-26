@@ -272,7 +272,7 @@ SCENARIOS: dict[str, Scenario] = {
     "resume": Scenario(_basic, 130, resume=True),
     "fromargs-benefit": Scenario(_fromargs_benefit, 167, author=_fromargs_author, check=check_cli,
                                  verdict=cli_verdict),
-    "changelog-proof": Scenario(_changelog_proof, 199, author=changelog_proof.author, check=changelog_proof.check,
+    "changelog-proof": Scenario(_changelog_proof, 119, author=changelog_proof.author, check=changelog_proof.check,
                                 verdict=changelog_proof.proof_verdict),
 }
 """Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it)."""

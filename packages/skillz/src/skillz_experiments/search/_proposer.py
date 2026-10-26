@@ -51,11 +51,28 @@ EVIDENCE = ("unmet", "edit_hint", "gate_feedback")
 EVIDENCE_RULE = ("A feedback record can end with unmet, the criteria that the judge did not fully meet. "
                  "Then edit_hint names the files that probably need the change. "
                  "Then gate_feedback holds the end of the failed gate output. "
-                 "The hint can be wrong. Every editable component stays editable.")
+                 "The edit_hint can be wrong. Every editable component stays editable. "
+                 "The gate is the independent check of the case. "
+                 "When a skill rule conflicts with gate_feedback, change the skill rule to match the gate.")
 
 MAX_EDITS = 6
 MIN_EDITS = 1
+CLI_EDITS = 2
+"""A new `@new-cli` target and the SKILL.md line that calls it take 2 edits. The budget keeps them while `@new-cli` is empty."""
 LAST_PROPOSAL_FROM = 0.85
+# Only a run that offers `@new-cli` sends this rule. A prose fix of a mechanical rule can pass, so the search tries code early.
+# The proposer cannot read the fromargs source, so the rule gives its API. A proposer with no API wrote no target.
+_CLI_EARLY = (f"A rule that code applies the same way to every input is a good fit for {NEW_CLI}. "
+              + f"Try {NEW_CLI} early. Do not wait until a prose fix fails. "
+              + "A CLI can also cut the task tokens of each case. "
+              + "The fromargs source is not in this prompt. Use this summary of its API: "
+              + '`from fromargs import App`, `app = App("<name>")`, one handler under `@app.default`, '
+              + "and `main = app.main`. "
+              + "The handler takes typed parameters and returns JSON data. fromargs prints that data on stdout. "
+              + "A module that uses only the standard library is valid too. ")
+# Only a run with a token rule sends this rule. That run adds these keys to a feedback record when the counts are known.
+TOKEN_FIELDS_RULE = ("A feedback record can hold task_tokens, the mean uncached task tokens of the candidate on that case. "
+                     + "It can also hold incumbent_task_tokens, the mean uncached task tokens of the current best candidate on that case.")
 
 
 @dataclass(frozen=True)
@@ -63,13 +80,14 @@ class Progress:
     """Where the search stands. The numbers come from the session record, never from case content.
 
     `planned` is the search's real allowance: the planned calls less the last iteration's overshoot margin.
-    `stalled` and `advice` come from the stall signal.
+    `stalled` and `advice` come from the stall signal. `cli_open` is True while the run offers an empty `@new-cli`.
     """
     spent: int
     planned: int
     proposal: int
     stalled: int = 0
     advice: str = ""
+    cli_open: bool = False
 
     @property
     def fraction(self) -> float:
@@ -77,8 +95,12 @@ class Progress:
         return 1.0 if self.planned < 1 else min(1.0, max(0.0, self.spent / self.planned))
 
     def budget(self) -> int:
-        """Return the edit budget: a cosine schedule from `MAX_EDITS` at the start to `MIN_EDITS` at the end, rounded down."""
-        return math.floor(MIN_EDITS + (MAX_EDITS - MIN_EDITS) * 0.5 * (1 + math.cos(math.pi * self.fraction)))
+        """Return the edit budget: a cosine schedule from `MAX_EDITS` at the start to `MIN_EDITS` at the end, rounded down.
+
+        While `cli_open` is True, the budget is at least `CLI_EDITS`.
+        """
+        scheduled = math.floor(MIN_EDITS + (MAX_EDITS - MIN_EDITS) * 0.5 * (1 + math.cos(math.pi * self.fraction)))
+        return max(scheduled, CLI_EDITS) if self.cli_open else scheduled
 
     @property
     def percent(self) -> int:
@@ -89,9 +111,11 @@ class Progress:
         """Return the budget sentence and the run-status block."""
         count = self.budget()
         text = (f"Make at most {count} {'edit' if count == 1 else 'edits'} across all components. "
-                "An edit is one block of consecutive changed lines. "
-                f"Run status: this is proposal {self.proposal}. Search calls spent: {self.spent} of {self.planned} "
-                f"({self.percent}%). Proposals since the last validation gain: {self.stalled}.")
+                + "An edit is one block of consecutive changed lines. "
+                + (f"A new {NEW_CLI} target and the SKILL.md line that calls it are {CLI_EDITS} edits. "
+                   if self.cli_open else "")
+                + f"Run status: this is proposal {self.proposal}. Search calls spent: {self.spent} of {self.planned} "
+                + f"({self.percent}%). Proposals since the last validation gain: {self.stalled}.")
         if self.fraction >= LAST_PROPOSAL_FROM:
             text += " This may be the last proposal, so prefer one small, safe change."
         if self.advice:
@@ -120,12 +144,12 @@ def request(edit: Edit, candidate: dict[str, str], feedback: Mapping[str, Sequen
         if NEW_CLI in components or any(name.startswith(WEDGE_PREFIX) for name in components):
             instruction += _FROMARGS_RULE
         if NEW_CLI in components:
-            instruction += prompt_rule()
+            instruction += prompt_rule() + _CLI_EARLY
     else:
         instruction = "Improve only the supplied skill text components. Preserve the helper CLI contract. "
     head = instruction + _STE_RULE + "Return complete component contents. Do not alter independent checks or permissions."
     if cheaper:
-        head += " Prefer fewer tokens when correctness is equal."
+        head += " Prefer fewer tokens when correctness is equal. " + TOKEN_FIELDS_RULE
     head += " Add an " + HYPOTHESIS + " text of at most " + str(MAX_HYPOTHESIS) + " characters that states why the change helps, or null."
     head += " Add an " + NOTES + " text of at most " + str(MAX_NOTES) + " characters that you want to read in later proposals, or null. "
     sections = (render(history, protect), render_rejected(memory), render_earlier(earlier), render_notes(journal))
