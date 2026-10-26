@@ -484,6 +484,9 @@ A family breach still turns any verdict, including `promote-cheaper`, into `reje
 A `promote-cheaper` winner is advisory. Export it and report it, but do not apply it as you would a `promote` winner. The user decides whether to apply it.
 The winner choice uses the same rule as the gate. See [Incumbent](#incumbent).
 With a token field set, the reflection prompt also says: "Prefer fewer tokens when correctness is equal."
+It then names the two token counts of the feedback. A scored search feedback record adds `task_tokens`, the mean task tokens of its scored repeats.
+It also adds `incumbent_task_tokens`, the mean task tokens of the scored search outcomes of the incumbent on the same case.
+A field with an unknown count stays out. Without a token field, the feedback record has neither field.
 The search then also reflects on a train minibatch that the parent scores perfectly.
 A child can tie the minibatch score sum of its parent.
 Such a child enters the candidate pool only when its mean task tokens on that minibatch are known and lower.
@@ -617,6 +620,10 @@ The runner offers `@new-cli` only when all of these conditions hold:
 - Each first-party file of the fromargs include is at most 16 MiB.
 
 When one condition fails, the run has no `@new-cli` component.
+When the run offers `@new-cli`, the reflection prompt says that it fits a rule that code applies the same way to every input.
+The prompt says to try `@new-cli` early, and not to wait until a prose fix fails. A CLI can also cut the task tokens of each case.
+The proposer cannot read the fromargs source, so the prompt gives a summary of its API: `App`, `@app.default`, and `main = app.main`.
+It also says that a module that uses only the standard library is valid.
 When no editable target uses the no-group layer and `uv` or the layer population fails, the run drops the component and continues.
 The run records the reason as `new_cli_dropped` in the own-targets record.
 
@@ -688,6 +695,8 @@ The progress `p` is the search calls spent over the search allowance, clamped to
 The allowance is `estimate.metric_calls` plus the headroom train outcomes, less the overshoot margin of the last search iteration. It is the GEPA call budget.
 The margin counts each validation case once per repeat. The last iteration can pass the allowance by up to that margin.
 The budget is `floor(1 + 5 * 0.5 * (1 + cos(pi * p)))`. It falls from 6 edits at `p = 0` to 1 edit at `p = 1`.
+While the run offers `@new-cli` and the parent leaves it empty, the budget is at least 2.
+A new `@new-cli` target and the `SKILL.md` line that calls it are 2 edits, and the budget sentence says so.
 An edit is one block of consecutive changed lines, found with `difflib.SequenceMatcher` over the lines of one component.
 The count adds the blocks of all changed components.
 The run-status block gives the proposal number, the search calls spent of the allowance, and the whole percent (integer math, rounded down).
@@ -1005,6 +1014,8 @@ When the markers alone would pass that limit, the later entries hold empty text 
 A judged outcome also adds `edit_hint`: the sorted editable files that share 4 words in a row with an unmet criterion text.
 With no match, `edit_hint` is `["unknown"]`. The hint is advice only, and every editable file stays editable.
 An outcome with a `gate_diagnostic` adds it as `gate_feedback`.
+The reflection prompt says that the gate is the independent check of the case.
+When a skill rule conflicts with `gate_feedback`, the prompt says to change the skill rule to match the gate.
 A validation case with more than one scored repeat gets the repeat mean and the masked `request`, with no `unmet` or `gate_feedback`.
 GEPA reflects on train cases only.
 

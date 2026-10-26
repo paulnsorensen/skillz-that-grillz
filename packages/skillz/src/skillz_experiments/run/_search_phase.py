@@ -8,13 +8,13 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import cast, final
 
 from skillz_experiments._budget import CallTimeout
-from skillz_experiments._candidate import Candidate
+from skillz_experiments._candidate import NEW_CLI, Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments.evaluation import task_tokens
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._plan import VALIDATION_REPEATS, repeat_indices
 from skillz_experiments.run._outcomes import (
-    case_ids, fault_reason, failed_outcome, is_unscored, mean_tokens, reflection_fault, repeat_feedback,
+    case_ids, fault_reason, failed_outcome, is_failed, is_unscored, mean_tokens, reflection_fault, repeat_feedback,
     search_fault, stall_observations,
 )
 from skillz_experiments.run._record_fields import field, int_field
@@ -222,7 +222,26 @@ class SearchPhase:
             self._identities[digest(components)] = candidate.identity
         results = [self._run(candidate, case, repeat) for repeat in repeat_indices(case.split)]
         Leaderboard(state).keep_if_best(candidate, case)
-        return repeat_feedback(results, case, self._denylist.harness, candidate)
+        score, feedback = repeat_feedback(results, case, self._denylist.harness, candidate)
+        return score, feedback if is_unscored(feedback) else feedback | self._token_fields(case, results)
+
+    def _token_fields(self, case: Case, results: Sequence[Mapping[str, object]]) -> dict[str, object]:
+        """Return the task tokens of `case` and the incumbent mean on it, when the run sets a token rule.
+
+        `task_tokens` is the mean over the scored outcomes in `results`. `incumbent_task_tokens` is the mean over the
+        scored search outcomes of the incumbent on `case`. A field with an unknown count stays out.
+        """
+        state = self._state
+        if not state.statistics.token_rule:
+            return {}
+        with state.lock:
+            incumbent = Leaderboard(state).best_identity()
+            theirs = [item for item in self.search_outcomes()
+                      if item.get("search_candidate") == incumbent and item.get("case_id") == case.identifier]
+        means = {"task_tokens": results, "incumbent_task_tokens": theirs}
+        found = {name: mean_tokens([task_tokens(item) for item in items if not is_failed(item)])
+                 for name, items in means.items()}
+        return {name: value for name, value in found.items() if value is not None}
 
     def _run(self, candidate: Candidate, case: Case, repeat: int | None) -> dict[str, object]:
         """Return the recorded outcome of one run, else score it live. A provider failure records a failed outcome."""
@@ -312,7 +331,8 @@ class SearchPhase:
             chosen = focus_component([*self.earlier, *history], state.seed.editable) if stall.level == "shift" else None
             progress = Progress(spent=len(self.search_outcomes()), planned=self.search_ceiling(),
                                 proposal=1 + sum(1 for item in self.reflections() if not faulted_reflection(item)), stalled=stall.streak,
-                                advice=stall.advice if chosen is None else focus_advice(stall.streak, chosen))
+                                advice=stall.advice if chosen is None else focus_advice(stall.streak, chosen),
+                                cli_open=NEW_CLI in components and not candidate.get(NEW_CLI, "").strip())
             protect = protected_cases(state.outcomes, leaderboard.best_identity())
             memory = rejected_memory(history, band=state.statistics.min_gain)
             journal = build_journal(state.outcomes)

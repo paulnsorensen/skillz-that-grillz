@@ -33,7 +33,9 @@ from fake_provider import FakeRunProvider
 pytestmark = pytest.mark.usefixtures("host_login")
 
 MODEL = "local-test"
-SENTENCE = " Prefer fewer tokens when correctness is equal."
+SENTENCE = (" Prefer fewer tokens when correctness is equal. "
+            + "A feedback record can hold task_tokens, the mean uncached task tokens of the candidate on that case. "
+            + "It can also hold incumbent_task_tokens, the mean uncached task tokens of the current best candidate on that case.")
 
 
 def _document(**extra: object) -> dict[str, object]:
@@ -354,7 +356,7 @@ STATUS = (" Make at most 6 edits across all components. An edit is one block of 
 START = Progress(spent=0, planned=100, proposal=1)
 
 
-def test_the_reflection_prompt_is_unchanged_without_a_token_field_and_gains_one_sentence_with_one() -> None:
+def test_the_reflection_prompt_is_unchanged_without_a_token_field_and_gains_the_token_sentences_with_one() -> None:
     body = json.dumps({"candidate": {"SKILL.md": "x"}, "feedback": {}}, default=str)
     plain, schema = reflection_request("prose", {"SKILL.md": "x"}, {}, ["SKILL.md"], progress=START)
     assert plain == TODAY_PROSE + HYPOTHESIS_ASK + STATUS + body
