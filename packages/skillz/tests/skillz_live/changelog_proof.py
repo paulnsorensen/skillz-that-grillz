@@ -54,6 +54,11 @@ RULE_WORDS = re.compile(r"\[|\b(?:brackets?|prefix(?:ed|es)?|tickets?|parenthes[
 """A request that holds one of these words can state the enforced rule, so the draft check refuses it."""
 SIGIL = {"claude": "/", "codex": "$"}
 """Claude Code calls a skill as `/name`. Codex calls it as `$name`."""
+TOKEN_RULE = ("--min-token-saving", "0.1", "--max-quality-loss", "0.05")
+"""A prose fix of rule 1 scores as well as a CLI, so only task tokens can rank them (experiments.md `The token rule`).
+With this rule, the reflection prompt prefers fewer tokens, and a candidate that ties the incumbent and cuts the task
+tokens by at least 10% replaces it (`promote-cheaper`). The holdout gate against the seed still needs `promote`.
+A case entry is short, so the saving is below the 30% of `fromargs-benefit`."""
 PROMPT = """{sigil}skillz autoimprove {target}
 
 Use the {harness} harness. The task model is {task_model}.

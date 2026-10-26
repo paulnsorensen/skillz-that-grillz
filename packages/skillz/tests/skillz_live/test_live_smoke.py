@@ -253,12 +253,13 @@ def _fromargs_author(target: Path, work: Path, harness: str,
 def _changelog_proof(work: Path, harness: str, model: str) -> Setup:
     """Search a skill with one wrong format rule. The task role runs `model`; reflection and judge run stronger.
 
-    No token rule applies, so only a quality gain promotes.
+    The token rule lets a CLI that ties a prose fix and cuts the task tokens replace it in the search. The holdout
+    gate against the seed still needs a quality `promote`.
     """
     del model
     path, config = _stronger(work, harness, strong_model(harness))
     return Setup(changelog_proof.build(work), changelog_proof.reference_draft(), config,
-                 ("--harness-config", str(path)), ("--edit", "prose+cli"))
+                 ("--harness-config", str(path)), ("--edit", "prose+cli", *changelog_proof.TOKEN_RULE))
 
 
 SCENARIOS: dict[str, Scenario] = {
@@ -632,6 +633,16 @@ def test_the_changelog_proof_scenario_fails_a_completed_run_that_the_shared_rule
     assert _verdict(record, BASIC)[0], "the shared rule passes a completed run with a patch and a scored holdout"
     passed, reason = _verdict(record, SCENARIOS["changelog-proof"])
     assert not passed and "claims.apply is None" in reason and "cli=None" in reason, reason
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-14")
+def test_the_changelog_proof_run_sets_the_token_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def build(work: Path) -> Path:
+        return work / "changelog-entry"
+
+    monkeypatch.setattr(changelog_proof, "build", build)
+    flags = _changelog_proof(tmp_path, "claude", "sonnet").flags
+    assert flags == ("--edit", "prose+cli", "--min-token-saving", "0.1", "--max-quality-loss", "0.05"), flags
 
 
 def test_every_scenario_with_a_record_check_has_its_own_pass_rule() -> None:

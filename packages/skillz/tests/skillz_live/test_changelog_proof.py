@@ -18,12 +18,13 @@ import pytest
 
 import changelog_proof
 from changelog_check import RULES, entry_for, verdict
-from changelog_proof import (CONTRACT, FIXTURE, NAME, PYPROJECT, WEDGE_TOML, check, check_draft, codex_argv,
-                             match_entries, patch_files, proof_verdict, reference_draft)
+from changelog_proof import (CONTRACT, FIXTURE, NAME, PYPROJECT, TOKEN_RULE, WEDGE_TOML, check, check_draft,
+                             codex_argv, match_entries, patch_files, proof_verdict, reference_draft)
 from skillz_experiments import _graders
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import parse
+from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, verdict as gate_verdict
 from skillz_experiments.run._outcomes import feedback_for
 from skillz_experiments.run._patch import _patch_lines, _patch_text  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.search import HarnessText
@@ -464,3 +465,35 @@ def test_a_failed_runner_check_is_named_as_a_reason() -> None:
                                                                                 "preflight": "pass"}}}
     passed, reason = proof_verdict(_complete(claims=claims))
     assert not passed and "runner refuted (holdout-coverage=fail)" in reason, reason
+
+
+def _token_rule() -> Statistics:
+    """Return the gate thresholds of the scenario flags, checked as the run checks them."""
+    pairs = zip(TOKEN_RULE[::2], TOKEN_RULE[1::2], strict=True)
+    declared = Statistics.declared({flag.removeprefix("--").replace("-", "_"): float(value) for flag, value in pairs})
+    return cast(Callable[..., Statistics], Statistics)(**declared)
+
+
+PROSE_TOKENS = (4000.0, 4200.0, 3900.0, 4100.0, 4050.0, 3950.0)
+
+
+def _tokens(share: float) -> dict[str, tuple[float | None, float | None]]:
+    """Pair the prose incumbent tokens of each case with a challenger that spends `share` of them, with jitter."""
+    return {f"c{index}": (base, base * share * (1 + (-1) ** index * 0.02)) for index, base in enumerate(PROSE_TOKENS)}
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-14")
+def test_a_cli_that_ties_a_prose_fix_with_fewer_tokens_replaces_it_only_under_the_token_rule() -> None:
+    ties = dict.fromkeys(_tokens(0.8), 0.0)
+    assert gate_verdict(ties, thresholds=_token_rule(), tokens=_tokens(0.8)).verdict == "promote-cheaper"
+    assert gate_verdict(ties, thresholds=DEFAULT_STATISTICS, tokens=_tokens(0.8)).verdict == "inconclusive"
+    assert gate_verdict(ties, thresholds=_token_rule(), tokens=_tokens(0.95)).verdict == "inconclusive"
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-14")
+def test_a_fix_of_the_planted_rule_still_promotes_on_quality_against_the_seed() -> None:
+    deltas = {name: 0.0 if name == "c3" else 1.0 for name in _tokens(0.8)}
+    result = gate_verdict(deltas, thresholds=_token_rule(), tokens=_tokens(0.8))
+    assert (result.verdict, result.reasons) == ("promote", ()), result
+    unknown = _tokens(0.8) | {"c0": (4000.0, None)}
+    assert gate_verdict(deltas, thresholds=_token_rule(), tokens=unknown).reasons == ("unknown-usage",)

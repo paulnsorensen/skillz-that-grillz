@@ -95,7 +95,9 @@ SKILLZ_LIVE=1 just live-smoke codex gpt-6-luna changelog-proof
    It has network access, because the runner can populate the uv site layer of the fixture.
    The prompt states the requirement as a user would: entries start with the ticket id in square brackets. A request never states it.
    The draft check needs 6 families of 3 task cases and 2 ticketed cases in each family. Each `expected.entry` must equal `changelog_check.entry_for`.
-3. Stage 2 runs the shared path with the agent's draft: preflight, `run --edit prose+cli --repeats 1`, and `export`. No token rule applies, so only a quality gain promotes.
+3. Stage 2 runs the shared path with the agent's draft: preflight, `run --edit prose+cli --repeats 1`, and `export`, with `--min-token-saving 0.1 --max-quality-loss 0.05`.
+   A prose fix of rule 1 scores as well as a CLI. The token rule lets a CLI that ties it with fewer task tokens replace it in the search (`promote-cheaper`).
+   The holdout gate against the seed still needs `promote`, a quality gain.
 4. The test applies the patch to a copy, rebuilds the new target, and runs it on every drafted case with the command from the winner `SKILL.md`. The same check scores each entry.
 
 The test passes only when `claims.apply` is true and `cli` is `ok`.
