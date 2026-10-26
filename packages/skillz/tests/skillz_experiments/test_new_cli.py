@@ -806,11 +806,15 @@ def test_a_search_that_prefers_the_component_gates_with_the_built_target_and_exp
 
 @final
 class _ProseOnly(FakeRunProvider):
-    """A provider that records each reflection prompt and answers with the seed text, so `@new-cli` stays empty."""
+    """A provider that records each reflection prompt and answers with the seed text plus `cli` as `@new-cli`.
 
-    def __init__(self, seed: dict[str, str], budget: Budget, checkpoint: Callable[[], None], prompts: list[str]) -> None:
+    With the default empty `cli`, `@new-cli` stays empty. A candidate that carries the built `hello-cli` target scores higher.
+    """
+
+    def __init__(self, seed: dict[str, str], budget: Budget, checkpoint: Callable[[], None], prompts: list[str],
+                 cli: str = "") -> None:
         super().__init__()
-        self.seed, self.budget, self.checkpoint, self.prompts = seed, budget, checkpoint, prompts
+        self.seed, self.budget, self.checkpoint, self.prompts, self.cli = seed, budget, checkpoint, prompts, cli
 
     @override
     def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
@@ -825,7 +829,8 @@ class _ProseOnly(FakeRunProvider):
         del checks
         self.budget.claim(holdout=holdout)
         self.checkpoint()
-        return {"score": 0.5, "candidate_hash": candidate.identity, "case_hash": case.identifier}
+        built = "scripts/hello-cli.pyz" in candidate.frozen
+        return {"score": 0.9 if built else 0.5, "candidate_hash": candidate.identity, "case_hash": case.identifier}
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -834,24 +839,44 @@ class _ProseOnly(FakeRunProvider):
         self.budget.claim(holdout=holdout)
         self.prompts.append(prompt)
         names = [name for name in cast(list[str], schema["required"]) if name not in ("@hypothesis", "@notes")]
-        return {"answer": {name: self.seed.get(name, "") + ("\nMore." if name == "SKILL.md" else "") for name in names}
-                | {"@hypothesis": None, "@notes": None}}
+        answer = {name: self.seed.get(name, "") + ("\nMore." if name == "SKILL.md" else "") for name in names}
+        return {"answer": answer | ({NEW_CLI: self.cli} if self.cli else {}) | {"@hypothesis": None, "@notes": None}}
+
+
+def _prompts(world: World, out: Path, cli: str = "") -> list[str]:
+    """Run the search of `out` with a `_ProseOnly` provider that proposes `cli` as `@new-cli`. Return each reflection prompt."""
+    seed, prompts = cast(dict[str, str], read(out / "run.json")["seed"]), list[str]()
+
+    def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> _ProseOnly:
+        return _ProseOnly(seed, budget, checkpoint, prompts, cli)
+
+    _ = run(world.skill, out, MODEL, live=True, factory=factory)
+    assert prompts, "the search made no reflection call"
+    return prompts
+
+
+TWO_EDITS = "A new @new-cli target and the SKILL.md line that calls it are 2 edits."
+"""The budget sentence of a reflection prompt whose parent has an empty `@new-cli`."""
 
 
 @pytest.mark.ac("proposer-cli-early:AC-1")
 @pytest.mark.ac("proposer-cli-early:AC-2")
 def test_each_reflection_prompt_of_a_run_with_an_empty_new_cli_offers_it_early_with_two_edits(
         world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
-    out = prepared(world, tmp_path, write_draft, approvals)
-    seed, prompts = cast(dict[str, str], read(out / "run.json")["seed"]), list[str]()
-
-    def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> _ProseOnly:
-        return _ProseOnly(seed, budget, checkpoint, prompts)
-
-    _ = run(world.skill, out, MODEL, live=True, factory=factory)
-    heads = [prompt.split("\n", 1)[0] for prompt in prompts]
-    assert heads, "the search made no reflection call"
+    heads = [prompt.split("\n", 1)[0] for prompt in _prompts(world, prepared(world, tmp_path, write_draft, approvals))]
     for head in heads:
         assert "Try @new-cli early. Do not wait until a prose fix fails." in head
-        assert "A new @new-cli target and the SKILL.md line that calls it are 2 edits." in head
+        assert TWO_EDITS in head
         assert int(head.split("Make at most ", 1)[1].split(" ", 1)[0]) >= 2
+
+
+@pytest.mark.ac("proposer-cli-early:AC-2")
+def test_a_parent_with_a_new_cli_target_gets_no_two_edit_floor(
+        world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    prompts = _prompts(world, prepared(world, tmp_path, write_draft, approvals), VALUE)
+    parts = [prompt.split("\n", 1) for prompt in prompts]
+    filled = [head for head, data in parts if cast(dict[str, str], json.loads(data)["candidate"])[NEW_CLI].strip()]
+    assert filled, "no reflection prompt had a parent with a @new-cli target"
+    for head in filled:
+        assert TWO_EDITS not in head
+        assert "Try @new-cli early. Do not wait until a prose fix fails." in head

@@ -34,8 +34,8 @@ pytestmark = pytest.mark.usefixtures("host_login")
 
 MODEL = "local-test"
 SENTENCE = (" Prefer fewer tokens when correctness is equal. "
-            + "A feedback record can hold task_tokens, the mean uncached task tokens of the candidate on that case, "
-            + "and incumbent_task_tokens, the mean of the current best candidate on the same case.")
+            + "A feedback record can hold task_tokens, the mean uncached task tokens of the candidate on that case. "
+            + "It can also hold incumbent_task_tokens, the mean uncached task tokens of the current best candidate on that case.")
 
 
 def _document(**extra: object) -> dict[str, object]:

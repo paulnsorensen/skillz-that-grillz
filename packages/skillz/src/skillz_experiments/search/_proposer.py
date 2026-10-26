@@ -71,8 +71,8 @@ _CLI_EARLY = (f"A rule that code applies the same way to every input is a good f
               + "The handler takes typed parameters and returns JSON data. fromargs prints that data on stdout. "
               + "A module that uses only the standard library is valid too. ")
 # Only a run with a token rule sends this rule. That run adds these keys to a feedback record when the counts are known.
-TOKEN_FIELDS_RULE = ("A feedback record can hold task_tokens, the mean uncached task tokens of the candidate on that case, "
-                     + "and incumbent_task_tokens, the mean of the current best candidate on the same case.")
+TOKEN_FIELDS_RULE = ("A feedback record can hold task_tokens, the mean uncached task tokens of the candidate on that case. "
+                     + "It can also hold incumbent_task_tokens, the mean uncached task tokens of the current best candidate on that case.")
 
 
 @dataclass(frozen=True)

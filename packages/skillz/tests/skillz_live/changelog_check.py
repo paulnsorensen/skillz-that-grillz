@@ -35,7 +35,7 @@ def change_problem(change: object) -> str | None:
         return f"type must be one of {', '.join(LABELS)}"
     if scope is not None and not (isinstance(scope, str) and SCOPE.fullmatch(scope)):
         return "scope must be null or one lowercase word"
-    if not isinstance(summary, str) or not summary.strip() or "\n" in summary:
+    if not isinstance(summary, str) or not summary.strip() or summary.splitlines() != [summary]:
         return "summary must be one nonblank line"
     if not isinstance(breaking, bool):
         return "breaking must be true or false"

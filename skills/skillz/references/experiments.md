@@ -484,7 +484,7 @@ A family breach still turns any verdict, including `promote-cheaper`, into `reje
 A `promote-cheaper` winner is advisory. Export it and report it, but do not apply it as you would a `promote` winner. The user decides whether to apply it.
 The winner choice uses the same rule as the gate. See [Incumbent](#incumbent).
 With a token field set, the reflection prompt also says: "Prefer fewer tokens when correctness is equal."
-It then names the token fields of the feedback. A scored search feedback record adds `task_tokens`, the mean task tokens of its scored repeats.
+It then names the two token counts of the feedback. A scored search feedback record adds `task_tokens`, the mean task tokens of its scored repeats.
 It also adds `incumbent_task_tokens`, the mean task tokens of the scored search outcomes of the incumbent on the same case.
 A field with an unknown count stays out. Without a token field, the feedback record has neither field.
 The search then also reflects on a train minibatch that the parent scores perfectly.

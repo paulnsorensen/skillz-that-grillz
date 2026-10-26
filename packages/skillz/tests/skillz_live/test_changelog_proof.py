@@ -274,6 +274,8 @@ MALFORMED: list[tuple[Mutate, str]] = [
     (lambda case: case.update(expected={}), "expected count null, the oracle says"),
     (lambda case: case.update(files={"changes.json": '[{"ticket": "x"}]'}), "change 0: ticket must be null"),
     (lambda case: case.update(files={"changes.json": "{}"}), "changes.json is not a nonempty JSON list"),
+    (lambda case: _with(case, [_cases()[0][0] | {"summary": "fix\rthe parser"}, *_cases()[0][1:]]),
+     "change 0: summary must be one nonblank line"),
     (lambda case: case.update(files={}), "files lack changes.json"),
     (lambda case: _with(case, _cases()[0][:29]), "holds 29 changes"),
     (lambda case: _with(case, [*_cases()[0], *_cases()[1]][:41]), "holds 41 changes"),
