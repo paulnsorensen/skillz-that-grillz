@@ -1,8 +1,8 @@
 # Changelog entry format
 
-One change gives one entry.
+Each change gives one entry.
 The entry is one Markdown list item: it starts with `- `.
-Build it from the keys of `change.json` with these rules.
+Build it from the keys of the change with these rules.
 
 1. **Ticket id.** When the change has a ticket, end the entry with one space and the ticket id in parentheses, such as `(ABC-123)`.
    A change with no ticket gives an entry with no ticket id.
@@ -13,19 +13,22 @@ Build it from the keys of `change.json` with these rules.
 4. **Summary.** Write the summary of the change with its first letter in upper case and no trailing period.
 5. **Breaking marker.** When `breaking` is `true`, write one space and `**BREAKING**` right after the summary.
    A change that is not breaking has no marker.
-6. **One line.** The entry is one line.
-   Write it to `entry.md` with one trailing newline and nothing else.
+6. **One line per change.** Each entry is one line.
+   Write the entries to `entries.md` in the order of `changes.json`.
+   Each line ends with one newline. Write nothing else.
 
 ## Example
 
-`change.json` holds:
+`changes.json` holds:
 
 ```json
-{"ticket": "ABC-123", "type": "fix", "scope": "parser", "summary": "handle empty body.", "breaking": false}
+[{"ticket": "ABC-123", "type": "fix", "scope": "parser", "summary": "handle empty body.", "breaking": false},
+ {"ticket": null, "type": "feat", "scope": null, "summary": "add export command", "breaking": true}]
 ```
 
-The entry is:
+`entries.md` holds:
 
 ```text
 - Fixed in parser: Handle empty body (ABC-123)
+- Added: Add export command **BREAKING**
 ```

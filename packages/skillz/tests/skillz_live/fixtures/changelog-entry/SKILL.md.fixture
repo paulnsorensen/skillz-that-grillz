@@ -1,17 +1,18 @@
 ---
 name: changelog-entry
-description: Write the changelog entry of one change from its change.json. Use when the user asks for the changelog line of a change.
+description: Write the changelog entries of a release from its changes.json. Use when the user asks for the changelog lines of a release.
 ---
 # changelog-entry
 
-Read `change.json` in the working directory.
-Apply the rules of `references/format.md` to write one changelog entry.
-Write the entry to `entry.md`.
-Then return one JSON object as the answer, and nothing else: `{"entry": "<the entry line>"}`.
+Read `changes.json` in the working directory.
+Apply the rules of `references/format.md` to write one changelog entry for each change, in order.
+Write the entries to `entries.md`.
+Then return one JSON object as the answer, and nothing else: `{"count": N}`.
+N is the number of entries.
 
 ## Input
 
-`change.json` holds one JSON object with these keys:
+`changes.json` holds a JSON list of changes. Each change is an object with these keys:
 
 - `ticket`: an id such as `ABC-123`, or `null`.
 - `type`: `feat`, `fix`, `perf`, `docs`, or `refactor`.
@@ -21,4 +22,4 @@ Then return one JSON object as the answer, and nothing else: `{"entry": "<the en
 
 ## Helper
 
-No helper writes the entry yet. Apply the rules of `references/format.md` by hand to every change.
+No helper writes the entries yet. Apply the rules of `references/format.md` by hand to every change.
