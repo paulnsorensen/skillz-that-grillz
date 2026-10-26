@@ -1,0 +1,31 @@
+# Changelog entry format
+
+One change gives one entry.
+The entry is one Markdown list item: it starts with `- `.
+Build it from the keys of `change.json` with these rules.
+
+1. **Ticket id.** When the change has a ticket, end the entry with one space and the ticket id in parentheses, such as `(ABC-123)`.
+   A change with no ticket gives an entry with no ticket id.
+2. **Label.** Write the label of the change type:
+   `feat` is `Added`, `fix` is `Fixed`, `perf` is `Improved`, `docs` is `Documented`, and `refactor` is `Changed`.
+3. **Scope.** When the change has a scope, write ` in <scope>` right after the label.
+   Then write a colon and one space.
+4. **Summary.** Write the summary of the change with its first letter in upper case and no trailing period.
+5. **Breaking marker.** When `breaking` is `true`, write one space and `**BREAKING**` right after the summary.
+   A change that is not breaking has no marker.
+6. **One line.** The entry is one line.
+   Write it to `entry.md` with one trailing newline and nothing else.
+
+## Example
+
+`change.json` holds:
+
+```json
+{"ticket": "ABC-123", "type": "fix", "scope": "parser", "summary": "handle empty body.", "breaking": false}
+```
+
+The entry is:
+
+```text
+- Fixed in parser: Handle empty body (ABC-123)
+```
