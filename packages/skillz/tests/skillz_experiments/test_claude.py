@@ -683,6 +683,168 @@ def test_preflight_stops_when_the_read_tool_leaves_the_workspace_or_is_not_probe
     assert budget.calls == len(calls(executable))
 
 
+@pytest.mark.ac("gh-176:AC-1")
+def test_every_claude_call_blocks_reads_outside_the_working_directories(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    floor = _settings.settings(tmp_path / "workspace")
+    assert cast(dict[str, object], floor["permissions"])["blockReadsOutsideWorkingDirectories"] is True
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable, Budget(10, 120, 0))
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    logged = calls(executable)
+    assert logged
+    for call in logged:
+        settings = cast(dict[str, dict[str, object]], json.loads(cast(str, call["settings"])))
+        assert settings["permissions"]["blockReadsOutsideWorkingDirectories"] is True
+
+
+@pytest.mark.ac("gh-176:AC-2")
+def test_preflight_stops_when_the_read_tool_returns_the_host_file(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, "read-tool-host")
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        with pytest.raises(CodedError, match="the Read tool read the host file /etc/hosts") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    assert budget.calls == len(calls(executable))
+
+
+@pytest.mark.ac("gh-176:AC-2")
+def test_preflight_stops_when_the_settings_lose_the_read_block(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fake Claude honors the setting, as the live CLI does. Without it, the Read tool reaches the host."""
+    del sandbox_passes
+    original = _settings.settings
+
+    def without_block(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                      overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+        floor = original(workspace, out, config=config, overrides=overrides, unix_sockets=unix_sockets)
+        permissions = cast(dict[str, object], floor["permissions"])
+        floor["permissions"] = {key: value for key, value in permissions.items() if key != "blockReadsOutsideWorkingDirectories"}
+        return floor
+    monkeypatch.setattr(_transport, "settings", without_block)
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable)
+    try:
+        with pytest.raises(CodedError, match="read isolation failed: the Read tool") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+@pytest.mark.ac("gh-176:AC-3")
+def test_preflight_asks_the_read_tool_for_the_host_file_and_needs_its_refusal(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path)
+    session = harness(tmp_path, executable, Budget(10, 120, 0))
+    try:
+        _ = session.preflight()
+    finally:
+        session.close()
+    prompt = cast(str, calls(executable)[0]["prompt"])
+    host = prompt.index("read the file `/etc/hosts` with the Read tool, not Bash")
+    assert host < prompt.index("`cat "), prompt
+    (tmp_path / "skipped").mkdir()
+    skipped = fake_claude(tmp_path / "skipped", "read-tool-host-skipped")
+    session = harness(tmp_path / "skipped", skipped, Budget(10, 120, 0))
+    try:
+        with pytest.raises(CodedError, match="no Read tool call was refused for the host file /etc/hosts") as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+
+
+@pytest.mark.ac("gh-176:AC-3")
+@pytest.mark.ac("gh-176:AC-4")
+def test_preflight_evidence_records_the_refused_host_file_read(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    session = harness(tmp_path, fake_claude(tmp_path))
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    roles = cast(dict[str, dict[str, object]], evidence["roles"])
+    assert roles["task"]["read_tool"] == {"host_file": "/etc/hosts", "result": "refused"}
+
+
+def test_read_tool_verdict_fails_closed_on_a_host_file_result_without_an_error_flag(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    use: dict[str, object] = {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "h", "name": "Read", "input": {"file_path": "/etc/hosts"}}]}}
+    silent: dict[str, object] = {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "h", "content": ""}]}}
+    refused: dict[str, object] = {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "h", "is_error": True, "content": "denied"}]}}
+    assert "read the host file" in str(_events.read_tool_failure([use, silent], "t", sealed, evidence=False))
+    assert _events.read_tool_failure([use, refused], "t", sealed, evidence=False) is None
+
+
+def _read_use(ident: str, path: str) -> dict[str, object]:
+    return {"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": ident, "name": "Read", "input": {"file_path": path}}]}}
+
+
+def _read_result(ident: str, content: str, **flags: object) -> dict[str, object]:
+    return {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": ident, "content": content, **flags}]}}
+
+
+def test_read_tool_verdict_resolves_a_non_canonical_host_file_path(tmp_path: Path) -> None:
+    events = [_read_use("h", "/etc/../etc/hosts"), _read_result("h", "127.0.0.1 localhost")]
+    assert "read the host file" in str(_events.read_tool_failure(events, "t", tmp_path / "sealed", evidence=False))
+
+
+def test_read_tool_verdict_fails_on_an_explicit_false_error_flag(tmp_path: Path) -> None:
+    events = [_read_use("h", "/etc/hosts"), _read_result("h", "127.0.0.1 localhost", is_error=False)]
+    assert "read the host file" in str(_events.read_tool_failure(events, "t", tmp_path / "sealed", evidence=False))
+
+
+def test_read_tool_verdict_reports_a_sealed_leak_next_to_a_refused_host_read(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    events = [_read_use("h", "/etc/hosts"), _read_result("h", "denied", is_error=True),
+              _read_use("s", str(sealed)), _read_result("s", "token-123")]
+    verdict = str(_events.read_tool_failure(events, "token-123", sealed, evidence=True))
+    assert "reached a path outside the workspace" in verdict
+
+
+def test_read_tool_verdict_does_not_count_a_host_read_without_a_result_as_refused(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    events = [_read_use("s", str(sealed)), _read_result("s", "no such file", is_error=True), _read_use("h", "/etc/hosts")]
+    verdict = str(_events.read_tool_failure(events, "token-123", sealed, evidence=True))
+    assert "no Read tool call was refused for the host file" in verdict
+
+
+def test_read_tool_verdict_fails_when_a_later_host_read_returns_content_after_a_refusal(tmp_path: Path) -> None:
+    sealed = tmp_path / "sealed"
+    events = [_read_use("s", str(sealed)), _read_result("s", "no such file", is_error=True),
+              _read_use("a", "/etc/hosts"), _read_result("a", "denied", is_error=True),
+              _read_use("b", "/etc/hosts"), _read_result("b", "127.0.0.1 localhost")]
+    assert "read the host file" in str(_events.read_tool_failure(events, "token-123", sealed, evidence=True))
+
+
+@pytest.mark.ac("gh-176:AC-5")
+def test_the_reference_and_adr_006_document_the_read_block_and_why_read_stays() -> None:
+    root = Path(__file__).resolve().parents[4]
+    reference = (root / "skills/skillz/references/experiment-harness.md").read_text(encoding="utf-8")
+    adr = (root / "docs/agents/decisions/skillz-autoimprove.md").read_text(encoding="utf-8")
+    amendment = re.search(r"^- \*\*Amendment 2026-10-26 \(ADR-006; issue #176\):\*\*.*$", adr, re.M)
+    assert amendment is not None
+    for text in (reference, amendment[0]):
+        assert "`permissions.blockReadsOutsideWorkingDirectories: true`" in text
+        assert "Claude Code 2.1.257" in text and "`/etc/hosts`" in text and "`preflight-leak`" in text
+    assert "The Read tool stays enabled, because the task reads the candidate skill" in reference
+    assert "`Read` stays in `TOOLS`" in amendment[0] and f"`{_transport.READ_PROBE}`" in amendment[0]
+
+
 def test_environment_key_changes_when_the_read_probe_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
     before = session.environment_key()

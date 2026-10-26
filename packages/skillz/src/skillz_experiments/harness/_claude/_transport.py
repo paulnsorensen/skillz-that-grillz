@@ -83,7 +83,7 @@ TOOLS = "Bash,Read,Skill"
 NETWORK_PROBE = "loopback-dns-nonloopback-v3"
 
 
-READ_PROBE = "read-tool-outside-workspace-v1"
+READ_PROBE = "read-tool-outside-workspace-v2"
 
 
 SANDBOX_STDERR_LIMIT = 100_000

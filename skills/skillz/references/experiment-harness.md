@@ -147,9 +147,13 @@ A `User` memory row stops the run even when its path does not match, so a change
 Memory that appears during the run gets its listing before the next model call.
 You do not need to move your `CLAUDE.md`.
 The live preflight also stops with `preflight-leak` when the init event lists a user skill, plugin, agent, or MCP server.
-The live preflight also asks the Read tool to read a sealed file outside the workspace.
-The run stops with `preflight-leak` when the Read tool returns that file, or when the model never calls the Read tool.
-The `--restricted` flag no longer confines the Read tool, so only this probe proves it.
+The settings set `permissions.blockReadsOutsideWorkingDirectories: true`, so the Read tool cannot read a file outside the workspace.
+This setting needs Claude Code 2.1.257 or later.
+The Read tool stays enabled, because the task reads the candidate skill and the workspace files with it.
+The live preflight asks the Read tool to read a sealed file outside the workspace, and then `/etc/hosts`.
+The run stops with `preflight-leak` when the Read tool returns either file.
+The run also stops when no Read call answers for the sealed file, or when no Read call for `/etc/hosts` is refused.
+The preflight evidence records the refused `/etc/hosts` read. The `--restricted` flag does not confine the Read tool, so only the setting and this probe do.
 Only the candidate skill, Claude Code's own commands and built-in plugins, and the built-in agents are allowed.
 
 When the live preflight call returns and a preflight check then fails, the runner keeps its transcript in `RUN/preflight.events.json` (mode 0600).

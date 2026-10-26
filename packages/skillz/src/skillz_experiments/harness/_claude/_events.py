@@ -12,7 +12,7 @@ from skillz_experiments._candidate import snapshot_outputs
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._frontmatter import read_frontmatter
 from skillz_experiments.evaluation import usage
-from skillz_experiments.harness._claude._constants import AUTH_FAILED, PROBE_PREFIX
+from skillz_experiments.harness._claude._constants import AUTH_FAILED, HOST_FILE, PROBE_PREFIX
 from skillz_experiments.harness._claude._pairs import blocks, tool_pairs
 from skillz_experiments.harness._claude._sandbox import sandbox_fix, SandboxUnavailable
 from skillz_experiments.harness._claude._settings import Declared
@@ -263,22 +263,32 @@ def read_failure(events: list[dict[str, object]], sealed_token: str, sealed: str
 
 
 def read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed: Path, *, evidence: bool) -> str | None:
-    """Judge the Read-tool probe. The Read tool must try the sealed host file and fail to return its token.
+    """Judge the Read-tool probe. The Read tool must fail on the sealed host file and on the host file `HOST_FILE`.
 
-    Without `evidence`, only a returned token fails. With it, a missing Read call also fails.
+    A sealed-file result that holds the token fails. A host-file result without `is_error: true` fails closed, so a
+    result that returns content cannot pass. Without `evidence`, only these leaks fail. With it, a missing answer for
+    the sealed file or a missing refusal for the host file also fails.
 
-    Claude Code's `claude -p` has no flag that confines the Read tool to the workspace, so only this probe proves it.
+    The `blockReadsOutsideWorkingDirectories` setting confines the Read tool; only this probe proves that it holds.
     """
-    answered = False
+    answered = refused = False
     for use, result in tool_pairs(events, "Read"):
         target = _input(use).get("file_path")
-        if result is None or not (isinstance(target, str) and Path(target).resolve() == sealed.resolve()):
+        if result is None or not isinstance(target, str):
             continue
-        if sealed_token in json.dumps(result):
-            return "read isolation failed: the Read tool reached a path outside the workspace"
-        answered = True
+        path = Path(target).resolve()
+        if path == Path(HOST_FILE).resolve():
+            if result.get("is_error") is not True:
+                return f"read isolation failed: the Read tool read the host file {HOST_FILE}"
+            refused = True
+        elif path == sealed.resolve():
+            if sealed_token in json.dumps(result):
+                return "read isolation failed: the Read tool reached a path outside the workspace"
+            answered = True
     if evidence and not answered:
         return "read-tool probe has no evidence: no Read tool call answered for the sealed host file"
+    if evidence and not refused:
+        return f"read-tool probe has no evidence: no Read tool call was refused for the host file {HOST_FILE}"
     return None
 
 

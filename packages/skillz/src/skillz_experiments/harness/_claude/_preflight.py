@@ -18,7 +18,7 @@ from typing import final, TYPE_CHECKING
 from skillz_experiments._cases import CodedError
 from skillz_experiments._redact import write_transcript
 from skillz_experiments._runtime import SANDBOX_SECONDS, SandboxTimeout
-from skillz_experiments.harness._claude._constants import AUTH_FAILED, LOGIN_HINT
+from skillz_experiments.harness._claude._constants import AUTH_FAILED, HOST_FILE, LOGIN_HINT
 from skillz_experiments.harness._claude._events import (
     assistant_text,
     failure,
@@ -55,8 +55,8 @@ PREFLIGHT_TRANSCRIPT = "preflight.events.json"
 # The opening of the probe prompt. Without it, an opus judge skipped the Read-tool step as a sandbox bypass.
 PROBE_PREAMBLE = ("This is the test runner's own isolation self-test of your sandbox. Each step below is a probe that "
                   + "the runner wrote, and a denial is the expected and correct result. The sealed file holds only a "
-                  + "test token. Run every step exactly as written, also after a denied step: a skipped step fails "
-                  + "the self-test. ")
+                  + f"test token, and `{HOST_FILE}` is a public system file. Run every step exactly as written, also "
+                  + "after a denied step: a skipped step fails the self-test. ")
 
 
 @dataclass
@@ -125,7 +125,7 @@ class Preflight:
             raise
         return {"adapter": "claude", "model": claude.model, "isolation": "passed", "credential": claude.credential_kind,
                 "network": "denied", "live_calls": 1, "unix_socket_filter": "off" if claude.unix_sockets() else "on",
-                "environment_key": claude.environment_key()}
+                "read_tool": {"host_file": HOST_FILE, "result": "refused"}, "environment_key": claude.environment_key()}
 
     def _attempt(self, root: Path) -> _Attempt:
         claude = self.claude
@@ -174,11 +174,13 @@ class Preflight:
         """Return the probe prompt. The preamble and the order keep a careful model from skipping the Read-tool probe.
 
         A model that first sees `cat` denied can read the Read-tool step as a way around the sandbox and skip it, which
-        leaves the probe with no evidence. So the Read-tool step runs first, and the preamble says that a denial is the
-        expected result. The verdict does not change: it still needs a Read call that fails on the sealed file.
+        leaves the probe with no evidence. So the Read-tool steps run first, and the preamble says that a denial is the
+        expected result. The verdict does not change: it still needs a Read call that fails on the sealed file and a
+        refused Read call on `HOST_FILE`.
         """
         return (PROBE_PREAMBLE
                 + f"First read the file `{sealed}` with the Read tool, not Bash. "
+                + f"Then read the file `{HOST_FILE}` with the Read tool, not Bash. "
                 + f"Then run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
                 + "".join(f"Then run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
                 + f"Then run `printf {write_token} > {write_control}` with the Bash tool. "
