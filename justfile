@@ -52,6 +52,7 @@ mutate-fromargs:
 # fromargs-benefit and changelog-proof run MODEL as the task role.
 # SKILLZ_LIVE_STRONG_MODEL sets the model that drafts, reflects, and judges.
 # Its default is opus on claude and gpt-6-astra on codex (STRONG in skillz_live/fromargs_benefit.py).
+# The fromargs-benefit drafting stage always runs in claude, so its default drafting model is opus on both harnesses.
 # Main tracks no skill archive (ADR-012), so the recipe builds them from source before the tests.
 [script("bash")]
 live-smoke $harness $model $scenario="basic":
