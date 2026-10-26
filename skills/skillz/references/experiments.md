@@ -867,6 +867,10 @@ Export writes no empty patch file.
 A `spread` entry also has `arm` and `levels`. It marks a criterion whose level spreads by 2 or more across repeats of one candidate on one arm and case.
 A `partly-met` entry also has `level_2` and `outcomes`. It marks a criterion with level 2 in at least half of the case outcomes, over all arms.
 `report.json` redacts the reasons of the outcome `criteria`.
+`report.json` also holds `zero_cases`: each case that scores 0 on every repeat of one candidate on one arm.
+An entry has `case_id`, `arm`, `candidate`, `repeats`, and `criteria`. The list is sorted by `case_id`, `arm`, and `candidate`.
+`criteria` maps each unmet criterion `id` to one verdict per unmet repeat: `level`, `met` (`false`), and the redacted `reason`.
+Read the `zero_cases` reasons to find a case that the skill never passes.
 Read `criteria_flags` before you draft the next cases. The criteria drafting reference that `SKILL.md` lists says how.
 When the winner files equal the seed files, export writes only `report.json`. Its result has `patches: []` and `reason: "winner-equals-baseline"`.
 Tell the user that the run found no change to apply.
@@ -999,6 +1003,8 @@ A `judge` or `hybrid` grader can also declare these fields:
   The capture runs in the OS sandbox of the task role, so `--sandbox-read` and `--sandbox-seconds` apply.
   On macOS the sandbox blocks all network access, loopback included, so a capture that starts a local server needs Linux.
 A judge answer that leaves out a criterion `id` or adds one scores 0 with status `evaluation-failed`.
+A judged outcome stores `criteria` next to its `score`. Each criterion `id` maps to the judge `level`, the one-line `reason`, and `met`.
+`met` is `true` only at level 4 (fully met). The run record keeps the reasons unredacted. The export redacts them.
 A contract that declares `pillars` stops with `contract-pillars-removed`. Move each pillar into case criteria.
 
 A command score below 1 records `gate_diagnostic` on the outcome: the last 1,000 characters of the redacted grader stderr.
@@ -1018,6 +1024,7 @@ The reflection prompt says that the gate is the independent check of the case.
 When a skill rule conflicts with `gate_feedback`, the prompt says to change the skill rule to match the gate.
 A validation case with more than one scored repeat gets the repeat mean and the masked `request`, with no `unmet` or `gate_feedback`.
 GEPA reflects on train cases only.
+A holdout outcome and its judge reasons never enter a feedback record. The search reuses only `search` outcomes on train and validation cases.
 
 The contract hash covers the whole contract, `capture` included. The case hash covers every case, criteria included.
 
@@ -1026,6 +1033,11 @@ A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: o
 A kind spends one invocation when the judge does not run.
 This covers a failed hybrid gate, a failed capture, a failed activation, and an invalid audit report.
 Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the judge.
+The frozen judge holds `scoring_policy`, the label of the scoring rule.
+A run whose judged kinds use only the `audit` grader freezes `detection-f1*(0.5+0.25*severity-accuracy+0.25*actionability);clean-exact;v1`.
+A run with a `judge`, `hybrid`, or `journey` kind freezes `criteria-levels;must-below-3-zero;mean-level-minus-1-over-3;v1`.
+A run frozen with another label stops a resume and an export with `judge differs from the frozen record; create a new run`.
+A criteria run from before this label is a different cohort. Start a new run directory for it.
 
 
 ## Journeys

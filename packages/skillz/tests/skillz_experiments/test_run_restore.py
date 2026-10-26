@@ -19,6 +19,7 @@ from typing import cast, final
 import pytest
 from typing_extensions import override
 
+from skillz_experiments._audit import CRITERIA_SCORING_POLICY, SCORING_POLICY
 from skillz_experiments._candidate import Candidate
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments._cases import Case, CodedError
@@ -361,8 +362,8 @@ def test_a_resume_with_another_installed_codex_version_stops_as_environment_diff
     assert run(target, out, MODEL, live=True, configuration=configuration)["phase"] == "complete"
 
 
-def _changed_judge(model: str) -> dict[str, str]:
-    return {"model": model, "changed": "yes"}
+def _changed_judge(model: str, grader_kind: str) -> dict[str, str]:
+    return {"model": model, "grader_kind": grader_kind, "changed": "yes"}
 
 
 def test_a_changed_judge_stops_a_resume_and_an_export(
@@ -381,6 +382,32 @@ def test_a_changed_judge_stops_a_resume_and_an_export(
         patch.setattr("skillz_experiments.run._export.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = export(out, tmp_path / "export")
+    assert not (tmp_path / "export").exists()
+
+
+@pytest.mark.ac("gh-301:AC-2")
+def test_a_run_frozen_with_the_audit_label_for_a_rubric_judge_stops_a_resume_and_an_export(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    shutil.rmtree(target / "evals")
+    out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
+
+    def frozen(label: str) -> str:
+        record = read(out / "run.json")
+        judge = cast(dict[str, str], record["judge"])
+        current, judge["scoring_policy"] = judge["scoring_policy"], label
+        write(out / "run.json", record)
+        return current
+
+    criteria_label = frozen(SCORING_POLICY)
+    assert criteria_label == CRITERIA_SCORING_POLICY
+    with pytest.raises(ValueError, match="judge differs"):
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    _ = frozen(criteria_label)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+    _ = frozen(SCORING_POLICY)
+    with pytest.raises(ValueError, match="judge differs"):
+        _ = export(out, tmp_path / "export")
     assert not (tmp_path / "export").exists()
 
 

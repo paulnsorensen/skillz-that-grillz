@@ -8,7 +8,7 @@ from typing import Protocol, cast, runtime_checkable
 
 from skillz_experiments import _audit, _graders
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, CodedError, digest, mapping, string
+from skillz_experiments._cases import MET_LEVEL, Case, CodedError, digest, mapping, string
 from skillz_experiments._contract import Contract, resolve
 from skillz_experiments.evaluation._scoring import executed, grade, usage, witnessed_events
 from skillz_experiments._budget import Budget
@@ -265,7 +265,8 @@ def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contr
         score, verdicts, judge = _graders.judge(judge_transport, grader, case, answer.get("result_json"), files,
                                                 attachments, holdout=holdout, journey=_judge_data(case, journey))
         scores["judge"] = result["score"] = score
-        result["criteria"] = {name: {"level": verdict.level, "reason": verdict.reason} for name, verdict in verdicts.items()}
+        result["criteria"] = {name: {"level": verdict.level, "reason": verdict.reason, "met": verdict.level == MET_LEVEL}
+                              for name, verdict in verdicts.items()}
         result["judge_usage"] = judge.get("usage", usage([]))
         result["usage"] = _audit.combined_usage(mapping(result["task_usage"]), mapping(result["judge_usage"]))
         result["judge_latency_seconds"] = judge.get("latency_seconds")

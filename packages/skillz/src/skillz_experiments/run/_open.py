@@ -11,7 +11,7 @@ from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._budget import SECONDS_PER_CALL, Budget, BudgetExhausted, ceilings
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, Split, digest, mapping
-from skillz_experiments._contract import Contract
+from skillz_experiments._contract import RUBRIC_GRADERS, Contract
 from skillz_experiments.harness import ClaudeOptions, Configuration
 from skillz_experiments.run._plan import VALIDATION_REPEATS, plan_estimate, size_plan
 from skillz_experiments.run._record_fields import (
@@ -45,8 +45,13 @@ def scoring_digest(package: Path) -> str:
     return digest({path.relative_to(package).as_posix(): path.read_text() for path in paths})
 
 
+def judge_kind(contract: Contract) -> str:
+    """Return `criteria` when a kind of `contract` uses a criteria-level rubric judge, else `audit`."""
+    return "criteria" if any(kind in RUBRIC_GRADERS for kind in contract.grader_types().values()) else "audit"
+
+
 def freeze_identities(record: dict[str, object], seed: Candidate, model: str, configuration: Configuration | None,
-                      judged: bool) -> None:
+                      judged: bool, contract: Contract) -> None:
     if configuration is not None:
         target = record.get("target_root")
         if not isinstance(target, str):
@@ -59,8 +64,9 @@ def freeze_identities(record: dict[str, object], seed: Candidate, model: str, co
     if judged:
         judge_model = configuration.roles["judge"].model if configuration is not None else model
         _ = record.setdefault("judge_model", judge_model)
-        _ = record.setdefault("judge", judge_identity(judge_model))
-        if record["judge"] != judge_identity(judge_model):
+        expected = judge_identity(judge_model, judge_kind(contract))
+        _ = record.setdefault("judge", expected)
+        if record["judge"] != expected:
             raise ValueError("judge differs from the frozen record; create a new run")
     if seed.identity != text_field(record, "seed_hash"):
         raise ValueError("seed differs from the frozen record")

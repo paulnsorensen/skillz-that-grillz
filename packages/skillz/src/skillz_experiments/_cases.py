@@ -196,6 +196,8 @@ _EARS = re.compile(r"(?:(?P<trigger>WHEN|WHILE|IF|WHERE)\s+\S.*?\s+)?THE\s+\S.*?
 _EARS_WORDS = re.compile(r"\b(?:WHEN|WHILE|IF|WHERE|THE|SHALL)\b")
 _QUOTED = re.compile(r"`[^`]*`|\"[^\"]*\"")
 CRITERION_TEXT_LIMIT = 1000
+# A judge level below this is an unmet criterion. Level 4 is `fully met`.
+MET_LEVEL = 4
 _HIDDEN = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 

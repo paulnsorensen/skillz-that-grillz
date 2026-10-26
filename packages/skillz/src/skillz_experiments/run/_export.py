@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import cast
 
 from skillz_experiments._audit import identity as judge_identity
-from skillz_experiments._cases import Case, CodedError, load_cases, mapping
+from skillz_experiments._cases import MET_LEVEL, Case, CodedError, load_cases, mapping
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments._new_cli import unused_helpers
 from skillz_experiments._redact import redact
@@ -17,7 +17,7 @@ from skillz_experiments.run._claims import claims
 from skillz_experiments.run._patch import build_patch
 from skillz_experiments.run._plan import case_calls
 from skillz_experiments.run._replay import STDERR_LIMIT
-from skillz_experiments.run._open import engine_hash
+from skillz_experiments.run._open import engine_hash, judge_kind
 from skillz_experiments.run._record_fields import field, record_outcomes, text_field
 
 _TOKEN_FIELDS = {"input_tokens": "input_tokens", "cached_tokens": "cached_input_tokens", "output_tokens": "output_tokens"}
@@ -224,6 +224,33 @@ def criteria_flags(outcomes: list[dict[str, object]]) -> list[dict[str, object]]
                                            str(flag.get("arm", ""))))
 
 
+def zero_cases(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return each judged case that scores 0 on every repeat of one candidate on one arm, with its unmet verdicts.
+
+    The repeats of a case are its judged outcomes for one candidate on one arm, as in `criteria_flags`.
+    Each entry lists, per criterion, the level and the redacted reason of each unmet verdict, in repeat order.
+    An outcome without `criteria` adds nothing. The entries sort by case, arm, and candidate.
+    """
+    grouped: dict[tuple[str, str, str], list[dict[str, object]]] = {}
+    for item in outcomes:
+        if isinstance(item.get("criteria"), dict):
+            candidate = str(item.get("search_candidate", item.get("candidate_hash")))
+            grouped.setdefault((str(item.get("case_id")), str(item.get("arm")), candidate), []).append(item)
+    entries: list[dict[str, object]] = []
+    for (case, arm, candidate), items in sorted(grouped.items()):
+        if not all(type(item.get("score")) in (int, float) and item["score"] == 0 for item in items):
+            continue
+        unmet: dict[str, list[dict[str, object]]] = {}
+        for item in items:
+            for name, verdict in cast(dict[str, object], item["criteria"]).items():
+                level = cast(dict[str, object], verdict).get("level") if isinstance(verdict, dict) else None
+                if type(level) is int and level < MET_LEVEL:
+                    reason = redact(str(cast(dict[str, object], verdict).get("reason", "")))
+                    unmet.setdefault(name, []).append({"level": level, "met": False, "reason": reason})
+        entries.append({"case_id": case, "arm": arm, "candidate": candidate, "repeats": len(items), "criteria": unmet})
+    return entries
+
+
 def _export_outcome(item: dict[str, object]) -> dict[str, object]:
     allowed = {"arm", "split", "case_id", "repeat", "score", "status", "reason", "loaded", "helper_executed", "candidate_hash",
                "case_hash", "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
@@ -265,7 +292,8 @@ def export(out: Path, destination: Path) -> dict[str, object]:
         raise ValueError("export requires a completed run")
     if "judge" in record:
         judge_model = text_field(record, "judge_model" if "judge_model" in record else "model")
-        if record["judge"] != judge_identity(judge_model):
+        contract = parse(field(record, "contract"), text_field(record, "contract_source"))
+        if record["judge"] != judge_identity(judge_model, judge_kind(contract)):
             raise ValueError("judge differs from the frozen record; create a new run")
     if not os.path.lexists(destination) and is_inside(destination, Path(text_field(record, "target_root"))):
         raise CodedError("export-into-target", "the export destination must be outside the target skill directory")
@@ -286,6 +314,7 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     report = summary(record, out) | patches | {"sharing": "private-local-only",
                                           "outcomes": [_export_outcome(item) for item in record_outcomes(record)],
                                           "criteria_flags": criteria_flags(record_outcomes(record)),
+                                          "zero_cases": zero_cases(record_outcomes(record)),
                                           "cost_usd": None}
     if patch.cli is not None:
         report["new_cli"] = {"target": patch.cli.name, "package": patch.cli.package,
