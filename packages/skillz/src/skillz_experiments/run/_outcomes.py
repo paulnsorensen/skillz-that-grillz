@@ -11,7 +11,7 @@ from typing import TypeVar, cast
 from skillz_experiments._budget import CallTimeout
 from skillz_experiments._graders import DIAGNOSTIC_LIMIT
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, CodedError, Criterion, case_criteria
+from skillz_experiments._cases import MET_LEVEL, Case, CodedError, Criterion, case_criteria
 from skillz_experiments._redact import redact
 from skillz_experiments.evaluation import task_tokens
 from skillz_experiments.gate import close
@@ -22,8 +22,6 @@ from skillz_experiments.search import complete_means, is_reflection, is_search_v
 FAULT_MIN_FINISHED = 4
 FAULT_STREAK = 5
 _FAULT_REASON = re.compile(r"\bfails: ([a-z][a-z-]*)")
-# A judge level below this is an unmet criterion. Level 4 is `fully met`.
-MET_LEVEL = 4
 # The feedback caps each criterion text and judge reason, and caps the sum of those fields over all unmet criteria.
 FIELD_LIMIT = 300
 FIELDS_LIMIT = 4_000

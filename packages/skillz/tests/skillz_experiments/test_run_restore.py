@@ -19,6 +19,7 @@ from typing import cast, final
 import pytest
 from typing_extensions import override
 
+from skillz_experiments._audit import CRITERIA_SCORING_POLICY, SCORING_POLICY
 from skillz_experiments._candidate import Candidate
 from skillz_experiments.evaluation import CheckResult
 from skillz_experiments._cases import Case, CodedError
@@ -361,8 +362,8 @@ def test_a_resume_with_another_installed_codex_version_stops_as_environment_diff
     assert run(target, out, MODEL, live=True, configuration=configuration)["phase"] == "complete"
 
 
-def _changed_judge(model: str) -> dict[str, str]:
-    return {"model": model, "changed": "yes"}
+def _changed_judge(model: str, grader_kind: str) -> dict[str, str]:
+    return {"model": model, "grader_kind": grader_kind, "changed": "yes"}
 
 
 def test_a_changed_judge_stops_a_resume_and_an_export(
@@ -381,6 +382,32 @@ def test_a_changed_judge_stops_a_resume_and_an_export(
         patch.setattr("skillz_experiments.run._export.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = export(out, tmp_path / "export")
+    assert not (tmp_path / "export").exists()
+
+
+@pytest.mark.ac("gh-301:AC-2")
+def test_a_run_frozen_with_the_audit_label_for_a_rubric_judge_stops_a_resume_and_an_export(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    shutil.rmtree(target / "evals")
+    out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
+
+    def frozen(label: str) -> str:
+        record = read(out / "run.json")
+        judge = cast(dict[str, str], record["judge"])
+        current, judge["scoring_policy"] = judge["scoring_policy"], label
+        write(out / "run.json", record)
+        return current
+
+    criteria_label = frozen(SCORING_POLICY)
+    assert criteria_label == CRITERIA_SCORING_POLICY
+    with pytest.raises(ValueError, match="judge differs"):
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    _ = frozen(criteria_label)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+    _ = frozen(SCORING_POLICY)
+    with pytest.raises(ValueError, match="judge differs"):
+        _ = export(out, tmp_path / "export")
     assert not (tmp_path / "export").exists()
 
 
@@ -964,8 +991,9 @@ def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reser
 
 def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:
     # Each validation case runs twice (gh-500), so the plan admits 10 validation cases here, not 20.
+    # The six preflight calls (gh-176) leave no search under the time cap at 60 sandbox seconds, so the top step is 50.
     plain = plan_run(20, 10, 6, 1, 3)
-    shrunk = [plan_run(20, 10, 6, 1, 3, seconds) for seconds in (30, 40, 60)]
+    shrunk = [plan_run(20, 10, 6, 1, 3, seconds) for seconds in (30, 40, 50)]
     assert all(plan.sized.seconds <= APPROVED_SECONDS for plan in shrunk)
     assert shrunk[0].metric_calls < plain.metric_calls and shrunk[2].metric_calls < shrunk[0].metric_calls
     with pytest.raises(Stop, match="sandbox time alone need") as caught:

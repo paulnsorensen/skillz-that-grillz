@@ -12,7 +12,7 @@ from skillz_experiments._candidate import snapshot_outputs
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._frontmatter import read_frontmatter
 from skillz_experiments.evaluation import usage
-from skillz_experiments.harness._claude._constants import AUTH_FAILED, PROBE_PREFIX
+from skillz_experiments.harness._claude._constants import AUTH_FAILED, HOST_FILE, PROBE_PREFIX
 from skillz_experiments.harness._claude._pairs import blocks, tool_pairs
 from skillz_experiments.harness._claude._sandbox import sandbox_fix, SandboxUnavailable
 from skillz_experiments.harness._claude._settings import Declared
@@ -262,23 +262,50 @@ def read_failure(events: list[dict[str, object]], sealed_token: str, sealed: str
     return None
 
 
-def read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed: Path, *, evidence: bool) -> str | None:
-    """Judge the Read-tool probe. The Read tool must try the sealed host file and fail to return its token.
+def read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed: Path, link: Path, control_token: str,
+                      control_file: Path, *, evidence: bool) -> str | None:
+    """Judge the Read-tool probe. The Read tool must fail on the sealed host file, on the host file `HOST_FILE`, and on
+    the workspace symlink `link` to the sealed file. It must read the workspace file `control_file`.
 
-    Without `evidence`, only a returned token fails. With it, a missing Read call also fails.
+    A sealed-file or symlink result that holds the token fails. A host-file result without `is_error: true` fails
+    closed, so a result that returns content cannot pass. Without `evidence`, only these leaks fail. With it, a missing
+    answer for the sealed file or the symlink, a missing refusal for the host file, or a failed control read also fails.
+    The control read proves that the setting does not also block the workspace.
 
-    Claude Code's `claude -p` has no flag that confines the Read tool to the workspace, so only this probe proves it.
+    The `blockReadsOutsideWorkingDirectories` setting confines the Read tool, and this probe proves that it holds.
     """
-    answered = False
+    answered = refused = linked = controlled = False
     for use, result in tool_pairs(events, "Read"):
         target = _input(use).get("file_path")
-        if result is None or not (isinstance(target, str) and Path(target).resolve() == sealed.resolve()):
+        if result is None or not isinstance(target, str):
             continue
-        if sealed_token in json.dumps(result):
-            return "read isolation failed: the Read tool reached a path outside the workspace"
-        answered = True
-    if evidence and not answered:
+        text = json.dumps(result)
+        if Path(target) == link:
+            if sealed_token in text:
+                return "read isolation failed: the Read tool followed a workspace symlink to a path outside the workspace"
+            linked = True
+            continue
+        path = Path(target).resolve()
+        if path == Path(HOST_FILE).resolve():
+            if result.get("is_error") is not True:
+                return f"read isolation failed: the Read tool read the host file {HOST_FILE}"
+            refused = True
+        elif path == sealed.resolve():
+            if sealed_token in text:
+                return "read isolation failed: the Read tool reached a path outside the workspace"
+            answered = True
+        elif path == control_file.resolve():
+            controlled = controlled or (result.get("is_error") is not True and control_token in text)
+    if not evidence:
+        return None
+    if not answered:
         return "read-tool probe has no evidence: no Read tool call answered for the sealed host file"
+    if not refused:
+        return f"read-tool probe has no evidence: no Read tool call was refused for the host file {HOST_FILE}"
+    if not linked:
+        return "read-tool probe has no evidence: no Read tool call answered for the workspace symlink to the sealed file"
+    if not controlled:
+        return "read-tool probe has no positive control: the Read tool cannot read a workspace file"
     return None
 
 

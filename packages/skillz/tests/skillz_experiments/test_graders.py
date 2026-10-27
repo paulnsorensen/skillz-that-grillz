@@ -269,7 +269,7 @@ def test_judged_outcome_stores_the_verdicts_under_criteria_outside_scores(
     sent = judge.schemas[0]
     assert sent is not None
     ids = cast(list[str], cast(dict[str, dict[str, object]], sent["properties"])["criteria"]["required"])
-    assert ids and result["criteria"] == {name: {"level": 4, "reason": "ok"} for name in ids}
+    assert ids and result["criteria"] == {name: {"level": 4, "reason": "ok", "met": True} for name in ids}
     assert result["scores"] == scores
 
 

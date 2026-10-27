@@ -297,7 +297,7 @@ def test_a_resume_in_the_replay_phase_does_not_repeat_a_scored_replay_outcome(
 def test_the_plan_counts_replay_calls_in_the_estimate_the_approval_and_the_holdout_reserve(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     plan = _plan(6, 6, 6, 1, 3)
-    without = estimate(preflight_calls=3, holdout=12, repeats=3, search_calls=plan.metric_calls,
+    without = estimate(preflight_calls=6, holdout=12, repeats=3, search_calls=plan.metric_calls,
                        retry_calls=plan.retry_calls, reflection_calls=plan.reflection_calls)
     assert plan.replay_calls == 6 and plan.headroom_calls == 6
     assert plan.sized.calls == without.calls + plan.replay_calls + plan.headroom_calls

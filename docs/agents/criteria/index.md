@@ -32,6 +32,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
 - [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
 - [gh-131](./gh-131.md) — gh-131: the network preflight probes and the macOS live path
+- [gh-176](./gh-176.md) — gh-176: the Read tool cannot read host files outside the workspace
 - [gh-223](./gh-223.md) — gh-223: skillz_experiments module layout and borrow waves
 - [gh-235](./gh-235.md) — gh-235: freeze a run compatibility fingerprint (W2.4)
 - [gh-236](./gh-236.md) — gh-236: deterministic proposal leakage check (W3.1)
@@ -57,6 +58,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
 - [gh-300](./gh-300.md) — gh-300: the train split gets at least 4 scored cases from 2 families
+- [gh-301](./gh-301.md) — gh-301: finish the judge rationale record
 - [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
 - [gh-311](./gh-311.md) — gh-311: assert where the journey press test creates its workspace
 - [gh-312](./gh-312.md) — gh-312: a contract check returns one typed result, and checks of different candidates run at the same time

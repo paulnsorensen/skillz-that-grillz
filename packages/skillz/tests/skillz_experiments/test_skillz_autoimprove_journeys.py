@@ -84,9 +84,9 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     # Each of the 6 validation journeys runs `VALIDATION_REPEATS` times per search candidate (gh-500).
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (924, 60, 210, 48, 258)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (927, 60, 210, 48, 258)
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
-    assert plan.sized.seconds == 28700
+    assert plan.sized.seconds == 28790
 
 
 SEED_EVALUATIONS = 9
@@ -469,7 +469,7 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     assert {case.identifier: case.split for case in cases} == base
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (924, 60, 210, 48, 28700)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (927, 60, 210, 48, 28790)
 
 
 def ask_harness_cases(tmp_path: Path) -> list[dict[str, object]]:

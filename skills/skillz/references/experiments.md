@@ -182,7 +182,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
-| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. When the live preflight call returned and a check then failed, the message also names `RUN/preflight.events.json`. | To find the cause of a failed probe, read `RUN/preflight.events.json` before you spend another live call. For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, report the Claude Code version; no unsafe fallback exists. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A preflight call with no tool call of its tool also stops the run; the message says that the model refused or skipped the check, and that this is not a confirmed leak. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. When the live preflight calls returned and a check then failed, the message also names `RUN/preflight.events.json`. | To find the cause of a failed probe, read `RUN/preflight.events.json` before you spend another live call. For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, report the Claude Code version; no unsafe fallback exists. For a refused or skipped check, read the model reply in `RUN/preflight.events.json`, then run again. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
 | `nono-removed` | A resume found a run that recorded the removed nono backend, or a role file sets `isolation` to `nono`. The message links issue 211. A completed run still returns its summary. | Start a new run directory. |
 | `isolation-removed` | A role file sets the removed `isolation` key. | Delete the key. |
 | `codex-version-unsupported` | The Codex CLI is older than 0.154.0, or its `--version` output is unparsable. No model call ran. | Install Codex 0.154.0 or newer, then run again. |
@@ -867,7 +867,11 @@ Export writes no empty patch file.
 `report.json` also holds `criteria_flags`, sorted by `criterion`, `reason`, `case_id`, and `arm`. Each entry has `criterion`, `reason`, and `case_id`.
 A `spread` entry also has `arm` and `levels`. It marks a criterion whose level spreads by 2 or more across repeats of one candidate on one arm and case.
 A `partly-met` entry also has `level_2` and `outcomes`. It marks a criterion with level 2 in at least half of the case outcomes, over all arms.
-`report.json` redacts the reasons of the outcome `criteria`.
+`report.json` redacts the reasons of the outcome `criteria`. Each outcome verdict also keeps its stored `met` flag.
+`report.json` also holds `zero_cases`: each judged case that scores 0 on every judged repeat of one candidate on one arm.
+An entry has `case_id`, `arm`, `candidate`, `repeats`, and `criteria`. Export sorts the list by `case_id`, `arm`, and `candidate`.
+`criteria` maps each unmet criterion `id` to one verdict per repeat with a level from 1 to 3: `level`, `met` (`false`), and the redacted `reason`.
+Read the `zero_cases` reasons to find a case that the skill never passes.
 Read `criteria_flags` before you draft the next cases. The criteria drafting reference that `SKILL.md` lists says how.
 When the winner files equal the seed files, export writes only `report.json`. Its result has `patches: []` and `reason: "winner-equals-baseline"`.
 Tell the user that the run found no change to apply.
@@ -1000,6 +1004,8 @@ A `judge` or `hybrid` grader can also declare these fields:
   The capture runs in the OS sandbox of the task role, so `--sandbox-read` and `--sandbox-seconds` apply.
   On macOS the sandbox blocks all network access, loopback included, so a capture that starts a local server needs Linux.
 A judge answer that leaves out a criterion `id` or adds one scores 0 with status `evaluation-failed`.
+A judged outcome stores `criteria` next to its `score`. Each criterion `id` maps to the judge `level`, the one-line `reason`, and `met`.
+`met` is `true` only at level 4 (fully met). The run record keeps the reasons unredacted. The export redacts them.
 A contract that declares `pillars` stops with `contract-pillars-removed`. Move each pillar into case criteria.
 
 A command score below 1 records `gate_diagnostic` on the outcome: the last 1,000 characters of the redacted grader stderr.
@@ -1019,6 +1025,7 @@ The reflection prompt says that the gate is the independent check of the case.
 When a skill rule conflicts with `gate_feedback`, the prompt says to change the skill rule to match the gate.
 A validation case with more than one scored repeat gets the repeat mean and the masked `request`, with no `unmet` or `gate_feedback`.
 GEPA reflects on train cases only.
+A holdout outcome and its judge reasons never enter a feedback record. The search reuses only `search` outcomes on train and validation cases.
 
 The contract hash covers the whole contract, `capture` included. The case hash covers every case, criteria included.
 
@@ -1027,6 +1034,11 @@ A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: o
 A kind spends one invocation when the judge does not run.
 This covers a failed hybrid gate, a failed capture, a failed activation, and an invalid audit report.
 Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the judge.
+The frozen judge holds `scoring_policy`, the label of the scoring rule.
+A run whose judged kinds use only the `audit` grader freezes `detection-f1*(0.5+0.25*severity-accuracy+0.25*actionability);clean-exact;v1`.
+A run with a `judge`, `hybrid`, or `journey` kind freezes `criteria-levels;must-below-3-zero;mean-level-minus-1-over-3;v1`.
+A run frozen with another label stops a resume and an export with `judge differs from the frozen record; create a new run`.
+A criteria run from before this label is a different cohort. Start a new run directory for it.
 
 
 ## Journeys

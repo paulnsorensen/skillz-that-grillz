@@ -40,7 +40,8 @@ ANALYTICS = ROOT / "skills/skillz/scripts/agent-session-analytics.pyz"
 PACKS = ("skill-usage", "agent-orchestration", "drift-regression")
 FAMILIES = {"f0": 2, "f1": 2, "f2": 2, "f3": 6}
 """Train holds two families of two cases, validation one family of two, and the holdout one family of six."""
-PREFLIGHT_CALLS = 3
+PREFLIGHT_CALLS = 6
+"""Three roles, each with a Bash sandbox call and a Read file-access call."""
 INTERRUPT_AFTER = 3
 """The resume scenario stops its first process with SIGINT after this many recorded outcomes."""
 COPY_CHECK = ("import json, pathlib\nout = pathlib.Path('output/result.txt')\n"
@@ -264,19 +265,22 @@ def _changelog_proof(work: Path, harness: str, model: str) -> Setup:
 
 
 SCENARIOS: dict[str, Scenario] = {
-    "basic": Scenario(_basic, 123),
-    "command-harness": Scenario(_command_harness, 123, bridge=True),
-    "command-grader": Scenario(_command_grader, 67),
-    "hybrid-mixed": Scenario(_hybrid_mixed, 123, bridge=True),
-    "prose-cli": Scenario(_prose_cli, 67),
-    "journey": Scenario(_journey, 606),
-    "resume": Scenario(_basic, 123, resume=True),
-    "fromargs-benefit": Scenario(_fromargs_benefit, 167, author=_fromargs_author, check=check_cli,
+    "basic": Scenario(_basic, 126),
+    "command-harness": Scenario(_command_harness, 126, bridge=True),
+    "command-grader": Scenario(_command_grader, 70),
+    "hybrid-mixed": Scenario(_hybrid_mixed, 126, bridge=True),
+    "prose-cli": Scenario(_prose_cli, 70),
+    "journey": Scenario(_journey, 609),
+    "resume": Scenario(_basic, 126, resume=True),
+    "fromargs-benefit": Scenario(_fromargs_benefit, 170, author=_fromargs_author, check=check_cli,
                                  verdict=cli_verdict),
-    "changelog-proof": Scenario(_changelog_proof, 119, author=changelog_proof.author, check=changelog_proof.check,
+    "changelog-proof": Scenario(_changelog_proof, 122, author=changelog_proof.author, check=changelog_proof.check,
                                 verdict=changelog_proof.proof_verdict),
 }
-"""Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it)."""
+"""Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it).
+
+The run estimate includes the run's own `PREFLIGHT_CALLS`, so the two-call preflight (gh-176) adds 3 to each cap.
+"""
 NAMES = (*SCENARIOS, "analytics")
 
 
@@ -616,8 +620,8 @@ def test_the_fromargs_benefit_scenario_fails_a_record_that_the_shared_rule_passe
 
 
 @pytest.mark.parametrize(("entry", "passes", "phrase"), [
-    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 123}, True, "at most the cap"),
-    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 124}, False, "the stated cap is 123"),
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 126}, True, "at most the cap"),
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 127}, False, "the stated cap is 126"),
     ({"verdict": "stopped", "stage": "cases", "expect": None, "code": "case-criteria-missing"}, False,
      "stage cases with code case-criteria-missing"),
     ({"verdict": "stopped", "stage": "cases", "expect": "journey-unsupported", "code": "journey-unsupported"}, True,

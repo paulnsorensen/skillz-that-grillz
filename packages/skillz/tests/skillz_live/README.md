@@ -19,18 +19,19 @@ A dry run fails when it stops before the budget question with a code that the sc
 
 | Scenario | What it runs | Run cap |
 | --- | --- | --- |
-| `basic` | Built-in harness, no contract, default judge | 123 |
-| `command-harness` | `--harness command` through a test-only bridge to `codex exec` | 123 |
-| `command-grader` | Contract with a `command` grader, and one `source: session` case | 67 |
-| `hybrid-mixed` | `--harness-config` with a Codex task role and a command judge role, a `hybrid` grader, contract `statistics`, and `--min-gain` | 123 |
-| `prose-cli` | `--edit prose+cli` with a helper script and an `exact-json` grader | 67 |
-| `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 606 |
-| `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 123 |
-| `fromargs-benefit` | `/skillz autoimprove` drafts the cases in `claude -p`, then a `--edit prose+cli` run of the `semver-next` fixture, which applies nine version rules by hand. See below | 167 |
-| `changelog-proof` | The `/skillz autoimprove` journey in `claude -p` or `codex exec`, then a `--edit prose+cli` run of the `changelog-entry` fixture, which has one wrong format rule and a release of 30 to 40 changes in each case. See below | 119 |
+| `basic` | Built-in harness, no contract, default judge | 126 |
+| `command-harness` | `--harness command` through a test-only bridge to `codex exec` | 126 |
+| `command-grader` | Contract with a `command` grader, and one `source: session` case | 70 |
+| `hybrid-mixed` | `--harness-config` with a Codex task role and a command judge role, a `hybrid` grader, contract `statistics`, and `--min-gain` | 126 |
+| `prose-cli` | `--edit prose+cli` with a helper script and an `exact-json` grader | 70 |
+| `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 609 |
+| `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 126 |
+| `fromargs-benefit` | `/skillz autoimprove` drafts the cases in `claude -p`, then a `--edit prose+cli` run of the `semver-next` fixture, which applies nine version rules by hand. See below | 170 |
+| `changelog-proof` | The `/skillz autoimprove` journey in `claude -p` or `codex exec`, then a `--edit prose+cli` run of the `changelog-entry` fixture, which has one wrong format rule and a release of 30 to 40 changes in each case. See below | 122 |
 | `analytics` | The bundled `agent-session-analytics.pyz`: a forced ingest of the real session logs into a private database, then every query of the three Usage packs | no model call |
 
-A run approves its estimate only when the estimate is at most its cap. The preflight gets at most 3 more calls.
+A run approves its estimate only when the estimate is at most its cap. The estimate includes the 6 preflight calls of the run: two for each of the three roles.
+The standalone `self-test --preflight-only` step before the run gets at most 6 more calls.
 The `command-harness` and `hybrid-mixed` scenarios need `codex` and skip with another `HARNESS`.
 A test passes when the run reaches `phase == complete`, the export writes `candidate.patch`, and the gate scores holdout cases.
 A test also passes when a step after the preflight stops with a coded error.
@@ -107,4 +108,4 @@ SKILLZ_LIVE=1 just live-smoke codex gpt-6-luna changelog-proof
 The test passes only when `claims.apply` is true and `cli` is `ok`.
 The record holds the claims, the gate delta and SE, the patch files, and whether the patch changed `references/format.md`.
 The runner keeps `edit_hint` only in the proposer feedback, so the record cannot show it.
-With `SKILLZ_LIVE_DRY=1`, the test skips Stage 1 and uses the 18-case reference draft. The dry estimate is 119 calls on both harnesses.
+With `SKILLZ_LIVE_DRY=1`, the test skips Stage 1 and uses the 18-case reference draft. The dry estimate is 122 calls on both harnesses.
