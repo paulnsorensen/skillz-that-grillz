@@ -47,8 +47,12 @@ def declared_commands(events: list[dict[str, object]]) -> tuple[frozenset[str], 
 
 
 def parse_events(stdout: str) -> list[dict[str, object]]:
+    """Read one JSON object per line. Raise `RuntimeError` when a nonblank line is not a JSON object.
+
+    Split only on `\\r` and `\\n`: JSON escapes them in strings, but Claude Code writes U+0085, U+2028, and U+2029 raw.
+    """
     events: list[dict[str, object]] = []
-    for line in stdout.splitlines():
+    for line in re.split(r"[\r\n]", stdout):
         if not line.strip():
             continue
         try:
