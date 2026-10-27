@@ -21,7 +21,7 @@ import pytest
 
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
-from skillz_experiments.harness._claude._preflight import PROBE_PREAMBLE, probe_sandbox
+from skillz_experiments.harness._claude._preflight import READ_INTRO, SANDBOX_INTRO, probe_sandbox
 from skillz_experiments.harness._claude import _constants, _events, _late, _memory, _options, _preflight, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
@@ -533,7 +533,7 @@ def test_preflight_stops_on_isolation_failure_without_fallback(
     assert caught.value.code == code
     assert "no unsafe fallback" in str(caught.value)
     logged = calls(executable)
-    assert len(logged) == 1
+    assert len(logged) == 2
     assert all("--restricted" not in cast(list[str], call["argv"]) for call in logged)
 
 
@@ -570,7 +570,7 @@ def test_preflight_passes_when_only_the_probe_skill_loads(
     roles = cast(dict[str, dict[str, object]], evidence["roles"])
     assert roles["task"]["isolation"] == "passed"
     assert roles["task"]["credential"] == "subscription login"
-    assert roles["task"]["live_calls"] == 1
+    assert roles["task"]["live_calls"] == 2
 
 
 def test_preflight_charges_and_reports_every_live_call(tmp_path: Path, sandbox_passes: None) -> None:
@@ -583,7 +583,7 @@ def test_preflight_charges_and_reports_every_live_call(tmp_path: Path, sandbox_p
     finally:
         session.close()
     logged = len(calls(executable))
-    assert logged == len(session.transports) >= 2
+    assert logged == 2 * len(session.transports) >= 4
     assert budget.calls == logged
     assert evidence["live_calls"] == logged
 
@@ -595,7 +595,7 @@ def test_preflight_passes_through_the_real_sandbox(tmp_path: Path) -> None:
         evidence = session.preflight()
     finally:
         session.close()
-    assert evidence["live_calls"] == len(session.transports)
+    assert evidence["live_calls"] == 2 * len(session.transports)
 
 
 def test_preflight_runs_the_isolation_probe_through_the_sandbox(
@@ -633,7 +633,7 @@ def test_preflight_stops_when_a_host_file_is_readable(tmp_path: Path, sandbox_pa
     assert "cat " in prompt
 
 
-def test_preflight_asks_the_read_tool_for_the_sealed_file_and_passes_when_it_is_denied(
+def test_preflight_asks_the_read_tool_for_the_outside_file_and_passes_when_it_is_denied(
         tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
     executable = fake_claude(tmp_path)
@@ -643,29 +643,13 @@ def test_preflight_asks_the_read_tool_for_the_sealed_file_and_passes_when_it_is_
         evidence = session.preflight()
     finally:
         session.close()
-    assert re.search(r"read the file `[^`]+/sealed` with the Read tool, not Bash", cast(str, calls(executable)[0]["prompt"]))
+    assert re.search(r"Read the file `[^`]+/outside\.txt` with the Read tool\. ", cast(str, calls(executable)[1]["prompt"]))
     assert budget.calls == len(calls(executable)) == evidence["live_calls"]
-
-
-def test_the_preflight_prompt_asks_for_the_read_tool_before_any_denial_and_says_a_denial_is_expected(
-        tmp_path: Path, sandbox_passes: None) -> None:
-    """A live opus judge skipped the Read step after `cat` was denied, as a bypass. The prompt must not invite that."""
-    del sandbox_passes
-    executable = fake_claude(tmp_path)
-    session = harness(tmp_path, executable, Budget(10, 120, 0))
-    try:
-        _ = session.preflight()
-    finally:
-        session.close()
-    prompt = cast(str, calls(executable)[0]["prompt"])
-    assert prompt.startswith(PROBE_PREAMBLE) and "a denial is the expected and correct result" in prompt
-    read = re.search(r"read the file `([^`]+/sealed)` with the Read tool", prompt)
-    assert read is not None and read.start() < prompt.index(f"`cat {read[1]}`"), prompt
 
 
 @pytest.mark.parametrize(("mode", "reason"), [
     ("read-tool-escape", "the Read tool reached a path outside the workspace"),
-    ("read-tool-skipped", "read-tool probe has no evidence"),
+    ("read-tool-skipped", "the file-access check has no evidence"),
 ])
 @pytest.mark.ac("gh-396:AC-3")
 def test_preflight_stops_when_the_read_tool_leaves_the_workspace_or_is_not_probed(
@@ -748,9 +732,9 @@ def test_preflight_asks_the_read_tool_for_the_host_file_and_needs_its_refusal(tm
         _ = session.preflight()
     finally:
         session.close()
-    prompt = cast(str, calls(executable)[0]["prompt"])
-    host = prompt.index("read the file `/etc/hosts` with the Read tool, not Bash")
-    assert host < prompt.index("`cat "), prompt
+    prompts = [cast(str, call["prompt"]) for call in calls(executable)]
+    for sandbox, read in zip(prompts[::2], prompts[1::2], strict=True):
+        assert "Read the file `/etc/hosts` with the Read tool. " in read and "/etc/hosts" not in sandbox, read
     (tmp_path / "skipped").mkdir()
     skipped = fake_claude(tmp_path / "skipped", "read-tool-host-skipped")
     session = harness(tmp_path / "skipped", skipped, Budget(10, 120, 0))
@@ -775,8 +759,73 @@ def test_preflight_evidence_records_the_refused_host_file_read(tmp_path: Path, s
     assert roles["task"]["read_tool"] == {"host_file": "/etc/hosts", "result": "refused"}
 
 
+def _preflight_prompts(tmp_path: Path, mode: str = "ok") -> tuple[list[str], dict[str, object], Budget, int]:
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(20, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    return [cast(str, call["prompt"]) for call in calls(executable)], evidence, budget, len(session.transports)
+
+
+@pytest.mark.ac("gh-176:AC-10")
+def test_preflight_makes_a_bash_sandbox_call_then_a_separate_read_call_for_each_role(
+        tmp_path: Path, sandbox_passes: None) -> None:
+    """A live sonnet role refused one long prompt that mixed Read steps with the Bash sweep, so each role makes two calls."""
+    del sandbox_passes
+    prompts, evidence, budget, roles = _preflight_prompts(tmp_path)
+    assert _transport.READ_PROBE == "read-tool-outside-workspace-v4"
+    assert roles >= 2 and len(prompts) == 2 * roles == budget.calls == evidence["live_calls"]
+    assert {cast(dict[str, object], role)["live_calls"] for role in cast(dict[str, object], evidence["roles"]).values()} == {2}
+    for bash, read in zip(prompts[::2], prompts[1::2], strict=True):
+        assert bash.startswith(SANDBOX_INTRO) and "Read tool" not in bash, bash
+        assert re.search(r"Run `cat [^`]+/outside\.txt` with the Bash tool\. Run `cat [^`]+/control\.txt` with the Bash tool", bash)
+        assert read.startswith(READ_INTRO) and "Bash" not in read and "`cat " not in read, read
+        paths = [Path(found) for found in cast(list[str], re.findall(r"Read the file `([^`]+)` with the Read tool\.", read))]
+        assert len(paths) == 4 and paths[1] == Path("/etc/hosts"), read
+        assert [paths[0].name, paths[2].name, paths[3].name] == ["outside.txt", "link.txt", "control.txt"]
+        assert paths[2].parent == paths[3].parent != paths[0].parent
+
+
+@pytest.mark.ac("gh-176:AC-10")
+def test_the_preflight_prompts_use_plain_check_words(tmp_path: Path, sandbox_passes: None) -> None:
+    del sandbox_passes
+    prompts, _evidence, _budget, _roles = _preflight_prompts(tmp_path)
+    assert prompts
+    for prompt in prompts:
+        lowered = prompt.lower()
+        for word in ("sealed", "secret", "escape", "exfiltrat", "self-test", "isolation", "leak"):
+            assert word not in lowered, (word, prompt)
+        assert "probe" not in re.sub(r"`[^`]*`", "", lowered), prompt
+
+
+@pytest.mark.parametrize(("mode", "check", "tool"), [
+    ("refuses", "Bash sandbox check", "Bash"),
+    ("read-tool-skipped", "file-access check", "Read"),
+])
+@pytest.mark.ac("gh-176:AC-11")
+def test_preflight_stops_with_a_refusal_reason_when_a_check_call_makes_no_tool_call(
+        tmp_path: Path, sandbox_passes: None, mode: str, check: str, tool: str) -> None:
+    del sandbox_passes
+    executable = fake_claude(tmp_path, mode)
+    budget = Budget(20, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        with pytest.raises(CodedError) as caught:
+            _ = session.preflight()
+    finally:
+        session.close()
+    assert caught.value.code == "preflight-leak"
+    message = str(caught.value)
+    assert (f"isolation preflight fails: the {check} has no evidence: the model made no {tool} tool call, so it "
+            + "refused or skipped the check; this is not a confirmed leak; no unsafe fallback") in message, message
+    assert "isolation failed" not in message
+    assert budget.calls == len(calls(executable)) == 2
+
 def _verdict(events: list[dict[str, object]], sealed: Path, *, evidence: bool, token: str = "token-123") -> str | None:
-    return _events.read_tool_failure(events, token, sealed, sealed.parent / "workspace" / "escape", "control-token",
+    return _events.read_tool_failure(events, token, sealed, sealed.parent / "workspace" / _constants.LINK, "control-token",
                                      sealed.parent / "workspace" / "control.txt", evidence=evidence)
 
 
@@ -839,7 +888,7 @@ def _probe_events(sealed: Path, link: str, control: str, **control_flags: object
     workspace = sealed.parent / "workspace"
     return [_read_use("s", str(sealed)), _read_result("s", "denied", is_error=True),
             _read_use("h", "/etc/hosts"), _read_result("h", "denied", is_error=True),
-            _read_use("l", str(workspace / "escape")), _read_result("l", link, is_error=link == "denied"),
+            _read_use("l", str(workspace / _constants.LINK)), _read_result("l", link, is_error=link == "denied"),
             _read_use("c", str(workspace / "control.txt")), _read_result("c", control, **control_flags)]
 
 
@@ -850,7 +899,7 @@ def test_read_tool_verdict_needs_a_symlink_answer_and_fails_when_the_symlink_ret
     followed = _probe_events(sealed, "1\ttoken-123", "1\tcontrol-token")
     assert _verdict(followed, sealed, evidence=False, token="token-123") == (
         "read isolation failed: the Read tool followed a workspace symlink to a path outside the workspace")
-    skipped = [event for event in _probe_events(sealed, "denied", "1\tcontrol-token") if "escape" not in json.dumps(event)]
+    skipped = [event for event in _probe_events(sealed, "denied", "1\tcontrol-token") if _constants.LINK not in json.dumps(event)]
     assert _verdict(skipped, sealed, evidence=True, token="token-123") == (
         "read-tool probe has no evidence: no Read tool call answered for the workspace symlink to the sealed file")
 
@@ -883,9 +932,9 @@ def test_preflight_stops_when_the_read_tool_follows_the_symlink_or_cannot_read_t
     finally:
         session.close()
     assert caught.value.code == "preflight-leak"
-    prompt = cast(str, calls(executable)[0]["prompt"])
-    link = prompt.index("/escape` with the Read tool, not Bash")
-    assert link < prompt.index("/control.txt` with the Read tool, not Bash") < prompt.index("`cat "), prompt
+    prompt = cast(str, calls(executable)[1]["prompt"])
+    link = prompt.index(f"/{_constants.LINK}` with the Read tool. ")
+    assert link < prompt.index("/control.txt` with the Read tool. ") and "`cat " not in prompt, prompt
 
 
 @pytest.mark.ac("gh-176:AC-9")
@@ -930,7 +979,7 @@ def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(
     del sandbox_passes
     session = harness(tmp_path, fake_claude(tmp_path, "bundled-skill"))
     try:
-        assert session.preflight()["live_calls"] == len(session.transports)
+        assert session.preflight()["live_calls"] == 2 * len(session.transports)
         original_settings = _settings.settings
         original_environment = ClaudeCode._environment  # pyright: ignore[reportPrivateUsage]
 
@@ -1874,7 +1923,7 @@ def test_macos_uses_the_real_config_dir_and_preflight_rejects_foreign_init_entri
     _ = (real / ".credentials.json").write_text("{}")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
     executable = fake_claude(tmp_path)
-    session = harness(tmp_path, executable)
+    session = harness(tmp_path, executable, Budget(20, 120, 0))
     adapter = cast(ClaudeCode, session.transports["task"])
     try:
         assert adapter.config_dir == real and adapter.credential is None
@@ -1882,7 +1931,7 @@ def test_macos_uses_the_real_config_dir_and_preflight_rejects_foreign_init_entri
         first = calls(executable)[0]
         assert cast(dict[str, str], first["environment"])["CLAUDE_CONFIG_DIR"] == str(real)
         assert first["config_entries"] == {".credentials.json": "file"}
-        assert evidence["live_calls"] == len(session.transports)
+        assert evidence["live_calls"] == 2 * len(session.transports)
         for mode, kind in [("foreign-skill", "skill"), ("foreign-plugin", "plugin"), ("foreign-mcp", "MCP server"),
                            ("foreign-agent", "agent")]:
             _ = executable.with_name("claude.mode").write_text(mode)
@@ -2121,7 +2170,7 @@ def test_a_failed_context_listing_names_the_login_or_the_timeout(
     ("bwrap-missing", "install bubblewrap", 0),
     ("userns-restricted", "kernel.apparmor_restrict_unprivileged_userns=0", 0),
     ("socat-missing", "install socat", 0),
-    ("live-sandbox-failure", "install bubblewrap", 1),
+    ("live-sandbox-failure", "install bubblewrap", 2),
 ])
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-4")
 def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
@@ -2233,7 +2282,7 @@ def test_preflight_allows_claude_codes_own_commands_and_builtin_plugins(tmp_path
         evidence = session.preflight()
     finally:
         session.close()
-    assert evidence["live_calls"] == len(session.transports)
+    assert evidence["live_calls"] == 2 * len(session.transports)
     assert "skillOverrides" not in live_settings(executable)
     assert len(inventory_calls(executable)) == len(session.transports)
 
@@ -2266,7 +2315,7 @@ def test_preflight_accepts_a_builtin_skill_that_registers_after_the_first_listin
         assert "design" in transport.inventory().builtin
     finally:
         transport.close()
-    assert evidence["live_calls"] == 1 and budget.calls == 1
+    assert evidence["live_calls"] == 2 and budget.calls == 2
     assert len(inventory_calls(executable)) == 2
 
 
@@ -2698,7 +2747,7 @@ def test_the_write_probe_also_targets_the_claude_skills_directory(tmp_path: Path
     finally:
         session.close()
     prompt = cast(str, calls(executable)[0]["prompt"])
-    assert "/.claude/skills/" in prompt and "/.agents/write-probe" in prompt
+    assert "/.claude/skills/" in prompt and "/.agents/write-check.txt" in prompt
 
 
 @pytest.mark.parametrize(("mode", "reason"), [

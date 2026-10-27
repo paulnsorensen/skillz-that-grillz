@@ -84,7 +84,7 @@ TOOLS = "Bash,Read,Skill"
 NETWORK_PROBE = "loopback-dns-nonloopback-v3"
 
 
-READ_PROBE = "read-tool-outside-workspace-v3"
+READ_PROBE = "read-tool-outside-workspace-v4"
 
 
 SANDBOX_STDERR_LIMIT = 100_000
@@ -380,7 +380,7 @@ class ClaudeCode:
 
     def _sealed(self, root: Path) -> tuple[Path, Path, str]:
         workspace = make_workspace(root / "workspace")
-        sealed = root / "sealed"
+        sealed = root / "outside.txt"
         token = secrets.token_hex(16)
         _ = sealed.write_text(token)
         (workspace / LINK).symlink_to(sealed)

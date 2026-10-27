@@ -39,7 +39,8 @@ ANALYTICS = ROOT / "skills/skillz/scripts/agent-session-analytics.pyz"
 PACKS = ("skill-usage", "agent-orchestration", "drift-regression")
 FAMILIES = {"f0": 3, "f1": 3, "f2": 6}
 """Two search families of three cases and one holdout family of six. The search share holds about three reflections."""
-PREFLIGHT_CALLS = 3
+PREFLIGHT_CALLS = 6
+"""Three roles, each with a Bash sandbox call and a Read file-access call."""
 INTERRUPT_AFTER = 3
 """The resume scenario stops its first process with SIGINT after this many recorded outcomes."""
 COPY_CHECK = ("import json, pathlib\nout = pathlib.Path('output/result.txt')\n"

@@ -335,7 +335,8 @@ def start(tmp_path: Path, max_turns: int) -> tuple[Path, Path, str, Callable[...
 
 
 def test_journey_budget_estimate_shows_a_separate_journey_line_and_asks_once(tmp_path: Path) -> None:
-    target, out, approved, factory, _ = start(tmp_path, 7)
+    # Six turns, because the six preflight calls (gh-176) leave no search for seven turns under the journey cap.
+    target, out, approved, factory, _ = start(tmp_path, 6)
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved)
     assert asked.value.code == "budget-unapproved"

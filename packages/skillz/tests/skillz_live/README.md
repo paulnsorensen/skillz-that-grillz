@@ -29,7 +29,7 @@ A dry run fails when it stops before the budget question with a code that the sc
 | `changelog-proof` | The `/skillz autoimprove` journey in `claude -p` or `codex exec`, then a `--edit prose+cli` run of the `changelog-entry` fixture, which has one wrong format rule and a release of 30 to 40 changes in each case. See below | 119 |
 | `analytics` | The bundled `agent-session-analytics.pyz`: a forced ingest of the real session logs into a private database, then every query of the three Usage packs | no model call |
 
-A run approves its estimate only when the estimate is at most its cap. The preflight gets at most 3 more calls.
+A run approves its estimate only when the estimate is at most its cap. The preflight gets at most 6 more calls: two for each of the three roles.
 The `command-harness` and `hybrid-mixed` scenarios need `codex` and skip with another `HARNESS`.
 A test passes when the run reaches `phase == complete`, the export writes `candidate.patch`, and the gate scores holdout cases.
 A test also passes when a step after the preflight stops with a coded error.

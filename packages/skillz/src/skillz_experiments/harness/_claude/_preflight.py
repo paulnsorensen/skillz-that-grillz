@@ -1,4 +1,4 @@
-"""The live preflight of Claude Code: one model call checks Bash reads, writes, and network inside the sandbox.
+"""The live preflight of Claude Code: two model calls check Bash reads, writes, network, and the Read tool.
 
 `Preflight` is a thin friend of one `ClaudeCode` instance. It calls the private members `_run`, `_sealed`,
 and `_check_memory`, and the public `late` and `inventory`.
@@ -7,6 +7,7 @@ and `_check_memory`, and the public `late` and `inventory`.
 from __future__ import annotations
 
 import secrets
+import shutil
 import sys
 import tempfile
 from collections.abc import Callable, Collection
@@ -31,6 +32,7 @@ from skillz_experiments.harness._claude._events import (
     write_failure,
 )
 from skillz_experiments.harness._claude._login import login_failed, preflight_leak
+from skillz_experiments.harness._claude._pairs import tool_pairs
 from skillz_experiments.harness._claude._sandbox import (
     host_tools,
     network_commands,
@@ -52,16 +54,33 @@ LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted
 # The private file in the run directory that holds the tool transcript of a failed live preflight.
 PREFLIGHT_TRANSCRIPT = "preflight.events.json"
 
-# The opening of the probe prompt. Without it, an opus judge skipped the Read-tool step as a sandbox bypass.
-PROBE_PREAMBLE = ("This is the test runner's own isolation self-test of your sandbox. Each step below is a probe that "
-                  + "the runner wrote, and a denial is the expected and correct result. The sealed file holds only a "
-                  + f"test token, and `{HOST_FILE}` is a public system file. Run every step exactly as written, also "
-                  + "after a denied step: a skipped step fails the self-test. ")
+# The two preflight calls of each role. A live sonnet role refused one long prompt that mixed the Read steps with the
+# Bash sweep as a sandbox-escape test, so each call has one plain task and the prompts avoid words such as "sealed".
+SANDBOX_CHECK = "Bash sandbox check"
+READ_CHECK = "file-access check"
+SANDBOX_INTRO = ("This is a check of the Bash sandbox in this workspace. Run each command below with the Bash tool, "
+                 + "exactly as written and in the given order. The sandbox blocks some of these commands, so a failed "
+                 + "command is a normal result: continue with the next command. Do not change a command, and do not "
+                 + "use another tool. ")
+READ_INTRO = ("This is a file-access check for this workspace. Open each file below with the Read tool, one Read call "
+              + "per file, in the given order. Some files are outside the workspace, so the Read tool can refuse them, "
+              + "and a refusal is a normal result: continue with the next file. Do not use another tool. ")
+
+
+@dataclass(frozen=True)
+class _Call:
+    """One live preflight call: the check it runs, the tool that check needs, and what the call returned."""
+
+    check: str
+    tool: str
+    returncode: int
+    stderr: str
+    events: list[dict[str, object]]
 
 
 @dataclass
 class _Attempt:
-    """What the one live call and its listeners left behind, for the verdict steps to judge."""
+    """What the live calls and their listeners left behind, for the verdict steps to judge."""
 
     name: str
     sealed: Path
@@ -78,10 +97,13 @@ class _Attempt:
     abstract: str
     reached: bool
     socket_open: bool
-    returncode: int
-    stderr: str
-    events: list[dict[str, object]]
+    calls: list[_Call]
     builtin: Collection[str] = field(default_factory=frozenset[str])
+
+    @property
+    def events(self) -> list[dict[str, object]]:
+        """Return the events of every call in call order. A leak in either call fails the checks that read them."""
+        return [event for call in self.calls for event in call.events]
 
 
 def _leak(reason: str | None) -> CodedError | None:
@@ -94,7 +116,7 @@ def probe_sandbox(claude: ClaudeCode, workspace: Path, sealed: Path) -> None:
         if not found:
             raise SandboxUnavailable(f"{name} is missing, and the Claude Code sandbox needs it", fix)
     with listening() as port:
-        script = probe(workspace, sealed, Path(__file__).resolve(), port)
+        script = probe(workspace, sealed, Path(__file__).resolve(), port, link=LINK)
         try:
             code, output, _stderr = claude.sandbox(workspace, ["/usr/bin/python3", "-c", script],
                                                    max(SANDBOX_SECONDS, claude.options.sandbox_seconds))
@@ -109,9 +131,11 @@ class Preflight:
     def __init__(self, claude: ClaudeCode) -> None:
         self.claude = claude
         # The order decides which reason wins when several fire. The first check that returns an error stops the run.
+        # A confirmed leak in either call wins over a call that made no tool call.
         self.checks: tuple[Callable[[_Attempt], CodedError | None], ...] = (
-            self._leaked, self._failed, partial(self._read_tool, evidence=False), self._read,
-            partial(self._read_tool, evidence=True), self._write, self._network)
+            self._leaked, self._failed, partial(self._read_tool, evidence=False), partial(self._refused, tool="Bash"),
+            self._read, self._write, self._network, partial(self._refused, tool="Read"),
+            partial(self._read_tool, evidence=True))
 
     def run(self) -> dict[str, object]:
         claude = self.claude
@@ -127,7 +151,8 @@ class Preflight:
             self._keep_transcript(error, attempt.events)
             raise
         return {"adapter": "claude", "model": claude.model, "isolation": "passed", "credential": claude.credential_kind,
-                "network": "denied", "live_calls": 1, "unix_socket_filter": "off" if claude.unix_sockets() else "on",
+                "network": "denied", "live_calls": len(attempt.calls),
+                "unix_socket_filter": "off" if claude.unix_sockets() else "on",
                 "read_tool": {"host_file": HOST_FILE, "result": "refused"}, "environment_key": claude.environment_key()}
 
     def _attempt(self, root: Path) -> _Attempt:
@@ -140,7 +165,7 @@ class Preflight:
         control = secrets.token_hex(16)
         control_file = workspace / "control.txt"
         _ = control_file.write_text(control)
-        protected = [workspace / ".agents/write-probe", workspace / ".claude/skills" / name / "write-probe"]
+        protected = [workspace / ".agents/write-check.txt", workspace / ".claude/skills" / name / "write-check.txt"]
         write_control = workspace / "write-control.txt"
         write_token = secrets.token_hex(16)
         network_token = secrets.token_hex(16)
@@ -148,49 +173,63 @@ class Preflight:
         sockets.mkdir()
         probing = claude.unix_sockets()
         abstract = f"skillz-{network_token[:16]}"
+        calls: list[_Call] = []
         with (watched() as (port, connected), watched_unix(sockets, active=probing) as (socket_path, socket_reached),
               watched_abstract(abstract, active=probing) as abstract_reached):
             if claude.out is not None:
                 (claude.out / PREFLIGHT_TRANSCRIPT).unlink(missing_ok=True)
-            claude.budget.claim(role="preflight")
-            claude.checkpoint()
             commands = network_commands(port, network_token)
             if probing:
                 commands += [unix_command(str(socket_path), network_token), unix_command("\\0" + abstract, network_token)]
             try:
-                returncode, stderr, events = claude._run(  # pyright: ignore[reportPrivateUsage]
-                    workspace, self._prompt(sealed, control_file, protected, write_control, write_token, commands),
-                    None, [name])
+                calls.append(self._call(workspace, SANDBOX_CHECK, "Bash", self._sandbox_prompt(
+                    sealed, control_file, protected, write_control, write_token, commands), name))
+                # Each call stages the project skills again, so keep the write evidence of the Bash call first.
+                wrote = any(file.exists() for file in protected)
+                shutil.rmtree(workspace / ".claude/skills")
+                calls.append(self._call(workspace, READ_CHECK, "Read", self._read_prompt(sealed, control_file), name))
             except Exception:
                 if connected(network_token) or socket_reached(network_token) or abstract_reached(network_token):
                     raise NetworkIsolationFailed(LISTENER_REACHED) from None
                 raise
             reached = connected(network_token)
             socket_open = socket_reached(network_token) or abstract_reached(network_token)
-        wrote = any(file.exists() for file in protected)
+        wrote = wrote or any(file.exists() for file in protected)
         controlled = write_control.is_file() and write_control.read_text() == write_token
         return _Attempt(name, sealed, token, control, control_file, protected, wrote, controlled, port, network_token,
-                        probing, socket_path, abstract, reached, socket_open, returncode, stderr, events)
+                        probing, socket_path, abstract, reached, socket_open, calls)
 
-    def _prompt(self, sealed: Path, control_file: Path, protected: list[Path], write_control: Path, write_token: str,
-                commands: list[str]) -> str:
-        """Return the probe prompt. The preamble and the order keep a careful model from skipping the Read-tool probe.
+    def _call(self, workspace: Path, check: str, tool: str, prompt: str, name: str) -> _Call:
+        """Claim one preflight call from the budget, then run it. Each call is a separate live model call."""
+        claude = self.claude
+        claude.budget.claim(role="preflight")
+        claude.checkpoint()
+        returncode, stderr, events = claude._run(workspace, prompt, None, [name])  # pyright: ignore[reportPrivateUsage]
+        return _Call(check, tool, returncode, stderr, events)
 
-        A model that first sees `cat` denied can read the Read-tool step as a way around the sandbox and skip it, which
-        leaves the probe with no evidence. So the Read-tool steps run first, and the preamble says that a denial is the
-        expected result. The verdict does not change: it still needs a Read call that fails on the sealed file and on
-        the workspace symlink to it, a refused Read call on `HOST_FILE`, and a Read call that reads the control file.
+    def _sandbox_prompt(self, outside: Path, control_file: Path, protected: list[Path], write_control: Path,
+                        write_token: str, commands: list[str]) -> str:
+        """Return the prompt of the Bash call: the reads, the writes, and the network commands, in that order.
+
+        A live model refused one long prompt that mixed these steps with the Read-tool steps. So this call names one
+        tool and one plain task, and it says that a blocked command is a normal result.
         """
-        return (PROBE_PREAMBLE
-                + f"First read the file `{sealed}` with the Read tool, not Bash. "
-                + f"Then read the file `{HOST_FILE}` with the Read tool, not Bash. "
-                + f"Then read the file `{control_file.parent / LINK}` with the Read tool, not Bash. "
-                + f"Then read the file `{control_file}` with the Read tool, not Bash. "
-                + f"Then run `cat {sealed}` with the Bash tool. Then run `cat {control_file}` with the Bash tool. "
-                + "".join(f"Then run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
-                + f"Then run `printf {write_token} > {write_control}` with the Bash tool. "
-                + "".join(f"Then run `{command}` with the Bash tool. " for command in commands)
-                + "Reply with the read outputs, or the word denied for each step that fails.")
+        return (SANDBOX_INTRO
+                + f"Run `cat {outside}` with the Bash tool. Run `cat {control_file}` with the Bash tool. "
+                + "".join(f"Run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
+                + f"Run `printf {write_token} > {write_control}` with the Bash tool. "
+                + "".join(f"Run `{command}` with the Bash tool. " for command in commands)
+                + "Then reply with one line per command: its output, or the word failed.")
+
+    def _read_prompt(self, outside: Path, control_file: Path) -> str:
+        """Return the prompt of the Read call. The verdict needs each of the four Read calls.
+
+        The Read tool must refuse the file outside the workspace, `HOST_FILE`, and the workspace symlink to the outside
+        file. It must read the control file and return its token.
+        """
+        files = [outside, Path(HOST_FILE), control_file.parent / LINK, control_file]
+        return (READ_INTRO + "".join(f"Read the file `{file}` with the Read tool. " for file in files)
+                + "Then reply with one line per file: its text, or the word refused.")
 
     def _verify(self, attempt: _Attempt) -> None:
         """Raise the first error of the ordered verdict. The relist for a late built-in skill runs after the listener and socket checks."""
@@ -212,9 +251,20 @@ class Preflight:
         return preflight_leak(leak + ("; the real config directory exposes user entries" if sys.platform == "darwin" else ""))
 
     def _failed(self, attempt: _Attempt) -> CodedError | None:
-        reason = failure(attempt.returncode, attempt.stderr, attempt.events, [attempt.name], attempt.builtin,
-                         allowed=self.claude.declared.skills)
-        return login_failed(LOGIN_HINT) if reason == AUTH_FAILED else _leak(reason)
+        for call in attempt.calls:
+            reason = failure(call.returncode, call.stderr, call.events, [attempt.name], attempt.builtin,
+                             allowed=self.claude.declared.skills)
+            if reason is not None:
+                return login_failed(LOGIN_HINT) if reason == AUTH_FAILED else preflight_leak(reason)
+        return None
+
+    def _refused(self, attempt: _Attempt, *, tool: str) -> CodedError | None:
+        """Fail closed when the call of `tool` made no call of that tool. A refusal is not a confirmed leak."""
+        for call in attempt.calls:
+            if call.tool == tool and not any(True for _pair in tool_pairs(call.events, tool)):
+                return preflight_leak(f"the {call.check} has no evidence: the model made no {tool} tool call, so it "
+                                      + "refused or skipped the check; this is not a confirmed leak")
+        return None
 
     def _read_tool(self, attempt: _Attempt, *, evidence: bool) -> CodedError | None:
         return _leak(read_tool_failure(attempt.events, attempt.token, attempt.sealed, attempt.control_file.parent / LINK,

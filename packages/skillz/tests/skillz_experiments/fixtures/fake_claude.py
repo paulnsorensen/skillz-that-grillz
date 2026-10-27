@@ -210,12 +210,13 @@ def inventory(mode: str, config: dict[str, object]) -> int:
 
 
 def read_tool_probe(prompt: str, mode: str, config: dict[str, object]) -> list[str]:
-    """Answer each preflight Read-tool step. Like Claude Code 2.1.257 or later, it refuses a path that resolves outside the
-    working directory only when the settings hold `permissions.blockReadsOutsideWorkingDirectories: true`.
+    """Answer each Read step of the preflight file-access call. Like Claude Code 2.1.257 or later, it refuses a path
+    that resolves outside the working directory only when the settings hold
+    `permissions.blockReadsOutsideWorkingDirectories: true`.
 
     The live preflight decides real `claude -p` behavior. `read-tool-escape` returns the content of every file outside
     the workspace except the host file. `read-tool-host` returns the `/etc/hosts` content. `read-tool-link` follows the
-    workspace symlink to the sealed file. `read-tool-control-denied` refuses the workspace control file.
+    workspace symlink to the file outside the workspace. `read-tool-control-denied` refuses the workspace control file.
     `read-tool-skipped` never calls the Read tool. `read-tool-host-skipped` never calls the Read tool on `/etc/hosts`.
     """
     if mode == "read-tool-skipped":
@@ -223,13 +224,13 @@ def read_tool_probe(prompt: str, mode: str, config: dict[str, object]) -> list[s
     permissions = config.get("permissions")
     blocked = isinstance(permissions, dict) and cast(dict[str, object], permissions).get("blockReadsOutsideWorkingDirectories") is True
     texts: list[str] = []
-    for index, found in enumerate(re.finditer(r"read the file `([^`]+)` with the Read tool", prompt)):
+    for index, found in enumerate(re.finditer(r"Read the file `([^`]+)` with the Read tool", prompt)):
         path = found.group(1)
         host = path == "/etc/hosts"
         if host and mode == "read-tool-host-skipped":
             continue
         escaped = ((mode == "read-tool-escape" and not host) or (mode == "read-tool-host" and host)
-                   or (mode == "read-tool-link" and path.endswith("/escape")))
+                   or (mode == "read-tool-link" and path.endswith("/link.txt")))
         allowed = not blocked or _inside(str(Path(path).resolve()), [str(Path.cwd().resolve())])
         allowed = allowed and not (mode == "read-tool-control-denied" and path.endswith("/control.txt"))
         text = Path(path).read_text() if escaped or allowed else "denied"
@@ -241,13 +242,24 @@ def read_tool_probe(prompt: str, mode: str, config: dict[str, object]) -> list[s
     return texts
 
 
+def read_call(prompt: str, mode: str, config: dict[str, object]) -> int:
+    """Answer the preflight file-access call. `refuses` answers with text and makes no tool call."""
+    texts = [] if mode == "refuses" else read_tool_probe(prompt, mode, config)
+    emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts) or "I will not do this.",
+          "usage": USAGE})
+    return 0
+
+
 def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object], prompt: str) -> int:
-    """Answer the preflight read probe. Each target is one `cat` call; modes break the probe in one way."""
-    if mode == "skips-cat":
-        emit({"type": "result", "subtype": "success", "is_error": False, "result": "denied", "usage": USAGE})
+    """Answer the preflight Bash sandbox call. Each target is one `cat` call; modes break the probe in one way.
+
+    `refuses` answers with text and makes no tool call. `skips-cat` skips only the `cat` commands.
+    """
+    if mode == "refuses":
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": "I will not do this.", "usage": USAGE})
         return 0
     texts: list[str] = []
-    for index, path in enumerate(targets):
+    for index, path in enumerate([] if mode == "skips-cat" else targets):
         reads = (mode == "read-host" and index == 0) or (mode not in {"bash-broken", "read-fallback"} and _readable(path, config))
         reads = reads or (mode == "read-fallback" and index == 0 and _readable(path, config))
         text = Path(path).read_text() if reads and Path(path).is_file() else "denied"
@@ -262,7 +274,6 @@ def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: 
         emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1",
               "is_error": False, "content": Path(targets[-1]).read_text()}]}})
         texts[-1] = Path(targets[-1]).read_text()
-    texts += read_tool_probe(prompt, mode, config)
     texts += write_probe(writes, mode, config)
     texts += network_probe(prompt, mode)
     emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts), "usage": USAGE})
@@ -429,6 +440,8 @@ def main() -> int:
         emit({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key - Please run /login",
               "usage": {}})
         return 1
+    if re.search(r"Read the file `[^`]+` with the Read tool", prompt):
+        return read_call(prompt, mode, config)
     targets = re.findall(r"`cat (\S+)` with the Bash tool", prompt)
     if targets:
         writes = re.findall(r"`printf (\S+) > (\S+)` with the Bash tool", prompt)

@@ -150,18 +150,22 @@ The live preflight also stops with `preflight-leak` when the init event lists a 
 The settings set `permissions.blockReadsOutsideWorkingDirectories: true`, so the Read tool cannot read a file outside the workspace.
 This setting needs Claude Code 2.1.257 or later.
 The Read tool stays enabled, because the task reads the candidate skill and the workspace files with it.
-The live preflight asks the Read tool for four paths.
+The live preflight makes two calls for each Claude role.
+The first call, the Bash sandbox check, runs the Bash read, write, and network commands.
+The second call, the file-access check, asks the Read tool for four paths.
 They are a sealed file outside the workspace, `/etc/hosts`, a workspace symlink to the sealed file, and a workspace control file.
 The run stops with `preflight-leak` when the Read tool returns the sealed file or `/etc/hosts`, directly or through the symlink.
 The run also stops when a Read call for the sealed file, `/etc/hosts`, or the symlink has no answer.
 The run also stops when the Read tool cannot return the control file.
+A call that makes no tool call of its tool also stops the run with `preflight-leak`.
+Its message says that the model refused or skipped the check, and that this is not a confirmed leak.
 A host without `/etc/hosts` stops with `host-not-ready` before the model call.
 The preflight evidence records the refused `/etc/hosts` read.
 The `--restricted` flag does not confine the Read tool.
 The setting confines it, and this probe checks the setting on each new Claude Code version.
 Only the candidate skill, Claude Code's own commands and built-in plugins, and the built-in agents are allowed.
 
-When the live preflight call returns and a preflight check then fails, the runner keeps its transcript in `RUN/preflight.events.json` (mode 0600).
+When the live preflight calls return and a preflight check then fails, the runner keeps their transcript in `RUN/preflight.events.json` (mode 0600).
 A call that times out or fails to run writes no transcript. Each preflight first removes an old transcript.
 The stop message names the file. `run.json` records the message in `failure`.
 If the file cannot be written, the stop keeps its code and the message says so.
@@ -189,7 +193,7 @@ A command that differs from the generated command, a missing output, or a malfor
 All these failures use the code `network-isolation-failed`.
 The environment key carries the probe version, so a change of the probe set starts a new preflight.
 The run record keeps the pass and its live calls under `preflight`.
-Each Claude role makes one live preflight per run. Each one counts against the approved call budget.
+Each Claude role makes two live preflight calls per run. Each call counts against the approved call budget.
 A resumed `run` reuses the recorded pass and makes no new live call.
 Every resume still runs the free helper sandbox probe, which makes no model call.
 The reuse key joins the role fingerprint and the Claude environment hash.
@@ -434,7 +438,7 @@ Codex and command preflights make no inference invocation.
 The Codex preflight requires `codex --version` to report 0.154.0 or newer and records the observed string as `codex_version`.
 A lower or unparsable version stops with `codex-version-unsupported`. A resume on a different recorded version stops with `environment-differs`.
 A runner upgrade needs a new run. A run record from an older runner does not resume.
-Each `claude` role makes one live preflight call per run.
+Each `claude` role makes two live preflight calls per run.
 Every attempted inference, including a failed response, consumes the shared invocation budget.
 All roles share the same deadline and holdout reservation.
 The reservation holds the gate calls and the gate's estimated time: the gate calls times 60 seconds, divided by 2 parallel calls.
