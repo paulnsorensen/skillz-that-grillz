@@ -97,16 +97,17 @@ def watched_abstract(name: str, *, active: bool = True) -> Generator[Callable[[s
         yield _connected(server)
 
 
-def probe(workspace: Path, sealed: Path, engine: Path, port: int) -> str:
+def probe(workspace: Path, sealed: Path, engine: Path, port: int, *, link: str = "escape") -> str:
     """Build the isolation probe script. It must fail to reach the host loopback listener on `port`.
 
+    The script must also fail to read `sealed`, the workspace symlink `link` to it, and `engine`.
     On macOS, the `/usr/bin/python3` shim adds `CPATH`, `LIBRARY_PATH`, `MANPATH`, and `SDKROOT`.
     The Claude adapter and the Gemini `sandbox` operation set `DEVELOPER_DIR`.
     The script allows these names only when it runs on macOS.
     On other systems, the script allows none of them.
     """
     allowed = {"PATH", "HOME", "TMPDIR", "LANG", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"}
-    denied = [str(sealed), str(workspace / "escape"), str(engine)]
+    denied = [str(sealed), str(workspace / link), str(engine)]
     return (
         "import os,pathlib,socket,sys\n"
         f"for name in {denied!r}:\n"

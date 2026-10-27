@@ -32,6 +32,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
 - [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
 - [gh-131](./gh-131.md) — gh-131: the network preflight probes and the macOS live path
+- [gh-176](./gh-176.md) — gh-176: the Read tool cannot read host files outside the workspace
 - [gh-223](./gh-223.md) — gh-223: skillz_experiments module layout and borrow waves
 - [gh-235](./gh-235.md) — gh-235: freeze a run compatibility fingerprint (W2.4)
 - [gh-236](./gh-236.md) — gh-236: deterministic proposal leakage check (W3.1)
