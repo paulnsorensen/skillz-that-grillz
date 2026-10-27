@@ -39,12 +39,13 @@ STATUSES = {"supported", "refuted", "inconclusive"}
 
 
 def _finished(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, suffix: str = "",
-              ) -> tuple[Path, Path, Search, int, dict[str, object]]:
+              scores: Callable[[str, str], float | None] | None = None) -> tuple[Path, Path, Search, int, dict[str, object]]:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
     state = Search(target)
     state.suffix = suffix
+    state.score_of = scores
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert result["phase"] == "complete"
     return target, out, state, calls, read(out / "run.json")
@@ -224,8 +225,9 @@ def test_a_patch_that_fails_differs_or_rebuilds_another_identity_refutes_the_exp
 
 
 def _gated(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, keep: int = 0,
-           suffix: str = "") -> tuple[Path, Path, dict[str, object], dict[str, object]]:
-    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals, suffix)
+           suffix: str = "", scores: Callable[[str, str], float | None] | None = None,
+           ) -> tuple[Path, Path, dict[str, object], dict[str, object]]:
+    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals, suffix, scores)
     done = cast(dict[str, object], json.loads(json.dumps(record)))
     return target, out, done, _rewind(out, record, keep)
 
@@ -295,7 +297,7 @@ def test_a_resume_in_the_replay_phase_does_not_repeat_a_scored_replay_outcome(
 def test_the_plan_counts_replay_calls_in_the_estimate_the_approval_and_the_holdout_reserve(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     plan = _plan(6, 6, 6, 1, 3)
-    without = estimate(preflight_calls=3, holdout=12, repeats=3, search_calls=plan.metric_calls,
+    without = estimate(preflight_calls=6, holdout=12, repeats=3, search_calls=plan.metric_calls,
                        retry_calls=plan.retry_calls, reflection_calls=plan.reflection_calls)
     assert plan.replay_calls == 6 and plan.headroom_calls == 6
     assert plan.sized.calls == without.calls + plan.replay_calls + plan.headroom_calls
@@ -778,7 +780,9 @@ def test_a_winner_with_crlf_line_endings_replays_to_the_same_identity(
 def test_a_user_git_attributes_file_does_not_change_the_replayed_bytes(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
-    target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals, suffix="\nsecond line\n")
+    # Fixed scores make the search pick the suffixed winner, whatever the split.
+    target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals, suffix="\nsecond line\n",
+                                          scores=lambda text, _split: 0.9 if "improved" in text else 0.2)
     config = tmp_path / "user-config"
     (config / "git").mkdir(parents=True)
     _ = (config / "git" / "attributes").write_text("* text eol=crlf\n")

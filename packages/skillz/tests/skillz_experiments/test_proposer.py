@@ -1,6 +1,11 @@
 """The proposer seam: the reflection request text is frozen per edit mode, and the answer check keeps its error."""
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from skillz_experiments._candidate import is_skill_file
@@ -49,8 +54,18 @@ CLI_HEAD = ("Improve the supplied skill text and helper script components. "
              "The module defines a top-level main, and the entry is <package>:main. "
              "The host builds the target to scripts/<name>.pyz. "
              "SKILL.md calls it with python3 scripts/<name>.pyz. "
-             "The host rejects a second target. ")
+             "The host rejects a second target. "
+             "A rule that code applies the same way to every input is a good fit for @new-cli. "
+             "Try @new-cli early. Do not wait until a prose fix fails. "
+             "A CLI can also cut the task tokens of each case. "
+             "The fromargs source is not in this prompt. Use this summary of its API: "
+             '`from fromargs import App`, `app = App("<name>")`, one handler under `@app.default`, '
+             "and `main = app.main`. "
+             "The handler takes typed parameters and returns JSON data. fromargs prints that data on stdout. "
+             "A module that uses only the standard library is valid too. ")
 PROSE_CLI = CLI_HEAD + STE + STATUS
+API_MODULE = '''import json\nfrom fromargs import App\napp = App("count-items")\n\n\n@app.default\ndef count(path: str) -> dict[str, int]:\n    """Count the items of a JSON list."""\n    with open(path, encoding="utf-8") as handle:\n        return {"count": len(json.load(handle))}\n\n\nmain = app.main\n'''
+"""A module written only from the fromargs API summary of the `@new-cli` prompt."""
 
 
 @pytest.mark.ac("gh-238:AC-1")
@@ -115,6 +130,35 @@ def test_the_budget_follows_the_cosine_schedule_rounded_down() -> None:
 @pytest.mark.ac("gh-239:AC-1")
 def test_a_plan_without_calls_counts_as_spent() -> None:
     assert Progress(spent=0, planned=0, proposal=1).budget() == 1
+
+
+@pytest.mark.ac("proposer-cli-early:AC-2")
+def test_the_budget_keeps_two_edits_while_new_cli_is_empty() -> None:
+    late = Progress(spent=100, planned=100, proposal=9, cli_open=True)
+    assert late.budget() == 2
+    budget = ("Make at most 2 edits across all components. An edit is one block of consecutive changed lines. "
+              + "A new @new-cli target and the SKILL.md line that calls it are 2 edits.")
+    assert budget in _status(late)
+    assert Progress(spent=0, planned=100, proposal=1, cli_open=True).budget() == 6
+    assert Progress(spent=100, planned=100, proposal=9).budget() == 1
+    assert "@new-cli" not in _status(Progress(spent=100, planned=100, proposal=9))
+
+
+@pytest.mark.ac("proposer-cli-early:AC-1")
+def test_only_a_run_that_offers_new_cli_tells_the_proposer_to_try_it_early() -> None:
+    early = "Try @new-cli early. Do not wait until a prose fix fails."
+    offered = ["SKILL.md", "@new-cli"]
+    assert early in reflection_request("prose+cli", dict.fromkeys(offered, ""), {}, offered, progress=START)[0]
+    assert early not in reflection_request("prose+cli", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)[0]
+    assert early not in reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)[0]
+
+
+@pytest.mark.ac("gh-537:AC-1")
+def test_a_token_rule_explains_the_token_fields_of_the_feedback() -> None:
+    fields = "A feedback record can hold task_tokens"
+    cheaper = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START, cheaper=True)[0]
+    assert "Prefer fewer tokens when correctness is equal. " + fields in cheaper
+    assert fields not in reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=START)[0]
 
 
 @pytest.mark.ac("gh-239:AC-4")
@@ -277,16 +321,33 @@ def test_notes_follow_the_hypothesis_rules_with_their_own_limit_and_codes() -> N
 
 
 @pytest.mark.ac("gh-501:AC-7")
+@pytest.mark.ac("proposer-cli-early:AC-4")
 def test_the_prompt_shows_the_unmet_criteria_then_the_hint_then_the_gate_output_and_keeps_every_file_editable() -> None:
     record = {"gate_feedback": "GATE_TEXT", "edit_hint": ["HINT_FILE.md"], "case_id": "t1",
               "unmet": [{"id": "UNMET_ID", "must": True, "level": 2, "text": "t", "reason": "r"}], "task_correct": 0.0}
     prompt, _ = reflection_request("prose", {"SKILL.md": "t"}, {"SKILL.md": [record]}, ["SKILL.md"], progress=START)
     head, data = prompt.split("\n", 1)
     assert data.index("case_id") < data.index("UNMET_ID") < data.index("HINT_FILE.md") < data.index("GATE_TEXT")
-    assert "The hint can be wrong. Every editable component stays editable." in head
+    assert "The edit_hint can be wrong. Every editable component stays editable." in head
+    assert "When a skill rule conflicts with gate_feedback, change the skill rule to match the gate." in head
     assert head.index("unmet") < head.index("edit_hint") < head.index("gate_feedback")
     assert data.index('"task_correct"') < data.index('"unmet"')
     for sentence in EVIDENCE_RULE.split(". "):
         assert len(sentence.split()) <= 20, sentence
     plain, _ = reflection_request("prose", {"SKILL.md": "t"}, {"SKILL.md": [{"task_correct": 0.0}]}, ["SKILL.md"], progress=START)
     assert "edit_hint" not in plain
+
+
+@pytest.mark.ac("proposer-cli-early:AC-3")
+def test_a_module_written_from_the_prompt_api_summary_runs_with_fromargs(tmp_path: Path) -> None:
+    offered = ["SKILL.md", "@new-cli"]
+    head = reflection_request("prose+cli", dict.fromkeys(offered, ""), {}, offered, progress=START)[0]
+    for part in ("`from fromargs import App`", '`app = App("<name>")`', "`@app.default`", "`main = app.main`"):
+        assert part in head and part.strip("`").replace('"<name>"', '"count-items"') in API_MODULE
+    package = tmp_path / "count_items"
+    package.mkdir()
+    _ = (package / "__init__.py").write_text(API_MODULE, encoding="utf-8")
+    _ = (tmp_path / "items.json").write_text("[1, 2, 3]", encoding="utf-8")
+    run = subprocess.run([sys.executable, "-c", "import count_items; count_items.main()", "items.json"], cwd=tmp_path,
+                         capture_output=True, text=True, check=False, timeout=60)
+    assert run.returncode == 0 and json.loads(run.stdout) == {"count": 3}, (run.stdout, run.stderr)

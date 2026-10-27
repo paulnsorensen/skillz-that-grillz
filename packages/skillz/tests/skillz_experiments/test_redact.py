@@ -3,9 +3,9 @@
 import json
 import subprocess
 import sys
-import time
 
 import pytest
+from cpu_growth import LIMIT, STEP, best_seconds
 
 from skillz_experiments import _redact
 
@@ -75,22 +75,9 @@ def test_an_unterminated_quote_after_a_credential_key_redacts_through_the_end(li
                                   "secret's 'a' "],
                          ids=["adjacent-quotes", "spaced-pairs", "keys", "json", "possessives", "possessives-then-quotes"])
 def test_the_cost_of_many_credentials_grows_linearly_with_the_length(unit: str) -> None:
-    """Each sample runs for at least 100 ms of CPU time, and the two sizes alternate, so noise hits both alike."""
-    texts = {count: unit * count + "cookie=Z" for count in (3000, 6000)}
-
-    def per_run_seconds(text: str) -> float:
-        runs, begin = 0, time.process_time()
-        while runs == 0 or time.process_time() - begin < 0.1:
-            _ = _redact.redact(text)
-            runs += 1
-        return (time.process_time() - begin) / runs
-
-    best = dict.fromkeys(texts, float("inf"))
-    for _ in range(3):
-        for count, text in texts.items():
-            best[count] = min(best[count], per_run_seconds(text))
-    small, large = best[3000], best[6000]
-    assert large <= 3 * small, f"doubling the input multiplied the cost by {large / small:.1f}"
+    """16 times the credentials must not cost more than 64 times the CPU time (linear is 16, quadratic is 256)."""
+    small, large = best_seconds(_redact.redact, unit * 2000 + "cookie=Z", unit * 2000 * STEP + "cookie=Z")
+    assert large <= LIMIT * small, f"{STEP} times the input multiplied the cost by {large / small:.1f}"
 
 
 @pytest.mark.ac("gh-501:AC-4")
@@ -267,19 +254,13 @@ ADVERSARIAL_UNIT = [
 
 @pytest.mark.ac("gh-512:AC-4")
 @pytest.mark.parametrize("unit", ADVERSARIAL_UNIT)
-def test_redact_stays_linear_on_200_kb_of_dotted_escaped_and_unicode_keys(unit: str) -> None:
-    """Doubling a 100 KB input must not multiply the CPU time by more than 3, and 200 KB must finish well inside 15 s."""
-    small = unit * (100_000 // len(unit))
-    large = unit * (200_000 // len(unit))
+def test_redact_stays_linear_on_dotted_escaped_and_unicode_keys(unit: str) -> None:
+    """16 times a 200 KB input must not cost more than 64 times the CPU time (linear is 16, quadratic is 256).
 
-    def best_seconds(text: str) -> float:
-        best = float("inf")
-        for _ in range(3):
-            begin = time.process_time()
-            _ = _redact.redact(text)
-            best = min(best, time.process_time() - begin)
-        return best
-
-    fast, slow = best_seconds(small), best_seconds(large)
-    assert slow < DEADLINE_SECONDS, f"200 KB took {slow:.1f}s"
-    assert slow <= 3 * max(fast, 0.01), f"doubling the input multiplied the cost by {slow / max(fast, 0.01):.1f}"
+    The large input is 3.2 MB, so a quadratic part that is more than two times the linear part at 1.6 MB still fails
+    the test.
+    """
+    count = 200_000 // len(unit)
+    small, large = best_seconds(_redact.redact, unit * count, unit * count * STEP)
+    assert large < DEADLINE_SECONDS, f"3.2 MB took {large:.1f}s"
+    assert large <= LIMIT * small, f"{STEP} times the input multiplied the cost by {large / small:.1f}"

@@ -62,7 +62,7 @@ def _draft(tmp_path: Path, cases: list[dict[str, object]]) -> None:
 
 def _variants(case: dict[str, object]) -> list[dict[str, object]]:
     return [case | {"id": f"v{family}-{index}", "family": f"f{family}", "request": f"/culture variant {family}-{index}"}
-            for family in range(5) for index in range(2)]
+            for family in range(6) for index in range(2)]
 
 
 @pytest.mark.ac("gh-369:AC-1")

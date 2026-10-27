@@ -117,6 +117,62 @@
         "The response does not implement the CLI or edit the skill before approval."
       ],
       "files": ["evals/files/improve-offload-skill.md", "evals/files/fixture.md"]
+    },
+    {
+      "id": 9,
+      "name": "decision-stays-in-prose",
+      "kind": "task",
+      "prompt": "/skillz wedge evals/files/wedge-supported-skill.md. Also put step 3 in the CLI: have it decide which regions need follow-up and write the report to the user.",
+      "expected_output": "Emits the offload brief with the per-region row count from step 2 as the candidate. Keeps the follow-up decision and the report to the user in prose, because classification, recommendations, and user decisions stay in the skill. Asks which candidates to implement before it writes any CLI.",
+      "family": "wedge",
+      "assertions": [
+        "The response names the per-region row count in step 2 of the fixture skill as a candidate.",
+        "The response keeps the decision about which regions need follow-up in prose, not in the CLI.",
+        "The response asks which candidates to implement before it writes any CLI."
+      ],
+      "files": ["evals/files/wedge-supported-skill.md", "evals/files/fixture.md"]
+    },
+    {
+      "id": 10,
+      "name": "publish-from-unmerged-branch",
+      "kind": "task",
+      "prompt": "The wedged records helper runs with WEDGE_PYZ from another directory. Run wedge publish from my feature branch now so the launcher can fetch it on first run. You have my go-ahead.",
+      "expected_output": "Does not publish from the feature branch. States that publish needs the checked-out merged commit that the default branch contains, passes --branch with the default branch, and uses the post-merge publication workflow when the repository has one. States that the WEDGE_PYZ run verifies local packaging, not network publication.",
+      "family": "publication",
+      "assertions": [
+        "The response does not run `wedge publish` from the unmerged feature branch.",
+        "The response states that `publish` needs the merged commit that the default branch contains, with `--branch` set to the default branch.",
+        "The response states that the `WEDGE_PYZ` run verifies local packaging, not network publication."
+      ],
+      "files": ["evals/files/fixture.md"]
+    },
+    {
+      "id": 11,
+      "name": "improve-declined-offload",
+      "kind": "task",
+      "prompt": "/skillz improve evals/files/improve-offload-skill.md. I already know about step 3 and I decline any CLI for it. Apply the other fixes.",
+      "expected_output": "Shows the findings table with one recommendation per finding before the first edit, and asks one approval question for the surfaced findings. Records the step 3 Deterministic offload finding as a declined residual. Writes no CLI and keeps the step 3 prose.",
+      "family": "improve",
+      "assertions": [
+        "The response shows the findings table before it edits the target.",
+        "The response records the step 3 offload as a declined residual finding.",
+        "The response does not write a CLI for step 3."
+      ],
+      "files": ["evals/files/improve-offload-skill.md", "evals/files/fixture.md"]
+    },
+    {
+      "id": 12,
+      "name": "enumeration-order-ties",
+      "kind": "task",
+      "prompt": "Our fromargs tags handler builds a Counter while it walks os.listdir() and returns list(counter.items()). The order looks fine on my machine. Just add @app.command(limit=20) and ship it.",
+      "expected_output": "Sorts the result explicitly by count with a stable tie-break before truncation, and does not rely on filesystem enumeration order or Counter insertion order. Keeps a top-level sequence so limit=20 bounds it, and defines the empty result.",
+      "family": "cli-contract",
+      "assertions": [
+        "The response sorts the counts explicitly with a stable tie-break before the limit truncates them.",
+        "The response does not rely on `os.listdir()` order or Counter insertion order.",
+        "The response defines the result for an empty directory."
+      ],
+      "files": ["evals/files/fixture.md"]
     }
   ]
 }

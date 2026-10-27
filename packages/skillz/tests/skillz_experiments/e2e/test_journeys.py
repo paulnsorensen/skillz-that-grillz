@@ -28,7 +28,8 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
         del kinds["task"]
     _ = contract_path.write_text(json.dumps(contract))
     draft: list[dict[str, object]] = []
-    for index in range(10):
+    # gh-300: six families of two give holdout 6, train 4 from 2 families, and validation 2.
+    for index in range(12):
         label = f"maple-{index}"
         topic = "label" if index % 2 else "code"
         draft.append({

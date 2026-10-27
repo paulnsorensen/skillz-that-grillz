@@ -52,7 +52,7 @@ def test_cheaper_tied_winner_needs_opt_in(tmp_path: Path, flags: tuple[str, ...]
                                               expected: tuple[str, float | None]) -> None:
     scenario = make_scenario(tmp_path)
     for case in scenario.draft:
-        if case["family"] in {"f9", "f7", "f5", "f3", "f0", "f4"}:
+        if case["family"] in {"f9", "f7", "f5", "f3", "f0"}:
             source = cast(dict[str, str], case["files"])["fixture.md"].upper()
             cast(dict[str, str], case["files"])["fixture.md"] = source
     result = run_scenario(scenario, tmp_path, mode="cheap", extra_flags=("--seed", "1", *flags))
@@ -78,9 +78,9 @@ def test_gain_floors_block_positive_evidence(tmp_path: Path, flag: str, reason: 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
 def test_nonzero_case_se_prevents_promotion(tmp_path: Path) -> None:
     scenario = make_scenario(tmp_path)
-    held = {"f9", "f7", "f5", "f3", "f0", "f4"}
+    held = {"f9", "f7", "f5", "f3", "f0"}
     for case in scenario.draft:
-        if case["family"] in held - {"f9", "f7"}:
+        if case["family"] in held - {"f9"}:
             source = cast(dict[str, str], case["files"])["fixture.md"].upper()
             cast(dict[str, str], case["files"])["fixture.md"] = source
     result = run_scenario(scenario, tmp_path, extra_flags=("--seed", "1"))

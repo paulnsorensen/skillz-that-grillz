@@ -124,8 +124,12 @@ def test_the_stop_names_the_seed_file_and_shows_only_counts(tmp_path: Path, make
     assert stop.data["seed_summary"] == {"cases": 4, "journeys": 0, "kinds": {"near-miss": 1, "task": 2, "trigger": 1},
                                          "families": {"billing": 2, "miss": 1, "trig": 1},
                                          "inferred": {"one": "task", "two": "task", "miss": "near-miss"},
-                                         "split": {"families": {"billing": 2}, "families_minimum": 3, "holdout_minimum": 6,
-                                                   "holdout_capacity": 0, "deficit": 6}}
+                                         "split": {"families": {"billing": 2}, "families_minimum": 4, "holdout_minimum": 6,
+                                                   "train_minimum": 4, "train_families_minimum": 2,
+                                                   "holdout_capacity": 0, "deficit": 6,
+                                                   "shortfall": {"train": {"cases": 4, "families": 2},
+                                                                 "validation": {"families": 0},
+                                                                 "holdout": {"cases": 6}}}}
     assert not (tmp_path / "run/cases.draft.json").exists()
 
 
@@ -305,9 +309,9 @@ def test_the_repository_skill_seeds_only_task_cases_in_three_families() -> None:
     assert seed
     evals_json = [case for case in seed if case["kind"] != "journey"]
     summary = seed_summary(evals_json)
-    assert summary["kinds"] == {"task": 8}
+    assert summary["kinds"] == {"task": 12}
     assert len(cast(dict[str, int], summary["families"])) >= 3
-    assert seed_summary(seed)["kinds"] == {"task": 8, "journey": 18}
+    assert seed_summary(seed)["kinds"] == {"task": 12, "journey": 18}
 
 
 @pytest.mark.ac("gh-366:AC-2")

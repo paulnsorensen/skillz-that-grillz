@@ -126,9 +126,9 @@ def test_ac20_a_hidden_character_stops_and_names_its_code_point_and_position(fie
 
 
 def draft(out: Path, first: dict[str, object]) -> None:
-    """Write ten task cases in five families. The first case takes `first` as its expected value."""
+    """Write twelve task cases in six families. The first case takes `first` as its expected value."""
     cases: list[dict[str, object]] = []
-    for family in range(5):
+    for family in range(6):
         for index in range(2):
             cases.append({"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request {family} {index}",
                           "files": {"fixture.md": "hello\n"}, "expected": expected({"id": "answer", "text": GOOD[0]}),
@@ -281,7 +281,7 @@ def test_ac10_the_approval_question_lists_each_criterion_with_must_and_from(
     assert "  - criterion echo | must true | from assertion:0 | THE answer SHALL echo hello." in lines
     assert "  - criterion short | must false | from assertion:1 | THE answer SHALL be one line." in lines
     assert "  - criterion plain | must false | from - | THE answer SHALL hold no markup." in lines
-    assert sum(line.startswith("  - criterion answer |") for line in lines) == 9
+    assert sum(line.startswith("  - criterion answer |") for line in lines) == 11
 
 
 def changed(**change: object) -> dict[str, object]:

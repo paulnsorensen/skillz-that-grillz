@@ -121,12 +121,12 @@ def test_kind_journey_scores_only_the_journey_cases(tmp_path: Path, capsys: pyte
     target = echo_skill(tmp_path)
     task_and_journey(target)
     rules = load_contract(target)
-    data, out = walk(tmp_path, target, [*tasks(2), *journeys("journey", "j", size=3)], capsys, "--kind", "journey")
+    data, out = walk(tmp_path, target, [*tasks(2), *journeys("journey", "j", 5, 3)], capsys, "--kind", "journey")
     question = str(data["question"]).splitlines()
     assert sum("| not scored |" in line for line in question if line.startswith("- t")) == 4
-    assert sum("| scored |" in line for line in question if line.startswith("- j")) == 12
+    assert sum("| scored |" in line for line in question if line.startswith("- j")) == 15
     document = cast(dict[str, list[dict[str, object]]], json.loads((out / "cases.json").read_text()))
-    assert {item["kind"] for item in document["cases"]} == {"journey"} and len(document["cases"]) == 12
+    assert {item["kind"] for item in document["cases"]} == {"journey"} and len(document["cases"]) == 15
     assert len(document["not_scored"]) == 4
     assert set(frozen(out, rules).values()) == {"journey"}
 
@@ -138,9 +138,9 @@ def test_without_kind_a_declared_task_drives_the_split_and_journeys_are_still_sc
     task_and_journey(target)
     rules = load_contract(target)
     assert scored_kinds(rules) == ("task",)
-    data, out = walk(tmp_path, target, [*tasks(5), *journeys("journey", "j")], capsys)
+    data, out = walk(tmp_path, target, [*tasks(6), *journeys("journey", "j")], capsys)
     assert "| not scored |" not in str(data["question"])
-    assert sorted(set(frozen(out, rules).values())) == ["journey", "task"] and len(frozen(out, rules)) == 18
+    assert sorted(set(frozen(out, rules).values())) == ["journey", "task"] and len(frozen(out, rules)) == 20
 
 
 # judge-criteria-verdicts: the journey items gained expected.criteria, which the case hash covers, so the pin moved.
@@ -213,11 +213,11 @@ def test_a_journey_only_contract_with_a_task_case_in_the_draft_freezes_and_loads
     set_contract(target, kinds={"journey": journey_kind(JOURNEY_GATE, RUBRIC_B)})
     rules = load_contract(target)
     assert scored_kinds(rules) == ("journey",)
-    data, out = walk(tmp_path, target, [*tasks(2), *journeys("journey", "j", size=3)], capsys)
+    data, out = walk(tmp_path, target, [*tasks(2), *journeys("journey", "j", 5, 3)], capsys)
     question = str(data["question"]).splitlines()
     assert sum("| not scored |" in line for line in question if line.startswith("- t")) == 4
     loaded = load_cases(out / "cases.json", rules.grader_types())
-    assert {case.kind for case in loaded} == {"journey"} and len(loaded) == 12
+    assert {case.kind for case in loaded} == {"journey"} and len(loaded) == 15
 
 
 def test_the_default_kinds_follow_the_contract_and_a_bad_selection_stops(tmp_path: Path) -> None:

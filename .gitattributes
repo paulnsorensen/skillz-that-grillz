@@ -1,0 +1,8 @@
+* text=auto eol=lf
+
+*.png binary
+*.pyz binary
+
+uv.lock linguist-generated=true
+
+docs/** linguist-documentation

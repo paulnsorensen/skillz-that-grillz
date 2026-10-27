@@ -52,7 +52,7 @@ def _cursor_resolve_slug(slug: str, fs_root: str = "/") -> str:
     """Decode a dash-encoded absolute path, preferring the longest existing dir.
 
     Cursor project slugs replace path separators with dashes
-    (``Users-paul-Dev-easy-cheese``). A directory whose own name contains a
+    (``Users-alex-src-app``). A directory whose own name contains a
     dash is ambiguous if every dash is treated as a separator. Walk
     left-to-right and at each step take the longest prefix of remaining
     segments that exists under ``fs_root``; fall back to a naive split for

@@ -37,8 +37,11 @@ def settings(workspace: Path, out: Path | None = None, *, config: Path | None = 
     workspace and the runtime roots. On macOS, they cannot read the host roots, the user temp roots, the temporary
     directory, the home directory, the run directory, or the Claude config directory `config`, and the workspace allow
     reopens its own path. Other system paths stay readable. The Read tool follows permission rules, not the sandbox,
-    so a deny rule covers the host roots, `/proc`, the run directory `out`, and `config` for that tool. Nothing else confines that tool, so the live preflight
-    proves it: the Read tool must fail to read a file outside the workspace. Commands cannot write
+    so a deny rule covers the host roots, `/proc`, the run directory `out`, and `config` for that tool. The
+    `blockReadsOutsideWorkingDirectories` permission (Claude Code 2.1.257 or later) makes the file tools refuse every
+    path outside the working directory, the workspace, in every permission mode (#176). The live preflight proves it:
+    the Read tool must fail to read the sealed file, `/etc/hosts`, and a workspace symlink to the sealed file, and
+    it must read a workspace control file. Commands cannot write
     `.agents` or `.claude`, so they cannot change the candidate or plant project settings.
     Claude Code's own sandbox enforces the `.agents` and `.claude` write deny rules. `overrides` names the skills that
     `skillOverrides` turns off. `unix_sockets` skips the Unix-socket filter, which cannot start where the host blocks
@@ -57,7 +60,7 @@ def settings(workspace: Path, out: Path | None = None, *, config: Path | None = 
                     "filesystem": {"denyRead": _deny_read([*hidden, *temporary]), "denyWrite": protected,
                                    "allowRead": unique([str(workspace), str(workspace.resolve()), *runtime])}},
         "disableBundledSkills": True, "disableAllHooks": True,
-        "permissions": {"allow": ["Skill", "Bash"],
+        "permissions": {"allow": ["Skill", "Bash"], "blockReadsOutsideWorkingDirectories": True,
                         "deny": [*[f"Read(/{root}/**)" for root in unique([*PERMISSION_DENY_ROOTS, str(Path.home()), *hidden])],
                                  *[f"Read(/{root}/{CONFIG_PREFIX}*/**)" for root in temporary]]}}
     if overrides:

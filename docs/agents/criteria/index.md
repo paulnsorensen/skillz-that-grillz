@@ -29,9 +29,11 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 
 <!-- HALLOUMINATE:INDEX-START -->
 - [autoimprove-authoring-headroom](./autoimprove-authoring-headroom.md) — autoimprove-authoring-headroom: stop a run when the seed already saturates a family
+- [autoimprove-live-proof](./autoimprove-live-proof.md) — autoimprove-live-proof: the autoimprove journey promotes a planted-defect fix with a suggested CLI
 - [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
 - [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
 - [gh-131](./gh-131.md) — gh-131: the network preflight probes and the macOS live path
+- [gh-176](./gh-176.md) — gh-176: the Read tool cannot read host files outside the workspace
 - [gh-223](./gh-223.md) — gh-223: skillz_experiments module layout and borrow waves
 - [gh-235](./gh-235.md) — gh-235: freeze a run compatibility fingerprint (W2.4)
 - [gh-236](./gh-236.md) — gh-236: deterministic proposal leakage check (W3.1)
@@ -56,6 +58,8 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-296](./gh-296.md) — gh-296: the cases-missing stop writes the seed to a file and shows only counts
 - [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
+- [gh-300](./gh-300.md) — gh-300: the train split gets at least 4 scored cases from 2 families
+- [gh-301](./gh-301.md) — gh-301: finish the judge rationale record
 - [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
 - [gh-305](./gh-305.md) — gh-305: Codex task temp files have no .git ancestor
 - [gh-311](./gh-311.md) — gh-311: assert where the journey press test creates its workspace
@@ -123,8 +127,11 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-508](./gh-508.md) — gh-508: export a completed run from an earlier engine when its replay patch digest matches
 - [gh-512](./gh-512.md) — gh-512: the shared redactor redacts dotted, multiply escaped, and Unicode-quoted credential keys
 - [gh-529](./gh-529.md) — gh-529: promote-cheaper uses the SE of the losses, and a cheaper tie is not a stall
+- [gh-537](./gh-537.md) — gh-537: the proposer feedback carries task tokens when the run sets a token rule
+- [gh-538](./gh-538.md) — gh-538: the live smoke builds the skill archives before the tests
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
+- [proposer-cli-early](./proposer-cli-early.md) — proposer-cli-early: the reflection prompt offers @new-cli early and keeps room for its two edits
 - [skillz-autoimprove-claims](./skillz-autoimprove-claims.md) — skillz-autoimprove-claims: validate the three autoimprove claims separately
 - [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
 - [skillz-pragmatic-autoimprove](./skillz-pragmatic-autoimprove.md) — skillz-pragmatic-autoimprove: pragmatic autoimprove

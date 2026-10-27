@@ -163,8 +163,8 @@ def _make_target(tmp_path: Path, *, helper: bool = False, surface: dict[str, obj
     return target
 
 
-def _write_draft(out: Path, families: int = 5, per_family: int = 2) -> list[str]:
-    """Write a case draft and return the case ids."""
+def _write_draft(out: Path, families: int = 6, per_family: int = 2) -> list[str]:
+    """Write a case draft and return the case ids. The default fills train 4, validation 2, and holdout 6."""
     cases: list[dict[str, object]] = []
     for family in range(families):
         for index in range(per_family):

@@ -35,7 +35,7 @@ def run_intake(tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str])
     out.mkdir(mode=0o700)
     cases = [{"id": f"c{family}-{index}", "family": f"f{family}", "kind": "task", "request": "Echo hello",
               "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello"}, "source": "skill"}
-             for family in range(5) for index in range(2)]
+             for family in range(6) for index in range(2)]
     _ = (out / "cases.draft.json").write_text(json.dumps(cases))
     command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose"]
     code = main(command)

@@ -182,7 +182,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
-| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. When the live preflight call returned and a check then failed, the message also names `RUN/preflight.events.json`. | To find the cause of a failed probe, read `RUN/preflight.events.json` before you spend another live call. For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, report the Claude Code version; no unsafe fallback exists. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A preflight call with no tool call of its tool also stops the run; the message says that the model refused or skipped the check, and that this is not a confirmed leak. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. When the live preflight calls returned and a check then failed, the message also names `RUN/preflight.events.json`. | To find the cause of a failed probe, read `RUN/preflight.events.json` before you spend another live call. For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, report the Claude Code version; no unsafe fallback exists. For a refused or skipped check, read the model reply in `RUN/preflight.events.json`, then run again. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
 | `nono-removed` | A resume found a run that recorded the removed nono backend, or a role file sets `isolation` to `nono`. The message links issue 211. A completed run still returns its summary. | Start a new run directory. |
 | `isolation-removed` | A role file sets the removed `isolation` key. | Delete the key. |
 | `codex-version-unsupported` | The Codex CLI is older than 0.154.0, or its `--version` output is unparsable. No model call ran. | Install Codex 0.154.0 or newer, then run again. |
@@ -192,7 +192,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `evals-unreadable` | `evals/evals.json` or `evals/journeys.json` is a symlink, too large, or malformed. An entry can also have an unknown `kind`, a duplicate case id (also across the two files), assertions on a trigger or near-miss, or a string `expected_skill` with no `kind` (the message says to set `kind`). At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix the eval file or the fixture, set `kind` on an ambiguous entry, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json` or a journey of `evals/journeys.json`. It can also change an entry `kind` or `request`, or a journey `brief`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from its eval file. Then run again. A run directory that an older version drafted can stop here: a kind-less entry with no assertions moved from `trigger` to `task`. Copy the seed again, or set `kind` in the entry. |
 | `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
-| `cases-too-few` | The scored families cannot fill the splits. A run needs 3 scored families and a holdout of 6 scored cases. The message names the two smallest families, the holdout capacity, the deficit, and a fix. The data holds `families`, `families_minimum`, `holdout_minimum`, `holdout_capacity`, `deficit`, and `fix`. | Follow the fix: add scored cases to other families, or add a family. Then run again. |
+| `cases-too-few` | The scored families cannot fill the splits. A run needs 4 scored families: train 4 scored cases from 2 families, validation 1 family, and a holdout of 6 scored cases. The message names the cases and families that each split needs, the validation family, the train families, the holdout capacity, the deficit, and a fix. The data holds `families`, `families_minimum`, `holdout_minimum`, `train_minimum`, `train_families_minimum`, `holdout_capacity`, `deficit`, `shortfall` (the missing `cases` and `families` of each split), and `fix`. | Follow the fix: add scored cases to other families, or add a family. Then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `search-faulted` | At least 4 search evaluations finished in this session and more than half failed, or the 5 newest failed in a row. A resume starts a new count. The message gives the failed counts by reason. | Wait for the provider, then resume the run in the same directory. |
 | `holdout-faulted` | Provider faults left the gate with no holdout case that has a scored baseline and winner pair. The command exits nonzero. | Wait for the provider, then run again in the same directory. |
@@ -281,7 +281,7 @@ A seed case has a `family` only when the entry has a nonempty-text `family` key.
 Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged, and a journey case with its `brief` unchanged. You can extend `files`, `expected`, and `family`.
 When the draft drops a seed case or changes its `id`, `kind`, `request`, or `brief`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from its eval file.
 Then add cases until the draft meets the minimums below. To add journey cases, read `Draft journeys`.
-The holdout split alone needs 6 scored cases, and a family never crosses splits, so a contract needs about 10 or more `task` cases.
+The holdout split alone needs 6 scored cases. Train needs 4 scored cases from 2 families, and validation needs 1 family. A family never crosses splits, so a contract needs about 11 or more `task` cases in at least 4 families.
 A skill with neither `evals/evals.json` nor `evals/journeys.json`, or with an unreadable one, has no seed file, and the stop removes an old one. Draft every case from the `facts`.
 
 Each case has these fields:
@@ -307,12 +307,13 @@ Each case has these fields:
 A `trigger` case is a request that should load the skill. A `near-miss` case is a similar request that should not.
 The runner records `trigger` and `near-miss` cases as pending. It does not score them yet.
 Draft the `task` cases with care, because only they decide the verdict.
-Write at least three `task` families and at least six `task` cases for the holdout.
+Write at least four `task` families, at least six `task` cases for the holdout, and at least four for train.
 When the target contract has a `task` rubric, draft each `task` case so the rubric can score it.
 Do not assign splits. Code assigns them from the seed.
 When session analytics exists, run the Usage ceremony from `SKILL.md`.
 Add extra cases from past sessions with `source: session`. Remove private data first.
 The approval question lists every case, with its source, family, and split. It also lists each criterion with `must` and `from`.
+It shows the scored case total and the family total of the train, validation, and holdout splits.
 A change to the draft changes the case hash and asks the question again.
 
 ## Draft journeys
@@ -375,7 +376,7 @@ A contract with `status: draft` gives a warning. Any finding with severity `erro
 Each finding has `code`, `severity`, `file`, `pointer`, `message`, and `fix`. A `cases-too-few` finding also holds `data` with the family counts.
 
 The report holds `split` with the case count of each split under the default seed.
-The first `run` stop, `cases-missing`, shows the same projection in `seed_summary.split`. It lists `families`, `holdout_capacity`, and `deficit`.
+The first `run` stop, `cases-missing`, shows the same projection in `seed_summary.split`. It lists `families`, `holdout_capacity`, `deficit`, and `shortfall`.
 The projection uses the kinds that the run scores by default, and it does not depend on the seed.
 
 Make the cases hard. A family that the seed already passes adds no signal.
@@ -484,6 +485,9 @@ A family breach still turns any verdict, including `promote-cheaper`, into `reje
 A `promote-cheaper` winner is advisory. Export it and report it, but do not apply it as you would a `promote` winner. The user decides whether to apply it.
 The winner choice uses the same rule as the gate. See [Incumbent](#incumbent).
 With a token field set, the reflection prompt also says: "Prefer fewer tokens when correctness is equal."
+It then names the two token counts of the feedback. A scored search feedback record adds `task_tokens`, the mean task tokens of its scored repeats.
+It also adds `incumbent_task_tokens`, the mean task tokens of the scored search outcomes of the incumbent on the same case.
+A field with an unknown count stays out. Without a token field, the feedback record has neither field.
 The search then also reflects on a train minibatch that the parent scores perfectly.
 A child can tie the minibatch score sum of its parent.
 Such a child enters the candidate pool only when its mean task tokens on that minibatch are known and lower.
@@ -617,6 +621,10 @@ The runner offers `@new-cli` only when all of these conditions hold:
 - Each first-party file of the fromargs include is at most 16 MiB.
 
 When one condition fails, the run has no `@new-cli` component.
+When the run offers `@new-cli`, the reflection prompt says that it fits a rule that code applies the same way to every input.
+The prompt says to try `@new-cli` early, and not to wait until a prose fix fails. A CLI can also cut the task tokens of each case.
+The proposer cannot read the fromargs source, so the prompt gives a summary of its API: `App`, `@app.default`, and `main = app.main`.
+It also says that a module that uses only the standard library is valid.
 When no editable target uses the no-group layer and `uv` or the layer population fails, the run drops the component and continues.
 The run records the reason as `new_cli_dropped` in the own-targets record.
 
@@ -688,6 +696,8 @@ The progress `p` is the search calls spent over the search allowance, clamped to
 The allowance is `estimate.metric_calls` plus the headroom train outcomes, less the overshoot margin of the last search iteration. It is the GEPA call budget.
 The margin counts each validation case once per repeat. The last iteration can pass the allowance by up to that margin.
 The budget is `floor(1 + 5 * 0.5 * (1 + cos(pi * p)))`. It falls from 6 edits at `p = 0` to 1 edit at `p = 1`.
+While the run offers `@new-cli` and the parent leaves it empty, the budget is at least 2.
+A new `@new-cli` target and the `SKILL.md` line that calls it are 2 edits, and the budget sentence says so.
 An edit is one block of consecutive changed lines, found with `difflib.SequenceMatcher` over the lines of one component.
 The count adds the blocks of all changed components.
 The run-status block gives the proposal number, the search calls spent of the allowance, and the whole percent (integer math, rounded down).
@@ -857,7 +867,11 @@ Export writes no empty patch file.
 `report.json` also holds `criteria_flags`, sorted by `criterion`, `reason`, `case_id`, and `arm`. Each entry has `criterion`, `reason`, and `case_id`.
 A `spread` entry also has `arm` and `levels`. It marks a criterion whose level spreads by 2 or more across repeats of one candidate on one arm and case.
 A `partly-met` entry also has `level_2` and `outcomes`. It marks a criterion with level 2 in at least half of the case outcomes, over all arms.
-`report.json` redacts the reasons of the outcome `criteria`.
+`report.json` redacts the reasons of the outcome `criteria`. Each outcome verdict also keeps its stored `met` flag.
+`report.json` also holds `zero_cases`: each judged case that scores 0 on every judged repeat of one candidate on one arm.
+An entry has `case_id`, `arm`, `candidate`, `repeats`, and `criteria`. Export sorts the list by `case_id`, `arm`, and `candidate`.
+`criteria` maps each unmet criterion `id` to one verdict per repeat with a level from 1 to 3: `level`, `met` (`false`), and the redacted `reason`.
+Read the `zero_cases` reasons to find a case that the skill never passes.
 Read `criteria_flags` before you draft the next cases. The criteria drafting reference that `SKILL.md` lists says how.
 When the winner files equal the seed files, export writes only `report.json`. Its result has `patches: []` and `reason: "winner-equals-baseline"`.
 Tell the user that the run found no change to apply.
@@ -990,6 +1004,8 @@ A `judge` or `hybrid` grader can also declare these fields:
   The capture runs in the OS sandbox of the task role, so `--sandbox-read` and `--sandbox-seconds` apply.
   On macOS the sandbox blocks all network access, loopback included, so a capture that starts a local server needs Linux.
 A judge answer that leaves out a criterion `id` or adds one scores 0 with status `evaluation-failed`.
+A judged outcome stores `criteria` next to its `score`. Each criterion `id` maps to the judge `level`, the one-line `reason`, and `met`.
+`met` is `true` only at level 4 (fully met). The run record keeps the reasons unredacted. The export redacts them.
 A contract that declares `pillars` stops with `contract-pillars-removed`. Move each pillar into case criteria.
 
 A command score below 1 records `gate_diagnostic` on the outcome: the last 1,000 characters of the redacted grader stderr.
@@ -1005,8 +1021,11 @@ When the markers alone would pass that limit, the later entries hold empty text 
 A judged outcome also adds `edit_hint`: the sorted editable files that share 4 words in a row with an unmet criterion text.
 With no match, `edit_hint` is `["unknown"]`. The hint is advice only, and every editable file stays editable.
 An outcome with a `gate_diagnostic` adds it as `gate_feedback`.
+The reflection prompt says that the gate is the independent check of the case.
+When a skill rule conflicts with `gate_feedback`, the prompt says to change the skill rule to match the gate.
 A validation case with more than one scored repeat gets the repeat mean and the masked `request`, with no `unmet` or `gate_feedback`.
 GEPA reflects on train cases only.
+A holdout outcome and its judge reasons never enter a feedback record. The search reuses only `search` outcomes on train and validation cases.
 
 The contract hash covers the whole contract, `capture` included. The case hash covers every case, criteria included.
 
@@ -1015,6 +1034,11 @@ A kind with the `judge`, `hybrid`, or `audit` grader reserves two invocations: o
 A kind spends one invocation when the judge does not run.
 This covers a failed hybrid gate, a failed capture, a failed activation, and an invalid audit report.
 Every judged kind (`judge`, `hybrid`, `audit`) freezes `judge_model` and the judge.
+The frozen judge holds `scoring_policy`, the label of the scoring rule.
+A run whose judged kinds use only the `audit` grader freezes `detection-f1*(0.5+0.25*severity-accuracy+0.25*actionability);clean-exact;v1`.
+A run with a `judge`, `hybrid`, or `journey` kind freezes `criteria-levels;must-below-3-zero;mean-level-minus-1-over-3;v1`.
+A run frozen with another label stops a resume and an export with `judge differs from the frozen record; create a new run`.
+A criteria run from before this label is a different cohort. Start a new run directory for it.
 
 
 ## Journeys

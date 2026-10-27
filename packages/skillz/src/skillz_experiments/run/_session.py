@@ -87,7 +87,7 @@ class Session:
         configuration = supplied if supplied is not None else (
             Configuration.split(adapter, model, judge_flag(self.record), options) if factory is None else None)
         self.sizing = options if configuration is None else configuration.sizing_options()
-        freeze_identities(self.record, self.seed, model, configuration, judged)
+        freeze_identities(self.record, self.seed, model, configuration, judged, self.contract)
         freeze_compatibility(self.record, self.cases, self.contract, configuration)
         self.budget = open_budget(self.record, self.cases, self.contract, self.sizing)
         self.faults = FaultLatch(self.lock)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -68,16 +69,22 @@ def infer(request: dict[str, object], mode: str, workspace: Path) -> dict[str, o
     if "result_json" in fields:
         answer, trace = inspection(request, workspace)
     elif "criteria" in fields:
-        level = 1 if mode == "low-score" else 4
+        level = 1 if mode in {"low-score", "case-reason"} else 4
         ids = cast(list[str], cast(dict[str, dict[str, object]], schema["properties"])["criteria"]["required"])
-        answer = {"criteria": {name: {"level": level, "reason": "fake judge"} for name in ids}}
+        reason = "fake judge"
+        if mode == "case-reason":
+            # Quote the case id of the judged request, so that a test can trace each reason back to its case.
+            found = re.search(r'"request": "request-([a-z0-9-]+)-end"', str(request["prompt"]))
+            reason = f"rationale<{found.group(1) if found else 'unknown'}>"
+        answer = {"criteria": {name: {"level": level, "reason": reason} for name in ids}}
     elif "matches" in fields:
         assert not list((workspace / ".agents/skills").iterdir())
         answer = {"matches": []}
     else:
         payload = cast(dict[str, dict[str, str]], json.loads(str(request["prompt"]).rstrip("\n").rsplit("\n", 1)[-1]))
-        answer = {key: payload["candidate"][key] + "\n# OPTIMIZED\n" for key in fields}
-    if mode in {"empty-result", "whitespace-result", "invalid-result"}:
+        candidate = payload["candidate"]
+        answer = {key: candidate[key] + "\n# OPTIMIZED\n" if key in candidate else None for key in fields}
+    if mode in {"empty-result", "whitespace-result", "invalid-result"} and "result_json" in fields:
         answer["result_json"] = {"empty-result": "", "whitespace-result": " \n", "invalid-result": "not-json"}[mode]
     if mode == "wrong-schema":
         answer = {"unexpected": "value"}
