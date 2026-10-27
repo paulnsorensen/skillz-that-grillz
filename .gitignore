@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .venv/
+# Hypothesis example database: local runs only. With CI set, Hypothesis loads its built-in `ci` profile, which has no database.
+.hypothesis/
 
 # OS / editor
 .DS_Store
