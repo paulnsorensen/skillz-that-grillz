@@ -137,7 +137,7 @@ def test_every_role_and_every_preflight_call_keeps_the_sandbox_floor(tmp_path: P
     finally:
         session.close()
     logged = calls(executable)
-    assert len(logged) == 5
+    assert len(logged) == 8
     for call in logged:
         assert_floor(call)
 
@@ -213,7 +213,7 @@ def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and
     finally:
         session.close()
     logged = calls(executable)
-    assert len(logged) == 1 and "--restricted" not in cast(list[str], logged[0]["argv"])
+    assert len(logged) == 2 and not any("--restricted" in cast(list[str], call["argv"]) for call in logged)
     assert not any("--dangerously-skip-permissions" in cast(list[str], call["argv"]) for call in logged)
 
 
@@ -338,7 +338,7 @@ def test_a_failed_preflight_leaves_no_partial_pass_in_a_second_attempt(tmp_path:
                 _ = session.preflight()
     finally:
         session.close()
-    assert len(calls(executable)) == 2
+    assert len(calls(executable)) == 4
 
 
 def test_preflight_budget_exhaustion_stops_before_the_live_call(tmp_path: Path, probes: list[list[str]]) -> None:
@@ -585,8 +585,8 @@ def test_a_tampered_record_never_grants_a_reuse_pass_and_runs_the_live_probe_aga
         evidence = session.preflight(recorded)
     finally:
         session.close()
-    assert len(calls(executable)) == logged + len(session.transports)
-    assert cast(int, evidence["live_calls"]) == len(session.transports)
+    assert len(calls(executable)) == logged + 2 * len(session.transports)
+    assert cast(int, evidence["live_calls"]) == 2 * len(session.transports)
 
 
 def test_reuse_with_a_failing_sandbox_probe_stops_and_makes_no_live_call(

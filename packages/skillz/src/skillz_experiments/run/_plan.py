@@ -25,7 +25,8 @@ from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, search_allowance
 
-PREFLIGHT_CALLS = 3
+PREFLIGHT_CALLS = 6
+"""Three roles, each with two preflight calls: the Bash sandbox check and the Read file-access check (gh-176)."""
 
 
 SEARCH_CASE_FACTOR = 4

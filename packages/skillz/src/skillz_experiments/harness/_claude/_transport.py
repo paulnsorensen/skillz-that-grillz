@@ -31,6 +31,7 @@ from skillz_experiments.harness._check import (
 from skillz_experiments.harness._claude._constants import (
     AUTH_FAILED,
     INSTALL_BUBBLEWRAP,
+    LINK,
     LOGIN_HINT,
     NOTICE_CODES,
     PROBE_PREFIX,
@@ -83,7 +84,7 @@ TOOLS = "Bash,Read,Skill"
 NETWORK_PROBE = "loopback-dns-nonloopback-v3"
 
 
-READ_PROBE = "read-tool-outside-workspace-v1"
+READ_PROBE = "read-tool-outside-workspace-v4"
 
 
 SANDBOX_STDERR_LIMIT = 100_000
@@ -379,10 +380,10 @@ class ClaudeCode:
 
     def _sealed(self, root: Path) -> tuple[Path, Path, str]:
         workspace = make_workspace(root / "workspace")
-        sealed = root / "sealed"
+        sealed = root / "outside.txt"
         token = secrets.token_hex(16)
         _ = sealed.write_text(token)
-        (workspace / "escape").symlink_to(sealed)
+        (workspace / LINK).symlink_to(sealed)
         return workspace, sealed, token
 
     def _check_memory(self) -> None:
