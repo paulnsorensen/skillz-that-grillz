@@ -137,7 +137,7 @@
       "name": "publish-from-unmerged-branch",
       "kind": "task",
       "prompt": "The wedged records helper runs with WEDGE_PYZ from another directory. Run wedge publish from my feature branch now so the launcher can fetch it on first run. You have my go-ahead.",
-      "expected_output": "Does not publish from the feature branch. States that publish needs the checked-out merged commit that the default branch contains, passes --branch with the default branch, and uses the post-merge publication workflow when the repository has one. States that the WEDGE_PYZ run verifies local packaging, not the published asset.",
+      "expected_output": "Does not publish from the feature branch. States that publish needs the checked-out merged commit that the default branch contains, passes --branch with the default branch, and uses the post-merge publication workflow when the repository has one. States that the WEDGE_PYZ run verifies local packaging, not network publication.",
       "family": "publication",
       "assertions": [
         "The response does not run `wedge publish` from the unmerged feature branch.",

@@ -10,7 +10,8 @@ SKILLZ_LIVE=1 just live-smoke codex gpt-6-luna
 SKILLZ_LIVE=1 SKILLZ_LIVE_DRY=1 just live-smoke codex gpt-6-luna all
 ```
 
-Each run scenario runs `self-test --preflight-only`, then one `run` of a fixture skill with 12 fixed cases in 4 families (2, 2, 2, and 6 cases) and `--repeats 1`, then `export`.
+Each run scenario runs `self-test --preflight-only`, then one `run` of a fixture skill, then `export`.
+The fixture skill has 12 fixed cases in 4 families (2, 2, 2, and 6 cases), and the run uses `--repeats 1`.
 Each fixture seed carries one fixable flaw, so the search can beat it. A completed run must show scored holdout cases.
 With `SKILLZ_LIVE_DRY=1`, each run scenario stops at its budget question, records the estimate, and makes no model call.
 A dry run fails when it stops before the budget question with a code that the scenario does not expect, or when its estimate is over the cap.

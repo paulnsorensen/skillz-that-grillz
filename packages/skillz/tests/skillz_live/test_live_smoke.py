@@ -656,13 +656,14 @@ def test_every_scenario_with_a_record_check_has_its_own_pass_rule() -> None:
 @pytest.mark.parametrize("name", list(SCENARIOS))
 def test_each_scenario_splits_its_draft_and_its_cap_equals_the_dry_estimate(
         name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """Run the dry path offline. A stub host report and a stub `codex` path stand in for the host checks only."""
+    """Run the dry path offline. A stub host report and stub `claude` and `codex` paths stand in for the host checks only."""
     def ready(selections: list[tuple[str, str | None]]) -> dict[str, object]:
         return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
     found = shutil.which
+    stubs = {"claude": "/usr/bin/claude", "codex": "/usr/bin/codex"}
 
     def which(command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None) -> str | None:
-        return "/usr/bin/codex" if command == "codex" else found(command, mode, path)
+        return stubs.get(command) or found(command, mode, path)
     monkeypatch.setattr(run_module, "host_report", ready)
     monkeypatch.setattr(shutil, "which", which)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))

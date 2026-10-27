@@ -225,6 +225,13 @@ def test_holdout_reaches_the_minimum_when_the_draft_allows_it(tmp_path: Path, si
         assert split == split_cases(cases, seed)
 
 
+@pytest.mark.parametrize("seed", range(60))
+def test_the_fallback_gives_validation_a_family_of_two_cases_when_one_fits(tmp_path: Path, seed: int) -> None:
+    """A 1-case validation gives 1 paired delta, and a promotion needs 2. Here a 2-case family fits validation."""
+    counts = counted(split_cases(load_draft(write_draft(tmp_path, sized([1, 1, 2, 2, 6]))), seed))
+    assert counts["validation"][0] >= 2, (seed, counts)
+
+
 def feasible(sizes: tuple[int, ...]) -> bool:
     """Return whether any assignment of whole families meets every split minimum, by brute force."""
     for assignment in itertools.product(SPLITS, repeat=len(sizes)):
@@ -280,6 +287,17 @@ def test_a_suite_too_small_for_both_floors_names_what_each_split_needs(
     assert data["holdout_minimum"] == HOLDOUT_MINIMUM and data["shortfall"] == shortfall
 
 
+@pytest.mark.ac("gh-300:AC-2")
+def test_the_fix_for_too_few_families_names_the_missing_family_count() -> None:
+    three = too_few({"a": 4, "b": 4, "c": 4})
+    assert three is not None and three.details is not None
+    assert cast(str, three.details["fix"]).startswith("add scored cases in 1 more family, so that train holds 4")
+    empty = too_few({})
+    assert empty is not None and empty.details is not None
+    assert cast(str, empty.details["fix"]).startswith("add scored cases in 4 more families")
+    assert "smallest family" not in str(empty) and "(none" not in str(empty), str(empty)
+
+
 def mixed(task_sizes: list[int], journey_sizes: list[int]) -> list[dict[str, object]]:
     cases = sized(task_sizes)
     for family, size in enumerate(journey_sizes):
@@ -326,6 +344,29 @@ def test_approval_question_shows_the_scored_case_and_family_totals_of_each_split
     totals = [line for line in lines if line.startswith("scored totals: ")]
     assert totals == ["scored totals: train 4 cases from 4 families, validation 1 case from 1 family, "
                       + "holdout 6 cases from 1 family"]
+
+
+def totals_of(split: list[IntakeCase], seed: int) -> dict[str, str]:
+    """Return the totals text of each split from the `scored totals` line of the approval question."""
+    line = next(line for line in approval_question(split, seed).splitlines() if line.startswith("scored totals: "))
+    return dict(cast(tuple[str, str], tuple(part.split(" ", 1))) for part in line.removeprefix("scored totals: ").split(", "))
+
+
+@pytest.mark.ac("gh-300:AC-6")
+@pytest.mark.parametrize("seed", [0, 3, 20261006])
+def test_the_totals_of_a_task_run_name_the_journey_cases_that_do_not_size_the_split(tmp_path: Path, seed: int) -> None:
+    """Each journey family has 2 cases. A task run scores them with `also`, and a journey run scores only them."""
+    cases = load_draft(write_draft(tmp_path, mixed([1, 1, 1, 1, 1, 6], [2] * 5)))
+    split = split_cases(cases, seed, "task", [], ["journey"])
+    homes = [case.split for case in split if case.journey is not None]
+    totals = totals_of(split, seed)
+    for name in SPLITS:
+        tasks = sum(case.split == name and case.journey is None for case in split)
+        journey = f" ({homes.count(name)} journey)" if homes.count(name) else ""
+        assert totals[name].startswith(f"{tasks + homes.count(name)} ") and journey in totals[name], totals
+        assert ("journey)" in totals[name]) == bool(journey), totals
+    journeys = split_cases(cases, seed, None, ["journey"])
+    assert all("journey" not in text for text in totals_of(journeys, seed).values()), totals_of(journeys, seed)
 
 
 def test_grading_kind_is_covered_by_the_hash_and_written_per_case(tmp_path: Path) -> None:

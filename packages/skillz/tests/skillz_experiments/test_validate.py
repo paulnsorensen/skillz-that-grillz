@@ -60,6 +60,21 @@ def test_validate_reports_two_task_families_as_cases_too_few(
     assert found[0]["severity"] == "error" and found[0]["fix"]
 
 
+@pytest.mark.ac("gh-300:AC-2")
+def test_validate_reports_a_split_that_misses_the_holdout_minimum_once(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """Five families pass the family count, so the split runs and the post-split check reports the shortfall."""
+    target = make_target(tmp_path)
+    _entries(target, {family: 2 for family in "abcde"})
+    code, report = _report(capsys, "--target", str(target))
+    findings = cast(list[dict[str, object]], report["findings"])
+    found = [item for item in findings if item["code"] == "cases-too-few"]
+    assert code == 1 and report["ok"] is False and len(found) == 1, findings
+    data = cast(dict[str, object], found[0]["data"])
+    assert data["families"] == {family: 2 for family in "abcde"} and data["deficit"] == 2, data
+    assert str(found[0]["message"]).startswith("the holdout can hold 4 scored cases; the minimum is 6"), found[0]
+
+
 @pytest.mark.ac("gh-370:AC-3")
 def test_run_with_a_two_family_draft_prints_the_cases_too_few_code(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
@@ -105,7 +120,8 @@ def test_an_empty_holdout_asks_only_for_a_new_family() -> None:
 
 
 def test_the_projection_leaves_the_case_hash_of_an_existing_draft_unchanged(tmp_path: Path) -> None:
-    # gh-300: five families of 2 cannot give train 4 cases, so the draft has six. main splits this draft to the same hash.
+    # gh-300: five families of 2 cannot give train 4 cases, so the draft has six.
+    # The seeded split meets every minimum here, so the fallback does not run and the hash stays the same.
     cases = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"Do thing {family}.{index}",
               "files": {"input.txt": "hello\n"}, "expected": {"answer": f"{family}"}, "source": "skill"}
              for family in range(6) for index in range(2)]
