@@ -68,7 +68,7 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
                 if item.get("arm") == "search" and item.get("split") in ("train", "validation"))
     percent = 100 * spent // planned
     edit_budget = math.floor(1 + 2.5 * (1 + math.cos(math.pi * spent / planned)))
-    assert (headroom["outcomes"], spent, planned, percent, edit_budget) == (2, 6, 18, 33, 4)
+    assert (headroom["outcomes"], spent, planned, percent, edit_budget) == (4, 8, 28, 28, 5)
     assert f"Make at most {edit_budget} edits across all components." in first_prompt
     assert f"Run status: this is proposal 1. Search calls spent: {spent} of {planned} ({percent}%)." in first_prompt
     assert edit_budget < 6
@@ -192,4 +192,4 @@ def test_edit_budget_is_advisory_and_counts_oversized_proposals(tmp_path: Path) 
     requests = [cast(dict[str, object], item["request"]) for item in events
                 if item["role"] == "reflection"]
     assert len(requests) == 1
-    assert "Make at most 4 edits across all components." in cast(str, requests[0]["prompt"])
+    assert "Make at most 5 edits across all components." in cast(str, requests[0]["prompt"])

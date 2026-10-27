@@ -596,7 +596,7 @@ def draft_items(**changes: object) -> list[dict[str, object]]:
     base: dict[str, object] = {"id": "a", "family": "fa", "kind": "journey", "request": "r", "source": "skill",
                                "files": {"f.txt": "x"}, "expected": {"must": ["ref"], "criteria": CRITERIA},
                                "brief": "wants plan"}
-    others = [base | {"id": name, "family": "f" + name} for name in ("b", "c")]
+    others = [base | {"id": name, "family": "f" + name} for name in ("b", "c", "d")]
     return [base | changes, *others]
 
 

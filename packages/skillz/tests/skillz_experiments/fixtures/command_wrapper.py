@@ -82,8 +82,9 @@ def infer(request: dict[str, object], mode: str, workspace: Path) -> dict[str, o
         answer = {"matches": []}
     else:
         payload = cast(dict[str, dict[str, str]], json.loads(str(request["prompt"]).rstrip("\n").rsplit("\n", 1)[-1]))
-        answer = {key: payload["candidate"][key] + "\n# OPTIMIZED\n" for key in fields}
-    if mode in {"empty-result", "whitespace-result", "invalid-result"}:
+        candidate = payload["candidate"]
+        answer = {key: candidate[key] + "\n# OPTIMIZED\n" if key in candidate else None for key in fields}
+    if mode in {"empty-result", "whitespace-result", "invalid-result"} and "result_json" in fields:
         answer["result_json"] = {"empty-result": "", "whitespace-result": " \n", "invalid-result": "not-json"}[mode]
     if mode == "wrong-schema":
         answer = {"unexpected": "value"}

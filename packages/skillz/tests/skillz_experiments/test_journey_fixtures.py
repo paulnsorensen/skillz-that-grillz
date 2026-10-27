@@ -75,9 +75,9 @@ def stage(name: str, destination: Path) -> Path:
 
 
 def frozen_case(target: Path, contract: Contract, tmp_path: Path) -> Case:
-    # Intake wants three task families; the fixture's single case is copied into two more families.
+    # Intake wants four scored families; the fixture's single case is copied into three more families.
     draft = [journey_seed(target)]
-    copies = [draft[0] | {"id": f"{draft[0]['id']}-{n}", "family": f"{draft[0]['family']}-{n}"} for n in (1, 2)]
+    copies = [draft[0] | {"id": f"{draft[0]['id']}-{n}", "family": f"{draft[0]['family']}-{n}"} for n in (1, 2, 3)]
     drafted = tmp_path / DRAFT_NAME
     _ = drafted.write_text(json.dumps([*draft, *copies]), encoding="utf-8")
     cases = split_cases(load_draft(drafted), 7, None, ["journey"])
@@ -267,7 +267,7 @@ def journey_seed(target: Path) -> dict[str, object]:
     return seeded[0]
 
 
-def write_journeys(target: Path, out: Path, max_turns: int, families: int = 5) -> None:
+def write_journeys(target: Path, out: Path, max_turns: int, families: int = 6) -> None:
     brief = journey_seed(target)
     cases = [brief | {"id": f"j{family}-{index}", "family": f"f{family}", "max_turns": max_turns,
                       "request": f"/culture request-{family}-{index}"}
@@ -492,7 +492,7 @@ def test_a_mold_journey_run_launches_the_task_with_the_surface_and_stages_the_co
     target, out = stage("mold-journey", tmp_path / "target"), tmp_path / "run"
     brief = journey_seed(target)
     drafted = [brief | {"id": f"m{family}-{index}", "family": f"f{family}", "request": f"/mold shape {family}-{index}"}
-               for family in range(5) for index in range(2)]
+               for family in range(6) for index in range(2)]
     drafted[0] |= {"id": brief["id"], "request": brief["request"]}
     out.mkdir(mode=0o700)
     _ = (out / DRAFT_NAME).write_text(json.dumps(drafted), encoding="utf-8")

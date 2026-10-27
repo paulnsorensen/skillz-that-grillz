@@ -50,7 +50,7 @@ def _judged_run(base: Path, judge_model: str, make_target: Callable[..., Path],
         out.mkdir(mode=0o700)
         cases = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-t{family}-{index}-end",
                   "files": {"fixture.md": "hello\n"}, "expected": expected, "source": "skill"}
-                 for family in range(5) for index in range(2)]
+                 for family in range(6) for index in range(2)]
         _ = (out / DRAFT_NAME).write_text(json.dumps(cases), encoding="utf-8")
     result = approved_run(target, out, model="task-model", configuration=Configuration.load(config, "task-model"))
     return out, read(out / "run.json"), result

@@ -130,9 +130,10 @@ def make_scenario(base: Path, *, helper: bool = False) -> Scenario:
     evals.mkdir()
     _ = (evals / "autoimprove.json").write_text(json.dumps(contract))
     draft: list[dict[str, object]] = []
-    for index in range(10):
+    # gh-300: f4 and f9 hold two cases each, so train gets 4 cases and validation gets 2 at seed 1 and the default seed.
+    for index, family in enumerate([*range(10), 4, 9]):
         source = f"case-{index}\n"
-        draft.append({"id": f"t{index}", "family": f"f{index}", "kind": "task",
+        draft.append({"id": f"t{index}", "family": f"f{family}", "kind": "task",
                       "request": "Transform fixture.md according to this skill.",
                       "files": {"fixture.md": source}, "expected": {"text": source.upper(), "criteria": CRITERIA},
                       "source": "skill"})
