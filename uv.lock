@@ -22,6 +22,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
+    { name = "hypothesis" },
     { name = "pytest" },
     { name = "pytest-xdist" },
 ]
@@ -32,6 +33,7 @@ requires-dist = [{ name = "fromargs", editable = "packages/fromargs" }]
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = "==1.40.2" },
+    { name = "hypothesis", specifier = ">=6.170.12" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-xdist", specifier = ">=3" },
 ]
@@ -731,6 +733,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
+    { name = "hypothesis" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "typing-extensions" },
@@ -745,6 +748,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = "==1.40.2" },
+    { name = "hypothesis", specifier = ">=6.170.12" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-xdist", specifier = ">=3" },
     { name = "typing-extensions", specifier = "==4.16.0" },
