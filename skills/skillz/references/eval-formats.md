@@ -169,7 +169,9 @@ The first two families in that order go to train and validation.
 If the rest hold fewer than six scored cases, the split orders the families smallest first instead.
 The next family always goes to the holdout split. More families join it until it holds six cases.
 The remaining families alternate between validation and train.
-If this split misses a minimum, the smallest family goes to validation.
+If this split misses a minimum, validation takes the smallest family of at least two scored cases that leaves the other minimums met.
+A validation split of one case gives one paired delta, and a promotion needs two.
+If no such family exists, the smallest family goes to validation.
 Train then takes the smallest set of the other families that meets the train minimums. The holdout takes the rest.
 
 The promotion gate needs the paired delta to exceed twice its standard error over three repeats.
