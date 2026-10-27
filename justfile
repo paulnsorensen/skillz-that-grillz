@@ -47,7 +47,7 @@ mutate-fromargs:
 
 # Opt-in live smoke runs of the experiment stack and session analytics (not part of build/ci). They need SKILLZ_LIVE=1.
 # HARNESS is claude or codex. SCENARIO is basic (default), all, or a comma list; see packages/skillz/tests/skillz_live.
-# SKILLZ_LIVE_DRY=1 stops each run at its budget question and makes no model call. The basic run uses at most 136 calls.
+# SKILLZ_LIVE_DRY=1 stops each run at its budget question and makes no model call. The basic run uses at most 139 calls.
 # Each attempt appends one JSON line to .live-smoke/runs.jsonl (gitignored).
 # fromargs-benefit and changelog-proof run MODEL as the task role.
 # SKILLZ_LIVE_STRONG_MODEL sets the model that drafts, reflects, and judges.
