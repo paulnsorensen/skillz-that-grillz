@@ -18,6 +18,15 @@ NOT_TEXT = st.one_of(st.integers(), st.booleans(), st.floats(allow_nan=False), s
                      st.dictionaries(st.text(max_size=3), st.integers(), max_size=2))
 
 
+def _at_the_limit(pad: str, size: int, end: str) -> str:
+    return pad + "h" * size + end
+
+
+# Plain text seldom reaches the limit, so also draw text whose stripped length is one under, at, or one over it.
+SAID = st.text() | st.builds(_at_the_limit, st.sampled_from(["", " ", "\n\t "]),
+                             st.integers(MAX_HYPOTHESIS - 1, MAX_HYPOTHESIS + 1), st.sampled_from(["", " ", "\r\n"]))
+
+
 @st.composite
 def _answers(draw: st.DrawFn) -> tuple[list[str], dict[str, str], dict[str, str]]:
     components = draw(COMPONENTS)
@@ -71,7 +80,7 @@ def test_an_answer_with_a_value_that_is_not_text_is_refused(
         _ = accept_proposal(answer | {name: data.draw(NOT_TEXT)}, components, candidate)
 
 
-@given(_answers(), st.text(), st.one_of(st.none(), st.text(), NOT_TEXT))
+@given(_answers(), SAID, st.one_of(st.none(), st.text(), NOT_TEXT))
 def test_a_text_hypothesis_is_kept_stripped_unless_blank_or_too_long_and_notes_never_change_the_result(
         case: tuple[list[str], dict[str, str], dict[str, str]], said: str, notes: object) -> None:
     components, answer, candidate = case
