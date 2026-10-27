@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 from collections.abc import Callable, Mapping
@@ -114,8 +115,9 @@ class Role:
     options: ClaudeOptions = ClaudeOptions()
 
     def fingerprint(self) -> str:
+        # Unlike Path.is_file, os.path.isfile is False for a name that is too long.
         files = {part: (str(Path(part).resolve()), hashlib.sha256(Path(part).read_bytes()).hexdigest())
-                 for part in command_paths(self.command) if Path(part).is_file()}
+                 for part in command_paths(self.command) if os.path.isfile(part)}
         options = self.options.data()
         return digest({"adapter": self.adapter, "model": self.model, "command": self.command,
                        "identity": self.identity, "files": files}
