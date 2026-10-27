@@ -36,6 +36,17 @@ def test_validate_accepts_the_shipped_skillz_skill_with_a_full_holdout(capsys: p
     assert split["holdout"] >= 6 and split["seed"] == SEED
 
 
+@pytest.mark.ac("gh-300:AC-4")
+def test_validate_gives_the_shipped_skillz_task_split_a_full_train_and_holdout(
+        capsys: pytest.CaptureFixture[str]) -> None:
+    code, report = _report(capsys, "--target", str(REPO / "skills/skillz"))
+    split, kinds = cast(dict[str, int], report["split"]), cast(dict[str, dict[str, int]], report["cases"])["kinds"]
+    assert code == 0 and report["ok"] is True
+    # The task kind drives the split: the three splits hold every task case.
+    assert split["train"] + split["validation"] + split["holdout"] == kinds["task"]
+    assert split["holdout"] >= 6 and split["train"] >= 4 and split["train_minimum"] == 4
+
+
 @pytest.mark.ac("gh-370:AC-2")
 def test_validate_reports_two_task_families_as_cases_too_few(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
@@ -47,6 +58,21 @@ def test_validate_reports_two_task_families_as_cases_too_few(
     assert code == 1 and report["ok"] is False and found
     assert cast(dict[str, object], found[0]["data"])["families"] == {"a": 2, "b": 2}
     assert found[0]["severity"] == "error" and found[0]["fix"]
+
+
+@pytest.mark.ac("gh-300:AC-2")
+def test_validate_reports_a_split_that_misses_the_holdout_minimum_once(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """Five families pass the family count, so the split runs and the post-split check reports the shortfall."""
+    target = make_target(tmp_path)
+    _entries(target, {family: 2 for family in "abcde"})
+    code, report = _report(capsys, "--target", str(target))
+    findings = cast(list[dict[str, object]], report["findings"])
+    found = [item for item in findings if item["code"] == "cases-too-few"]
+    assert code == 1 and report["ok"] is False and len(found) == 1, findings
+    data = cast(dict[str, object], found[0]["data"])
+    assert data["families"] == {family: 2 for family in "abcde"} and data["deficit"] == 2, data
+    assert str(found[0]["message"]).startswith("the holdout can hold 4 scored cases; the minimum is 6"), found[0]
 
 
 @pytest.mark.ac("gh-370:AC-3")
@@ -66,27 +92,43 @@ def test_run_with_a_two_family_draft_prints_the_cases_too_few_code(
 
 @pytest.mark.ac("gh-370:AC-4")
 def test_the_holdout_shortfall_names_the_smallest_families_the_capacity_the_deficit_and_a_fix() -> None:
-    error = too_few({"a": 1, "b": 2, "c": 2, "d": 2})
+    # gh-300: train now takes b:2 and c:2 before the holdout fills, so the shortfall needs a fifth family.
+    error = too_few({"a": 1, "b": 2, "c": 2, "d": 2, "e": 2})
     assert isinstance(error, CodedError) and error.code == "cases-too-few"
-    assert "(a:1, b:2)" in str(error) and "rest hold 4" in str(error) and "deficit is 2" in str(error)
-    assert "add 2 scored cases to families other than a and b, or one new family of at least 2" in str(error)
+    assert "smallest family (a:1)" in str(error) and "train takes b:2, c:2" in str(error)
+    assert "rest hold 4" in str(error) and "deficit is 2" in str(error)
+    assert "add 2 scored cases to families other than a and b and c, or one new family of at least 2" in str(error)
     assert error.details is not None
     details = dict(error.details)
     fix = cast(str, details.pop("fix"))
-    assert details == {"families": {"a": 1, "b": 2, "c": 2, "d": 2}, "families_minimum": 3,
-                       "holdout_minimum": 6, "holdout_capacity": 4, "deficit": 2}
+    assert details == {"families": {"a": 1, "b": 2, "c": 2, "d": 2, "e": 2}, "families_minimum": 4,
+                       "holdout_minimum": 6, "train_minimum": 4, "train_families_minimum": 2,
+                       "holdout_capacity": 4, "deficit": 2,
+                       "shortfall": {"train": {"cases": 0, "families": 0}, "validation": {"families": 0},
+                                     "holdout": {"cases": 2}}}
     assert fix in str(error)
-    assert too_few({"a": 1, "b": 2, "c": 3, "d": 3}) is None
+    assert too_few({"a": 1, "b": 2, "c": 3, "d": 3, "e": 2}) is None
+
+
+@pytest.mark.ac("gh-300:AC-2")
+def test_an_empty_holdout_asks_only_for_a_new_family() -> None:
+    # Train takes b, c, and d, so no family is left to grow for the holdout.
+    error = too_few({"a": 1, "b": 1, "c": 1, "d": 2})
+    assert isinstance(error, CodedError) and error.details is not None
+    assert error.details["fix"] == "add one new family of at least 6 scored cases"
+    assert "train takes b:1, c:1, d:2" in str(error) and "families other than" not in str(error)
 
 
 def test_the_projection_leaves_the_case_hash_of_an_existing_draft_unchanged(tmp_path: Path) -> None:
+    # gh-300: five families of 2 cannot give train 4 cases, so the draft has six.
+    # The seeded split meets every minimum here, so the fallback does not run and the hash stays the same.
     cases = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"Do thing {family}.{index}",
               "files": {"input.txt": "hello\n"}, "expected": {"answer": f"{family}"}, "source": "skill"}
-             for family in range(5) for index in range(2)]
+             for family in range(6) for index in range(2)]
     path = tmp_path / "cases.draft.json"
     _ = path.write_text(json.dumps(cases))
     assert case_hash(split_cases(load_draft(path), SEED), SEED) == (
-        "4b117ff9c6d39ffeca565a72a0d3e5e4feffd710da07dce720f770706303663f")
+        "86e91732a1dde5a2f25818953c4225416a1adca704b4fefb7629eb8b0ab11e80")
 
 
 @pytest.mark.ac("gh-370:AC-9")
@@ -96,8 +138,10 @@ def test_the_cases_missing_stop_carries_a_split_projection(tmp_path: Path, make_
     with pytest.raises(Stop) as caught:
         _ = run(target, tmp_path / "run", "local-test", live=True)
     summary = cast(dict[str, object], caught.value.data["seed_summary"])
-    assert summary["split"] == {"families": {"a": 1, "b": 2, "c": 4}, "families_minimum": 3, "holdout_minimum": 6,
-                                "holdout_capacity": 4, "deficit": 2}
+    assert summary["split"] == {"families": {"a": 1, "b": 2, "c": 4}, "families_minimum": 4, "holdout_minimum": 6,
+                                "train_minimum": 4, "train_families_minimum": 2, "holdout_capacity": 0, "deficit": 6,
+                                "shortfall": {"train": {"cases": 0, "families": 0}, "validation": {"families": 0},
+                                              "holdout": {"cases": 6}}}
 
 
 @pytest.mark.ac("gh-370:AC-9")

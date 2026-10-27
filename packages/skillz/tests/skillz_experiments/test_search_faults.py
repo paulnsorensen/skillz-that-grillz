@@ -165,7 +165,7 @@ def test_a_kept_seed_with_scored_evidence_is_still_an_inconclusive_complete_run(
 def test_a_candidate_with_no_scored_validation_outcome_is_not_selected_over_the_seed(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
-    out, state, launch = _launch(tmp_path, make_target, write_draft, approvals, families=5)
+    out, state, launch = _launch(tmp_path, make_target, write_draft, approvals, families=6)
     # Each validation case runs twice, so the failed runs of one candidate make a majority. Lift the fault rule: this
     # test checks the selection, and other tests check the fault rule.
     monkeypatch.setattr(_outcomes, "FAULT_MIN_FINISHED", 10**6)

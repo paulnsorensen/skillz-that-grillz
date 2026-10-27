@@ -141,7 +141,7 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
     assert code == 1 and cast(dict[str, object], missing["facts"])["name"] == "echo-skill"
     draft = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-{family}-{index}",
               "files": {"fixture.md": "hello\n"}, "expected": EXPECTED, "source": "skill"}
-             for family in range(5) for index in range(2)]
+             for family in range(6) for index in range(2)]
     _ = Path(cast(str, missing["draft"])).write_text(json.dumps(draft))
     _, cases = call()
     case_hash = cast(str, cases["case_hash"])
@@ -176,7 +176,7 @@ def test_missing_builtin_harness_stops_with_a_code_before_any_approval(
     _ = capsys.readouterr()
     draft = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-{family}-{index}",
               "files": {"fixture.md": "hello\n"}, "expected": EXPECTED, "source": "skill"}
-             for family in range(5) for index in range(2)]
+             for family in range(6) for index in range(2)]
     _ = (out / "cases.draft.json").write_text(json.dumps(draft))
     assert main(args) == 1
     assert json.loads(capsys.readouterr().err)["code"] == "harness-missing"

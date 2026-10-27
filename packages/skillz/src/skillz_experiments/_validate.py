@@ -15,7 +15,8 @@ from skillz_experiments._cases import CodedError, journey_of, mapping, text_map
 from skillz_experiments._contract import LOCATION, Contract, load_contract, parse
 from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._intake import (
-    HOLDOUT_MINIMUM, MINIMUM_FAMILIES, DraftCase, check_helper_input, intake_contract, load_draft, split_cases, too_few,
+    HOLDOUT_MINIMUM, MINIMUM_FAMILIES, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase, check_helper_input,
+    intake_contract, load_draft, split_cases, too_few,
 )
 from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, seed_cases, seed_family
 from skillz_experiments.run import DEFAULT_SEED, resolve_statistics, scored_kinds
@@ -140,7 +141,8 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
 
     split_seed = DEFAULT_SEED if seed is None else seed
     split: dict[str, object] = {"seed": split_seed, "train": None, "validation": None, "holdout": None,
-                                "holdout_minimum": HOLDOUT_MINIMUM, "families_minimum": MINIMUM_FAMILIES}
+                                "holdout_minimum": HOLDOUT_MINIMUM, "families_minimum": MINIMUM_FAMILIES,
+                                "train_minimum": TRAIN_MINIMUM, "train_families_minimum": TRAIN_FAMILIES_MINIMUM}
     if contract is not None and chosen is not None and drafted is not None:
         names = set(contract.journey_kinds())
         plain = [kind for kind in chosen if kind not in names]

@@ -22,9 +22,13 @@ from skillz_experiments._records import write
 DRAFT_NAME = "cases.draft.json"
 PENDING_KINDS = ("trigger", "near-miss")
 HOLDOUT_MINIMUM = 6
+TRAIN_MINIMUM = 4
+TRAIN_FAMILIES_MINIMUM = 2
 REQUEST_PREVIEW = 80
 DRAFT_LIMIT = 2_000_000
-MINIMUM_FAMILIES = 3
+MINIMUM_FAMILIES = TRAIN_FAMILIES_MINIMUM + 2
+"""Train needs two families, and validation and holdout need one family each."""
+SPLITS: tuple[Split, ...] = ("train", "validation", "holdout")
 TASK_RUBRIC = ("Grade the answer on each criterion. `reference` holds the expected output and the assertions that the "
                "criteria come from. Ignore differences in JSON shape, quoting, or whitespace.")
 DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
@@ -137,39 +141,144 @@ def check_criteria(contract: Contract, cases: Sequence[IntakeCase]) -> None:
             _ = case_criteria(case.expected, case.identifier)
 
 
+def _train_set(families: Sequence[str], size: Mapping[str, int]) -> tuple[str, ...] | None:
+    """Return the set of `families` with the fewest scored cases that meets the train minimums, else None.
+
+    The search keeps the first set that it finds for each case total and family count, so a tie follows the
+    order of `families`.
+    """
+    found: dict[tuple[int, int], tuple[str, ...]] = {(0, 0): ()}
+    for family in families:
+        for (total, count), chosen in list(found.items()):
+            if count >= TRAIN_FAMILIES_MINIMUM and total >= TRAIN_MINIMUM:
+                continue
+            _ = found.setdefault((total + size[family], min(count + 1, TRAIN_FAMILIES_MINIMUM)), (*chosen, family))
+    valid = [chosen for (total, count), chosen in found.items()
+             if count >= TRAIN_FAMILIES_MINIMUM and total >= TRAIN_MINIMUM]
+    return min(valid, key=lambda chosen: sum(size[family] for family in chosen), default=None)
+
+
+def _placement(order: Sequence[str], size: Mapping[str, int]) -> tuple[str | None, tuple[str, ...] | None]:
+    """Return the validation family and the train families that leave the largest holdout.
+
+    Validation takes the first smallest family in `order`. Train takes the smallest set of the other families
+    that meets the train minimums, or None when no such set exists.
+    """
+    if not order:
+        return None, None
+    validation = min(order, key=lambda family: size[family])
+    return validation, _train_set([family for family in order if family != validation], size)
+
+
+def _fallback(order: Sequence[str], size: Mapping[str, int]) -> dict[str, Split]:
+    """Return the fallback assignment when a split exists that meets every split minimum.
+
+    Validation takes the smallest family that holds at least 2 scored cases and still leaves a qualifying train set
+    and the holdout minimum. A validation split of 1 case gives 1 paired delta, and a promotion needs 2. When no
+    such family exists, validation takes the first smallest family. Train takes the smallest qualifying set of the
+    other families, and the holdout takes the rest.
+    """
+    smallest, train = _placement(order, size)
+    validation, total = cast(str, smallest), sum(size[family] for family in order)
+    for family in sorted(order, key=lambda family: size[family]):
+        rest = _train_set([other for other in order if other != family], size) if size[family] >= 2 else None
+        if rest is not None and total - size[family] - sum(size[other] for other in rest) >= HOLDOUT_MINIMUM:
+            validation, train = family, rest
+            break
+    chosen = set(cast(tuple[str, ...], train))
+    return {family: "validation" if family == validation else "train" if family in chosen else "holdout"
+            for family in order}
+
+
+def _layout(size: Mapping[str, int]) -> tuple[str | None, tuple[str, ...] | None, tuple[str, ...]]:
+    """Return the validation family, the qualifying train set or None, and the families that train takes.
+
+    The families go smallest first. When no train set qualifies, train takes all the families except validation.
+    """
+    order = sorted(size, key=lambda family: (size[family], family))
+    validation, train = _placement(order, size)
+    return validation, train, train if train is not None else tuple(family for family in order if family != validation)
+
+
 def projection(size: Mapping[str, int]) -> dict[str, object]:
     """Project the split minimums over the scored cases per family, without a seed.
 
-    The two smallest families go to train and validation in the worst shuffle. The scored cases of the other
-    families are the most that the holdout can hold, so `holdout_capacity` and `deficit` hold for every seed.
+    The smallest family goes to validation, and the smallest set of the other families that holds
+    `TRAIN_MINIMUM` scored cases from `TRAIN_FAMILIES_MINIMUM` families goes to train. The scored cases of the
+    rest are the most that the holdout can hold in a split that meets the train minimums, so `holdout_capacity`
+    and `deficit` hold for every seed. When no train set exists, train takes all the other families and the
+    holdout holds 0.
     """
-    ordered = sorted(size.values())
-    capacity = sum(ordered[2:])
+    validation, _, chosen = _layout(size)
+    train_cases = sum(size[family] for family in chosen)
+    capacity = sum(size[family] for family in size if family != validation and family not in chosen)
+    deficit = max(0, HOLDOUT_MINIMUM - capacity)
     return {"families": dict(sorted(size.items())), "families_minimum": MINIMUM_FAMILIES,
-            "holdout_minimum": HOLDOUT_MINIMUM, "holdout_capacity": capacity,
-            "deficit": max(0, HOLDOUT_MINIMUM - capacity)}
+            "holdout_minimum": HOLDOUT_MINIMUM, "train_minimum": TRAIN_MINIMUM,
+            "train_families_minimum": TRAIN_FAMILIES_MINIMUM, "holdout_capacity": capacity, "deficit": deficit,
+            "shortfall": {"train": {"cases": max(0, TRAIN_MINIMUM - train_cases),
+                                     "families": max(0, TRAIN_FAMILIES_MINIMUM - len(chosen))},
+                          "validation": {"families": 0 if validation is not None else 1},
+                          "holdout": {"cases": deficit}}}
 
 
 def too_few(size: Mapping[str, int]) -> CodedError | None:
-    """Return the `cases-too-few` error when the scored families cannot fill the three splits, else None."""
+    """Return the `cases-too-few` error when no whole-family split meets every split minimum, else None."""
     data = projection(size)
     capacity, deficit = cast(int, data["holdout_capacity"]), cast(int, data["deficit"])
-    if len(size) >= MINIMUM_FAMILIES and not deficit:
+    validation, train, chosen = _layout(size)
+    if train is not None and not deficit:
         return None
-    smallest = sorted(size.items(), key=lambda item: (item[1], item[0]))[:2]
-    names = [name for name, _ in smallest]
-    listed = ", ".join(f"{name}:{count}" for name, count in smallest)
-    others = " and ".join(names)
+    needs = (f"each run needs train {TRAIN_MINIMUM} scored cases from {TRAIN_FAMILIES_MINIMUM} families, "
+             + f"validation 1 family, and holdout {HOLDOUT_MINIMUM} scored cases")
     if len(size) < MINIMUM_FAMILIES:
-        head = f"intake needs at least {MINIMUM_FAMILIES} scored families (train, validation, holdout); the draft has {len(size)}"
-        fix = (f"add scored cases in {MINIMUM_FAMILIES - len(size)} more families, so that the families outside the "
-               + f"two smallest hold at least {HOLDOUT_MINIMUM} scored cases")
+        head = (f"intake needs at least {MINIMUM_FAMILIES} scored families ({TRAIN_FAMILIES_MINIMUM} train, "
+                + f"1 validation, 1 holdout); the draft has {len(size)}")
+    elif train is None:
+        head = (f"the families outside the smallest cannot give train {TRAIN_MINIMUM} scored cases from "
+                + f"{TRAIN_FAMILIES_MINIMUM} families")
     else:
         head = f"the holdout can hold {capacity} scored cases; the minimum is {HOLDOUT_MINIMUM}"
+    goal = (f"train holds {TRAIN_MINIMUM} scored cases from {TRAIN_FAMILIES_MINIMUM} families, validation holds "
+            + f"1 family, and the holdout holds {HOLDOUT_MINIMUM} scored cases")
+    if len(size) < MINIMUM_FAMILIES:
+        missing = MINIMUM_FAMILIES - len(size)
+        fix = f"add scored cases in {missing} more {'family' if missing == 1 else 'families'}, so that {goal}"
+    elif train is None:
+        fix = f"add scored cases in new or existing families until {goal}"
+    elif capacity:
+        others = " and ".join([cast(str, validation), *chosen])
         fix = f"add {deficit} scored cases to families other than {others}, or one new family of at least {deficit}"
-    message = (f"{head}; the two smallest families ({listed}) go to train and validation; the rest hold {capacity}; "
-               + f"the deficit is {deficit}; {fix}")
+    else:
+        fix = f"add one new family of at least {deficit} scored cases"
+    placed = ", ".join(f"{family}:{size[family]}" for family in chosen) or "no family"
+    layout = (f"the smallest family ({validation}:{size[validation]}) goes to validation; train takes {placed}; "
+              if validation is not None else "")
+    message = f"{head}; {needs}; {layout}the rest hold {capacity}; the deficit is {deficit}; {fix}"
     return CodedError("cases-too-few", message, data | {"fix": fix})
+
+
+def _seeded(order: Sequence[str], size: Mapping[str, int]) -> tuple[dict[str, Split], bool]:
+    """Assign families in `order`. Return the assignment and whether it meets every split minimum.
+
+    Train and validation get the first two families. Holdout takes the next families until it holds
+    `HOLDOUT_MINIMUM` scored cases. The rest alternate between validation and train. When the first two families
+    leave too few scored cases for holdout, the families go in order of size instead.
+    """
+    if sum(size[family] for family in order[2:]) < HOLDOUT_MINIMUM:
+        order = sorted(order, key=lambda family: size[family])
+    assigned: dict[str, Split] = dict(zip(order, ("train", "validation")))
+    holdout = 0
+    for index, family in enumerate(order[2:]):
+        if index == 0 or holdout < HOLDOUT_MINIMUM:
+            assigned[family] = "holdout"
+            holdout += size[family]
+        else:
+            assigned[family] = "train" if index % 2 else "validation"
+    train = [family for family, given in assigned.items() if given == "train"]
+    met = (holdout >= HOLDOUT_MINIMUM and sum(size[family] for family in train) >= TRAIN_MINIMUM
+           and len(train) >= TRAIN_FAMILIES_MINIMUM and "validation" in assigned.values())
+    return assigned, met
 
 
 def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task", journeys: Collection[str] = (),
@@ -182,11 +291,13 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task"
     A journey case of a kind in `also` is frozen and evaluated, but it does not size the split.
     It takes a seeded split, as a journey family does in a task run.
 
-    Train and validation get one scored family each. Holdout takes the next families until it holds
-    `HOLDOUT_MINIMUM` scored cases. The rest alternate between train and validation.
-    When the first two shuffled families leave too few scored cases for holdout, the two smallest families go
-    to train and validation instead. Families with no scored case, such as pending-only families and
-    journey families in a task run, get a seeded split.
+    The split gives train at least `TRAIN_MINIMUM` scored cases from `TRAIN_FAMILIES_MINIMUM` families, gives
+    validation at least 1 family, and gives the holdout at least `HOLDOUT_MINIMUM` scored cases, when any
+    whole-family split meets these minimums. The seeded assignment comes first. When it misses a minimum, a
+    deterministic fallback assignment replaces it. A draft with fewer than `MINIMUM_FAMILIES` scored families
+    stops with `cases-too-few`. When no split meets every minimum, the seeded assignment stays, and the caller's
+    `too_few` check stops the intake. Families with no scored case, such as pending-only families and journey
+    families in a task run, get a seeded split.
     """
     rng = random.Random(seed)
 
@@ -199,22 +310,17 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task"
     for case in cases:
         if scores(case):
             size[case.family] = size.get(case.family, 0) + 1
-    if len(size) < MINIMUM_FAMILIES:
-        raise cast(CodedError, too_few(size))
+    stop = too_few(size)
+    if stop is not None and len(size) < MINIMUM_FAMILIES:
+        raise stop
     order = sorted(size)
     rng.shuffle(order)
-    if sum(size[family] for family in order[2:]) < HOLDOUT_MINIMUM:
-        order.sort(key=lambda family: size[family])
-    assigned: dict[str, Split] = {order[0]: "train", order[1]: "validation"}
-    holdout = 0
-    for index, family in enumerate(order[2:]):
-        if index == 0 or holdout < HOLDOUT_MINIMUM:
-            assigned[family] = "holdout"
-            holdout += size[family]
-        else:
-            assigned[family] = "train" if index % 2 else "validation"
+    assigned: dict[str, Split]
+    assigned, met = _seeded(order, size)
+    if not met and stop is None:
+        assigned = _fallback(order, size)
     for family in sorted({case.family for case in cases} - set(assigned)):
-        assigned[family] = rng.choice(("train", "validation", "holdout"))
+        assigned[family] = rng.choice(SPLITS)
     return [IntakeCase(c.identifier, c.family, kind if scores(c) and c.journey is None and kind is not None else c.kind,
                        c.request, c.source, c.files, c.expected, c.journey, split=assigned[c.family],
                        scored=scores(c) or (not c.pending and c.journey is not None and c.kind in also)) for c in cases]
@@ -228,6 +334,21 @@ def case_hash(cases: Sequence[IntakeCase], seed: int, statistics: Mapping[str, o
     return digest(body)
 
 
+def _totals(cases: Sequence[IntakeCase], split: Split) -> str:
+    """Return the scored case total and family total of one split, for the approval question.
+
+    In a task run, the total names the journey cases in it, because the split minimums count only the task cases.
+    A journey run scores only journey cases, so its totals have no journey part.
+    """
+    scored = [case for case in cases if case.split == split and case.scored]
+    count, families = len(scored), len({case.family for case in scored})
+    journeys = sum(case.journey is not None for case in scored)
+    task_run = any(case.scored and case.journey is None for case in cases)
+    part = f" ({journeys} journey)" if journeys and task_run else ""
+    return (f"{split} {count} {'case' if count == 1 else 'cases'}{part} from {families} "
+            + f"{'family' if families == 1 else 'families'}")
+
+
 def approval_question(cases: Sequence[IntakeCase], seed: int, contract: Contract | None = None,
                       statistics: Mapping[str, object] | None = None) -> str:
     """Return the one approval question. It lists every case and binds approval to the case hash."""
@@ -237,6 +358,7 @@ def approval_question(cases: Sequence[IntakeCase], seed: int, contract: Contract
         lines.append(f"statistics: {', '.join(f'{name} {value}' for name, value in statistics.items())}")
     if contract is not None:
         lines.append(f"contract: source {contract.source}; kinds {', '.join(sorted(contract.kinds))}")
+    lines.append("scored totals: " + ", ".join(_totals(cases, name) for name in SPLITS))
     for case in sorted(cases, key=lambda c: c.identifier):
         status = "pending" if case.pending else "scored" if case.scored else "not scored"
         request = " ".join(case.request.split())

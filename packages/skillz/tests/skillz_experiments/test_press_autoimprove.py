@@ -30,7 +30,8 @@ from skillz_experiments.harness._claude._settings import Inventory, settings
 from skillz_experiments._cli import main
 from skillz_experiments.gate import DEFAULT_STATISTICS, case_deltas, verdict
 from skillz_experiments.harness import Configuration
-from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, PENDING_KINDS, DraftCase, case_hash, split_cases)
+from skillz_experiments._intake import (DRAFT_NAME, HOLDOUT_MINIMUM, MINIMUM_FAMILIES, PENDING_KINDS, TRAIN_FAMILIES_MINIMUM,
+                                       TRAIN_MINIMUM, DraftCase, case_hash, split_cases, too_few)
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget
 from skillz_experiments.search import Edit, search
@@ -469,11 +470,11 @@ def test_pending_cases_are_never_scored_even_in_the_holdout_family(
     """PA-5: trigger and near-miss cases stay pending and no provider call scores them."""
     target, out = make_target(tmp_path), tmp_path / "run"
     cases: list[dict[str, object]] = []
-    for family in range(5):
+    for family in range(6):
         for index in range(2):
             cases.append({"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": "r",
                           "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"})
-    for family in range(5):
+    for family in range(6):
         cases.append({"id": f"p{family}", "family": f"f{family}", "kind": "trigger", "request": "pending", "source": "skill"})
     cases.append({"id": "p-only", "family": "only-pending", "kind": "near-miss", "request": "pending", "source": "skill"})
     out.mkdir(mode=0o700)
@@ -484,7 +485,7 @@ def test_pending_cases_are_never_scored_even_in_the_holdout_family(
     scored = {name for name, _held, _files in spy.evaluated}
     assert scored and not any(name.startswith("p") and name != "p" and name[1:].isdigit() or name == "p-only" for name in scored)
     document = cast(dict[str, list[dict[str, object]]], json.loads((out / "cases.json").read_text()))
-    assert {str(item["id"]) for item in document["pending"]} == {f"p{n}" for n in range(5)} | {"p-only"}
+    assert {str(item["id"]) for item in document["pending"]} == {f"p{n}" for n in range(6)} | {"p-only"}
     assert not any(str(item["id"]).startswith("p") for item in document["cases"])
 
 
@@ -506,10 +507,19 @@ def _fuzz_draft(rng: random.Random) -> list[DraftCase]:
 @pytest.mark.parametrize("trial", range(150))
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_split_invariants_hold_for_random_drafts(trial: int) -> None:
-    """PA-5: family never crosses splits, splits are deterministic and order-free, holdout reaches 6 when possible."""
+    """PA-5: family never crosses splits, splits are deterministic and order-free, and every split minimum holds when possible."""
     rng = random.Random(trial)
     cases = _fuzz_draft(rng)
     seed = rng.randrange(-(2**40), 2**40)
+    sizes: dict[str, int] = {}
+    for case in cases:
+        if case.kind not in PENDING_KINDS:
+            sizes[case.family] = sizes.get(case.family, 0) + 1
+    if len(sizes) < MINIMUM_FAMILIES:
+        with pytest.raises(CodedError) as stopped:
+            _ = split_cases(cases, seed, "echo")
+        assert stopped.value.code == "cases-too-few"
+        return
     first = split_cases(cases, seed, "echo")
     families: dict[str, set[str]] = {}
     for item in first:
@@ -522,13 +532,12 @@ def test_split_invariants_hold_for_random_drafts(trial: int) -> None:
     assert split_cases(cases, seed, "echo") == first
     scored = [item for item in first if not item.pending]
     assert all(item.kind == "echo" for item in scored) and all(item.kind in PENDING_KINDS for item in first if item.pending)
-    sizes: dict[str, int] = {}
-    for item in scored:
-        sizes[item.family] = sizes.get(item.family, 0) + 1
     for split in ("train", "validation", "holdout"):
         assert any(item.split == split for item in scored), split
-    if sum(sizes.values()) - sum(sorted(sizes.values())[:2]) >= HOLDOUT_MINIMUM:
+    if too_few(sizes) is None:
+        train = [item for item in scored if item.split == "train"]
         assert sum(item.split == "holdout" for item in scored) >= HOLDOUT_MINIMUM
+        assert len(train) >= TRAIN_MINIMUM and len({item.family for item in train}) >= TRAIN_FAMILIES_MINIMUM
     assert case_hash(first, seed) == case_hash(list(reversed(first)), seed) != case_hash(first, seed + 1)
 
 
