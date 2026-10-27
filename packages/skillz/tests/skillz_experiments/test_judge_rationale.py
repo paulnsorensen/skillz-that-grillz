@@ -104,7 +104,9 @@ def test_export_lists_each_case_that_scores_zero_on_every_repeat_with_redacted_r
     secret_case, passing_case = str(secret["case_id"]), str(passing["case_id"])
     cast(dict[str, dict[str, object]], secret["criteria"])["answer"]["reason"] = "password=hunter2hunter2"
     passing_arm = passing["arm"]
-    passing["score"] = 0.5
+    for item in rows:
+        if item["case_id"] == passing_case and item["arm"] == passing_arm:
+            item["score"] = 0.5
     write(judged.out / "run.json", record)
     _ = export(judged.out, tmp_path / "export")
     report = read(tmp_path / "export" / "report.json")
