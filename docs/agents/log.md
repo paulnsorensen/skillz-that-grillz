@@ -120,3 +120,5 @@
 - 2026-10-22 · c1182c6ea19c3c0d · merged · decisions/wedge-skill-packaging.md · Record consumer merge-group validation and separate publication policies. All three frozen probes return the decision page at rank 1; corpus reconciliation remains pending.
 
 - 2026-10-24 · wedge-site-layer-cache · updated · decisions/wedge-skill-packaging.md · ADR-003 and ADR-011 amendments: `build` reuses a manifest-verified site layer from wedge's own cache, and `build_from_layer` links clean layer entries instead of copying them
+
+- 2026-10-27 · gh-324-live-proof · new-page · skillz-live-proof-lessons.md · Lessons from the #324 live proof: split and plain preflight prompts after a live model refusal, the native Read setting, split floors that move suites and caps together, caps that equal the dry estimate, the scoring-label cohort break, CPU-time test margins, and process gotchas. No page owned these gotchas; ADR-006 and the criteria files hold the design.
