@@ -27,6 +27,7 @@ import changelog_proof
 from fromargs_benefit import TOKEN_RULE, author, build_target, check_cli, cli_verdict, reference_draft, strong_model
 from skillz_experiments._cli import main
 from skillz_experiments._records import read
+from skillz_experiments.run import _run as run_module
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
@@ -37,8 +38,8 @@ FLAWED_ECHO = ("---\nname: echo-skill\ndescription: Echo a request back as JSON.
 RECORDS = ROOT / ".live-smoke/runs.jsonl"
 ANALYTICS = ROOT / "skills/skillz/scripts/agent-session-analytics.pyz"
 PACKS = ("skill-usage", "agent-orchestration", "drift-regression")
-FAMILIES = {"f0": 3, "f1": 3, "f2": 6}
-"""Two search families of three cases and one holdout family of six. The search share holds about three reflections."""
+FAMILIES = {"f0": 2, "f1": 2, "f2": 2, "f3": 6}
+"""Train holds two families of two cases, validation one family of two, and the holdout one family of six."""
 PREFLIGHT_CALLS = 3
 INTERRUPT_AFTER = 3
 """The resume scenario stops its first process with SIGINT after this many recorded outcomes."""
@@ -263,13 +264,13 @@ def _changelog_proof(work: Path, harness: str, model: str) -> Setup:
 
 
 SCENARIOS: dict[str, Scenario] = {
-    "basic": Scenario(_basic, 130),
-    "command-harness": Scenario(_command_harness, 130, bridge=True),
-    "command-grader": Scenario(_command_grader, 71),
-    "hybrid-mixed": Scenario(_hybrid_mixed, 130, bridge=True),
-    "prose-cli": Scenario(_prose_cli, 71),
-    "journey": Scenario(_journey, 601),
-    "resume": Scenario(_basic, 130, resume=True),
+    "basic": Scenario(_basic, 123),
+    "command-harness": Scenario(_command_harness, 123, bridge=True),
+    "command-grader": Scenario(_command_grader, 67),
+    "hybrid-mixed": Scenario(_hybrid_mixed, 123, bridge=True),
+    "prose-cli": Scenario(_prose_cli, 67),
+    "journey": Scenario(_journey, 606),
+    "resume": Scenario(_basic, 123, resume=True),
     "fromargs-benefit": Scenario(_fromargs_benefit, 167, author=_fromargs_author, check=check_cli,
                                  verdict=cli_verdict),
     "changelog-proof": Scenario(_changelog_proof, 119, author=changelog_proof.author, check=changelog_proof.check,
@@ -615,8 +616,8 @@ def test_the_fromargs_benefit_scenario_fails_a_record_that_the_shared_rule_passe
 
 
 @pytest.mark.parametrize(("entry", "passes", "phrase"), [
-    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 130}, True, "at most the cap"),
-    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 131}, False, "the stated cap is 130"),
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 123}, True, "at most the cap"),
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 124}, False, "the stated cap is 123"),
     ({"verdict": "stopped", "stage": "cases", "expect": None, "code": "case-criteria-missing"}, False,
      "stage cases with code case-criteria-missing"),
     ({"verdict": "stopped", "stage": "cases", "expect": "journey-unsupported", "code": "journey-unsupported"}, True,
@@ -649,3 +650,25 @@ def test_every_scenario_with_a_record_check_has_its_own_pass_rule() -> None:
     """A scenario with `check` and no `verdict` passes by the shared rule, even when `check` records a failed CLI."""
     unpaired = [name for name, scenario in SCENARIOS.items() if scenario.check is not None and scenario.verdict is None]
     assert unpaired == [], unpaired
+
+
+@pytest.mark.ac("gh-300:AC-5")
+@pytest.mark.parametrize("name", list(SCENARIOS))
+def test_each_scenario_splits_its_draft_and_its_cap_equals_the_dry_estimate(
+        name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """Run the dry path offline. A stub host report and a stub `codex` path stand in for the host checks only."""
+    def ready(selections: list[tuple[str, str | None]]) -> dict[str, object]:
+        return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
+    found = shutil.which
+
+    def which(command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None) -> str | None:
+        return "/usr/bin/codex" if command == "codex" else found(command, mode, path)
+    monkeypatch.setattr(run_module, "host_report", ready)
+    monkeypatch.setattr(shutil, "which", which)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    scenario = SCENARIOS[name]
+    work = tmp_path / "work"
+    work.mkdir()
+    entry = _run(scenario, "codex" if scenario.bridge else "claude", "sonnet", work, capsys, dry=True)
+    assert entry.get("code") != "cases-too-few", entry
+    assert entry.get("estimate") == scenario.cap, entry

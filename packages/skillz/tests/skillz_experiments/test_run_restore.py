@@ -530,7 +530,7 @@ def test_a_task_case_without_the_helper_input_stops_as_cases_invalid(tmp_path: P
 def test_a_draft_with_a_small_holdout_stops_with_cases_too_few(
         tmp_path: Path, make_target: Maker) -> None:
     target, out, state = make_target(tmp_path), tmp_path / "run", State()
-    sizes = {"a": 1, "b": 1, "c": 2}
+    sizes = {"a": 2, "b": 2, "c": 2, "d": 2, "e": 2}
     out.mkdir(mode=0o700)
     draft = out / "cases.draft.json"
     cases = [{"id": f"{family}-{index}", "family": family, "kind": "task", "request": f"request-{family}-{index}-end",

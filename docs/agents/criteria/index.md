@@ -56,6 +56,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-296](./gh-296.md) — gh-296: the cases-missing stop writes the seed to a file and shows only counts
 - [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
+- [gh-300](./gh-300.md) — gh-300: the train split gets at least 4 scored cases from 2 families
 - [gh-302](./gh-302.md) — gh-302: prose+cli proposals leak runner context into candidate code comments
 - [gh-311](./gh-311.md) — gh-311: assert where the journey press test creates its workspace
 - [gh-312](./gh-312.md) — gh-312: a contract check returns one typed result, and checks of different candidates run at the same time

@@ -215,7 +215,7 @@ class Provider(FakeRunProvider):
 
 def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
            approvals: Callable[..., tuple[str, int]], noise: int = 0,
-           families: int = 5) -> tuple[Path, Path, Search, str, int]:
+           families: int = 6) -> tuple[Path, Path, Search, str, int]:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out, families=families)
     case_hash, calls = approvals(target, out)
@@ -501,7 +501,13 @@ def test_a_resume_evaluates_a_recorded_failed_evaluation_again(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, _ = _interrupt(tmp_path, make_target, write_draft, approvals)
     record = read(out / "run.json")
-    failed = next(item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("arm") == "search")
+    # A resume keeps the recorded headroom pass, so fail a seed outcome that the first minibatch asks for again:
+    # the case that the first proposal scores.
+    train = [item for item in cast(list[dict[str, object]], record["outcomes"])
+             if item.get("arm") == "search" and item.get("split") == "train"]
+    seed = train[0]["search_candidate"]
+    asked = next(item["case_id"] for item in train if item["search_candidate"] != seed)
+    failed = next(item for item in train if item["search_candidate"] == seed and item["case_id"] == asked)
     failed |= {"status": "evaluation-failed", "score": 0.0, "failure": "provider fell over"}
     write(out / "run.json", record)
     pair = (cast(str, failed["search_candidate"]), cast(str, failed["split"]), cast(str, failed["case_id"]))
@@ -1206,7 +1212,7 @@ def _leak_start(tmp_path: Path, make_target: Callable[..., Path], approvals: Cal
         with (target / "SKILL.md").open("a", encoding="utf-8") as handle:
             _ = handle.write("\n" + seed_extra + "\n")
     cases: list[dict[str, object]] = []
-    for family in range(5):
+    for family in range(6):
         for index in range(2):
             name = f"t{family}-{index}"
             cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"please {SPAN} payment {name} today{request_tail}",
@@ -1234,9 +1240,10 @@ def _spy_feedback(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, dict[str
     return seen
 
 
+# t3-1 is a train case. The denylist skips holdout cases.
 @pytest.mark.parametrize(("suffix", "rule"), [
     (" " + SPAN, "request-span"), (" " + ANSWER, "expected-answer"),
-    (" see case t1-1 here", "case-id"), (f" open {FIXTURE} first", "fixture-name")])
+    (" see case t3-1 here", "case-id"), (f" open {FIXTURE} first", "fixture-name")])
 def test_a_leaking_proposal_scores_zero_without_a_task_or_judge_call_and_is_counted(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
         monkeypatch: pytest.MonkeyPatch, suffix: str, rule: str) -> None:

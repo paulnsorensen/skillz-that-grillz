@@ -11,7 +11,7 @@ from typing import cast
 
 import pytest
 
-from support import (CRITERIA, FIXTURES, HARNESS_RUNS, HARNESSES, assert_promoted, assert_replayed, carries_answer, export_and_apply, holdout,
+from support import (FIXTURES, HARNESS_RUNS, HARNESSES, assert_promoted, assert_replayed, carries_answer, export_and_apply, holdout,
                      make_scenario, raw_holdout, read_record, run_scenario, snapshot)
 
 
@@ -78,7 +78,7 @@ def test_command_helper_executes_winning_export(tmp_path: Path, harness: str, cl
 @pytest.mark.parametrize("harness", HARNESSES)
 def test_changed_winner_ties_on_holdout(tmp_path: Path, harness: str) -> None:
     scenario = make_scenario(tmp_path)
-    held_families = {"f9", "f7", "f5", "f3", "f0", "f4"}
+    held_families = {"f9", "f7", "f5", "f3", "f0"}
     for case in scenario.draft:
         if case["family"] in held_families:
             source = cast(dict[str, str], case["files"])["fixture.md"].upper()
@@ -92,7 +92,7 @@ def test_changed_winner_ties_on_holdout(tmp_path: Path, harness: str) -> None:
     assert cast(dict[str, str], record["winner"])["SKILL.md"] != scenario.original
     held = holdout(record)
     assert len(held) == 36
-    assert {item["case_id"] for item in held} == {f"t{int(family[1:])}" for family in held_families}
+    assert {item["case_id"] for item in held} == {case["id"] for case in scenario.draft if case["family"] in held_families}
     assert {item["score"] for item in held} == {1.0}
     assert (scenario.target / "SKILL.md").read_text() == scenario.original
 
@@ -103,13 +103,9 @@ def test_protected_family_regression_rejects(tmp_path: Path, harness: str) -> No
     scenario = make_scenario(tmp_path)
     for case in scenario.draft:
         if case["family"] == "f9":
-            cast(dict[str, str], case["files"])["fixture.md"] = "PROTECTED-9\n"
-            cast(dict[str, str], case["expected"])["text"] = "PROTECTED-9\n"
-    extra = dict(scenario.draft[9])
-    extra["id"] = "t10"
-    extra["files"] = {"fixture.md": "PROTECTED-10\n"}
-    extra["expected"] = {"text": "PROTECTED-10\n", "criteria": CRITERIA}
-    scenario.draft.append(extra)
+            protected = f"PROTECTED-{str(case['id'])[1:]}\n"
+            cast(dict[str, str], case["files"])["fixture.md"] = protected
+            cast(dict[str, str], case["expected"])["text"] = protected
     result = run_scenario(scenario, tmp_path, harness=harness, mode="regress", extra_flags=("--seed", "1", "--family-budget", "0"))
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"], gate["cases"], gate["repeats"]) == (
@@ -124,7 +120,7 @@ def test_protected_family_regression_rejects(tmp_path: Path, harness: str) -> No
     assert cast(dict[str, object], record["search"])["retained_seed"] is False
     held = holdout(record)
     assert len(held) == 36
-    protected = [item for item in held if item["case_id"] in {"t9", "t10"}]
+    protected = [item for item in held if item["case_id"] in {"t9", "t11"}]
     assert len(protected) == 12
     assert {item["score"] for item in protected if item["arm"] == "baseline"} == {1.0}
     assert {item["score"] for item in protected if item["arm"] == "winner"} == {0.0}
@@ -134,7 +130,7 @@ def test_protected_family_regression_rejects(tmp_path: Path, harness: str) -> No
 @pytest.mark.parametrize("harness", HARNESSES)
 def test_changed_winner_is_globally_worse_on_holdout(tmp_path: Path, harness: str) -> None:
     scenario = make_scenario(tmp_path)
-    held_families = {"f9", "f7", "f5", "f3", "f0", "f4"}
+    held_families = {"f9", "f7", "f5", "f3", "f0"}
     for case in scenario.draft:
         if case["family"] in held_families:
             source = f"PROTECTED-{str(case['id']).upper()}\n"
@@ -149,7 +145,7 @@ def test_changed_winner_is_globally_worse_on_holdout(tmp_path: Path, harness: st
     assert cast(dict[str, str], record["winner"])["SKILL.md"] != scenario.original
     held = holdout(record)
     assert len(held) == 36
-    assert {item["case_id"] for item in held} == {f"t{int(family[1:])}" for family in held_families}
+    assert {item["case_id"] for item in held} == {case["id"] for case in scenario.draft if case["family"] in held_families}
     for identifier in {item["case_id"] for item in held}:
         for arm, score in (("baseline", 1.0), ("winner", 0.0)):
             observed = [item for item in held if item["case_id"] == identifier and item["arm"] == arm]

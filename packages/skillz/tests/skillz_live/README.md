@@ -10,7 +10,7 @@ SKILLZ_LIVE=1 just live-smoke codex gpt-6-luna
 SKILLZ_LIVE=1 SKILLZ_LIVE_DRY=1 just live-smoke codex gpt-6-luna all
 ```
 
-Each run scenario runs `self-test --preflight-only`, then one `run` of a fixture skill with 12 fixed cases and `--repeats 1`, then `export`.
+Each run scenario runs `self-test --preflight-only`, then one `run` of a fixture skill with 12 fixed cases in 4 families (2, 2, 2, and 6 cases) and `--repeats 1`, then `export`.
 Each fixture seed carries one fixable flaw, so the search can beat it. A completed run must show scored holdout cases.
 With `SKILLZ_LIVE_DRY=1`, each run scenario stops at its budget question, records the estimate, and makes no model call.
 A dry run fails when it stops before the budget question with a code that the scenario does not expect, or when its estimate is over the cap.
@@ -18,13 +18,13 @@ A dry run fails when it stops before the budget question with a code that the sc
 
 | Scenario | What it runs | Run cap |
 | --- | --- | --- |
-| `basic` | Built-in harness, no contract, default judge | 130 |
-| `command-harness` | `--harness command` through a test-only bridge to `codex exec` | 130 |
-| `command-grader` | Contract with a `command` grader, and one `source: session` case | 71 |
-| `hybrid-mixed` | `--harness-config` with a Codex task role and a command judge role, a `hybrid` grader, contract `statistics`, and `--min-gain` | 130 |
-| `prose-cli` | `--edit prose+cli` with a helper script and an `exact-json` grader | 71 |
-| `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 601 |
-| `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 130 |
+| `basic` | Built-in harness, no contract, default judge | 123 |
+| `command-harness` | `--harness command` through a test-only bridge to `codex exec` | 123 |
+| `command-grader` | Contract with a `command` grader, and one `source: session` case | 67 |
+| `hybrid-mixed` | `--harness-config` with a Codex task role and a command judge role, a `hybrid` grader, contract `statistics`, and `--min-gain` | 123 |
+| `prose-cli` | `--edit prose+cli` with a helper script and an `exact-json` grader | 67 |
+| `journey` | Journey cases. Only `claude` holds a conversation, so `codex` must stop with `journey-unsupported` | 606 |
+| `resume` | `basic`, stopped with SIGINT after 3 outcomes, then the same command again | 123 |
 | `fromargs-benefit` | `/skillz autoimprove` drafts the cases in `claude -p`, then a `--edit prose+cli` run of the `semver-next` fixture, which applies nine version rules by hand. See below | 167 |
 | `changelog-proof` | The `/skillz autoimprove` journey in `claude -p` or `codex exec`, then a `--edit prose+cli` run of the `changelog-entry` fixture, which has one wrong format rule and a release of 30 to 40 changes in each case. See below | 119 |
 | `analytics` | The bundled `agent-session-analytics.pyz`: a forced ingest of the real session logs into a private database, then every query of the three Usage packs | no model call |

@@ -192,7 +192,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `evals-unreadable` | `evals/evals.json` or `evals/journeys.json` is a symlink, too large, or malformed. An entry can also have an unknown `kind`, a duplicate case id (also across the two files), assertions on a trigger or near-miss, or a string `expected_skill` with no `kind` (the message says to set `kind`). At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix the eval file or the fixture, set `kind` on an ambiguous entry, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json` or a journey of `evals/journeys.json`. It can also change an entry `kind` or `request`, or a journey `brief`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from its eval file. Then run again. A run directory that an older version drafted can stop here: a kind-less entry with no assertions moved from `trigger` to `task`. Copy the seed again, or set `kind` in the entry. |
 | `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
-| `cases-too-few` | The scored families cannot fill the splits. A run needs 3 scored families and a holdout of 6 scored cases. The message names the two smallest families, the holdout capacity, the deficit, and a fix. The data holds `families`, `families_minimum`, `holdout_minimum`, `holdout_capacity`, `deficit`, and `fix`. | Follow the fix: add scored cases to other families, or add a family. Then run again. |
+| `cases-too-few` | The scored families cannot fill the splits. A run needs 4 scored families: train 4 scored cases from 2 families, validation 1 family, and a holdout of 6 scored cases. The message names the cases and families that each split needs, the validation family, the train families, the holdout capacity, the deficit, and a fix. The data holds `families`, `families_minimum`, `holdout_minimum`, `train_minimum`, `train_families_minimum`, `holdout_capacity`, `deficit`, `shortfall` (the missing `cases` and `families` of each split), and `fix`. | Follow the fix: add scored cases to other families, or add a family. Then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `search-faulted` | At least 4 search evaluations finished in this session and more than half failed, or the 5 newest failed in a row. A resume starts a new count. The message gives the failed counts by reason. | Wait for the provider, then resume the run in the same directory. |
 | `holdout-faulted` | Provider faults left the gate with no holdout case that has a scored baseline and winner pair. The command exits nonzero. | Wait for the provider, then run again in the same directory. |
@@ -281,7 +281,7 @@ A seed case has a `family` only when the entry has a nonempty-text `family` key.
 Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged, and a journey case with its `brief` unchanged. You can extend `files`, `expected`, and `family`.
 When the draft drops a seed case or changes its `id`, `kind`, `request`, or `brief`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from its eval file.
 Then add cases until the draft meets the minimums below. To add journey cases, read `Draft journeys`.
-The holdout split alone needs 6 scored cases, and a family never crosses splits, so a contract needs about 10 or more `task` cases.
+The holdout split alone needs 6 scored cases. Train needs 4 scored cases from 2 families, and validation needs 1 family. A family never crosses splits, so a contract needs about 11 or more `task` cases in at least 4 families.
 A skill with neither `evals/evals.json` nor `evals/journeys.json`, or with an unreadable one, has no seed file, and the stop removes an old one. Draft every case from the `facts`.
 
 Each case has these fields:
@@ -307,12 +307,13 @@ Each case has these fields:
 A `trigger` case is a request that should load the skill. A `near-miss` case is a similar request that should not.
 The runner records `trigger` and `near-miss` cases as pending. It does not score them yet.
 Draft the `task` cases with care, because only they decide the verdict.
-Write at least three `task` families and at least six `task` cases for the holdout.
+Write at least four `task` families, at least six `task` cases for the holdout, and at least four for train.
 When the target contract has a `task` rubric, draft each `task` case so the rubric can score it.
 Do not assign splits. Code assigns them from the seed.
 When session analytics exists, run the Usage ceremony from `SKILL.md`.
 Add extra cases from past sessions with `source: session`. Remove private data first.
 The approval question lists every case, with its source, family, and split. It also lists each criterion with `must` and `from`.
+It shows the scored case total and the family total of the train, validation, and holdout splits.
 A change to the draft changes the case hash and asks the question again.
 
 ## Draft journeys
@@ -375,7 +376,7 @@ A contract with `status: draft` gives a warning. Any finding with severity `erro
 Each finding has `code`, `severity`, `file`, `pointer`, `message`, and `fix`. A `cases-too-few` finding also holds `data` with the family counts.
 
 The report holds `split` with the case count of each split under the default seed.
-The first `run` stop, `cases-missing`, shows the same projection in `seed_summary.split`. It lists `families`, `holdout_capacity`, and `deficit`.
+The first `run` stop, `cases-missing`, shows the same projection in `seed_summary.split`. It lists `families`, `holdout_capacity`, `deficit`, and `shortfall`.
 The projection uses the kinds that the run scores by default, and it does not depend on the seed.
 
 Make the cases hard. A family that the seed already passes adds no signal.

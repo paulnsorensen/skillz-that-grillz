@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 from pathlib import Path
 from typing import cast
@@ -9,14 +10,15 @@ import pytest
 from skillz_experiments.harness import _roles
 from skillz_experiments._cases import Case, CodedError, Journey, load_cases
 from skillz_experiments._intake import (
-    DRAFT_NAME, TASK_RUBRIC, approval_question, case_hash, freeze, intake_contract, load_draft, skill_facts, split_cases,
+    DRAFT_NAME, HOLDOUT_MINIMUM, MINIMUM_FAMILIES, SPLITS, TASK_RUBRIC, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase,
+    IntakeCase, approval_question, case_hash, freeze, intake_contract, load_draft, skill_facts, split_cases, too_few,
 )
 from skillz_experiments._graders import judge as judge_case
 
 CRITERIA = [{"id": "answer", "text": "THE answer SHALL match the reference."}]
 
 
-def draft(families: int = 5, per_family: int = 2) -> list[dict[str, object]]:
+def draft(families: int = 6, per_family: int = 2) -> list[dict[str, object]]:
     cases: list[dict[str, object]] = []
     for family in range(families):
         for index in range(per_family):
@@ -99,8 +101,8 @@ def test_hash_mismatch_raises_cases_unapproved_and_writes_nothing(tmp_path: Path
 
 
 def test_too_few_families_names_the_minimum(tmp_path: Path) -> None:
-    cases = load_draft(write_draft(tmp_path, draft(families=2)))
-    with pytest.raises(ValueError, match="at least 3 scored families"):
+    cases = load_draft(write_draft(tmp_path, draft(families=3)))
+    with pytest.raises(ValueError, match="at least 4 scored families"):
         _ = split_cases(cases, 1)
 
 
@@ -204,15 +206,78 @@ def sized(sizes: list[int]) -> list[dict[str, object]]:
             for family, size in enumerate(sizes) for index in range(size)]
 
 
-@pytest.mark.parametrize("sizes", [[6, 6, 1, 1], [1, 1, 6, 6], [5, 1, 1, 4], [2, 2, 2, 2, 2]])
+def counted(split: list[IntakeCase]) -> dict[str, tuple[int, int]]:
+    """Return the scored case total and the family total of each split."""
+    return {name: (sum(case.split == name and case.scored for case in split),
+                   len({case.family for case in split if case.split == name and case.scored})) for name in SPLITS}
+
+
+@pytest.mark.ac("gh-300:AC-1")
+@pytest.mark.parametrize("sizes", [[6, 6, 1, 1], [1, 1, 6, 6], [5, 1, 1, 4, 2], [2] * 6, [1, 1, 1, 1, 1, 6], [3] * 9])
 def test_holdout_reaches_the_minimum_when_the_draft_allows_it(tmp_path: Path, sizes: list[int]) -> None:
     cases = load_draft(write_draft(tmp_path, sized(sizes)))
     for seed in range(40):
         split = split_cases(cases, seed)
-        counts = {name: sum(case.split == name for case in split) for name in ("train", "validation", "holdout")}
-        assert counts["holdout"] >= 6, (seed, counts)
-        assert counts["train"] >= 1 and counts["validation"] >= 1
+        counts = counted(split)
+        assert counts["holdout"][0] >= HOLDOUT_MINIMUM, (seed, counts)
+        assert counts["train"][0] >= TRAIN_MINIMUM and counts["train"][1] >= TRAIN_FAMILIES_MINIMUM, (seed, counts)
+        assert counts["validation"][1] >= 1, (seed, counts)
         assert split == split_cases(cases, seed)
+
+
+def feasible(sizes: tuple[int, ...]) -> bool:
+    """Return whether any assignment of whole families meets every split minimum, by brute force."""
+    for assignment in itertools.product(SPLITS, repeat=len(sizes)):
+        cases = {name: sum(size for size, given in zip(sizes, assignment) if given == name) for name in SPLITS}
+        families = {name: assignment.count(name) for name in SPLITS}
+        if (cases["holdout"] >= HOLDOUT_MINIMUM and cases["train"] >= TRAIN_MINIMUM
+                and families["train"] >= TRAIN_FAMILIES_MINIMUM and families["validation"] >= 1):
+            return True
+    return False
+
+
+@pytest.mark.ac("gh-300:AC-3")
+def test_every_feasible_suite_of_up_to_six_families_splits_for_every_seed() -> None:
+    """Check every suite of 1 to 6 families of 1 to 6 scored cases against a brute-force feasibility check."""
+    checked = {True: 0, False: 0}
+    for count in range(1, 7):
+        for sizes in itertools.combinations_with_replacement(range(1, 7), count):
+            cases = [DraftCase(f"c{family}-{index}", f"f{family}", "task", "Do it", "skill", {}, "y")
+                     for family, size in enumerate(sizes) for index in range(size)]
+            possible = feasible(sizes)
+            checked[possible] += 1
+            assert (too_few({f"f{family}": value for family, value in enumerate(sizes)}) is None) == possible, sizes
+            if count < MINIMUM_FAMILIES:
+                with pytest.raises(CodedError, match="at least 4 scored families"):
+                    _ = split_cases(cases, 0)
+                continue
+            for seed in (0, 1, 2, 3, 20261006):
+                counts = counted(split_cases(cases, seed))
+                met = (counts["holdout"][0] >= HOLDOUT_MINIMUM and counts["train"][0] >= TRAIN_MINIMUM
+                       and counts["train"][1] >= TRAIN_FAMILIES_MINIMUM and counts["validation"][1] >= 1)
+                assert met == possible, (sizes, seed, counts)
+    assert checked[True] > 0 and checked[False] > 0, checked
+
+
+@pytest.mark.ac("gh-300:AC-2")
+@pytest.mark.parametrize(("sizes", "head", "shortfall"), [
+    ([2, 2, 2, 2, 2], "the holdout can hold 4 scored cases; the minimum is 6",
+     {"train": {"cases": 0, "families": 0}, "validation": {"families": 0}, "holdout": {"cases": 2}}),
+    ([1, 1, 1, 1], "the families outside the smallest cannot give train 4 scored cases from 2 families",
+     {"train": {"cases": 1, "families": 0}, "validation": {"families": 0}, "holdout": {"cases": 6}}),
+    ([4, 4, 4], "intake needs at least 4 scored families (2 train, 1 validation, 1 holdout); the draft has 3",
+     {"train": {"cases": 0, "families": 0}, "validation": {"families": 0}, "holdout": {"cases": 6}}),
+])
+def test_a_suite_too_small_for_both_floors_names_what_each_split_needs(
+        sizes: list[int], head: str, shortfall: dict[str, dict[str, int]]) -> None:
+    error = too_few({f"f{family}": size for family, size in enumerate(sizes)})
+    assert error is not None and error.code == "cases-too-few"
+    message = str(error)
+    assert message.startswith(head), message
+    assert "each run needs train 4 scored cases from 2 families, validation 1 family, and holdout 6 scored cases" in message
+    data = cast(dict[str, object], error.details)
+    assert data["train_minimum"] == TRAIN_MINIMUM == 4 and data["train_families_minimum"] == TRAIN_FAMILIES_MINIMUM == 2
+    assert data["holdout_minimum"] == HOLDOUT_MINIMUM and data["shortfall"] == shortfall
 
 
 def mixed(task_sizes: list[int], journey_sizes: list[int]) -> list[dict[str, object]]:
@@ -235,8 +300,8 @@ def test_journey_families_do_not_count_toward_the_scored_task_holdout(tmp_path: 
 
 
 def test_a_draft_with_too_few_task_families_stops_even_when_journey_families_fill_the_count(tmp_path: Path) -> None:
-    cases = load_draft(write_draft(tmp_path, mixed([3, 3], [2, 2, 2])))
-    with pytest.raises(ValueError, match="at least 3 scored families"):
+    cases = load_draft(write_draft(tmp_path, mixed([3, 3, 3], [2, 2, 2])))
+    with pytest.raises(ValueError, match="at least 4 scored families"):
         _ = split_cases(cases, 1)
 
 
@@ -249,6 +314,18 @@ def test_approval_question_shows_family_request_and_contract(tmp_path: Path) -> 
     assert "long " * 40 not in question and "..." in question
     assert "contract: source intake; kinds task" in question
     assert "Please run the skill" in question
+
+
+@pytest.mark.ac("gh-300:AC-6")
+@pytest.mark.parametrize("seed", [0, 3, 20261006])
+def test_approval_question_shows_the_scored_case_and_family_totals_of_each_split(tmp_path: Path, seed: int) -> None:
+    """Five families of 1 case and one family of 6 have one valid split, so the totals line is exact for every seed."""
+    raw = sized([1, 1, 1, 1, 1, 6])
+    raw.append({"id": "trig-1", "family": "f0", "kind": "trigger", "request": "Please run the skill", "source": "session"})
+    lines = approval_question(split_cases(load_draft(write_draft(tmp_path, raw)), seed), seed).splitlines()
+    totals = [line for line in lines if line.startswith("scored totals: ")]
+    assert totals == ["scored totals: train 4 cases from 4 families, validation 1 case from 1 family, "
+                      + "holdout 6 cases from 1 family"]
 
 
 def test_grading_kind_is_covered_by_the_hash_and_written_per_case(tmp_path: Path) -> None:

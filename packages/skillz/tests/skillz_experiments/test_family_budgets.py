@@ -301,7 +301,7 @@ def test_a_family_budget_flag_rejects_a_regressing_holdout_family_and_summary_an
     gate = cast(dict[str, object], result["gate"])
     reasons = cast(list[str], gate["reasons"])
     assert gate["verdict"] == "reject"
-    assert reasons == ["family-regression:f0"]
+    assert reasons == ["family-regression:f0", "family-regression:f1"]
     assert gate["skipped_families"] == []
     assert read(out / "run.json")["statistics"]["family_budget"] == 0.0  # pyright: ignore[reportIndexIssue]
     _ = export(out, tmp_path / "export")

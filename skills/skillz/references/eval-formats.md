@@ -162,12 +162,15 @@ A path or phrase that a seed file already holds stays allowed.
 
 ## The minimums
 
-A run needs at least three scored families and a holdout split of at least six scored cases.
+A run needs at least four scored families. Train needs at least four scored cases from two families.
+Validation needs one family. The holdout split needs at least six scored cases.
 The split gives each family to one split only. It shuffles the families with the run seed.
 The first two families in that order go to train and validation.
 If the rest hold fewer than six scored cases, the split orders the families smallest first instead.
 The next family always goes to the holdout split. More families join it until it holds six cases.
 The remaining families alternate between validation and train.
+If this split misses a minimum, the smallest family goes to validation.
+Train then takes the smallest set of the other families that meets the train minimums. The holdout takes the rest.
 
 The promotion gate needs the paired delta to exceed twice its standard error over three repeats.
 Fewer than two holdout cases is always inconclusive.
@@ -178,11 +181,13 @@ A simulation with 3 repeats and 5 candidates gave these rates for 3 and for 6 ho
 | 3 | 1.95% | 17% |
 | 6 | 1.35% | 43% |
 
-Three families are structural: one family for each split.
+Four families are structural: two train families, one validation family, and one holdout family.
+A train split of fewer than four cases gives the search too little signal to choose a candidate.
 
 A worked example: the scored families are `a` with 1 case, `b` with 2, `c` with 2, and `d` with 2.
-The two smallest, `a` and `b`, go to train and validation. The rest hold 4 cases, so the deficit is 2.
-Add 2 scored cases to `c` or `d`, or add one new family of at least 2 cases.
+The smallest family, `a`, goes to validation. Train takes `b` and `c`, which hold 4 cases.
+The holdout holds the 2 cases of `d`, so the deficit is 4.
+Add 4 scored cases to `d`, or add one new family of at least 4 cases.
 The run stops with `cases-too-few`, and `validate` reports the same finding before any model call.
 
 ## Check the files offline
