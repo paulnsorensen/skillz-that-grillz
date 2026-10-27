@@ -1,26 +1,31 @@
 # skillz live proof lessons
 
 This page records what the #324 live proof taught, so a later live run or PR does not learn it again.
-The proof closed on 2026-10-27: `changelog-proof` gave a quality `promote` on Claude and Codex on `main` at `b9993984`.
+The proof closed on 2026-10-27: `changelog-proof` gave a quality `promote` on Claude and on Codex.
+The runs used integration branches that combined PRs #549, #550, and #551.
+Claude ran at `9093e735`, and its tree is the same as `main` at `b9993984`.
+Codex ran at `c20d8002`, on an earlier integration branch. Its tree is not the same as `b9993984`.
 The design records are in [skillz autoimprove decisions](./decisions/skillz-autoimprove.md) (ADR-006 amendments) and in the `gh-176`, `gh-300`, and `gh-301` criteria files.
 
 ## Keep live probe prompts short, plain, and split
 
-The Claude preflight asks the model to try reads, writes, sockets, and network calls that the sandbox must refuse.
-One long prompt with all these steps failed live: Sonnet refused the whole list as "a sweep of sandbox-boundary and network-egress tests" that looked like an injected instruction block.
+The ADR-006 amendment of 2026-10-27 in [skillz autoimprove decisions](./decisions/skillz-autoimprove.md) records the design. This section keeps the operational lessons.
+
+The Claude preflight asks the model to try reads, writes, and network calls that the sandbox must refuse.
+One long prompt with all these steps failed live. Sonnet read the list as a sweep of sandbox tests and refused all of it.
 It made no tool call, so the run stopped with `preflight-leak` and no evidence.
 
-- Split the probe by tool. Each role now makes one Bash sandbox call and one Read file-access call (`PREFLIGHT_CALLS = 6`, `READ_PROBE` v4).
-- Use plain words in model-facing text: `outside.txt`, `link.txt`, "file-access check". Do not write "sealed", "secret", or "escape".
+- Split the probe by tool. Each role now makes one Bash sandbox call and one Read file-access call.
+- Use plain words in model-facing text. Do not write "sealed", "secret", or "escape".
 - Keep the verdict strict. A call with no tool call of its type still stops the run. The stop reason says that the model refused or skipped the check, not that a leak occurred.
 - Offline tests cannot show a model refusal. Only a live preflight proves a changed probe prompt.
 
 ## Read confinement uses the native setting, not removal of Read
 
-`permissions.blockReadsOutsideWorkingDirectories` makes the Read tool refuse paths outside the working directories in every permission mode.
-The `denyRead` list of the sandbox does not apply to the Read tool; only permission rules do.
-Read stays in `TOOLS`, so evaluation behavior and the judge capture reads do not change.
-An older Claude Code ignores the setting. The Read check on `/etc/hosts` then returns content, and the run stops with `preflight-leak`.
+The ADR-006 amendment of 2026-10-26 records the design: the `permissions.blockReadsOutsideWorkingDirectories` setting confines the Read tool, and Read stays in `TOOLS`.
+The `denyRead` list of the sandbox does not apply to the Read tool. Only permission rules confine it.
+Claude Code before 2.1.257 ignores the setting. The Read check on `/etc/hosts` then returns content, and the run stops with `preflight-leak`.
+Use Claude Code 2.1.257 or later for a live run.
 
 ## Split floors change suites, approved cases, and caps together
 
@@ -33,6 +38,7 @@ The fix had to enlarge the shipped `skills/skillz` task suite (8 to 12 cases, wh
 ## Live smoke caps equal the dry estimate
 
 Each scenario cap in `test_live_smoke.py` is the dry estimate (`SKILLZ_LIVE_DRY=1`), not a rounded budget.
+The table in `packages/skillz/tests/skillz_live/README.md` and the `live-smoke` comment in the `justfile` repeat the caps. Change all three together.
 Two PRs that each move the estimate conflict on the caps. Recompute the caps on the combined tree with a dry run of both harnesses. Do not add the two deltas by hand without that check.
 
 ## A scoring label change is a cohort break
@@ -45,8 +51,9 @@ The owner accepted this. Treat any later label change the same way, and say so i
 
 The development host has two kinds of cores. Under the gate's parallel lanes, the CPU time of the same work changes by about 3x.
 Linearity tests with a 2x margin failed now and then for this reason, not because the code was quadratic.
-PR #552 moves these tests to a shared helper: a 16x size step, a limit of 64, timing that alternates the small and large inputs, the minimum of 7 rounds, and thread CPU time.
-Write a new linearity test with the same helper. Prove it with a temporary quadratic variant.
+PR #552 adds the shared test helper `cpu_growth.best_seconds` and moves these tests to it.
+The helper uses a 16x size step, a limit of 64, timing that alternates the small and large inputs, the minimum of 7 rounds, and thread CPU time.
+Write a new linearity test with the `cpu_growth.best_seconds` helper from #552. Prove it with a temporary quadratic variant.
 
 ## Process gotchas
 
