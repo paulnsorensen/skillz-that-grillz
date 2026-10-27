@@ -5,14 +5,13 @@
 import shlex
 
 from cyclopts import App, CycloptsError
-from hypothesis import HealthCheck, given, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from fromargs._argv import GLOBAL_FLAGS, parse_once, repair_rejected, strip_global_flags
 
 # Each example parses argv several times through Cyclopts, so one example can take longer than the default deadline.
-# The autouse temp-root fixture of conftest.py is function-scoped, but no example writes a temporary file.
-PROPERTY = settings(deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+PROPERTY = settings(deadline=None)
 
 WORDS = st.from_regex(r"[a-z][a-z0-9_]{0,7}", fullmatch=True)
 # Tokens that a caller can pass: the command, its options, global flags, the end-of-options marker, and merged text.

@@ -4,11 +4,11 @@ from __future__ import annotations
 import itertools
 import json
 import stat
-import time
 from pathlib import Path
 from typing import cast
 
 import pytest
+from cpu_growth import LIMIT, STEP, best_seconds
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments.search import Progress
@@ -140,21 +140,14 @@ def test_an_escaped_credential_in_a_component_leaves_no_canary_in_the_logged_req
 
 @pytest.mark.ac("gh-501:AC-6")
 def test_the_cost_of_colliding_keys_grows_linearly_with_their_number(tmp_path: Path) -> None:
-    """Each sample runs for at least 100 ms of CPU time, and the two sizes alternate, so noise hits both alike."""
-    values = {count: {f"https://{index}.example": index for index in range(count)} for count in (2000, 4000)}
+    """16 times the keys must not cost more than 64 times the CPU time (linear is 16, quadratic is 256)."""
+    small, large = ({f"https://{index}.example": index for index in range(count)} for count in (1000, 1000 * STEP))
     calls = itertools.count()
 
-    def per_run_seconds(value: dict[str, int]) -> float:
-        runs, begin = 0, time.process_time()
-        while runs == 0 or time.process_time() - begin < 0.1:
-            run_dir = tmp_path / str(next(calls))
-            run_dir.mkdir()
-            ReflectionLog(run_dir).record(1, "p", value)
-            runs += 1
-        return (time.process_time() - begin) / runs
+    def record(value: dict[str, int]) -> None:
+        run_dir = tmp_path / str(next(calls))
+        run_dir.mkdir()
+        ReflectionLog(run_dir).record(1, "p", value)
 
-    best = dict.fromkeys(values, float("inf"))
-    for _ in range(3):
-        for count, value in values.items():
-            best[count] = min(best[count], per_run_seconds(value))
-    assert best[4000] <= 3 * best[2000], f"doubling the keys multiplied the cost by {best[4000] / best[2000]:.1f}"
+    fast, slow = best_seconds(record, small, large)
+    assert slow <= LIMIT * fast, f"{STEP} times the keys multiplied the cost by {slow / fast:.1f}"
