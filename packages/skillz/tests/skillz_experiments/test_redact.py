@@ -257,7 +257,8 @@ ADVERSARIAL_UNIT = [
 def test_redact_stays_linear_on_dotted_escaped_and_unicode_keys(unit: str) -> None:
     """16 times a 200 KB input must not cost more than 64 times the CPU time (linear is 16, quadratic is 256).
 
-    The large input is 3.2 MB, so a quadratic part that is two times the linear part at 1.6 MB still fails the test.
+    The large input is 3.2 MB, so a quadratic part that is more than two times the linear part at 1.6 MB still fails
+    the test.
     """
     count = 200_000 // len(unit)
     small, large = best_seconds(_redact.redact, unit * count, unit * count * STEP)
