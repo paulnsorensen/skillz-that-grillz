@@ -13,6 +13,11 @@ Push a `agent-session-analytics-v<version>` tag after the release commit merges.
 
 ## [Unreleased]
 
+### Fixed
+
+- `ingest` no longer stops on one corrupt log line. A JSON text that nests deeper than the parser recursion limit, or holds an integer with more digits than the `int` limit, raised `RecursionError` or `ValueError` and stopped the ingest. The line reader now skips such a line. The Pi-family and Codex adapters keep such a tool argument as raw text. The Codex adapter reads no error flag from such a tool output.
+- A Cursor `<timestamp>` whose UTC offset moves the time past the datetime range no longer stops the ingest with `OverflowError`. The row keeps the last valid timestamp.
+
 ## [0.2.1] - 2026-10-25
 
 ### Changed

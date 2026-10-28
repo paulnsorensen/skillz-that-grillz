@@ -107,7 +107,7 @@ def _pi_family_normalize(path: str, harness: str) -> Iterator[dict[str, object]]
                     if isinstance(args, str):
                         try:
                             args = cast(JsonValue, json.loads(args))
-                        except json.JSONDecodeError:
+                        except (ValueError, RecursionError):
                             args = {"raw": args}
                     if not isinstance(args, dict):
                         args = {"raw": args}

@@ -58,7 +58,7 @@ def _codex_content_block_payloads(blocks: list[JsonValue]) -> Iterator[dict[str,
     for block_text in texts[1:]:
         try:
             payload = cast(JsonValue, json.loads(block_text.strip()))
-        except ValueError:
+        except (ValueError, RecursionError):
             continue
         if isinstance(payload, dict):
             yield payload
@@ -76,7 +76,7 @@ def _codex_structured_payloads(out: JsonValue) -> Iterator[dict[str, JsonValue]]
     text = out.strip()
     try:
         parsed = cast(JsonValue, json.loads(text))
-    except ValueError:
+    except (ValueError, RecursionError):
         parsed = None
     if isinstance(parsed, dict):
         yield parsed
@@ -101,7 +101,7 @@ def _codex_structured_payloads(out: JsonValue) -> Iterator[dict[str, JsonValue]]
             return
         try:
             parsed, end = cast(tuple[JsonValue, int], decoder.raw_decode(text, position))
-        except ValueError:
+        except (ValueError, RecursionError):
             return
         if isinstance(parsed, dict):
             yield parsed
@@ -333,7 +333,7 @@ def codex_normalize(path: str) -> Iterator[dict[str, object]]:
                 parsed: JsonValue = (
                     cast(JsonValue, json.loads(raw_input)) if isinstance(raw_input, str) else raw_input
                 )
-            except (json.JSONDecodeError, TypeError):
+            except (ValueError, TypeError, RecursionError):
                 parsed = {"raw": raw_input}
             if not isinstance(parsed, dict):
                 parsed = {"raw": parsed}
