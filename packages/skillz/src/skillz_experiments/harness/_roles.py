@@ -94,14 +94,14 @@ def _command(value: object, root: Path, *, path_only: bool = False) -> tuple[str
         if path_only:
             raise CodedError("harness-missing", f"the `{parts[0]}` executable is not on PATH; install it and log in, "
                              + "or choose the other harness with --harness")
-        if not candidate.is_file():
+        if not os.path.isfile(candidate):  # Unlike Path.is_file, it is False for a name that is too long.
             raise ValueError("harness executable is unavailable")
         executable = str(candidate)
     parts[0] = str(Path(executable).absolute())
     for index, argument in enumerate(parts[1:], 1):
         prefix, name = _split(argument)
         path = root / name
-        if (prefix or not argument.startswith("-")) and path.is_file():
+        if (prefix or not argument.startswith("-")) and os.path.isfile(path):
             parts[index] = prefix + str(path.absolute())
     return tuple(parts)
 
