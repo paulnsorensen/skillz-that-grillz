@@ -405,8 +405,14 @@ class Codex:
 
 
 def _events(stdout: str) -> list[dict[str, object]]:
+    """Read one JSON object per line. Raise `RuntimeError` when a nonblank line is not a JSON object.
+
+    Split only on `\\r` and `\\n`: JSON escapes them in strings, but Codex writes U+0085, U+2028, and U+2029 raw.
+    """
     events: list[dict[str, object]] = []
-    for line in stdout.splitlines():
+    for line in re.split(r"[\r\n]", stdout):
+        if not line.strip():
+            continue
         try:
             events.append(mapping(loads_untrusted(line)))
         except ValueError:
