@@ -307,13 +307,16 @@ def test_the_draft_check_accepts_ordinary_request_words_and_tricky_summaries() -
     assert check_draft(draft) == []
 
 
+# macOS CoreFoundation injects `__CF_USER_TEXT_ENCODING` into every child after exec, so the fake
+# ignores `__CF_*` names. The production env allowlist never passes them.
 FAKE_AGENT = """#!{python}
 import json, os, pathlib, sys
 prompt = sys.stdin.read()
 argv = sys.argv[1:]
 out = pathlib.Path(argv[-1] if argv[0] == "-p" else argv[argv.index("--add-dir") + 1])
 log = {{"argv": argv, "prompt": prompt, "home": os.environ.get("HOME"), "codex_home": os.environ.get("CODEX_HOME"),
-       "env": sorted(os.environ), "skills": sorted(str(path) for path in pathlib.Path.cwd().glob("*/skills/*"))}}
+       "env": sorted(name for name in os.environ if not name.startswith("__CF_")),
+       "skills": sorted(str(path) for path in pathlib.Path.cwd().glob("*/skills/*"))}}
 (out / "agent.json").write_text(json.dumps(log))
 (out / "cases.draft.json").write_text(pathlib.Path({draft!r}).read_text())
 if argv[0] == "-p":
