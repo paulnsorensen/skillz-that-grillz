@@ -33,7 +33,8 @@ def _unquote(text: str) -> str:
 def read_frontmatter(text: str) -> dict[str, str]:
     """Return the top-level fields of the leading frontmatter block as strings.
 
-    A value loses its quotes and trailing comment. A block scalar (`|`, `>-`, ...) reads as its body, so an
+    A value loses its quotes and trailing comment. A plain value that continues on indented lines reads as its
+    lines joined by single spaces. A block scalar (`|`, `>-`, ...) reads as its body, so an
     empty body is an empty value. A nested mapping or list reads as an empty value. Raise `ValueError` when the
     text has no `---` delimiters or a top-level line is not a `key: value` pair.
     """
@@ -59,6 +60,13 @@ def read_frontmatter(text: str) -> dict[str, str]:
                 body.append(block[index].strip())
                 index += 1
             fields[key] = "\n".join(body).strip()
+        elif value[:1] not in ("", "'", '"', "[", "{"):
+            parts = [value]
+            while index < len(block) and block[index].strip() and block[index][0].isspace():
+                if not block[index].lstrip().startswith("#"):
+                    parts.append(COMMENT.sub("", block[index]).strip())
+                index += 1
+            fields[key] = " ".join(part for part in parts if part)
         else:
             fields[key] = _unquote(line.partition(":")[2]) if separator else ""
     return fields
