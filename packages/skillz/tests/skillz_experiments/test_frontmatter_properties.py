@@ -230,14 +230,14 @@ def test_the_frontmatter_name_is_the_nonempty_name_field_or_none(
     assert _frontmatter_name(text) == (None if broken is not None else fields.get("name") or None)
 
 
-@pytest.mark.xfail(strict=True, reason="read_frontmatter keeps only the first line of a multi-line plain value")
-@given(KEYS, st.from_regex(r"[a-z]{1,8}", fullmatch=True), st.lists(st.from_regex(r"[a-z]{1,8}", fullmatch=True), min_size=1,
-                                                                   max_size=3))
-def test_a_plain_value_that_continues_on_indented_lines_is_folded_or_refused(key: str, first: str, rest: list[str]) -> None:
-    text = "\n".join(["---", f"{key}: {first}", *(f"  {word}" for word in rest), "---"])
-    try:
-        fields = read_frontmatter(text)
-    except ValueError:
-        return
+@given(KEYS.filter(lambda key: key != "after"), PLAIN.filter(bool), _comments(), st.lists(st.tuples(INDENTS, PLAIN.filter(bool),
+                                                                                         _comments()), min_size=1, max_size=3),
+       _scalars())
+def test_a_plain_value_that_continues_on_indented_lines_reads_as_one_line(
+        key: str, first: str, comment: str, rest: list[tuple[str, str, str]], after: tuple[str, str]) -> None:
+    lines = ["---", f"{key}: {first}{comment}", *(indent + word + note for indent, word, note in rest), f"after: {after[0]}",
+             "---"]
+    fields = read_frontmatter("\n".join(lines))
 
-    assert fields[key] == " ".join([first, *rest])
+    assert fields == {key: " ".join([first, *(word for _, word, _ in rest)]), "after": after[1]}
+    assert facts_frontmatter(lines, len(lines) - 1)[key].text() == fields[key]
