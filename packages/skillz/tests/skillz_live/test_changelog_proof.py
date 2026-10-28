@@ -52,14 +52,17 @@ def _planted(changes: Changes) -> str:
 
 
 def _grade(changes: Changes, text: str | None, tmp_path: Path) -> tuple[float, str]:
-    """Run the contract argv as the grader does: `changes.json` at the root and the entries under `output/`."""
+    """Run the contract argv as the grader does: `changes.json` at the root and the entries under `output/`.
+
+    The argv keeps its own interpreter, `/usr/bin/python3`. On macOS that is Python 3.9, so the check must run there.
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     _ = (tmp_path / "changes.json").write_text(json.dumps(changes), encoding="utf-8")
     if text is not None:
         (tmp_path / "output").mkdir()
         _ = (tmp_path / "output/entries.md").write_text(text, encoding="utf-8")
     argv = cast(list[str], cast(dict[str, dict[str, object]], CONTRACT["kinds"])["task"]["argv"])
-    run = subprocess.run([sys.executable, *argv[1:]], cwd=tmp_path, capture_output=True, text=True, check=False)
+    run = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stderr
     return float(cast(dict[str, float], json.loads(run.stdout))["score"]), run.stderr
 
@@ -108,6 +111,7 @@ def test_the_format_example_breaks_only_the_ticket_rule(tmp_path: Path) -> None:
 
 @pytest.mark.ac("autoimprove-live-proof:AC-2")
 @pytest.mark.ac("autoimprove-live-proof:AC-4")
+@pytest.mark.ac("autoimprove-live-proof:AC-15")
 def test_a_file_that_follows_the_planted_rule_scores_0_with_one_message_that_names_the_rule_and_the_line(
         tmp_path: Path) -> None:
     changes = _cases()[0]
