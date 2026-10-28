@@ -245,3 +245,38 @@ def test_network_probe_checks_the_route_with_a_udp_connect_and_never_a_tcp_syn(t
         "socket.socket.connect=connect\n")
     result = _run_probe(tmp_path, port, prefix)
     assert (result.returncode, result.stdout.strip()) == (0, "isolation-ok")
+
+
+@pytest.mark.ac("gh-568:AC-1")
+def test_live_kill_after_the_child_exited_but_before_it_was_reaped_does_not_raise() -> None:
+    from skillz_experiments._runtime import Live
+
+    child = subprocess.Popen([sys.executable, "-c", "pass"], text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, start_new_session=True)
+    live = Live(child)
+    _ = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
+    try:
+        live.kill()
+    finally:
+        _ = child.wait()
+
+
+@pytest.mark.ac("gh-568:AC-1")
+def test_live_kill_does_not_hide_a_permission_error_from_a_running_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments._runtime import Live
+
+    child = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"], text=True, stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    live = Live(child)
+
+    def refuse(_pid: int, _signal: int) -> None:
+        raise PermissionError(1, "Operation not permitted")
+
+    try:
+        monkeypatch.setattr(os, "killpg", refuse)
+        with pytest.raises(PermissionError):
+            live.kill()
+    finally:
+        monkeypatch.undo()
+        child.kill()
+        _ = child.wait()

@@ -220,6 +220,9 @@ class Live:
             os.killpg(self.child.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            if self.child.poll() is None:
+                raise
 
     def turn(self, message: str, timeout: float, ends: Callable[[str], bool]) -> tuple[list[str], bool]:
         """Send one line, then collect output lines until `ends` accepts one.
