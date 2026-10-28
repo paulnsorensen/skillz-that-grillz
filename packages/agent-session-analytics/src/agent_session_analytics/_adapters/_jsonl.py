@@ -20,5 +20,7 @@ def iter_jsonl(path: str) -> Iterator[JsonValue]:
                 continue
             try:
                 yield cast(JsonValue, json.loads(line))
-            except json.JSONDecodeError:
+            # JSONDecodeError is a ValueError. A number past the int digit limit raises a plain ValueError,
+            # and nesting past the recursion limit raises RecursionError. Each skips one line.
+            except (ValueError, RecursionError):
                 continue

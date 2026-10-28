@@ -38,9 +38,10 @@ def _cursor_parse_timestamp(text: str) -> str | None:
         # The UTC offset is applied manually below, so parse a wall-clock time
         # and tag it UTC; a %z-aware parse would double-count the offset.
         dt = datetime.strptime(dt_str, "%b %d, %Y, %I:%M %p").replace(tzinfo=UTC)
-    except ValueError:
+        # An offset of any size can push the time past the datetime range.
+        dt -= timedelta(hours=int(offset))
+    except (ValueError, OverflowError):
         return None
-    dt -= timedelta(hours=int(offset))
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
