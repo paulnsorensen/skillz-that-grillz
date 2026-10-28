@@ -10,11 +10,14 @@ doing anything else.
 
 - `just build` — autofix markdown and YAML, then verify formats, run root
   basedpyright and Vulture checks, skill validators, fromargs/wedge suites,
-  and wedge check. Run after every change.
+  the file-size ratchet, and wedge check. A final `coverage` lane combines the
+  pytest lane coverage and checks the project floor, whole-symbol dead code, and
+  diff coverage. Run after every change.
 - `just ci` — the same gate with NO autofixes; this is what CI runs.
   CI sets `GATE_SKIP=skillz-e2e-pytest,skillz-pytest` on the `gate (just ci)` job
   and runs those two lanes in six parallel shard jobs (`GATE_SHARD=<n>/6 just test-skillz`),
-  which the required `skillz tests` check gates.
+  which the required `skillz tests` check gates. The `coverage` job combines the
+  coverage data of the gate job and the shards (`GATE_COVERAGE_DIR`).
   Locally, `just build` and `just ci` still run every lane.
 
 ```bash
@@ -77,3 +80,10 @@ of truth for repo-local skills (tooling for work on this repository only).
   - Never edit `slices.toml`, `sbguard-baseline.json`, or `depth-ratchet.json` to make a check pass.
     Do not pass `--accept-denominator-gains`; that decision belongs to the human owner.
     See `docs/agents/decisions/architecture-gates.md`.
+- Quality ratchets (`docs/agents/decisions/quality-ratchets.md`):
+  - `.github/scripts/check_file_lengths.py` holds each `packages/*/src` file to 300 lines;
+    `[tool.skillz.file-size.exceptions]` in `pyproject.toml` lists the measured ceilings.
+    When a waived file shrinks, run `check_file_lengths.py tighten` in the same change. Split a file that grows; only a human raises a ceiling.
+  - The `coverage` lane fails below `[tool.coverage.report].fail_under`, on a function with zero coverage hits,
+    and when the lines a change adds are below `[tool.skillz.coverage].diff_fail_under`.
+    Add tests; never lower a floor. Raise `fail_under` when the gate asks for it.

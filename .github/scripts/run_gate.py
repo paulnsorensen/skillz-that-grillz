@@ -32,6 +32,10 @@ EATMYDATA_VARIABLE = "GATE_EATMYDATA"
 # The count of gates on one host that run their lanes at the same time; `0` removes the limit.
 HOST_SLOTS_VARIABLE = "GATE_HOST_SLOTS"
 DEFAULT_HOST_SLOTS = 2
+# The pytest lanes write their coverage data here; CI sets it so the jobs can upload the data to the coverage job.
+COVERAGE_DIR_VARIABLE = "GATE_COVERAGE_DIR"
+# The serial lane that combines the lane data and runs check_coverage.py after every other lane passes.
+COVERAGE_LANE = "coverage"
 
 
 def _environment() -> dict[str, str]:
@@ -210,30 +214,58 @@ def _stop_children() -> None:
         output.close()
 
 
-def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
+def coverage_dir(temp_root: Path) -> Path:
+    """Create and return the lane coverage data directory: `$GATE_COVERAGE_DIR`, else one below the temporary root.
+
+    Remove the lane data of an earlier run, so the coverage lane never combines stale data.
+    """
+    configured = os.environ.get(COVERAGE_DIR_VARIABLE)
+    directory = Path(configured).resolve() if configured else temp_root / "cov"
+    directory.mkdir(parents=True, exist_ok=True)
+    for stale in [*directory.glob("*.cov"), *directory.glob("*.cov.*")]:
+        stale.unlink()
+    return directory
+
+
+def _covered(lane: str, data_dir: Path) -> tuple[list[str], list[str]]:
+    """Return the prefix that names one lane's coverage data file, and the `coverage run` command that wraps pytest.
+
+    Every lane measures every workspace package, because the tests of one package also run another's code.
+    `--parallel-mode` and `patch = ["subprocess"]` make the controller, each xdist worker, and each test subprocess
+    write their own `<data file>.<host>.<pid>.<random>`. Only the coverage lane combines them.
+    A CI shard tags its file name with the shard, so the coverage job can merge every shard's files.
+    The sources are absolute, so a test subprocess with another working directory measures the same tree.
+    """
+    shard = os.environ.get(SHARD_VARIABLE, "").replace("/", "of")
+    data_file = data_dir / f"{lane}{'.' + shard if shard else ''}.cov"
+    sources = ",".join(str(source) for source in sorted((ROOT / "packages").glob("*/src")))
+    return ["env", f"COVERAGE_FILE={data_file}"], ["coverage", "run", "--parallel-mode", f"--source={sources}",
+                                                   "-m", "pytest"]
+
+
+def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None) -> list[Job]:
     root = ["uv", "run", "--locked", "--no-sync", "--all-groups"]
     wedge = ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge"]
     skillz = ["uv", "run", "--locked", "--no-sync", "--project", "packages/skillz"]
     fromargs = ["uv", "run", "--locked", "--no-sync", "--project", "packages/fromargs"]
     analytics = ["uv", "run", "--locked", "--no-sync", "--project", "packages/agent-session-analytics"]
-    # Only the `--no-sync` pytest lanes run without fsync; they write only below `cache_root`.
+    # Only the `--no-sync` pytest lanes run without fsync; they write only below `cache_root` and the coverage directory.
     eat = fsync_wrapper()
+    data_dir = data_dir or cache_root / "cov"
+
+    def pytest(lane: str, runner: list[str], paths: list[str], key: str) -> Job:
+        prefix, measured = _covered(lane, data_dir)
+        return lane, eat + prefix + runner + [*measured, *paths, "-q", "-n", str(test_workers), "--dist", "worksteal",
+                                              "--basetemp", str(cache_root / key),
+                                              "-o", f"cache_dir={cache_root / (key + 'c')}"]
+
     # The slow process-level e2e suite runs as its own job, in parallel with the skillz unit tests.
     skillz_e2e = "packages/skillz/tests/skillz_experiments/e2e"
     return [
-        ("skillz-e2e-pytest", eat + skillz + ["pytest", skillz_e2e, "-q", "-n", str(test_workers),
-                                  "--dist", "worksteal", "--basetemp", str(cache_root / "e"),
-                                  "-o", f"cache_dir={cache_root / 'ec'}"]),
-        ("wedge-pytest", eat + wedge + ["pytest", "packages/wedge/tests", "-q", "-n", str(test_workers),
-                            "--dist", "worksteal", "--basetemp", str(cache_root / "l"),
-                            "-o", f"cache_dir={cache_root / 'lc'}"]),
-        ("skillz-pytest", eat + skillz + ["pytest", "packages/skillz/tests", "--ignore", skillz_e2e,
-                              "-q", "-n", str(test_workers),
-                              "--dist", "worksteal", "--basetemp", str(cache_root / "s"),
-                              "-o", f"cache_dir={cache_root / 'sc'}"]),
-        ("fromargs-pytest", eat + fromargs + ["pytest", "packages/fromargs/tests", "-q", "-n", str(test_workers),
-                                      "--dist", "worksteal", "--basetemp", str(cache_root / "f"),
-                                      "-o", f"cache_dir={cache_root / 'fc'}"]),
+        pytest("skillz-e2e-pytest", skillz, [skillz_e2e], "e"),
+        pytest("wedge-pytest", wedge, ["packages/wedge/tests"], "l"),
+        pytest("skillz-pytest", skillz, ["packages/skillz/tests", "--ignore", skillz_e2e], "s"),
+        pytest("fromargs-pytest", fromargs, ["packages/fromargs/tests"], "f"),
         ("skill-validator-tests", root + ["python", ".github/scripts/test_validate_skills.py"]),
         ("eval-validator-tests", root + ["python", ".github/scripts/test_validate_evals.py"]),
         ("skill-validator", root + ["python", ".github/scripts/validate_skills.py"]),
@@ -249,11 +281,12 @@ def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
         ("ac-trace-tests", root + ["python", ".github/scripts/test_check_ac_trace.py"]),
         ("ac-trace", root + ["python", ".github/scripts/check_ac_trace.py"]),
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
+        ("file-size-tests", root + ["python", ".github/scripts/test_check_file_lengths.py"]),
+        ("file-size", root + ["python", ".github/scripts/check_file_lengths.py", "check"]),
+        ("coverage-tests", root + ["python", ".github/scripts/test_check_coverage.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
         ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
-        ("agent-session-analytics-pytest", eat + analytics + ["pytest", "packages/agent-session-analytics/tests", "-q", "-n", str(test_workers),
-                                                "--dist", "worksteal", "--basetemp", str(cache_root / "a"),
-                                                "-o", f"cache_dir={cache_root / 'ac'}"]),
+        pytest("agent-session-analytics-pytest", analytics, ["packages/agent-session-analytics/tests"], "a"),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
         ("wedge-check", wedge + ["wedge", "check", "--root", "packages/wedge/examples/skills",
                               "--root", "packages/wedge/examples/consumer/skills"]),
@@ -273,11 +306,23 @@ def _check_jobs() -> list[Job]:
 def _skipped() -> frozenset[str]:
     """Return the lane names in `GATE_SKIP`; reject a name that is not a lane."""
     names = frozenset(part.strip() for part in os.environ.get(SKIP_VARIABLE, "").split(",") if part.strip())
-    lanes = {name for name, _ in _test_jobs(1, Path("/tmp")) + _check_jobs()}
+    lanes = {name for name, _ in _test_jobs(1, Path("/tmp")) + _check_jobs()} | {COVERAGE_LANE}
     unknown = sorted(names - lanes)
     if unknown:
         raise ValueError(f"{SKIP_VARIABLE} names unknown lanes: {', '.join(unknown)}")
     return names
+
+
+def _coverage(data_dir: Path, skip: frozenset[str]) -> int:
+    """Run the coverage lane after every other lane passes; it needs the data of every pytest lane."""
+    missing = sorted(name for name in skip if name.endswith("-pytest"))
+    if COVERAGE_LANE in skip or missing:
+        reason = f"needs {', '.join(missing)}" if missing and COVERAGE_LANE not in skip else f"skipped by {SKIP_VARIABLE}"
+        print(f"- {COVERAGE_LANE} ({reason})", flush=True)
+        return 0
+    command = ["uv", "run", "--locked", "--no-sync", "--all-groups", "python", ".github/scripts/check_coverage.py",
+               str(data_dir)]
+    return 0 if run_step(COVERAGE_LANE, command) else 1
 
 
 def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
@@ -319,9 +364,12 @@ def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: 
             return 1
     if not _prepare():
         return 1
-    jobs = _without(_test_jobs(test_workers, temp_root) + _check_jobs(), skip)
+    data_dir = coverage_dir(temp_root)
+    jobs = _without(_test_jobs(test_workers, temp_root, data_dir) + _check_jobs(), skip)
     with host_slot(slots):
-        return 0 if run_jobs(jobs, workers) else 1
+        if not run_jobs(jobs, workers):
+            return 1
+    return _coverage(data_dir, skip)
 
 
 def _workers(name: str) -> int:
@@ -380,7 +428,8 @@ def main(argv: list[str] | None = None) -> int:
                     with host_slot(slots):
                         return 0 if run_step(f"{package}-pytest", command) else 1
                 if args[0] in {"test", "skillz"}:
-                    jobs = _test_jobs(test_workers, temp_root)
+                    # These modes write the lane data but do not check it: CI's coverage job combines the shards.
+                    jobs = _test_jobs(test_workers, temp_root, coverage_dir(temp_root))
                     if args[0] == "skillz":
                         plugin = ["-p", "pytest_shard"] if shard else []
                         jobs = [(name, command + plugin) for name, command in jobs if name in SKILLZ_LANES]
