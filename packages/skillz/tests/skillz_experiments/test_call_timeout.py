@@ -11,7 +11,16 @@ from typing import cast
 import pytest
 
 from skillz_experiments import _runtime
-from skillz_experiments._budget import CALL_TIMEOUT_FACTOR, FAILED, SEARCH_ROLES, SECONDS_PER_CALL, Budget, BudgetExhausted, CallTimeout
+from skillz_experiments._budget import (
+    CALL_TIMEOUT_FACTOR,
+    FAILED,
+    PROMPT_CHARS_PER_SECOND,
+    SEARCH_ROLES,
+    SECONDS_PER_CALL,
+    Budget,
+    BudgetExhausted,
+    CallTimeout,
+)
 from skillz_experiments._records import read, write
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._codex import Codex
@@ -33,17 +42,22 @@ def _restore_call_slots() -> Iterator[None]:
 
 
 @pytest.fixture
-def timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """Record the timeout of every process the model calls start. The real process still runs."""
-    seen: list[float] = []
+def spied(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, int]]:
+    """Record the timeout and the input characters of every process the model calls start. The real process still runs."""
+    seen: list[tuple[float, int]] = []
     original = _runtime.process
 
     def spy(command: list[str], *, cwd: Path, timeout: float, **options: object) -> subprocess.CompletedProcess[str]:
-        seen.append(timeout)
+        seen.append((timeout, len(cast(str | None, options.get("input_text")) or "")))
         return original(command, cwd=cwd, timeout=timeout, **options)  # pyright: ignore[reportArgumentType]
 
     monkeypatch.setattr(_runtime, "process", spy)
     return seen
+
+
+def _base(spied: list[tuple[float, int]]) -> list[float]:
+    """Return each uncapped timeout less the share that its input size adds (gh-563)."""
+    return [timeout - chars / PROMPT_CHARS_PER_SECOND for timeout, chars in spied]
 
 
 def _no_sleep(_seconds: float) -> None:
@@ -69,36 +83,36 @@ def test_the_per_call_estimate_is_the_plan_estimate() -> None:
 
 @pytest.mark.ac("gh-319:AC-1")
 def test_a_codex_call_gets_four_times_the_per_call_estimate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                           timeouts: list[float]) -> None:
+                                                           spied: list[tuple[float, int]]) -> None:
     _ = _fake(tmp_path, monkeypatch, failures=0)
     _ = _codex_call(Budget(10, 1000, 0, call_seconds=2.5))
-    assert timeouts == [10.0]
+    assert _base(spied) == pytest.approx([10.0])
 
 
 @pytest.mark.ac("gh-319:AC-1")
 def test_a_codex_call_timeout_is_capped_by_the_remaining_search_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                                    timeouts: list[float]) -> None:
+                                                                    spied: list[tuple[float, int]]) -> None:
     _ = _fake(tmp_path, monkeypatch, failures=0)
     _ = _codex_call(Budget(10, 5, 0))
-    assert len(timeouts) == 1 and 0 < timeouts[0] <= 5 < CALL_TIMEOUT_FACTOR * SECONDS_PER_CALL
+    assert len(spied) == 1 and 0 < spied[0][0] <= 5 < CALL_TIMEOUT_FACTOR * SECONDS_PER_CALL
 
 
 @pytest.mark.ac("gh-319:AC-1")
 def test_a_codex_retry_attempt_gets_the_per_call_timeout_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                            timeouts: list[float]) -> None:
+                                                            spied: list[tuple[float, int]]) -> None:
     _ = _fake(tmp_path, monkeypatch, failures=1, event='{"type":"error","message":"429 rate limit exceeded"}')
     monkeypatch.setattr(_codex, "_sleep", _no_sleep)
     _ = _codex_call(Budget(10, 1000, 0, call_seconds=2.5))
-    assert timeouts == [10.0, 10.0]
+    assert _base(spied) == pytest.approx([10.0, 10.0])
 
 
 @pytest.mark.ac("gh-319:AC-1")
-def test_a_command_call_gets_four_times_the_per_call_estimate_and_the_remaining_cap(timeouts: list[float]) -> None:
+def test_a_command_call_gets_four_times_the_per_call_estimate_and_the_remaining_cap(spied: list[tuple[float, int]]) -> None:
     with pytest.raises(CallTimeout):
         _ = _sleeper(Budget(10, 1000, 0, call_seconds=0.25)).invoke("hello")
     with pytest.raises(BudgetExhausted):
         _ = _sleeper(Budget(10, 0.5, 0, call_seconds=100)).invoke("hello")
-    assert timeouts[0] == 1.0 and 0 < timeouts[1] <= 0.5
+    assert _base(spied[:1]) == pytest.approx([1.0]) and 0 < spied[1][0] <= 0.5
 
 
 @pytest.mark.ac("gh-319:AC-2")
