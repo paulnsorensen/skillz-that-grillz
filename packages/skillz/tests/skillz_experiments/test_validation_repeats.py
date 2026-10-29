@@ -118,7 +118,8 @@ def test_a_budget_stop_names_the_call_cap_the_search_deadline_or_the_global_dead
 @pytest.mark.parametrize(("stopped", "trigger", "reason"), [("metric-count", "metric-count", "validation-mean"),
                                                           ("call-share", "call-share", "validation-mean"),
                                                           ("stall", "stall", "converged-stalled"),
-                                                          ("idle", "stall", "validation-mean")])
+                                                          pytest.param("idle", "idle", "validation-mean",
+                                                                       marks=pytest.mark.ac("gh-563:AC-5"))])
 def test_the_run_records_the_engine_stop_as_the_search_stop_trigger(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, monkeypatch: pytest.MonkeyPatch,
         stopped: str, trigger: str, reason: str) -> None:

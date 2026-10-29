@@ -45,9 +45,9 @@ def _differences(recorded: object, observed: object, name: str = "") -> list[str
     return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
 
 
-# The `search.stop_trigger` of each engine stop reason. An idle search adds no new evaluation, so it stalled.
+# The `search.stop_trigger` of each engine stop reason. Idle (no new evaluation for `skip_limit` iterations) is not a stall.
 _ENGINE_TRIGGERS: Mapping[str, str] = {"metric-count": "metric-count", "call-share": "call-share", "stall": "stall",
-                                      "idle": "stall"}
+                                      "idle": "idle"}
 
 
 def _budget_trigger(budget: Budget, timed_out: bool) -> str:

@@ -297,7 +297,7 @@ class SearchPhase:
         except CallTimeout as error:
             with state.lock:
                 state.outcomes.append({"arm": "search", "split": "reflection", "status": "timeout", "reason": "timeout",
-                                       "failure": str(error)})
+                                       "failure": str(error), "prompt_chars": len(prompt)})
                 self._ended_proposal = asked
                 state.checkpoint()
             raise ValueError("the reflection call timed out; the proposal ends with no candidate") from error
@@ -305,7 +305,7 @@ class SearchPhase:
             # A provider failure other than a timeout. GEPA skips the proposal, so the row is the only trace of the paid call.
             with state.lock:
                 state.outcomes.append({"arm": "search", "split": "reflection", "status": "failed",
-                                       "reason": fault_reason(error), "failure": str(error)})
+                                       "reason": fault_reason(error), "failure": str(error), "prompt_chars": len(prompt)})
                 self._ended_proposal = asked
                 state.checkpoint()
                 fault = reflection_fault(self.reflections())
@@ -369,7 +369,7 @@ class SearchPhase:
             outcome: dict[str, object] = {"arm": "search", "split": "reflection", "usage": result.get("usage"),
                                           "latency_seconds": result.get("latency_seconds"), "parent": digest(candidate),
                                           "components_digest": None if refusal is not None else digest(proposal),
-                                          "minibatch": case_ids(feedback), "hypothesis": hypothesis,
+                                          "minibatch": case_ids(feedback), "hypothesis": hypothesis, "prompt_chars": len(prompt),
                                           "hypothesis_dropped": hypothesis_dropped, "notes": notes,
                                           "notes_dropped": notes_dropped,
                                           "rejected": None if refusal is None else "reflection-shape",

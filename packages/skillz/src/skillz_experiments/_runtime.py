@@ -164,7 +164,9 @@ def sandboxed(command: list[str], *, cwd: Path, limit: float, budget: Budget, en
 
 def model_call(budget: Budget, command: list[str], *, cwd: Path, environment: dict[str, str],
                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    """Run one model call under its per-call timeout: `budget.call_timeout()`, which the remaining search time caps.
+    """Run one model call under its per-call timeout: `budget.call_timeout()` for the size of `input_text`.
+
+    The remaining search time caps the timeout.
 
     The per-call clock starts after the call holds a slot. A slot wait that reaches the search deadline
     raises `BudgetExhausted`, never `CallTimeout`.
@@ -172,7 +174,7 @@ def model_call(budget: Budget, command: list[str], *, cwd: Path, environment: di
     A call that the deadline stops raises `BudgetExhausted`.
     """
     with _slot(budget.remaining()):
-        limit = budget.call_timeout()
+        limit = budget.call_timeout(len(input_text or ""))
         try:
             return process(command, cwd=cwd, timeout=limit, environment=environment, input_text=input_text, slotted=True)
         except BudgetExhausted:
