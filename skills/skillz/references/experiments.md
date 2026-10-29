@@ -120,6 +120,7 @@ A skill with no editable helper script, no own wedge source, and no usable `@new
 The fallback also applies when the `@new-cli` site layer fails or lacks cyclopts. The runner writes one note on stderr with the reason, and the run does not stop.
 The fallback also applies when the `prose+cli` editable text exceeds 200000 characters, because each reflection call reads and returns all of it.
 An explicit `--edit` never falls back. When the planned editable text exceeds 200000 characters, the `budget-unapproved` stop holds `reflection_warning`, and the runner writes it on stderr.
+When the runner cannot plan the prose set, for example because the contract `editable` list names a script, the run keeps `prose+cli`, and `reflection_warning` gives no `--edit prose` advice.
 A resume without `--edit` keeps the mode of the first run.
 `--edit prose` changes only Markdown files.
 A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.

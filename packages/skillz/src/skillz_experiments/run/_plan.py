@@ -257,6 +257,8 @@ REFLECTION_TEXT_LIMIT = 200_000
 """The editable characters above which a reflection call risks its per-call timeout (gh-563).
 
 A reflection prompt holds every editable file, and the answer returns every component in full.
+At `PROMPT_CHARS_PER_SECOND` in `_budget`, a prompt at this limit adds 1000 seconds to the per-call timeout.
+Change the two values together.
 """
 
 
@@ -265,13 +267,24 @@ def editable_chars(files: Mapping[str, str], editable: Sequence[str]) -> int:
     return sum(len(files.get(name, "")) for name in editable)
 
 
-def reflection_warning(chars: int, edit: Edit) -> str | None:
-    """Return the budget-question warning for `chars` editable characters, or None at or below the limit."""
+def reflection_excess(chars: int) -> str | None:
+    """Return the clause that names `chars` editable characters over `REFLECTION_TEXT_LIMIT`, or None at or below it."""
     if chars <= REFLECTION_TEXT_LIMIT:
         return None
-    advice = ("run with --edit prose, or " if edit == "prose+cli" else "") + "name fewer files in the contract editable list"
-    return (f"the editable text holds {chars} characters, more than the reflection limit of {REFLECTION_TEXT_LIMIT}; "
-            + f"each reflection call reads and returns all of it, so it can reach its per-call timeout; {advice}")
+    return f"the editable text holds {chars} characters, more than the reflection limit of {REFLECTION_TEXT_LIMIT}"
+
+
+def reflection_warning(chars: int, edit: Edit, *, offer_prose: bool = True) -> str | None:
+    """Return the budget-question warning for `chars` editable characters, or None at or below the limit.
+
+    The advice names `--edit prose` only for a `prose+cli` edit, and only when `offer_prose` is true.
+    """
+    excess = reflection_excess(chars)
+    if excess is None:
+        return None
+    prose_hint = "run with --edit prose, or " if edit == "prose+cli" and offer_prose else ""
+    advice = prose_hint + "name fewer files in the contract editable list"
+    return f"{excess}; each reflection call reads and returns all of it, so it can reach its per-call timeout; {advice}"
 
 
 def _default_kinds(contract: Contract) -> tuple[str, ...]:

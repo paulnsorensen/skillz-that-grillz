@@ -51,10 +51,10 @@ from skillz_experiments.harness import (
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._plan import (
-    REFLECTION_TEXT_LIMIT,
     editable_chars,
     editable_files,
     plan_estimate,
+    reflection_excess,
     reflection_warning,
     scored_kinds,
     size_plan,
@@ -92,6 +92,7 @@ def _fall_back_to_prose(target: Path, skeleton: Candidate, contract: Contract,
     files = skeleton.files | wedge.sources
     frozen = skeleton.frozen | wedge.frozen
     planned = wedge, Candidate(files, tuple(editable_files(files, contract, "prose", frozen.keys(), wedge)), contract, frozen=frozen)
+    # Print only after the prose plan succeeds: the size fallback suppresses a failed plan and keeps prose+cli.
     print(f"skillz-experiment: {reason}; this run uses --edit prose", file=sys.stderr)
     return planned
 
@@ -109,12 +110,11 @@ def _seed_or_prose(target: Path, skeleton: Candidate, contract: Contract, edit: 
         if edit is not None or error.code != "helper-missing":
             raise
         return ("prose", *_fall_back_to_prose(target, skeleton, contract, str(error)), True)
-    chars = editable_chars(seed.files, seed.editable)
-    if edit is None and mode == "prose+cli" and chars > REFLECTION_TEXT_LIMIT:
+    reason = reflection_excess(editable_chars(seed.files, seed.editable))
+    if edit is None and mode == "prose+cli" and reason is not None:
         # A prose plan that fails, such as explicit non-Markdown editable names, keeps prose+cli and its warning.
         with suppress(CodedError):
-            reason = f"the prose+cli editable text holds {chars} characters, more than the reflection limit of {REFLECTION_TEXT_LIMIT}"
-            return ("prose", *_fall_back_to_prose(target, skeleton, contract, reason), True)
+            return ("prose", *_fall_back_to_prose(target, skeleton, contract, f"the prose+cli plan: {reason}"), True)
     return mode, wedge, seed, False
 
 
@@ -199,7 +199,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
     mode, wedge, seed_candidate, _ = _seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
-    warning = reflection_warning(editable_chars(seed_candidate.files, seed_candidate.editable), mode)
+    # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warning does not offer prose.
+    warning = reflection_warning(editable_chars(seed_candidate.files, seed_candidate.editable), mode, offer_prose=edit is not None)
     if warning is not None:
         print(f"skillz-experiment: warning: {warning}", file=sys.stderr)
     plan = size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
