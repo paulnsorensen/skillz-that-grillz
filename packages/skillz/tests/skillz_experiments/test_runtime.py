@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import subprocess
 import sys
@@ -247,36 +248,41 @@ def test_network_probe_checks_the_route_with_a_udp_connect_and_never_a_tcp_syn(t
     assert (result.returncode, result.stdout.strip()) == (0, "isolation-ok")
 
 
-@pytest.mark.ac("gh-568:AC-1")
-def test_live_kill_after_the_child_exited_but_before_it_was_reaped_does_not_raise() -> None:
-    from skillz_experiments._runtime import Live
-
-    child = subprocess.Popen([sys.executable, "-c", "pass"], text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, start_new_session=True)
-    live = Live(child)
-    _ = os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT)
-    try:
-        live.kill()
-    finally:
-        _ = child.wait()
+def _refuse_killpg(_pid: int, _signal: int) -> None:
+    raise PermissionError(errno.EPERM, "Operation not permitted")
 
 
 @pytest.mark.ac("gh-568:AC-1")
-def test_live_kill_does_not_hide_a_permission_error_from_a_running_child(monkeypatch: pytest.MonkeyPatch) -> None:
-    from skillz_experiments._runtime import Live
+def test_live_turn_deadline_after_the_child_exited_stops_with_budget_exhausted(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments._runtime import live
 
-    child = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"], text=True, stdin=subprocess.PIPE,
-                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-    live = Live(child)
+    with live([sys.executable, "-c", "pass"], cwd=tmp_path, environment={"PATH": os.defpath}) as session:
+        _ = session.child.wait()
+        monkeypatch.setattr(os, "killpg", _refuse_killpg)
+        with pytest.raises(BudgetExhausted, match="terminated at deadline"):
+            _ = session.turn("x", 0, lambda _line: False)
 
-    def refuse(_pid: int, _signal: int) -> None:
-        raise PermissionError(1, "Operation not permitted")
 
-    try:
-        monkeypatch.setattr(os, "killpg", refuse)
-        with pytest.raises(PermissionError):
-            live.kill()
-    finally:
-        monkeypatch.undo()
-        child.kill()
-        _ = child.wait()
+@pytest.mark.ac("gh-568:AC-1")
+@pytest.mark.skipif(not hasattr(os, "waitid"), reason="os.waitid exists on macOS only from Python 3.13")
+def test_live_kill_after_the_child_exited_but_before_it_was_reaped_does_not_raise(tmp_path: Path) -> None:
+    from skillz_experiments._runtime import live
+
+    with live([sys.executable, "-c", "pass"], cwd=tmp_path, environment={"PATH": os.defpath}) as session:
+        _ = os.waitid(os.P_PID, session.child.pid, os.WEXITED | os.WNOWAIT)
+        session.kill()
+
+
+@pytest.mark.ac("gh-568:AC-3")
+def test_live_kill_does_not_hide_a_permission_error_from_a_running_child(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments._runtime import live
+
+    command = [sys.executable, "-c", "import time;time.sleep(30)"]
+    with live(command, cwd=tmp_path, environment={"PATH": os.defpath}) as session:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "killpg", _refuse_killpg)
+            with pytest.raises(PermissionError):
+                session.kill()
+        session.child.kill()
