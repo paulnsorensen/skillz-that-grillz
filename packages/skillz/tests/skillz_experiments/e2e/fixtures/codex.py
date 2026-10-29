@@ -42,7 +42,7 @@ def discover() -> int:
             workspace = Path(cast(list[str], params["cwds"])[0])
             skills = sorted((workspace / ".agents/skills").glob("*/SKILL.md"))
             listing = [{"name": skill.parent.name, "enabled": True, "scope": "repo",
-                        "pluginId": None, "path": str(skill)} for skill in skills]
+                        "pluginId": None, "path": str(skill.resolve())} for skill in skills]
             print(json.dumps({"id": 1, "result": {"data": [{"cwd": str(workspace),
                              "errors": [], "skills": listing}]}}), flush=True)
     return 0
