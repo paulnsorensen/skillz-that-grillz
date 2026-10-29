@@ -372,7 +372,11 @@ def test_each_harness_runs_the_author_stage_in_its_own_agent_with_the_skillz_ski
     assert log["skills"] == [str(work / "author" / skills_dir / "skills/skillz")], log
     if harness == "codex":
         assert log["home"] == str(work / "author-home") and log["codex_home"] == str(work / "codex-home")
-        assert log["env"] == ["CODEX_HOME", "HOME", "LANG", "PATH", "TMPDIR", "UV_CACHE_DIR"], log
+        # On macOS, the Python process that runs the fake can get `__CF_USER_TEXT_ENCODING` after exec.
+        # `codex_author` does not pass it, so the check removes only that name and only on macOS.
+        injected = {"__CF_USER_TEXT_ENCODING"} if sys.platform == "darwin" else set[str]()
+        env = [name for name in cast(list[str], log["env"]) if name not in injected]
+        assert env == ["CODEX_HOME", "HOME", "LANG", "PATH", "TMPDIR", "UV_CACHE_DIR"], log
         assert (work / "codex-home/auth.json").resolve() == host / "auth.json"
         assert sorted(path.name for path in (work / "codex-home").iterdir()) == ["auth.json"]
 
