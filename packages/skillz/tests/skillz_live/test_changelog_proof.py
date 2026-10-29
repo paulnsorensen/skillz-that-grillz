@@ -5,6 +5,7 @@ None of them makes a model call, so the `skillz-pytest` gate step runs them.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -18,7 +19,7 @@ import pytest
 
 import changelog_proof
 from changelog_check import RULES, entries_for, entry_for, verdict
-from changelog_proof import (CONTRACT, FIXTURE, NAME, PYPROJECT, TOKEN_RULE, WEDGE_TOML, check, check_draft,
+from changelog_proof import (CHECK, CONTRACT, FIXTURE, NAME, PYPROJECT, TOKEN_RULE, WEDGE_TOML, check, check_draft,
                              codex_argv, match_entries, patch_files, proof_verdict, reference_draft)
 from skillz_experiments import _graders
 from skillz_experiments._candidate import Candidate
@@ -123,6 +124,20 @@ def test_a_file_that_follows_the_planted_rule_scores_0_with_one_message_that_nam
     assert cast(str, verdict(EXAMPLE, entries_for(EXAMPLE) + "extra\n")).startswith("entries.md:3: rule 6")
 
 
+@pytest.mark.ac("autoimprove-live-proof:AC-15")
+def test_the_check_source_parses_as_python_3_9_and_passes_no_strict_keyword_to_zip_or_map() -> None:
+    """Guard Python 3.9 where `/usr/bin/python3` is newer, as on the Linux CI hosts.
+
+    The parse checks only the grammar, and the walk finds only a `strict` keyword of `zip` or `map`.
+    Neither proves that every runtime API of the check exists in Python 3.9.
+    """
+    tree = ast.parse(CHECK, feature_version=(3, 9))
+    strict = [node.lineno for node in ast.walk(tree)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"zip", "map"}
+              and any(keyword.arg == "strict" for keyword in node.keywords)]
+    assert strict == [], f"Python 3.9 zip and map take no strict keyword; check lines {strict}"
+
+
 TRICKY: Changes = [
     {"ticket": None, "type": "feat", "scope": None, "summary": "add HTTP-2 support", "breaking": False},
     {"ticket": None, "type": "fix", "scope": "io", "summary": "handle UTF-8 names", "breaking": False},
@@ -219,7 +234,7 @@ class _Sandboxed:
     """A task transport that runs the grader argv in the workspace, as the harness sandbox does."""
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
-        run = subprocess.run([sys.executable, *argv[1:]], cwd=workspace, capture_output=True, text=True, timeout=20)
+        run = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=20)
         return run.returncode, run.stdout, run.stderr
 
 
