@@ -15,7 +15,7 @@ from skillz_experiments import _runtime
 from skillz_experiments._budget import CALL_TIMEOUT_FACTOR, PROMPT_CHARS_PER_SECOND, Budget, CallTimeout
 from skillz_experiments._records import read
 from skillz_experiments.run import Stop, run
-from skillz_experiments.run._plan import REFLECTION_TEXT_LIMIT, reflection_excess, reflection_warning
+from skillz_experiments.run._edit_plan import REFLECTION_TEXT_LIMIT, reflection_excess, reflection_warning
 from test_default_edit import MODEL, _prepare
 from test_run_search import _start
 

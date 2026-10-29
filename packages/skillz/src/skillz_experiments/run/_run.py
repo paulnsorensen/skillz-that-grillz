@@ -20,7 +20,6 @@ from skillz_experiments._budget import (
 )
 from skillz_experiments._candidate import NEW_CLI, Candidate, store_frozen
 from skillz_experiments._cases import CodedError, Split, digest, load_cases
-from skillz_experiments._contract import Contract
 from skillz_experiments._intake import (
     DRAFT_NAME,
     approval_question,
@@ -36,7 +35,7 @@ from skillz_experiments._intake import (
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_inferred, seed_projection, seed_summary
-from skillz_experiments.run._wedge_targets import TargetPlan, plan_targets, seal, settle
+from skillz_experiments.run._wedge_targets import plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
     ClaudeOptions,
@@ -50,15 +49,8 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
-from skillz_experiments.run._plan import (
-    editable_chars,
-    editable_files,
-    plan_estimate,
-    reflection_excess,
-    reflection_warning,
-    scored_kinds,
-    size_plan,
-)
+from skillz_experiments.run._edit_plan import editable_chars, reflection_warning, seed_or_prose
+from skillz_experiments.run._plan import plan_estimate, scored_kinds, size_plan
 from skillz_experiments.run._resume import (
     check_resume,
     check_statistics,
@@ -83,39 +75,6 @@ DEFAULT_SEED = 20261006
 
 
 DEFAULT_REPEATS = 3
-
-
-def _fall_back_to_prose(target: Path, skeleton: Candidate, contract: Contract,
-                        reason: str) -> tuple[TargetPlan, Candidate]:
-    """Plan an omitted `--edit` as `prose` after `prose+cli` could not plan, and say why on stderr."""
-    wedge = plan_targets(target, skeleton.files, contract, "prose")
-    files = skeleton.files | wedge.sources
-    frozen = skeleton.frozen | wedge.frozen
-    planned = wedge, Candidate(files, tuple(editable_files(files, contract, "prose", frozen.keys(), wedge)), contract, frozen=frozen)
-    # Print only after the prose plan succeeds: the size fallback suppresses a failed plan and keeps prose+cli.
-    print(f"skillz-experiment: {reason}; this run uses --edit prose", file=sys.stderr)
-    return planned
-
-
-def _seed_or_prose(target: Path, skeleton: Candidate, contract: Contract, edit: Edit | None, mode: Edit, wedge: TargetPlan,
-                   files: dict[str, str], frozen: dict[str, bytes]) -> tuple[Edit, TargetPlan, Candidate, bool]:
-    """Build the seed candidate. Without an explicit `--edit`, `prose+cli` falls back to `prose`.
-
-    The fallback happens when no helper is editable, or when the editable text exceeds `REFLECTION_TEXT_LIMIT`
-    and the prose set can be planned. The last item is true when the run fell back to `prose`.
-    """
-    try:
-        seed = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
-    except CodedError as error:
-        if edit is not None or error.code != "helper-missing":
-            raise
-        return ("prose", *_fall_back_to_prose(target, skeleton, contract, str(error)), True)
-    reason = reflection_excess(editable_chars(seed.files, seed.editable))
-    if edit is None and mode == "prose+cli" and reason is not None:
-        # A prose plan that fails, such as explicit non-Markdown editable names, keeps prose+cli and its warning.
-        with suppress(CodedError):
-            return ("prose", *_fall_back_to_prose(target, skeleton, contract, f"the prose+cli plan: {reason}"), True)
-    return mode, wedge, seed, False
 
 
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit | None, repeats: int, seed: int | None,
@@ -198,7 +157,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     wedge = plan_targets(target, skeleton.files, contract, mode)
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
-    mode, wedge, seed_candidate, _ = _seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
+    mode, wedge, seed_candidate, _ = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
     # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warning does not offer prose.
     warning = reflection_warning(editable_chars(seed_candidate.files, seed_candidate.editable), mode, offer_prose=edit is not None)
     if warning is not None:
@@ -217,7 +176,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if offered and wedge.capable is None:
         files = skeleton.files | wedge.sources
         frozen = skeleton.frozen | wedge.frozen
-        mode, wedge, seed_candidate, fell_back = _seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
+        mode, wedge, seed_candidate, fell_back = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
         if fell_back:
             layers = {}
     seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
