@@ -19,7 +19,8 @@ It needs no source checkout or runtime package installation.
   The search scores each candidate twice on each validation case, and GEPA gets the mean of the scored repeats.
   A failed repeat still counts as run. A case with no scored repeat has no score.
   `run.json` records `validation_policy: {"repeats": 2}`. A resume with another policy, or none, stops with `validation-policy-differs`.
-  `search.stop_trigger` names the limit that ended the search: `metric-count`, `call-share`, `stall`, `search-deadline`, `deadline`, or `call-cap`.
+  `search.stop_trigger` names the limit that ended the search: `metric-count`, `call-share`, `stall`, `idle`, `search-deadline`, `deadline`, or `call-cap`.
+  `idle` means that the search added no new evaluation for several iterations, for example because each reflection call timed out.
 - **Case draft**: the file `RUN/cases.draft.json` that you write from the skill, and from past sessions when analytics exists.
 - **Split**: the train, validation, or holdout group of a case. Code assigns it from a recorded seed.
 - **Approval**: the user's answer to one question. The runner binds each answer to a hash or to a call count.
@@ -41,6 +42,7 @@ The contract question under `No contract` is outside these three. Ask it only wh
 1. Harness and model: "Which harness and model do you want to use? Use `claude` or `codex`." Skip it when the user already named both.
 2. Case approval: show the `question` text from the `cases-unapproved` stop, and ask the user to approve the listed cases.
 3. Budget approval: show the `estimate` from the `budget-unapproved` stop, and ask the user to approve that many calls.
+   When the stop holds `reflection_warning`, show it too.
 
 ## Procedure
 
@@ -83,13 +85,16 @@ The last `turn.failed` message always classifies the failure and stays in the ev
 A ChatGPT-plan usage limit ("You've hit your usage limit") fails as `usage-limited`. The runner does not retry it and does not halve the concurrent calls.
 It is an unscored `evaluation-failed` outcome that counts toward `search-faulted` and `holdout-faulted`. The runner does not read its "try again at" time as a wait.
 Each model call (every harness) has a per-call timeout of 4 times the per-call estimate, capped by the remaining search time.
+The timeout also adds 1 second per 200 prompt characters, before the cap.
+A reflection prompt holds every editable file, so a large editable set gets a longer reflection timeout.
 The exception is a Claude journey turn. It still runs under the remaining search time only.
 The estimate is 60 seconds plus the sandbox seconds of one evaluation in the run plan.
 The clock starts after the call gets a call slot. A wait for a slot that reaches the search deadline is a budget stop, not a timeout.
 Each retry attempt gets the same limit.
 A task or judge call that exceeds it ends as an `evaluation-failed` outcome with `reason: timeout`.
 A reflection call that exceeds it records a reflection outcome with `status: timeout`, and the proposal ends with no candidate and no second reflection call.
-A reflection outcome with a status is no stall observation.
+Each reflection outcome that made a call (answered, `timeout`, or `failed`) records `prompt_chars`, the characters of its prompt.
+A reflection outcome with a status is no stall observation. When such outcomes leave the search with no new evaluation, it stops with `stop_trigger: idle`, not `stall`.
 When every feedback record is unscored, the run skips the reflection (`status: skipped`, `reason: no-scored-feedback`) and the proposal ends with no candidate.
 Each answered reflection call writes `RUN/reflections/<k>.json` (mode 0600) for audit: the redacted prompt and the redacted answer as JSON text.
 `k` is the count of reflection outcomes in the run, so a timed-out, failed, or skipped call leaves a gap, and a resume continues the count.
@@ -113,6 +118,9 @@ Claude Code's own sandbox confines Bash commands.
 `--edit prose+cli` is the default. It also changes the helper scripts and the own wedge sources of the skill, in the same single search.
 A skill with no editable helper script, no own wedge source, and no usable `@new-cli` falls back to `--edit prose`.
 The fallback also applies when the `@new-cli` site layer fails or lacks cyclopts. The runner writes one note on stderr with the reason, and the run does not stop.
+The fallback also applies when the `prose+cli` editable text exceeds 200000 characters, because each reflection call reads and returns all of it.
+An explicit `--edit` never falls back. When the planned editable text exceeds 200000 characters, the `budget-unapproved` stop holds `reflection_warning`, and the runner writes it on stderr.
+When the runner cannot plan the prose set, for example because the contract `editable` list names a script, the run keeps `prose+cli`, and `reflection_warning` gives no `--edit prose` advice.
 A resume without `--edit` keeps the mode of the first run.
 `--edit prose` changes only Markdown files.
 A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
@@ -159,7 +167,7 @@ Map each coded stop to its next step:
 | `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_file` (the path of `RUN/cases.seed.json`) and `seed_summary` (`cases`, `journeys` (the journey case count), and the case count of each kind and each family; a task case with no family is in no family count; both only when `evals/evals.json` or `evals/journeys.json` exists), `doctor` (the host checks) | Write the case draft. Start from the `seed_file` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics` | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics`, `reflection_warning` (only when the editable text exceeds 200000 characters) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `cases-too-easy` | The seed already scores at least 0.9 on a train or validation family. The message names each family, its split, and its mean. | Do not ask a new question. Draft harder cases in a new run directory, then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `baseline-check-timeout` | `next`, and optional `detail` | The contract check of the original skill reached the sandbox time limit twice, before the search or in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |

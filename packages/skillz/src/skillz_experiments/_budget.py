@@ -11,6 +11,10 @@ from skillz_experiments._cases import CodedError
 
 SECONDS_PER_CALL = 60
 CALL_TIMEOUT_FACTOR = 4
+# Every model call gets 1 more second of timeout per PROMPT_CHARS_PER_SECOND prompt characters.
+# The rate fits the slowest case, a reflection call: its answer returns complete components, so it is about as long
+# as its prompt. At about 4 characters per token and 50 output tokens per second, a model writes about 200 characters per second.
+PROMPT_CHARS_PER_SECOND = 200
 FAILED = "failed"
 SEARCH_ROLES = ("task", "reflection", "judge", FAILED)
 MAX_CONCURRENT_CALLS = 2
@@ -149,9 +153,14 @@ class Budget:
             raise BudgetExhausted("search deadline exhausted; the holdout gate holds the remaining time")
         return remaining - reserved
 
-    def call_timeout(self) -> float:
-        """Return the seconds that one model call may run: `CALL_TIMEOUT_FACTOR` times the per-call estimate, capped by `remaining`."""
-        return min(CALL_TIMEOUT_FACTOR * self.call_seconds, self.remaining())
+    def call_timeout(self, prompt_chars: int = 0) -> float:
+        """Return the seconds that one model call may run, capped by `remaining`.
+
+        The limit is `CALL_TIMEOUT_FACTOR` times the per-call estimate, plus 1 second per `PROMPT_CHARS_PER_SECOND`
+        characters of the prompt. A large prompt, such as a reflection prompt that holds every editable file, gets more time.
+        """
+        scaled = CALL_TIMEOUT_FACTOR * self.call_seconds + prompt_chars / PROMPT_CHARS_PER_SECOND
+        return min(scaled, self.remaining())
 
     def out_of_time(self) -> bool:
         """Return whether the search deadline has passed."""
