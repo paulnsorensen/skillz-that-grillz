@@ -105,6 +105,25 @@ class FileLengthTest(unittest.TestCase):
             self.assertEqual(output.count("\n"), 2, output)
             self.assertIn(f"{over}: 8 lines (limit 7)", output)
 
+    def test_tighten_rewrites_only_the_key_and_keeps_comments_and_spacing(self) -> None:
+        tricky = 'reason = "was max_lines = 400, see #12"'
+        exceptions = (f'"{BIG}" = {{ {tricky}, max_lines = 12 }}  # split later\n'
+                      f'\n"{SMALL}" = {{ max_lines = 8, {REASON} }}\n\n# trailer\n')
+        with _root() as root:
+            _tree(root, {BIG: 9, SMALL: 4}, exceptions)
+            self.assertEqual(_run(root, "tighten")[0], 0)
+            text = (root / "pyproject.toml").read_text()
+            self.assertIn(f'"{BIG}" = {{ {tricky}, max_lines = 9 }}  # split later\n\n\n# trailer\n', text)
+            self.assertEqual(_run(root, "check")[0], 0)
+
+    def test_line_counts_match_newlines_not_form_feeds(self) -> None:
+        with _root() as root:
+            _tree(root, {})
+            path = root / SMALL
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _ = path.write_text("a = 1\n\f\nb = ' '\nc = 3\nd = 4\ne = 5")
+            self.assertEqual(lengths.measure(root), {SMALL: 6})
+            self.assertEqual(_run(root, "check")[0], 1)
     def test_a_bad_command_is_a_usage_error(self) -> None:
         with _root() as root:
             _tree(root, {})

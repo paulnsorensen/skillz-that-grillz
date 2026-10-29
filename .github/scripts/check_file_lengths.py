@@ -67,10 +67,15 @@ def load_budget(root: Path) -> Budget:
     return Budget(limit, waivers)
 
 
+def _line_count(text: str) -> int:
+    """Count lines as `wc -l` and editors do: `str.splitlines` also splits on form feeds and U+2028."""
+    return text.count("\n") + (bool(text) and not text.endswith("\n"))
+
+
 def measure(root: Path) -> dict[str, int]:
     """Return the line count of each source file, keyed by its repository-relative POSIX path."""
     return {
-        path.relative_to(root).as_posix(): len(path.read_text(encoding="utf-8").splitlines())
+        path.relative_to(root).as_posix(): _line_count(path.read_text(encoding="utf-8"))
         for path in sorted(root.glob(SOURCE_GLOB))
     }
 
@@ -95,7 +100,12 @@ def violations(budget: Budget, counts: dict[str, int]) -> list[str]:
 
 
 def _entry_pattern(path: str) -> re.Pattern[str]:
-    return re.compile(rf'^"{re.escape(path)}"\s*=\s*\{{.*\}}\s*\n', re.MULTILINE)
+    """Match one exception line, with an optional trailing comment; keep the lines around it."""
+    return re.compile(rf'^"{re.escape(path)}"[ \t]*=[ \t]*\{{.*\}}[ \t]*(#.*)?\n', re.MULTILINE)
+
+
+# The `max_lines` key of an inline table: it follows `{` or `,`, so a reason string that names it never matches.
+_CEILING = re.compile(r"([{,]\s*)max_lines\s*=\s*\d+")
 
 
 def tighten(text: str, budget: Budget, counts: dict[str, int]) -> str:
@@ -109,7 +119,7 @@ def tighten(text: str, budget: Budget, counts: dict[str, int]) -> str:
             text = pattern.sub("", text, count=1)
         elif actual < waiver.max_lines:
             text = pattern.sub(
-                lambda match: re.sub(r"max_lines\s*=\s*\d+", f"max_lines = {actual}", match.group(0), count=1),
+                lambda match: _CEILING.sub(rf"\g<1>max_lines = {actual}", match.group(0), count=1),
                 text, count=1,
             )
     return text

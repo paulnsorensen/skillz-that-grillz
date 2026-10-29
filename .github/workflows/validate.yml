@@ -101,7 +101,10 @@ jobs:
             ${{ runner.temp }}/coverage/*.cov
             ${{ runner.temp }}/coverage/*.cov.*
           if-no-files-found: error
-          retention-days: 1
+          # A rerun of failed jobs reuses the other jobs' data from the first attempt, so keep it past one day.
+          retention-days: 5
+          # A rerun attempt replaces this job's data from the earlier attempt instead of a name conflict.
+          overwrite: true
 
   skillz-shard:
     # The two skillz pytest lanes set the gate's wall time, so they run here
@@ -157,7 +160,8 @@ jobs:
             ${{ runner.temp }}/coverage/*.cov
             ${{ runner.temp }}/coverage/*.cov.*
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 5
+          overwrite: true
 
   coverage:
     # The gate job and the six skillz shards each measure part of the pytest lanes. This job combines

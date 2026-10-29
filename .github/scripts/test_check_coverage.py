@@ -62,7 +62,9 @@ diff_fail_under = 95
 [tool.skillz.dead-code]
 allow = ["p.mod:allowed"]
 """
-DRIVER = "import sys\nsys.path.insert(0, sys.argv[1])\nfrom p.mod import used\nused()\n"
+QMODULE = "def helper():\n    return 7\n"
+DRIVER = ("import sys\nsys.path[:0] = sys.argv[1:]\nfrom p.mod import used\nfrom q.mod import helper\n"
+          "used()\nhelper()\n")
 
 
 TRIMMED = MODULE.split("\n\n\ndef dead")[0] + "\n"
@@ -74,16 +76,23 @@ def _git(root: Path, *args: str) -> str:
 
 
 class _World:
-    """A Git repository with one workspace package `p`, committed as the diff base."""
+    """A Git repository with two workspace packages `p` and `q`, committed as the diff base.
+
+    Two packages match production, which measures every `packages/*/src` tree with comma-joined sources.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root: Path = root
         self.data: Path = root / "data"
         self.source: Path = root / "packages/p/src"
+        self.other: Path = root / "packages/q/src"
         self.data.mkdir()
         (self.source / "p").mkdir(parents=True)
+        (self.other / "q").mkdir(parents=True)
         _ = (self.source / "p/__init__.py").write_text("")
         _ = (self.source / "p/mod.py").write_text(MODULE)
+        _ = (self.other / "q/__init__.py").write_text("")
+        _ = (self.other / "q/mod.py").write_text(QMODULE)
         _ = (root / "packages/p/pyproject.toml").write_text('[project.scripts]\np = "p.mod:entry"\n')
         self.config(0)
         _ = (root / ".gitignore").write_text("data/\ndriver.py\n")
@@ -102,7 +111,7 @@ class _World:
         """Run the driver under coverage.py and write the data file `name`."""
         _ = (self.root / "driver.py").write_text(DRIVER)
         _ = subprocess.run([sys.executable, "-m", "coverage", "run", f"--data-file={self.data / name}",
-                            f"--source={self.source}", "driver.py", str(self.source)],
+                            f"--source={self.source},{self.other}", "driver.py", str(self.source), str(self.other)],
                            cwd=self.root, check=True, capture_output=True)
 
     def gate(self) -> tuple[int, str]:
@@ -134,6 +143,21 @@ class CoverageGateTest(unittest.TestCase):
             self.assertEqual(dead_code.module_name(world.source / "p/__init__.py", world.root), "p")
             self.assertIsNone(dead_code.module_name(world.root / "scripts/tool.py", world.root))
 
+    def test_an_untracked_untested_function_in_a_second_package_fails_dead_code_and_diff(self) -> None:
+        with _world() as world:
+            world.module(TRIMMED)
+            _ = _git(world.root, "commit", "-q", "-am", "trim")
+            world.base = _git(world.root, "rev-parse", "HEAD")
+            # Not added to Git: a local run must still see a new file before `git add`.
+            _ = (world.other / "q/extra.py").write_text("def fresh(value):\n    doubled = value * 2\n    return doubled\n")
+            world.measure()
+            code, output = world.gate()
+            self.assertEqual(code, 1, output)
+            self.assertIn("packages/q/src/q/extra.py:1: q.extra:fresh is whole-symbol dead code", output)
+            # The file was never imported, so its `def` line counts as measured and missed too.
+            self.assertIn("diff coverage 0% of 3 measured lines (floor 95%)", output)
+            self.assertIn("  packages/q/src/q/extra.py: missing lines 1, 2, 3", output)
+
     def test_a_clean_change_passes_and_combines_every_lane(self) -> None:
         with _world() as world:
             world.module(TRIMMED)
@@ -145,6 +169,8 @@ class CoverageGateTest(unittest.TestCase):
             code, output = world.gate()
             self.assertEqual(code, 0, output)
             self.assertIn("coverage: combined 3 lane data files", output)
+            # The change only removes lines, so the diff check measures none and says so instead of a pass claim.
+            self.assertIn("diff coverage: no measured source line in this diff against", output)
             self.assertTrue((world.data / "coverage.xml").is_file())
 
     def test_the_project_floor_fails_below_and_asks_for_a_raise_above(self) -> None:
@@ -170,6 +196,8 @@ class CoverageGateTest(unittest.TestCase):
             code, output = world.gate()
             self.assertEqual(code, 1, output)
             self.assertIn("Failure. Coverage is below 95%", output)
+            self.assertIn("diff coverage 0% of 2 measured lines (floor 95%)", output)
+            self.assertIn("  packages/p/src/p/mod.py: missing lines 6, 7", output)
             self.assertNotIn("below the floor", output)
 
     def test_missing_lane_data_is_an_input_error(self) -> None:

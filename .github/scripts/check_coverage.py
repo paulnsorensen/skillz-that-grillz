@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import subprocess
 import sys
 import tomllib
@@ -74,14 +75,32 @@ def project_check(combined: Coverage) -> tuple[bool, str]:
 
 
 def diff_check(coverage_xml: Path, base: str, threshold: float, root: Path) -> tuple[bool, str]:
-    """Run diff-cover against `base` and return whether the changed lines reach `threshold`."""
-    tool = Path(sys.executable).parent / "diff-cover"
+    """Run diff-cover against `base` and return whether the changed lines reach `threshold`.
+
+    The report names the measured line count, so a diff with no measured line never reads as a pass.
+    `--include-untracked` makes a local run see a new file before `git add`; CI has no untracked file.
+    """
+    report = coverage_xml.with_name("diff-cover.json")
     result = subprocess.run(
-        [str(tool), str(coverage_xml), f"--compare-branch={base}", f"--fail-under={threshold:g}", "--quiet"],
+        [sys.executable, "-m", "diff_cover.diff_cover_tool", str(coverage_xml), f"--compare-branch={base}",
+         f"--fail-under={threshold:g}", "--include-untracked", f"--format=json:{report}", "--quiet"],
         cwd=root, capture_output=True, text=True, check=False,
     )
     output = (result.stdout + result.stderr).strip()
-    return result.returncode == 0, output or f"diff coverage reaches {threshold:g}% against {base[:12]}"
+    try:
+        stats = cast(dict[str, object], json.loads(report.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return False, output or f"diff coverage: diff-cover wrote no report (exit {result.returncode})"
+    lines = cast(int, stats.get("total_num_lines", 0))
+    if not lines:
+        return result.returncode == 0, f"diff coverage: no measured source line in this diff against {base[:12]}"
+    percent = cast(float, stats.get("total_percent_covered", 0))
+    report_lines = [f"diff coverage {percent:g}% of {lines} measured lines (floor {threshold:g}%) against {base[:12]}"]
+    for path, file_stats in sorted(cast(dict[str, dict[str, object]], stats.get("src_stats", {})).items()):
+        missing = cast(list[int], file_stats.get("violation_lines", []))
+        if missing:
+            report_lines.append(f"  {path}: missing lines {', '.join(map(str, missing))}")
+    return result.returncode == 0, "\n".join(filter(None, [output, *report_lines]))
 
 
 def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
@@ -96,17 +115,16 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
         combined, lanes = combine(data_dir, root)
         coverage_xml = data_dir / "coverage.xml"
         _ = combined.xml_report(outfile=str(coverage_xml))
-        exempt = dead_code.load_exemptions(root)
+        dead = dead_code.find_whole_dead_symbols(coverage_xml, root, dead_code.load_exemptions(root))
+        diff_passed, diff_report = diff_check(coverage_xml, base, threshold, root)
     except (MapError, NoDataError, OSError, ValueError, tomllib.TOMLDecodeError) as error:
         print(f"coverage: {error}", file=sys.stderr)
         return 2
     print(f"coverage: combined {len(lanes)} lane data files")
     passed, report = project_check(combined)
     print(report)
-    dead = dead_code.find_whole_dead_symbols(coverage_xml, root, exempt)
     for symbol in dead:
         print(symbol.report())
-    diff_passed, diff_report = diff_check(coverage_xml, base, threshold, root)
     print(diff_report)
     return 0 if passed and not dead and diff_passed else 1
 
