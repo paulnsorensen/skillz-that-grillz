@@ -13,6 +13,7 @@ from typing import cast
 
 import pytest
 
+from skillz_experiments._budget import ESTIMATE_SECONDS_PER_CALL
 from skillz_experiments._cli import main
 from skillz_experiments._contract import load_contract
 from skillz_experiments._seed import seed_cases
@@ -132,6 +133,29 @@ def _stops(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], edi
     first, second = _stop_errors(target, tmp_path, capsys, edit)
     return str(first["code"]), str(second["code"])
 
+
+@pytest.mark.ac("gh-571-calibrate:AC-3")
+def test_the_shipped_journey_run_shows_the_plan_rate_and_no_reflection_time_warning(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = _staged(tmp_path)
+    seeded = cast(list[dict[str, object]], seed_cases(target))
+    for case in seeded:
+        _ = cast(dict[str, object], case["expected"]).setdefault("criteria", DRAFTED)
+    out = tmp_path / "run"
+    out.mkdir(mode=0o700)
+    _ = (out / "cases.draft.json").write_text(json.dumps(seeded), encoding="utf-8")
+    command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose", "--repeats", "1",
+               "--kind", "journey"]
+    _ = main(command)
+    shown = cast(dict[str, object], json.loads(capsys.readouterr().out))["case_hash"]
+    _ = main([*command, "--approve-cases", str(shown)])
+    captured = capsys.readouterr()
+    stop = cast(dict[str, object], json.loads(captured.out))
+    estimate = cast(dict[str, object], stop["estimate"])
+    assert _coded(captured.err)["code"] == "budget-unapproved"
+    assert estimate["seconds_per_call"] == ESTIMATE_SECONDS_PER_CALL
+    assert cast(dict[str, int], estimate["reflection"])["calls"] > 0
+    assert "reflection_time_warning" not in stop and "reflection_time_warning" not in captured.err
 
 @pytest.mark.ac("gh-384:AC-1")
 def test_a_prose_journey_run_on_a_copy_without_wedge_toml_reaches_the_budget_stop(

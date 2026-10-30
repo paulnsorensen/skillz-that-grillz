@@ -156,6 +156,7 @@ def test_a_checkpoint_reads_the_budget_through_one_snapshot(
 
 
 @pytest.mark.ac("gh-319:AC-1")
+@pytest.mark.ac("gh-571-calibrate:AC-2")
 def test_the_per_call_estimate_adds_the_sandbox_seconds_of_one_evaluation(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
