@@ -278,7 +278,11 @@ The runner passes the declared MCP file with `--mcp-config` and grants the permi
 MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
 They run unconfined on the host; only the seed-fixed MCP config limits them.
 
-Codex and command transports raise `journey-unsupported`.
+Codex runs each journey in one ephemeral App Server thread and one isolated workspace.
+It sends each simulator reply as a new turn and applies the strict Codex permission profile throughout.
+The first turn must read `SKILL.md` and `EXPERIMENT_MARKER` successfully and show the marker output.
+The trace gate receives raw App Server notifications. Scoring receives normalized command and usage events.
+The command transport still raises `journey-unsupported`.
 A declared surface raises `contract-surface-unsupported` first.
 
 ## Credential kind

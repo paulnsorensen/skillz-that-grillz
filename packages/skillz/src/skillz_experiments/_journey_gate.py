@@ -14,7 +14,18 @@ def agent_turn(line: str) -> bool:
         event = cast(object, json.loads(line))
     except json.JSONDecodeError:
         return False
-    return isinstance(event, dict) and cast(dict[str, object], event).get("type") == "assistant"
+    if not isinstance(event, dict):
+        return False
+    data = cast(dict[str, object], event)
+    if data.get("type") == "assistant":
+        return True
+    if data.get("method") != "item/completed":
+        return False
+    params = data.get("params")
+    if not isinstance(params, dict):
+        return False
+    item = cast(dict[str, object], params).get("item")
+    return isinstance(item, dict) and cast(dict[str, object], item).get("type") == "agentMessage"
 
 
 def main() -> None:
