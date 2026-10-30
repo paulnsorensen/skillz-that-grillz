@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from skillz_experiments.harness._discovery import valid_listing
 
 
@@ -19,3 +21,16 @@ def test_native_listing_requires_exact_enabled_skill_and_no_errors(tmp_path: Pat
     assert not valid_listing({"data": [{"cwd": str(tmp_path), "skills": [dict(skill, enabled=False)], "errors": []}]}, tmp_path, "skillz")
     assert not valid_listing({"data": [{"cwd": str(tmp_path), "skills": [skill], "errors": ["invalid"]}]}, tmp_path, "skillz")
     assert not valid_listing({"data": [{"cwd": str(tmp_path), "skills": [skill, dict(skill, name="host")], "errors": []}]}, tmp_path, "skillz")
+
+
+@pytest.mark.ac("gh-566:AC-1")
+def test_native_listing_accepts_the_canonical_skill_path_of_a_symlinked_workspace(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    (real / ".agents/skills/skillz").mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    skill: dict[str, object] = {"name": "skillz", "path": str(real.resolve() / ".agents/skills/skillz/SKILL.md"),
+                                "scope": "repo", "enabled": True, "pluginId": None}
+    assert valid_listing({"data": [{"cwd": str(link), "skills": [skill], "errors": []}]}, link, "skillz")
+    other = dict(skill, path=str(tmp_path / "elsewhere/.agents/skills/skillz/SKILL.md"))
+    assert not valid_listing({"data": [{"cwd": str(link), "skills": [other], "errors": []}]}, link, "skillz")
