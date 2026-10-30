@@ -27,6 +27,8 @@ with open(os.environ['EVENT_LOG'], 'a') as log:
         log.write('live-flag-leaked\\n')
     if 'GATE_SHARD' in os.environ:
         log.write('pythonpath ' + os.environ.get('PYTHONPATH', '') + '\\n')
+    if 'COVERAGE_FILE' in os.environ:
+        log.write('coverage-file ' + os.environ['COVERAGE_FILE'] + '\\n')
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
     pid_file = pathlib.Path(os.environ['CHILD_PID'])
     pid_tmp = pid_file.with_name(pid_file.name + '.tmp')
@@ -58,8 +60,10 @@ class GateRunnerTest(unittest.TestCase):
             tool = root / name
             _ = tool.write_text(FAKE_TOOL)
             tool.chmod(0o755)
-        # CI jobs set GATE_SKIP or GATE_SHARD; drop them so each test sets its own lane selection.
-        inherited = {name: value for name, value in os.environ.items() if name not in {"GATE_SKIP", "GATE_SHARD"}}
+        # CI jobs set GATE_SKIP, GATE_SHARD, or GATE_COVERAGE_DIR; drop them so each test sets its own lane selection.
+        # An inherited GATE_COVERAGE_DIR would let a fake gate remove the live coverage data of the outer gate.
+        dropped = {"GATE_SKIP", "GATE_SHARD", "GATE_COVERAGE_DIR"}
+        inherited = {name: value for name, value in os.environ.items() if name not in dropped}
         # A private lock directory keeps the fake gates out of the real host slots that the outer gate holds.
         return {**inherited, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                 "EVENT_LOG": str(root / "events"), "GATE_JOBS": "2", "TEST_WORKERS": "3",
@@ -79,7 +83,11 @@ class GateRunnerTest(unittest.TestCase):
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
-            wrapped = [event.removeprefix("eatmydata ") for event in events if event.startswith("eatmydata ")]
+            # Each pytest lane runs as `eatmydata env COVERAGE_FILE=<lane data> uv run ...`.
+            wrapped = [event.removeprefix("eatmydata env ").split(" ", 1)[1] for event in events
+                       if event.startswith("eatmydata ")]
+            self.assertTrue(all(event.startswith("eatmydata env COVERAGE_FILE=") for event in events
+                                if event.startswith("eatmydata ")))
             pytest_events = [event for event in events if " pytest " in event and not event.startswith("eatmydata ")]
             self.assertEqual(len(pytest_events), 5)
             self.assertEqual(sorted(wrapped), sorted(pytest_events))
@@ -344,7 +352,8 @@ class GateRunnerTest(unittest.TestCase):
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            events = (root / "events").read_text().splitlines()
+            events = [event for event in (root / "events").read_text().splitlines()
+                      if not event.startswith("coverage-file ")]
             self.assertEqual(events[0], "uv sync --locked --all-packages --all-groups --all-extras")
             # Each CI shard builds the archives that its tests run (ADR-012).
             self.assertEqual(events[1], "uv run --locked --no-sync --project packages/wedge wedge bundle skills/skillz")
@@ -367,6 +376,74 @@ class GateRunnerTest(unittest.TestCase):
             self.assertTrue(all(event.endswith(" -p pytest_shard") for event in pytest_events))
             paths = {event for event in events if event.startswith("pythonpath ")}
             self.assertEqual(paths, {f"pythonpath {RUNNER.parent}{os.pathsep}/elsewhere"})
+
+    def test_every_pytest_lane_writes_its_own_coverage_then_the_coverage_lane_runs_last(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "lane-data"
+            data.mkdir()
+            for name in ("old.cov", "old.cov.host.7.Xabc", "keep.txt"):
+                _ = (data / name).write_text("")
+            env = {**self._fake_env(root), "GATE_COVERAGE_DIR": str(data)}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            files = [event.removeprefix("coverage-file ") for event in events if event.startswith("coverage-file ")]
+            self.assertEqual(sorted(Path(path).name for path in files), [
+                "agent-session-analytics-pytest.cov", "fromargs-pytest.cov", "skillz-e2e-pytest.cov",
+                "skillz-pytest.cov", "wedge-pytest.cov"])
+            self.assertTrue(all(Path(path).parent == data.resolve() for path in files))
+            pytest_events = [event for event in events if " pytest " in event]
+            sources = ",".join(f"{RUNNER.parents[2]}/packages/{name}/src"
+                                for name in ("agent-session-analytics", "fromargs", "skillz", "wedge"))
+            self.assertEqual(len(pytest_events), 5)
+            self.assertTrue(all(f" coverage run --parallel-mode --source={sources} -m pytest " in event
+                                for event in pytest_events), pytest_events)
+            gate = ".github/scripts/check_coverage.py"
+            self.assertEqual(events[-1], f"uv run --locked --no-sync --all-groups python {gate} {data.resolve()}")
+            self.assertIn("✓ coverage", result.stdout)
+            # Stale lane data from an earlier run is gone; other files stay.
+            self.assertEqual(sorted(path.name for path in data.iterdir()), ["keep.txt"])
+
+    def test_the_coverage_lane_needs_every_pytest_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_SKIP": "skillz-pytest"}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("- coverage (needs skillz-pytest)", result.stdout)
+            self.assertFalse(any(" .github/scripts/check_coverage.py " in event
+                                 for event in (root / "events").read_text().splitlines()))
+            env = {**self._fake_env(root), "GATE_SKIP": "coverage"}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("- coverage (skipped by GATE_SKIP)", result.stdout)
+
+    def test_a_failed_lane_stops_the_gate_before_the_coverage_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tool = root / "just"
+            env = self._fake_env(root)
+            _ = tool.write_text(FAKE_TOOL + "if args == ['lint-yaml']:\n    sys.exit(3)\n")
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn("coverage", result.stdout.replace("coverage-tests", ""))
+
+    def test_a_shard_tags_its_coverage_files_and_skips_the_coverage_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_SHARD": "2/6", "GATE_COVERAGE_DIR": str(root / "data")}
+            result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            files = sorted(Path(event.split(" ", 1)[1]).name for event in events if event.startswith("coverage-file "))
+            self.assertEqual(files, ["skillz-e2e-pytest.2of6.cov", "skillz-pytest.2of6.cov"])
+            self.assertFalse(any(" .github/scripts/check_coverage.py " in event for event in events))
 
     def test_a_malformed_or_misplaced_shard_fails_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

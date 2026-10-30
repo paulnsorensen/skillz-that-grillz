@@ -1,6 +1,7 @@
 """The command check of the `changelog-proof` scenario, and the oracle text that it enforces.
 
-The grader runs this file as `python3 -I -c <source>`. Its workspace holds the case file `changes.json` at the root
+The grader runs this file as `/usr/bin/python3 -I -c <source>`. That is Python 3.9 on macOS, so the file uses no
+newer feature. Its workspace holds the case file `changes.json` at the root
 and the task output under `output/`. The check prints `{"score": 1}` only when `output/entries.md` is the oracle text:
 one entry line for each change, in order. Otherwise it prints `{"score": 0}` and writes one linter-style message to
 stderr. The message names the rule and the line. It never repeats the summary or the scope, so it holds no long part
@@ -122,7 +123,8 @@ def verdict(changes: list[dict[str, object]], text: str | None) -> str | None:
     if len(lines) != len(changes):
         return _fault(6, min(len(lines), len(changes)) + 1,
                       f"entries.md holds one line for each of the {len(changes)} changes, in order")
-    for index, (change, line) in enumerate(zip(changes, lines, strict=True), 1):
+    # The count check above makes the lengths equal. Python 3.9 has no `zip(strict=True)`.
+    for index, (change, line) in enumerate(zip(changes, lines), 1):
         if line != entry_for(change):
             return _entry_fault(change, line, index)
     return _fault(6, len(lines), "entries.md ends with one newline")

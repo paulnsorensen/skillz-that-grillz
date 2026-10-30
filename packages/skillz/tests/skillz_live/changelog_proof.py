@@ -31,7 +31,7 @@ FIXTURE = HERE / "fixtures/changelog-entry"
 NAME = "changelog-entry"
 SEED_CLI = "change-check"
 CHECK = (HERE / "changelog_check.py").read_text(encoding="utf-8")
-"""The command check source. The grader runs it as `python3 -I -c CHECK`."""
+"""The command check source. The grader runs it as `/usr/bin/python3 -I -c CHECK`."""
 CONTRACT: dict[str, object] = {
     "schema_version": 1, "status": "approved", "skill": NAME, "invocation": f"${NAME}",
     "kinds": {"task": {"grader": "command", "argv": ["/usr/bin/python3", "-I", "-c", CHECK]}},

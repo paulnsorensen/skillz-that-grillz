@@ -367,10 +367,9 @@ class SearchPhase:
             notes, notes_dropped = None, leak.rule
         with state.lock:
             outcome: dict[str, object] = {"arm": "search", "split": "reflection", "usage": result.get("usage"),
-                                          "prompt_chars": len(prompt),
                                           "latency_seconds": result.get("latency_seconds"), "parent": digest(candidate),
                                           "components_digest": None if refusal is not None else digest(proposal),
-                                          "minibatch": case_ids(feedback), "hypothesis": hypothesis,
+                                          "minibatch": case_ids(feedback), "hypothesis": hypothesis, "prompt_chars": len(prompt),
                                           "hypothesis_dropped": hypothesis_dropped, "notes": notes,
                                           "notes_dropped": notes_dropped,
                                           "rejected": None if refusal is None else "reflection-shape",
