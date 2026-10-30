@@ -42,7 +42,9 @@ The contract question under `No contract` is outside these three. Ask it only wh
 1. Harness and model: "Which harness and model do you want to use? Use `claude` or `codex`." Skip it when the user already named both.
 2. Case approval: show the `question` text from the `cases-unapproved` stop, and ask the user to approve the listed cases.
 3. Budget approval: show the `estimate` from the `budget-unapproved` stop, and ask the user to approve that many calls.
-   When the stop holds `reflection_warning`, show it too.
+   When the stop holds `reflection_warning` or `reflection_time_warning`, show it too.
+   Also show `estimate.reflection.seconds`, the time that the reflection calls need for the editable text.
+   The reflection calls run one at a time. Do not add it to `estimate.seconds`, because that value already holds a flat share for reflection.
 
 ## Procedure
 
@@ -121,6 +123,12 @@ The fallback also applies when the `@new-cli` site layer fails or lacks cyclopts
 The fallback also applies when the `prose+cli` editable text exceeds 200000 characters, because each reflection call reads and returns all of it.
 An explicit `--edit` never falls back. When the planned editable text exceeds 200000 characters, the `budget-unapproved` stop holds `reflection_warning`, and the runner writes it on stderr.
 When the runner cannot plan the prose set, for example because the contract `editable` list names a script, the run keeps `prose+cli`, and `reflection_warning` gives no `--edit prose` advice.
+The estimate holds `reflection` with `calls`, `editable_chars`, and `seconds`.
+Each reflection call reads and returns the editable text. Each call takes 60 seconds plus 1 second per 200 characters, and the calls run one at a time.
+When that time takes the run past its seconds cap, the stop holds `reflection_time_warning`.
+The runner also writes it on stderr, on an approved run too. The search can then stop at the deadline before it spends its calls.
+The warning does not change the calls, the seconds, or the search size. When `reflection_warning` also fires, only that warning gives the advice.
+The `reflection` block describes the seed of the budget question. A later prose fallback after the `@new-cli` site layer settles does not change it.
 A resume without `--edit` keeps the mode of the first run.
 `--edit prose` changes only Markdown files.
 A `prose+cli` edit can change the command-line interface of a script. Every caller and every `SKILL.md` or reference mention must change to match.
@@ -159,6 +167,7 @@ When the run directory already holds a run, the same command resumes it. A resum
 A value that you pass on a resume must match the first run. The target skill directory must also match.
 
 Each stop prints one JSON object on stdout and a coded error on stderr.
+Warning lines (`skillz-experiment: warning: ...`) and notes can come before the coded error. The coded error is the last non-empty stderr line.
 Each object holds `stop` (the code) and `message`. The table lists the other fields.
 Map each coded stop to its next step:
 
@@ -167,7 +176,7 @@ Map each coded stop to its next step:
 | `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_file` (the path of `RUN/cases.seed.json`) and `seed_summary` (`cases`, `journeys` (the journey case count), and the case count of each kind and each family; a task case with no family is in no family count; both only when `evals/evals.json` or `evals/journeys.json` exists), `doctor` (the host checks) | Write the case draft. Start from the `seed_file` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey), `statistics`, `reflection_warning` (only when the editable text exceeds 200000 characters) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey; `reflection` with `calls`, `editable_chars`, and `seconds`), `statistics`, `reflection_warning` (only when the editable text exceeds 200000 characters), `reflection_time_warning` (only when the reflection time takes the run past its seconds cap) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `cases-too-easy` | The seed already scores at least 0.9 on a train or validation family. The message names each family, its split, and its mean. | Do not ask a new question. Draft harder cases in a new run directory, then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `baseline-check-timeout` | `next`, and optional `detail` | The contract check of the original skill reached the sandbox time limit twice, before the search or in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |

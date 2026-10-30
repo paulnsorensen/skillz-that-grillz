@@ -5,7 +5,6 @@ Phases: prepared, searched, gated, replayed, complete. `run.json` (schema 4) hol
 from __future__ import annotations
 
 import fcntl
-import sys
 import time
 import uuid
 from collections import Counter
@@ -49,7 +48,7 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
-from skillz_experiments.run._edit_plan import editable_chars, reflection_warning, seed_or_prose
+from skillz_experiments.run._edit_plan import ReflectionNotes, seed_or_prose
 from skillz_experiments.run._plan import plan_estimate, scored_kinds, size_plan
 from skillz_experiments.run._resume import (
     check_resume,
@@ -158,19 +157,17 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
     mode, wedge, seed_candidate, _ = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
-    # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warning does not offer prose.
-    warning = reflection_warning(editable_chars(seed_candidate.files, seed_candidate.editable), mode, offer_prose=edit is not None)
-    if warning is not None:
-        print(f"skillz-experiment: warning: {warning}", file=sys.stderr)
+    # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warnings do not offer prose.
+    notes = ReflectionNotes.size(seed_candidate, mode, offer_prose=edit is not None)
     plan = size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
-    shown = plan_estimate(plan, repeats, count["holdout"])
+    shown = plan_estimate(plan, repeats, count["holdout"]) | {"reflection": notes.time(plan.reflection_calls, plan.sized)}
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
         budget = approve(plan.sized, approve_budget, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
                                                      "statistics": resolved.data(), **shown_options,
-                                                     **({} if warning is None else {"reflection_warning": warning})}) from None
+                                                     **notes.warnings}) from None
     offered = wedge.capable is not None
     wedge, layers = settle(wedge, out / "site")
     if offered and wedge.capable is None:
