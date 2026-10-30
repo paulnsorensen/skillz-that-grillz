@@ -38,8 +38,11 @@ npx skills@latest add paulnsorensen/skillz-that-grillz --skill skillz
 
 Add `--global` to install user-wide. Without it, the skill installs into the
 current repo under `.agents/skills/`. The installer reads the default branch,
-`dist`, which holds the built `scripts/*.pyz` archives. Then run the skill in
-your agent harness:
+`dist`, which holds the built `scripts/*.pyz` archives. Any other installer
+must also follow the remote default branch. A cache that stays on `main`, and a
+release tag on a `main` commit, have no archives
+([distribution contract](skills/skillz/references/wedge-packaging.md#distribution-contract-for-direct-mode-on-a-dist-branch)).
+Then run the skill in your agent harness:
 
 ```text
 /skillz audit skills/my-skill/SKILL.md       # report only; never edits the target
@@ -84,6 +87,10 @@ Run /skillz improve skills/release-notes/SKILL.md to apply.
 ## Requirements
 
 - Python 3.11+ for the bundled helpers.
+- A writable cache root for the bundled helpers: `SHIV_ROOT`, else
+  `XDG_CACHE_HOME/shiv`, else `~/.cache/shiv`. In an agent sandbox, allow
+  writes there. See the
+  [runtime contract](skills/skillz/references/wedge-packaging.md#runtime-contract).
 - [uv](https://docs.astral.sh/uv/) on `PATH` to wedge a CLI. Without uv,
   `skillz wedge` falls back to a stdlib `argparse` CLI or a shell pipeline.
 - Optional: the `duckdb` CLI for the Usage lens. Without it, `skillz` offers a

@@ -146,6 +146,84 @@ Bytes outside the archive members, such as trailing data, do not change the cont
 To test rejection, change the content of one member, not the file's tail.
 A successful override verifies local packaging, not network publication.
 
+## Runtime contract
+
+This section is the single description of what a wedge archive needs when it runs.
+It applies in launcher mode and in direct mode.
+State it in the install docs of every skill that ships a wedge archive.
+
+Every `.pyz` that wedge builds is a shiv archive.
+On the first run of each build, the archive unpacks its dependencies into a cache root.
+The archive picks the root in this order:
+
+1. `SHIV_ROOT`, when it is set and not empty.
+2. `XDG_CACHE_HOME/shiv`, when `XDG_CACHE_HOME` is an absolute path.
+3. `~/.cache/shiv`.
+
+Wedge archives do not use `~/.shiv`.
+Only the first run of a new build writes to the root.
+A later run of an unpacked build only reads it.
+
+When the archive cannot write the root for a new build, it prints one JSON line to stderr and exits with status 3:
+
+```json
+{"error": "cannot extract this archive into SHIV_ROOT=<root>: <OS error>; set SHIV_ROOT to a writable directory", "exit_code": 3}
+```
+
+To fix the error, set `SHIV_ROOT` to an absolute path that the process can write.
+
+After the archive unpacks a new build, it deletes old builds of the same archive name in the same root.
+The name ignores a `-<12 hex digits>` content-digest suffix, so the release assets of one skill count as one name.
+The archive keeps the newest other build and every build younger than one day, because another session can still run one.
+It does not delete symlinks, files, or entries with other names.
+You can delete the cache root at any time; the next run unpacks the build again.
+
+### Run in an agent sandbox
+
+An agent harness can run shell commands in a sandbox that allows writes only to some paths.
+Put the cache root below one of those paths before the first run of a new build.
+
+In Claude Code, sandboxed Bash can write only to the working directory, the per-user temporary directory, and directories that you add.
+Use one of these settings ([Claude Code sandboxing](https://code.claude.com/docs/en/sandboxing)):
+
+- Add the parent of the default cache root to `sandbox.filesystem.allowWrite`. `~/.cache` is a common entry.
+- Set `SHIV_ROOT` in the settings `env` block to an absolute path that the sandbox can write. Do not use `~` in that value; the documentation does not say that `env` expands it.
+
+```json
+{
+  "sandbox": {"filesystem": {"allowWrite": ["~/.cache"]}},
+  "env": {"SHIV_ROOT": "/home/<user>/.cache/shiv"}
+}
+```
+
+Some wedged CLIs start their own bubblewrap sandbox.
+On Linux, a command in the Claude Code sandbox cannot create user namespaces by default.
+Bubblewrap needs them, so such a CLI cannot run nested in that sandbox.
+Use one of these options:
+
+- Run the CLI from a normal shell, outside the agent.
+- Add a `sandbox.excludedCommands` entry for the CLI, for example `python3 /path/to/skill/scripts/<name>.pyz *`.
+  A matching call runs with no sandbox: it has no filesystem limits and no network proxy.
+  Claude Code matches the text of the call, so a script that calls the CLI does not match.
+  Every command in a chained call must match an entry, or the whole call stays in the sandbox.
+
+Other harnesses have their own sandbox settings.
+In each one, make the cache root writable, or set `SHIV_ROOT` to a writable absolute path.
+
+## Distribution contract for direct mode on a dist branch
+
+This section applies when a repository keeps source on `main` and publishes built direct archives on a `dist` branch.
+In that model, CI builds `scripts/<name>.pyz` and appends the source and the archives to `dist`, and `dist` is the default branch.
+The skillz-that-grillz repository uses this model ([ADR-012](https://github.com/paulnsorensen/skillz-that-grillz/blob/main/docs/agents/decisions/wedge-skill-packaging.md)).
+
+- An installer must follow the remote default branch. `npx skills add` and a plain `git clone` do.
+  A vendoring cache that keeps the branch it checked out first does not follow a change of the default branch.
+  Such a cache can stay on `main` and install the skill with no archives ([paulnsorensen/dotfiles#1489](https://github.com/paulnsorensen/dotfiles/issues/1489)).
+- A release tag on a `main` commit has no archives. An install from that tag gets source only.
+
+State both facts in the install docs of your skill.
+Also link the runtime contract above, so that users can make the cache root writable.
+
 ## Distribution and first run
 
 Without `WEDGE_PYZ`, the launcher fetches its content-addressed asset from the repository's rolling `wedge` release.

@@ -30,10 +30,10 @@ import sysconfig
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
+from zipfile import ZipFile
 
+from wedge._archive import canonicalize_archive
 from wedge._config import ConfigError, WedgeConfig, load_config, load_targets, validate_name
 from wedge._digest import content_sha256
 from wedge._fanout import Outcome, fan_out
@@ -465,7 +465,7 @@ def _shiv_into(
     with tempfile.TemporaryDirectory(prefix="wedge-build-") as tmp:
         built = Path(tmp) / f"{name}.pyz"
         _shiv(site_dir, entry, built)
-        _canonicalize_archive(built)
+        canonicalize_archive(built)
         if check is not None:
             _check_layer_members(built, *check)
         digest = content_sha256(built)
@@ -729,27 +729,3 @@ def _shiv(site_dir: Path, entry: str, out_path: Path) -> None:
         capture_output=True,
         text=True,
     )
-
-
-def _canonicalize_archive(path: Path) -> None:
-    """Sort, normalize, and deflate ZIP members.
-
-    shiv does not sort its bundled bootstrap files. The deflate bytes can vary
-    with the zlib build; the content digest ignores them.
-    """
-    original = path.read_bytes()
-    shebang, separator, _ = original.partition(b"\n")
-    if not separator or not shebang.startswith(b"#!"):
-        raise ValueError(f"shiv output lacks a shebang: {path}")
-    with ZipFile(BytesIO(original)) as source, path.open("wb") as output:
-        _ = output.write(shebang + separator)
-        with ZipFile(output, "w") as target:
-            for info in sorted(source.infolist(), key=lambda item: item.filename):
-                data = source.read(info)
-                info.date_time = (1980, 1, 1, 0, 0, 0)
-                info.create_system = 3
-                is_dir = info.filename.endswith("/")
-                mode = 0o40755 if is_dir else 0o100644
-                info.external_attr = (mode << 16) | (0x10 if is_dir else 0)
-                info.compress_type = ZIP_STORED if is_dir else ZIP_DEFLATED
-                target.writestr(info, data)

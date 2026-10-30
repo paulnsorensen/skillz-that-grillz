@@ -221,6 +221,10 @@ recommends.
   platform markers or unexportable requirements. Vendor local packages through `include`; URL and unsupported requirements must be replaced with vendored source.
 - The launcher and the build need Python 3.11 or later.
 - Wedge never deletes an old asset from the `wedge` release.
+- On the first run of each build, a `.pyz` unpacks itself into a cache root
+  that it must be able to write. The
+  [runtime contract](../../skills/skillz/references/wedge-packaging.md#runtime-contract)
+  names the root, the `SHIV_ROOT` override, the error, and the agent-sandbox setup.
 
 The design records are in
 [wedge skill packaging decisions](../../docs/agents/decisions/wedge-skill-packaging.md).
