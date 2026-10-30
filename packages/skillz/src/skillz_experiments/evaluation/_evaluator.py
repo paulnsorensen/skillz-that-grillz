@@ -82,7 +82,8 @@ def _simulator(transport: _Responder, case: Case, holdout: bool,
 def _prompt(rules: Contract, instruction: str, case: Case) -> str:
     """Build the candidate prompt. It never holds `expected` or a grader rubric."""
     root = f".agents/skills/{rules.skill}"
-    steps = f"cat {root}/SKILL.md; then read {root}/EXPERIMENT_MARKER"
+    reader = "/usr/bin/cat" if case.journey is not None else "cat"
+    steps = f"{reader} {root}/SKILL.md; then {reader} {root}/EXPERIMENT_MARKER"
     if case.journey is None and rules.helper is not None:
         steps += f"; then python3 -I {root}/{rules.helper.path} {rules.helper.input}"
     invocation = rules.invocation.replace("{skill}", rules.skill).replace("{path}", root)

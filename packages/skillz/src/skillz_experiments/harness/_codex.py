@@ -21,8 +21,9 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments.harness._discovery import discover
+from skillz_experiments.harness._codex_events import parse_events
 from skillz_experiments._redact import redact
-from skillz_experiments.evaluation import CheckMemo, CheckResult, answer_schema, evaluate, helper_failure, usage
+from skillz_experiments.evaluation import CheckMemo, CheckResult, Reply, Transcript, answer_schema, evaluate, helper_failure, usage
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import (SANDBOX_SECONDS, halve_call_slots, model_call, process, reset_call_slots,
                                          sandboxed)
@@ -30,6 +31,7 @@ from skillz_experiments.harness._check import Check, credential_row, failed
 from skillz_experiments.harness._isolation import listening, probe
 from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN
 
+_events = parse_events
 MINIMUM_VERSION = (0, 154, 0)
 MINIMUM_TEXT = ".".join(map(str, MINIMUM_VERSION))
 # The fixed role fingerprint label. The observed `codex --version` string, not this label, gates and records the version.
@@ -400,24 +402,22 @@ class Codex:
                 return CheckResult(False, None, "fail")
             return helper_failure(self, workspace, rules)
 
+    def converse(self, request: str, candidate: Candidate, case: Case, holdout: bool,
+                 simulate: Callable[[Transcript], Reply]) -> dict[str, object]:
+        from skillz_experiments.harness._codex_journey import converse
+
+        def command(workspace: Path) -> list[str]:
+            return [str(self.executable), "app-server", "--strict-config",
+                    *configuration(workspace, self.executable, [])]
+
+        return converse(request, candidate, case, holdout, simulate,
+                        budget=self.budget,
+                        checkpoint=self.checkpoint,
+                        role=self.role, model=self.model,
+                        command=command, environment=self._environment)
+
     def evaluate(self, candidate: Candidate, case: Case, *, checks: CheckMemo, holdout: bool = False) -> dict[str, object]:
         return evaluate(self, self, candidate, case, holdout=holdout, checks=checks)
-
-
-def _events(stdout: str) -> list[dict[str, object]]:
-    """Read one JSON object per line. Raise `RuntimeError` when a nonblank line is not a JSON object.
-
-    Split only on `\\r` and `\\n`: JSON escapes them in strings, but Codex writes U+0085, U+2028, and U+2029 raw.
-    """
-    events: list[dict[str, object]] = []
-    for line in re.split(r"[\r\n]", stdout):
-        if not line.strip():
-            continue
-        try:
-            events.append(mapping(loads_untrusted(line)))
-        except ValueError:
-            raise RuntimeError("invalid Codex JSON event stream") from None
-    return events
 
 
 def _error_messages(events: list[dict[str, object]]) -> list[str]:
