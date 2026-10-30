@@ -208,7 +208,7 @@ def _prose_cli(work: Path, harness: str, model: str) -> Setup:
 
 
 def _journey(work: Path, harness: str, model: str) -> Setup:
-    """Run journey cases. Only the claude task transport holds a conversation, so another harness stops with a code."""
+    """Run journey cases through a persistent task conversation."""
     del model
     kind = {"grader": "journey", "argv": ["/usr/bin/python3", "-I", "-c", "import json; print(json.dumps({'score': 1}))"],
             "rubric": "Pass only when the agent echoed the brief's text back as JSON."}
@@ -220,7 +220,7 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
                 "expected": {"must": [name], "criteria": [{"id": "says-text", "from": "must:0", "must": True,
                                                          "text": f"THE agent SHALL say `{name}` once."}]}}
     return Setup(target, _cases(case), _builtin(harness), ("--harness", harness, "--edit", "prose"),
-                 expect=None if harness == "claude" else "journey-unsupported")
+                 expect=None if harness in {"claude", "codex"} else "journey-unsupported")
 
 
 def _stronger(work: Path, harness: str, model: str) -> tuple[Path, dict[str, object]]:

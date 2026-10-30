@@ -124,10 +124,10 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     drafted = load_draft(draft, contract.journey_kinds())
     task_adapter = configuration.roles["task"].adapter if configuration is not None else adapter
     evaluated = {*kinds, *extra}
-    if not has_claude_sandbox(task_adapter) and any(case.journey is not None and case.kind in evaluated for case in drafted):
+    if not Configuration.supports_conversation(task_adapter) and any(case.journey is not None and case.kind in evaluated for case in drafted):
         retry = "; or pass --kind task" if "task" in contract.kinds and "task" not in journeys else ""
         raise CodedError("journey-unsupported", "a journey case needs a task transport that can hold a conversation; "
-                         + f"run with --harness claude{retry}")
+                         + f"run with --harness claude or codex{retry}")
     check_helper_input(contract, drafted)
     check_coverage(target, drafted)
     plain = [kind for kind in kinds if kind not in journeys]

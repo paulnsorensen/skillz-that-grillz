@@ -14,7 +14,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, ClaudeLogin, ClaudeOptions,
                                               resolve_read_roots)
-from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, Role, command_paths, has_claude_sandbox,
+from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, Role, adapter_class, command_paths, has_claude_sandbox,
                                                parse_role)
 from skillz_experiments.harness._transport import Transport
 
@@ -111,6 +111,11 @@ class Configuration:
         """Resolve the sandbox read roots of every role against `out`. Raise when a root is unusable."""
         for role in self.roles.values():
             _ = resolve_read_roots(role.options.sandbox_read, out)
+
+    @staticmethod
+    def supports_conversation(adapter: str) -> bool:
+        """Return whether an adapter can run a journey in one live conversation."""
+        return hasattr(adapter_class(adapter), "converse")
 
     def judge_captures(self) -> bool:
         """Return whether the judge role can show capture files to the judge."""

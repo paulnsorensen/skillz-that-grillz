@@ -129,7 +129,7 @@ def test_coverage_stops_on_an_id_that_repeats_across_the_two_files(tmp_path: Pat
 
 
 @pytest.mark.ac("gh-369:AC-15")
-def test_a_journey_kind_on_a_harness_that_cannot_converse_stops_before_any_approval(tmp_path: Path) -> None:
+def test_a_journey_kind_on_codex_reaches_approval_instead_of_unsupported(tmp_path: Path) -> None:
     target = _stage(tmp_path / "target")
     seeded = cast(list[dict[str, object]], seed_cases(target))
     kept = _variants(seeded[0])
@@ -137,8 +137,7 @@ def test_a_journey_kind_on_a_harness_that_cannot_converse_stops_before_any_appro
     _draft(tmp_path, kept)
     with pytest.raises(CodedError) as caught:
         _ = run(target, tmp_path / "run", "local-test", adapter="codex", live=True)
-    assert caught.value.code == "journey-unsupported" and "--harness claude" in str(caught.value)
-    assert "--kind task" not in str(caught.value)
+    assert caught.value.code == "cases-unapproved"
     assert not (tmp_path / "run/run.json").exists()
 
 

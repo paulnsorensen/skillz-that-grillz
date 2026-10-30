@@ -131,8 +131,8 @@ def test_failed_journey_command_gate_never_calls_judge(tmp_path: Path) -> None:
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-7")
-@pytest.mark.parametrize("harness", ["codex", "command"])
-def test_unsupported_journey_refuses_before_task_inference(tmp_path: Path, harness: str) -> None:
+def test_unsupported_journey_refuses_before_task_inference(tmp_path: Path) -> None:
+    harness = "command"
     scenario = journey_scenario(tmp_path)
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
             "--model", "offline-test", "--harness", harness, "--live", "--edit", "prose"]
