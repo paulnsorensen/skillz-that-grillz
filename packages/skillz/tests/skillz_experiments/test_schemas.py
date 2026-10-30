@@ -110,6 +110,9 @@ EXAMPLES: list[tuple[SchemaName, object, bool, str]] = [
     ("draft", [_with(DRAFT, source="other")], False, "draft-source"),
     ("draft", [_with(DRAFT, family=None)], False, "draft-no-family"),
     ("draft", [], False, "draft-empty"),
+    ("draft", {"fixtures": {"in.txt": "t"}, "cases": [_with(DRAFT, files=["in.txt"])]}, True, "draft-shared-fixtures"),
+    ("draft", {"cases": [DRAFT], "bogus": 1}, False, "draft-shared-unknown-key"),
+    ("draft", {"fixtures": {}, "cases": []}, False, "draft-shared-empty"),
 ]
 
 

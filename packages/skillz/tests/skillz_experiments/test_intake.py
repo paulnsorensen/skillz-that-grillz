@@ -100,6 +100,61 @@ def test_hash_mismatch_raises_cases_unapproved_and_writes_nothing(tmp_path: Path
     assert not out.exists()
 
 
+def shared_draft(tmp_path: Path, text: str) -> Path:
+    """Write the draft in the object form: every task case lists one path into the shared `fixtures` map."""
+    cases = [case | {"files": ["input.txt"]} if "files" in case else case for case in draft()]
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps({"fixtures": {"input.txt": text}, "cases": cases}), encoding="utf-8")
+    return path
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_cases_that_share_a_large_file_freeze_its_text_once_and_load_it_into_each_case(tmp_path: Path) -> None:
+    text = "y" * 300_000  # 12 inline copies pass the 2 MB cap of cases.json
+    cases = split_cases(load_draft(shared_draft(tmp_path, text)), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    assert out.stat().st_size < 2 * len(text)
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    assert document["fixtures"] == {"input.txt": text} and document["approved_hash"] == case_hash(cases, 7)
+    loaded = load_cases(out, {"task": "judge"})
+    assert len(loaded) == 12 and all(case.files == {"input.txt": text} for case in loaded)
+
+
+@pytest.mark.ac("gh-580:AC-3")
+def test_inline_files_in_a_list_draft_and_in_cases_json_still_load_as_the_shared_form_does(tmp_path: Path) -> None:
+    inline = split_cases(load_draft(write_draft(tmp_path, draft())), 7)
+    shared = split_cases(load_draft(shared_draft(tmp_path, "hello\n")), 7)
+    assert case_hash(inline, 7) == case_hash(shared, 7)
+    out = tmp_path / "cases.json"
+    freeze(out, shared, 7, case_hash(shared, 7))
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    fixtures = cast(dict[str, str], document.pop("fixtures"))
+    document["cases"] = [case | {"files": {name: fixtures[name] for name in cast(list[str], case["files"])}}
+                         for case in cast(list[dict[str, object]], document["cases"])]
+    legacy = tmp_path / "legacy.json"
+    _ = legacy.write_text(json.dumps(document), encoding="utf-8")
+    assert load_cases(legacy, {"task": "judge"}) == load_cases(out, {"task": "judge"})
+
+
+REFUSED: list[tuple[dict[str, object], str]] = [
+    ({"fixtures": {}, "cases": [{"files": ["input.txt"]}]}, "not in fixtures"),
+    ({"fixtures": {}, "cases": [], "extra": 1}, "only fixtures and a nonempty cases list"),
+    ({"fixtures": {"../x": "t"}, "cases": [{}]}, "unsafe relative path"),
+]
+
+
+@pytest.mark.parametrize(("document", "fragment"), REFUSED)
+def test_a_shared_draft_with_an_unknown_path_an_extra_key_or_an_unsafe_fixture_is_refused(
+        tmp_path: Path, document: dict[str, object], fragment: str) -> None:
+    if document["cases"]:
+        document["cases"] = [draft()[0] | cast(list[dict[str, object]], document["cases"])[0]]
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match=fragment):
+        _ = load_draft(path)
+
+
 def test_too_few_families_names_the_minimum(tmp_path: Path) -> None:
     cases = load_draft(write_draft(tmp_path, draft(families=3)))
     with pytest.raises(ValueError, match="at least 4 scored families"):

@@ -16,6 +16,7 @@ from skillz_experiments._cases import CodedError
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._seed import check_coverage, seed_cases, seed_summary
 from skillz_experiments.run import Stop, run
+from seed_reader import read_seed
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -72,7 +73,7 @@ def test_a_target_with_only_journeys_json_writes_a_seed_with_the_journey_fields(
     _journeys(target, [EASY_CHEESE_CASE])
     stopped = _first_call(target, tmp_path)
     assert isinstance(stopped, Stop) and stopped.code == "cases-missing"
-    seed = cast(list[dict[str, object]], json.loads(Path(cast(str, stopped.data["seed_file"])).read_text(encoding="utf-8")))
+    seed = read_seed(Path(cast(str, stopped.data["seed_file"])))
     assert len(seed) == 1
     case = seed[0]
     assert case["brief"] == EASY_CHEESE_CASE["brief"] and case["max_turns"] == 4
