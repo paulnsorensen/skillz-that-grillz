@@ -33,6 +33,12 @@ branch through the compare API, so a shallow checkout still passes.
 For local development, run `uv run --project packages/wedge wedge --help`. Building
 requires `uv`; publishing also requires an authenticated `gh` CLI.
 
+Every built `.pyz` unpacks itself into a writable cache root on the first run of
+each build, in launcher mode and in direct mode. The
+[runtime contract](../../skills/skillz/references/wedge-packaging.md#runtime-contract)
+describes the root, the `SHIV_ROOT` override, pruning, the coded error, and the
+agent-sandbox setup.
+
 ## Merge queues and publication races
 
 Run the check that matches each skill's packaging mode on both `pull_request`
@@ -67,6 +73,9 @@ release-asset workflow. These links pin the implementation inspected on
   Its `Source-Commit` trailer identifies the source. It skips older snapshots,
   rejects divergent history, and uses a non-force push so concurrent writes fail
   rather than overwrite another publication.
+
+A repository that uses this model must tell its users the
+[distribution contract](../../skills/skillz/references/wedge-packaging.md#distribution-contract-for-direct-mode-on-a-dist-branch).
 
 This example shows merge-group-ready validation and race-safe distribution,
 not proof of queue enforcement. Check your own repository settings before

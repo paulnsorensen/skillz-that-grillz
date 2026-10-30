@@ -30,6 +30,7 @@ def _wedge(cwd: Path, *args: str) -> dict[str, object]:
 
 
 @pytest.mark.ac("wedge-skill-packaging:AC-W8")
+@pytest.mark.ac("gh-581:AC-8")
 def test_consumer_checks_relocks_and_runs_outside_this_repo(
     tmp_path: Path, consumer_dir: Path, copy_consumer: Callable[[Path], Path]
 ) -> None:
@@ -53,7 +54,8 @@ def test_consumer_checks_relocks_and_runs_outside_this_repo(
         capture_output=True,
         text=True,
         cwd="/",
-        env={"PATH": "/usr/bin:/bin"},
+        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path / "home")},
     )
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == {"greeting": "hello, cave"}
+    assert (tmp_path / "home" / ".cache" / "shiv").is_dir()

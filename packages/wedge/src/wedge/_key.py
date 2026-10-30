@@ -15,7 +15,7 @@ from pathlib import Path
 
 from wedge._config import ConfigError, WedgeConfig, defaults_path
 
-FORMAT_VERSION = 8
+FORMAT_VERSION = 9
 TARGET_PYTHON = "3.11"
 
 
