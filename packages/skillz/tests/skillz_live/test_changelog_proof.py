@@ -5,6 +5,7 @@ None of them makes a model call, so the `skillz-pytest` gate step runs them.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -18,7 +19,7 @@ import pytest
 
 import changelog_proof
 from changelog_check import RULES, entries_for, entry_for, verdict
-from changelog_proof import (CONTRACT, FIXTURE, NAME, PYPROJECT, TOKEN_RULE, WEDGE_TOML, check, check_draft,
+from changelog_proof import (CHECK, CONTRACT, FIXTURE, NAME, PYPROJECT, TOKEN_RULE, WEDGE_TOML, check, check_draft,
                              codex_argv, match_entries, patch_files, proof_verdict, reference_draft)
 from skillz_experiments import _graders
 from skillz_experiments._candidate import Candidate
@@ -52,14 +53,17 @@ def _planted(changes: Changes) -> str:
 
 
 def _grade(changes: Changes, text: str | None, tmp_path: Path) -> tuple[float, str]:
-    """Run the contract argv as the grader does: `changes.json` at the root and the entries under `output/`."""
+    """Run the contract argv as the grader does: `changes.json` at the root and the entries under `output/`.
+
+    The argv keeps its own interpreter, `/usr/bin/python3`. On macOS that is Python 3.9, so the check must run there.
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     _ = (tmp_path / "changes.json").write_text(json.dumps(changes), encoding="utf-8")
     if text is not None:
         (tmp_path / "output").mkdir()
         _ = (tmp_path / "output/entries.md").write_text(text, encoding="utf-8")
     argv = cast(list[str], cast(dict[str, dict[str, object]], CONTRACT["kinds"])["task"]["argv"])
-    run = subprocess.run([sys.executable, *argv[1:]], cwd=tmp_path, capture_output=True, text=True, check=False)
+    run = subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True, check=False)
     assert run.returncode == 0, run.stderr
     return float(cast(dict[str, float], json.loads(run.stdout))["score"]), run.stderr
 
@@ -108,6 +112,7 @@ def test_the_format_example_breaks_only_the_ticket_rule(tmp_path: Path) -> None:
 
 @pytest.mark.ac("autoimprove-live-proof:AC-2")
 @pytest.mark.ac("autoimprove-live-proof:AC-4")
+@pytest.mark.ac("autoimprove-live-proof:AC-15")
 def test_a_file_that_follows_the_planted_rule_scores_0_with_one_message_that_names_the_rule_and_the_line(
         tmp_path: Path) -> None:
     changes = _cases()[0]
@@ -117,6 +122,20 @@ def test_a_file_that_follows_the_planted_rule_scores_0_with_one_message_that_nam
     assert message.startswith(f"entries.md:{first + 1}: rule 1 (ticket id):"), message
     assert cast(str, verdict(EXAMPLE, "\n")).startswith("entries.md:1: rule 6")
     assert cast(str, verdict(EXAMPLE, entries_for(EXAMPLE) + "extra\n")).startswith("entries.md:3: rule 6")
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-15")
+def test_the_check_source_parses_as_python_3_9_and_passes_no_strict_keyword_to_zip_or_map() -> None:
+    """Guard Python 3.9 where `/usr/bin/python3` is newer, as on the Linux CI hosts.
+
+    The parse checks only the grammar, and the walk finds only a `strict` keyword of `zip` or `map`.
+    Neither proves that every runtime API of the check exists in Python 3.9.
+    """
+    tree = ast.parse(CHECK, feature_version=(3, 9))
+    strict = [node.lineno for node in ast.walk(tree)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"zip", "map"}
+              and any(keyword.arg == "strict" for keyword in node.keywords)]
+    assert strict == [], f"Python 3.9 zip and map take no strict keyword; check lines {strict}"
 
 
 TRICKY: Changes = [
@@ -215,7 +234,7 @@ class _Sandboxed:
     """A task transport that runs the grader argv in the workspace, as the harness sandbox does."""
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
-        run = subprocess.run([sys.executable, *argv[1:]], cwd=workspace, capture_output=True, text=True, timeout=20)
+        run = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=20)
         return run.returncode, run.stdout, run.stderr
 
 
@@ -372,7 +391,11 @@ def test_each_harness_runs_the_author_stage_in_its_own_agent_with_the_skillz_ski
     assert log["skills"] == [str(work / "author" / skills_dir / "skills/skillz")], log
     if harness == "codex":
         assert log["home"] == str(work / "author-home") and log["codex_home"] == str(work / "codex-home")
-        assert log["env"] == ["CODEX_HOME", "HOME", "LANG", "PATH", "TMPDIR", "UV_CACHE_DIR"], log
+        # On macOS, the Python process that runs the fake can get `__CF_USER_TEXT_ENCODING` after exec.
+        # `codex_author` does not pass it, so the check removes only that name and only on macOS.
+        injected = {"__CF_USER_TEXT_ENCODING"} if sys.platform == "darwin" else set[str]()
+        env = [name for name in cast(list[str], log["env"]) if name not in injected]
+        assert env == ["CODEX_HOME", "HOME", "LANG", "PATH", "TMPDIR", "UV_CACHE_DIR"], log
         assert (work / "codex-home/auth.json").resolve() == host / "auth.json"
         assert sorted(path.name for path in (work / "codex-home").iterdir()) == ["auth.json"]
 

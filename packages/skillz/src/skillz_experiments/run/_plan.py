@@ -253,27 +253,6 @@ def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, fro
     return names
 
 
-REFLECTION_TEXT_LIMIT = 200_000
-"""The editable characters above which a reflection call risks its per-call timeout (gh-563).
-
-A reflection prompt holds every editable file, and the answer returns every component in full.
-"""
-
-
-def editable_chars(files: Mapping[str, str], editable: Sequence[str]) -> int:
-    """Return the characters of the editable files, which every reflection prompt holds."""
-    return sum(len(files.get(name, "")) for name in editable)
-
-
-def reflection_warning(chars: int, edit: Edit) -> str | None:
-    """Return the budget-question warning for `chars` editable characters, or None at or below the limit."""
-    if chars <= REFLECTION_TEXT_LIMIT:
-        return None
-    advice = ("run with --edit prose, or " if edit == "prose+cli" else "") + "name fewer files in the contract editable list"
-    return (f"the editable text holds {chars} characters, more than the reflection limit of {REFLECTION_TEXT_LIMIT}; "
-            + f"each reflection call reads and returns all of it, so it can reach its per-call timeout; {advice}")
-
-
 def _default_kinds(contract: Contract) -> tuple[str, ...]:
     journeys = contract.journey_kinds()
     if "task" in contract.kinds:
