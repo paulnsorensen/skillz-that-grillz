@@ -229,8 +229,11 @@ A sandbox that cannot start stops the run before any task call, with the code `s
 The message names the cause and the fix.
 If `bwrap` is missing, install bubblewrap.
 If `socat` is missing, install socat.
-If the host restricts user namespaces for every process, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
-Or add an AppArmor profile for `bwrap`.
+If the runner starts inside another sandbox, such as Claude Code's sandboxed Bash, the outer sandbox blocks new user namespaces.
+The fix then says so when `/proc/self/uid_map` shows a nested user namespace or `/proc/sys/user/max_user_namespaces` is `0`.
+Start the runner from a normal shell, or add a `sandbox.excludedCommands` entry for the runner command.
+If `/proc/sys/kernel/apparmor_restrict_unprivileged_userns` is `1`, add an AppArmor profile with a `userns,` rule for `bwrap`.
+As a broader second choice, run `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
 
 On Ubuntu 24.04 and later, the AppArmor profile `bwrap-userns-restrict` lets `bwrap` start, but strips capabilities from every process that `bwrap` starts.
 The sysctl does not lift that profile. Claude Code's Unix-socket filter needs a nested user namespace, so it fails there.

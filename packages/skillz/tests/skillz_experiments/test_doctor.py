@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import stat
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -20,6 +21,7 @@ from skillz_experiments._cases import CodedError
 from skillz_experiments.run import Stop, run
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
+REAL_SANDBOX = ClaudeCode.sandbox
 pytestmark = pytest.mark.usefixtures("host_login")
 
 
@@ -148,6 +150,51 @@ def test_a_failed_probe_names_its_fix_and_leaves_the_inventory_row(
     checks = rows(_doctor.doctor("claude"))
     assert checks["sandbox-probe"]["status"] == "fail" and checks["sandbox-probe"]["fix"]
     assert checks["skill-inventory"]["status"] == "pass"
+
+
+# The stderr of bwrap 0.13 when the kernel or an outer sandbox refuses a new user namespace (#582).
+USERNS_STDERR = ("bwrap: No permissions to create a new namespace, likely because the kernel does not allow "
+                 "non-privileged user namespaces.")
+FULL_RANGE = "         0          0 4294967295\n"
+
+
+@pytest.mark.parametrize(("uid_map", "limit", "apparmor", "case"), [
+    pytest.param("         0       1000          1\n", "0\n", None, "nested",
+                 marks=pytest.mark.ac("gh-582:AC-1"), id="nested-sandbox"),
+    pytest.param("         0       1000          1\n", "243190\n", None, "nested",
+                 marks=pytest.mark.ac("gh-582:AC-1"), id="nested-userns-only"),
+    pytest.param(FULL_RANGE, "0\n", "1\n", "nested", marks=pytest.mark.ac("gh-582:AC-1"), id="zero-limit"),
+    pytest.param(FULL_RANGE, "243190\n", "1\n", "apparmor", marks=pytest.mark.ac("gh-582:AC-2"), id="ubuntu-restricted"),
+    pytest.param(FULL_RANGE, "243190\n", "0\n", "other", marks=pytest.mark.ac("gh-582:AC-3"), id="apparmor-off"),
+    pytest.param(FULL_RANGE, "243190\n", None, "other", marks=pytest.mark.ac("gh-582:AC-3"), id="no-apparmor"),
+    pytest.param(None, None, None, "other", marks=pytest.mark.ac("gh-582:AC-3"), id="unreadable-proc"),
+])
+def test_a_userns_probe_failure_names_the_fix_for_the_proc_state(
+        host_bin: Callable[[str], Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        uid_map: str | None, limit: str | None, apparmor: str | None, case: str) -> None:
+    _ = host_bin("ok")
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(ClaudeCode, "sandbox", REAL_SANDBOX)
+
+    def refused(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "", USERNS_STDERR)
+    monkeypatch.setattr(_transport, "sandboxed", refused)
+    proc = tmp_path / "proc"
+    files = {"self/uid_map": uid_map, "sys/user/max_user_namespaces": limit,
+             "sys/kernel/apparmor_restrict_unprivileged_userns": apparmor}
+    for relative, text in files.items():
+        if text is not None:
+            (proc / relative).parent.mkdir(parents=True, exist_ok=True)
+            _ = (proc / relative).write_text(text)
+    monkeypatch.setattr(_sandbox, "PROC", proc)
+    row = rows(_doctor.doctor("claude"))["sandbox-probe"]
+    fix = cast(str, row["fix"])
+    assert row["status"] == "fail" and "No permissions to create a new namespace" in cast(str, row["detail"])
+    assert ("another sandbox" in fix and "a normal shell" in fix and "sandbox.excludedCommands" in fix) == (case == "nested")
+    assert ("apparmor" in fix.lower()) == (case == "apparmor")
+    if case == "apparmor":
+        assert fix.startswith("add an AppArmor profile for `/usr/bin/bwrap`")
+        assert fix.index("userns,") < fix.index("sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0")
 
 
 def test_a_credential_notice_at_close_is_info_and_another_close_error_fails_with_a_fix(
