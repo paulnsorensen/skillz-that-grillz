@@ -100,6 +100,12 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
   - **Note 2026-10-18 (kit location):** The self-autoimprove kit lives in `packages/skillz/journey-kits/skillz-autoimprove/`. PR #363 renamed it from `packages/skillz/experiments/`. The old name looked like the `skillz_experiments` engine package, but the kit holds no engine code.
   - **Amendment 2026-10-18 (typed expected, ADR-023):** A journey case may omit `files`, because a conversation needs no seed files. `Case.eligible` accepts a journey with no files. A task case still needs them.
 - **Amendment 2026-10-30 (Codex journeys):** Codex now runs a journey in one ephemeral App Server thread and one isolated workspace. It sends each simulator reply as a new turn. The same strict permission profile and isolated Codex home apply to every turn. A successful first-turn read of `SKILL.md` and `EXPERIMENT_MARKER`, including the marker output, is required before the simulator continues. The runner normalizes command and usage events for scoring and keeps raw App Server notifications for the trace gate. It charges each task turn and keeps simulator usage separate. Command transport remains unsupported. The original deferral above records the earlier decision.
+  - **Note 2026-10-30 (PR #579 guard repair):** Activation accepts only absolute system `cat` commands and supported absolute system-shell wrappers. A workspace command named `cat` or `bash` is not trusted read evidence. Native trace gates must retain each command's `cwd` and unwrap supported system shells before approval and output checks. Relative output paths otherwise use the wrong directory, and wrapped runs can bypass parsing. Earlier-turn approval and nonzero runner-stop rules remain unchanged.[^codex-journey-guards]
+
+[^codex-journey-guards]: `packages/skillz/src/skillz_experiments/harness/_codex_journey.py`; `skills/skillz/evals/gates/journey.py`; PR #579 Cure findings, 2026-10-30.
+
+_Source: PR #579 guard review and approved repair · Updated: 2026-10-30_
+
 
 ### ADR-009: Declare the task tool surface in the contract  [status: accepted]
 - **Context:** A journey skill needs more than `Bash,Read,Skill`. It can call MCP servers, agents, and companion skills.

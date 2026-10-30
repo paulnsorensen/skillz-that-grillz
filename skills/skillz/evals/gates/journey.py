@@ -115,14 +115,14 @@ DIRECTORY_WORDS = {"pushd", "popd", "builtin"}
 ENV_DIRECTORY = {"-C", "--chdir"}
 
 
-def working_directory(words: list[str]) -> str | None:
-    """Follow each `cd DIR` in `words` from the workspace root.
+def working_directory(words: list[str], initial: str = ".") -> str | None:
+    """Follow each `cd DIR` in `words` from the command's initial directory.
 
     Return None when a directory change goes where the gate cannot tell: a `cd` that is not a plain command,
     a `cd` that an earlier command or `||` can skip, a `pushd`, `popd`, or `builtin` word,
     an `env` command with `-C`/`--chdir`, or a `cd` to a non-literal directory.
     """
-    place = "."
+    place = initial or None
     in_env = False
     other = False  # a command other than `cd` came earlier in the list since the last `;`
     for index, word in enumerate(words):
@@ -140,6 +140,8 @@ def working_directory(words: list[str]) -> str | None:
             return None
         goal = words[index + 1] if index + 1 < len(words) else ""
         if not goal or OPERATOR.fullmatch(goal) or goal[0] in "-~$":
+            return None
+        if place is None:
             return None
         place = posixpath.join(place, goal)
     return place
@@ -171,14 +173,41 @@ def command_words(words: list[str]) -> list[str]:
     return rest
 
 
-def run_arguments(command: str) -> tuple[list[str], dict[str, str], str | None] | None:
-    """Return the words after `skillz-experiment.pyz run`, the shell assignments, and the `cd` directory of the run, or None."""
+def run_arguments(command: str, initial: str = ".") -> tuple[list[str], dict[str, str], str | None] | None:
+    """Return a run's arguments, assignments, and effective directory, or None."""
+    try:
+        shell = shlex.split(command)
+    except ValueError:
+        shell = []
+    if (len(shell) == 3 and shell[0] in {"/bin/sh", "/bin/bash", "/bin/zsh",
+                                                "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh"}
+            and shell[1] in {"-c", "-lc"}):
+        command = shell[2]
     words = words_of(command)
     assigned = {word.split("=", 1)[0]: word.split("=", 1)[1] for word in words if ASSIGNMENT.match(word)}
+    start = 0
     for index, word in enumerate(words[:-1]):
-        if word.endswith(RUNNER) and words[index + 1] == "run":
-            rest = command_words(words[index + 2:])
-            return None if {"--help", "-h"} & set(rest) else (rest, assigned, working_directory(words[:index]))
+        if word in {";", "&&", "||", "|", "("}:
+            start = index + 1
+            continue
+        if not (word.endswith(RUNNER) and words[index + 1] == "run"):
+            continue
+        prefix = words[start:index]
+        while prefix and (ASSIGNMENT.match(prefix[0]) or prefix[0] in {"then", "do", "{"}):
+            prefix = prefix[1:]
+        if prefix and prefix[0] == "env":
+            prefix = prefix[1:]
+            while prefix:
+                if prefix[0] in ENV_DIRECTORY and len(prefix) > 1:
+                    prefix = prefix[2:]
+                elif ASSIGNMENT.match(prefix[0]) or prefix[0].startswith("--chdir="):
+                    prefix = prefix[1:]
+                else:
+                    break
+        if prefix and not (len(prefix) == 1 and posixpath.basename(prefix[0]) in {"python", "python3"}):
+            continue
+        rest = command_words(words[index + 2:])
+        return None if {"--help", "-h"} & set(rest) else (rest, assigned, working_directory(words[:index], initial))
     return None
 
 
@@ -201,9 +230,42 @@ def edited_fixture() -> bool:
     return False
 
 
+def trace_events() -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for line in pathlib.Path("trace/events.jsonl").read_text().splitlines():
+        try:
+            event = mapping(cast(object, json.loads(line)))
+        except json.JSONDecodeError:
+            continue
+        if event.get("method") == "turn/completed":
+            events.append({"type": "result"})
+        elif event.get("method") == "item/completed":
+            item = mapping(mapping(event.get("params")).get("item"))
+            if (item.get("type") == "commandExecution" and isinstance(item.get("id"), str)
+                    and type(item.get("exitCode")) is int):
+                command_id = str(item["id"])
+                events.append({"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "name": "Bash", "id": command_id,
+                     "input": {"command": item.get("command", ""), "cwd": item.get("cwd", ".")}}]}})
+                events.append({"type": "user", "message": {"content": [
+                    {"type": "tool_result", "tool_use_id": command_id,
+                     "content": item.get("aggregatedOutput", "")}]}})
+            elif item.get("type") == "agentMessage":
+                events.append({"type": "assistant", "message": {"content": [
+                    {"type": "text", "text": item.get("text", "")}]}})
+            elif item.get("type") == "fileChange":
+                for change in items(item.get("changes")):
+                    path = mapping(change).get("path", "")
+                    events.append({"type": "assistant", "message": {"content": [
+                        {"type": "tool_use", "name": "Edit", "input": {"file_path": path}}]}})
+        else:
+            events.append(event)
+    return events
+
+
 def main() -> None:
     turn = 0
-    commands: list[tuple[int, str]] = []
+    commands: list[tuple[int, str, str]] = []
     results: list[tuple[int, str]] = []
     run_ids: set[str] = set()
     budget_turns: list[int] = []
@@ -211,11 +273,7 @@ def main() -> None:
     said: list[tuple[int, int, str]] = []
     stops: list[tuple[int, int, str]] = []
     seen = 0
-    for line in pathlib.Path("trace/events.jsonl").read_text().splitlines():
-        try:
-            event = mapping(cast(object, json.loads(line)))
-        except json.JSONDecodeError:
-            continue
+    for event in trace_events():
         if event.get("type") == "result":
             turn += 1
             continue
@@ -223,8 +281,9 @@ def main() -> None:
             if event.get("type") == "assistant" and block.get("type") == "tool_use":
                 data = mapping(block.get("input"))
                 if block.get("name") == "Bash":
-                    commands.append((turn, str(data.get("command", ""))))
-                    if run_arguments(commands[-1][1]) is not None and block.get("id"):
+                    cwd = data.get("cwd", ".")
+                    commands.append((turn, str(data.get("command", "")), cwd if isinstance(cwd, str) else ""))
+                    if run_arguments(commands[-1][1], commands[-1][2]) is not None and block.get("id"):
                         run_ids.add(str(block.get("id")))
                 if block.get("name") in EDITS:
                     edits.append(str(data.get("file_path") or data.get("notebook_path") or ""))
@@ -238,7 +297,7 @@ def main() -> None:
                     budget_turns.append(turn)
                 stops.extend((turn, seen, shown) for shown in stop_hashes(text))
     failed: set[str] = set()
-    runs = [(t, found) for t, c in commands if (found := run_arguments(c)) is not None]
+    runs = [(t, found) for t, c, cwd in commands if (found := run_arguments(c, cwd)) is not None]
     if not runs:
         failed.add("no-run")
     for t, (words, assigned, place) in runs:

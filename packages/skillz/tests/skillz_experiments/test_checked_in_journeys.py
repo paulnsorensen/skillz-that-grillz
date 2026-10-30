@@ -128,7 +128,6 @@ def test_coverage_stops_on_an_id_that_repeats_across_the_two_files(tmp_path: Pat
     assert duplicate.value.code == "evals-unreadable" and "duplicate case id 't'" in str(duplicate.value)
 
 
-@pytest.mark.ac("gh-369:AC-15")
 def test_a_journey_kind_on_codex_reaches_approval_instead_of_unsupported(tmp_path: Path) -> None:
     target = _stage(tmp_path / "target")
     seeded = cast(list[dict[str, object]], seed_cases(target))
@@ -141,7 +140,6 @@ def test_a_journey_kind_on_codex_reaches_approval_instead_of_unsupported(tmp_pat
     assert not (tmp_path / "run/run.json").exists()
 
 
-@pytest.mark.ac("gh-369:AC-15")
 def test_a_journey_kind_with_only_task_cases_drafted_does_not_stop_as_journey_unsupported(
         tmp_path: Path, make_target: Maker, write_draft: Callable[..., list[str]]) -> None:
     target = make_target(tmp_path)

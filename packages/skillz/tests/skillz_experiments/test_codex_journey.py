@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import shlex
+import subprocess
+import sys
 import shutil
 import stat
 from dataclasses import replace
@@ -11,12 +13,14 @@ from typing import cast
 import pytest
 
 from skillz_experiments._budget import Budget, CallTimeout
-from skillz_experiments.evaluation import Reply, Transcript
+from skillz_experiments._contract import parse
+from skillz_experiments.evaluation import CheckMemo, Reply, Transcript, evaluate
 from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.evaluation._scoring import executed
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._codex_journey import _first_turn_loaded  # pyright: ignore[reportPrivateUsage]
 from test_journey import contract, journey_case
+from test_journey_press import Judge
 
 FIXTURE = Path(__file__).parent / "fixtures/fake_codex_app_server.py"
 
@@ -110,6 +114,52 @@ def test_codex_missing_usage_stays_unknown(tmp_path: Path, monkeypatch: pytest.M
 
 
 @pytest.mark.usefixtures("host_login")
+def test_codex_missing_final_usage_discards_partial_total(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_codex(tmp_path, monkeypatch, "missing_final_usage")
+    case, candidate = journey_case(tmp_path, contract(), 2)
+    transport = Codex("offline-test", Budget(2, 120, 0), lambda: None)
+    try:
+        result = transport.converse("first request", candidate, case, False,
+                                    lambda _transcript: Reply("follow up", False))
+    finally:
+        transport.close()
+    assert result["usage"] == {"input_tokens": None, "cached_input_tokens": None, "output_tokens": None}
+    assert len([event for event in cast(list[dict[str, object]], result["events"])
+                if event.get("type") == "turn.completed"]) == 1
+
+
+@pytest.mark.usefixtures("host_login")
+def test_workspace_cat_does_not_activate_codex_journey(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_codex(tmp_path, monkeypatch, "workspace_cat")
+    case, candidate = journey_case(tmp_path, contract(), 2)
+    transport = Codex("offline-test", Budget(2, 120, 0), lambda: None)
+    try:
+        result = transport.converse("first request", candidate, case, False,
+                                    lambda _transcript: pytest.fail("simulator must not run"))
+    finally:
+        transport.close()
+    assert cast(dict[str, object], result["answer"])["load_marker"] == ""
+    assert len(cast(Transcript, result["transcript"])) == 2
+
+@pytest.mark.usefixtures("host_login")
+def test_codex_later_snapshot_recovers_middle_gap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_codex(tmp_path, monkeypatch, "middle_gap_usage")
+    case, candidate = journey_case(tmp_path, contract(), 3)
+    transport = Codex("offline-test", Budget(3, 120, 0), lambda: None)
+    try:
+        result = transport.converse("first request", candidate, case, False,
+                                    lambda _transcript: Reply("follow up", False))
+    finally:
+        transport.close()
+    assert result["usage"] == {"input_tokens": 30, "cached_input_tokens": 6, "output_tokens": 9}
+    turns = [event["usage"] for event in cast(list[dict[str, object]], result["events"])
+             if event.get("type") == "turn.completed"]
+    assert turns == [{"input_tokens": 10, "cached_input_tokens": 2, "output_tokens": 3},
+                     {"input_tokens": 20, "cached_input_tokens": 4, "output_tokens": 6}]
+
+
+
+@pytest.mark.usefixtures("host_login")
 @pytest.mark.parametrize("mode", ["unloaded", "read_failed", "marker_wrong", "failed", "timeout", "approval",
                                    "wrong_started", "wrong_thread", "wrong_turn", "no_answer", "request_start",
                                    "error_start", "unexpected_response", "unexpected_response_start", "unscoped_item",
@@ -125,10 +175,53 @@ def test_codex_converse_does_not_treat_missing_read_or_failed_turn_as_success(
             assert cast(dict[str, object], result["answer"])["load_marker"] == ""
             assert len(cast(Transcript, result["transcript"])) == 2
         else:
-            with pytest.raises((RuntimeError, CallTimeout), match="Codex|call"):
+            errors = {"approval": "requested an unsupported client action", "wrong_started": "started another journey thread",
+                      "wrong_thread": "changed the journey thread", "wrong_turn": "event for another turn",
+                      "no_answer": "turn has no assistant message", "request_start": "requested an unsupported client action",
+                      "error_start": "rejected request", "unexpected_response": "unexpected response",
+                      "unexpected_response_start": "unexpected response", "unscoped_item": "changed the journey thread",
+                      "global_wrong_thread": "changed the journey thread", "legacy_event": "changed the journey thread",
+                      "invalid_usage": "invalid token usage", "decreasing_usage": "token usage decreased",
+                      "failed": "turn failed"}
+            expected = CallTimeout if mode == "timeout" else RuntimeError
+            with pytest.raises(expected, match=errors.get(mode, "Codex app-server call timed out")):
                 _ = transport.converse("first request", candidate, case, False, lambda _text: Reply("next", False))
     finally:
         transport.close()
+
+
+@pytest.mark.usefixtures("host_login")
+@pytest.mark.parametrize("mode", ["gate_journey", "gate_journey_bad", "gate_journey_bad_out",
+                                  "gate_journey_cwd_bad", "gate_journey_cd_bad"])
+def test_codex_converse_trace_reaches_real_journey_gate_through_evaluator(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    fake_codex(tmp_path, monkeypatch, mode)
+    source = (Path(__file__).resolve().parents[4] / "skills/skillz/evals/gates/journey.py").read_text()
+    rules = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill",
+                   "invocation": "$echo-skill run", "kinds": {"journey": {"grader": "journey",
+                   "argv": [sys.executable, "-I", "-c", source], "rubric": "Score the journey."}}}, "skill")
+    case, candidate = journey_case(tmp_path, rules, 2)
+    task = Codex("offline-test", Budget(5, 120, 0), lambda: None)
+    judge = Judge([{"reply": "follow up", "done": False},
+                   {"criteria": {"must-0": {"level": 4, "reason": "valid trace"}}}])
+    judge.budget = task.budget
+
+    def sandbox(_self: Codex, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
+        done = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=30, check=False)
+        return done.returncode, done.stdout, done.stderr
+
+    monkeypatch.setattr(Codex, "sandbox", sandbox)
+    try:
+        result = evaluate(task, judge, candidate, case, checks=CheckMemo())
+    finally:
+        task.close()
+    if mode == "gate_journey":
+        assert result["scores"] == {"command": 1.0, "judge": 1.0}
+        assert result.get("status") != "gate-failed"
+    else:
+        assert result["scores"] == {"command": 0.0, "judge": None}
+        assert result["status"] == "gate-failed"
+
 
 @pytest.mark.usefixtures("host_login")
 def test_codex_journey_reports_redacted_startup_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,7 +297,7 @@ def test_first_turn_accepts_only_completed_candidate_reads(
 
     def command(name: str) -> str:
         path = shlex.quote(str(root / name))
-        return f"/bin/bash -lc {shlex.quote(f'/usr/bin/cat {path}')}" if shell else f"cat {path}"
+        return f"/bin/bash -lc {shlex.quote(f'/usr/bin/cat {path}')}" if shell else f"/usr/bin/cat {path}"
 
     def event(name: str, exit_code: int, output: str = "") -> dict[str, object]:
         return {"type": "item.completed", "item": {"type": "command_execution", "command": command(name),
@@ -216,6 +309,16 @@ def test_first_turn_accepts_only_completed_candidate_reads(
     spoof = event("SKILL.md", 0)
     cast(dict[str, object], spoof["item"])["command"] = command("SKILL.md") + "; printf spoof"
     assert not _first_turn_loaded([spoof, events[1]], tmp_path, candidate)
+
+
+def test_workspace_shell_does_not_wrap_a_trusted_read(tmp_path: Path) -> None:
+    _, candidate = journey_case(tmp_path, contract(), 2)
+    root = tmp_path / ".agents" / "skills" / candidate.skill
+    events: list[dict[str, object]] = [{"type": "item.completed", "item": {"type": "command_execution",
+               "command": f"./{shell} -lc {shlex.quote(f'/usr/bin/cat {root / name}')}",
+               "exit_code": 0, "output": candidate.identity if name == "EXPERIMENT_MARKER" else ""}}
+              for shell, name in (("bash", "SKILL.md"), ("sh", "EXPERIMENT_MARKER"))]
+    assert not _first_turn_loaded(events, tmp_path, candidate)
 
 
 def _assert_continuity(result: dict[str, object], token: str) -> None:

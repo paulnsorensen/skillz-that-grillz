@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 
 from support import (BUNDLE, CLI, CRITERIA, FIXTURES, Scenario, assert_promoted, call_cli, cli_error,
-                     command_adapter, export_and_apply, make_scenario, make_vendor_bin, read_cases, read_events,
+                     command_adapter, export_and_apply, make_scenario, read_cases, read_events,
                      read_record, run_scenario, snapshot)
 
 
@@ -131,19 +131,15 @@ def test_failed_journey_command_gate_never_calls_judge(tmp_path: Path) -> None:
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-7")
+@pytest.mark.ac("gh-369:AC-15")
 def test_unsupported_journey_refuses_before_task_inference(tmp_path: Path) -> None:
-    harness = "command"
     scenario = journey_scenario(tmp_path)
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
-            "--model", "offline-test", "--harness", harness, "--live", "--edit", "prose"]
-    bin_dir = None
-    if harness == "command":
-        args += command_adapter(scenario)
-    else:
-        bin_dir = make_vendor_bin(scenario, tmp_path, harness, "normal")
+            "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose",
+            *command_adapter(scenario)]
     scenario.out.mkdir(mode=0o700, exist_ok=True)
     _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
-    code, result, error = call_cli(args, tmp_path, bin_dirs=[bin_dir] if bin_dir else ())
+    code, result, error = call_cli(args, tmp_path)
     # The stop comes before the case and budget approvals, so no approval data and no task call exist.
     assert code == 1 and cli_error(error)["code"] == "journey-unsupported", (result, error)
     assert "case_hash" not in result and not (scenario.out / "run.json").exists()

@@ -171,11 +171,11 @@ def _first_turn_loaded(events: list[dict[str, object]], workspace: Path, candida
             continue
         try:
             parts = shlex.split(command)
-            if len(parts) == 3 and Path(parts[0]).name in {"sh", "bash", "zsh"} and parts[1] in {"-c", "-lc"}:
+            if len(parts) == 3 and parts[0] in {"/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh"} and parts[1] in {"-c", "-lc"}:
                 parts = shlex.split(parts[2])
         except ValueError:
             continue
-        if len(parts) != 2 or Path(parts[0]).name != "cat":
+        if len(parts) != 2 or parts[0] not in {"/bin/cat", "/usr/bin/cat"}:
             continue
         if parts[1] in read_paths:
             seen.add("read")
@@ -214,6 +214,7 @@ def converse(request: str, candidate: Candidate, case: Case, holdout: bool,
                 shown = case.request
                 marker = ""
                 total: dict[str, int] | None = None
+                fresh: list[dict[str, object]] = []
                 for turn in range(case.journey.max_turns):
                     budget.claim(holdout=holdout, role=role)
                     checkpoint()
@@ -233,7 +234,9 @@ def converse(request: str, candidate: Candidate, case: Case, holdout: bool,
                         break
                     message = shown = reply.reply
                 return {"answer": {"result_json": transcript[-1]["text"], "load_marker": marker},
-                        "events": events, "usage": usage(events), "workspace": str(workspace),
+                        "events": events, "usage": usage(events) if any(event.get("type") == "turn.completed" for event in fresh)
+                        else {"input_tokens": None, "cached_input_tokens": None, "output_tokens": None},
+                        "workspace": str(workspace),
                         "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace),
                         "transcript": transcript, "raw_events": server.raw}
             except RuntimeError as error:

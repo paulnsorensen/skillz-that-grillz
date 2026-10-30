@@ -124,3 +124,6 @@
 - 2026-10-25 · wiki-harvest · updated · criteria/index.md · Add the 41 criteria files that the index list lacked, so the list matches the directory.
 
 - 2026-10-27 · gh-324-live-proof · new-page · skillz-live-proof-lessons.md · Lessons from the #324 live proof: split and plain preflight prompts after a live model refusal, the native Read setting, split floors that move suites and caps together, caps that equal the dry estimate, the scoring-label cohort break, CPU-time test margins, and process gotchas. No page owned these gotchas; ADR-006 and the criteria files hold the design.
+
+
+- 2026-10-30 · 6070cd54e776b3bf · merged · decisions/skillz-autoimprove.md · Record approved trusted activation and native shell/cwd parsing constraints from PR #579.

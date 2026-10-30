@@ -25,6 +25,16 @@ for line in sys.stdin:
             print("startup failed: key=private-value", file=sys.stderr)
             sys.exit(2)
         send({"id": request["id"], "result": {"userAgent": "fake"}})
+    elif method == "skills/list":
+        params = cast(dict[str, object], request["params"])
+        cwds = cast(list[str], params["cwds"])
+        assert len(cwds) == 1 and params["forceReload"] is True
+        skill_paths = list((Path(cwds[0]) / ".agents/skills").glob("*/SKILL.md"))
+        assert len(skill_paths) == 1
+        skill_path = skill_paths[0]
+        send({"id": request["id"], "result": {"data": [{"cwd": cwds[0], "errors": [],
+              "skills": [{"name": skill_path.parent.name, "enabled": True, "scope": "repo",
+                          "pluginId": None, "path": str(skill_path.resolve())}]}]}})
     elif method == "thread/start":
         params = cast(dict[str, object], request["params"])
         workspace = Path(cast(str, params["cwd"]))
@@ -100,13 +110,34 @@ for line in sys.stdin:
         if mode != "unloaded":
             for index, name in enumerate(("SKILL.md", "EXPERIMENT_MARKER")):
                 item = {"id": f"command-{turns}-{index}", "type": "commandExecution",
-                        "command": f"cat .agents/skills/echo-skill/{name}",
+                        "command": f"{'./cat' if mode == 'workspace_cat' else '/usr/bin/cat'} .agents/skills/echo-skill/{name}",
                         "exitCode": 1 if mode == "read_failed" and name == "SKILL.md" else 0,
                         "status": "completed", "aggregatedOutput": ("wrong" if mode == "marker_wrong"
                                                                      and name == "EXPERIMENT_MARKER" else (skill / name).read_text())}
                 send({"method": "item/completed", "params": {"threadId": thread, "turnId": turn, "item": item,
                                                              "completedAtMs": 1}})
-        message = {"id": f"message-{turns}", "type": "agentMessage", "text": f"turn={turns} previous={previous}"}
+        if mode in {"gate_journey", "gate_journey_bad", "gate_journey_bad_out", "gate_journey_cwd_bad",
+                    "gate_journey_cd_bad"}:
+            case_hash = "ab" * 32
+            cwd = str(workspace / "toys/a") if mode == "gate_journey_cwd_bad" else str(workspace)
+            run = ("cd toys/a; python3 x/skillz-experiment.pyz run --target . --out result"
+                   if mode == "gate_journey_cd_bad" else
+                   f"python3 x/skillz-experiment.pyz run --target {workspace / 'toys/a'} --out result"
+                   if mode == "gate_journey_cwd_bad" else
+                   "python3 x/skillz-experiment.pyz run --target toys/a --out toys/a/result"
+                   if mode == "gate_journey_bad_out" else
+                   "python3 x/skillz-experiment.pyz run --target toys/a --out output")
+            commands = ([(run, json.dumps({"stop": "cases-unapproved", "case_hash": case_hash})
+                          if mode != "gate_journey_bad" else "no approval evidence"),
+                         (run, json.dumps({"stop": "budget-unapproved", "estimate": {"calls": 2}}))]
+                        if turns == 1 else [(f"{run} --approve-cases {case_hash} --approve-budget yes", "done")])
+            for index, (command, output) in enumerate(commands):
+                item = {"id": f"run-{turns}-{index}", "type": "commandExecution",
+                        "command": f"/bin/bash -lc {json.dumps(command)}", "cwd": cwd,
+                        "exitCode": 1 if turns == 1 else 0, "status": "completed", "aggregatedOutput": output}
+                send({"method": "item/completed", "params": {"threadId": thread, "turnId": turn, "item": item}})
+        message = {"id": f"message-{turns}", "type": "agentMessage", "text": (f"Approve {('ab' * 32)}?" if mode.startswith("gate_journey") and turns == 1
+                                                                   else f"turn={turns} previous={previous}")}
         if mode != "no_answer":
             send({"method": "item/completed", "params": {"threadId": thread, "turnId": turn, "item": message,
                                                              "completedAtMs": 1}})
@@ -121,7 +152,7 @@ for line in sys.stdin:
             totals = ({"inputTokens": True, "cachedInputTokens": 2, "outputTokens": 3},)
         if mode == "decreasing_usage" and turns == 2:
             totals = ({"inputTokens": 9, "cachedInputTokens": 2, "outputTokens": 3},)
-        if mode != "no_usage":
+        if mode != "no_usage" and not (mode == "missing_final_usage" and turns == 2) and not (mode == "middle_gap_usage" and turns == 2):
             for total in (*totals, totals[-1]) if mode == "usage_snapshots" else totals:
                 send({"method": "thread/tokenUsage/updated", "params": {"threadId": thread, "turnId": turn,
                         "tokenUsage": {"last": {"inputTokens": 1, "cachedInputTokens": 0, "outputTokens": 1},
