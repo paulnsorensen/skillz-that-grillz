@@ -224,8 +224,10 @@ def test_codex_converse_trace_reaches_real_journey_gate_through_evaluator(
 
 
 @pytest.mark.usefixtures("host_login")
-def test_codex_journey_reports_redacted_startup_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    fake_codex(tmp_path, monkeypatch, "startup_exit")
+@pytest.mark.parametrize("mode", ["startup_exit", "startup_stdout_closed"])
+def test_codex_journey_reports_redacted_startup_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                       mode: str) -> None:
+    fake_codex(tmp_path, monkeypatch, mode)
     case, candidate = journey_case(tmp_path, contract(), 2)
     transport = Codex("offline-test", Budget(2, 120, 0), lambda: None)
     try:
