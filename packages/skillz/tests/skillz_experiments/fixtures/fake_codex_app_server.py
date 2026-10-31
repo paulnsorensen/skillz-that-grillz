@@ -21,8 +21,12 @@ for line in sys.stdin:
     request = cast(dict[str, object], json.loads(line))
     method = request.get("method")
     if method == "initialize":
-        if mode == "startup_exit":
-            print("startup failed: key=private-value", file=sys.stderr)
+        if mode in {"startup_exit", "startup_stdout_closed"}:
+            print("startup failed: key=private-value", file=sys.stderr, flush=True)
+            if mode == "startup_stdout_closed":
+                # Keep the process alive after stdout EOF, before the parent reads stderr.
+                os.close(sys.stdout.fileno())
+                _ = sys.stdin.read()
             sys.exit(2)
         send({"id": request["id"], "result": {"userAgent": "fake"}})
     elif method == "skills/list":
