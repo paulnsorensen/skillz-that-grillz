@@ -38,6 +38,26 @@ truth for every published skill in this repo — paths, commands, and purpose.
 Read it there rather than duplicating it here. `.agents/skills/` is the source
 of truth for repo-local skills (tooling for work on this repository only).
 
+## Branch targets for bots and jobs
+
+- `main` is the source branch. `dist` is the default installation branch, not a development branch.
+- Set every Dependabot version-update entry to `target-branch: main`.
+  Set `commit-message: {prefix: chore, include: scope}` so PR titles pass the title check.
+- Dependabot security updates always use the default branch. `target-branch` does not redirect them.
+  Recreate their dependency changes on a branch from `main`; do not merge a branch cut from `dist`.
+- Keep CodeRabbit `reviews.auto_review.base_branches: ["^main$"]`.
+  This adds `main` to its default-branch review scope; it does not remove `dist`.
+- Keep Copilot auto-review and source protection rules on `refs/heads/main`, not `~DEFAULT_BRANCH`.
+- Run source validation on PR merge commits and pushes to `main`. Review dependencies on PRs targeting `main`.
+  PR labeling uses the event payload and does not check out source.
+- Keep release tag checks against `origin/main`. Check out the tag, not the default branch, for release builds.
+- `publish dist` checks out `main` explicitly, including scheduled and manual runs. Only this publisher writes `dist`.
+- Scorecard intentionally scans `dist`: published results require the default branch.
+- The retarget job handles PRs targeting `dist` without running PR code.
+  Retargeting does not repair unrelated history or remove built archives from a branch cut from `dist`.
+- Audit branch targets when adding bots, schedules, manual jobs, or release jobs.
+  Do not replace event merge refs or release tags with `main` in validation or release checkouts.
+
 ## Development notes
 
 - Use `uv` for Python: `uv run <script>`, `uv pip install <pkg>`
