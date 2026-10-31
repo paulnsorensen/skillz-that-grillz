@@ -240,8 +240,7 @@ def converse(request: str, candidate: Candidate, case: Case, holdout: bool,
                         "latency_seconds": time.monotonic() - started, "output_files": snapshot_outputs(workspace),
                         "transcript": transcript, "raw_events": server.raw}
             except RuntimeError as error:
-                if child.poll() is None:
-                    raise
+                # Stdout EOF can precede process exit. Read available stderr without waiting for poll().
                 _ = errors.seek(0, os.SEEK_END)
                 _ = errors.seek(max(0, errors.tell() - 4096))
                 detail = redact(errors.read(4096).decode(errors="replace"))
