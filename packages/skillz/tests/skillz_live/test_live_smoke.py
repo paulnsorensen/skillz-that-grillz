@@ -285,11 +285,18 @@ NAMES = (*SCENARIOS, "analytics")
 
 
 def _json(text: str) -> dict[str, object]:
-    """Return the JSON object in `text`. Keep the tail of text that is not a JSON object under `text`."""
+    """Return the JSON object in `text`. Keep the tail of text that is not a JSON object under `text`.
+
+    Warning lines can come before the coded error on stderr, so the last non-empty line also counts as the object.
+    """
+    lines = text.strip().splitlines()
     try:
         value = cast(object, json.loads(text))
     except ValueError:
-        return {"text": text[-2000:]} if text.strip() else {}
+        try:
+            value = cast(object, json.loads(lines[-1]))
+        except (ValueError, IndexError):
+            return {"text": text[-2000:]} if text.strip() else {}
     return cast(dict[str, object], value) if isinstance(value, dict) else {"text": text[-2000:]}
 
 
