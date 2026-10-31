@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import cast
 
 from skillz_experiments._cases import (
-    JOURNEY_FIELDS, CodedError, Journey, Split, case_criteria, digest, journey_of, loads_untrusted, string, text_map,
+    JOURNEY_FIELDS, CodedError, Journey, Split, case_criteria, digest, journey_of, loads_untrusted, mapping, string, text_map,
 )
 from skillz_experiments._contract import LOCATION, RUBRIC_GRADERS, Contract, Grader, load_contract, parse
 from skillz_experiments._evals_format import EVAL_KINDS, SOURCES
 from skillz_experiments._frontmatter import read_frontmatter
-from skillz_experiments._records import write
+from skillz_experiments._records import share_files, write
 
 DRAFT_NAME = "cases.draft.json"
 PENDING_KINDS = ("trigger", "near-miss")
@@ -70,7 +70,7 @@ class IntakeCase(DraftCase):
         return item
 
 
-def _case(value: object, position: int, journeys: Collection[str]) -> DraftCase:
+def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, str]) -> DraftCase:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ValueError(f"draft case {position} must be a JSON object")
     item = cast(dict[str, object], value)
@@ -87,7 +87,7 @@ def _case(value: object, position: int, journeys: Collection[str]) -> DraftCase:
             raise ValueError(f"kind must be one of {', '.join(allowed)}")
         if source not in SOURCES:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}")
-        files = text_map(item.get("files", {}))
+        files = text_map(item.get("files", {}), fixtures)
         expected = item.get("expected")
         if kind == "task" and (not files or expected is None):
             raise ValueError("a task case needs files and an expected reference")
@@ -103,14 +103,17 @@ def _case(value: object, position: int, journeys: Collection[str]) -> DraftCase:
 def load_draft(path: Path, journeys: Collection[str] = ("journey",)) -> list[DraftCase]:
     """Read and strictly validate `cases.draft.json`. Raise `ValueError` that names the bad case.
 
+    The draft is a list of cases, or an object whose `cases` list paths into its shared `fixtures` map (gh-580).
     `journeys` names the contract kinds that use the journey grader. Their cases take the journey fields.
     """
     if not path.is_file() or path.is_symlink() or path.stat().st_size > DRAFT_LIMIT:
         raise ValueError("draft must be a bounded regular file, not a symlink")
     document = loads_untrusted(path.read_text(encoding="utf-8"))
-    if not isinstance(document, list) or not document:
-        raise ValueError("draft must be a nonempty list of cases")
-    cases = [_case(item, position, journeys) for position, item in enumerate(cast(list[object], document), 1)]
+    shared = mapping(cast(object, document)) if isinstance(document, dict) else {"cases": document}
+    if not isinstance(shared.get("cases"), list) or not shared["cases"] or set(shared) - {"fixtures", "cases"}:
+        raise ValueError("draft must be a nonempty list of cases, or an object with only fixtures and a nonempty cases list")
+    fixtures = text_map(shared.get("fixtures", {}))
+    cases = [_case(item, position, journeys, fixtures) for position, item in enumerate(cast(list[object], shared["cases"]), 1)]
     seen: set[str] = set()
     for case in cases:
         if case.identifier in seen:
@@ -380,18 +383,14 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
     expected = case_hash(cases, seed, statistics)
     if approved_hash != expected:
         raise CodedError("cases-unapproved", "the approved hash does not match the cases; ask for approval again")
-    scored: list[dict[str, object]] = []
-    for case in cases:
-        if case.scored:
-            item = case.data()
-            item.update(provenance=case.source, provider_approved=True)
-            scored.append(item)
-    pending = [case.data() for case in cases if case.pending]
-    document: dict[str, object] = {"schema_version": 1, "seed": seed, "approved_hash": expected, "cases": scored,
-                                   "pending": pending}
+    fixtures: dict[str, str] = {}
+    scored = [case.data() | {"provenance": case.source, "provider_approved": True} for case in cases if case.scored]
+    document: dict[str, object] = {"schema_version": 1, "seed": seed, "approved_hash": expected, "fixtures": fixtures,
+                                   "cases": share_files(scored, fixtures),
+                                   "pending": share_files([case.data() for case in cases if case.pending], fixtures)}
     unscored = [case.data() for case in cases if not case.scored and not case.pending]
     if unscored:
-        document["not_scored"] = unscored
+        document["not_scored"] = share_files(unscored, fixtures)
     write(out, document)
 
 

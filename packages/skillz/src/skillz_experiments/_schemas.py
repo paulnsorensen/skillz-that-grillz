@@ -131,16 +131,17 @@ def journeys() -> Json:
 def draft() -> Json:
     properties = {name: value for name, value in _journey_properties().items() if name in DRAFT_FIELDS}
     properties["kind"] = NONEMPTY | {"description": "trigger, near-miss, task, or a journey kind of the contract."}
+    properties["files"] = {"anyOf": [TEXT_MAP, {"type": "array", "items": {"type": "string"}}],
+                           "description": "Inline files (path to text), or a list of paths into the top-level fixtures map."}
     properties["source"] = {"enum": list(SOURCES)}
     properties["expected"] = {"description": "The reference. A journey case takes the typed object. A judged task case "
                               + "takes an object with criteria, next to its expected_output and assertions.",
                               "properties": {"criteria": _criteria()}}
-    return _top("RUN/cases.draft.json", {
-        "type": "array",
-        "minItems": 1,
-        "items": {"type": "object", "required": sorted(DRAFT_REQUIRED), "properties": properties,
-                  "additionalProperties": False},
-    })
+    cases: Json = {"type": "array", "minItems": 1, "items": {"type": "object", "required": sorted(DRAFT_REQUIRED),
+                                                              "properties": properties, "additionalProperties": False}}
+    shared: Json = {"type": "object", "required": ["cases"], "additionalProperties": False, "properties": {
+        "fixtures": TEXT_MAP | {"description": "Shared files: path to text, stored once."}, "cases": {"$ref": "#/$defs/cases"}}}
+    return _top("RUN/cases.draft.json", {"$defs": {"cases": cases}, "oneOf": [{"$ref": "#/$defs/cases"}, shared]})
 
 
 def _statistics() -> Json:

@@ -34,7 +34,7 @@ from skillz_experiments._intake import (
     too_few,
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
-from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_inferred, seed_projection, seed_summary
+from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_document, seed_inferred, seed_projection, seed_summary
 from skillz_experiments.run._wedge_targets import plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
@@ -101,7 +101,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         seed_file.unlink(missing_ok=True)
         seeded = seed_cases(target)
         if seeded is not None:
-            write(seed_file, seeded)
+            write(seed_file, seed_document(seeded))
             split: dict[str, object] | None = None
             with suppress(CodedError, ValueError):
                 planned = intake_contract(target)

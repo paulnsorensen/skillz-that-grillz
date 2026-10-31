@@ -4,7 +4,7 @@ import contextlib
 import json
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -44,6 +44,20 @@ def write_bytes(path: Path, data: bytes, *, mode: int = 0o600, guard: Callable[[
 def write(path: Path, value: object) -> None:
     _ = write_bytes(path, (json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8"))
 
+
+def share_files(cases: Sequence[Mapping[str, object]], fixtures: dict[str, str]) -> list[dict[str, object]]:
+    """Return `cases` with each `files` map as a list of paths into `fixtures`, which this call fills (gh-580).
+
+    A file that many cases list is stored once. A case whose path holds other text in `fixtures` keeps its files inline.
+    """
+    shared: list[dict[str, object]] = []
+    for case in cases:
+        files = case.get("files")
+        if isinstance(files, dict) and all(fixtures.get(path, text) == text for path, text in cast(dict[str, str], files).items()):
+            fixtures.update(cast(dict[str, str], files))
+            case = {**case, "files": list(cast(dict[str, str], files))}
+        shared.append(dict(case))
+    return shared
 
 def read(path: Path) -> dict[str, object]:
     if path.is_symlink() or path.stat().st_size > 10_000_000:

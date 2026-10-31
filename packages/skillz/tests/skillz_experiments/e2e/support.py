@@ -238,7 +238,11 @@ def read_record(out: Path) -> dict[str, object]:
 
 
 def read_cases(out: Path) -> list[dict[str, object]]:
-    return cast(list[dict[str, object]], cast(dict[str, object], json.loads((out / "cases.json").read_text()))["cases"])
+    """Return the frozen cases, each `files` list of paths resolved against the shared `fixtures` map (gh-580)."""
+    document = cast(dict[str, object], json.loads((out / "cases.json").read_text()))
+    fixtures = cast(dict[str, str], document.get("fixtures", {}))
+    return [case | {"files": {name: fixtures[name] for name in cast(list[str], case["files"])}} if isinstance(case.get("files"), list) else case
+            for case in cast(list[dict[str, object]], document["cases"])]
 
 
 def read_events(out: Path) -> list[dict[str, object]]:
