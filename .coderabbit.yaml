@@ -7,6 +7,9 @@ tone_instructions: >-
   State the impact and a concrete failure scenario first.
 reviews:
   profile: chill
+  auto_review:
+    base_branches:
+      - "^main$"
   poem: false
   in_progress_fortune: false
   path_instructions:
