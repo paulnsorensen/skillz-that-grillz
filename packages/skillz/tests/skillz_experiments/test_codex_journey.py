@@ -168,7 +168,8 @@ def test_codex_converse_does_not_treat_missing_read_or_failed_turn_as_success(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     fake_codex(tmp_path, monkeypatch, mode)
     case, candidate = journey_case(tmp_path, contract(), 2)
-    transport = Codex("offline-test", Budget(5, 5 if mode == "timeout" else 120, 0, call_seconds=0.01), lambda: None)
+    budget = Budget(5, 5, 0, call_seconds=0.01) if mode == "timeout" else Budget(5, 120, 0)
+    transport = Codex("offline-test", budget, lambda: None)
     try:
         if mode in {"unloaded", "read_failed", "marker_wrong"}:
             result = transport.converse("first request", candidate, case, False, lambda _text: Reply("next", False))
